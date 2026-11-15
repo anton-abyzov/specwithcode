@@ -28,7 +28,9 @@ function extensionBadge(name: string): string {
 }
 
 function hostPath(workspaceRoot: string, path: string): string {
-  return path.startsWith("/") ? path : `${workspaceRoot.replace(/\/+$/, "")}/${path}`;
+  // A Windows host answers with a drive path or a network share.
+  const absolute = path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
+  return absolute ? path : `${workspaceRoot.replace(/\/+$/, "")}/${path}`;
 }
 
 /**

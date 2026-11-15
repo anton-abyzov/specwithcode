@@ -2,7 +2,6 @@
 // from 700 fictional increments, filtered and cut the way the server does.
 import type { ProjectBoardCard, ProjectBoardResult, ProjectId } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
-import { scopeThreadRef, scopedThreadKey } from "@specweave-studio/client-runtime/environment";
 
 const NOW = Date.parse("2026-11-14T18:00:00Z");
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
@@ -190,38 +189,23 @@ export const FIXTURE_MACHINE_LABELS = new Map<string, string>(
   MACHINES.map((machine) => [machine.environmentId, machine.label]),
 );
 
-export function useProjectThreadIncrementProgress(
-  environmentId: string,
-  threads: ReadonlyArray<EnvironmentThreadShell>,
-) {
-  return progressFor(environmentId, threads);
-}
-const progressCache = new WeakMap<object, ReturnType<typeof buildProgress>>();
-function buildProgress(environmentId: string, threads: ReadonlyArray<EnvironmentThreadShell>) {
-  const progress = new Map<string, { incrementId: string }>();
-  for (const entry of threads) {
-    const incrementId = LINKS.get(`${entry.environmentId}:${entry.id}`);
-    if (entry.environmentId === environmentId && incrementId) progress.set(entry.id, { incrementId });
-  }
-  return { progress, unplanned: new Set<string>(), answered: true };
-}
-function progressFor(environmentId: string, threads: ReadonlyArray<EnvironmentThreadShell>) {
-  let held = progressCache.get(threads);
-  if (!held) progressCache.set(threads, (held = buildProgress(environmentId, threads)));
-  return held;
-}
-const plansCache = new WeakMap<object, { plans: Map<string, { label: string }>; loaders: null }>();
-export function useSidebarThreadPlans(threads: ReadonlyArray<EnvironmentThreadShell>) {
-  let held = plansCache.get(threads);
-  if (!held) {
-    const plans = new Map<string, { label: string }>();
-    for (const entry of threads) {
-      const label = LINKS.get(`${entry.environmentId}:${entry.id}`);
-      if (label) plans.set(scopedThreadKey(scopeThreadRef(entry.environmentId, entry.id)), { label });
+// One answer per distinct page of threads, as the real query atoms hold theirs.
+const pageStates = new Map<string, unknown>();
+export function useThreadIncrementState(input: {
+  environmentId: string;
+  threadIds: ReadonlyArray<string>;
+}) {
+  const key = `${input.environmentId}|${input.threadIds.join(",")}`;
+  let state = pageStates.get(key);
+  if (!state) {
+    const progress = new Map<string, { incrementId: string }>();
+    for (const id of input.threadIds) {
+      const incrementId = LINKS.get(`${input.environmentId}:${id}`);
+      if (incrementId) progress.set(id, { incrementId });
     }
-    plansCache.set(threads, (held = { plans, loaders: null }));
+    pageStates.set(key, (state = { progress, unplanned: new Set<string>(), answered: true }));
   }
-  return held;
+  return state;
 }
 const ENVIRONMENTS = { environments: MACHINES.map((machine) => ({ ...machine })) };
 export const useEnvironments = () => ENVIRONMENTS;

@@ -2272,7 +2272,20 @@ export function ProjectWorkspaceSurface({
                   threads={workers}
                   machineLabels={machineLabels}
                   onOpenThread={(thread) => openThread(thread.id, thread.environmentId)}
-                  onAsk={canOperate && connected ? draftForCoordinator : undefined}
+                  onAsk={
+                    canOperate && connected
+                      ? (text) => {
+                          // The composer sits behind an expanded panel, and on a phone
+                          // behind the panel itself.
+                          setPaneExpanded(false);
+                          if (phone) {
+                            setSelected(null);
+                            setOverviewOpen(false);
+                          }
+                          draftForCoordinator(text);
+                        }
+                      : undefined
+                  }
                 />
               ) : paneTab === "designs" ? (
                 <ProjectDesignsPane
