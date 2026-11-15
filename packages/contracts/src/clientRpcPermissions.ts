@@ -16,6 +16,7 @@ import {
 import { WS_METHODS } from "./rpc.ts";
 import { PROVISION_RPC_METHODS } from "./provision.ts";
 import { MACHINE_TOOLS_RPC_METHODS } from "./machineTools.ts";
+import { PROJECT_CREDENTIALS_RPC_METHODS } from "./projectCredentials.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
@@ -55,6 +56,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // First-run setup's machine basics: read like Check readiness, install like provisioning.
   [MACHINE_TOOLS_RPC_METHODS.machineToolsCheck]: AuthFilesystemReadScope,
   [MACHINE_TOOLS_RPC_METHODS.machineToolsInstall]: AuthEnvironmentMaintainScope,
+  // Which sign-ins a project uses is read from its folder; saving the list writes one file there.
+  [PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsScan]: AuthFilesystemReadScope,
+  [PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsSave]: AuthFilesystemWriteScope,
+  // Sign-in state says which services a person uses and runs their tools: operate, not read.
+  [PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsProbe]: AuthOrchestrationOperateScope,
   // Reading a folder's repositories and a copy's notes before linking.
   [WS_METHODS.projectsFingerprint]: AuthFilesystemReadScope,
   [WS_METHODS.projectLinkPreview]: AuthOrchestrationReadScope,
