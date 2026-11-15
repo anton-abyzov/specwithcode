@@ -43,9 +43,9 @@ describe("resetReport", () => {
     expect(report.accounts).toHaveLength(1);
     expect(report.accounts[0]?.weeks).toEqual([
       null,
-      { usedPercent: 40, lostPercent: 60, resets: 1 },
-      { usedPercent: 55, lostPercent: 45, resets: 1 },
-      { usedPercent: 59, lostPercent: 41, resets: 1 },
+      { usedPercent: 40, lostPercent: 60, resets: 1, upperBound: false },
+      { usedPercent: 55, lostPercent: 45, resets: 1, upperBound: false },
+      { usedPercent: 59, lostPercent: 41, resets: 1, upperBound: false },
     ]);
     expect(report.accounts[0]?.latest?.lostPercent).toBe(41);
     expect(Math.round(report.accounts[0]?.averageLostPercent ?? 0)).toBe(49);
@@ -66,7 +66,7 @@ describe("resetReport", () => {
       "codex:b@x.dev",
       "codex:a@x.dev",
     ]);
-    expect(report.accounts[1]?.weeks[3]).toEqual({ usedPercent: 120, lostPercent: 80, resets: 2 });
+    expect(report.accounts[1]?.weeks[3]).toEqual({ usedPercent: 120, lostPercent: 80, resets: 2, upperBound: false });
   });
 
   it("reports the account-wide weekly window, never a model family or a second kind", () => {
@@ -84,7 +84,7 @@ describe("resetReport", () => {
       ],
       now,
     );
-    expect(report.accounts[0]?.weeks[3]).toEqual({ usedPercent: 80, lostPercent: 20, resets: 1 });
+    expect(report.accounts[0]?.weeks[3]).toEqual({ usedPercent: 80, lostPercent: 20, resets: 1, upperBound: false });
   });
 
   it("leaves out resets older than the report and accounts with none in it", () => {
@@ -147,5 +147,31 @@ describe("resetReportMarkdown", () => {
       "| Codex Pro · m1 | No reset recorded | 59% used, 41% lost | 41% over 1 reset | Not measurable |",
     );
     expect(markdown).toContain("Lost this week: 41% of one window.");
+  });
+
+  it("marks a loss read long before its reset as an upper bound and withholds its tokens", () => {
+    const report = resetReport(
+      [
+        period("codex:a@x.dev", monday(0) + 2 * DAY, 10, {
+          lastReadAt: iso(monday(0) + 2 * DAY - 5 * DAY),
+        }),
+      ],
+      now,
+      { tokensSpent: () => 1_000_000 },
+    );
+    const account = report.accounts[0];
+    expect(account?.weeks[3]).toMatchObject({ lostPercent: 90, upperBound: true });
+    expect(account?.upperBound).toBe(true);
+    expect(account?.tokensLostEstimate).toBeNull();
+    expect(report.lostThisWeekUpperBound).toBe(true);
+    expect(report.lostAllWeeksUpperBound).toBe(true);
+    const markdown = resetReportMarkdown(
+      report,
+      () => "Codex Pro",
+      () => "week",
+      String,
+    );
+    expect(markdown).toContain("10% used, up to 90% lost");
+    expect(markdown).toContain("Lost this week: up to 90% of one window.");
   });
 });

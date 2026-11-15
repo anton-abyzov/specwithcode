@@ -13,7 +13,11 @@ import type {
   UsageResetPeriod,
 } from "@specweave-studio/contracts";
 import { isFreshSample, resetBetween } from "@specweave-studio/shared/usageLimitForecast";
-import { closedReset, isLedgerWindow } from "@specweave-studio/shared/usageResetLedger";
+import {
+  closedReset,
+  isLedgerWindow,
+  ledgerWindowLengthMs,
+} from "@specweave-studio/shared/usageResetLedger";
 import { windowModelScope } from "@specweave-studio/shared/usageWindows";
 
 import { type HistoryReading, isoAt } from "./usageLimitHistoryStore.ts";
@@ -39,9 +43,14 @@ export interface LedgerCursor {
   resetsAt: number | null;
   /** When the running period began; null when that reset was never observed. */
   startedAt: number | null;
-  /** Banked resets at the last read, and whether one was spent since the period began. */
+  /**
+   * Banked resets at the last read, and the read that first saw one fewer. A
+   * reset counts as redeemed only when it shows at that read or the next:
+   * a credit that left weeks ago (spent, or expired) says nothing about a
+   * later early reset.
+   */
   credits: number | null;
-  creditSpent: boolean;
+  creditSpentAt: number | null;
 }
 
 export interface LedgerPeriod {
@@ -119,7 +128,7 @@ export function advanceLedger(state: LedgerState, reading: LedgerReading): Ledge
         ...sample,
         startedAt: null,
         credits: reading.resetCredits,
-        creditSpent: false,
+        creditSpentAt: null,
       });
       continue;
     }
@@ -132,11 +141,11 @@ export function advanceLedger(state: LedgerState, reading: LedgerReading): Ledge
       reading.resetCredits !== null &&
       reading.resetCredits < cursor.credits
     ) {
-      cursor.creditSpent = true;
+      cursor.creditSpentAt = sample.at;
     }
-    const lengthMs =
-      cursor.windowDurationMins === undefined ? null : cursor.windowDurationMins * MINUTE;
-    const closed = closedReset(cursor, sample, lengthMs, cursor.creditSpent);
+    const lengthMs = ledgerWindowLengthMs(cursor.windowKind, cursor.windowDurationMins);
+    const redeemed = cursor.creditSpentAt !== null && cursor.creditSpentAt >= cursor.at;
+    const closed = closedReset(cursor, sample, lengthMs, redeemed);
     if (closed) {
       closedPeriods.push({
         accountKey: cursor.accountKey,
@@ -149,12 +158,12 @@ export function advanceLedger(state: LedgerState, reading: LedgerReading): Ledge
         ...closed,
       });
       cursor.startedAt = closed.endedAt;
-      cursor.creditSpent = false;
+      cursor.creditSpentAt = null;
     } else if (resetBetween(cursor, sample, lengthMs)) {
       // The window started over with its spend unread: no period, and the new one's start is
       // known only when the reset fell between two reads less than a window apart.
       cursor.startedAt = lengthMs !== null && sample.at - cursor.at >= lengthMs ? null : sample.at;
-      cursor.creditSpent = false;
+      cursor.creditSpentAt = null;
     }
     cursor.at = sample.at;
     cursor.usedPercent = sample.usedPercent;
@@ -256,7 +265,7 @@ export function decodeLedgerFile(raw: string): LedgerState {
   for (const entry of Array.isArray(parsed.cursors) ? parsed.cursors : []) {
     if (!isRecord(entry)) continue;
     const window = decodeWindow(entry);
-    const { at, usedPercent, resetsAt, startedAt, credits, creditSpent } = entry;
+    const { at, usedPercent, resetsAt, startedAt, credits, creditSpentAt } = entry;
     if (!window || !isFiniteNumber(at) || !isFiniteNumber(usedPercent)) continue;
     if (!isTimeOrNull(resetsAt) || !isTimeOrNull(startedAt)) continue;
     state.cursors.set(cursorKey(window.accountKey, window.windowKind, window.windowId), {
@@ -266,7 +275,7 @@ export function decodeLedgerFile(raw: string): LedgerState {
       resetsAt,
       startedAt,
       credits: isFiniteNumber(credits) ? credits : null,
-      creditSpent: creditSpent === true,
+      creditSpentAt: isFiniteNumber(creditSpentAt) ? creditSpentAt : null,
     });
   }
   for (const entry of Array.isArray(parsed.periods) ? parsed.periods : []) {

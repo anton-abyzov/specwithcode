@@ -4,6 +4,7 @@ import type { LimitHistorySample } from "./usageLimitForecast.ts";
 import {
   closedReset,
   isLedgerWindow,
+  ledgerWindowLengthMs,
   lossIsUpperBound,
   mergeResetPeriods,
   resetPeriods,
@@ -167,6 +168,20 @@ describe("mergeResetPeriods", () => {
     ]);
   });
 
+  it("keeps two resets hours apart that one machine saw in a row", () => {
+    const early = { ...period(t0 + 9 * HOUR, t0 + 8 * HOUR, 80, null), cause: "early" as const };
+    const redeemed = {
+      ...period(t0 + 13 * HOUR, t0 + 12.5 * HOUR, 100, t0 + 9 * HOUR),
+      cause: "redeemed" as const,
+    };
+    const third = period(t0 + 18 * HOUR, t0 + 17 * HOUR, 30, t0 + 13 * HOUR);
+    expect(mergeResetPeriods([[early, redeemed, third]]).map((entry) => entry.cause)).toEqual([
+      "early",
+      "redeemed",
+      "scheduled",
+    ]);
+  });
+
   it("keeps different accounts and windows apart", () => {
     const other = { ...period(reset1, reset1 - HOUR, 10, null), windowId: "seven_day_opus" };
     expect(mergeResetPeriods([[period(reset1, reset1 - HOUR, 59, null)], [other]])).toHaveLength(2);
@@ -181,6 +196,16 @@ describe("ledger helpers", () => {
     expect(isLedgerWindow("other", 24 * 60)).toBe(true);
     expect(isLedgerWindow("other", 300)).toBe(false);
     expect(isLedgerWindow("other", undefined)).toBe(false);
+  });
+
+  it("gives a weekly or monthly window without a reported length the shortest one", () => {
+    expect(ledgerWindowLengthMs("weekly", undefined)).toBe(WEEK);
+    expect(ledgerWindowLengthMs("monthly", undefined)).toBe(28 * DAY);
+    expect(ledgerWindowLengthMs("monthly", 30 * 24 * 60)).toBe(30 * DAY);
+    expect(ledgerWindowLengthMs("other", undefined)).toBeNull();
+    // Three monthly resets passed unread: no period is invented from the two reads.
+    const length = ledgerWindowLengthMs("monthly", undefined);
+    expect(closedReset(read(t0, 80, null), read(t0 + 105 * DAY, 20, null), length)).toBeNull();
   });
 
   it("marks a loss read long before the reset as an upper bound", () => {

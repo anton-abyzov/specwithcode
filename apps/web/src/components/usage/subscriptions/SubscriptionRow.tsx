@@ -110,7 +110,9 @@ function RenewalDay({
         type="button"
         className="rounded-sm text-foreground underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => {
-          setValue(row.renewal ? String(new Date(row.renewal.at).getDate()) : "");
+          setValue(
+            row.renewal ? String(row.renewal.day ?? new Date(row.renewal.at).getDate()) : "",
+          );
           setEditing(true);
         }}
       >

@@ -31,6 +31,8 @@ export interface SubscriptionRenewal {
   readonly at: number;
   /** Reported by the provider, or worked out from the day the person set. */
   readonly source: "provider" | "set";
+  /** The day of the month the person set; a short month shows an earlier date, the day is kept. */
+  readonly day?: number;
 }
 
 export interface SubscriptionLoss {
@@ -161,7 +163,7 @@ export function subscriptionRows(
         reported !== null && reported > now
           ? { at: reported, source: "provider" }
           : setDay !== undefined
-            ? { at: nextRenewalOn(setDay, now), source: "set" }
+            ? { at: nextRenewalOn(setDay, now), source: "set", day: setDay }
             : null,
       credits:
         credits && credits.availableCount > 0

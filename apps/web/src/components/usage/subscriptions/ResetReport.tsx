@@ -33,11 +33,17 @@ export function ResetReport({
       <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
         <span>
           Lost this week:{" "}
-          <span className="font-medium tabular-nums">{Math.round(report.lostThisWeek)}%</span>
+          <span className="font-medium tabular-nums">
+            {report.lostThisWeekUpperBound ? "up to " : ""}
+            {Math.round(report.lostThisWeek)}%
+          </span>
         </span>
         <span>
           Lost over {report.weekStarts.length} weeks:{" "}
-          <span className="font-medium tabular-nums">{Math.round(report.lostAllWeeks)}%</span>
+          <span className="font-medium tabular-nums">
+            {report.lostAllWeeksUpperBound ? "up to " : ""}
+            {Math.round(report.lostAllWeeks)}%
+          </span>
         </span>
         <span className="text-xs text-muted-foreground">Percent of one account's window.</span>
       </div>
@@ -65,7 +71,7 @@ export function ResetReport({
                   <div
                     key={account.accountKey}
                     className="flex h-full flex-1 flex-col-reverse overflow-hidden rounded-sm bg-muted"
-                    title={`${labelOf(account.accountKey)}: ${Math.round(cell.usedPercent)}% used, ${Math.round(cell.lostPercent)}% lost`}
+                    title={`${labelOf(account.accountKey)}: ${Math.round(cell.usedPercent)}% used, ${cell.upperBound ? "up to " : ""}${Math.round(cell.lostPercent)}% lost`}
                   >
                     <div
                       style={{
@@ -116,12 +122,14 @@ export function ResetReport({
                 {account.latest === null ? "Not reported" : `${Math.round(account.latest.usedPercent)}%`}
               </TableCell>
               <TableCell className="text-right tabular-nums">
-                {account.latest === null ? "Not reported" : `${Math.round(account.latest.lostPercent)}%`}
+                {account.latest === null
+                  ? "Not reported"
+                  : `${account.latest.upperBound ? "up to " : ""}${Math.round(account.latest.lostPercent)}%`}
               </TableCell>
               <TableCell className="text-right tabular-nums">
                 {account.averageLostPercent === null
                   ? "Not reported"
-                  : `${Math.round(account.averageLostPercent)}% over ${account.resets} ${account.resets === 1 ? "reset" : "resets"}`}
+                  : `${account.upperBound ? "up to " : ""}${Math.round(account.averageLostPercent)}% over ${account.resets} ${account.resets === 1 ? "reset" : "resets"}`}
               </TableCell>
               <TableCell className="text-right tabular-nums">
                 {account.tokensLostEstimate === null
@@ -133,7 +141,8 @@ export function ResetReport({
         </TableBody>
       </Table>
       <p className="text-xs text-muted-foreground">
-        Used and Lost are for each account's latest reset. A token estimate appears only where one
+        Used and Lost are for each account's latest reset. "Up to" marks a reset the app last
+        read more than two hours before, so some of that quota may have been used. A token estimate appears only where one
         account of that provider was in use, so the spend behind its percent can be measured.
       </p>
     </div>

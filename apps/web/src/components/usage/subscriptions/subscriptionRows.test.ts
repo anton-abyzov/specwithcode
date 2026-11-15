@@ -111,7 +111,7 @@ describe("subscriptionRows", () => {
     );
     expect(rows[0]?.renewal).toEqual({ at: now + 18 * DAY, source: "provider" });
     expect(rows[0]?.plan).toBe("Business");
-    expect(rows[1]?.renewal).toEqual({ at: new Date(2026, 10, 17).getTime(), source: "set" });
+    expect(rows[1]?.renewal).toEqual({ at: new Date(2026, 10, 17).getTime(), source: "set", day: 17 });
     expect(rows[2]?.renewal).toBeNull();
   });
 

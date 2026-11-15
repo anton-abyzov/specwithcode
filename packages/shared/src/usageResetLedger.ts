@@ -19,8 +19,6 @@ const HOUR = 60 * MINUTE;
 
 /** A reset this long before its announced time was not the scheduled one. */
 const EARLY_RESET_MARGIN_MS = 10 * MINUTE;
-/** Two machines on one account see the same reset at reads this far apart at most. */
-const SAME_PERIOD_TOLERANCE_MS = 6 * HOUR;
 /** Shorter windows turn over many times a day; what they leave unused is not a loss worth a ledger. */
 const MIN_LEDGER_WINDOW_MINS = 24 * 60;
 
@@ -45,6 +43,23 @@ export function isLedgerWindow(
   if (kind === "weekly" || kind === "monthly") return true;
   if (kind === "session") return false;
   return windowDurationMins !== undefined && windowDurationMins >= MIN_LEDGER_WINDOW_MINS;
+}
+
+const DAY = 24 * HOUR;
+
+/**
+ * How long a ledger window runs, for telling a whole unread window from a
+ * short gap. Providers that report a weekly or monthly window without its
+ * length get the shortest such window, so a long silence never closes a period.
+ */
+export function ledgerWindowLengthMs(
+  kind: ServerProviderUsageWindow["kind"],
+  windowDurationMins: number | undefined,
+): number | null {
+  if (windowDurationMins !== undefined && windowDurationMins > 0) return windowDurationMins * MINUTE;
+  if (kind === "weekly") return 7 * DAY;
+  if (kind === "monthly") return 28 * DAY;
+  return null;
 }
 
 export interface ClosedReset {
@@ -125,6 +140,11 @@ export function resetPeriods(
  * One list from the ledgers of several machines. Two machines signed in to
  * one account each record the same reset from their own reads; the one that
  * read last before the reset knows the spend best, so it is kept.
+ *
+ * Two records are one reset when the spans between each one's last read and
+ * its end overlap: both machines had the reset inside their own gap. Two
+ * resets one machine saw in a row never overlap, however close they are, so
+ * an early reset and a redeemed one hours apart both stay.
  */
 export function mergeResetPeriods<Period extends ResetPeriod>(
   ledgers: ReadonlyArray<ReadonlyArray<Period>>,
@@ -144,11 +164,12 @@ export function mergeResetPeriods<Period extends ResetPeriod>(
       last &&
       last.accountKey === period.accountKey &&
       last.windowId === period.windowId &&
-      period.endedAt - last.endedAt < SAME_PERIOD_TOLERANCE_MS
+      period.lastReadAt < last.endedAt
     ) {
       if (period.lastReadAt > last.lastReadAt) {
         merged[merged.length - 1] = {
           ...period,
+          endedAt: Math.max(period.endedAt, last.endedAt),
           startedAt: period.startedAt ?? last.startedAt,
         };
       } else if (last.startedAt === null && period.startedAt !== null) {

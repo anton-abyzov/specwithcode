@@ -6,6 +6,7 @@
  * measured.
  */
 import type { UsageResetPeriod } from "@specweave-studio/contracts";
+import { lossIsUpperBound } from "@specweave-studio/shared/usageResetLedger";
 
 const DAY = 24 * 60 * 60_000;
 /** Below this much used, tokens per percent is too noisy to scale up. */
@@ -16,6 +17,11 @@ export interface ReportCell {
   readonly lostPercent: number;
   /** Resets in the week: more than one when the provider reset limits early. */
   readonly resets: number;
+  /**
+   * The last read was long before a reset, so what was spent after it is
+   * unknown: used is at least, and lost at most, what is shown.
+   */
+  readonly upperBound: boolean;
 }
 
 export interface ReportAccount {
@@ -28,6 +34,8 @@ export interface ReportAccount {
   /** Average loss per reset over the report, and how many resets it averages. */
   readonly averageLostPercent: number | null;
   readonly resets: number;
+  /** Some reset in the average was read long before it happened. */
+  readonly upperBound: boolean;
   /** Tokens the unused quota would have bought, or null when it cannot be measured. */
   readonly tokensLostEstimate: number | null;
 }
@@ -39,6 +47,9 @@ export interface ResetReport {
   /** Summed over accounts, in percent of one account's window. */
   readonly lostThisWeek: number;
   readonly lostAllWeeks: number;
+  /** The totals include a loss that is only an upper bound. */
+  readonly lostThisWeekUpperBound: boolean;
+  readonly lostAllWeeksUpperBound: boolean;
 }
 
 /** Local midnight of the Monday on or before `at`. */
@@ -97,23 +108,31 @@ export function resetReport(
     const cells: Array<ReportCell | null> = weekStarts.map(() => null);
     let lostSum = 0;
     let resets = 0;
+    let anyUpperBound = false;
     let tokens: number | null = options.tokensSpent ? 0 : null;
     for (const period of reported) {
       const endedAt = Date.parse(period.endedAt);
       const index = weekStarts.indexOf(weekStartOf(endedAt));
       if (index === -1) continue;
       const cell = cells[index];
+      const upperBound = lossIsUpperBound({
+        endedAt,
+        lastReadAt: Date.parse(period.lastReadAt),
+      });
+      anyUpperBound ||= upperBound;
       cells[index] = {
         usedPercent: (cell?.usedPercent ?? 0) + period.usedPercentAtReset,
         lostPercent: (cell?.lostPercent ?? 0) + period.lostPercent,
         resets: (cell?.resets ?? 0) + 1,
+        upperBound: (cell?.upperBound ?? false) || upperBound,
       };
       lostSum += period.lostPercent;
       resets += 1;
       if (tokens === null || period.lostPercent === 0) continue;
       const startedAt = period.startedAt === undefined ? null : Date.parse(period.startedAt);
       const spent =
-        startedAt === null || period.usedPercentAtReset < MIN_USED_FOR_ESTIMATE
+        // Spend after the last read is unknown, so tokens per percent cannot be scaled.
+        upperBound || startedAt === null || period.usedPercentAtReset < MIN_USED_FOR_ESTIMATE
           ? null
           : (options.tokensSpent?.({ accountKey, driver: period.driver }, startedAt, endedAt) ??
             null);
@@ -130,6 +149,7 @@ export function resetReport(
       latest: cells.findLast((cell) => cell !== null) ?? null,
       averageLostPercent: lostSum / resets,
       resets,
+      upperBound: anyUpperBound,
       tokensLostEstimate: tokens !== null && tokens > 0 ? Math.round(tokens) : null,
     });
   }
@@ -143,6 +163,8 @@ export function resetReport(
     weekStarts,
     accounts,
     lostThisWeek: accounts.reduce((sum, account) => sum + (account.weeks[last]?.lostPercent ?? 0), 0),
+    lostThisWeekUpperBound: accounts.some((account) => account.weeks[last]?.upperBound === true),
+    lostAllWeeksUpperBound: accounts.some((account) => account.upperBound),
     lostAllWeeks: accounts.reduce(
       (sum, account) =>
         sum + account.weeks.reduce((inner, cell) => inner + (cell?.lostPercent ?? 0), 0),
@@ -164,11 +186,11 @@ export function resetReportMarkdown(
     ...account.weeks.map((cell) =>
       cell === null
         ? "No reset recorded"
-        : `${Math.round(cell.usedPercent)}% used, ${Math.round(cell.lostPercent)}% lost`,
+        : `${Math.round(cell.usedPercent)}% used, ${cell.upperBound ? "up to " : ""}${Math.round(cell.lostPercent)}% lost`,
     ),
     account.averageLostPercent === null
       ? "Not reported"
-      : `${Math.round(account.averageLostPercent)}% over ${account.resets} ${account.resets === 1 ? "reset" : "resets"}`,
+      : `${account.upperBound ? "up to " : ""}${Math.round(account.averageLostPercent)}% over ${account.resets} ${account.resets === 1 ? "reset" : "resets"}`,
     account.tokensLostEstimate === null
       ? "Not measurable"
       : `~${formatTokens(account.tokensLostEstimate)}`,
@@ -177,13 +199,13 @@ export function resetReportMarkdown(
   return [
     "# Subscription quota: used against lost",
     "",
-    `Lost this week: ${Math.round(report.lostThisWeek)}% of one window. Lost over ${report.weekStarts.length} weeks: ${Math.round(report.lostAllWeeks)}%.`,
+    `Lost this week: ${report.lostThisWeekUpperBound ? "up to " : ""}${Math.round(report.lostThisWeek)}% of one window. Lost over ${report.weekStarts.length} weeks: ${report.lostAllWeeksUpperBound ? "up to " : ""}${Math.round(report.lostAllWeeks)}%.`,
     "",
     line(header),
     line(header.map(() => "---")),
     ...rows.map(line),
     "",
-    "Percent is of one account's window at each reset. A token figure is an estimate from this fleet's own usage and appears only where one account of the provider was in use.",
+    "Percent is of one account's window at each reset. \"Up to\" marks a reset last read more than two hours before it. A token figure is an estimate from this fleet's own usage and appears only where one account of the provider was in use.",
     "",
   ].join("\n");
 }

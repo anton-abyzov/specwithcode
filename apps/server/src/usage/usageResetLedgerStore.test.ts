@@ -95,6 +95,30 @@ describe("advanceLedger", () => {
     ).toMatchObject([{ cause: "redeemed", lostPercent: 0 }]);
   });
 
+  it("does not call an early reset redeemed for a credit that left reads earlier", () => {
+    const state = emptyLedger();
+    advanceLedger(state, reading(t0, [weekly(40, reset1)], 2));
+    // One credit expires; the window keeps running.
+    advanceLedger(state, reading(t0 + HOUR, [weekly(45, reset1)], 1));
+    advanceLedger(state, reading(t0 + 10 * HOUR, [weekly(70, reset1)], 1));
+    expect(
+      advanceLedger(state, reading(t0 + 11 * HOUR, [weekly(0, t0 + 11 * HOUR + WEEK)], 1)),
+    ).toMatchObject([{ cause: "early", lostPercent: 30 }]);
+  });
+
+  it("invents no period for a monthly window of unreported length read months apart", () => {
+    const monthly = (usedPercent: number): ServerProviderUsageWindow => ({
+      id: "premium",
+      kind: "monthly",
+      label: "Monthly",
+      usedPercent,
+    });
+    const state = emptyLedger();
+    advanceLedger(state, reading(t0, [monthly(80)]));
+    expect(advanceLedger(state, reading(t0 + 105 * DAY, [monthly(20)]))).toEqual([]);
+    expect(state.periods).toEqual([]);
+  });
+
   it("closes nothing for an account seen only at its limit, a week apart", () => {
     const state = emptyLedger();
     advanceLedger(state, reading(t0, [weekly(100, null)]));

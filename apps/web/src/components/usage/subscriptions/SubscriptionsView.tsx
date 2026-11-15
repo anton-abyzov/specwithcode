@@ -75,16 +75,24 @@ export function SubscriptionsView({
     return map;
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- accounts is rebuilt each render; its keys decide.
   }, [accounts.map((account) => account.key).join("\n")]);
-  const accountsPerDriver = new Map<string, number>();
+  // Every account of a provider seen now or in the ledger: one that signed out since still
+  // spent tokens in the periods it has.
+  const accountsOfDriver = new Map<string, Set<string>>();
+  const seen = (driver: string, key: string) => {
+    const keys = accountsOfDriver.get(driver) ?? new Set<string>();
+    keys.add(key);
+    accountsOfDriver.set(driver, keys);
+  };
   for (const account of accounts) {
-    accountsPerDriver.set(account.driver, (accountsPerDriver.get(account.driver) ?? 0) + 1);
+    seen(account.driver, limitAccountKey(account.driver, account.email, account.limits) ?? account.key);
   }
+  for (const period of periods) seen(period.driver, period.accountKey);
   const report = resetReport(periods, now, {
     weeks: REPORT_WEEKS,
     tokensSpent: ({ driver }, from, to) => {
       const kind = USAGE_KIND[driver];
       // Usage is counted per provider, so it is one account's only when it is the only one.
-      if (kind === undefined || accountsPerDriver.get(driver) !== 1) return null;
+      if (kind === undefined || accountsOfDriver.get(driver)?.size !== 1) return null;
       if (usage.isPending || usage.isPartial) return null;
       let tokens = 0;
       let days = 0;
