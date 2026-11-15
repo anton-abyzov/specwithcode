@@ -35,14 +35,14 @@ The rows under "Right now" are the live windows, renewal days and banked resets 
 
 Accounts about to lose quota are listed first.
 
-## Used against lost
+## The four-week report
 
-Under the list, a chart and table show what each weekly or monthly reset found used and what it
-left unused, for the last four weeks. Figures are a percent of one account's window, because
-that is what providers report. **Copy report** copies the table as Markdown.
+**Copy 4-week report** beside "Right now" copies a Markdown table of what each weekly or monthly
+reset found used and what it left unused, for the last four weeks. Figures are a percent of one
+account's window, because that is what providers report.
 
-A token estimate appears only when one account of that provider was in use, so the tokens behind
-its used percent can be measured. Otherwise the table says "Not measurable".
+A token estimate appears only when one account of that provider was read in the period, so the
+tokens behind its used percent can be measured. Otherwise the table says "Not measurable".
 
 ## How resets are recorded
 
