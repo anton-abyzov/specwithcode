@@ -83,6 +83,9 @@ function untilLabel(until: number, now: number): string {
     : `${at.toLocaleDateString([], { weekday: "short" })} ${time}`;
 }
 
+/** How long a started boost may take to show before focus stops waiting for it. */
+const REFOCUS_WAIT_MS = 5_000;
+
 const LINK =
   "rounded-sm text-xs font-medium text-foreground underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
@@ -189,7 +192,7 @@ export function QuotaAlertBanner({
   // Closing the picker puts focus back on the button that opened it. After Start that
   // button gives way to the new boost's "End now", which takes the focus once it is there.
   const actions = useRef<HTMLElement>(null);
-  const refocus = useRef<{ readonly started: string | null } | null>(null);
+  const refocus = useRef<{ readonly started: string | null; readonly at: number } | null>(null);
   useEffect(() => {
     const wanted = refocus.current;
     if (picking !== null || wanted === null) return;
@@ -200,18 +203,26 @@ export function QuotaAlertBanner({
       start?.focus();
       return;
     }
+    // The start may never land (refused, or ended at once), and the person may have moved
+    // on: the wait ends after a few seconds or as soon as focus is somewhere else.
+    const active = document.activeElement;
+    const elsewhere = active !== null && active !== document.body && active !== start;
+    if (elsewhere || Date.now() - wanted.at > REFOCUS_WAIT_MS) {
+      refocus.current = null;
+      return;
+    }
     const end = [...(root?.querySelectorAll<HTMLElement>("[data-quota-boost-end]") ?? [])].find(
       (button) => button.dataset.quotaBoostEnd === wanted.started,
     );
     if (end !== undefined) {
       refocus.current = null;
       end.focus();
-    } else if (document.activeElement === document.body) {
+    } else if (active === document.body) {
       start?.focus();
     }
   });
   const close = (started: string | null) => {
-    refocus.current = { started };
+    refocus.current = { started, at: Date.now() };
     setPicking(null);
   };
   if (alerts.length === 0 && boosts.length === 0) return null;
