@@ -83,6 +83,12 @@ const machineWith = (
   };
 };
 
+/**
+ * Checks never run on Windows (every credential answers "unknown" there), and these
+ * cases stand a tool in with a shell script and file mode bits, which Windows lacks.
+ */
+const windowsHost = process.platform === "win32";
+
 const ok: ProbeRun = { exitCode: 0, printed: true, timedOut: false };
 
 describe("probeCredential", () => {
@@ -180,14 +186,17 @@ describe("resolveProbeBinary", () => {
     );
   });
 
-  it("refuses a name with a path in it, a folder and a file that cannot run", async () => {
-    await tool(tools, "gh");
-    expect(await resolveProbeBinary("../tools/gh", [tools], [])).toBeNull();
-    await NodeFSP.mkdir(NodePath.join(tools, "az"));
-    expect(await resolveProbeBinary("az", [tools], [])).toBeNull();
-    await NodeFSP.writeFile(NodePath.join(tools, "aws"), "", { mode: 0o644 });
-    expect(await resolveProbeBinary("aws", [tools], [])).toBeNull();
-  });
+  it.skipIf(windowsHost)(
+    "refuses a name with a path in it, a folder and a file that cannot run",
+    async () => {
+      await tool(tools, "gh");
+      expect(await resolveProbeBinary("../tools/gh", [tools], [])).toBeNull();
+      await NodeFSP.mkdir(NodePath.join(tools, "az"));
+      expect(await resolveProbeBinary("az", [tools], [])).toBeNull();
+      await NodeFSP.writeFile(NodePath.join(tools, "aws"), "", { mode: 0o644 });
+      expect(await resolveProbeBinary("aws", [tools], [])).toBeNull();
+    },
+  );
 });
 
 describe("resolveProbeBinary and project roots", () => {
@@ -240,7 +249,7 @@ describe("probeFolders and probeEnvironment", () => {
 });
 
 describe("spawnProbe", () => {
-  it("keeps nothing a tool prints and stops one that hangs", async () => {
+  it.skipIf(windowsHost)("keeps nothing a tool prints and stops one that hangs", async () => {
     const chatty = await tool(tools, "chatty", "#!/bin/sh\necho account-name-and-token\nexit 0\n");
     const run = await spawnProbe(chatty, [], {
       cwd: base,
@@ -268,18 +277,21 @@ describe("spawnProbe", () => {
 });
 
 describe("spawnProbe time limit", () => {
-  it("ends the wait when a tool leaves a child holding its output open", async () => {
-    // The tool exits at once; its background child keeps stdout open for 30 seconds.
-    const leaver = await tool(tools, "leaver", "#!/bin/sh\n(sleep 30) &\nexit 0\n");
-    const started = Date.now();
-    const run = await spawnProbe(leaver, [], {
-      cwd: base,
-      env: { PATH: "/usr/bin:/bin" },
-      timeoutMs: 300,
-    });
-    expect(Date.now() - started).toBeLessThan(5000);
-    expect(run.timedOut).toBe(true);
-  });
+  it.skipIf(windowsHost)(
+    "ends the wait when a tool leaves a child holding its output open",
+    async () => {
+      // The tool exits at once; its background child keeps stdout open for 30 seconds.
+      const leaver = await tool(tools, "leaver", "#!/bin/sh\n(sleep 30) &\nexit 0\n");
+      const started = Date.now();
+      const run = await spawnProbe(leaver, [], {
+        cwd: base,
+        env: { PATH: "/usr/bin:/bin" },
+        timeoutMs: 300,
+      });
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(run.timedOut).toBe(true);
+    },
+  );
 });
 
 describe("ProbeGate", () => {
