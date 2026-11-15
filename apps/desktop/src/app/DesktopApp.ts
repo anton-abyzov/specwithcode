@@ -35,6 +35,7 @@ import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopLocalService from "../backend/DesktopLocalService.ts";
 import { embeddedBackendRefusal, reservedServicePorts } from "../backend/localServiceAttach.ts";
+import { followLocalService } from "../backend/followLocalService.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopLegacyLocalStorage from "./DesktopLegacyLocalStorage.ts";
@@ -382,6 +383,38 @@ const bootstrap = Effect.gen(function* () {
           ),
         );
       }
+      const exposure = yield* DesktopServerExposure.DesktopServerExposure;
+      // A service that restarts on another port (a fleet update hands off to a
+      // server on the default port) would leave every window calling the old one.
+      yield* Effect.forkScoped(
+        followLocalService({
+          attached: localService.attached,
+          answers: localService.answers,
+          relocate: localService.relocate,
+          reattach: (service) =>
+            Effect.gen(function* () {
+              if (yield* Ref.get(state.quitting)) return;
+              yield* exposure.attachLocalService({ port: service.runtime.port });
+              yield* localService.attach(service);
+              yield* logBootstrapInfo("followed the Studio server to its new address", {
+                pid: service.runtime.pid,
+                origin: service.httpBaseUrl.href,
+                serverVersion: service.descriptor.serverVersion,
+              });
+              // Windows read the address again on their next topology poll; this
+              // wakes their reconnect now. No reload, so drafts and files stay.
+              yield* desktopWindow.handleBackendReady(service.httpBaseUrl);
+            }).pipe(
+              // Logged, then failed again, so the next check retries it.
+              Effect.catchCause((cause) =>
+                logBootstrapWarning("could not follow the Studio server to its new address", {
+                  origin: service.httpBaseUrl.href,
+                  cause: String(cause),
+                }).pipe(Effect.andThen(Effect.failCause(cause))),
+              ),
+            ),
+        }),
+      );
       return;
     }
   }

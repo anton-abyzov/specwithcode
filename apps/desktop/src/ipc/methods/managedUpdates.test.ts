@@ -117,6 +117,8 @@ function fixture() {
       installedServices: Effect.die("unexpected installed services"),
       usesDefaultHome: true,
       attach: () => Effect.die("unexpected attach"),
+      answers: () => Effect.die("unexpected probe"),
+      relocate: () => Effect.die("unexpected relocate"),
       markSpawned: Effect.die("unexpected spawn"),
       ownsBundledService: Effect.succeed(false),
     }),

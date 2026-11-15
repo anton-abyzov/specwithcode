@@ -217,6 +217,21 @@ export function environmentUnavailableSendToast(input: {
   };
 }
 
+// Only a request that got no answer at all; a certificate, CORS or encoding
+// failure keeps its own wording, since "no answer" would point the wrong way.
+const NO_ANSWER_REASON =
+  /^Failed to fetch environment endpoint (https?:\/\/\S+) \((?:[^()]*: )?(?:Transport error|TypeError: (?:fetch failed|Failed to fetch|Load failed|NetworkError))/;
+const TIMED_OUT_REASON = /^Environment endpoint (https?:\/\/\S+) timed out after (\d+)ms\.?$/;
+
+/**
+ * True when a request to a machine's server got no answer at all (refused,
+ * dropped or timed out). That is the machine's connection state, which the
+ * composer already shows, not a failure of the request itself.
+ */
+export function isUnansweredEnvironmentRequest(reason: string): boolean {
+  return NO_ANSWER_REASON.test(reason) || TIMED_OUT_REASON.test(reason);
+}
+
 /**
  * Says which address did not answer instead of the raw HTTP client error
  * ("Failed to fetch environment endpoint https://…/.well-known/studio/environment
@@ -228,15 +243,8 @@ export function readableConnectionReason(
   reason: string,
   describe?: (url: URL) => string | null,
 ): string {
-  // Only a request that got no answer at all; a certificate, CORS or encoding
-  // failure keeps its own wording, since "no answer" would point the wrong way.
-  const failed =
-    /^Failed to fetch environment endpoint (https?:\/\/\S+) \((?:[^()]*: )?(?:Transport error|TypeError: (?:fetch failed|Failed to fetch|Load failed|NetworkError))/.exec(
-      reason,
-    );
-  const timedOut = /^Environment endpoint (https?:\/\/\S+) timed out after (\d+)ms\.?$/.exec(
-    reason,
-  );
+  const failed = NO_ANSWER_REASON.exec(reason);
+  const timedOut = TIMED_OUT_REASON.exec(reason);
   const raw = failed?.[1] ?? timedOut?.[1];
   if (raw === undefined) return reason;
   let url: URL;

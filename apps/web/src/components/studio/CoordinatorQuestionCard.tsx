@@ -106,6 +106,8 @@ export interface CoordinatorQuestionRecoveryContext {
   readonly cwd: string | undefined;
   readonly uploadsSupported: boolean;
   readonly canAttach: boolean;
+  /** False while the host is out of reach: files wait and upload once it is back. */
+  readonly hostReachable?: boolean;
   readonly maxFileBytes: number | null;
   /** Why the message box cannot send right now; shown above the recovery box. */
   readonly composerProblem: string | null;
@@ -188,6 +190,9 @@ function CoordinatorDraftAnswer(props: {
     uploadsSupported: props.recovery.uploadsSupported,
     canUpload: props.recovery.canAttach,
     maxFileBytes: props.recovery.maxFileBytes,
+    ...(props.recovery.hostReachable !== undefined
+      ? { hostReachable: props.recovery.hostReachable }
+      : {}),
   });
   const [error, setError] = useState<string | null>(null);
   const picker = useRef<HTMLInputElement>(null);
@@ -282,7 +287,7 @@ function CoordinatorDraftAnswer(props: {
         <Button
           variant="outline"
           size="sm"
-          disabled={!props.recovery.canAttach || locked}
+          disabled={(!props.recovery.canAttach && props.recovery.hostReachable !== false) || locked}
           onClick={() => picker.current?.click()}
         >
           <PlusIcon aria-hidden />

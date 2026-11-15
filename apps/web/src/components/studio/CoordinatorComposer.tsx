@@ -189,6 +189,7 @@ function CoordinatorComposerForm(props: {
     uploadsSupported,
     canUpload: canAttach,
     maxFileBytes,
+    ...(props.hostReachable !== undefined ? { hostReachable: props.hostReachable } : {}),
   });
   const slashMenu = useCoordinatorSlashMenu({
     prompt,
@@ -354,7 +355,7 @@ function CoordinatorComposerForm(props: {
               type="button"
               className="sws-icon-button sws-attach"
               aria-label="Attach files"
-              disabled={!canAttach}
+              disabled={!canAttach && props.hostReachable !== false}
               onClick={() => filePicker.current?.click()}
             >
               <PlusIcon aria-hidden />

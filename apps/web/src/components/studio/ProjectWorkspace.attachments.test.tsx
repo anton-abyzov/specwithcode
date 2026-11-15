@@ -372,7 +372,7 @@ describe("coordinator image attachments", () => {
     await paste([png()]);
     expect(container.querySelector(".sws-attachments")).toBeNull();
     expect(state.uploadsStarted).toEqual([]);
-    expect(alertText()).toContain("Reconnect to this host");
+    expect(alertText()).toContain("may not send to this host");
   });
   it("clears an attachment notice once a message is sent", async () => {
     state.maxFileBytes = null;

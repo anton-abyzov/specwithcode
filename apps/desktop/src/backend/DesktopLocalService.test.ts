@@ -701,6 +701,41 @@ describe("DesktopLocalService.discover", () => {
     }),
   );
 
+  it.effect("follows the same service to the new address its home names", () =>
+    withDescriptorServer((origin) => {
+      const { home } = makeHomeWithBootService(origin, process.ppid);
+      return Effect.gen(function* () {
+        const service = yield* DesktopLocalService.DesktopLocalService;
+        const discovery = yield* service.discover();
+        assert.equal(discovery._tag, "running");
+        if (discovery._tag !== "running") return;
+        // The app still holds the address the server had before a fleet update.
+        const stale = "http://127.0.0.1:36465";
+        const attached = {
+          ...discovery.service,
+          runtime: { ...discovery.service.runtime, port: 36465, origin: stale },
+          httpBaseUrl: new URL(stale),
+        };
+        const moved = yield* service.relocate(attached);
+        assert.isTrue(Option.isSome(moved));
+        if (Option.isNone(moved)) return;
+        assert.equal(moved.value.httpBaseUrl.origin, new URL(origin).origin);
+        assert.equal(moved.value.baseDir, discovery.service.baseDir);
+        // Nothing moved: the address the home names is the one held.
+        assert.isTrue(Option.isNone(yield* service.relocate(discovery.service)));
+        // Another environment at that address is never followed.
+        const other = {
+          ...attached,
+          descriptor: { ...attached.descriptor, environmentId: "another-machine" },
+        } as unknown as DesktopLocalService.AttachedLocalService;
+        assert.isTrue(Option.isNone(yield* service.relocate(other)));
+      }).pipe(
+        Effect.provide(layerFor(home, {}, undefined, undefined, "linux")),
+        Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+      );
+    }),
+  );
+
   it.effect("never attaches to a copied home whose runtime names another server", () =>
     withDescriptorServer((origin) => {
       const { home } = makeHomeWithBootService(origin, process.ppid, "copied-from-another-machine");

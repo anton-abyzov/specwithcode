@@ -7,6 +7,7 @@ import {
   environmentConnectionStatusText,
   environmentConnectionStatusTitle,
   environmentUnavailableSendToast,
+  isUnansweredEnvironmentRequest,
   lastSeenLabel,
   machineDetail,
   machineStatus,
@@ -213,6 +214,29 @@ describe("a send refused while the machine is not connected", () => {
       description:
         "Your message stays in the composer. Send it once M1 is back, or continue on M3.",
     });
+  });
+});
+
+describe("isUnansweredEnvironmentRequest", () => {
+  it("holds for this machine's own server not answering, as on a busy Linux desktop", () => {
+    expect(
+      isUnansweredEnvironmentRequest(
+        "Failed to fetch environment endpoint http://127.0.0.1:36465/.well-known/studio/environment (HttpClientError: Transport error (GET http://127.0.0.1:36465/.well-known/studio/environment)).",
+      ),
+    ).toBe(true);
+    expect(
+      isUnansweredEnvironmentRequest(
+        "Environment endpoint http://127.0.0.1:36465/.well-known/studio/environment timed out after 8000ms.",
+      ),
+    ).toBe(true);
+  });
+  it("does not hide a request the server answered or refused for a reason", () => {
+    expect(isUnansweredEnvironmentRequest("Repository not found.")).toBe(false);
+    expect(
+      isUnansweredEnvironmentRequest(
+        "Failed to fetch environment endpoint https://box/.well-known/studio/environment (HttpClientError: InvalidUrl (GET https://box/.well-known/studio/environment)).",
+      ),
+    ).toBe(false);
   });
 });
 
