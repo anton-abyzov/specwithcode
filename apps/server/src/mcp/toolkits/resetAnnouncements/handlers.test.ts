@@ -32,7 +32,7 @@ const scope: Context.McpInvocationScope = {
   capabilities: new Set(["orchestration" as const]),
 };
 
-const layerFor = (enabled: boolean, recorded: ResetAnnouncement[]) =>
+const layerFor = (enabled: boolean, recorded: ResetAnnouncement[], saves = true) =>
   Access.HandlersLayer.layer(Handlers.layer).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
@@ -40,8 +40,10 @@ const layerFor = (enabled: boolean, recorded: ResetAnnouncement[]) =>
           record: (announcement) =>
             Effect.sync(() => {
               const seen = recorded.some((entry) => entry.sourceUrl === announcement.sourceUrl);
-              if (!seen) recorded.push(announcement);
-              return { recorded: !seen };
+              if (seen) return { recorded: false, saved: true };
+              if (!saves) return { recorded: false, saved: false };
+              recorded.push(announcement);
+              return { recorded: true, saved: true };
             }),
         }),
         Layer.mock(ServerSettings.ServerSettingsService)({
@@ -79,10 +81,13 @@ it.effect("records a post once and reports a repeat", () => {
   return Effect.gen(function* () {
     expect(yield* record(POST)).toEqual({
       recorded: true,
-      id: "recorded:https://x.com/OpenAI/status/1",
+      id: "recorded:https://x.com/openai/status/1",
+      sourceUrl: "https://x.com/openai/status/1",
     });
     expect((yield* record(POST)).recorded).toBe(false);
-    expect(recorded.map((entry) => entry.provider)).toEqual(["codex"]);
+    expect(recorded.map((entry) => [entry.provider, entry.origin])).toEqual([
+      ["codex", "recorded"],
+    ]);
   }).pipe(Effect.provide(layerFor(true, recorded)));
 });
 
@@ -103,4 +108,13 @@ it.effect("records nothing while reset announcements are off", () => {
     expect(String(result.message)).toContain("Read reset announcements");
     expect(recorded).toEqual([]);
   }).pipe(Effect.provide(layerFor(false, recorded)));
+});
+
+it.effect("says nothing was recorded when the post could not be saved", () => {
+  const recorded: ResetAnnouncement[] = [];
+  return Effect.gen(function* () {
+    const result = yield* record(POST);
+    expect(result).toMatchObject({ code: "orchestration_error" });
+    expect(recorded).toEqual([]);
+  }).pipe(Effect.provide(layerFor(true, recorded, false)));
 });

@@ -57,7 +57,7 @@ Under the live rows, **Reset announcements** lists posts in which a provider res
 
 The list says when the feed's newest event is more than 14 days old, since the feed may have stopped. Turn the feed off under Settings > Models, "Read reset announcements"; the list then keeps what was already read.
 
-If the feed goes quiet, a personal assistant can watch the posts itself: under its Routines, start **Reset announcement watch** from a template. It is off until you save it, runs when you ask or every 2 hours if you choose that, and reads the listed staff and official accounts on X in your signed-in Chrome. Each confirmed post it finds is recorded into the same list; it never posts, replies or follows, and answers "No new reset posts." when there is nothing new. A recorded post must link to the post on X or on the provider's own site, and nothing is recorded while "Read reset announcements" is off.
+If the feed goes quiet, a personal assistant can watch the posts itself: under its Routines, start **Reset announcement watch** from a template. It is off until you save it, runs when you ask or every 2 hours if you choose that, and reads the listed staff and official accounts on X in your signed-in Chrome. Each post it finds is added to the same list, marked "Read by your routine, not verified"; it never posts, replies or follows, and answers "No new reset posts." when there is nothing new. Only posts by those accounts, or pages on the provider's own site, are kept, and nothing is kept while "Read reset announcements" is off. A recorded post raises no warning or notification and does not count toward the feed's 14-day note; when the feed later carries the same post, the feed's version replaces it.
 
 ## Warnings before quota resets unused
 

@@ -32,8 +32,15 @@ export const layer = Access.toLayer(ResetAnnouncementToolkit, {
         });
       }
       const monitor = yield* ResetAnnouncementMonitor.ResetAnnouncementMonitor;
-      const { recorded } = yield* monitor.record(checked.announcement);
-      return { recorded, id: checked.announcement.id };
+      const { recorded, saved } = yield* monitor.record(checked.announcement);
+      if (!saved) {
+        return yield* new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message:
+            "The post could not be saved on this machine. Nothing was recorded; try again later.",
+        });
+      }
+      return { recorded, id: checked.announcement.id, sourceUrl: checked.announcement.sourceUrl };
     }),
   ),
 });

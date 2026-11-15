@@ -156,6 +156,18 @@ export const parseConfirmedFeed = (raw: string, now: number) =>
 export const parsePromisedFeed = (raw: string, now: number) => parseFeed(raw, PROMISED_KINDS, now);
 
 /**
+ * Whether `next` takes the place of `seen` for the same link. The verified feed
+ * always replaces what an agent recorded and a recording never replaces the feed;
+ * within one origin a confirmed event replaces a promise.
+ */
+export function replaces(next: ResetAnnouncement, seen: ResetAnnouncement): boolean {
+  const nextRecorded = next.origin === "recorded";
+  const seenRecorded = seen.origin === "recorded";
+  if (nextRecorded !== seenRecorded) return seenRecorded;
+  return seen.kind === "expected_reset" && next.kind !== "expected_reset";
+}
+
+/**
  * `known` with `read` added: one announcement per source link, a confirmed
  * event replacing a promise for the same post, newest first, within the
  * retention and the cap.
@@ -168,7 +180,7 @@ export function mergeAnnouncements(
   const byLink = new Map<string, ResetAnnouncement>();
   for (const announcement of [...known, ...read]) {
     const seen = byLink.get(announcement.sourceUrl);
-    if (seen === undefined || (seen.kind === "expected_reset" && announcement.kind !== "expected_reset")) {
+    if (seen === undefined || replaces(announcement, seen)) {
       byLink.set(announcement.sourceUrl, announcement);
     }
   }
@@ -176,9 +188,7 @@ export function mergeAnnouncements(
     .filter((announcement) => {
       const published = Date.parse(announcement.publishedAt);
       // Also for what an earlier read saved: a post dated ahead of now is never listed.
-      return (
-        published <= now + FUTURE_ALLOWANCE_MS && now - published <= ANNOUNCEMENT_RETENTION_MS
-      );
+      return published <= now + FUTURE_ALLOWANCE_MS && now - published <= ANNOUNCEMENT_RETENTION_MS;
     })
     .toSorted(
       (left, right) =>
@@ -212,7 +222,8 @@ export function decodeAnnouncementFile(raw: string): AnnouncementFile {
             typeof entry.headline === "string" &&
             httpsLink(entry.sourceUrl) !== null &&
             Number.isFinite(Date.parse(entry.publishedAt)) &&
-            ["full_reset", "banked_grant", "limit_change", "expected_reset"].includes(entry.kind),
+            ["full_reset", "banked_grant", "limit_change", "expected_reset"].includes(entry.kind) &&
+            (entry.origin === undefined || entry.origin === "recorded"),
         )
       : [];
     const etag = (value: unknown) => (typeof value === "string" ? value : null);
@@ -233,7 +244,8 @@ export function decodeAnnouncementFile(raw: string): AnnouncementFile {
 export const listedAnnouncements = (file: AnnouncementFile, now: number): ResetAnnouncement[] =>
   mergeAnnouncements(file.announcements, [], now);
 
-export const encodeAnnouncementFile = (file: AnnouncementFile): string => `${JSON.stringify(file)}\n`;
+export const encodeAnnouncementFile = (file: AnnouncementFile): string =>
+  `${JSON.stringify(file)}\n`;
 
 /**
  * One read of both feeds folded into the file. A feed that failed or did not
@@ -245,7 +257,9 @@ export function applyFeedReadings(
   now: number,
 ): AnnouncementFile {
   const read = [
-    ...(readings.confirmed.state === "fresh" ? parseConfirmedFeed(readings.confirmed.text, now) : []),
+    ...(readings.confirmed.state === "fresh"
+      ? parseConfirmedFeed(readings.confirmed.text, now)
+      : []),
     ...(readings.promised.state === "fresh" ? parsePromisedFeed(readings.promised.text, now) : []),
   ];
   const answered = readings.confirmed.state !== "failed" || readings.promised.state !== "failed";

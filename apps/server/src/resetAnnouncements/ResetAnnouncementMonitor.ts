@@ -55,12 +55,13 @@ export class ResetAnnouncementMonitor extends Context.Service<
     /** What has been read so far, without fetching anything. */
     readonly list: Effect.Effect<ResetAnnouncementsResult>;
     /**
-     * Keeps a post an agent read itself (AC-09), next to the feed's. False when the
-     * post was already known by its link, or falls outside the retention.
+     * Keeps a post an agent read itself (AC-09), next to the feed's. `recorded` is false
+     * when the post was already known by its link, falls outside the retention, or could
+     * not be saved (`saved` false).
      */
     readonly record: (
       announcement: ResetAnnouncement,
-    ) => Effect.Effect<{ readonly recorded: boolean }>;
+    ) => Effect.Effect<{ readonly recorded: boolean; readonly saved: boolean }>;
     /** Reads the feeds now, unless they are turned off. */
     readonly check: Effect.Effect<void>;
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
@@ -99,25 +100,29 @@ export const makeWith = (fetcher: typeof globalThis.fetch) =>
     /** For fetching: when the switch cannot be read, nothing is requested. */
     const mayFetch = setting.pipe(Effect.orElseSucceed(() => false));
 
-    const save = (next: AnnouncementFile) =>
-      Ref.set(file, next).pipe(
-        Effect.andThen(
-          writeFileStringAtomically({ filePath, contents: encodeAnnouncementFile(next) }),
-        ),
+    /** Writes `next`; true once it is on disk. */
+    const write = (next: AnnouncementFile) =>
+      writeFileStringAtomically({ filePath, contents: encodeAnnouncementFile(next) }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
+        Effect.as(true),
         Effect.catchCause((cause) =>
-          Effect.logWarning("Could not save reset announcements", { cause }),
+          Effect.logWarning("Could not save reset announcements", { cause }).pipe(Effect.as(false)),
         ),
       );
+    /** A feed read is kept in memory even when the disk refuses it: the next read repeats it. */
+    const save = (next: AnnouncementFile) => Ref.set(file, next).pipe(Effect.andThen(write(next)));
 
     const record: ResetAnnouncementMonitor["Service"]["record"] = (announcement) =>
       Effect.gen(function* () {
         const before = yield* current;
         const now = yield* Clock.currentTimeMillis;
         const next = recordIntoFile(before, announcement, now);
-        if (next.recorded) yield* save(next.file);
-        return { recorded: next.recorded };
+        if (!next.recorded) return { recorded: false, saved: true };
+        // A recording is kept only once it is on disk, so "recorded" never outlives a restart.
+        const saved = yield* write(next.file);
+        if (saved) yield* Ref.set(file, next.file);
+        return { recorded: saved, saved };
       }).pipe(lock.withPermits(1));
 
     const check = Effect.gen(function* () {

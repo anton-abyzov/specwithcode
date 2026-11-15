@@ -37,6 +37,7 @@ import { environmentPresentations } from "../../../state/presentation";
 import { useMachineNicknames } from "../../../studio/machineNickname";
 import { getDriverOption } from "../../settings/providerDriverMeta";
 import {
+  alertingAnnouncements,
   announcementDriver,
   useResetAnnouncements,
 } from "../subscriptions/resetAnnouncementsState";
@@ -437,7 +438,8 @@ function LiveQuotaAlerts({
   const rows = subscriptionRows(accounts, periods, renewalDays ?? {}, now);
   // Posts the main machine read from the announcement feed, re-read as often as the ledger.
   const feed = useResetAnnouncements(here, Math.floor(now / LEDGER_REFRESH_MS));
-  const announced = feed?.enabled === true ? feed.announcements : [];
+  // Only the verified feed warns and notifies; a post an agent recorded is listed, unverified.
+  const announced = alertingAnnouncements(feed);
   const expected: QuotaAlertExpectedReset[] = announced.flatMap((announcement) => {
     const driver = announcementDriver(announcement.provider);
     return announcement.kind === "expected_reset" && driver !== null
