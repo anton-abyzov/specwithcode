@@ -213,13 +213,19 @@ export function readLedger(state: LedgerState, since: number): UsageResetPeriod[
     }));
 }
 
-/** Every account with a followed window, once each. */
+/** Every account with a followed window, once each, with the newest read of any of them. */
 export function ledgerAccounts(
   state: LedgerState,
-): Array<{ accountKey: string; driver: ServerProvider["driver"] }> {
-  const accounts = new Map<string, ServerProvider["driver"]>();
-  for (const cursor of state.cursors.values()) accounts.set(cursor.accountKey, cursor.driver);
-  return [...accounts].map(([accountKey, driver]) => ({ accountKey, driver }));
+): Array<{ accountKey: string; driver: ServerProvider["driver"]; lastReadAt: number }> {
+  const accounts = new Map<string, { driver: ServerProvider["driver"]; lastReadAt: number }>();
+  for (const cursor of state.cursors.values()) {
+    const known = accounts.get(cursor.accountKey);
+    accounts.set(cursor.accountKey, {
+      driver: cursor.driver,
+      lastReadAt: Math.max(known?.lastReadAt ?? 0, cursor.at),
+    });
+  }
+  return [...accounts].map(([accountKey, account]) => ({ accountKey, ...account }));
 }
 
 const FILE_VERSION = 1;

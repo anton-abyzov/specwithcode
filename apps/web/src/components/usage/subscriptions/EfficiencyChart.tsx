@@ -19,6 +19,15 @@ function axisLabel(column: DashboardColumn, range: DashboardRange): string {
     : formatDay(column.start);
 }
 
+/**
+ * A column's score in words. One reset is a reading, not an average, and a
+ * reset read long before it happened makes the score a floor; both are said.
+ */
+function scoreText(column: DashboardColumn): string {
+  const score = `${column.upperBound ? "at least " : ""}${Math.round(column.score ?? 0)}%`;
+  return column.resets === 1 ? `${score} at its one reset` : `${score} across ${column.resets} resets`;
+}
+
 /** True one frame after mount, so bars grow from the baseline once. */
 export function useGrowIn(): boolean {
   const [grown, setGrown] = useState(false);
@@ -82,12 +91,13 @@ export function EfficiencyChart({
                 <button
                   key={entry.start}
                   type="button"
-                  disabled={score === null}
-                  aria-pressed={isSelected}
+                  // Not `disabled`: an empty column still takes focus, so its label is read out.
+                  aria-disabled={score === null}
+                  aria-pressed={score === null ? undefined : isSelected}
                   aria-label={
                     score === null
                       ? `${columnTitle(entry, range)}: no reset recorded`
-                      : `${columnTitle(entry, range)}: ${Math.round(score)}% across ${entry.resets} ${entry.resets === 1 ? "reset" : "resets"}`
+                      : `${columnTitle(entry, range)}: ${scoreText(entry)}`
                   }
                   data-efficiency-column={index}
                   data-in-range={entry.inRange ? "" : undefined}
@@ -95,11 +105,13 @@ export function EfficiencyChart({
                     "group flex min-w-0 flex-1 flex-col gap-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     score !== null && "cursor-pointer",
                   )}
-                  onPointerEnter={() => setHovered(score === null ? null : index)}
+                  onPointerEnter={() => setHovered(index)}
                   onPointerLeave={() => setHovered(null)}
-                  onFocus={() => setHovered(score === null ? null : index)}
+                  onFocus={() => setHovered(index)}
                   onBlur={() => setHovered(null)}
-                  onClick={() => onSelect(isSelected ? null : index)}
+                  onClick={() => {
+                    if (score !== null) onSelect(isSelected ? null : index);
+                  }}
                 >
                   <span
                     className={cn(
@@ -117,7 +129,7 @@ export function EfficiencyChart({
                           "group-hover:opacity-100",
                         )}
                         style={{
-                          height: grown ? `${Math.max(1, score)}%` : "0%",
+                          height: grown ? `${score > 0 ? Math.max(1, score) : 0}%` : "0%",
                           transitionDelay: `${index * 25}ms`,
                         }}
                       />
@@ -134,12 +146,14 @@ export function EfficiencyChart({
         </div>
       </div>
       <p className="min-h-10 text-xs text-muted-foreground" aria-live="polite" data-efficiency-readout="">
-        {column === null || column.score === null ? (
+        {column === null ? (
           "Point at a column for each group, or click one to see its resets."
+        ) : column.score === null ? (
+          `${columnTitle(column, range)}: no reset recorded`
         ) : (
           <>
             <span className="font-medium text-foreground">
-              {columnTitle(column, range)}: {Math.round(column.score)}%
+              {columnTitle(column, range)}: {scoreText(column)}
             </span>
             {column.groups.map((group) => (
               <span key={group.key}>

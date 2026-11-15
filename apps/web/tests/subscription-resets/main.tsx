@@ -14,7 +14,7 @@ import { barColor } from "../../src/components/usage/UsageLimits";
 import { SubscriptionsDashboard } from "../../src/components/usage/subscriptions/SubscriptionsDashboard";
 import { SubscriptionRow } from "../../src/components/usage/subscriptions/SubscriptionRow";
 import { subscriptionLabel } from "../../src/components/usage/subscriptions/SubscriptionsView";
-import { resetReport } from "../../src/components/usage/subscriptions/resetReportModel";
+import { resetReport, tokensLostAtReset } from "../../src/components/usage/subscriptions/resetReportModel";
 import { subscriptionRows } from "../../src/components/usage/subscriptions/subscriptionRows";
 import "./fixture.css";
 
@@ -148,10 +148,6 @@ const report = resetReport(periods, now, {
   tokensSpent: ({ driver }) => (driver === claude ? 300_000_000 : null),
 });
 
-const estimates = report.accounts.flatMap((entry) =>
-  entry.tokensLostEstimate === null ? [] : [entry.tokensLostEstimate],
-);
-const tokensLost = estimates.length === 0 ? null : estimates.reduce((sum, value) => sum + value, 0);
 // Readings through the newest Codex period, so its opened row draws use against an even pace.
 const newest = now - 2 * DAY;
 const history = new Map(
@@ -184,7 +180,9 @@ createRoot(document.getElementById("root")!).render(
       providerOf={(driver) => (driver === claude ? "Claude" : "Codex")}
       providerColorOf={barColor}
       machinesOf={(key) => byKey.get(key)?.environments.map((entry) => entry.label) ?? []}
-      tokensLost={() => tokensLost}
+      tokensLostOf={(period) =>
+        period.driver === claude ? tokensLostAtReset(period, () => 300_000_000) : null
+      }
       onSetPlan={() => undefined}
     />
     {rows.length === 0 ? (

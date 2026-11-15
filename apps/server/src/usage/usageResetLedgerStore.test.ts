@@ -201,7 +201,9 @@ describe("ledger accounts and older files", () => {
   it("lists an account that was read without closing a period", () => {
     const state = emptyLedger();
     advanceLedger(state, reading(t0, [weekly(100, null)]));
-    expect(ledgerAccounts(state)).toEqual([{ accountKey: "codex:pro@example.com", driver: codex }]);
+    expect(ledgerAccounts(state)).toEqual([
+      { accountKey: "codex:pro@example.com", driver: codex, lastReadAt: t0 },
+    ]);
     expect(state.periods).toEqual([]);
   });
 

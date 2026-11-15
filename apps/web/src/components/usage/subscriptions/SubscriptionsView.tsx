@@ -16,7 +16,8 @@ import { barColor } from "../UsageLimits";
 import { useUsageLimitHistory } from "../usageLimitHistoryState";
 import { SubscriptionsDashboard } from "./SubscriptionsDashboard";
 import { SubscriptionRow, formatDay } from "./SubscriptionRow";
-import { resetReport, resetReportMarkdown } from "./resetReportModel";
+import type { EfficiencyPeriod } from "./efficiency";
+import { resetReport, resetReportMarkdown, tokensLostAtReset } from "./resetReportModel";
 import { subscriptionRows } from "./subscriptionRows";
 import { useUsageResetLedger } from "./usageResetLedgerState";
 
@@ -79,42 +80,56 @@ export function SubscriptionsView({
     return map;
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- accounts is rebuilt each render; its keys decide.
   }, [accounts.map((account) => account.key).join("\n")]);
-  // Every account of a provider seen now or in the ledger: one that signed out since still
-  // spent tokens in the periods it has.
-  const accountsOfDriver = new Map<string, Set<string>>();
-  const seen = (driver: string, key: string) => {
-    const keys = accountsOfDriver.get(driver) ?? new Set<string>();
-    keys.add(key);
-    accountsOfDriver.set(driver, keys);
+  // When each account of a provider was last seen, now or in the ledger. Usage is counted per
+  // provider, so a span's tokens are one account's only when no other account was seen after
+  // the span began. One that signed out before it never touched it.
+  const lastSeenOfDriver = new Map<string, Map<string, number>>();
+  const seen = (driver: string, key: string, at: number) => {
+    const keys = lastSeenOfDriver.get(driver) ?? new Map<string, number>();
+    keys.set(key, Math.max(keys.get(key) ?? 0, at));
+    lastSeenOfDriver.set(driver, keys);
+  };
+  const timeOr = (value: string | undefined, fallback: number) => {
+    const at = value === undefined ? Number.NaN : Date.parse(value);
+    return Number.isFinite(at) ? at : fallback;
   };
   for (const account of accounts) {
-    seen(account.driver, limitAccountKey(account.driver, account.email, account.limits) ?? account.key);
+    seen(
+      account.driver,
+      limitAccountKey(account.driver, account.email, account.limits) ?? account.key,
+      timeOr(account.limits.checkedAt, now),
+    );
   }
-  for (const period of periods) seen(period.driver, period.accountKey);
-  // An account read in the period without closing one still shared the provider's token counts.
-  for (const open of ledger?.openAccounts ?? []) seen(open.driver, open.accountKey);
-  const tokensSpent = ({ driver }: { readonly driver: UsageResetPeriod["driver"] }, from: number, to: number) => {
-      const kind = USAGE_KIND[driver];
-      // Usage is counted per provider, so it is one account's only when it is the only one.
-      if (kind === undefined || accountsOfDriver.get(driver)?.size !== 1) return null;
-      if (usage.isPending || usage.isPartial) return null;
-      let tokens = 0;
-      let days = 0;
-      for (const day of usage.merged.daily) {
-        const start = new Date(`${day.day}T00:00:00`).getTime();
-        if (start + 86_400_000 <= from || start >= to) continue;
-        days += 1;
-        tokens += day.byProvider.get(kind)?.totalTokens ?? 0;
-      }
-      return days === 0 ? null : tokens;
+  for (const period of periods) seen(period.driver, period.accountKey, timeOr(period.endedAt, now));
+  // An account read without closing a period still shared the provider's token counts. A
+  // server too old to say when it was last read counts as read now.
+  for (const open of ledger?.openAccounts ?? []) {
+    seen(open.driver, open.accountKey, timeOr(open.lastReadAt, now));
+  }
+  const tokensSpent = (
+    { accountKey, driver }: { readonly accountKey: string; readonly driver: UsageResetPeriod["driver"] },
+    from: number,
+    to: number,
+  ) => {
+    const kind = USAGE_KIND[driver];
+    if (kind === undefined) return null;
+    for (const [other, lastSeen] of lastSeenOfDriver.get(driver) ?? []) {
+      if (other !== accountKey && lastSeen > from) return null;
+    }
+    if (usage.isPending || usage.isPartial) return null;
+    let tokens = 0;
+    let days = 0;
+    for (const day of usage.merged.daily) {
+      const start = new Date(`${day.day}T00:00:00`).getTime();
+      if (start + 86_400_000 <= from || start >= to) continue;
+      days += 1;
+      tokens += day.byProvider.get(kind)?.totalTokens ?? 0;
+    }
+    return days === 0 ? null : tokens;
   };
   const report = resetReport(periods, now, { weeks: REPORT_WEEKS, tokensSpent });
-  const tokensLost = (weeks: number) => {
-    const estimates = resetReport(periods, now, { weeks, tokensSpent }).accounts.flatMap(
-      (account) => (account.tokensLostEstimate === null ? [] : [account.tokensLostEstimate]),
-    );
-    return estimates.length === 0 ? null : estimates.reduce((sum, value) => sum + value, 0);
-  };
+  const tokensLostOf = (period: EfficiencyPeriod) =>
+    tokensLostAtReset(period, (from, to) => tokensSpent(period, from, to));
   const labelOf = (accountKey: string) => {
     const account = byKey.get(accountKey);
     return account ? subscriptionLabel(account) : accountKey.replace(/^[^:]+:/, "");
@@ -157,7 +172,7 @@ export function SubscriptionsView({
         providerOf={providerOf}
         providerColorOf={barColor}
         machinesOf={machinesOf}
-        tokensLost={tokensLost}
+        tokensLostOf={tokensLostOf}
         onSetPlan={setPlan}
       />
       <section className="flex flex-col gap-3" aria-labelledby="current-windows-heading">

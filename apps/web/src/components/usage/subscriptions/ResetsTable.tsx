@@ -1,3 +1,4 @@
+import { formatTokens } from "@specweave-studio/shared/usageFormat";
 import { formatDuration } from "@specweave-studio/shared/usageLimits";
 import type { LimitHistoryIndex } from "@specweave-studio/shared/usageLimitForecast";
 import { Fragment, useState } from "react";
@@ -6,7 +7,8 @@ import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../ui/table";
 import { formatDay } from "./SubscriptionRow";
-import type { EfficiencyPeriod } from "./efficiency";
+import { type EfficiencyPeriod, busiestDay } from "./efficiency";
+import type { SubscriptionRenewal } from "./subscriptionRows";
 
 export const RESETS_PAGE_SIZE = 10;
 
@@ -33,22 +35,26 @@ function formatWhen(at: number): string {
  * Use through the period against an even pace, from the quota history. Only
  * recent periods have samples, so older rows show the figures without it.
  */
+/** The readings kept from inside a period; the quota history holds about two weeks. */
+function samplesOf(period: EfficiencyPeriod, history: LimitHistoryIndex | null) {
+  const startedAt = period.startedAt;
+  return startedAt === null
+    ? []
+    : (history?.get(`${period.accountKey}|${period.windowKind}:${period.windowId}`) ?? []).filter(
+        (sample) => sample.at >= startedAt && sample.at <= period.lastReadAt,
+      );
+}
+
 function UsePath({
   period,
-  history,
+  samples,
   color,
 }: {
   readonly period: EfficiencyPeriod;
-  readonly history: LimitHistoryIndex | null;
+  readonly samples: ReturnType<typeof samplesOf>;
   readonly color: string;
 }) {
   const startedAt = period.startedAt;
-  const samples =
-    startedAt === null
-      ? []
-      : (history?.get(`${period.accountKey}|${period.windowKind}:${period.windowId}`) ?? []).filter(
-          (sample) => sample.at >= startedAt && sample.at <= period.lastReadAt,
-        );
   if (startedAt === null || samples.length < 3) return null;
   const span = Math.max(1, period.endedAt - startedAt);
   const x = (at: number) => ((at - startedAt) / span) * 100;
@@ -102,10 +108,50 @@ function Fact({ value, note }: { readonly value: string; readonly note: string }
   );
 }
 
+function TokensFact({ lost }: { readonly lost: number | null }) {
+  return lost === null ? (
+    <Fact
+      value="Tokens not measurable"
+      note="needs an exact read and one account of the provider in use"
+    />
+  ) : lost === 0 ? (
+    <Fact value="No tokens left unused" note="the quota was used up" />
+  ) : (
+    <Fact
+      value={`About ${formatTokens(Math.round(lost))} tokens unused`}
+      note="estimate from this fleet's own usage"
+    />
+  );
+}
+
+function BusiestFact({ samples }: { readonly samples: ReturnType<typeof samplesOf> }) {
+  const busiest = busiestDay(samples);
+  return busiest === null ? (
+    <Fact value="Busiest day not kept" note="daily readings are kept for about two weeks" />
+  ) : (
+    <Fact
+      value={`Busiest ${new Date(busiest.day).toLocaleDateString(undefined, { weekday: "long" })}, ${formatDay(busiest.day)}`}
+      note={`${Math.round(busiest.percent)}% of the quota that day`}
+    />
+  );
+}
+
+function RenewalFact({ renewal }: { readonly renewal: SubscriptionRenewal | null }) {
+  return renewal === null ? (
+    <Fact value="Renewal not reported" note="set the day under Right now" />
+  ) : (
+    <Fact
+      value={`Renews ${formatDay(renewal.at)}`}
+      note={renewal.source === "provider" ? "reported by the provider" : "from the day you set"}
+    />
+  );
+}
+
 /**
  * Every reset in scope, newest first, ten to a page. A row opens in place
  * with what the table leaves out: how exact the figure is, the planned
- * share, where the account is signed in, and use through the period.
+ * share, the token estimate, the busiest day, the renewal, where the account
+ * is signed in, and use through the period.
  */
 export function ResetsTable({
   periods,
@@ -113,6 +159,8 @@ export function ResetsTable({
   labelOf,
   colorOf,
   machinesOf,
+  tokensLostOf,
+  renewalOf,
   targetOf,
 }: {
   readonly periods: readonly EfficiencyPeriod[];
@@ -120,6 +168,8 @@ export function ResetsTable({
   readonly labelOf: (accountKey: string) => string;
   readonly colorOf: (accountKey: string) => string;
   readonly machinesOf: (accountKey: string) => readonly string[];
+  readonly tokensLostOf: (period: EfficiencyPeriod) => number | null;
+  readonly renewalOf: (accountKey: string) => SubscriptionRenewal | null;
   readonly targetOf: (accountKey: string) => number;
 }) {
   const [page, setPage] = useState(0);
@@ -149,8 +199,9 @@ export function ResetsTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {shown.map((period) => {
+          {shown.map((period, index) => {
             const key = periodKey(period);
+            const detailId = `reset-detail-${first + index}`;
             const isOpen = open === key;
             const color = colorOf(period.accountKey);
             const machines = machinesOf(period.accountKey);
@@ -167,6 +218,8 @@ export function ResetsTable({
                     <button
                       type="button"
                       aria-expanded={isOpen}
+                      aria-controls={isOpen ? detailId : undefined}
+                      aria-label={`${formatWhen(period.endedAt)}, ${labelOf(period.accountKey)}`}
                       className="rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={(event) => {
                         event.stopPropagation();
@@ -198,7 +251,7 @@ export function ResetsTable({
                   <TableCell className="hidden sm:table-cell">{CAUSE[period.cause]}</TableCell>
                 </TableRow>
                 {isOpen ? (
-                  <TableRow data-reset-detail={key} className="hover:bg-transparent">
+                  <TableRow id={detailId} data-reset-detail={key} className="hover:bg-transparent">
                     <TableCell colSpan={5} className="bg-muted/30">
                       <div className="flex flex-col gap-3 py-1">
                         <div className="grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-4">
@@ -230,8 +283,15 @@ export function ResetsTable({
                             value={machines.length === 0 ? "Not signed in now" : machines.join(", ")}
                             note="where it is signed in"
                           />
+                          <TokensFact lost={tokensLostOf(period)} />
+                          <BusiestFact samples={samplesOf(period, history)} />
+                          <RenewalFact renewal={renewalOf(period.accountKey)} />
                         </div>
-                        <UsePath period={period} history={history} color={color} />
+                        <UsePath
+                          period={period}
+                          samples={samplesOf(period, history)}
+                          color={color}
+                        />
                       </div>
                     </TableCell>
                   </TableRow>

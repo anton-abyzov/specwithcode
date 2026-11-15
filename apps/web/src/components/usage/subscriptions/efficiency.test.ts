@@ -4,9 +4,11 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   type DashboardOptions,
   accountWidePeriods,
+  busiestDay,
   dashboardColumns,
   efficiencyDashboard,
   periodScore,
+  rangeTokensLost,
   targetOf,
 } from "./efficiency";
 
@@ -87,16 +89,16 @@ describe("efficiencyDashboard", () => {
     period("muse:a@x.dev", 0, 29),
   ];
 
-  it("weighs each account equally and gives a spare its own target", () => {
+  it("averages over closed periods and gives a spare its own target", () => {
     const plain = efficiencyDashboard(ledger, now, options());
-    // Codex averages 55, Muse 30: the mean of the two accounts.
-    expect(plain.score).toBeCloseTo(42.5);
-    expect(plain.unusedPercent).toBeCloseTo(57.5);
+    // Six resets: 40, 50, 60, 70, 31 and 29.
+    expect(plain.score).toBeCloseTo(280 / 6);
+    expect(plain.unusedPercent).toBeCloseTo(100 - 280 / 6);
     expect(plain.weightedByPrice).toBe(false);
 
     const spare = efficiencyDashboard(ledger, now, options({ targets: { "muse:a@x.dev": 30 } }));
     // Muse: 31 of 30 is 100, 29 of 30 is 96.67.
-    expect(spare.score).toBeCloseTo((55 + (100 + (29 / 30) * 100) / 2) / 2);
+    expect(spare.score).toBeCloseTo((220 + 100 + (29 / 30) * 100) / 6);
     const museGroup = spare.groups.find((group) => group.key === "muse");
     expect(museGroup).toMatchObject({ targetPercent: 30, usedPercent: 30, resets: 2 });
   });
@@ -110,7 +112,8 @@ describe("efficiencyDashboard", () => {
       options({ prices: { "codex:a@x.dev": 200, "muse:a@x.dev": 50 } }),
     );
     expect(priced.weightedByPrice).toBe(true);
-    expect(priced.score).toBeCloseTo((55 * 200 + 30 * 50) / 250);
+    // Each period carries its plan's price: four at 200, two at 50.
+    expect(priced.score).toBeCloseTo((220 * 200 + 60 * 50) / (4 * 200 + 2 * 50));
   });
 
   it("marks the range's columns, scores each, and compares with the span before", () => {
@@ -127,6 +130,15 @@ describe("efficiencyDashboard", () => {
     const dashboard = efficiencyDashboard([period("codex:a@x.dev", 0, 70)], now, options());
     expect(dashboard.score).toBeNull();
     expect(dashboard.resets).toBe(1);
+    expect(dashboard.columns[11]).toMatchObject({ score: 70, resets: 1 });
+  });
+
+  it("does not compare a year with one the ledger never kept", () => {
+    // Resets from thirteen months back would otherwise pass for the whole previous year.
+    const old = [56, 55, 54].map((weeksAgo) => period("codex:a@x.dev", weeksAgo, 20));
+    const year = efficiencyDashboard([...old, ...ledger], now, options({ range: "1y" }));
+    expect(year.score).not.toBeNull();
+    expect(year.previousScore).toBeNull();
   });
 
   it("flags a range holding a reset read long before it happened", () => {
@@ -139,9 +151,11 @@ describe("efficiencyDashboard", () => {
       options(),
     );
     expect(dashboard.upperBound).toBe(true);
+    expect(dashboard.columns[11]?.upperBound).toBe(true);
+    expect(dashboard.columns[10]?.upperBound).toBe(false);
   });
 
-  it("puts one account in every machine group it is signed in on", () => {
+  it("counts each reset in one group, so groups add up to the range", () => {
     const dashboard = efficiencyDashboard(
       ledger,
       now,
@@ -149,17 +163,39 @@ describe("efficiencyDashboard", () => {
         groupBy: "machine",
         groupsOf: ({ accountKey }) =>
           accountKey.startsWith("codex")
-            ? [
-                { key: "m1", label: "m1" },
-                { key: "m4", label: "m4" },
-              ]
+            ? [{ key: "m1|m4", label: "m1 + m4" }]
             : [{ key: "m4", label: "m4" }],
       }),
     );
     expect(dashboard.groups.map((group) => [group.key, group.resets])).toEqual([
-      ["m1", 4],
-      ["m4", 6],
+      ["m1|m4", 4],
+      ["m4", 2],
     ]);
+    expect(dashboard.groups.reduce((sum, group) => sum + group.resets, 0)).toBe(dashboard.resets);
+  });
+});
+
+describe("rangeTokensLost and busiestDay", () => {
+  it("sums accounts whose every loss is measurable and leaves the others out", () => {
+    const periods = accountWidePeriods([
+      period("codex:a@x.dev", 1, 60),
+      period("codex:a@x.dev", 0, 70),
+      period("muse:a@x.dev", 1, 31),
+      period("muse:a@x.dev", 0, 29),
+    ]);
+    const lost = rangeTokensLost(periods, (entry) =>
+      entry.accountKey.startsWith("muse") && entry.usedPercent === 29 ? null : entry.lostPercent,
+    );
+    // Codex lost 40 and 30; Muse has one reset that cannot be measured.
+    expect(lost).toBe(70);
+    expect(rangeTokensLost(periods, () => null)).toBeNull();
+  });
+
+  it("names the day that took the most of the quota", () => {
+    const day = (index: number) => new Date(2026, 10, 3 + index, 12).getTime();
+    const samples = [0, 4, 9, 30, 34].map((usedPercent, index) => ({ at: day(index), usedPercent }));
+    expect(busiestDay(samples)).toEqual({ day: new Date(2026, 10, 6).getTime(), percent: 21 });
+    expect(busiestDay(samples.slice(0, 2))).toBeNull();
   });
 });
 

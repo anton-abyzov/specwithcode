@@ -119,6 +119,8 @@ export interface DashboardColumn {
   /** Null when no reset was recorded in the column. */
   readonly score: number | null;
   readonly resets: number;
+  /** A reset in the column was read long before it happened, so the score is a floor. */
+  readonly upperBound: boolean;
   readonly inRange: boolean;
   /** The column's groups, for the hover readout. */
   readonly groups: readonly DashboardGroup[];
@@ -130,7 +132,10 @@ export interface EfficiencyDashboard {
   readonly rangeEnd: number;
   /** Null with fewer than two resets in the range: one reset is not a score. */
   readonly score: number | null;
-  /** The same score over the equally long span before the range. */
+  /**
+   * The same score over the equally long span before the range. Null for the
+   * year: the ledger keeps one year, so the year before it is not there.
+   */
   readonly previousScore: number | null;
   /** Average left unused per reset in the range. */
   readonly unusedPercent: number | null;
@@ -148,7 +153,7 @@ export interface DashboardOptions {
   readonly groupBy: DashboardGroupBy;
   readonly targets: Readonly<Record<string, number>>;
   readonly prices: Readonly<Record<string, number>>;
-  /** The groups an account belongs to under `groupBy`; a machine grouping can give several. */
+  /** The group an account belongs to under `groupBy`; one each, so no reset counts twice. */
   readonly groupsOf: (
     period: Pick<EfficiencyPeriod, "accountKey" | "driver">,
   ) => ReadonlyArray<{ readonly key: string; readonly label: string }>;
@@ -191,18 +196,13 @@ function weighted(
   const byPrice =
     periods.length > 0 &&
     periods.every((period) => (options.prices[period.accountKey] ?? 0) > 0);
-  // Equal weight per account: a period's weight is its account's share of that account's resets.
-  const perAccount = new Map<string, number>();
-  for (const period of periods) {
-    perAccount.set(period.accountKey, (perAccount.get(period.accountKey) ?? 0) + 1);
-  }
+  // Every closed period counts once, or by its plan's price: a week of a 200 plan left unused
+  // costs more than a week of a 20 one.
   return {
     byPrice,
     entries: periods.map((period) => ({
       period,
-      weight:
-        (byPrice ? (options.prices[period.accountKey] ?? 0) : 1) /
-        (perAccount.get(period.accountKey) ?? 1),
+      weight: byPrice ? (options.prices[period.accountKey] ?? 0) : 1,
       target: targetOf(options.targets, period.accountKey),
     })),
   };
@@ -273,17 +273,16 @@ export function efficiencyDashboard(
       ...span,
       score: mean(entries, scoreOf),
       resets: inside.length,
+      upperBound: inside.some((period) => period.upperBound),
       inRange: index >= spans.length - covered,
       groups: groupsOf(inside, options),
     };
   });
   const current = scoreBetween(periods, rangeStart, rangeEnd, options);
-  const previous = scoreBetween(
-    periods,
-    rangeStart - (rangeEnd - rangeStart),
-    rangeStart,
-    options,
-  );
+  const previous =
+    options.range === "1y"
+      ? { score: null }
+      : scoreBetween(periods, rangeStart - (rangeEnd - rangeStart), rangeStart, options);
   const { entries, byPrice } = weighted(current.inside, options);
   return {
     columns,
@@ -298,4 +297,44 @@ export function efficiencyDashboard(
     periods: current.inside.toSorted((left, right) => right.endedAt - left.endedAt),
     weightedByPrice: byPrice,
   };
+}
+
+/**
+ * Tokens the unused quota of these resets would have bought. An account
+ * counts only when every one of its losses can be measured, so a partial
+ * figure never stands in for the range; null when no account can.
+ */
+export function rangeTokensLost(
+  periods: readonly EfficiencyPeriod[],
+  tokensLostOf: (period: EfficiencyPeriod) => number | null,
+): number | null {
+  const byAccount = new Map<string, number | null>();
+  for (const period of periods) {
+    const sofar = byAccount.has(period.accountKey) ? byAccount.get(period.accountKey)! : 0;
+    const lost = sofar === null ? null : tokensLostOf(period);
+    byAccount.set(period.accountKey, sofar === null || lost === null ? null : sofar + lost);
+  }
+  const measured = [...byAccount.values()].filter((value): value is number => value !== null && value > 0);
+  return measured.length === 0 ? null : Math.round(measured.reduce((sum, value) => sum + value, 0));
+}
+
+/**
+ * The local day that took the most of the quota, from the samples read
+ * through a period; null with too few samples to tell days apart.
+ */
+export function busiestDay(
+  samples: ReadonlyArray<{ readonly at: number; readonly usedPercent: number }>,
+): { readonly day: number; readonly percent: number } | null {
+  if (samples.length < 3) return null;
+  const ordered = samples.toSorted((left, right) => left.at - right.at);
+  const byDay = new Map<number, number>();
+  for (let index = 1; index < ordered.length; index += 1) {
+    const rise = ordered[index]!.usedPercent - ordered[index - 1]!.usedPercent;
+    if (rise <= 0) continue;
+    const date = new Date(ordered[index]!.at);
+    const day = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    byDay.set(day, (byDay.get(day) ?? 0) + rise);
+  }
+  const top = [...byDay].toSorted((left, right) => right[1] - left[1] || left[0] - right[0])[0];
+  return top === undefined ? null : { day: top[0], percent: top[1] };
 }

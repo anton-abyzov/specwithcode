@@ -123,7 +123,7 @@ const dashboard = (ledger: UsageResetPeriod[] | null) =>
       providerOf={() => "Codex"}
       providerColorOf={() => "teal"}
       machinesOf={() => ["m1"]}
-      tokensLost={() => null}
+      tokensLostOf={() => null}
       onSetPlan={() => undefined}
     />,
   );
@@ -147,6 +147,20 @@ describe("SubscriptionsDashboard", () => {
     expect(html).not.toContain("data-efficiency-score");
     expect(html).toContain("up to 90%");
     expect(html).toContain("at least</span>10%");
+    // One reset is drawn, and said to be one reading, not an average.
+    expect(html).toContain("at least 10% at its one reset");
+  });
+
+  it("marks a score that holds a reset read long before it happened", () => {
+    const html = dashboard([lost(now - 4 * DAY, 41), lost(now - 11 * DAY, 45, 9 * HOUR)]);
+    expect(html).toContain('data-efficiency-floor="">at least');
+    expect(html).toContain("at least 55% at its one reset");
+  });
+
+  it("keeps a week with no reset reachable by keyboard", () => {
+    const html = dashboard([lost(now - 4 * DAY, 41), lost(now - 11 * DAY, 45)]);
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).not.toMatch(/<button[^>]*data-efficiency-column[^>]* disabled/);
   });
 
   it("says so before the first read and when nothing was recorded", () => {

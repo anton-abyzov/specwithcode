@@ -165,9 +165,10 @@ export const make = Effect.gen(function* () {
       return {
         createdAt: isoAt(now),
         periods: readLedger(state, since),
-        openAccounts: ledgerAccounts(state).map(({ accountKey, driver }) => ({
+        openAccounts: ledgerAccounts(state).map(({ accountKey, driver, lastReadAt }) => ({
           accountKey: accountKey as UsageResetLedgerResult["periods"][number]["accountKey"],
           driver,
+          lastReadAt: isoAt(lastReadAt),
         })),
       } satisfies UsageResetLedgerResult;
     });

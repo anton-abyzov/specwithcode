@@ -15,8 +15,10 @@ import {
   type DashboardGroup,
   type DashboardGroupBy,
   type DashboardRange,
+  type EfficiencyPeriod,
   accountWidePeriods,
   efficiencyDashboard,
+  rangeTokensLost,
   targetOf,
 } from "./efficiency";
 import type { SubscriptionRow } from "./subscriptionRows";
@@ -199,8 +201,8 @@ export interface SubscriptionsDashboardProps {
   readonly providerOf: (driver: UsageResetPeriod["driver"]) => string;
   readonly providerColorOf: (driver: UsageResetPeriod["driver"]) => string;
   readonly machinesOf: (accountKey: string) => readonly string[];
-  /** Tokens the unused quota would have bought over `weeks`, or null when not measurable. */
-  readonly tokensLost: (weeks: number) => number | null;
+  /** Tokens the unused quota of one reset would have bought, or null when not measurable. */
+  readonly tokensLostOf: (period: EfficiencyPeriod) => number | null;
   readonly onSetPlan: (
     accountKey: string,
     plan: { readonly target: number; readonly price: number | null },
@@ -230,10 +232,12 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
         : groupBy === "account"
           ? [{ key: accountKey, label: props.labelOf(accountKey) }]
           : (() => {
-              const machines = props.machinesOf(accountKey);
+              // A reset is the account's, not one machine's: an account on two machines is
+              // its own group, so no machine is credited with quota another may have spent.
+              const machines = props.machinesOf(accountKey).toSorted();
               return machines.length === 0
                 ? [{ key: "machine:", label: "Not signed in now" }]
-                : machines.map((machine) => ({ key: `machine:${machine}`, label: machine }));
+                : [{ key: `machine:${machines.join("|")}`, label: machines.join(" + ") }];
             })(),
   });
   const column = selected === null ? null : (dashboard.columns[selected] ?? null);
@@ -256,8 +260,10 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
     .map((row) => row.credits?.nextExpiresAt ?? null)
     .filter((at): at is number => at !== null)
     .toSorted((left, right) => left - right)[0];
-  const weeks = range === "1w" ? 1 : range === "4w" ? 4 : range === "12w" ? 12 : 52;
-  const tokens = props.tokensLost(weeks);
+  // From the same resets as the percent beside it, so the two cover one span.
+  const tokens = rangeTokensLost(dashboard.periods, props.tokensLostOf);
+  const renewalOf = (accountKey: string) =>
+    rows.find((row) => row.accountKey === accountKey)?.renewal ?? null;
   const delta =
     dashboard.score === null || dashboard.previousScore === null
       ? null
@@ -281,6 +287,7 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
             if (value === undefined) return;
             setRange(value);
             setSelected(null);
+            setEditing(null);
           }}
         >
           {DASHBOARD_RANGES.map((entry) => (
@@ -320,12 +327,21 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
                 {ledger === null ? "Reading the reset history…" : "Not enough history yet"}
               </span>
             ) : (
-              <span className="text-4xl font-semibold tabular-nums" data-efficiency-score="">
-                {Math.round(dashboard.score)}%
+              <span className="flex flex-col">
+                {dashboard.upperBound ? (
+                  <span className="text-xs text-muted-foreground" data-efficiency-floor="">
+                    at least
+                  </span>
+                ) : null}
+                <span className="text-4xl font-semibold tabular-nums" data-efficiency-score="">
+                  {Math.round(dashboard.score)}%
+                </span>
               </span>
             )}
             <span className="text-xs text-muted-foreground">
-              {delta === null ? null : (
+              {delta === null ? null : delta === 0 ? (
+                "No change · "
+              ) : (
                 <span
                   className={
                     delta >= 0 ? "text-success-foreground" : "text-destructive-foreground"
@@ -474,6 +490,8 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
           labelOf={props.labelOf}
           colorOf={props.colorOf}
           machinesOf={props.machinesOf}
+          tokensLostOf={props.tokensLostOf}
+          renewalOf={renewalOf}
           targetOf={(accountKey) => targetOf(targets, accountKey)}
         />
       </section>

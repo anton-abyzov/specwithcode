@@ -131,6 +131,8 @@ try {
   const dashboard = page.locator("[data-subscriptions-dashboard]");
   await check("the score, what was left unused and what resets soon lead the page", async () => {
     assert.match(await dashboard.locator("[data-efficiency-score]").innerText(), /^\d+%$/);
+    // A reset in range was read long before it happened, so the score is a floor.
+    assert.equal(await dashboard.locator("[data-efficiency-floor]").innerText(), "at least");
     const unused = await dashboard.locator('[data-dashboard-tile="unused"]').innerText();
     assert.match(unused, /up to \d+%/);
     assert.match(unused, /tokens \(estimate\)/);
@@ -169,7 +171,10 @@ try {
   await check("a column reads out its groups and scopes the resets table", async () => {
     const newest = dashboard.locator('[data-efficiency-column="11"]');
     await newest.hover();
-    assert.match(await dashboard.locator("[data-efficiency-readout]").innerText(), /Week of .*: \d+%/);
+    assert.match(
+      await dashboard.locator("[data-efficiency-readout]").innerText(),
+      /Week of .*: (at least )?\d+% across 2 resets/,
+    );
     await newest.click();
     assert.match(await dashboard.locator("[data-resets-heading]").innerText(), /Resets · week of/);
     assert.equal(await dashboard.locator("[data-reset-row]").count(), 2);
@@ -184,6 +189,9 @@ try {
     assert.match(await detail.innerText(), /so the figure is exact/);
     assert.match(await detail.innerText(), /mini/);
     assert.equal(await detail.locator("[data-use-path]").count(), 1);
+    assert.match(await detail.innerText(), /Busiest \w+day, \w+ \d+/);
+    assert.match(await detail.innerText(), /Renews \w+ \d+/);
+    assert.match(await detail.innerText(), /Tokens not measurable/);
     await row.click();
     assert.equal(await dashboard.locator("[data-reset-detail]").count(), 0);
     const bound = dashboard.locator('[data-reset-row^="codex:team@example.com"]').first();
@@ -195,6 +203,14 @@ try {
     assert.match(await dashboard.locator("[data-resets-range]").innerText(), /1 to 10 of 25 resets/);
     await dashboard.getByRole("button", { name: "Next" }).click();
     assert.match(await dashboard.locator("[data-resets-range]").innerText(), /11 to 20 of 25 resets/);
+    await dashboard.getByRole("button", { name: "4W", exact: true }).click();
+  });
+  await check("a month with no reset is reachable by keyboard and says so", async () => {
+    await dashboard.getByRole("button", { name: "1Y", exact: true }).click();
+    const emptyColumn = dashboard.locator('[data-efficiency-column][aria-disabled="true"]').first();
+    await emptyColumn.focus();
+    assert.match(await dashboard.locator("[data-efficiency-readout]").innerText(), /no reset recorded/);
+    await emptyColumn.blur();
     await dashboard.getByRole("button", { name: "4W", exact: true }).click();
   });
 
