@@ -123,14 +123,12 @@ export function canonicalPostLink(
       refused: `sourceUrl must be a post on X or a page on ${provider}'s own site (${sources.hosts.join(", ")}).`,
     };
   }
+  // The same spelling the feed gives the page, so the feed replaces this recording.
   const link = canonicalLink(url);
   if (new URL(link).pathname === "/") {
     return { refused: "sourceUrl must be the page of the post, not the site's home." };
   }
-  // A recorded page keeps no query at all: what it says is on the page itself.
-  const page = new URL(link);
-  page.search = "";
-  return { link: page.toString() };
+  return { link };
 }
 
 /** The announcement to keep, or why it is refused. The id follows the canonical link. */

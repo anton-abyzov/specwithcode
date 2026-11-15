@@ -108,8 +108,8 @@ export const X_HOSTS: ReadonlySet<string> = new Set([
   "mobile.twitter.com",
 ]);
 const X_POST = /^\/([A-Za-z0-9_]{1,15})\/status\/(\d{1,25})(?:\/.*)?$/u;
-/** Query keys that only say where a reader came from. */
-const TRACKING_KEY = /^(utm_.+|s|t|ref|ref_src|ref_url|fbclid|gclid)$/u;
+/** Click ids that only say where a reader came from; other keys may pick the page. */
+const TRACKING_KEY = /^(utm_.+|fbclid|gclid)$/u;
 const UNRESERVED_ESCAPE =
   /%(2[DdEe]|3[0-9]|4[1-9A-Fa-f]|5[0-9Aa]|5[Ff]|6[1-9A-Fa-f]|7[0-9Aa]|7[Ee])/gu;
 
@@ -125,7 +125,8 @@ export function xPost(url: URL): { readonly handle: string; readonly id: string 
  * One spelling per post, so the feed and a recording of the same post are one
  * announcement: an X post becomes `https://x.com/{handle}/status/{id}`; any other
  * page loses its fragment, a leading `www.`, repeated or trailing slashes,
- * escapes of plain characters and tracking parameters.
+ * escapes of plain characters and click ids, and keeps the rest of its query
+ * sorted. Announcement pages are articles, so a fragment never picks a page.
  */
 export function canonicalLink(url: URL): string {
   const post = xPost(url);
@@ -140,7 +141,10 @@ export function canonicalLink(url: URL): string {
     .replace(/\/+$/u, "");
   const query = [...url.searchParams]
     .filter(([key]) => !TRACKING_KEY.test(key.toLowerCase()))
-    .toSorted(([left], [right]) => left.localeCompare(right));
+    .toSorted(
+      ([leftKey, leftValue], [rightKey, rightValue]) =>
+        leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue),
+    );
   const search = query.length === 0 ? "" : `?${new URLSearchParams(query).toString()}`;
   return `https://${host}${url.port === "" ? "" : `:${url.port}`}${path}${search}`;
 }

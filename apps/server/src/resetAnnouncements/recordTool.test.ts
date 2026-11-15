@@ -48,7 +48,7 @@ describe("recording a reset announcement (1340 AC-09)", () => {
       "https://mobile.twitter.com/OpenAI/status/7/photo/1",
     ])
       expect(link(spelling)).toBe(one);
-    expect(link("https://www.openai.com/index/limits/?utm=1#x")).toBe(
+    expect(link("https://www.openai.com/index/limits/?utm_source=1#x")).toBe(
       "https://openai.com/index/limits",
     );
   });
@@ -164,9 +164,38 @@ describe("recording a reset announcement (1340 AC-09)", () => {
       "https://openai.com//index/reset",
       "https://openai.com/index//reset/",
       "https://openai.com/%69ndex/reset",
-      "https://www.openai.com/index/reset?p=2",
+      "https://www.openai.com/index/reset?utm_source=x",
     ])
       expect(link(spelling)).toBe("https://openai.com/index/reset");
+    // A query that picks the page stays, sorted, so two pages stay two.
+    expect(link("https://openai.com/index/reset?p=2")).toBe("https://openai.com/index/reset?p=2");
+    expect(link("https://openai.com/post?s=beta&s=alpha")).toBe(
+      "https://openai.com/post?s=alpha&s=beta",
+    );
+    expect(link("https://openai.com/post?s=alpha")).not.toBe(
+      link("https://openai.com/post?s=beta"),
+    );
+  });
+
+  it("lets the feed replace a recorded page with a query", () => {
+    const mine = recorded({ sourceUrl: "https://www.openai.com/index/reset?p=2&utm_medium=x" });
+    const [feed] = parseConfirmedFeed(
+      JSON.stringify({
+        items: [
+          {
+            id: "page",
+            provider: "codex",
+            kind: "hard-reset",
+            evidence: "verified",
+            headline: "Codex reset usage limits",
+            sourceUrl: "https://openai.com/index/reset/?p=2",
+            publishedAt: "2026-11-15T06:30:00.000Z",
+          },
+        ],
+      }),
+      now,
+    );
+    expect(mergeAnnouncements([mine], [feed!], now)).toEqual([feed]);
   });
 
   it("refuses a calendar day that does not exist", () => {
