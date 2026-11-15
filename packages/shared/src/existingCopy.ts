@@ -34,7 +34,8 @@ export type ExistingCopy<T> =
   | { readonly kind: "several"; readonly copies: readonly T[] }
   | { readonly kind: "none" };
 
-const repositoryKeyOf = (project: CopyCandidate): string | null =>
+/** The repository a project belongs to, compared without case; null when unknown. */
+export const repositoryKeyOf = (project: CopyCandidate): string | null =>
   project.repositoryIdentity
     ? repositoryGroupingKeyOf(project.repositoryIdentity).toLowerCase()
     : null;

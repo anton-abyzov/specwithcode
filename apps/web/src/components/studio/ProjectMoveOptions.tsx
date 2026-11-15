@@ -9,6 +9,14 @@ import {
   type ReactNode,
 } from "react";
 import type { HandoffFolderMethod } from "../../studio/folderCopy";
+import { displayFolder } from "../../lib/displayFolder";
+import {
+  existingCopyLine,
+  pickedHolding,
+  SEND_CHOICES,
+  sendPlan,
+  type MachineHolding,
+} from "../../studio/sendToMachine";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Input } from "../ui/input";
@@ -34,6 +42,20 @@ export interface ProjectMoveDialogContext {
   readonly machinesExtra?: ReactNode;
   /** Sync into a machine that already has the project: only files travel, nothing to hand off. */
   readonly sync?: boolean;
+  /** What the chosen machine already holds of this project, for Copy or Move and the plan. */
+  readonly send?: SendFacts | null;
+}
+
+/** The chosen machine's holding and the names the plan sentence needs. */
+export interface SendFacts {
+  readonly holding: MachineHolding<{ readonly id: string; readonly workspaceRoot: string }>;
+  /** The copy picked among several on that machine; null until one is. */
+  readonly picked: string | null;
+  readonly onPick: (id: string) => void;
+  /** The machine Main is on now. */
+  readonly mainLabel: string;
+  /** Uncommitted files here; null when unknown. */
+  readonly localFiles: number | null;
 }
 
 export const ProjectMoveDialog = createContext<ProjectMoveDialogContext | null>(null);
@@ -43,71 +65,144 @@ export function useProjectMoveDialog() {
 }
 
 /**
- * "Where should the coordinator run?": the one difference between copying a project and
- * handing it over. Keep runs `copy-only` and links the copy as workers; Move runs
- * `copy-and-move`. A sync into a machine's own copy never moves it, so it shows nothing.
+ * Copy or Move, the one difference between sending a copy and handing the project over.
+ * Copy runs `copy-only` and the copy takes work from Main; Move runs `copy-and-move`. Above
+ * the choice, what the machine already holds; below it, the plan in one sentence. A machine
+ * that holds Main has nothing to move to, so it shows no choice; a sync shows nothing.
  */
 export function CoordinatorChoice({
   value,
   onChange,
   canMove,
-  sourceLabel,
   targetLabel,
   disabled = false,
 }: {
   readonly value: MoveIntent;
   readonly onChange: (intent: MoveIntent) => void;
   readonly canMove: boolean;
+  /** The machine sending; kept for callers, the choice names only the destination. */
   readonly sourceLabel: string;
   readonly targetLabel: string | null;
   readonly disabled?: boolean;
 }) {
-  if (useProjectMoveDialog()?.sync) return null;
+  const dialog = useProjectMoveDialog();
+  const send = targetLabel ? (dialog?.send ?? null) : null;
+  const holding = send ? pickedHolding(send.holding, send.picked) : null;
+  const toMain = holding?.kind === "main";
+  // Picking the copy that is Main leaves nothing to move: the choice falls back to Copy.
+  useEffect(() => {
+    if (toMain && value === "move") onChange("copy");
+  }, [toMain, value, onChange]);
+  if (dialog?.sync) return null;
   const there = targetLabel ?? "the other machine";
-  const options: ReadonlyArray<{
-    readonly value: MoveIntent;
-    readonly label: string;
-    readonly detail: string;
-    readonly off: boolean;
-  }> = [
-    {
-      value: "copy",
-      label: `Keep on ${sourceLabel}`,
-      detail: `${there} runs workers. You can move it later.`,
-      off: false,
-    },
-    {
-      value: "move",
-      label: `Move to ${there}`,
-      detail: `Its conversation and threads continue on ${there}; ${sourceLabel} runs workers.`,
-      off: !canMove,
-    },
-  ];
+  const line = send && targetLabel ? existingCopyLine({ there, holding: send.holding }) : null;
+  const plan =
+    send && holding && targetLabel
+      ? sendPlan({
+          choice: toMain ? "copy" : value,
+          there,
+          main: send.mainLabel,
+          holding,
+          way: dialog?.method === "folder" ? "git" : "copy",
+          localFiles: send.localFiles,
+        })
+      : null;
   return (
-    <fieldset disabled={disabled} className="min-w-0" data-slot="handoff-coordinator">
-      <legend className="mb-2 text-sm font-medium">Where should the coordinator run?</legend>
+    <div className="flex min-w-0 flex-col gap-2" data-slot="handoff-coordinator">
+      {line && (
+        <p className="text-sm text-muted-foreground" data-slot="send-existing-copy">
+          {line}
+        </p>
+      )}
+      {send?.holding.kind === "several" && (
+        <CopyPicker
+          copies={send.holding.copies}
+          mainId={send.holding.mainId}
+          picked={send.picked}
+          onPick={send.onPick}
+          disabled={disabled}
+        />
+      )}
+      {toMain ? null : (
+        <fieldset disabled={disabled} className="min-w-0">
+          <legend className="mb-2 text-sm font-medium">Copy or move</legend>
+          <RadioGroup
+            value={value}
+            onValueChange={(next) => {
+              if (next === "copy" || (next === "move" && canMove)) onChange(next);
+            }}
+            disabled={disabled}
+            aria-label="Copy or move"
+          >
+            {(["copy", "move"] as const).map((choice) => {
+              const off = choice === "move" && !canMove;
+              return (
+                <label
+                  key={choice}
+                  data-send-choice={choice}
+                  className={`flex min-w-0 items-start gap-3 rounded-lg border p-2.5 text-sm has-data-checked:border-primary has-data-checked:bg-primary/4 ${off ? "cursor-not-allowed opacity-60" : disabled ? "cursor-default" : "cursor-pointer"}`}
+                >
+                  <span className="flex h-5 items-center">
+                    <Radio value={choice} disabled={off} />
+                  </span>
+                  <span className="min-w-0 leading-5">
+                    <span className="block wrap-anywhere">{SEND_CHOICES[choice].label(there)}</span>
+                    <span className="block wrap-anywhere text-xs text-muted-foreground">
+                      {SEND_CHOICES[choice].detail}
+                    </span>
+                  </span>
+                </label>
+              );
+            })}
+          </RadioGroup>
+        </fieldset>
+      )}
+      {plan && (
+        <p className="rounded-lg bg-muted/40 px-3 py-2 text-sm" data-slot="send-plan">
+          {plan}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Several copies of this project on the chosen machine: the person picks the one to send to. */
+function CopyPicker({
+  copies,
+  mainId,
+  picked,
+  onPick,
+  disabled,
+}: {
+  readonly copies: ReadonlyArray<{ readonly id: string; readonly workspaceRoot: string }>;
+  readonly mainId: string | null;
+  readonly picked: string | null;
+  readonly onPick: (id: string) => void;
+  readonly disabled: boolean;
+}) {
+  return (
+    <fieldset disabled={disabled} className="min-w-0" data-slot="send-copy-picker">
+      <legend className="mb-2 text-sm font-medium">Copy to send to</legend>
       <RadioGroup
-        value={value}
+        value={picked ?? ""}
         onValueChange={(next) => {
-          if (next === "copy" || (next === "move" && canMove)) onChange(next);
+          if (typeof next === "string" && next) onPick(next);
         }}
         disabled={disabled}
-        aria-label="Where should the coordinator run?"
+        aria-label="Copy to send to"
       >
-        {options.map((item) => (
+        {copies.map((copy) => (
           <label
-            key={item.value}
-            className={`flex min-w-0 items-start gap-3 rounded-lg border p-2.5 text-sm has-data-checked:border-primary has-data-checked:bg-primary/4 ${item.off ? "cursor-not-allowed opacity-60" : disabled ? "cursor-default" : "cursor-pointer"}`}
+            key={copy.id}
+            className="flex min-w-0 items-center gap-3 rounded-lg border p-2.5 text-sm has-data-checked:border-primary has-data-checked:bg-primary/4"
           >
-            <span className="flex h-5 items-center">
-              <Radio value={item.value} disabled={item.off} />
+            <Radio value={copy.id} />
+            <span className="min-w-0 wrap-anywhere font-mono text-xs">
+              {displayFolder(copy.workspaceRoot)}
             </span>
-            <span className="min-w-0 leading-5">
-              <span className="block wrap-anywhere">{item.label}</span>
-              <span className="block wrap-anywhere text-xs text-muted-foreground">
-                {item.detail}
-              </span>
-            </span>
+            {copy.id === mainId && (
+              <span className="ms-auto text-xs text-muted-foreground">Main</span>
+            )}
           </label>
         ))}
       </RadioGroup>

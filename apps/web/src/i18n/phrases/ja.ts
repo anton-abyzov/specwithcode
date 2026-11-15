@@ -3151,7 +3151,7 @@ export const ja: PhraseCatalog = {
   "Run this draft on": "この下書きを実行するマシン",
   "Auto balance matching projects": "一致するプロジェクトを自動で分散",
   "Add to another machine…": "別のマシンに追加…",
-  "Copy to another machine…": "別のマシンにコピー…",
+  "Send to another machine…": "別のマシンに送る…",
   Link: "リンク",
   "Link with the project on {machine}…": "{machine} のプロジェクトとリンク…",
   "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
