@@ -72,8 +72,16 @@ describe("subscriptionRows", () => {
     );
     expect(rows.map((row) => row.key)).toEqual(["b", "a"]);
     expect(rows[0]?.windows).toEqual([
-      { id: "secondary", title: "Weekly", leftPercent: 62, resetsAt: now + 9 * HOUR, expiring: true, long: true },
+      expect.objectContaining({
+        id: "secondary",
+        title: "Weekly",
+        leftPercent: 62,
+        resetsAt: now + 9 * HOUR,
+        expiring: true,
+        long: true,
+      }),
     ]);
+    expect(rows[0]?.windows[0]?.durationMs).toBeGreaterThan(0);
     expect(rows[1]?.windows[0]?.expiring).toBe(false);
     expect(rows[0]?.machines).toEqual(["m1"]);
   });

@@ -46,11 +46,20 @@ const LEDGER_REFRESH_MS = 5 * MINUTE;
 const SHOWN = 2;
 const LIMITS_VIEW_KEY = "specwithcode:usage-limits-view";
 
-/** "Codex Pro": the provider and plan; the alert sentence adds the machine. */
-function planLabel(account: LimitAccount | undefined, alert: QuotaAlert): string {
+/**
+ * "Codex Pro": the provider and plan; the alert sentence adds the machine. A plan that
+ * already names the provider ("Claude Ultra Subscription") is not prefixed again, and
+ * "subscription" says nothing in a sentence about one.
+ */
+export function planLabel(provider: string, plan: string | undefined): string {
+  const named = (plan ?? "").trim().replace(/\s+subscription$/i, "");
+  if (named === "") return provider;
+  return named.toLowerCase().startsWith(provider.toLowerCase()) ? named : `${provider} ${named}`;
+}
+
+function alertLabel(account: LimitAccount | undefined, alert: QuotaAlert): string {
   const provider = getDriverOption(alert.driver as LimitAccount["driver"])?.label ?? alert.driver;
-  const plan = account?.limits.planLabel?.trim() || account?.plan?.trim();
-  return plan ? `${provider} ${plan}` : provider;
+  return planLabel(provider, account?.limits.planLabel?.trim() || account?.plan?.trim());
 }
 
 const KIND_TITLE: Record<string, string> = {
@@ -410,7 +419,7 @@ function LiveQuotaAlerts({
       updateSettings({ quotaAlertDismissals: JSON.parse(driftedKey) as Record<string, number> });
     }
   }, [driftedKey, updateSettings]);
-  const labelOf = (alert: QuotaAlert) => planLabel(byKey.get(alert.accountKey), alert);
+  const labelOf = (alert: QuotaAlert) => alertLabel(byKey.get(alert.accountKey), alert);
 
   // A boost runs on the main machine, where the setting lives and its threads launch, so
   // the subscription has to be signed in there, on a plan, with a regular model that the

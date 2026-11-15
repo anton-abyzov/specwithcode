@@ -2,7 +2,7 @@ import { quotaAlerts, visibleQuotaAlerts } from "@specweave-studio/shared/quotaA
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { QuotaAlertBanner } from "./QuotaAlertBanner";
+import { QuotaAlertBanner, planLabel } from "./QuotaAlertBanner";
 import { quotaAlertNotified, recordQuotaAlertNotification } from "./quotaAlertNotifications";
 
 const HOUR = 3_600_000;
@@ -14,7 +14,7 @@ const account = (key: string, resetsIn: number, leftPercent: number) => ({
   machines: ["m4"],
   offline: false,
   windows: [
-    { id: "secondary", title: "Weekly", leftPercent, resetsAt: now + resetsIn, expiring: true, long: true },
+    { id: "secondary", title: "Weekly", leftPercent, resetsAt: now + resetsIn, long: true },
   ],
   renewal: null,
   credits: null,
@@ -81,6 +81,12 @@ describe("QuotaAlertBanner", () => {
     );
     expect(html).toContain("New threads use Codex Pro until");
     expect(html).not.toContain("Dismiss until the next reset");
+  });
+
+  it("names a plan once, without repeating the provider", () => {
+    expect(planLabel("Claude", "Claude Ultra Subscription")).toBe("Claude Ultra");
+    expect(planLabel("Codex", "Pro")).toBe("Codex Pro");
+    expect(planLabel("Claude", undefined)).toBe("Claude");
   });
 
   it("shows the two soonest and counts the rest", () => {

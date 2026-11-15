@@ -20,6 +20,10 @@ export const QUOTA_ALERT_HORIZON_MS = 24 * HOUR;
 export const QUOTA_ALERT_PERIOD_DRIFT_MS = 30 * 60_000;
 /** A window ends with a renewal when it resets this close to it; a day set by hand is a date, not an hour. */
 export const RENEWAL_WINDOW_APART_MS = 12 * HOUR;
+/** A weekly or monthly window is watched over its last two days. */
+export const QUOTA_ALERT_LEAD_MS = 48 * HOUR;
+/** Under this long to the reset there is nothing left to do about it, so nothing is said. */
+export const QUOTA_ALERT_MIN_TIME_TO_ACT_MS = HOUR;
 /** An early reset is news for this long. */
 export const EARLY_RESET_NOTICE_MS = 6 * HOUR;
 
@@ -31,10 +35,42 @@ export interface QuotaAlertWindow {
   readonly title: string;
   readonly leftPercent: number;
   readonly resetsAt: number | null;
-  /** Resets soon with much of it unused, by the same rule routing uses. */
-  readonly expiring: boolean;
+  /** How long one period of it lasts; null when unknown, and then the pace cannot be read. */
+  readonly durationMs?: number | null;
   /** A weekly or monthly window. A short one refills many times before a renewal, so it never ends with one. */
   readonly long: boolean;
+}
+
+/**
+ * The share of a window that will still be unused at its reset if the person
+ * keeps the pace of the period so far: what is left now, less what that pace
+ * uses in the time that remains. With no known length the pace is unknown and
+ * what is left now stands.
+ */
+export function projectedUnusedPercent(
+  window: Pick<QuotaAlertWindow, "leftPercent" | "resetsAt" | "durationMs">,
+  now: number,
+): number {
+  const left = Math.max(0, Math.min(100, window.leftPercent));
+  const duration = window.durationMs ?? null;
+  if (window.resetsAt === null || duration === null || duration <= 0) return left;
+  const remaining = Math.max(0, window.resetsAt - now);
+  const elapsed = duration - remaining;
+  if (elapsed <= 0) return left;
+  return Math.max(0, left - ((100 - left) / elapsed) * remaining);
+}
+
+/**
+ * Whether a window is worth a warning: a weekly or monthly one in its last two
+ * days, with at least an hour to act, that the pace so far leaves at least 40%
+ * unused. A short window never is: it refills within hours, and by the time
+ * anyone reads the warning it has reset.
+ */
+export function quotaGoingUnused(window: QuotaAlertWindow, now: number): boolean {
+  if (!window.long || window.resetsAt === null) return false;
+  const remaining = window.resetsAt - now;
+  if (remaining < QUOTA_ALERT_MIN_TIME_TO_ACT_MS || remaining > QUOTA_ALERT_LEAD_MS) return false;
+  return projectedUnusedPercent(window, now) >= EXPIRING_QUOTA_MIN_LEFT_PERCENT;
 }
 
 /** One subscription as the alert rule reads it. */
@@ -107,20 +143,6 @@ export function quotaAlerts(
     if (accountKey === null || account.offline) continue;
     machinesOf.set(accountKey, account.machines);
     const base = { accountKey, driver: account.driver, machines: account.machines };
-    const before = alerts.length;
-    for (const window of account.windows) {
-      if (!window.expiring || window.resetsAt === null || window.resetsAt <= now) continue;
-      alerts.push({
-        ...base,
-        key: `${accountKey}|window:${window.id}`,
-        periodEnd: window.resetsAt,
-        kind: "window",
-        windowId: window.id,
-        windowResetsAt: window.resetsAt,
-        windowTitle: window.title,
-        leftPercent: window.leftPercent,
-      });
-    }
     const expiry = account.credits?.nextExpiresAt ?? null;
     if (account.credits && account.credits.count > 0 && expiry !== null) {
       if (expiry > now && expiry - now <= QUOTA_ALERT_HORIZON_MS) {
@@ -133,10 +155,15 @@ export function quotaAlerts(
         });
       }
     }
+    // One line per subscription. A renewal within a day says it best: it names the day
+    // the plan ends and the quota that ends with it.
     const renewsAt = account.renewal?.at ?? null;
-    // One line per subscription: a window alert already says quota is about to go.
-    const named = alerts.length > before;
-    if (!named && renewsAt !== null && renewsAt > now && renewsAt - now <= QUOTA_ALERT_HORIZON_MS) {
+    let renewing = false;
+    if (
+      renewsAt !== null &&
+      renewsAt - now >= QUOTA_ALERT_MIN_TIME_TO_ACT_MS &&
+      renewsAt - now <= QUOTA_ALERT_HORIZON_MS
+    ) {
       // The quota a renewal ends is the weekly or monthly window that resets with it: the
       // one whose reset is nearest the renewal. A window that resets well before or after
       // it keeps its quota through the renewal, and a 5-hour one refills long before.
@@ -149,6 +176,7 @@ export function quotaAlerts(
         .filter((entry) => entry.apart <= RENEWAL_WINDOW_APART_MS)
         .toSorted((left, right) => left.apart - right.apart)[0]?.window;
       if (ending !== undefined && ending.leftPercent >= EXPIRING_QUOTA_MIN_LEFT_PERCENT) {
+        renewing = true;
         alerts.push({
           ...base,
           key: `${accountKey}|renewal`,
@@ -158,6 +186,24 @@ export function quotaAlerts(
           ...(ending.resetsAt !== null ? { windowResetsAt: ending.resetsAt } : {}),
           windowTitle: ending.title,
           leftPercent: ending.leftPercent,
+        });
+      }
+    }
+    if (!renewing) {
+      // The window that resets first speaks for the subscription.
+      const going = account.windows
+        .filter((window) => quotaGoingUnused(window, now))
+        .toSorted((left, right) => (left.resetsAt ?? 0) - (right.resetsAt ?? 0))[0];
+      if (going !== undefined && going.resetsAt !== null) {
+        alerts.push({
+          ...base,
+          key: `${accountKey}|window:${going.id}`,
+          periodEnd: going.resetsAt,
+          kind: "window",
+          windowId: going.id,
+          windowResetsAt: going.resetsAt,
+          windowTitle: going.title,
+          leftPercent: going.leftPercent,
         });
       }
     }
