@@ -228,6 +228,8 @@ export function ProjectMachineHandoff({
   // Sharing is what the dialog opens on; moving and copying files start from it.
   // Read when the dialog closes: a measure or copy still running is watched until it is ready.
   const copyRunning = useRef(false);
+  // The copy flow waits at its review: closing hands it to the watcher to observe only.
+  const copyAtReview = useRef(false);
   const setCopyBusy = useCallback((value: boolean) => {
     copyRunning.current = value;
     setCopyBusyState(value);
@@ -426,10 +428,12 @@ export function ProjectMachineHandoff({
     // The folder copy keeps running on the machines; say when it is ready.
     // The app-wide watcher follows it, whichever project is open next.
     const activityKey = copyActivityKey(project.environmentId, project.id);
-    // A copy waiting at its review stays followed too: the sidebar, banner and Needs you
-    // offer Review again, as they do after a restart, instead of the copy going quiet.
-    if (!value && open && (copyRunning.current || copyAwaitsReview(project)))
+    // Closed at its review, a copy stays offered: the sidebar, banner and Needs you show
+    // Review again. The watcher only observes it: nothing is approved and no toast repeats.
+    const atReview = !copyRunning.current && copyAtReview.current && copyAwaitsReview(project);
+    if (!value && open && (copyRunning.current || atReview))
       watchCopy({
+        ...(atReview ? { reviewOnly: true } : {}),
         environmentId: project.environmentId,
         projectId: project.id,
         machineLabel: (environmentId) =>
@@ -971,7 +975,8 @@ export function ProjectMachineHandoff({
               // Requested, so a saved draft or last copy cannot swap the machine or its folder.
               machineRequested={requestedMachine !== null || syncCopy !== undefined}
               defaultMode={intent === "move" ? "copy-and-move" : "copy-only"}
-              onChoicesChange={({ mode, machine, done }) => {
+              onChoicesChange={({ mode, machine, done, review }) => {
+                copyAtReview.current = review === true;
                 setIntent(mode === "copy-and-move" ? "move" : "copy");
                 setCopyMachine(machine);
                 setCopyDone(done);

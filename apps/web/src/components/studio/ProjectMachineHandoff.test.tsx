@@ -1258,20 +1258,30 @@ it("lets a running folder copy close, keeps it, and watches it app wide until th
   expect(currentCopyWatches().has("m4:source")).toBe(true);
 });
 
-it("keeps a copy waiting at its review followed after the dialog closes, so Review stays offered", async () => {
+it("keeps a copy closed at its review offered, observed only; not one closed elsewhere", async () => {
   resetCopyActivityForTests();
   state.environments = machineEnvironments;
   await mount();
   await act(async () => props().onMethodChange!("copy"));
+  const copy = () => (props().copyFlow as { props: Record<string, any> }).props;
   const pointer = "specwithcode:folder-copy:m4:source";
-  // Nothing saved: closing leaves nothing behind.
+  localStorage.setItem(pointer, JSON.stringify({ operationId: "op", environmentId: "m3" }));
+  // Done or failed: the pointer is still there, but nothing waits for the person.
+  await act(async () =>
+    copy().onChoicesChange({ mode: "copy-only", machine: "m3", done: true, review: false }),
+  );
   await act(async () => props().onOpenChange(false));
   expect(currentCopyWatches().size).toBe(0);
-  // A measured copy waits for the person; the dialog is not busy at its review.
-  await act(async () => copyOpener("m4:source")?.() ?? props().onOpenChange(true));
-  localStorage.setItem(pointer, JSON.stringify({ operationId: "op", environmentId: "m3" }));
+  // At its review: the copy is handed to the watcher to observe, never to approve.
+  await act(async () => copyOpener("m4:source")!());
+  await act(async () =>
+    copy().onChoicesChange({ mode: "copy-only", machine: "m3", done: false, review: true }),
+  );
   await act(async () => props().onOpenChange(false));
-  expect(currentCopyWatches().get("m4:source")).toMatchObject({ projectId: "source" });
+  expect(currentCopyWatches().get("m4:source")).toMatchObject({
+    projectId: "source",
+    reviewOnly: true,
+  });
   // Review from the sidebar, banner or Needs you reopens this dialog on the same copy.
   await act(async () => copyOpener("m4:source")!());
   expect(props().open).toBe(true);

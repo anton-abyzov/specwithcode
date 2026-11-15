@@ -959,6 +959,42 @@ it("never announces again a copy that finished before a reload", async () => {
   }
 });
 
+it("only shows a copy closed at its review as waiting: no approval, no toast", async () => {
+  vi.useFakeTimers();
+  try {
+    resetCopyActivityForTests();
+    // A one-click copy that replaces nothing would be approved by a running watch.
+    pointer({ auto: true });
+    const calls: string[] = [];
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copyApprove = () => {
+      calls.push("copyApprove");
+      return copyStatus("approved");
+    };
+    let done = 0;
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          projectName="Project"
+          machineLabel={() => "M3"}
+          reviewOnly
+          onDone={() => (done += 1)}
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(calls).toEqual([]);
+    expect(state.toasts).toEqual([]);
+    expect(done).toBe(1);
+    // The sidebar, banner and Needs you read this and offer Review.
+    expect(currentCopyActivities().get("m4:source")).toMatchObject({ waiting: true });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("keeps a newer copy another tab saved while a closed copy's status was in flight", async () => {
   vi.useFakeTimers();
   try {
