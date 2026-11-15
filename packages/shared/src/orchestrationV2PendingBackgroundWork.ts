@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2ActiveWorkKind,
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderThread,
   OrchestrationV2Run,
@@ -324,12 +325,58 @@ export interface ActiveRunWork<Time = unknown> {
   readonly startedAt: Time;
   /** The thread a `studio_thread_wait` waits on, so the UI can link it. */
   readonly waitThreadId?: string;
+  /** What kind of step it is; a summary row says this in words instead of the label. */
+  readonly kind: OrchestrationV2ActiveWorkKind;
+}
+
+const WAIT_ON_THREAD_LABEL = "another thread";
+const WAIT_ON_TASK_LABEL = "a delegated task";
+const UNNAMED_SUBAGENT_LABEL = "a subagent";
+const UNNAMED_TOOL_LABEL = "a tool";
+
+/**
+ * A running step in plain words for a summary row: "Running a command",
+ * "Waiting on a subagent". The label itself is a command line or a prompt and
+ * belongs in a tooltip. A server older than `kind` sends only the label: its
+ * fixed labels still name their kind, and anything else is a step of some sort.
+ */
+export function activeWorkPhrase(
+  label: string | null,
+  kind?: OrchestrationV2ActiveWorkKind | null,
+): string {
+  const known =
+    kind ??
+    (label === WAIT_ON_THREAD_LABEL
+      ? "thread"
+      : label === WAIT_ON_TASK_LABEL
+        ? "task"
+        : label === UNNAMED_SUBAGENT_LABEL
+          ? "subagent"
+          : label === UNNAMED_TOOL_LABEL
+            ? "tool"
+            : null);
+  switch (known) {
+    case "command":
+      return "Running a command";
+    case "tool":
+      return "Using a tool";
+    case "subagent":
+      return "Waiting on a subagent";
+    case "thread":
+      return "Waiting on another thread";
+    case "task":
+      return "Waiting on a delegated task";
+    case null:
+      return "Running a step";
+  }
 }
 
 /** Tools that wait on other work: a legitimate wait, never a stall of this thread. */
-function waitTarget(item: {
-  readonly type: string;
-}): { readonly label: string; readonly threadId?: string } | null {
+function waitTarget(item: { readonly type: string }): {
+  readonly label: string;
+  readonly kind: "thread" | "task";
+  readonly threadId?: string;
+} | null {
   if (item.type !== "dynamic_tool") return null;
   const toolName = Reflect.get(item, "toolName");
   if (typeof toolName !== "string") return null;
@@ -340,10 +387,12 @@ function waitTarget(item: {
     const threadId =
       input !== null && typeof input === "object" ? Reflect.get(input, "threadId") : undefined;
     return typeof threadId === "string" && threadId.trim().length > 0
-      ? { label: "another thread", threadId: threadId.trim() }
-      : { label: "another thread" };
+      ? { label: WAIT_ON_THREAD_LABEL, kind: "thread", threadId: threadId.trim() }
+      : { label: WAIT_ON_THREAD_LABEL, kind: "thread" };
   }
-  if (tool === "task_status" || tool === "delegate_task") return { label: "a delegated task" };
+  if (tool === "task_status" || tool === "delegate_task") {
+    return { label: WAIT_ON_TASK_LABEL, kind: "task" };
+  }
   return null;
 }
 
@@ -387,6 +436,7 @@ export function deriveActiveRunWork<
   if (wait !== null) {
     return {
       label: wait.label,
+      kind: wait.kind,
       startedAt: newest.startedAt ?? newest.updatedAt,
       ...(wait.threadId === undefined ? {} : { waitThreadId: wait.threadId }),
     };
@@ -395,14 +445,20 @@ export function deriveActiveRunWork<
     descriptionFromTurnItem(newest as unknown as PendingBackgroundWorkTurnItem)
       ?.split("\n")[0]
       ?.trim() ?? "";
-  const fallback = newest.type === "subagent" ? "a subagent" : "a tool";
+  const fallback = newest.type === "subagent" ? UNNAMED_SUBAGENT_LABEL : UNNAMED_TOOL_LABEL;
+  const kind: OrchestrationV2ActiveWorkKind =
+    newest.type === "subagent"
+      ? "subagent"
+      : newest.type === "command_execution"
+        ? "command"
+        : "tool";
   const label =
     description.length === 0
       ? fallback
       : description.length > ACTIVE_WORK_LABEL_MAX
         ? `${description.slice(0, ACTIVE_WORK_LABEL_MAX - 1)}…`
         : description;
-  return { label, startedAt: newest.startedAt ?? newest.updatedAt };
+  return { label, kind, startedAt: newest.startedAt ?? newest.updatedAt };
 }
 
 /** A running turn with nothing in flight and no events for this long is stalled. */
@@ -430,8 +486,15 @@ export type RunHealth =
       readonly waitThreadId?: string;
       /** Set when the turn waits on the person, which no quiet period turns into a stall. */
       readonly awaitingPerson?: RunAwaitingPerson;
+      /** The step's kind when the server says it (`activeWorkPhrase`). */
+      readonly kind?: OrchestrationV2ActiveWorkKind;
     }
-  | { readonly state: "stalled"; readonly idleMs: number; readonly label: string | null };
+  | {
+      readonly state: "stalled";
+      readonly idleMs: number;
+      readonly label: string | null;
+      readonly kind?: OrchestrationV2ActiveWorkKind;
+    };
 
 /**
  * Tells a long legitimate turn from a stuck one. `lastActivityMs` is the
@@ -444,6 +507,7 @@ export function classifyRunHealth(input: {
     readonly label: string;
     readonly startedAtMs: number;
     readonly waitThreadId?: string | undefined;
+    readonly kind?: OrchestrationV2ActiveWorkKind | undefined;
   } | null;
   /**
    * True when the source cannot say what is in flight (a server older than
@@ -480,9 +544,10 @@ export function classifyRunHealth(input: {
       : { state: "working", idleMs };
   }
   const waitThreadId = input.activeWork.waitThreadId;
+  const kind = input.activeWork.kind === undefined ? {} : { kind: input.activeWork.kind };
   // Waiting on another thread is that thread's progress, not this one stalling.
   if (waitThreadId === undefined && idleMs >= RUN_STALL_WAITING_IDLE_MS) {
-    return { state: "stalled", idleMs, label: input.activeWork.label };
+    return { state: "stalled", idleMs, label: input.activeWork.label, ...kind };
   }
   return {
     state: "waiting",
@@ -490,5 +555,6 @@ export function classifyRunHealth(input: {
     label: input.activeWork.label,
     waitingMs: Math.max(0, input.nowMs - input.activeWork.startedAtMs),
     ...(waitThreadId === undefined ? {} : { waitThreadId }),
+    ...kind,
   };
 }

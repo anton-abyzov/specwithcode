@@ -21,6 +21,11 @@ const state = vi.hoisted(() => ({
   /** The worker project is a personal assistant, and whether Settings shows Percy. */
   workerPersonal: false,
   aideEnabled: true,
+  /** Every machine has reported or had its tries; and whether this machine's chats are in. */
+  allReported: true,
+  primaryLive: true,
+  /** Nicknames by machine, as Settings > Machines saves them. */
+  nicknames: {} as Record<string, string>,
   shells: [] as EnvironmentThreadShell[],
   projects: [
     { id: "project-local", environmentId: "host-local", title: "Local project" },
@@ -170,7 +175,21 @@ vi.mock("../../state/entities", () => ({
       : state.projects,
   useThreadShells: () => state.shells,
   useServerConfigs: () => new Map([["host-worker", { providers: state.providers }]]),
-  useAllEnvironmentShellsBootstrapped: () => true,
+  useAllEnvironmentShellsBootstrapped: () => state.allReported,
+  useEnvironmentShellLive: () => state.primaryLive,
+}));
+// Machines are named by nickname and color, as the sidebar names them.
+vi.mock("../../studio/machineIdentity", () => ({
+  useMachineIdentities: () => (environmentId: string, fallbackLabel?: string | null) => ({
+    environmentId,
+    name: state.nicknames[environmentId] ?? fallbackLabel ?? environmentId,
+    color: environmentId === "host-local" ? "rose" : "blue",
+    icon: "laptop",
+    short: "M",
+    derivedShort: "M",
+  }),
+  machineColorProps: (identity: { color: string } | null | undefined) =>
+    identity ? { "data-machine-color": identity.color } : {},
 }));
 const NO_UNREACHABLE_ENVIRONMENTS: ReadonlySet<string> = new Set();
 let environmentIdsCache: { readonly key: string; readonly ids: ReadonlyArray<string> } | null =
@@ -208,7 +227,7 @@ vi.mock("../../composerDraftStore", () => ({
   useComposerDraftStore: { getState: () => ({ setModelSelection: state.setModel }) },
 }));
 vi.mock("../../env", () => ({ isElectron: false }));
-vi.mock("../../branding", () => ({ APP_DISPLAY_NAME: "SpecWithCode" }));
+vi.mock("../../branding", () => ({ APP_DISPLAY_NAME: "SpecWithCode", APP_VERSION: "1.0.304" }));
 vi.mock("../WorkspacePageHeader", () => ({
   WorkspacePageHeader: ({ children }: { children: React.ReactNode }) => <header>{children}</header>,
 }));
@@ -288,6 +307,9 @@ beforeEach(() => {
   state.workerArchived = false;
   state.workerPersonal = false;
   state.aideEnabled = true;
+  state.allReported = true;
+  state.primaryLive = true;
+  state.nicknames = {};
   state.createDraft.mockResolvedValue({
     kind: "draft",
     draftId: "owned-new-draft",
@@ -698,10 +720,17 @@ describe("deliberate native session entry", () => {
     expect(workerMac?.textContent).toContain("0 projects");
 
     const entry = container.querySelector('[aria-labelledby="studio-assistant-title"]')!;
-    expect(container.querySelector("#studio-assistant-title")?.textContent).toBe("Percy");
-    // The entry sits above Projects in the rail.
+    expect(container.querySelector("#studio-assistant-title")?.textContent).toBe(
+      "Personal assistant",
+    );
+    // Projects lead the rail; the assistant has its own section after them, before Machines.
     expect(
-      entry.compareDocumentPosition(projectsPanel) & Node.DOCUMENT_POSITION_FOLLOWING,
+      projectsPanel.compareDocumentPosition(entry) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      entry.compareDocumentPosition(
+        container.querySelector('[aria-labelledby="studio-machines-title"]')!,
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     const rows = entry.querySelectorAll(
       '[role="group"][aria-label="Personal assistant"] .studio-project',
@@ -979,4 +1008,155 @@ it("opens a modern project coordinator with the chosen native model and no false
   );
   expect(state.setModel).not.toHaveBeenCalled();
   expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+describe("machines, status chips and rail order", () => {
+  const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const running = { status: "running" } as EnvironmentThreadShell["runtime"];
+
+  it("names a machine by its nickname in its color, with the host label on hover", async () => {
+    state.nicknames = { "host-worker": "m4", "host-local": "linux-mini" };
+    state.shells = [shell("build", { runtime: running, updatedAt: minutesAgo(0) })];
+    await render();
+    const row = container.querySelector(".studio-session-item")!;
+    const mark = row.querySelector(".studio-machine-mark")!;
+    expect(mark.textContent).toBe("m4");
+    expect(mark.getAttribute("data-machine-color")).toBe("blue");
+    expect(mark.getAttribute("data-hint")).toBe("Worker Mac");
+    // The meta line leads with the machine, then the project.
+    expect(
+      row.querySelector(".studio-row-meta")?.textContent?.startsWith("m4 · Worker project"),
+    ).toBe(true);
+    // Projects, Machines and the notice use the same name; the host label is never printed.
+    const rail = container.querySelector(".studio-rail")!;
+    expect(rail.textContent).toContain("linux-mini");
+    expect(rail.textContent).not.toContain("Worker Mac");
+    expect(rail.textContent).not.toContain("Main Mac");
+  });
+
+  it("says a running step in words and keeps the command for the tooltip", async () => {
+    state.shells = [
+      shell("plain", { runtime: running, updatedAt: minutesAgo(0) }),
+      shell("command", {
+        runtime: running,
+        updatedAt: minutesAgo(0),
+        activeWork: {
+          label: "cd /Users/anton/app && pnpm test",
+          kind: "command",
+          startedAt: minutesAgo(3),
+        },
+      }),
+      // A machine on an older version sends no kind.
+      shell("legacy", {
+        runtime: running,
+        updatedAt: minutesAgo(0),
+        activeWork: { label: "W=/Users/anton/work; cd $W", startedAt: minutesAgo(7) },
+      }),
+    ];
+    await render();
+    const working = container.querySelector('[aria-labelledby="studio-working-title"]')!;
+    const pill = (title: string) =>
+      [...working.querySelectorAll(".studio-session-item")]
+        .find((row) => row.textContent?.includes(title))!
+        .querySelector(".studio-pill");
+    // A row that is simply working is listed under Working; it carries no chip.
+    expect(pill("Cached plain")).toBeNull();
+    // The page's clock moves by the minute, so the age is three minutes give or take one.
+    expect(pill("Cached command")?.textContent).toMatch(/^Running a command · [23]m$/);
+    expect(pill("Cached command")?.getAttribute("data-hint")).toBe(
+      "cd /Users/anton/app && pnpm test",
+    );
+    expect(pill("Cached legacy")?.textContent).toMatch(/^Running a step · [67]m$/);
+    expect(working.textContent).not.toContain("/Users/anton");
+  });
+
+  it("explains a machine that never answered instead of counting nothing", async () => {
+    const { environments, projects } = state;
+    state.projects = [projects[0]!];
+    state.environments = [
+      environments[0]!,
+      { ...environments[1]!, connection: { phase: "reconnecting", error: "Timed out" } } as never,
+    ];
+    try {
+      await render();
+      const row = [...container.querySelectorAll(".studio-machine")].find((machine) =>
+        machine.textContent?.includes("Worker Mac"),
+      )!;
+      expect(row.textContent).toContain("Can’t reach it · retrying");
+      expect(row.textContent).toContain("Chats and projects not counted");
+      expect(row.textContent).not.toContain("0 projects");
+      expect(row.querySelector(".studio-machine-state")?.getAttribute("data-hint")).toBe(
+        "Timed out",
+      );
+      expect(container.querySelector(".studio-stale-notice")?.textContent).toContain(
+        "Worker Mac is not reachable",
+      );
+    } finally {
+      state.environments = environments;
+      state.projects = projects;
+    }
+  });
+
+  it("says whether each machine's version is current", async () => {
+    const { environments } = state;
+    const versioned = (index: number, serverVersion: string) =>
+      ({ ...environments[index]!, serverConfig: { environment: { serverVersion } } }) as never;
+    state.environments = [versioned(0, "1.0.304"), versioned(1, "1.0.306")];
+    try {
+      await render();
+      const version = (name: string) =>
+        [...container.querySelectorAll(".studio-machine")]
+          .find((machine) => machine.textContent?.includes(name))!
+          .querySelector(".studio-machine-version");
+      // Another machine already runs 1.0.306, so 1.0.304 is behind.
+      expect(version("Main Mac")?.textContent).toBe("1.0.304 · update available");
+      expect(version("Main Mac")?.getAttribute("data-hint")).toBe("1.0.306 is available");
+      expect(version("Worker Mac")?.textContent).toBe("1.0.306 · current");
+    } finally {
+      state.environments = environments;
+    }
+  });
+
+  it("shows what a machine runs and marks this machine", async () => {
+    state.shells = [
+      shell("one", { runtime: running, updatedAt: minutesAgo(0) }),
+      shell("two", { runtime: running, updatedAt: minutesAgo(0) }),
+    ];
+    await render();
+    const row = (name: string) =>
+      [...container.querySelectorAll(".studio-machine")].find((machine) =>
+        machine.textContent?.includes(name),
+      )!;
+    expect(row("Worker Mac").textContent).toContain("2 working · 1 project");
+    expect(row("Main Mac").textContent).toContain("Nothing running · 1 project");
+    expect(row("Main Mac").textContent).toContain("this machine");
+    expect(row("Worker Mac").textContent).toContain("Online");
+  });
+
+  it("lists this machine's chats while another machine has not answered yet", async () => {
+    state.allReported = false;
+    state.primaryLive = true;
+    const { environments } = state;
+    state.environments = [
+      environments[0]!,
+      { ...environments[1]!, connection: { phase: "reconnecting" } } as never,
+    ];
+    try {
+      await render();
+      expect(container.textContent).not.toContain("Reading your chats…");
+      expect(container.querySelector("h1")?.textContent).toBe("Nothing needs you");
+      expect(container.querySelector(".studio-intro")?.textContent).toContain(
+        "still reading Worker Mac",
+      );
+    } finally {
+      state.environments = environments;
+    }
+  });
+
+  it("waits for this machine's own chats before it says nothing needs you", async () => {
+    state.allReported = false;
+    state.primaryLive = false;
+    await render();
+    expect(container.querySelector("h1")?.textContent).toBe("Reading your chats…");
+  });
 });
