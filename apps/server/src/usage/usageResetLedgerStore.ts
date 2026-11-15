@@ -14,6 +14,7 @@ import type {
 } from "@specweave-studio/contracts";
 import { isFreshSample, resetBetween } from "@specweave-studio/shared/usageLimitForecast";
 import { closedReset, isLedgerWindow } from "@specweave-studio/shared/usageResetLedger";
+import { windowModelScope } from "@specweave-studio/shared/usageWindows";
 
 import { type HistoryReading, isoAt } from "./usageLimitHistoryStore.ts";
 
@@ -31,6 +32,8 @@ export interface LedgerCursor {
   readonly windowId: string;
   readonly windowKind: ServerProviderUsageWindow["kind"];
   windowDurationMins: number | undefined;
+  /** The model family the window is limited to; null for an account-wide window. */
+  readonly modelScope: string | null;
   at: number;
   usedPercent: number;
   resetsAt: number | null;
@@ -47,6 +50,7 @@ export interface LedgerPeriod {
   readonly windowId: string;
   readonly windowKind: ServerProviderUsageWindow["kind"];
   readonly windowDurationMins: number | undefined;
+  readonly modelScope: string | null;
   readonly startedAt: number | null;
   readonly endedAt: number;
   readonly lastReadAt: number;
@@ -111,6 +115,7 @@ export function advanceLedger(state: LedgerState, reading: LedgerReading): Ledge
         windowId: window.id,
         windowKind: window.kind,
         windowDurationMins: window.windowDurationMins,
+        modelScope: windowModelScope(window),
         ...sample,
         startedAt: null,
         credits: reading.resetCredits,
@@ -139,6 +144,7 @@ export function advanceLedger(state: LedgerState, reading: LedgerReading): Ledge
         windowId: cursor.windowId,
         windowKind: cursor.windowKind,
         windowDurationMins: cursor.windowDurationMins,
+        modelScope: cursor.modelScope,
         startedAt: cursor.startedAt,
         ...closed,
       });
@@ -188,6 +194,7 @@ export function readLedger(state: LedgerState, since: number): UsageResetPeriod[
       ...(period.windowDurationMins === undefined
         ? {}
         : { windowDurationMins: period.windowDurationMins }),
+      ...(period.modelScope === null ? {} : { modelScope: period.modelScope }),
       ...(period.startedAt === null ? {} : { startedAt: isoAt(period.startedAt) }),
       endedAt: isoAt(period.endedAt),
       lastReadAt: isoAt(period.lastReadAt),
@@ -220,7 +227,7 @@ const isTimeOrNull = (value: unknown): value is number | null =>
   value === null || isFiniteNumber(value);
 
 function decodeWindow(entry: Record<string, unknown>) {
-  const { accountKey, driver, windowId, windowKind, windowDurationMins } = entry;
+  const { accountKey, driver, windowId, windowKind, windowDurationMins, modelScope } = entry;
   if (!isName(accountKey) || !isName(driver) || !isName(windowId)) return null;
   if (typeof windowKind !== "string" || !WINDOW_KINDS.has(windowKind)) return null;
   return {
@@ -232,6 +239,7 @@ function decodeWindow(entry: Record<string, unknown>) {
       isFiniteNumber(windowDurationMins) && windowDurationMins >= 0
         ? Math.round(windowDurationMins)
         : undefined,
+    modelScope: isName(modelScope) ? modelScope : null,
   };
 }
 

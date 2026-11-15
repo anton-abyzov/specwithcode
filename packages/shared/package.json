@@ -508,6 +508,10 @@
       "types": "./src/usageLimitForecast.ts",
       "import": "./src/usageLimitForecast.ts"
     },
+    "./expiringQuota": {
+      "types": "./src/expiringQuota.ts",
+      "import": "./src/expiringQuota.ts"
+    },
     "./usageResetLedger": {
       "types": "./src/usageResetLedger.ts",
       "import": "./src/usageResetLedger.ts"

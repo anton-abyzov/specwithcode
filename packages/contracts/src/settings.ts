@@ -2534,7 +2534,7 @@ export const ServerSettingsPatch = Schema.Struct({
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
   /** Merged per machine, newest stamp wins; never replaces the whole map. */
   machineNicknames: Schema.optionalKey(MachineNicknames),
-  /** Replaces the whole map. */
+  /** Merged by account key; an entry left out keeps its day. */
   subscriptionRenewalDays: Schema.optionalKey(SubscriptionRenewalDays),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newProjectThreadEnvMode: Schema.optionalKey(ThreadEnvMode),

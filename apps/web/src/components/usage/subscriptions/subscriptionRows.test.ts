@@ -1,0 +1,195 @@
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  type ServerProviderUsageWindow,
+  type UsageResetPeriod,
+} from "@specweave-studio/contracts";
+import type { LimitAccount } from "@specweave-studio/shared/usageLimits";
+import { describe, expect, it } from "vite-plus/test";
+
+import { nextRenewalOn, subscriptionRows } from "./subscriptionRows";
+
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+const now = new Date(2026, 10, 14, 20, 0).getTime();
+const iso = (at: number) => new Date(at).toISOString();
+const codex = ProviderDriverKind.make("codex");
+const claude = ProviderDriverKind.make("claudeAgent");
+
+const weekly = (usedPercent: number, resetsIn: number): ServerProviderUsageWindow => ({
+  id: "secondary",
+  kind: "weekly",
+  label: "Weekly",
+  windowDurationMins: 10_080,
+  usedPercent,
+  resetsAt: iso(now + resetsIn),
+});
+
+const account = (
+  key: string,
+  driver: LimitAccount["driver"],
+  email: string | undefined,
+  machine: string,
+  limits: Partial<LimitAccount["limits"]> & Pick<LimitAccount["limits"], "windows">,
+  extra: Partial<LimitAccount> = {},
+): LimitAccount => ({
+  key,
+  driver,
+  displayName: null,
+  email,
+  plan: "Pro",
+  accentColor: undefined,
+  environments: [{ environmentId: EnvironmentId.make(`env-${machine}`), label: machine }],
+  sourceLabel: null,
+  offline: false,
+  redeem: null,
+  limits: { checkedAt: iso(now - 5 * 60_000), ...limits },
+  ...extra,
+});
+
+const period = (accountKey: string, endedAt: number, lostPercent: number): UsageResetPeriod => ({
+  accountKey,
+  driver: codex,
+  windowId: "secondary",
+  windowKind: "weekly",
+  endedAt: iso(endedAt),
+  lastReadAt: iso(endedAt - HOUR),
+  usedPercentAtReset: 100 - lostPercent,
+  lostPercent,
+  cause: "scheduled",
+});
+
+describe("subscriptionRows", () => {
+  it("puts the account about to lose quota first and marks its window", () => {
+    const rows = subscriptionRows(
+      [
+        account("a", claude, "a@x.dev", "m4", { windows: [weekly(82, 2 * DAY)] }),
+        account("b", codex, "b@x.dev", "m1", { windows: [weekly(38, 9 * HOUR)] }),
+      ],
+      [],
+      {},
+      now,
+    );
+    expect(rows.map((row) => row.key)).toEqual(["b", "a"]);
+    expect(rows[0]?.windows).toEqual([
+      { id: "secondary", title: "Weekly", leftPercent: 62, resetsAt: now + 9 * HOUR, expiring: true },
+    ]);
+    expect(rows[1]?.windows[0]?.expiring).toBe(false);
+    expect(rows[0]?.machines).toEqual(["m1"]);
+  });
+
+  it("does not mark a window with little left, or one that resets days away", () => {
+    const rows = subscriptionRows(
+      [
+        account("a", codex, "a@x.dev", "m4", { windows: [weekly(90, 3 * HOUR)] }),
+        account("b", codex, "b@x.dev", "m4", { windows: [weekly(10, 3 * DAY)] }),
+      ],
+      [],
+      {},
+      now,
+    );
+    expect(rows.flatMap((row) => row.windows.map((window) => window.expiring))).toEqual([
+      false,
+      false,
+    ]);
+  });
+
+  it("takes the renewal from the provider, else from the day the person set, else none", () => {
+    const rows = subscriptionRows(
+      [
+        account("a", codex, "a@x.dev", "m4", {
+          windows: [weekly(10, 3 * DAY)],
+          renewsAt: iso(now + 18 * DAY),
+          planLabel: "Business",
+        }),
+        account("b", codex, "b@x.dev", "m4", { windows: [weekly(10, 4 * DAY)] }),
+        account("c", codex, "c@x.dev", "m4", { windows: [weekly(10, 5 * DAY)] }),
+      ],
+      [],
+      { "codex:b@x.dev": 17 },
+      now,
+    );
+    expect(rows[0]?.renewal).toEqual({ at: now + 18 * DAY, source: "provider" });
+    expect(rows[0]?.plan).toBe("Business");
+    expect(rows[1]?.renewal).toEqual({ at: new Date(2026, 10, 17).getTime(), source: "set" });
+    expect(rows[2]?.renewal).toBeNull();
+  });
+
+  it("shows banked resets with their next expiry, and none when the bank is empty", () => {
+    const rows = subscriptionRows(
+      [
+        account("a", codex, "a@x.dev", "m4", {
+          windows: [weekly(10, 3 * DAY)],
+          resetCredits: { availableCount: 2, nextExpiresAt: iso(now + 7 * DAY) },
+        }),
+        account("b", codex, "b@x.dev", "m4", {
+          windows: [weekly(10, 4 * DAY)],
+          resetCredits: { availableCount: 0 },
+        }),
+      ],
+      [],
+      {},
+      now,
+    );
+    expect(rows[0]?.credits).toEqual({ count: 2, nextExpiresAt: now + 7 * DAY });
+    expect(rows[1]?.credits).toBeNull();
+  });
+
+  it("names the last reset's loss for the account, and nothing for an account with no ledger", () => {
+    const rows = subscriptionRows(
+      [
+        account("a", codex, "A@x.dev", "m4", { windows: [weekly(10, 3 * DAY)] }),
+        account("b", codex, undefined, "m4", { windows: [weekly(10, 4 * DAY)] }),
+      ],
+      [
+        period("codex:a@x.dev", now - 11 * DAY, 12),
+        period("codex:a@x.dev", now - 4 * DAY, 41),
+        period("codex:other@x.dev", now - DAY, 90),
+      ],
+      {},
+      now,
+    );
+    expect(rows[0]?.lastLoss).toEqual({
+      windowTitle: "Weekly",
+      lostPercent: 41,
+      endedAt: now - 4 * DAY,
+      upperBound: false,
+      cause: "scheduled",
+    });
+    expect(rows[1]?.accountKey).toBeNull();
+    expect(rows[1]?.lastLoss).toBeNull();
+  });
+
+  it("keeps an offline account's last reading and leaves out windows whose reset passed", () => {
+    const rows = subscriptionRows(
+      [
+        account(
+          "a",
+          codex,
+          "a@x.dev",
+          "ministorm",
+          { windows: [weekly(60, -HOUR), { ...weekly(40, 2 * DAY), id: "monthly" }] },
+          { offline: true },
+        ),
+      ],
+      [],
+      {},
+      now,
+    );
+    expect(rows[0]?.offline).toBe(true);
+    expect(rows[0]?.checkedAt).toBe(now - 5 * 60_000);
+    expect(rows[0]?.windows.map((window) => window.id)).toEqual(["monthly"]);
+  });
+});
+
+describe("nextRenewalOn", () => {
+  it("is today when the day is today, and next month once it has passed", () => {
+    expect(nextRenewalOn(14, now)).toBe(new Date(2026, 10, 14).getTime());
+    expect(nextRenewalOn(2, now)).toBe(new Date(2026, 11, 2).getTime());
+  });
+
+  it("uses the last day of a month too short for the day", () => {
+    const february = new Date(2027, 1, 10).getTime();
+    expect(nextRenewalOn(31, february)).toBe(new Date(2027, 1, 28).getTime());
+  });
+});

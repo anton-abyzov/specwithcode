@@ -28,6 +28,8 @@ export const UsageResetPeriod = Schema.Struct({
   driver: ProviderDriverKind,
   windowId: TrimmedNonEmptyString,
   windowKind: ServerProviderUsageWindow.fields.kind,
+  /** The model family the window is limited to; absent for an account-wide window. */
+  modelScope: Schema.optional(TrimmedNonEmptyString),
   windowDurationMins: Schema.optional(NonNegativeInt),
   /** Absent for the first period seen of a window: its start was never observed. */
   startedAt: Schema.optional(IsoDateTime),
