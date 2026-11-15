@@ -697,10 +697,8 @@ export const ja: PhraseCatalog = {
   "Add project": "プロジェクトを追加",
   "All machines": "すべてのマシン",
   "Archive project": "プロジェクトをアーカイブ",
-  "Archived ({count})": "アーカイブ済み（{count}）",
   "Archived chats": "アーカイブ済みのチャット",
   "Archived projects": "アーカイブ済みのプロジェクト",
-  "Automated ({count})": "自動作成（{count}）",
   "Automated projects": "自動作成のプロジェクト",
   "Chat name": "チャット名",
   Chats: "チャット",
@@ -720,8 +718,6 @@ export const ja: PhraseCatalog = {
   "Drop here to pin": "ここにドロップしてピン留め",
   "Filter and sort chats": "チャットの絞り込みと並べ替え",
   "Filter and sort chats, filter active": "チャットの絞り込みと並べ替え（絞り込み中）",
-  "Hide archived": "アーカイブ済みを隠す",
-  "Hide automated": "自動作成を隠す",
   "Its machine": "そのマシン",
   Machine: "マシン",
   "Move to project…": "プロジェクトに移動…",
@@ -756,8 +752,6 @@ export const ja: PhraseCatalog = {
     "{machine} のチャットを表示中。すべてのマシンを表示",
   "Unpin project": "ピン留めを外す",
   "Untitled chat": "無題のチャット",
-  "Projects that checks and agents made for themselves. Move one to your projects from its menu.":
-    "チェックやエージェントが自分用に作ったプロジェクトです。メニューから自分のプロジェクトに移せます。",
   "Could not archive {name}": "{name} をアーカイブできませんでした",
   "Could not restore {name}": "{name} を復元できませんでした",
   "No chats yet. Threads agents started are on their project page.":

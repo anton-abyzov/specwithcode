@@ -676,10 +676,8 @@ export const zh: PhraseCatalog = {
   "Add project": "添加项目",
   "All machines": "所有电脑",
   "Archive project": "归档项目",
-  "Archived ({count})": "已归档（{count}）",
   "Archived chats": "已归档的对话",
   "Archived projects": "已归档的项目",
-  "Automated ({count})": "自动（{count}）",
   "Automated projects": "自动项目",
   "Chat name": "对话名称",
   Chats: "对话",
@@ -696,8 +694,6 @@ export const zh: PhraseCatalog = {
   "Drop here to pin": "拖到这里即可置顶",
   "Filter and sort chats": "筛选和排序对话",
   "Filter and sort chats, filter active": "筛选和排序对话（已启用筛选）",
-  "Hide archived": "隐藏已归档",
-  "Hide automated": "隐藏自动项目",
   "Its machine": "其所在电脑",
   Machine: "电脑",
   "Move to project…": "移到项目…",
@@ -730,8 +726,6 @@ export const zh: PhraseCatalog = {
   "Showing chats on {machine}. Show all machines": "正在显示 {machine} 上的对话。显示所有电脑",
   "Unpin project": "取消置顶项目",
   "Untitled chat": "未命名对话",
-  "Projects that checks and agents made for themselves. Move one to your projects from its menu.":
-    "检查和代理为自己创建的项目。可从其菜单将项目移到你的项目中。",
   "Could not archive {name}": "无法归档 {name}",
   "Could not restore {name}": "无法恢复 {name}",
   "No chats yet. Threads agents started are on their project page.":

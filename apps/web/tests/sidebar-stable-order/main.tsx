@@ -100,9 +100,16 @@ if (params.get("scenario") === "projects") {
 
 // `?scenario=elsewhere`: the list Anton saw on November 13, 2026, viewed from "host":
 // two projects have a copy here, the rest live only on other machines. Those sit
-// below an "On other machines" label, greyed, each with its machine's tag.
+// below an "On other machines" label, greyed, each with its machine's tag. Archived
+// projects and the ones checks made stay out of the list (Settings > Archive has them).
 if (params.get("scenario") === "elsewhere") {
-  const project = (key: string, name: string, machines: string[], sharedWith: string[] = []) => {
+  const project = (
+    key: string,
+    name: string,
+    machines: string[],
+    sharedWith: string[] = [],
+    settings: Record<string, unknown> = {},
+  ) => {
     const here = machines.includes("host");
     return {
       projectKey: `logical:${key}`,
@@ -124,6 +131,7 @@ if (params.get("scenario") === "elsewhere") {
           kind: "code",
           archived: false,
           revision: 1,
+          ...settings,
           ...(sharedWith.length > 0
             ? {
                 logicalProject: {
@@ -153,6 +161,10 @@ if (params.get("scenario") === "elsewhere") {
       project("hack-openai", "hack26-openai", ["m4"]),
       project("specweave", "specweave", ["host", "m4"], ["linux-mini"]),
       project("sketchmate", "sketchmate_pro", ["m1"]),
+      project("old-site", "old-site", ["host"], [], { archived: true }),
+      project("legacy", "legacy-api", ["m4"], [], { archived: true }),
+      project("run-shell", "Run shell acceptance 357", ["host"], [], { origin: "automated" }),
+      project("move-check", "1164 handoff move check", ["host"], [], { origin: "automated" }),
     ],
   });
 }
