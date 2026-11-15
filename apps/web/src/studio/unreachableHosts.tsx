@@ -5,22 +5,36 @@
  *
  * @module unreachableHosts
  */
+import type {
+  EnvironmentConnectionPhase,
+  MachineReachState,
+} from "@specweave-studio/client-runtime/connection";
 import { createContext, useContext, useEffect, type ReactNode } from "react";
 
 import { recordMachinePhases } from "../lib/machineLastSeen";
-import { useEnvironments, useUnreachableEnvironmentIds } from "../state/environments";
+import { reachFromPhase } from "../lib/machineStatus";
+import {
+  useEnvironments,
+  useMachineReachStates,
+  useUnreachableEnvironmentIds,
+  type MachineReachStates,
+} from "../state/environments";
 
 const NONE: ReadonlySet<string> = new Set();
+const NO_STATES: MachineReachStates = new Map();
 export const UnreachableHostsContext = createContext<ReadonlySet<string>>(NONE);
+/** What each saved machine reads as now; a machine missing here reads as connected. */
+export const MachineReachContext = createContext<MachineReachStates>(NO_STATES);
 
 export function UnreachableHostsProvider({ children }: { children: ReactNode }) {
   const unreachable = useUnreachableEnvironmentIds();
+  const states = useMachineReachStates();
   const { environments } = useEnvironments();
   // Mounted for the whole shell, so it sees every machine leave "connected".
   useEffect(() => recordMachinePhases(environments), [environments]);
   return (
     <UnreachableHostsContext.Provider value={unreachable}>
-      {children}
+      <MachineReachContext.Provider value={states}>{children}</MachineReachContext.Provider>
     </UnreachableHostsContext.Provider>
   );
 }
@@ -31,4 +45,23 @@ export function useUnreachableHosts(): ReadonlySet<string> {
 
 export function useHostOffline(environmentId: string): boolean {
   return useContext(UnreachableHostsContext).has(environmentId);
+}
+
+/** What each saved machine reads as now (`machineReach`), for wording. */
+export function useHostReachStates(): MachineReachStates {
+  return useContext(MachineReachContext);
+}
+
+/** What one machine reads as now, or undefined when the app has not judged it. */
+export function useHostReach(environmentId: string | null | undefined): MachineReachState | undefined {
+  const states = useContext(MachineReachContext);
+  return environmentId ? states.get(environmentId) : undefined;
+}
+
+/** A machine's reach state, or what its phase alone says when the app has not judged it. */
+export function hostReachOr(
+  state: MachineReachState | undefined,
+  phase: EnvironmentConnectionPhase,
+): MachineReachState {
+  return state ?? reachFromPhase(phase);
 }

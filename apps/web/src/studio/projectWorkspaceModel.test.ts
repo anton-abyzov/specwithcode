@@ -538,9 +538,15 @@ describe("Project admission and retry", () => {
       /Connecting to this host/,
     );
     expect(hostDisconnectedLabel({ phase: "error", blockedReason: "configuration" })).toBe(
-      "Disconnected",
+      "Connection failed",
     );
-    expect(hostDisconnectedLabel(undefined)).toBe("Disconnected");
+    expect(hostDisconnectedLabel(undefined)).toBe("Not connected");
+    expect(
+      hostDisconnectedLabel(
+        { phase: "reconnecting" },
+        { isThisDevice: false, graceElapsed: true, reach: "not-answering" },
+      ),
+    ).toBe("Not answering");
     expect(projectAdmissionReason(settings, true, false)).toMatch(/read-only/);
     expect(projectAdmissionReason(null, true, true)).toMatch(/loading/);
     expect(projectAdmissionReason({ ...settings, paused: true }, true, true)).toMatch(/Resume/);
@@ -598,7 +604,7 @@ describe("Project admission and retry", () => {
         "Connecting to this host.",
       );
       expect(hostDisconnectedLabel({ phase: "reconnecting" }, remote)).toBe("Reconnecting");
-      expect(hostDisconnectedLabel({ phase: "offline" }, remote)).toBe("Offline");
+      expect(hostDisconnectedLabel({ phase: "offline" }, remote)).toBe("No network");
     }
   });
   it("refuses a message to a named machine that dropped, saying nothing goes elsewhere", () => {

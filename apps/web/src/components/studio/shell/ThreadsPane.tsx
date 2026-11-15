@@ -99,7 +99,7 @@ import { UnplannedThreadChip, UnplannedThreadsFilter } from "./UnplannedThreads"
 import { useUnplannedNotice } from "../../../studio/unplannedNotice";
 import { HandoffRowAction, HandoffRowBadge } from "../../handoff/HandoffBadge";
 import { designRoute } from "../../design/gallery/designLinks";
-import { useUnreachableHosts } from "../../../studio/unreachableHosts";
+import { useHostReachStates, useUnreachableHosts } from "../../../studio/unreachableHosts";
 
 const SORT_STORAGE_KEY = "studio:project-threads-sort:v1";
 const SortSchema = Schema.Literals(THREAD_SORTS);
@@ -225,6 +225,7 @@ export function ThreadsPane({
     Boolean(props.remoteWorkerCount) ||
     allThreads.some((thread) => thread.environmentId !== props.environmentId);
   const unreachable = useUnreachableHosts();
+  const hostReach = useHostReachStates();
   const { environments } = useEnvironments();
   const nickname = useMachineNicknames();
   const machineIdentity = useMachineIdentities();
@@ -990,7 +991,11 @@ export function ThreadsPane({
                       (settled && subagentsWorking > 0
                         ? `${subagentsWorking} ${subagentsWorking === 1 ? "subagent" : "subagents"} working`
                         : withRunningSubagents(
-                            threadStatusWord(thread, hostOffline),
+                            threadStatusWord(
+                              thread,
+                              hostOffline,
+                              hostReach.get(thread.environmentId),
+                            ),
                             subagentsWorking,
                           ));
                     const rowStatus = statusWord === group ? null : statusWord;

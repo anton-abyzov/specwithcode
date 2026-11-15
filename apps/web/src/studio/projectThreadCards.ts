@@ -4,6 +4,7 @@
  * also offers the next step its thread's state calls for. Pure rules only; the
  * components live in components/studio/ProjectThreadCards.tsx.
  */
+import type { MachineReachState } from "@specweave-studio/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { resolveThreadCurrentPullRequestLink } from "@specweave-studio/shared/threadPullRequests";
 import type { VcsStatusResult } from "@specweave-studio/contracts";
@@ -21,9 +22,13 @@ export interface ThreadCardStatus {
 
 type StatusShell = EnvironmentThreadShell;
 
-export function threadCardStatus(thread: StatusShell, hostOffline = false): ThreadCardStatus {
+export function threadCardStatus(
+  thread: StatusShell,
+  hostOffline = false,
+  hostReach?: MachineReachState,
+): ThreadCardStatus {
   const tone = threadTone(thread, hostOffline);
-  const word = threadStatusWord(thread, hostOffline);
+  const word = threadStatusWord(thread, hostOffline, hostReach);
   if (word !== null) return { tone, label: word };
   if (tone === "idle" && thread.latestRun?.status === "completed")
     return { tone: "done", label: "Done" };

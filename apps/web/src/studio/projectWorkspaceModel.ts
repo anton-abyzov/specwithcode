@@ -4,9 +4,15 @@ import {
   reportsToParentAgent,
   threadDependencyWait,
 } from "@specweave-studio/client-runtime/state/projectAttention";
+import {
+  isMachineReachDown,
+  type EnvironmentConnectionPresentation,
+  type MachineReachState,
+} from "@specweave-studio/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { threadRuntimeIsActive } from "@specweave-studio/client-runtime/state/shell";
 import type { ProjectId, ThreadId } from "@specweave-studio/contracts";
+import { machineReachWords, reachFromPhase } from "../lib/machineStatus";
 import { isAgentOwnedProjectThread } from "./projectPaneThreads";
 import { isProjectCoordinatorThread } from "./projectCoordinatorThreads";
 import { isNestedSubagentThread } from "./threadSubagents";
@@ -190,6 +196,8 @@ export function prepareProjectMarkdown(
   return linkPlainThreadMentions(linked, threads);
 }
 
+type HostPhase = EnvironmentConnectionPresentation["phase"] | undefined;
+
 type HostConnection = {
   readonly phase: string;
   readonly blockedReason?: string;
@@ -210,6 +218,8 @@ export type HostAdmissionContext = {
   readonly machineLabel?: string;
   /** The host has not confirmed this connection's grant yet. */
   readonly accessPending?: boolean;
+  /** What the machine reads as now (`machineReach`); judged by phase when omitted. */
+  readonly reach?: MachineReachState;
 };
 
 const REMOTE_PAST_GRACE: HostAdmissionContext = { isThisDevice: false, graceElapsed: true };
@@ -231,10 +241,10 @@ export function hostDisconnectedLabel(
     if (connection?.phase === "unsupported") return "Disconnected";
     return "Catching up";
   }
-  if (connection?.phase === "connecting") return "Connecting";
-  if (connection?.phase === "reconnecting") return "Reconnecting";
-  if (connection?.phase === "offline") return "Offline";
-  return "Disconnected";
+  return machineReachWords(
+    context.reach ?? reachFromPhase(connection?.phase as HostPhase),
+    connection?.phase as HostPhase,
+  ).short.replace(/…$/, "");
 }
 
 /**
@@ -265,6 +275,20 @@ export type ComposerHostStatus = {
   readonly showsSync: boolean;
   /** The message box says the draft is kept until the machine reconnects. */
   readonly keepsDraft: boolean;
+};
+
+/** A host with no name to show, once it is down. */
+const UNNAMED_HOST_HEADLINE: Record<MachineReachState, string> = {
+  connected: "This host is connected",
+  "catching-up": "Catching up with this host…",
+  connecting: "Connecting to this host…",
+  reconnecting: "Reconnecting to this host…",
+  "not-answering": "This host isn't answering",
+  offline: "This host is offline",
+  "cant-reach": "Can't reach this host",
+  "no-network": "This device has no network",
+  stopped: "Connection to this host failed",
+  "not-connected": "This host is not connected",
 };
 
 // The message box's placeholder says the draft is kept; the detail does not repeat it.
@@ -317,31 +341,39 @@ export function composerHostStatus(
       headline: named ? "Signed out of {machine}" : "Signed out of this host",
       action: "Reload the page to sign in again.",
     };
-  if (connection?.phase === "connecting")
+  const phase = connection?.phase as HostPhase;
+  const reach = context.reach ?? reachFromPhase(phase);
+  const words = machineReachWords(reach, phase);
+  if (reach === "connecting")
     return {
       ...base,
       tone: "connecting",
-      headline: named ? "Connecting to {machine}…" : "Connecting to this host…",
+      headline: named ? words.headline : "Connecting to this host…",
     };
-  if (connection?.phase === "offline")
+  if (reach === "no-network")
     return {
       ...base,
       tone: "offline",
-      headline: "This device is offline",
+      headline: words.headline,
       detail: ["Nothing is sent until it is back online. Your draft stays here."],
     };
-  const reconnecting = connection?.phase === "reconnecting";
+  // Inside its grace the machine is only reconnecting: calm, and the draft is kept.
+  const settling = !isMachineReachDown(reach);
   return {
     ...base,
-    tone: "offline",
-    headline: named ? "{machine} is offline" : "This host is offline",
-    progress: reconnecting ? "Reconnecting…" : null,
-    detail: named
-      ? UNREACHABLE_DETAIL
-      : [
-          ...(reconnecting ? ["If this does not clear, reload the page."] : []),
-          "Nothing is sent to another machine.",
-        ],
+    tone: settling ? "connecting" : "offline",
+    headline: named
+      ? words.headline
+      : settling
+        ? "Reconnecting to this host…"
+        : UNNAMED_HOST_HEADLINE[reach],
+    progress: words.next,
+    detail: [
+      ...(words.hint ? [words.hint] : []),
+      ...(named
+        ? UNREACHABLE_DETAIL
+        : ["If this does not clear, reload the page.", "Nothing is sent to another machine."]),
+    ],
     showsSync: named,
     keepsDraft: named,
   };

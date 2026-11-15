@@ -30,7 +30,7 @@ import {
   resumeQueueWithProjectModel,
 } from "../studio/coordinatorContinuation";
 import { latestWorkStep } from "../studio/coordinatorProgress";
-import { useUnreachableHosts } from "../studio/unreachableHosts";
+import { useHostReach, useUnreachableHosts } from "../studio/unreachableHosts";
 import { threadBlocker } from "../studio/projectWorkspaceModel";
 import {
   machineNickname as machineNicknameNow,
@@ -184,7 +184,10 @@ import {
   type WorktreeSetupSnapshot,
   isInlineRunTerminalId,
 } from "@specweave-studio/contracts";
-import { type EnvironmentConnectionPresentation } from "@specweave-studio/client-runtime/connection";
+import {
+  isMachineReachDown,
+  type EnvironmentConnectionPresentation,
+} from "@specweave-studio/client-runtime/connection";
 import { PendingAccessRequestPanel, accessAgentLabel } from "./chat/AccessRequestCard";
 import { deriveThreadTitleSeed } from "@specweave-studio/client-runtime/operations";
 import {
@@ -561,8 +564,6 @@ import {
 import {
   environmentUnavailableSendToast,
   isThisMachineCatchingUp,
-  lastSeenLabel,
-  machineDetail,
 } from "../lib/machineStatus";
 import { isDesktopLocalConnectionTarget, isThisMachineTarget } from "../connection/desktopLocal";
 import { useEnvironmentDisconnectDelay } from "../hooks/useEnvironmentDisconnectDelay";
@@ -756,7 +757,6 @@ import {
   shouldRefocusComposerOnWindowFocus,
   environmentUnavailableBanner,
   environmentWaitsForReconnectGrace,
-  THIS_MACHINE_BUSY_DESCRIPTION,
 } from "./ChatView.logic";
 import { useClockWhile } from "~/hooks/useClockWhile";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -3320,6 +3320,7 @@ function useChatViewState(props: ChatViewProps) {
   )
     ? (activeEnvironment?.environmentId ?? null)
     : null;
+  const activeEnvironmentReach = useHostReach(activeEnvironment?.environmentId);
   const [reconnectWarningGraceElapsedEnvironmentId, setReconnectWarningGraceElapsedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const reconnectWarningGraceElapsed = hasEnvironmentReconnectWarningGraceElapsed(
@@ -3718,6 +3719,9 @@ function useChatViewState(props: ChatViewProps) {
     ) {
       return null;
     }
+    // Nor is a machine inside its reconnect grace: most drops heal in seconds.
+    if (activeEnvironmentReach !== undefined && !isMachineReachDown(activeEnvironmentReach))
+      return null;
     const machineCandidate = (
       id: EnvironmentId,
       projectId: ProjectId | null,
@@ -3769,6 +3773,7 @@ function useChatViewState(props: ChatViewProps) {
       nowMs: renderNowMs,
     });
   }, [
+    activeEnvironmentReach,
     activeEnvironmentUnavailableState,
     activeProjectIsScratch,
     activeThread,
@@ -3816,19 +3821,17 @@ function useChatViewState(props: ChatViewProps) {
             label: activeEnvironmentUnavailableState.label,
             connection: unavailableConnection,
             isThisMachine: activeEnvironmentUnavailableState.isThisMachine,
+            reach: activeEnvironmentReach,
           })
         : null;
     const unavailableStatus = unavailableBanner?.status ?? null;
-    // Why it is unreachable and when it was last connected, so the banner says
-    // more than "offline". This machine is only busy: one calm line instead.
-    const unavailableDetail = unavailableBanner?.calm
-      ? THIS_MACHINE_BUSY_DESCRIPTION
-      : activeEnvironmentUnavailableState
-        ? machineDetail(
-            lastSeenLabel(activeMachineLastSeenAt, lastSeenNowMs),
-            unavailableStatus?.reason ?? null,
-          )
-        : "";
+    // Why it is down, when it last answered and that the app retries. A machine
+    // that is reconnecting, or this machine while it is busy, gets one calm line.
+    const unavailableDetail =
+      unavailableBanner?.describe(
+        unavailableConnection?.lastConnectedAt ?? activeMachineLastSeenAt,
+        lastSeenNowMs,
+      ) ?? "";
     const environmentReconnecting = unavailableBanner?.waitsForGrace === true;
     // While an update runs, transient connect blips are expected (the server
     // restarts) and the update banner already shows progress. Hard failure
@@ -3960,6 +3963,7 @@ function useChatViewState(props: ChatViewProps) {
     continuingElsewhere,
     openThreadRoute,
     automaticEnvironment,
+    activeEnvironmentReach,
     activeEnvironmentUnavailableState,
     handleReconnectActiveEnvironment,
     canDisconnectActiveEnvironment,

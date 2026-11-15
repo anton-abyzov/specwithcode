@@ -17,6 +17,8 @@ import { Link } from "@tanstack/react-router";
 import { ArrowRightIcon, InfoIcon, MonitorIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EnvironmentPresentation } from "../../state/environments";
+import { isThisMachineTarget } from "../../connection/desktopLocal";
+import { machineStatus } from "../../lib/machineStatus";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useEnvironmentScope } from "../../state/session";
@@ -327,9 +329,7 @@ function HostCard({
               ? tx("Connection failed")
               : e.connection.phase === "unsupported"
                 ? tx("Client not supported")
-                : e.connection.phase === "connecting" || e.connection.phase === "reconnecting"
-                  ? tx("Connecting…")
-                  : tx("Offline")}
+                : tx(machineStatus(e.connection, true, isThisMachineTarget(e.entry)).text)}
         </span>
       </header>
       <div className="studio-host-body">

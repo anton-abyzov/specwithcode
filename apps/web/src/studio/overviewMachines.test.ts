@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { machineActivity, machineReach } from "./overviewMachines";
+import { machineActivity, overviewMachineState } from "./overviewMachines";
 
-describe("machineReach", () => {
+describe("overviewMachineState", () => {
   it("says a connected, current machine is online", () => {
-    expect(machineReach({ phase: "connected", reported: true, stale: false })).toEqual({
+    expect(overviewMachineState({ reach: "connected", reported: true, stale: false })).toEqual({
       state: "Online",
       tone: "moss",
       word: "online",
@@ -13,31 +13,51 @@ describe("machineReach", () => {
   });
 
   it("says a connected machine still reading its chats is catching up", () => {
-    expect(machineReach({ phase: "connected", reported: true, stale: true }).state).toBe(
-      "Catching up",
-    );
+    for (const reach of ["connected", "catching-up"] as const)
+      expect(overviewMachineState({ reach, reported: true, stale: true }).state).toBe(
+        "Catching up",
+      );
   });
 
-  it("explains a machine that keeps retrying and never answered", () => {
-    // Was "Reconnecting · 0 projects".
-    expect(machineReach({ phase: "reconnecting", reported: false, stale: true })).toEqual({
-      state: "Can’t reach it · retrying",
+  it("reads a machine that just dropped as reconnecting, not offline", () => {
+    expect(overviewMachineState({ reach: "reconnecting", reported: true, stale: true })).toEqual({
+      state: "Reconnecting",
       tone: "amber",
-      word: "not reachable",
+      word: "reconnecting",
+      counted: true,
+    });
+  });
+
+  it("says why a machine is down in the words every other surface uses", () => {
+    const state = (reach: "not-answering" | "offline" | "cant-reach" | "no-network") =>
+      overviewMachineState({ reach, reported: false, stale: true });
+    // Was "Reconnecting · 0 projects", then "Can’t reach it · retrying".
+    expect(state("not-answering")).toEqual({
+      state: "Not answering",
+      tone: "amber",
+      word: "not answering",
       counted: false,
     });
+    expect(state("offline").state).toBe("Offline");
+    expect(state("cant-reach").state).toBe("Can't reach");
+    expect(state("no-network").state).toBe("No network");
   });
 
   it("keeps counting a machine that dropped after it reported", () => {
-    expect(machineReach({ phase: "reconnecting", reported: true, stale: true }).counted).toBe(true);
+    expect(
+      overviewMachineState({ reach: "not-answering", reported: true, stale: true }).counted,
+    ).toBe(true);
   });
 
   it("names a stopped or refused connection", () => {
-    expect(machineReach({ phase: "error", reported: false, stale: true })).toMatchObject({
-      state: "Can’t connect",
+    expect(overviewMachineState({ reach: "stopped", reported: false, stale: true })).toMatchObject({
+      state: "Connection failed",
       tone: "red",
+      word: "unable to connect",
     });
-    expect(machineReach({ phase: "offline", reported: false, stale: true }).state).toBe("Offline");
+    expect(
+      overviewMachineState({ reach: "not-connected", reported: false, stale: true }).state,
+    ).toBe("Not connected");
   });
 });
 

@@ -60,8 +60,16 @@ describe("threadMachinePresentation", () => {
       phase: "reconnecting",
       error: "timed out",
     });
-    expect(machine.warning).toBe("Can't reach");
-    expect(machine.tip).toContain("Can't reach. Retrying automatically.");
+    expect(machine.warning).toBe("Not answering");
+    expect(machine.tip).toContain("Not answering. Retrying by itself.");
+    const now = Date.now();
+    const reconnecting = threadMachinePresentation({
+      ...base,
+      phase: "reconnecting",
+      error: "timed out",
+      connection: { phase: "reconnecting", error: "timed out", lostAt: now, lastConnectedAt: now },
+    });
+    expect(reconnecting.warning).toBe("Reconnecting");
   });
 
   it("does not warn while this machine only catches up", () => {

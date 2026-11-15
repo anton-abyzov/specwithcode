@@ -2290,17 +2290,55 @@ describe("environmentUnavailableBanner", () => {
     expect(banner.status.retryable).toBe(true);
   });
 
-  it("keeps today's warning for another machine", () => {
+  it("gives another machine one calm line while it reconnects", () => {
+    for (const reach of ["reconnecting", "connecting"] as const) {
+      const banner = environmentUnavailableBanner({
+        label: "M1",
+        connection: stall,
+        isThisMachine: false,
+        reach,
+      });
+      expect(banner.calm).toBe(true);
+      expect(banner.variant).toBe("info");
+      expect(banner.title).toBe(reach === "reconnecting" ? "Reconnecting to M1…" : "Connecting to M1…");
+      expect(banner.describe(1_000, 61_000)).toBe("");
+      expect(banner.waitsForGrace).toBe(true);
+    }
+  });
+
+  it("says why another machine is down, when it last answered and that it retries", () => {
+    const down = (reach: "not-answering" | "offline" | "cant-reach" | "no-network") =>
+      environmentUnavailableBanner({ label: "M1", connection: stall, isThisMachine: false, reach });
+    const now = 10 * 60_000;
+    expect(down("not-answering").calm).toBe(false);
+    expect(down("not-answering").variant).toBe("warning");
+    expect(down("not-answering").title).toBe("M1 isn't answering");
+    expect(down("not-answering").describe(7 * 60_000, now)).toBe(
+      "Last answered 3m ago · Retrying by itself",
+    );
+    expect(down("offline").title).toBe("M1 is offline");
+    expect(down("offline").describe(null, now)).toBe("Retrying by itself");
+    expect(down("no-network").title).toBe("This device has no network");
+    // Only a relay that could not be reached points at the network.
+    expect(down("cant-reach").title).toBe("Can't reach M1");
+    expect(down("cant-reach").describe(null, now)).toBe(
+      "Retrying by itself. Your DNS or firewall may be blocking SpecWithCode Connect. Try another network, such as a phone hotspot",
+    );
+    for (const reach of ["not-answering", "offline", "no-network"] as const)
+      expect(down(reach).describe(null, now)).not.toContain("DNS or firewall");
+    expect(down("not-answering").status.retryable).toBe(true);
+  });
+
+  it("keeps the reason for a stopped connection to another machine", () => {
     const banner = environmentUnavailableBanner({
       label: "M1",
-      connection: stall,
+      connection: { phase: "error", error: "Sign in again." },
       isThisMachine: false,
+      reach: "stopped",
     });
-    expect(banner.calm).toBe(false);
-    expect(banner.variant).toBe("warning");
-    expect(banner.title).toBe("Can't reach M1");
-    expect(banner.status.reason).toBe("No answer from 127.0.0.1:8319 within 10s.");
-    expect(banner.status.retryable).toBe(true);
+    expect(banner.variant).toBe("error");
+    expect(banner.title).toBe("Connection to M1 failed");
+    expect(banner.describe(null, 0)).toBe("Sign in again.");
     expect(
       environmentUnavailableBanner({
         label: "M1",

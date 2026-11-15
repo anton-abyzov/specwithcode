@@ -745,14 +745,17 @@ describe("threads on this machine while its server catches up", () => {
           entry: {
             target: { _tag: "PrimaryConnectionTarget", httpBaseUrl: "http://127.0.0.1:8319" },
           },
-          connection: { phase: "reconnecting" },
+          connection: { phase: "reconnecting", lostAt: 0, lastConnectedAt: 0 },
         },
         {
           environmentId: "m1",
           entry: { target: { _tag: "RelayConnectionTarget" } },
-          connection: { phase: "reconnecting" },
+          connection: { phase: "reconnecting", lostAt: 0, lastConnectedAt: 0 },
         },
-      ] as never),
+      ] as never,
+      // Past the reconnect grace: the remote host is down, this machine is busy.
+      90_000,
+      ),
     );
     expect([...unreachable]).toEqual(["m1"]);
     const hostOffline = unreachable.has(blocked.environmentId);
@@ -768,9 +771,13 @@ describe("threads on an unreachable host", () => {
 
   it("says the host is offline instead of Blocked and does not wait on the person", () => {
     expect(threadStatusWord(blocked, true)).toBe("Host offline");
+    expect(threadStatusWord(blocked, true, "offline")).toBe("Host offline");
+    // A busy machine is not called offline: its rows say it is not answering.
+    expect(threadStatusWord(blocked, true, "not-answering")).toBe("Not answering");
+    expect(threadStatusWord(blocked, true, "no-network")).toBe("No network");
     expect(threadTone(blocked, true)).toBe("unknown");
     expect(waitingCount([blocked], offline)).toBe(0);
-    expect(threadsSummary([blocked], 0, offline)).toBe("Some machines are offline.");
+    expect(threadsSummary([blocked], 0, offline)).toBe("Some machines can't be reached.");
   });
 
   it("lists it as idle rather than working from a stale runtime", () => {
@@ -790,6 +797,33 @@ describe("threads on an unreachable host", () => {
     );
     expect(groups.find((g) => g.group === "Offline")?.threads).toHaveLength(2);
     expect(groups.find((g) => g.group === "Needs you")?.threads).toHaveLength(0);
+  });
+
+  it("keeps a thread in its group while its machine reconnects or catches up", () => {
+    const working = thread({ id: "worker-3", runtime: running });
+    const groupsFor = (freshness: "synchronizing" | "cached" | "empty" | "offline") =>
+      buildThreadPaneGroups([blocked, working], "activity", "", undefined, new Set(), {
+        roots: [blocked, working].map((root) => ({
+          key: root.id,
+          thread: root,
+          coordinator: false,
+          freshness,
+          actions: [],
+          working: false,
+        })),
+        count: 0,
+        working: 0,
+        complete: false,
+        staleCount: 0,
+        label: "Catching up with your machines",
+      });
+    for (const freshness of ["synchronizing", "cached", "empty"] as const) {
+      const groups = groupsFor(freshness);
+      expect(groups.find((g) => g.group === "Offline")?.threads ?? []).toHaveLength(0);
+      expect(groups.find((g) => g.group === "Needs you")?.threads).toEqual([blocked]);
+      expect(groups.find((g) => g.group === "Working")?.threads).toEqual([working]);
+    }
+    expect(groupsFor("offline").find((g) => g.group === "Offline")?.threads).toHaveLength(2);
   });
 
   it("keeps a resolved thread resolved and is unchanged once the host is back", () => {

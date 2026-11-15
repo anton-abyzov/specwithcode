@@ -2,7 +2,6 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
   hasRelayRoute,
-  type EnvironmentConnectionPhase,
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@specweave-studio/client-runtime/connection";
 import { Discovery } from "@specweave-studio/client-runtime/relay";
@@ -112,42 +111,11 @@ export function useConnectedEnvironmentIds() {
   return useAtomValue(environmentSummaries.connectedEnvironmentIdsAtom);
 }
 
-/**
- * Hosts that cannot be reached now: retrying, stopped or refused. A host on its
- * first connection attempt is not one yet, so a page load does not flash every
- * remote host as offline.
- *
- * This machine is never offline: its server shares this device, so a slow or
- * dropped answer means the app is busy (a stalled event loop, a full disk) and
- * catches up on its own. It counts only once the connection has stopped for
- * good ("error") or this build cannot talk to it ("unsupported").
- */
-export function isEnvironmentUnreachable(
-  phase: EnvironmentConnectionPhase,
-  isThisMachine = false,
-): boolean {
-  if (isThisMachine) return phase === "error" || phase === "unsupported";
-  return phase !== "connected" && phase !== "connecting";
-}
-
-/** The ids of {@link isEnvironmentUnreachable} environments, this machine judged as local. */
-export function unreachableEnvironmentIds(
-  environments: ReadonlyArray<
-    Pick<EnvironmentPresentation, "environmentId" | "entry" | "connection">
-  >,
-): ReadonlyArray<EnvironmentId> {
-  return environments
-    .filter((environment) =>
-      isEnvironmentUnreachable(
-        environment.connection.phase,
-        isThisMachineTarget(environment.entry),
-      ),
-    )
-    .map((environment) => environment.environmentId);
-}
-
-export function useUnreachableEnvironmentIds(): ReadonlySet<string> {
-  const { environments } = useEnvironments();
-  const key = unreachableEnvironmentIds(environments).join("\n");
-  return useMemo(() => new Set(key === "" ? [] : key.split("\n")), [key]);
-}
+export {
+  environmentReachState,
+  isEnvironmentUnreachable,
+  unreachableEnvironmentIds,
+  useMachineReachStates,
+  useUnreachableEnvironmentIds,
+  type MachineReachStates,
+} from "./machineReach";
