@@ -531,6 +531,10 @@ public final class ChatSession: Identifiable {
 
   /// The machine is unreachable and past its first attempt, so the chat says offline.
   public var showsMachineOffline: Bool { !machineOnline && !machineSettling }
+
+  /// A run is in progress right now. A transcript cached mid-run is not live,
+  /// so it shows as settled: no live row and no typing dots until the machine answers.
+  public var showsRunning: Bool { isRunning && !isStale }
 }
 
 // MARK: - Settings
@@ -653,6 +657,11 @@ public protocol AppEngine: AnyObject {
   func saveProjectSettings(_ draft: ProjectSettingsDraft, for project: ProjectRef) async throws
   func loadMachineSettings(_ machineId: String) async throws -> MachineSettings
   func saveMachineSettings(_ settings: MachineSettings, for machineId: String) async throws
+  /// Gives a project its own reply style on its machine. Throws, never a
+  /// silent no-op, when the machine cannot take the change.
+  func setReplyStyle(_ style: ReplyStyle, for project: ProjectRef) async throws
+  /// The thread a chat shows: the thread itself, or a project's coordinator thread.
+  func shownThread(for target: ChatTarget) -> ThreadRef?
 
   /// Signs in to SpecWithCode Connect and adds the account's computers.
   func connectSignIn(with method: ConnectSignInMethod) async throws
@@ -719,6 +728,17 @@ extension AppEngine {
     open(session)
   }
 
+  public func setReplyStyle(_ style: ReplyStyle, for project: ProjectRef) async throws {
+    throw SyncError.sendBlocked(MachineReplyStyles.updateNeededReason)
+  }
+
+  public func shownThread(for target: ChatTarget) -> ThreadRef? {
+    switch target {
+    case let .thread(ref): ref
+    case let .aide(p), let .project(p): ThreadRef(environmentId: p.environmentId, threadId: ProjectShell.defaultCoordinatorThreadId(projectId: p.projectId))
+    }
+  }
+
   public func connectSignIn(with method: ConnectSignInMethod) async throws {}
   public func connectSignOut() async {}
   public func connectDeleteAccount() async throws {}
@@ -762,20 +782,79 @@ public final class AppModel {
   public var appearance: AppearancePreference {
     didSet { UserDefaults.standard.set(appearance.rawValue, forKey: "appearance") }
   }
-  /// How much of a thread's work the transcript shows; kept on this device.
+  /// How much of a thread's work the transcript shows: the default for every
+  /// thread on this phone. A thread can have its own, in `threadTimelineDetails`.
   public var timelineDetail: TimelineDetail {
-    didSet { UserDefaults.standard.set(timelineDetail.rawValue, forKey: TimelineDetail.defaultsKey) }
+    didSet { defaults.set(timelineDetail.rawValue, forKey: TimelineDetail.defaultsKey) }
   }
+  /// Threads with their own Show level, kept on this phone.
+  public var threadTimelineDetails: ThreadDetailStore {
+    didSet { threadTimelineDetails.save(to: defaults) }
+  }
+  /// Each machine's reply style and its projects' own, by environment id.
+  /// Missing until a machine's settings arrive.
+  public var replyStyles: [String: MachineReplyStyles] = [:]
 
   @ObservationIgnored public let engine: AppEngine
+  @ObservationIgnored private let defaults: UserDefaults
   @ObservationIgnored private var sessions: [ChatTarget: ChatSession] = [:]
   @ObservationIgnored private var sessionViewers: [ChatTarget: Int] = [:]
 
-  public init(engine: AppEngine) {
+  public init(engine: AppEngine, defaults: UserDefaults = .standard) {
     self.engine = engine
-    self.appearance = UserDefaults.standard.string(forKey: "appearance").flatMap(AppearancePreference.init) ?? .system
-    self.timelineDetail = TimelineDetail.stored()
+    self.defaults = defaults
+    self.appearance = defaults.string(forKey: "appearance").flatMap(AppearancePreference.init) ?? .system
+    self.timelineDetail = TimelineDetail.stored(in: defaults)
+    self.threadTimelineDetails = ThreadDetailStore.stored(in: defaults)
     engine.start(model: self)
+  }
+
+  // MARK: Show and replies
+
+  /// The thread a chat shows, whose own Show level it uses.
+  public func shownThread(for target: ChatTarget) -> ThreadRef? { engine.shownThread(for: target) }
+
+  private var detailChoice: TimelineDetailChoice {
+    get { TimelineDetailChoice(phoneDefault: timelineDetail, threads: threadTimelineDetails) }
+    set {
+      if timelineDetail != newValue.phoneDefault { timelineDetail = newValue.phoneDefault }
+      if threadTimelineDetails != newValue.threads { threadTimelineDetails = newValue.threads }
+    }
+  }
+
+  /// The level a chat shows: its thread's own, else the phone's default.
+  public func timelineDetail(for target: ChatTarget) -> TimelineDetail {
+    detailChoice.resolved(for: shownThread(for: target))
+  }
+
+  /// Whether a Show choice in this chat changes only its thread or every thread.
+  public func timelineDetailScope(for target: ChatTarget) -> TimelineDetailScope {
+    detailChoice.scope(for: shownThread(for: target))
+  }
+
+  /// A level chosen in a chat's menu, under the scope the menu shows.
+  public func chooseTimelineDetail(_ detail: TimelineDetail, scope: TimelineDetailScope, in target: ChatTarget) {
+    detailChoice = detailChoice.choosing(detail, scope: scope, for: shownThread(for: target))
+  }
+
+  /// "Every thread" drops the chat's own level; "This thread" pins the one it shows.
+  public func chooseTimelineDetailScope(_ scope: TimelineDetailScope, in target: ChatTarget) {
+    detailChoice = detailChoice.changingScope(to: scope, for: shownThread(for: target))
+  }
+
+  /// The project whose reply style a chat follows: Percy's or a project's
+  /// coordinator, or the project a thread belongs to.
+  public func replyStyleProject(for target: ChatTarget) -> ProjectRef? {
+    switch target {
+    case let .aide(p), let .project(p): p
+    case let .thread(ref): thread(ref)?.projectRef
+    }
+  }
+
+  /// The reply style a chat's project uses; nil when its machine's value is unknown.
+  public func replyStyle(for target: ChatTarget) -> ReplyStyleState? {
+    guard let project = replyStyleProject(for: target) else { return nil }
+    return replyStyles[project.environmentId]?.state(forProject: project.projectId)
   }
 
   public var pinnedProjects: [ProjectSummary] { projects.filter { $0.isPinned && !$0.archived && !$0.isAutomated } }

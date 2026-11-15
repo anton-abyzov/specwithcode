@@ -176,10 +176,11 @@ private struct ChatScreen: View {
 
   // MARK: Transcript
 
-  /// The rows at the chosen detail level: Results only and Folded steps fold
-  /// each turn's steps behind one row; Everything shows them all.
+  /// The rows at this chat's Show level (its thread's own, else the phone's
+  /// default): Results only and Folded steps fold each turn's steps behind one
+  /// row; Everything shows them all. A transcript cached mid-run shows settled.
   private var visibleRows: [TranscriptRow] {
-    TranscriptFolding.rows(session.rows, detail: model.timelineDetail, isRunning: session.isRunning, expandedFolds: expandedFolds)
+    TranscriptFolding.rows(session.rows, detail: model.timelineDetail(for: target), isRunning: session.showsRunning, expandedFolds: expandedFolds)
   }
 
   private var transcript: some View {
@@ -416,9 +417,10 @@ private struct ChatScreen: View {
     }
   }
 
-  /// Typing dots while a run is active and no reply is streaming yet.
+  /// Typing dots while a run is active and no reply is streaming yet; never
+  /// over a transcript cached mid-run.
   private var showsTyping: Bool {
-    guard session.isRunning else { return false }
+    guard session.showsRunning else { return false }
     if case let .assistant(_, streaming) = session.rows.last?.kind, streaming { return false }
     return true
   }
@@ -456,6 +458,8 @@ private struct ChatScreen: View {
         }
         switch target {
         case let .aide(ref), let .project(ref):
+          ChatShowMenuButton(target: target)
+            .weaveGlass(in: Capsule(), interactive: true)
           WeaveIconButton("gearshape", label: "Project settings") { router.sheet = .projectSettings(LinkedProjectState.settingsTarget(ref, in: model)) }
             .accessibilityIdentifier("column.project-settings")
         case .thread:
@@ -507,10 +511,14 @@ private struct ChatScreen: View {
       titleCapsule
     } trailing: {
       if session.showsMachineOffline && target.threadRef == nil {
-        WeaveIconButton("laptopcomputer", label: "Connection options") {
-          nav.push(.machine(target.environmentId))
+        HStack(spacing: WeaveSpacing.s2) {
+          ChatShowMenuButton(target: target)
+            .weaveGlass(in: Capsule(), interactive: true)
+          WeaveIconButton("laptopcomputer", label: "Connection options") {
+            nav.push(.machine(target.environmentId))
+          }
+          .accessibilityIdentifier("chat.connection-options")
         }
-        .accessibilityIdentifier("chat.connection-options")
       } else {
         switch target {
         case let .aide(project), let .project(project):
@@ -518,43 +526,49 @@ private struct ChatScreen: View {
           // The personal assistant says topics; a project says threads.
           let listName = model.project(project)?.kind == .personal ? "Topics" : "Threads"
           // One glass capsule: the machine this coordinator runs on, a
-          // hairline, then the project's threads, which the list beside it
-          // already shows on a wide screen.
+          // hairline, the project's threads, which the list beside it
+          // already shows on a wide screen, then Show, since a coordinator
+          // has no thread menu to hold it.
           let switches: Bool = {
             guard case .project = target else { return false }
             return OrchestratorSwitcher.choices(model.project(project)?.members ?? [], current: project).count > 1
           }()
           let showsThreads = !threadsOnScreen(project)
-          if switches || showsThreads {
-            HStack(spacing: 0) {
-              if switches {
-                OrchestratorSwitcher(current: project)
-                if showsThreads {
-                  Rectangle()
-                    .fill(Color.weave.line)
-                    .frame(width: WeaveSize.hairline, height: 20)
-                    .accessibilityHidden(true)
-                }
-              }
+          HStack(spacing: 0) {
+            if switches {
+              OrchestratorSwitcher(current: project)
               if showsThreads {
-                Button {
-                  showThreads(of: project)
-                } label: {
-                  Label(listName, systemImage: "bubble.left.and.bubble.right")
-                    .labelStyle(ThreadsLabelStyle(showsTitle: threadsLabel))
-                    .font(.weave(.callout, weight: .semibold))
-                    .foregroundStyle(needsYou ? Color.weave.warn : Color.weave.ink)
-                    .padding(.horizontal, WeaveSpacing.s3)
-                    .frame(minHeight: WeaveSize.minTap)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(PressableStyle())
-                .accessibilityLabel(listName)
-                .accessibilityIdentifier("chat.threads")
+                Rectangle()
+                  .fill(Color.weave.line)
+                  .frame(width: WeaveSize.hairline, height: 20)
+                  .accessibilityHidden(true)
               }
             }
-            .weaveGlass(in: Capsule(), interactive: true)
+            if showsThreads {
+              Button {
+                showThreads(of: project)
+              } label: {
+                Label(listName, systemImage: "bubble.left.and.bubble.right")
+                  .labelStyle(ThreadsLabelStyle(showsTitle: threadsLabel))
+                  .font(.weave(.callout, weight: .semibold))
+                  .foregroundStyle(needsYou ? Color.weave.warn : Color.weave.ink)
+                  .padding(.horizontal, WeaveSpacing.s3)
+                  .frame(minHeight: WeaveSize.minTap)
+                  .contentShape(Rectangle())
+              }
+              .buttonStyle(PressableStyle())
+              .accessibilityLabel(listName)
+              .accessibilityIdentifier("chat.threads")
+            }
+            if switches || showsThreads {
+              Rectangle()
+                .fill(Color.weave.line)
+                .frame(width: WeaveSize.hairline, height: 20)
+                .accessibilityHidden(true)
+            }
+            ChatShowMenuButton(target: target)
           }
+          .weaveGlass(in: Capsule(), interactive: true)
         case let .thread(thread):
           if !usesRail { threadControls(thread) }
         }
@@ -746,6 +760,7 @@ private struct ChatScreen: View {
       Button("Check handoff options…", systemImage: "arrow.right.arrow.left") { showingHandoff = true }
         .accessibilityIdentifier("thread.handoff")
     }
+    ChatDetailMenuSections(target: .thread(ref))
     Section {
       Button(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin") {
         perform(pinned ? .unpin : .pin, on: ref)
@@ -885,8 +900,8 @@ private struct ChatScreen: View {
       }
       ComposerBar(
         text: draft,
-        isRunning: session.isRunning && !session.isStale,
-        placeholder: session.isRunning ? nil : placeholder,
+        isRunning: session.showsRunning,
+        placeholder: session.showsRunning ? nil : placeholder,
         blockedReason: session.machineOnline ? (session.sendBlockedReason ?? (photosPending ? "Preparing photos…" : nil)) : session.machineSettling ? "Connecting…" : "Machine unavailable. Your draft is kept.",
         hasAttachments: !pendingImages.isEmpty,
         // Set only from a thread's runs, so chats without runs offer none.

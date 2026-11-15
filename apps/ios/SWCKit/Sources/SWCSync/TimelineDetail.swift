@@ -1,7 +1,9 @@
 import Foundation
 
-/// How much of an agent's work a transcript shows. The same three levels as
-/// the desktop app's Replies setting; the phone keeps its own choice.
+/// How much of an agent's work a transcript shows: the Show setting, with the
+/// same three levels as on the desktop. The phone keeps its own default and a
+/// thread can have its own level (`ThreadDetailStore`). It is apart from
+/// Replies (`ReplyStyle`), which tells agents how to write.
 public enum TimelineDetail: String, CaseIterable, Sendable, Identifiable {
   /// Results only: your messages, each turn's reply and one fold per turn.
   case concise
@@ -64,9 +66,12 @@ public enum TranscriptFolding {
     return result
   }
 
-  /// The id of the fold row that stands for the turn starting at `firstRow`.
-  public static func foldId(for firstRow: TranscriptRow?) -> String {
-    "fold:\(firstRow?.id ?? "head")"
+  /// The id of the fold row that stands for the turn starting at `firstRow`,
+  /// or, for a turn still in progress, for the steps starting at `firstRow`.
+  /// A fold in progress has its own id, so one opened while the turn runs is
+  /// not open once the turn settles: the settled fold starts closed.
+  public static func foldId(for firstRow: TranscriptRow?, inProgress: Bool = false) -> String {
+    (inProgress ? "fold-live:" : "fold:") + (firstRow?.id ?? "head")
   }
 
   static func fold(
@@ -86,7 +91,9 @@ public enum TranscriptFolding {
     }
     func isStep(_ row: TranscriptRow, at index: Int) -> Bool {
       switch row.kind {
-      case .reasoning, .tool, .subagent: true
+      case .reasoning, .tool: true
+      // An agent still at work stays visible: its row links to the worker.
+      case let .subagent(_, _, isRunning): !isRunning
       case .assistant: index != lastReply
       default: false
       }
@@ -96,7 +103,7 @@ public enum TranscriptFolding {
     guard !steps.isEmpty, let firstStep = rows.firstIndex(where: { stepIds.contains($0.id) }) else {
       return rows
     }
-    let id = foldId(for: segment.first)
+    let id = foldId(for: segment.first, inProgress: active)
     let expanded = expandedFolds.contains(id)
     let foldRow = TranscriptRow(id: id, kind: .fold(
       label: running ? "Working" : "Worked",
@@ -138,7 +145,7 @@ public enum TranscriptFolding {
         result.append(first)
         return
       }
-      let id = foldId(for: first)
+      let id = foldId(for: first, inProgress: true)
       let expanded = expandedFolds.contains(id)
       result.append(TranscriptRow(id: id, kind: .fold(
         label: live ? "Working" : "Worked",

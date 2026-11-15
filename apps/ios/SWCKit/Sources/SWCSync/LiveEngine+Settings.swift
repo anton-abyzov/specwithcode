@@ -245,6 +245,42 @@ extension LiveEngine {
     settingsChanged(entry, updated)
   }
 
+  // MARK: - Reply style
+
+  /// Gives the project its own reply style with a per-key edit, so no other
+  /// project setting changes. Only a server reporting the capability saves it.
+  public func setReplyStyle(_ style: ReplyStyle, for project: ProjectRef) async throws {
+    guard let entry = machines[project.environmentId] else { throw SyncError.unknownMachine }
+    guard entry.canOperate else { throw SyncError.sendBlocked(Self.readOnlyReason) }
+    guard supportsProjectOverrideChanges(entry) else { throw SyncError.sendBlocked(MachineReplyStyles.updateNeededReason) }
+    let input = UpdateServerSettingsInput(patch: MachineReplyStyles.patch(style, forProject: project.projectId))
+    let updated = try await withRetry(project.environmentId) { socket in
+      try await Self.decode(ServerSettings.self, from: socket.call(tag: RpcMethod.serverUpdateSettings.rawValue, payload: JSONValue.from(input)))
+    }
+    settingsChanged(entry, updated)
+    publishNow()
+  }
+
+  public func shownThread(for target: ChatTarget) -> ThreadRef? {
+    switch target {
+    case let .thread(ref):
+      return ref
+    case let .aide(p), let .project(p):
+      let id = machines[p.environmentId].flatMap { threadId(for: target, entry: $0) }
+        ?? ProjectShell.defaultCoordinatorThreadId(projectId: p.projectId)
+      return ThreadRef(environmentId: p.environmentId, threadId: id)
+    }
+  }
+
+  func supportsProjectOverrideChanges(_ entry: MachineEntry) -> Bool {
+    entry.config?.environment.capabilities.has("projectSettingsOverrideChanges") ?? false
+  }
+
+  func replyStyles(_ entry: MachineEntry) -> MachineReplyStyles? {
+    guard let settings = entry.settings else { return nil }
+    return MachineReplyStyles.read(settings, canOperate: entry.canOperate, perKeyProjectChanges: supportsProjectOverrideChanges(entry))
+  }
+
   func settingsChanged(_ entry: MachineEntry, _ settings: ServerSettings) {
     guard machines[entry.environmentId] === entry else { return }
     entry.settings = settings

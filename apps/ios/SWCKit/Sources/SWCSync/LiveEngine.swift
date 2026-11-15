@@ -525,6 +525,9 @@ public final class LiveEngine: AppEngine {
     // Percy is a switch in the desktop's settings; any machine saying so shows it.
     let aideEnabled = AideSetting.visible(entries.map { aideMachine($0, nicknames: nicknames) }, previous: model.aideEnabled)
     assign(model, \.aideEnabled, aideEnabled)
+    assign(model, \.replyStyles, entries.reduce(into: [:]) { styles, entry in
+      if let value = replyStyles(entry) { styles[entry.environmentId] = value }
+    })
 
     let output = ShellSummaries.build(entries.map { entry in
       // A live list replaces the saved one wholesale, so a reconnect never doubles rows.

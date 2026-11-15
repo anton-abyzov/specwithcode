@@ -547,6 +547,16 @@ public final class FixtureEngine: AppEngine {
     machineSettings[machineId] = settings
   }
 
+  /// Sample machines write concise replies; a project's own choice is kept here.
+  public func setReplyStyle(_ style: ReplyStyle, for project: ProjectRef) async throws {
+    await pause(latency / 2)
+    try requireOnline(project.environmentId, doing: "change how agents reply")
+    guard let model else { return }
+    var styles = model.replyStyles[project.environmentId] ?? MachineReplyStyles(machine: .concise, canChange: true)
+    styles.projects[project.projectId] = style
+    model.replyStyles[project.environmentId] = styles
+  }
+
   // MARK: State
 
   private func teamRulesNotice(for target: ChatTarget, machine: MachineSummary?) -> ChatTeamRulesNotice? {
@@ -591,6 +601,9 @@ public final class FixtureEngine: AppEngine {
       return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
     }
     if let aide = model.aide { model.aide = refreshed(aide) }
+    for machine in model.machines where model.replyStyles[machine.id] == nil {
+      model.replyStyles[machine.id] = MachineReplyStyles(machine: .concise, canChange: true)
+    }
     // A merged row lists the same threads under each of its members.
     var seen = Set<ThreadRef>()
     let all = model.threadsByProject.values.flatMap { $0 }.filter { seen.insert($0.ref).inserted }
