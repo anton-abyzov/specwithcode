@@ -5,6 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { managedToolDirs } from "./machineTools.ts";
@@ -22,8 +23,12 @@ import {
   type TerminalPathFs,
 } from "./terminalPath.ts";
 
-// oxlint-disable-next-line studio/no-global-process-runtime -- mkfifo exists only on POSIX hosts.
-const posixOnly = process.platform === "win32" ? it.skip : it;
+/**
+ * The block goes into a POSIX shell's startup file and never onto Windows. These cases need what
+ * only a POSIX home folder has: file modes, FIFOs, and folders whose paths start with "/", the
+ * only ones the block's reader keeps.
+ */
+const posixOnly = it.skipIf(HostProcessPlatform.defaultValue() === "win32");
 
 let home = "";
 beforeEach(() => {
@@ -35,13 +40,15 @@ const touch = (file: string, text = "") => {
   NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
   NodeFS.writeFileSync(file, text);
 };
-const zprofile = () => NodePath.join(home, ".zprofile");
+/** The app joins the home folder with forward slashes on every host; so do the paths compared. */
+const inHome = (...parts: ReadonlyArray<string>) => NodePath.posix.join(home, ...parts);
+const zprofile = () => inHome(".zprofile");
 const read = (file = zprofile()) => NodeFS.readFileSync(file, "utf8");
 
 const sync = (options: { baseDir?: string; shell?: string; fs?: TerminalPathFs } = {}) =>
   syncTerminalPath({
     home,
-    baseDir: options.baseDir ?? NodePath.join(home, ".specwithcode"),
+    baseDir: options.baseDir ?? inHome(".specwithcode"),
     platform: "darwin",
     arch: "arm64",
     glibc: false,
@@ -106,7 +113,7 @@ describe("the block", () => {
 
 describe("syncTerminalPath", () => {
   it("lists the folders holding claude, Node.js, SpecWeave and Codex, then settles", async () => {
-    const base = NodePath.join(home, ".specwithcode");
+    const base = inHome(".specwithcode");
     const { node, specweave } = pinned(base);
     touch(NodePath.join(home, ".local/bin/claude"));
     touch(NodePath.join(node, "node"));
@@ -116,8 +123,8 @@ describe("syncTerminalPath", () => {
     touch(NodePath.join(home, ".local/share/specweave/providers/bin/README"));
 
     expect(await sync()).toBe("added");
-    const rel = (dir: string) => `"$HOME/${NodePath.relative(home, dir)}"`;
-    const codex = NodePath.join(base, "tools/codex/0.200.0/bin");
+    const rel = (dir: string) => `"$HOME/${dir.slice(home.length + 1)}"`;
+    const codex = NodePath.posix.join(base, "tools/codex/0.200.0/bin");
     const listed = [node, specweave, codex].toSorted().map(rel).join(" ");
     expect(read()).toContain(`for _swc_dir in "$HOME/.local/bin" ${listed}; do`);
     expect(read()).not.toContain("providers/bin");
@@ -125,7 +132,7 @@ describe("syncTerminalPath", () => {
     expect(await sync()).toBe("unchanged");
   });
 
-  it("keeps the person's bytes and file mode exactly", async () => {
+  posixOnly("keeps the person's bytes and file mode exactly", async () => {
     touch(NodePath.join(home, ".local/bin/claude"));
     const mine = Buffer.from([0x23, 0x20, 0x63, 0x61, 0x66, 0xe9, 0x0d, 0x0a]);
     NodeFS.writeFileSync(zprofile(), mine, { mode: 0o600 });
@@ -137,7 +144,7 @@ describe("syncTerminalPath", () => {
     expect(NodeFS.readdirSync(home).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
-  it("two app homes on one account settle on one merged block", async () => {
+  posixOnly("two app homes on one account settle on one merged block", async () => {
     const a = NodePath.join(home, ".specwithcode");
     const b = NodePath.join(home, ".specweave-studio");
     touch(NodePath.join(pinned(a).specweave, "specweave"));
@@ -229,7 +236,7 @@ describe("syncTerminalPath", () => {
     expect(read()).toBe("# zsh\n");
     expect(read(NodePath.join(home, ".bash_profile"))).toContain(TERMINAL_PATH_START);
     expect(JSON.parse(read(terminalPathStateFile(home)))).toEqual({
-      files: [NodePath.join(home, ".bash_profile")],
+      files: [inHome(".bash_profile")],
     });
   });
 
@@ -276,7 +283,7 @@ describe("syncTerminalPath", () => {
     expect(await sync()).toBe("added");
   });
 
-  it("keeps folders a second, duplicate block listed", async () => {
+  posixOnly("keeps folders a second, duplicate block listed", async () => {
     const other = pinned(NodePath.join(home, ".specweave-studio")).specweave;
     touch(NodePath.join(other, "specweave"));
     touch(NodePath.join(home, ".local/bin/claude"));
