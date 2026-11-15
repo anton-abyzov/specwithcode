@@ -9,9 +9,9 @@ What a conversation shows of an agent's work. One rule for web, desktop and iOS;
 
 ## The control
 
-One control in the conversation's header holds both, on desktop, web, iOS and Android.
+One control in the conversation's header holds both, on desktop and web. The phone keeps its own Show setting until the phone apps get the same control.
 
-- **Agent replies in this project**: Concise or Detailed. It is the project's setting on every machine that has the project, so it is read-only when this connection may not change settings there, and reads "Mixed" when the project's checkouts disagree. Phones change it only on machines that accept per-key project overrides.
+- **Agent replies in this project**: Concise or Detailed. It is the project's setting on every machine that has the project, so it is read-only when this connection may not change settings there, and reads "Mixed" when the project's checkouts disagree.
 - **Conversation shows**: the three levels, each listed once with its description.
 - **Applies to**: This thread or Every thread. A level chosen under "Every thread" is the device's default and this thread follows it. Under "This thread" it is this thread's own. Switching to "This thread" pins the level on screen; switching to "Every thread" drops the thread's own level.
 
