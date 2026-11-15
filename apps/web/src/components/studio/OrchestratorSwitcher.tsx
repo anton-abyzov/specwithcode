@@ -16,7 +16,6 @@ import {
   Settings2Icon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useScratchProject } from "../../hooks/useScratchProject";
 import { useTx } from "../../i18n";
 import { randomUUID } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -419,12 +418,12 @@ export function ProjectOrchestratorSwitcher({
   const identity = useMachineIdentity(project.environmentId, label);
   const [linkTarget, setLinkTarget] = useState<ProjectLinkTarget | null>(null);
   const projects = useProjects();
-  const { scratchWorkspaceRootFor } = useScratchProject();
   const nickname = useMachineNicknames();
   // Linking needs what copying needs: a project this person can operate, not a private one.
   const offers = useMemo(
-    () => (onCopy ? sameRepositoryLinkOffers(projects, project, scratchWorkspaceRootFor) : []),
-    [onCopy, projects, project, scratchWorkspaceRootFor],
+    // A machine's "No project" folder has no repository, so it never matches: no lookup needed.
+    () => (onCopy ? sameRepositoryLinkOffers(projects, project, () => null) : []),
+    [onCopy, projects, project],
   );
   return (
     <>
