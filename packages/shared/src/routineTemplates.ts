@@ -1,4 +1,11 @@
-import type { ScheduledTaskUpsertSchedule } from "@specweave-studio/contracts";
+import type {
+  ModelSelection,
+  ProviderModelTiers,
+  ScheduledTaskUpsertSchedule,
+  ServerProvider,
+} from "@specweave-studio/contracts";
+
+import { tierModelFor } from "./modelTiers.ts";
 
 /**
  * Ready-made routines for a personal assistant. Each one prepares and drafts
@@ -29,6 +36,29 @@ export interface RoutineTemplate {
   > | null;
   /** The form starts on the suggested cadence instead of "When you ask". */
   readonly cadenceOnByDefault?: boolean;
+  /**
+   * "everyday": the routine runs on the coordinator's provider at its everyday
+   * (regular) tier model, for routine work that needs no frontier model.
+   */
+  readonly modelTier?: "everyday";
+}
+
+/**
+ * The model a routine from `template` is saved with: the coordinator's, or for an
+ * everyday template that provider's regular tier model when it lists one. Options
+ * belong to the coordinator's model, so they are dropped when the model changes.
+ */
+export function routineTemplateModel(
+  template: Pick<RoutineTemplate, "modelTier">,
+  coordinator: ModelSelection | null,
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver" | "models">>,
+  tiers: ProviderModelTiers | undefined,
+): ModelSelection | null {
+  if (coordinator === null || template.modelTier !== "everyday") return coordinator;
+  const provider = providers.find((entry) => entry.instanceId === coordinator.instanceId);
+  const model = provider === undefined ? undefined : tierModelFor(provider, "regular", tiers);
+  if (model === undefined || model === coordinator.model) return coordinator;
+  return { instanceId: coordinator.instanceId, model } as ModelSelection;
 }
 
 /** The title the proactive briefing routine keeps, so the assistant can find it again. */
@@ -148,6 +178,7 @@ export const ROUTINE_TEMPLATES: ReadonlyArray<RoutineTemplate> = [
     output: null,
     // Offered, never on: the public feed already covers this (AC-09).
     suggestedCadence: { type: "interval", everyMs: 2 * 60 * 60_000 },
+    modelTier: "everyday",
   },
 ];
 

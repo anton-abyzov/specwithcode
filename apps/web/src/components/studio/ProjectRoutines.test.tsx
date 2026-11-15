@@ -33,6 +33,10 @@ vi.mock("../../state/server", () => ({
     upsertScheduledTask: "upsert",
   },
 }));
+vi.mock("./useRoutineModel", () => ({
+  useRoutineModel: (_environmentId: unknown, _template: unknown, coordinator: unknown) =>
+    coordinator,
+}));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({
     data: { tasks: state.tasks },
