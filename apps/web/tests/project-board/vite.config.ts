@@ -14,7 +14,6 @@ const stubs = new Set(
   [
     "browser/useOpenLink",
     "components/studio/shell/LibraryFileViewer",
-    "components/sidebar/SidebarPlanProgress",
     "state/environments",
     "state/query",
     "studio/machineIdentity",
