@@ -3962,6 +3962,11 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   title: TrimmedNonEmptyString,
   generateTitle: Schema.optional(Schema.Boolean),
   modelSelection: ModelSelection,
+  /**
+   * Nobody picked `modelSelection`: it is only what the composer showed. A
+   * project on Tracks then starts the thread on its Daily or Complex track.
+   */
+  modelUnnamed: Schema.optional(Schema.Boolean),
   /** The Auto routing decision behind `modelSelection`, kept on the thread. */
   routing: Schema.optional(TaskRoutingDecision),
   /** The model the thread stands in for: its launch moved off it because it had no room. */

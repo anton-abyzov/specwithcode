@@ -20,10 +20,21 @@ export const QUOTA_ALERT_HORIZON_MS = 24 * HOUR;
 export const QUOTA_ALERT_PERIOD_DRIFT_MS = 30 * 60_000;
 /** A window ends with a renewal when it resets this close to it; a day set by hand is a date, not an hour. */
 export const RENEWAL_WINDOW_APART_MS = 12 * HOUR;
+/** A weekly or monthly window is watched over its last two days. */
+export const QUOTA_ALERT_LEAD_MS = 48 * HOUR;
+/** Under this long to the reset there is nothing left to do about it, so nothing is said. */
+export const QUOTA_ALERT_MIN_TIME_TO_ACT_MS = HOUR;
+/** A promised reset is expected for this long after its post. */
+export const EXPECTED_RESET_WINDOW_MS = 24 * HOUR;
 /** An early reset is news for this long. */
 export const EARLY_RESET_NOTICE_MS = 6 * HOUR;
 
-export type QuotaAlertKind = "window" | "bankedReset" | "renewal" | "earlyReset";
+export type QuotaAlertKind =
+  | "window"
+  | "bankedReset"
+  | "renewal"
+  | "earlyReset"
+  | "expectedReset";
 
 export interface QuotaAlertWindow {
   readonly id: string;
@@ -31,10 +42,46 @@ export interface QuotaAlertWindow {
   readonly title: string;
   readonly leftPercent: number;
   readonly resetsAt: number | null;
-  /** Resets soon with much of it unused, by the same rule routing uses. */
-  readonly expiring: boolean;
+  /** Caps one model only (Claude's "Weekly · Fable"), so it is not the subscription's quota. */
+  readonly scoped?: boolean;
+  /** How long one period of it lasts; null when unknown, and then the pace cannot be read. */
+  readonly durationMs?: number | null;
   /** A weekly or monthly window. A short one refills many times before a renewal, so it never ends with one. */
   readonly long: boolean;
+}
+
+/**
+ * The share of a window that will still be unused at its reset if the person
+ * keeps the pace of the period so far: what is left now, less what that pace
+ * uses in the time that remains. With no known length the pace is unknown and
+ * what is left now stands. The period is taken to have begun one length before
+ * its reset; after an early reset on an unmoved anchor that overstates the time
+ * elapsed and so understates the pace, which errs toward a warning.
+ */
+export function projectedUnusedPercent(
+  window: Pick<QuotaAlertWindow, "leftPercent" | "resetsAt" | "durationMs">,
+  now: number,
+): number {
+  const left = Math.max(0, Math.min(100, window.leftPercent));
+  const duration = window.durationMs ?? null;
+  if (window.resetsAt === null || duration === null || duration <= 0) return left;
+  const remaining = Math.max(0, window.resetsAt - now);
+  const elapsed = duration - remaining;
+  if (elapsed <= 0) return left;
+  return Math.max(0, left - ((100 - left) / elapsed) * remaining);
+}
+
+/**
+ * Whether a window is worth a warning: a weekly or monthly one in its last two
+ * days, with at least an hour to act, that the pace so far leaves at least 40%
+ * unused. A short window never is: it refills within hours, and by the time
+ * anyone reads the warning it has reset.
+ */
+export function quotaGoingUnused(window: QuotaAlertWindow, now: number): boolean {
+  if (!window.long || window.scoped === true || window.resetsAt === null) return false;
+  const remaining = window.resetsAt - now;
+  if (remaining < QUOTA_ALERT_MIN_TIME_TO_ACT_MS || remaining > QUOTA_ALERT_LEAD_MS) return false;
+  return projectedUnusedPercent(window, now) >= EXPIRING_QUOTA_MIN_LEFT_PERCENT;
 }
 
 /** One subscription as the alert rule reads it. */
@@ -57,6 +104,15 @@ export interface QuotaAlertEarlyReset {
   readonly endedAt: number;
 }
 
+/** A reset a named source promised and that has not happened yet, from the announcement feed. */
+export interface QuotaAlertExpectedReset {
+  readonly id: string;
+  /** The provider driver whose accounts it concerns. */
+  readonly driver: string;
+  readonly publishedAt: number;
+  readonly sourceUrl: string;
+}
+
 export interface QuotaAlert {
   /** The account and what about it; the same across periods, so a dismissal replaces the last. */
   readonly key: string;
@@ -66,7 +122,17 @@ export interface QuotaAlert {
   readonly accountKey: string;
   readonly driver: string;
   readonly machines: readonly string[];
-  /** The window's title; absent for a banked reset or a renewal. */
+  /** The window whose quota is about to go; absent for a banked reset. */
+  readonly windowId?: string;
+  /** When that window resets; the period end of a window or renewal alert. */
+  readonly windowResetsAt?: number;
+  /** When the plan renews, for a renewal alert's sentence. */
+  readonly renewsAt?: number;
+  /** When an expected reset stops being expected: a day after its post. */
+  readonly expectedUntil?: number;
+  /** The post behind an expected reset. */
+  readonly sourceUrl?: string;
+  /** The window's title; absent for a banked reset. */
   readonly windowTitle?: string;
   /** What is left to use, 0..100; absent for a banked reset and an early reset. */
   readonly leftPercent?: number;
@@ -95,6 +161,7 @@ export function quotaAlerts(
   accounts: readonly QuotaAlertAccount[],
   earlyResets: readonly QuotaAlertEarlyReset[],
   now: number,
+  expectedResets: readonly QuotaAlertExpectedReset[] = [],
 ): QuotaAlert[] {
   const alerts: QuotaAlert[] = [];
   const machinesOf = new Map<string, readonly string[]>();
@@ -103,18 +170,6 @@ export function quotaAlerts(
     if (accountKey === null || account.offline) continue;
     machinesOf.set(accountKey, account.machines);
     const base = { accountKey, driver: account.driver, machines: account.machines };
-    const before = alerts.length;
-    for (const window of account.windows) {
-      if (!window.expiring || window.resetsAt === null || window.resetsAt <= now) continue;
-      alerts.push({
-        ...base,
-        key: `${accountKey}|window:${window.id}`,
-        periodEnd: window.resetsAt,
-        kind: "window",
-        windowTitle: window.title,
-        leftPercent: window.leftPercent,
-      });
-    }
     const expiry = account.credits?.nextExpiresAt ?? null;
     if (account.credits && account.credits.count > 0 && expiry !== null) {
       if (expiry > now && expiry - now <= QUOTA_ALERT_HORIZON_MS) {
@@ -127,31 +182,85 @@ export function quotaAlerts(
         });
       }
     }
-    const renewsAt = account.renewal?.at ?? null;
-    // One line per subscription: a window alert already says quota is about to go.
-    const named = alerts.length > before;
-    if (!named && renewsAt !== null && renewsAt > now && renewsAt - now <= QUOTA_ALERT_HORIZON_MS) {
-      // The quota a renewal ends is the weekly or monthly window that resets with it: the
-      // one whose reset is nearest the renewal. A window that resets well before or after
-      // it keeps its quota through the renewal, and a 5-hour one refills long before.
-      const ending = account.windows
-        .flatMap((window) =>
-          window.resetsAt === null || !window.long
-            ? []
-            : [{ window, apart: Math.abs(window.resetsAt - renewsAt) }],
-        )
-        .filter((entry) => entry.apart <= RENEWAL_WINDOW_APART_MS)
-        .toSorted((left, right) => left.apart - right.apart)[0]?.window;
-      if (ending !== undefined && ending.leftPercent >= EXPIRING_QUOTA_MIN_LEFT_PERCENT) {
-        alerts.push({
-          ...base,
-          key: `${accountKey}|renewal`,
-          periodEnd: renewsAt,
-          kind: "renewal",
-          windowTitle: ending.title,
-          leftPercent: ending.leftPercent,
-        });
-      }
+    // A reset promised today replaces whatever is left of the subscription's own quota,
+    // well before the window's reset, so it speaks first. "Expected", never "announced":
+    // it is a promise, and it ends when the window starts over or a day after the post.
+    const promise = expectedResets
+      .filter(
+        (expected) =>
+          expected.driver === account.driver &&
+          expected.publishedAt <= now &&
+          now - expected.publishedAt < EXPECTED_RESET_WINDOW_MS,
+      )
+      .toSorted((left, right) => right.publishedAt - left.publishedAt)[0];
+    const replaced =
+      promise === undefined
+        ? undefined
+        : account.windows
+            .filter(
+              (window) =>
+                window.long &&
+                window.scoped !== true &&
+                window.resetsAt !== null &&
+                // A window that began after the post is the reset having arrived.
+                (window.durationMs == null ||
+                  window.resetsAt - window.durationMs <= promise.publishedAt) &&
+                window.resetsAt - now >= QUOTA_ALERT_MIN_TIME_TO_ACT_MS &&
+                window.leftPercent >= EXPIRING_QUOTA_MIN_LEFT_PERCENT,
+            )
+            .toSorted((left, right) => (left.resetsAt ?? 0) - (right.resetsAt ?? 0))[0];
+    if (promise !== undefined && replaced !== undefined && replaced.resetsAt !== null) {
+      alerts.push({
+        ...base,
+        key: `${accountKey}|expected`,
+        // The period is the window's own: a second post about the same reset is the same
+        // warning, so a dismissal or a notification holds across reposts. A chosen limit:
+        // it also holds for a different promise posted later in the same window period,
+        // since a dismissal records a period end and not which post it was about.
+        periodEnd: replaced.resetsAt,
+        kind: "expectedReset",
+        expectedUntil: promise.publishedAt + EXPECTED_RESET_WINDOW_MS,
+        windowId: replaced.id,
+        windowResetsAt: replaced.resetsAt,
+        windowTitle: replaced.title,
+        leftPercent: replaced.leftPercent,
+        sourceUrl: promise.sourceUrl,
+      });
+      continue;
+    }
+    // One line per subscription: the window that resets first speaks for it.
+    const going = account.windows
+      .filter((window) => quotaGoingUnused(window, now))
+      .toSorted((left, right) => (left.resetsAt ?? 0) - (right.resetsAt ?? 0))[0];
+    if (going !== undefined && going.resetsAt !== null) {
+      // When the plan renews within a day and this is the window that ends with it (the
+      // long window whose reset is nearest the renewal), the line says so. It is still
+      // the same window and period, so a dismissal or a notification holds either way.
+      const renewsAt = account.renewal?.at ?? null;
+      const endsWithRenewal =
+        renewsAt !== null &&
+        renewsAt - now >= QUOTA_ALERT_MIN_TIME_TO_ACT_MS &&
+        renewsAt - now <= QUOTA_ALERT_HORIZON_MS &&
+        going.leftPercent >= EXPIRING_QUOTA_MIN_LEFT_PERCENT &&
+        account.windows
+          .flatMap((window) =>
+            window.resetsAt === null || !window.long || window.scoped === true
+              ? []
+              : [{ window, apart: Math.abs(window.resetsAt - renewsAt) }],
+          )
+          .filter((entry) => entry.apart <= RENEWAL_WINDOW_APART_MS)
+          .toSorted((left, right) => left.apart - right.apart)[0]?.window === going;
+      alerts.push({
+        ...base,
+        key: `${accountKey}|window:${going.id}`,
+        periodEnd: going.resetsAt,
+        kind: endsWithRenewal ? "renewal" : "window",
+        windowId: going.id,
+        windowResetsAt: going.resetsAt,
+        windowTitle: going.title,
+        leftPercent: going.leftPercent,
+        ...(endsWithRenewal && renewsAt !== null ? { renewsAt } : {}),
+      });
     }
   }
   for (const reset of earlyResets) {
@@ -170,7 +279,11 @@ export function quotaAlerts(
     });
   }
   // What is about to be lost first; an early reset is news, not a loss, so it follows.
-  const rank = (alert: QuotaAlert) => (alert.kind === "earlyReset" ? Number.MAX_SAFE_INTEGER : alert.periodEnd);
+  // An expected reset replaces its quota within a day of the post, not at the window's end.
+  const rank = (alert: QuotaAlert) =>
+    alert.kind === "earlyReset"
+      ? Number.MAX_SAFE_INTEGER
+      : (alert.expectedUntil ?? alert.periodEnd);
   return alerts.toSorted((left, right) => rank(left) - rank(right) || left.key.localeCompare(right.key));
 }
 
@@ -227,8 +340,12 @@ export function describeQuotaAlert(alert: QuotaAlert, label: string, now: number
     case "bankedReset":
       return `${where}: ${alert.count === 1 ? "a banked reset expires" : `${alert.count} banked resets, the next expires`} in ${inTime}`;
     case "renewal":
-      return `${where}: renews in ${inTime} with ${left}% of its ${window} quota unused`;
+      return `${where}: renews in ${duration((alert.renewsAt ?? alert.periodEnd) - now)} with ${left}% of its ${window} quota unused`;
     case "earlyReset":
       return `${where} reset early: ${window} back to 100%`;
+    case "expectedReset":
+      return `${label} reset expected today: ${left}% left${
+        alert.machines.length === 0 ? "" : ` on ${alert.machines.join(", ")}`
+      } will be replaced`;
   }
 }

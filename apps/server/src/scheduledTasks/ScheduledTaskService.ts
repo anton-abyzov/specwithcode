@@ -51,6 +51,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { ProjectCoordinatorService } from "../project/ProjectCoordinatorService.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { routeUnnamedLaunch } from "../project/TracksLaunch.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { checkedPrompt, isModelPinned, runScheduledTaskCheck } from "./ScheduledTaskCheck.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -1027,12 +1028,51 @@ export const layer = Layer.effect(
             : coordinators === undefined
               ? Effect.succeed(undefined)
               : coordinators.nextTurnModel(active.projectId, threadId);
+        // An unpinned routine's stored model is only a snapshot: in a project
+        // on Tracks a thread of its own starts on the track instead. A grant's
+        // routine stays on a sign-in its grant allows.
+        const trackedLaunch =
+          pinned || active.threadId !== null || providerRegistry === undefined
+            ? null
+            : yield* Effect.all([
+                projects.get(active.projectId).pipe(
+                  Effect.map(Option.getOrUndefined),
+                  Effect.orElseSucceed(() => undefined),
+                ),
+                providerRegistry.getProviders,
+              ]).pipe(
+                Effect.flatMap(([project, providers]) =>
+                  routeUnnamedLaunch({
+                    project,
+                    providers,
+                    modelSelection: active.modelSelection,
+                    title: active.title,
+                    text: prompt,
+                    // Scheduled work is everyday work: no model call to judge it on each fire.
+                    laneHint: "routine",
+                    settings: Option.fromNullishOr(serverSettings),
+                  }),
+                ),
+              );
+        // Nothing on the tracks can run and the stored model is billed per
+        // use: the run fails with that reason instead of spending unattended.
+        const tracksRefusal = trackedLaunch?.refused ?? null;
+        const tracked =
+          trackedLaunch !== null &&
+          trackedLaunch.routing !== null &&
+          (runsUnder === null ||
+            accountInGrant(runsUnder.accounts, trackedLaunch.modelSelection.instanceId))
+            ? trackedLaunch
+            : null;
         const providerDestination =
           active.threadId !== null
             ? sendModel(ThreadId.make(active.threadId)).pipe(
                 Effect.map((modelSelection) => ({ threadId: active.threadId, modelSelection })),
               )
-            : Effect.succeed({ threadId: null, modelSelection: active.modelSelection });
+            : Effect.succeed({
+                threadId: null,
+                modelSelection: tracked?.modelSelection ?? active.modelSelection,
+              });
         const fallbackRule =
           serverSettings === undefined
             ? Effect.succeed(null)
@@ -1194,7 +1234,11 @@ export const layer = Layer.effect(
               commandId: ownThreadLaunchCommandId(active, replacing),
               projectId: active.projectId,
               title: active.title,
-              modelSelection: routedModel ?? active.modelSelection,
+              modelSelection: routedModel ?? tracked?.modelSelection ?? active.modelSelection,
+              // A fire the provider check moved did not start on the track's pick.
+              ...(routedModel !== undefined || tracked === null || tracked.routing === null
+                ? {}
+                : { routing: tracked.routing }),
               runtimeMode: active.runtimeMode,
               interactionMode: active.interactionMode,
               workspaceStrategy: active.workspaceStrategy,
@@ -1244,15 +1288,17 @@ export const layer = Layer.effect(
         const result =
           teamRulesRefusal !== null
             ? Exit.fail(taskError(teamRulesRefusal.message, { taskId: active.id }))
-            : checked !== null && checked._tag === "Failure"
-              ? checked
-              : route?.type === "defer" || (checked !== null && !checked.value.passed)
-                ? Exit.void
-                : active.threadId !== null
-                  ? yield* Effect.exit(sendTo(ThreadId.make(active.threadId), prompt))
-                  : // No live thread yet: start the routine's own (see asOwnThreadRoutine),
-                    // replacing whatever thread the stored row still names.
-                    yield* Effect.exit(launchOwnThread(stored?.threadId ?? null));
+            : tracksRefusal !== null
+              ? Exit.fail(taskError(tracksRefusal, { taskId: active.id }))
+              : checked !== null && checked._tag === "Failure"
+                ? checked
+                : route?.type === "defer" || (checked !== null && !checked.value.passed)
+                  ? Exit.void
+                  : active.threadId !== null
+                    ? yield* Effect.exit(sendTo(ThreadId.make(active.threadId), prompt))
+                    : // No live thread yet: start the routine's own (see asOwnThreadRoutine),
+                      // replacing whatever thread the stored row still names.
+                      yield* Effect.exit(launchOwnThread(stored?.threadId ?? null));
 
         const completedAt = yield* localNow;
         const runSucceeded = result._tag === "Success" && route?.type !== "defer";

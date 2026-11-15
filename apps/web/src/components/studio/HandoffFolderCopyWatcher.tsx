@@ -239,6 +239,7 @@ export function HandoffFolderCopyWatcher({
   sourceLabel = "this machine",
   onOpenDialog,
   restored = false,
+  reviewOnly = false,
   onDone,
 }: {
   readonly environmentId: EnvironmentId;
@@ -252,6 +253,11 @@ export function HandoffFolderCopyWatcher({
   readonly onOpenDialog?: () => void;
   /** Restored after a reload: a copy that already finished is not announced again. */
   readonly restored?: boolean;
+  /**
+   * Closed at its review by the person: shows the copy as waiting, with no toast and no
+   * approval, until a dialog takes it back or it changes on the machines.
+   */
+  readonly reviewOnly?: boolean;
   /** Called once the watcher stops watching. */
   readonly onDone?: () => void;
 }) {
@@ -311,7 +317,7 @@ export function HandoffFolderCopyWatcher({
       return;
     }
     // Only the first check of a restored watch can find a copy that finished unseen.
-    let quiet = restored;
+    let quiet = restored || reviewOnly;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let startFailures = 0;
@@ -543,10 +549,11 @@ export function HandoffFolderCopyWatcher({
           }
           return false;
         }
-        if (firstCheck) {
+        // A copy closed at its review that finished elsewhere was never seen: announce it.
+        if (firstCheck && !(reviewOnly && destination.value.state !== "previewed")) {
           // Found waiting after a restart: nothing else says so, so the toast and a system
           // notification do, each with a way to the review.
-          if (activity?.waiting) {
+          if (activity?.waiting && !reviewOnly) {
             const review = () => openCopyReview(activityKey);
             const title = copyActivityText(activity);
             addWithOpen(
@@ -569,7 +576,11 @@ export function HandoffFolderCopyWatcher({
           }
           return false;
         }
-        if ((saved.auto || saved.replaceAll) && destination.value.state === "previewed") {
+        if (
+          !reviewOnly &&
+          (saved.auto || saved.replaceAll) &&
+          destination.value.state === "previewed"
+        ) {
           // A refused choice or approval waits for the person instead of retrying.
           const outcome = await settle(saved, destination.value).catch(() => "ask" as const);
           if (stopped) return false;
@@ -614,7 +625,8 @@ export function HandoffFolderCopyWatcher({
         named(copyActivityFromSource(source.value, machine, sourceLabel)),
       );
       if (source.value.state === "scanning") return true;
-      if (firstCheck && !saved.auto) return false;
+      // Only observed: a copy closed at its review never starts a new comparison.
+      if (reviewOnly || (firstCheck && !saved.auto)) return false;
       if (source.value.summary && source.value.state !== "failed") {
         if (saved.auto) {
           try {
@@ -672,7 +684,7 @@ export function HandoffFolderCopyWatcher({
       stopped = true;
       clearTimeout(timer);
     };
-  }, [environmentId, projectId, restored]);
+  }, [environmentId, projectId, restored, reviewOnly]);
 
   return null;
 }

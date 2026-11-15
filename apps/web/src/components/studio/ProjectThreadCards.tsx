@@ -19,7 +19,7 @@ import {
   useResolveThreadConflicts,
 } from "../../studio/useResolveThreadConflicts";
 import { threadAttentionNote } from "../../studio/projectWorkspaceModel";
-import { useHostOffline } from "../../studio/unreachableHosts";
+import { useHostOffline, useHostReach } from "../../studio/unreachableHosts";
 import { PULL_REQUEST_STATE_PRESENTATION, PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { Tip } from "./shell/Tip";
 import { ThreadLinkChipButton } from "../ThreadLinkChip";
@@ -80,7 +80,7 @@ export function ProjectThreadCard({
   onOpenPullRequest: (url: string) => void;
 }) {
   const hostOffline = useHostOffline(thread.environmentId);
-  const status = threadCardStatus(thread, hostOffline);
+  const status = threadCardStatus(thread, hostOffline, useHostReach(thread.environmentId));
   // An unreachable host's last report is stale; the card says the host is offline instead.
   const blocker = hostOffline ? null : threadAttentionNote(thread);
   const git = useThreadCardGitStatus(thread, projectRoot);

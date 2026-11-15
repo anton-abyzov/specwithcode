@@ -1,8 +1,8 @@
 /**
  * A short form for a reusable routine, started from a template: what it does,
  * what it works from, where the result goes, and when it runs. It runs only
- * when asked unless the person picks the template's cadence (a monthly day, or
- * a daily time); nothing is saved until they press Save.
+ * when asked unless the person picks the template's cadence (a monthly day, a
+ * daily time, or a fixed interval); nothing is saved until they press Save.
  */
 import { teamRulesClampRoutineMode } from "@specweave-studio/shared/teamRules";
 import { useTeamRules } from "../../teamRules/useTeamRules";
@@ -22,6 +22,16 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
 
 const DAYS = Array.from({ length: 28 }, (_, index) => index + 1);
+
+/** "Every 2 hours", "Every hour", "Every 30 minutes". */
+export function everyLabel(everyMs: number): string {
+  const minutes = Math.round(everyMs / 60_000);
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return hours === 1 ? "Every hour" : `Every ${hours} hours`;
+  }
+  return minutes === 1 ? "Every minute" : `Every ${minutes} minutes`;
+}
 
 export function RoutineQuickForm({
   environmentId,
@@ -47,11 +57,14 @@ export function RoutineQuickForm({
   const [output, setOutput] = useState(template.output ?? "");
   const suggested = template.suggestedCadence;
   const daily = suggested?.type === "fixed_time";
+  const everyMs = suggested?.type === "interval" ? suggested.everyMs : null;
   const [scheduled, setScheduled] = useState(template.cadenceOnByDefault === true);
   const [dayOfMonth, setDayOfMonth] = useState(
     suggested?.type === "monthly" ? suggested.dayOfMonth : 1,
   );
-  const [timeOfDay, setTimeOfDay] = useState(suggested?.timeOfDay ?? "09:00");
+  const [timeOfDay, setTimeOfDay] = useState(
+    suggested !== null && "timeOfDay" in suggested ? suggested.timeOfDay : "09:00",
+  );
   const [prepareOnly, setPrepareOnly] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -70,9 +83,11 @@ export function RoutineQuickForm({
     }
     const schedule: ScheduledTaskUpsertSchedule = !scheduled
       ? { type: "manual" }
-      : daily
-        ? { type: "fixed_time", timeOfDay }
-        : { type: "monthly", dayOfMonth, timeOfDay };
+      : everyMs !== null
+        ? { type: "interval", everyMs }
+        : daily
+          ? { type: "fixed_time", timeOfDay }
+          : { type: "monthly", dayOfMonth, timeOfDay };
     setSaving(true);
     setError(null);
     try {
@@ -183,9 +198,9 @@ export function RoutineQuickForm({
             checked={scheduled}
             onChange={() => setScheduled(true)}
           />
-          {daily ? "Every day" : "Every month"}
+          {everyMs !== null ? everyLabel(everyMs) : daily ? "Every day" : "Every month"}
         </label>
-        {scheduled ? (
+        {scheduled && everyMs === null ? (
           <div className="sws-routine-when">
             {daily ? null : (
               <label>

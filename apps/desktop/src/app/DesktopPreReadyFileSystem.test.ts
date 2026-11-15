@@ -68,4 +68,26 @@ it.layer(NodeServices.layer)("DesktopPreReadyFileSystem", (it) => {
         assert.isTrue(Exit.isFailure(exit));
       }),
   );
+
+  it.effect("removes a stale GPU cache with the startup file system", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-pre-ready-fs-" });
+      yield* fileSystem.makeDirectory(path.join(root, "GPUCache"));
+      yield* fileSystem.writeFileString(path.join(root, "GPUCache", "data_0"), "old shaders");
+      yield* fileSystem.writeFileString(path.join(root, "gpu-cache-electron-version"), "44.4.2");
+
+      yield* DesktopUserData.clearStaleGpuCaches({
+        userDataPath: root,
+        electronVersion: "44.10.1",
+      }).pipe(Effect.provide(DesktopPreReadyFileSystem.layer));
+
+      assert.isFalse(yield* fileSystem.exists(path.join(root, "GPUCache")));
+      assert.equal(
+        yield* fileSystem.readFileString(path.join(root, "gpu-cache-electron-version")),
+        "44.10.1",
+      );
+    }),
+  );
 });

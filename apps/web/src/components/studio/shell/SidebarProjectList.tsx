@@ -579,7 +579,7 @@ export function ProjectRow(props: {
   const quiet = archived || muted;
   const coverageText =
     !quiet && props.attentionComplete === false
-      ? (props.attentionLabel ?? "Some machines are offline")
+      ? (props.attentionLabel ?? "Some machines can't be reached")
       : null;
   const waiting = quiet ? 0 : props.waiting;
   const [renaming, setRenaming] = useState<RenameState | null>(null);

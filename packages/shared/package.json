@@ -536,6 +536,10 @@
       "types": "./src/quotaAlerts.ts",
       "import": "./src/quotaAlerts.ts"
     },
+    "./quotaBoost": {
+      "types": "./src/quotaBoost.ts",
+      "import": "./src/quotaBoost.ts"
+    },
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",
       "import": "./src/desktopAppControl.ts"

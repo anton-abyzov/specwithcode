@@ -1,4 +1,5 @@
 import {
+  OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
@@ -71,7 +72,8 @@ const threadMetadataDependencies = [
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
-    "List the V2 provider instances and their current models from the same live catalog as the composer, including configured custom models, inherited runtime settings, and app-owned orchestration features available to this caller. For a separate top-level thread, use studio_thread_launch; the project's Use worktrees setting decides whether it gets a worktree.",
+    "List the V2 provider instances and their current models from the same live catalog as the composer, including configured custom models, inherited runtime settings, and app-owned orchestration features available to this caller. For a separate top-level thread, use studio_thread_launch; the project's Use worktrees setting decides whether it gets a worktree. A large catalog lists model ids without options (detail.view compact); pass providerInstanceId for one instance in full, then modelOffset=detail.nextModelOffset until it is null.",
+  parameters: OrchestratorMcpCapabilitiesInput,
   success: OrchestratorMcpCapabilitiesResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
@@ -247,7 +249,7 @@ const ThreadListTool = Tool.make("studio_thread_list", {
 
 const ThreadReadTool = Tool.make("studio_thread_read", {
   description:
-    "Read durable state and a paginated timeline from any SpecWithCode thread in this environment. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Reading an untruncated terminal assistant result from this parent thread's direct app-owned child acknowledges that child's automatic completion delivery. Continue with afterPosition=nextPosition. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units.",
+    "Read durable state and a paginated timeline from any SpecWithCode thread in this environment. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Reading an untruncated terminal assistant result from this parent thread's direct app-owned child acknowledges that child's automatic completion delivery. Without a cursor it returns the newest items; go back with beforePosition=earlierPosition until it is null. afterPosition (-1 for the oldest) reads forward; continue with afterPosition=nextPosition while hasMore. Results are size-limited, never with gaps. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units.",
   parameters: OrchestratorMcpThreadReadInput,
   success: OrchestratorMcpThreadReadResult,
   failure: OrchestratorMcpFailure,

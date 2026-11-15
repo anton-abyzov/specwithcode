@@ -15,19 +15,42 @@ const remote: HostAdmissionContext = {
 const here: HostAdmissionContext = { isThisDevice: true, graceElapsed: true };
 
 describe("composerHostStatus", () => {
-  it("says a dropped machine is offline once, with what happens next", () => {
+  it("says a machine that just dropped is reconnecting, calmly, and keeps the draft", () => {
     const status = composerHostStatus({ phase: "reconnecting" }, remote);
     expect(status).toMatchObject({
-      tone: "offline",
-      headline: "{machine} is offline",
+      tone: "connecting",
+      headline: "Reconnecting to {machine}…",
       machine: "linux-mini",
-      progress: "Reconnecting…",
+      progress: null,
       action: null,
       showsSync: true,
       keepsDraft: true,
     });
-    expect(status.detail.join(" ")).not.toContain("cannot take messages");
-    expect(composerHostStatus({ phase: "error" }, remote).progress).toBeNull();
+    expect(status.detail.join(" ")).not.toMatch(/cannot take messages|offline/);
+  });
+  it("says why a machine is down once its grace has passed, with what happens next", () => {
+    const down = (reach: NonNullable<HostAdmissionContext["reach"]>) =>
+      composerHostStatus({ phase: "reconnecting" }, { ...remote, reach });
+    expect(down("not-answering")).toMatchObject({
+      tone: "offline",
+      headline: "{machine} isn't answering",
+      progress: "Retrying by itself",
+      showsSync: true,
+      keepsDraft: true,
+    });
+    expect(down("offline")).toMatchObject({
+      tone: "offline",
+      headline: "{machine} is offline",
+      progress: "Retrying by itself",
+    });
+    expect(down("not-answering").detail.join(" ")).not.toContain("DNS or firewall");
+    expect(down("cant-reach").headline).toBe("Can't reach {machine}");
+    expect(down("cant-reach").detail[0]).toContain("Your DNS or firewall may be blocking");
+    expect(composerHostStatus({ phase: "error" }, remote)).toMatchObject({
+      tone: "offline",
+      headline: "Connection to {machine} failed",
+      progress: null,
+    });
   });
   it("names each state a host passes through", () => {
     const states = (["connecting", "reconnecting", "offline", "error"] as const).map(
@@ -35,9 +58,9 @@ describe("composerHostStatus", () => {
     );
     expect(states).toEqual([
       "Connecting to {machine}…",
-      "{machine} is offline",
-      "This device is offline",
-      "{machine} is offline",
+      "Reconnecting to {machine}…",
+      "This device has no network",
+      "Connection to {machine} failed",
     ]);
     expect(
       composerHostStatus({ phase: "error", blockedReason: "authentication" }, remote),
@@ -61,7 +84,7 @@ describe("composerHostStatus", () => {
   it("falls back to this host when the machine has no name", () => {
     const status = composerHostStatus(
       { phase: "reconnecting" },
-      { isThisDevice: false, graceElapsed: true },
+      { isThisDevice: false, graceElapsed: true, reach: "offline" },
     );
     expect(status).toMatchObject({
       headline: "This host is offline",
@@ -113,10 +136,10 @@ const toggle = () => container.querySelector<HTMLButtonElement>(".sws-host-statu
 
 describe("ComposerHostStatus", () => {
   it("shows one short line, with the rest behind Details, opened in place", async () => {
-    await show("reconnecting");
+    await show("reconnecting", { ...remote, reach: "not-answering" });
     expect(container.querySelectorAll("[data-host-status]")).toHaveLength(1);
     expect(container.querySelector("[role=status]")?.textContent).toContain(
-      "linux-mini is offline · Reconnecting…",
+      "linux-mini isn't answering · Retrying by itself",
     );
     expect(container.querySelector("[data-host-status-detail]")).toBeNull();
     expect(toggle()?.getAttribute("aria-expanded")).toBe("false");
@@ -177,9 +200,9 @@ describe("ComposerHostStatus", () => {
   });
   it("speaks the interface language", async () => {
     setLocalePreference("de");
-    await show("reconnecting", remote, NOW - 3 * 3_600_000);
+    await show("reconnecting", { ...remote, reach: "offline" }, NOW - 3 * 3_600_000);
     expect(container.querySelector("[role=status]")?.textContent).toContain(
-      "linux-mini ist offline · Verbinde neu…",
+      "linux-mini ist offline",
     );
     await act(async () => toggle()!.click());
     expect(container.querySelector("[data-host-status-detail]")?.textContent).toContain(

@@ -19,6 +19,26 @@ export function isInlineRunTerminalId(terminalId: string): boolean {
   return terminalId.startsWith(INLINE_RUN_TERMINAL_ID_PREFIX);
 }
 
+const terminalHistoryEncoder = new TextEncoder();
+// A byte order mark at the cut is terminal output, not an encoding marker.
+const terminalHistoryDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+
+/**
+ * The newest `maxBytes` of UTF-8 in `history`, starting at a code point
+ * boundary. Servers send this much to a client that states its buffer size,
+ * and clients keep this much after a reset.
+ */
+export function terminalHistoryTail(history: string, maxBytes: number): string {
+  if (maxBytes <= 0) return "";
+  // A UTF-16 code unit is at most 3 UTF-8 bytes, so short strings need no encoding.
+  if (history.length * 3 <= maxBytes) return history;
+  const encoded = terminalHistoryEncoder.encode(history);
+  if (encoded.byteLength <= maxBytes) return history;
+  let start = encoded.byteLength - maxBytes;
+  while (start < encoded.byteLength && ((encoded[start] ?? 0) & 0xc0) === 0x80) start += 1;
+  return terminalHistoryDecoder.decode(encoded.subarray(start));
+}
+
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
   Schema.isLessThanOrEqualTo(1000),
@@ -34,6 +54,8 @@ const TerminalEnvValueSchema = Schema.String.check(Schema.isMaxLength(8_192));
 const TerminalEnvSchema = Schema.Record(TerminalEnvKeySchema, TerminalEnvValueSchema).check(
   Schema.isMaxProperties(128),
 );
+/** History bytes the client keeps; snapshots carry at most this much. Older servers ignore it. */
+const TerminalMaxHistoryBytesSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
 export const TerminalThreadInput = Schema.Struct({
   threadId: TrimmedNonEmptyStringSchema,
@@ -73,10 +95,14 @@ export const TerminalAttachInput = Schema.Struct({
   env: Schema.optional(TerminalEnvSchema),
   providerInstanceId: Schema.optional(ProviderInstanceId),
   restartIfNotRunning: Schema.optional(Schema.Boolean),
+  maxHistoryBytes: Schema.optional(TerminalMaxHistoryBytesSchema),
 });
 export type TerminalAttachInput = typeof TerminalAttachInput.Type;
 
-export const TerminalObserveInput = TerminalSessionInput;
+export const TerminalObserveInput = Schema.Struct({
+  ...TerminalSessionInput.fields,
+  maxHistoryBytes: Schema.optional(TerminalMaxHistoryBytesSchema),
+});
 export type TerminalObserveInput = Schema.Codec.Encoded<typeof TerminalObserveInput>;
 
 export const TerminalWriteInput = Schema.Struct({

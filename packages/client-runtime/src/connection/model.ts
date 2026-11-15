@@ -84,6 +84,12 @@ export class ConnectionTransientError extends Schema.TaggedError<ConnectionTrans
     traceId: Schema.optionalKey(Schema.String),
     /** The relay reached its tunnel but the machine did not answer: it is asleep or off. */
     machineOffline: Schema.optionalKey(Schema.Boolean),
+    /**
+     * The relay itself gave this device no answer (the request failed in
+     * transport or timed out), so nothing is known about the machine and this
+     * device's network may be in the way.
+     */
+    relayUnreachable: Schema.optionalKey(Schema.Boolean),
     /** The machine refused this client for a while; no retry comes sooner. */
     retryAfterMs: Schema.optionalKey(Schema.Number),
   },
@@ -153,6 +159,24 @@ export interface SupervisorConnectionState {
   readonly generation: number;
   readonly lastFailure: ConnectionAttemptError | null;
   readonly retryAt: number | null;
+  /**
+   * When this device last had a session with the machine in this run (epoch
+   * ms): when it was established while connected, when it ended afterwards.
+   * Absent or null when it has had none.
+   */
+  readonly lastConnectedAt?: number | null;
+  /**
+   * Since when this device has had no session while wanting one (epoch ms):
+   * when the last session ended, else when the connection was asked for.
+   * Null while connected or not wanted.
+   */
+  readonly lostAt?: number | null;
+  /**
+   * Why the latest attempt since {@link lostAt} failed. Unlike `lastFailure`
+   * it survives an explicit retry, so what a person reads about the machine
+   * does not blank while the retry runs.
+   */
+  readonly lossFailure?: ConnectionAttemptError | null;
 }
 
 export type ConnectionProjectionPhase = "disconnected" | "synchronizing" | "ready";

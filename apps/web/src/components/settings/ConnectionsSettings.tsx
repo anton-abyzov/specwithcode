@@ -218,7 +218,11 @@ import { APP_VERSION } from "~/branding";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
-import { lastSeenLabel, savedMachineStatus } from "../../lib/machineStatus";
+import {
+  environmentConnectionStatusText,
+  lastSeenLabel,
+  savedMachineStatus,
+} from "../../lib/machineStatus";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import {
@@ -1661,7 +1665,10 @@ function SavedBackendListRow({
     unsupported
       ? (environment.connection.error ?? connectionStatusText(environment.connection))
       : enabled
-        ? connectionStatusText(environment.connection)
+        ? environmentConnectionStatusText(
+            environment.connection,
+            isThisMachineTarget(environment.entry),
+          )
         : "Switched off"
   }${
     versionMismatch

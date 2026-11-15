@@ -18,25 +18,55 @@ import {
 } from "./machineStatus";
 
 describe("machineStatus", () => {
-  it("calls a machine unreachable once an attempt has failed, with the reason", () => {
+  const NOW = 1_000_000;
+  const dropped = (
+    secondsAgo: number,
+    cause?: "not-answering" | "no-service" | "relay-unreachable",
+  ) =>
+    ({
+      phase: "reconnecting",
+      error: "M1 could not establish a WebSocket connection.",
+      lostAt: NOW - secondsAgo * 1_000,
+      lastConnectedAt: NOW - secondsAgo * 1_000,
+      ...(cause ? { cause } : {}),
+    }) as const;
+
+  it("reads a machine that just dropped as reconnecting, without an error", () => {
+    expect(machineStatus(dropped(16, "not-answering"), true, false, NOW)).toEqual({
+      text: "Reconnecting…",
+      short: "Reconnecting",
+      reason: null,
+      retryable: true,
+    });
+  });
+
+  it("says why a machine is down once its grace has passed, with the reason", () => {
     expect(machineStatus({ phase: "connected", error: null }, true)).toEqual({
       text: "Connected",
+      short: "Connected",
       reason: null,
       retryable: false,
     });
     expect(machineStatus({ phase: "connecting", error: null }, true).text).toBe("Connecting…");
-    expect(
-      machineStatus(
-        { phase: "reconnecting", error: "M1 could not establish a WebSocket connection." },
-        true,
-      ),
-    ).toEqual({
-      text: "Can't reach. Retrying automatically",
+    expect(machineStatus(dropped(61, "not-answering"), true, false, NOW)).toEqual({
+      text: "Not answering. Retrying by itself",
+      short: "Not answering",
       reason: "M1 could not establish a WebSocket connection.",
       retryable: true,
     });
+    expect(machineStatus(dropped(61, "no-service"), true, false, NOW).text).toBe(
+      "Offline. Retrying by itself",
+    );
+    expect(machineStatus(dropped(61, "relay-unreachable"), true, false, NOW).text).toBe(
+      "Can't reach. Retrying by itself",
+    );
+    expect(machineStatus({ phase: "offline", error: null }, true, false, NOW)).toMatchObject({
+      text: "This device has no network",
+      short: "No network",
+    });
     expect(machineStatus({ phase: "error", error: "Sign in again." }, true)).toEqual({
       text: "Connection failed",
+      short: "Connection failed",
       reason: "Sign in again.",
       retryable: true,
     });
@@ -53,6 +83,7 @@ describe("machineStatus for this machine", () => {
     for (const phase of ["connecting", "reconnecting", "offline"] as const) {
       expect(machineStatus({ phase, error: STALL }, true, true)).toEqual({
         text: "Catching up…",
+        short: "Catching up",
         reason: null,
         retryable: false,
       });
@@ -62,6 +93,7 @@ describe("machineStatus for this machine", () => {
   it("keeps Connection failed only for a stopped connection", () => {
     expect(machineStatus({ phase: "error", error: "Sign in again." }, true, true)).toEqual({
       text: "Connection failed",
+      short: "Connection failed",
       reason: "Sign in again.",
       retryable: true,
     });
@@ -70,7 +102,7 @@ describe("machineStatus for this machine", () => {
 
   it("still calls another machine unreachable", () => {
     expect(machineStatus({ phase: "reconnecting", error: STALL }, true, false).text).toBe(
-      "Can't reach. Retrying automatically",
+      "Not answering. Retrying by itself",
     );
   });
 });
@@ -97,7 +129,7 @@ describe("machineUnavailableTitle", () => {
 });
 
 describe("savedMachineStatus", () => {
-  it("reads Catching up for this machine and Can't reach for another", () => {
+  it("reads Catching up for this machine and the reach word for another", () => {
     const connection = { phase: "reconnecting", error: "timed out" } as const;
     expect(savedMachineStatus(connection, true, true)).toEqual({
       text: "Catching up",
@@ -106,11 +138,20 @@ describe("savedMachineStatus", () => {
       retryable: false,
     });
     expect(savedMachineStatus(connection, true, false)).toEqual({
-      text: "Can't reach",
+      text: "Not answering",
       tone: "error",
       reason: "timed out",
       retryable: true,
     });
+    // Inside its grace the row is calm and shows no error text.
+    expect(
+      savedMachineStatus(
+        { ...connection, lostAt: 990_000, lastConnectedAt: 990_000 },
+        true,
+        false,
+        1_000_000,
+      ),
+    ).toEqual({ text: "Reconnecting", tone: "muted", reason: null, retryable: true });
     expect(savedMachineStatus({ phase: "offline", error: null }, true, true).text).toBe(
       "Catching up",
     );
@@ -121,6 +162,28 @@ describe("savedMachineStatus", () => {
       retryable: true,
     });
     expect(savedMachineStatus(connection, false, true).text).toBe("Off");
+  });
+  it("judges a retry and a lost network by reach, not by the phase", () => {
+    const lost = { lostAt: 900_000, lastConnectedAt: 900_000 } as const;
+    // A retry inside the grace keeps reading Reconnecting.
+    expect(
+      savedMachineStatus({ phase: "connecting", error: null, ...lost }, true, false, 930_000).text,
+    ).toBe("Reconnecting");
+    // A retry on a machine already down keeps naming why, with no flicker.
+    expect(
+      savedMachineStatus(
+        { phase: "connecting", error: "timed out", cause: "not-answering", ...lost },
+        true,
+        false,
+        1_000_000,
+      ),
+    ).toMatchObject({ text: "Not answering", tone: "error" });
+    expect(
+      savedMachineStatus({ phase: "offline", error: null, ...lost }, true, false, 1_000_000),
+    ).toEqual({ text: "No network", tone: "muted", reason: null, retryable: false });
+    expect(savedMachineStatus({ phase: "connecting", error: null }, true, false).text).toBe(
+      "Connecting",
+    );
   });
   it("keeps the status short and returns the reason apart", () => {
     const reason =
@@ -182,6 +245,13 @@ describe("this Mac in pickers and settings panels", () => {
     expect(environmentConnectionStatusTitle(reconnecting, false)).toBe(
       "Failed to connect. Reconnecting...",
     );
+  });
+
+  it("keeps the failure out of the sentence inside the reconnect grace", () => {
+    const fresh = { ...reconnecting, lostAt: 990_000, lastConnectedAt: 990_000 };
+    expect(environmentConnectionStatusText(fresh, false, 1_000_000)).toBe("Reconnecting...");
+    expect(environmentConnectionStatusTitle(fresh, false, 1_000_000)).toBe("Reconnecting...");
+    expect(environmentConnectionStatusText(fresh, false, 1_100_000)).toMatch(/^Failed to connect/);
   });
 });
 

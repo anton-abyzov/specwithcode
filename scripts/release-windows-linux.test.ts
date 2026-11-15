@@ -1107,6 +1107,11 @@ describe("release-windows-linux.yml", () => {
     expect(proof).toContain("- os: ubuntu-24.04");
     expect(proof).toContain("fail-fast: false");
     expect(proof).not.toContain("continue-on-error");
+    // The versioned .deb by name: the artifact and release also carry SpecWithCode-amd64.deb
+    // (1.0.311's attach failed when a *-amd64.deb glob matched both).
+    expect(proof).not.toMatch(/\*-amd64\.deb/);
+    expect(proof).toContain('--candidate "$RUNNER_TEMP/candidate/SpecWithCode-$VERSION-amd64.deb"');
+    expect(proof).toContain('--previous "$RUNNER_TEMP/previous/SpecWithCode-$PREVIOUS-amd64.deb"');
     const publish = workflow.slice(workflow.indexOf("\n  publish:\n"));
     const header = publish.slice(0, publish.indexOf("\n    steps:"));
     expect(header).toContain("needs: [plan, windows, linux, linux-update-proof]");

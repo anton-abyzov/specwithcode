@@ -19,6 +19,9 @@ import { SubscriptionRow, formatDay } from "./SubscriptionRow";
 import type { EfficiencyPeriod } from "./efficiency";
 import { resetReport, resetReportMarkdown, tokensLostAtReset } from "./resetReportModel";
 import { subscriptionRows } from "./subscriptionRows";
+import { usePrimaryEnvironmentId } from "../../../state/environments";
+import { ResetAnnouncements } from "./ResetAnnouncements";
+import { useResetAnnouncements } from "./resetAnnouncementsState";
 import { useUsageResetLedger } from "./usageResetLedgerState";
 
 const REPORT_WEEKS = 4;
@@ -61,6 +64,7 @@ export function SubscriptionsView({
     )
     .map(([environmentId]) => environmentId as EnvironmentId);
   const ledger = useUsageResetLedger(connected, now);
+  const announcements = useResetAnnouncements(usePrimaryEnvironmentId(), now);
   const history = useUsageLimitHistory(connected, now);
   const renewalDays = usePrimarySettings((settings) => settings.subscriptionRenewalDays);
   const targets = usePrimarySettings((settings) => settings.subscriptionTargets);
@@ -222,6 +226,14 @@ export function SubscriptionsView({
           </div>
         )}
       </section>
+      {announcements !== null ? (
+        <ResetAnnouncements
+          announcements={announcements.announcements}
+          checkedAt={announcements.checkedAt}
+          enabled={announcements.enabled}
+          now={now}
+        />
+      ) : null}
     </div>
   );
 }

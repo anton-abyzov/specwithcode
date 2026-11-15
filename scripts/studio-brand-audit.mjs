@@ -337,16 +337,19 @@ check("owned runtime has no original brand, env or origin", () => {
   assert.deepEqual(findings, []);
 });
 check("real first-party mark replaced", () => {
-  // The page-and-prompt brand mark from assets/brand/specwithcode-mark.svg starts with this path.
-  assert.match(read("assets/prod/logo.svg"), /M29 10H60L78 28/);
-  assert.match(read("apps/web/src/components/StudioWordmark.tsx"), /M29 10H60L78 28/);
+  // The current SpecWithCode mark is the path data of assets/brand/specwithcode-mark.svg;
+  // scripts/export-studio-icons.py copies it into each of these files.
+  const mark = /<path[^>]*\sd="([^"]+)"/.exec(read("assets/brand/specwithcode-mark.svg"))?.[1];
+  assert.ok(mark, "assets/brand/specwithcode-mark.svg has no path data");
+  assert.ok(read("assets/prod/logo.svg").includes(mark));
+  assert.ok(read("apps/web/src/components/StudioWordmark.tsx").includes(mark));
   assert.doesNotMatch(read("apps/web/src/components/StudioWordmark.tsx"), /M33.4509/);
   assert.match(read("apps/web/index.html"), /SpecWithCode/);
   for (const p of [
     "apps/desktop/resources/dmg/dmg-background-latest.svg",
     "apps/desktop/resources/dmg/dmg-background-nightly.svg",
   ]) {
-    assert.match(read(p), /M29 10H60L78 28/);
+    assert.ok(read(p).includes(mark), `${p} does not carry the current mark`);
     assert.doesNotMatch(read(p), /M33\.4509|base64,|M16 22H40/);
   }
 });
@@ -534,16 +537,16 @@ const DERIVED_UPSTREAM_ARTWORK = new Map([
   [
     "apps/mobile/assets/android-splash-icon-nightly.png",
     {
-      blob: "a0f110a43e18ee7531c0cbf27ed4250cec5e431c",
-      depicts: "the page-and-prompt brand mark over that night sky and the two clouds",
+      blob: "5aeba9b5ef8d88eedb0d996cd49c6475fdaf9d79",
+      depicts: "the prompt-and-lines brand mark over that night sky and the two clouds",
       differs: "Studio's mark composed over a render of the three nightly layers",
     },
   ],
   [
     "apps/mobile/assets/android-splash-icon-dev.png",
     {
-      blob: "885370117d12ff79531ee5ab240fa8f81276d78f",
-      depicts: "the page-and-prompt brand mark over the blueprint paper",
+      blob: "9d62f26dd37fe646a638545b05fe9799eedd7d44",
+      depicts: "the prompt-and-lines brand mark over the blueprint paper",
       differs: "Studio's mark composed over a render of the development background layer",
     },
   ],

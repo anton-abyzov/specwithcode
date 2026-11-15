@@ -306,6 +306,8 @@ export function projectThreadModel(
   project: LegacyProjectSettingsFields | null | undefined,
 ): ModelSelection | null {
   const resolved = resolveProjectSettings(settings, projectId, project);
+  // On Tracks no single model is the project's: the track for the task decides.
+  if (resolved.settings.threadModelMode === "tracks") return null;
   if (resolved.sources.defaultModelSelection === "project")
     return resolved.settings.defaultModelSelection;
   // Like an override, a saved model on a disabled provider does not count.
