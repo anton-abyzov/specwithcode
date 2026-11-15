@@ -51,15 +51,30 @@ over, and keeps the record for a year. Nothing is recorded when the app was not 
 whole window, because the spend in that time is unknown. Records start from the version that
 added this view; earlier resets are not shown.
 
+## Reset announcements
+
+Under the live rows, **Reset announcements** lists posts in which a provider reset limits for everyone, granted a banked reset, changed a limit or promised a reset: the date, the provider, the kind and a link to the post. Your main machine reads them every half hour from a public feed (airesets.dev) and keeps each post once. The request carries nothing about you. A confirmed post about a provider you have a subscription with raises one notification while it is under two days old, under the same conditions as the other warnings: the warnings are on, notifications are connected and the app is not in front. One machine sends it.
+
+The list says when the feed's newest event is more than 14 days old, since the feed may have stopped. Turn the feed off under Settings > Models, "Read reset announcements"; the list then keeps what was already read.
+
+If the feed goes quiet, a personal assistant can watch the posts itself: under its Routines, start **Reset announcement watch** from a template. It is off until you save it, runs on the assistant's provider at its everyday model (the form names the model; if that model is billed per token, is missing, or reports no billing and was not your own choice in Settings, the routine keeps the assistant's model and the form says why), runs when you ask or every 2 hours if you choose that, and reads the listed staff and official accounts on X in your signed-in Chrome. Each post it finds is added to the same list, marked "Read by your routine, not verified"; it never posts, replies or follows, and answers "No new reset posts." when there is nothing new. Only posts by those accounts, or pages on the provider's own site, are kept, and nothing is kept while "Read reset announcements" is off. A recorded post raises no warning or notification and does not count toward the feed's 14-day note; when the feed later carries the same post, the feed's version replaces it.
+
 ## Warnings before quota resets unused
 
-A banner above the project list says when a subscription is about to lose quota, the soonest loss first:
+A banner above the project list says when a subscription is about to lose quota, the soonest loss first. It covers every subscription on the machines you are connected to, not only the one you are looking from, because you can start threads on any of them; each line names its machines. It warns of:
 
-- a weekly window within a day of its reset with at least 40% left, or a 5-hour window within 90 minutes;
+- a weekly or monthly window in its last two days that your pace so far will leave at least 40% unused, while there is still at least an hour to use it. Nothing used with two days to go warns; steady use that will finish the quota does not. A 5-hour window never warns: it refills within hours. Neither does a window that caps one model only;
 - a banked reset in its last day;
-- a subscription renewing within a day with at least 40% of its quota unused;
-- a limit the provider reset early, for six hours after it happened.
+- when the plan also renews within a day and that window ends with it, the same line says "renews in" instead; it is one warning, so dismissing either form holds;
+- a limit the provider reset early, for six hours after it happened;
+- a reset a provider promised for today, for a subscription of that provider with at least 40% left: "Codex Pro reset expected today: 62% left on m1 will be replaced", with a link to the post. It says "expected", because a promise is not a reset. The line goes when the window starts over or a day after the post. Dismissing it holds until that window resets, also for another promise posted in the meantime.
 
 The banner shows the two soonest and counts the rest; a subscription takes one line. "See subscriptions" opens this page. The X dismisses the lines shown until the next reset of the windows they named. When the app is not in front and notifications are connected, each warning also raises one notification per period, on one machine: the first of the machines the account is signed in on.
+
+### Use it until it resets
+
+When the subscription in the first lines is signed in on your main machine on a plan, the banner offers **Use it for new worker threads until it resets**. Choose every project or tick the ones you want, then **Start**. Until that window resets, the setting names that subscription's regular model as the one new worker threads in those projects start on. Open threads and the project coordinator keep their model, and no saved default is changed, so there is nothing to restore. It covers worker threads an agent starts (delegated tasks and launched threads) that name no model of their own; routines, threads you start yourself in the composer, review tasks and a thread whose caller may not use that account keep their usual model.
+
+It ends by itself at the window's reset: a boost past that time is not read at all. With the app open on any device it also ends when the provider resets the window early, when under 5% is left, or when that sign-in is turned off, signed out or moved to another account, and it follows a change of the provider's regular model. While it runs the banner reads "New worker threads use Codex Pro until 6:40 AM", also with the warnings turned off; **End now** stops it. It is not offered for a per-token key, a paid router, a model billed by the token, a banked reset, or an account signed in only on another machine.
 
 An offline machine's reading is stale, so it raises no warning, and neither does an account you signed out of. The hosted app has no main machine to save a dismissal on, so it shows no banner. Turn the warnings off under Settings > Models, "Warn before quota resets unused"; the choice is saved on your main machine.

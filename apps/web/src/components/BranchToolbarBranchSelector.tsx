@@ -63,6 +63,10 @@ import {
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 import {
+  isWorktreeChangeBlocked,
+  WORKTREE_CHANGE_BLOCKED_MESSAGE,
+} from "./branchWorktreeChangeGuard";
+import {
   ThreadPullRequestBadgeControl,
   prStatusIndicator,
   resolveThreadPullRequestBadge,
@@ -99,6 +103,10 @@ interface BranchToolbarBranchSelectorProps {
 
 function toBranchActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
+}
+
+function showWorktreeChangeBlockedNotice() {
+  toastManager.add(stackedThreadToast({ type: "warning", title: WORKTREE_CHANGE_BLOCKED_MESSAGE }));
 }
 
 export function BranchToolbarBranchSelector({
@@ -167,6 +175,8 @@ export function BranchToolbarBranchSelector({
   const activeWorktreePath = forceNewWorktree
     ? null
     : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
+  // forceNewWorktree hides the thread's workspace from the picker, not from the running turn.
+  const currentThreadWorktreePath = serverThread ? serverThread.worktreePath : activeWorktreePath;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
   const hasServerThread = serverThread !== null;
@@ -184,18 +194,18 @@ export function BranchToolbarBranchSelector({
   // Thread branch mutation (colocated — only this component calls it)
   // ---------------------------------------------------------------------------
   const setThreadBranch = useCallback(
-    (branch: string | null, worktreePath: string | null, automatic = false) => {
+    (branch: string | null, worktreePath: string | null, automatic = false): boolean => {
       if (
         !activeThreadId ||
         !activeProject ||
         (hasServerThread && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
       )
-        return;
+        return false;
       if (hasServerThread && automatic) {
         // Never stop a native session or publish a manual branch override for
         // hydration. The server decides emptiness and workspace identity in
         // the same transaction that applies this default.
-        if (serverThread?.worktreePath != null) return;
+        if (serverThread?.worktreePath != null) return false;
         void defaultThreadMetadata({
           environmentId,
           input: {
@@ -206,7 +216,18 @@ export function BranchToolbarBranchSelector({
             expectedEmpty: true,
           },
         });
-        return;
+        return true;
+      }
+      // Moving the thread to another worktree would stop its running turn.
+      if (
+        isWorktreeChangeBlocked({
+          runtime: serverSession,
+          currentWorktreePath: currentThreadWorktreePath,
+          nextWorktreePath: worktreePath,
+        })
+      ) {
+        showWorktreeChangeBlockedNotice();
+        return false;
       }
       if (serverSession && worktreePath !== activeWorktreePath) {
         void stopThreadSession({
@@ -226,7 +247,7 @@ export function BranchToolbarBranchSelector({
       }
       if (hasServerThread) {
         onActiveThreadBranchOverrideChange?.(branch);
-        return;
+        return true;
       }
       const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
         nextWorktreePath: worktreePath,
@@ -240,12 +261,14 @@ export function BranchToolbarBranchSelector({
         environmentSelection: automatic ? (draftThread?.environmentSelection ?? "auto") : "manual",
         projectRef: scopeProjectRef(environmentId, activeProject.id),
       });
+      return true;
     },
     [
       activeThreadId,
       activeProject,
       serverSession,
       serverThread?.worktreePath,
+      currentThreadWorktreePath,
       activeWorktreePath,
       hasServerThread,
       onActiveThreadBranchOverrideChange,
@@ -482,6 +505,19 @@ export function BranchToolbarBranchSelector({
       return;
     }
 
+    // Refuse before the checkout, so Git leaves the running turn's files alone.
+    if (
+      isWorktreeChangeBlocked({
+        runtime: serverSession,
+        currentWorktreePath: currentThreadWorktreePath,
+        nextWorktreePath: selectionTarget.nextWorktreePath,
+      })
+    ) {
+      setIsBranchMenuOpen(false);
+      showWorktreeChangeBlockedNotice();
+      return;
+    }
+
     const selectedBranchName = refName.isRemote
       ? deriveLocalBranchNameFromRemoteRef(refName.name)
       : refName.name;
@@ -503,8 +539,11 @@ export function BranchToolbarBranchSelector({
         const nextBranchName = refName.isRemote
           ? (checkoutResult.value.refName ?? selectedBranchName)
           : selectedBranchName;
-        setOptimisticBranch(nextBranchName);
-        setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
+        setOptimisticBranch(
+          setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath)
+            ? nextBranchName
+            : previousBranch,
+        );
         return;
       }
       setOptimisticBranch(previousBranch);
@@ -540,8 +579,10 @@ export function BranchToolbarBranchSelector({
         },
       });
       if (createBranchResult._tag === "Success") {
-        setOptimisticBranch(createBranchResult.value.refName);
-        setThreadBranch(createBranchResult.value.refName, activeWorktreePath);
+        const nextBranchName = createBranchResult.value.refName;
+        setOptimisticBranch(
+          setThreadBranch(nextBranchName, activeWorktreePath) ? nextBranchName : previousBranch,
+        );
         return;
       }
       setOptimisticBranch(previousBranch);

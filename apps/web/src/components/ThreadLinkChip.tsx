@@ -10,7 +10,7 @@ import { MessagesSquareIcon } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 
 import { threadCardStatus } from "../studio/projectThreadCards";
-import { useHostOffline } from "../studio/unreachableHosts";
+import { useHostOffline, useHostReach } from "../studio/unreachableHosts";
 import { Tip } from "./studio/shell/Tip";
 import { toastManager } from "./ui/toast";
 
@@ -43,7 +43,11 @@ export function ThreadLinkChipButton(props: {
   copyMarkdown?: string | undefined;
   className?: string | undefined;
 }) {
-  const status = threadCardStatus(props.thread, useHostOffline(props.thread.environmentId));
+  const status = threadCardStatus(
+    props.thread,
+    useHostOffline(props.thread.environmentId),
+    useHostReach(props.thread.environmentId),
+  );
   const title = liveTitle(props.thread, props.label);
   return (
     <Tip label={`${title} · ${status.label}`} side="top">
@@ -73,7 +77,11 @@ export function ThreadLinkChipLink(props: {
   copyMarkdown?: string | undefined;
   className?: string | undefined;
 }) {
-  const status = threadCardStatus(props.thread, useHostOffline(props.thread.environmentId));
+  const status = threadCardStatus(
+    props.thread,
+    useHostOffline(props.thread.environmentId),
+    useHostReach(props.thread.environmentId),
+  );
   const title = liveTitle(props.thread, props.label);
   const onClick = (event: MouseEvent<HTMLAnchorElement>) => {
     const modified =

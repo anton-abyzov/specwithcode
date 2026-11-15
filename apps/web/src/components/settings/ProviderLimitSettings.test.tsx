@@ -82,15 +82,19 @@ vi.mock("./settingsLayout", () => ({
     control,
     status,
     resetAction,
+    children,
   }: {
     title: string;
     control: ReactNode;
     status?: string;
     resetAction?: ReactNode;
+    children?: ReactNode;
   }) => (
     <section aria-label={title} data-status={status}>
       {control}
       {resetAction}
+      {/* Only the Tracks saved-order row's body is exercised here. */}
+      {title === "Saved fallback order" ? children : null}
     </section>
   ),
   SettingResetButton: ({ onClick }: { onClick: () => void }) => (
@@ -307,7 +311,7 @@ it("follows the model tiers when no fallback order is set, and offers Only these
   };
   act(() => renderer!.update(<ProviderLimitSettings />));
   expect(section("Fallback order")[0]!.props["data-status"]).toBe("Uses your model tiers");
-  expect(section("Only these models")).toHaveLength(1);
+  expect(section("Stay on my tracks")).toHaveLength(1);
 });
 
 const switchAtSection = () =>
@@ -446,4 +450,85 @@ it("starts the custom field over when the stored value changes elsewhere", () =>
   expect(row("Switch before the limit").props.value).toBe("90");
   expect(customField()).toHaveLength(0);
   expect(state.update).not.toHaveBeenCalled();
+});
+
+function trackProvider(id: string, driver: string, slugs: string[], authType?: string) {
+  return {
+    instanceId: ProviderInstanceId.make(id),
+    driver,
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: { status: "authenticated", ...(authType === undefined ? {} : { type: authType }) },
+    checkedAt: new Date().toISOString(),
+    version: null,
+    models: slugs.map((slug) => ({ slug, name: slug, isCustom: false, capabilities: null })),
+    slashCommands: [],
+    skills: [],
+  };
+}
+
+it("on Tracks shows a saved order read-only, adds what Daily takes and keeps what it refuses", () => {
+  state.providers = [
+    trackProvider("codex", "codex", ["gpt-6.1-sol"]),
+    trackProvider("claude-api", "claudeAgent", ["claude-fable-5-2"], "apiKey"),
+  ];
+  const sol = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+  const fable = { instanceId: ProviderInstanceId.make("claude-api"), model: "claude-fable-5-2" };
+  state.settings = {
+    ...state.settings,
+    modelLanes: { complex: [], routine: [] },
+    providerLimitFallbackModels: [sol, fable],
+  };
+  act(() => {
+    renderer = create(<ProviderLimitSettings part="advanced" tracks />);
+  });
+  const text = () => JSON.stringify(renderer!.toJSON());
+  // No editable "Fallback order" row; the switch reads "Stay on my tracks".
+  expect(
+    renderer!.root.findAll((node) => node.props["aria-label"] === "Fallback order"),
+  ).toHaveLength(0);
+  expect(
+    renderer!.root.findAll((node) => node.props["aria-label"] === "Stay on my tracks").length,
+  ).toBeGreaterThan(0);
+  expect(text()).toContain("gpt-6.1-sol");
+  const button = (label: string) =>
+    renderer!.root.find((node) => node.type === "button" && node.children.includes(label));
+  act(() => button("Add to Daily").props.onClick());
+  const patch = state.update.mock.calls.at(-1)![0];
+  expect(patch.modelLanes.routine).toContainEqual(sol);
+  // The per-token Fable entry is refused by Daily, so it stays in the saved order, named.
+  expect(patch.providerLimitFallbackModels).toEqual([fable]);
+  expect(patch.providerLimitFallbackModelSelection).toEqual(fable);
+  // The note names the refused entry once the write lands, keyed to the order it left ...
+  state.settings = { ...state.settings, providerLimitFallbackModels: [fable] };
+  act(() => renderer!.update(<ProviderLimitSettings part="advanced" tracks />));
+  expect(text()).toContain("stays here:");
+  // ... and another project with no saved order never sees it.
+  state.search = { project: "q" };
+  state.settings = { ...state.settings, providerLimitFallbackModels: [] };
+  act(() => renderer!.update(<ProviderLimitSettings part="advanced" tracks />));
+  expect(text()).not.toContain("stays here:");
+});
+
+it("on Tracks, Use tracks clears the saved order", () => {
+  state.providers = [trackProvider("codex", "codex", ["gpt-6.1-sol"])];
+  state.settings = {
+    ...state.settings,
+    providerLimitFallbackModels: [
+      { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" },
+    ],
+  };
+  act(() => {
+    renderer = create(<ProviderLimitSettings part="advanced" tracks />);
+  });
+  act(() =>
+    renderer!.root
+      .find((node) => node.type === "button" && node.children.includes("Use tracks"))
+      .props.onClick(),
+  );
+  expect(state.update).toHaveBeenLastCalledWith({
+    providerLimitFallbackModels: [],
+    providerLimitFallbackModelSelection: null,
+  });
 });

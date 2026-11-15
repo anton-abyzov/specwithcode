@@ -415,6 +415,44 @@ export const QuotaAlertDismissals = Schema.Record(
 );
 export type QuotaAlertDismissals = typeof QuotaAlertDismissals.Type;
 
+/**
+ * "Use it until it resets": for a while, new worker threads of the named
+ * projects start on one subscription's model, because its quota is about to
+ * reset unused. A time-boxed override: no saved default is rewritten, so
+ * nothing has to be restored when it ends. See `quotaBoost` in shared.
+ */
+export const QuotaBoost = Schema.Struct({
+  accountKey: TrimmedNonEmptyString,
+  instanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+  /** The projects it covers; empty means every project. */
+  projectIds: Schema.Array(TrimmedNonEmptyString),
+  /** How the banner names it, for example "Codex Pro". */
+  label: TrimmedNonEmptyString,
+  /** The window whose reset ends it. */
+  windowId: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Epoch ms: the reset that ends it, and when it began. */
+  until: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 8.64e15 })),
+  /**
+   * The window's reset as read at the start, when `until` is not that reset: a
+   * boost started from an expected reset ends a day after the post, and the
+   * window moving past this is the reset arriving.
+   */
+  resetsAtStart: Schema.optionalKey(
+    Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 8.64e15 })),
+  ),
+  startedAt: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 8.64e15 })),
+});
+export type QuotaBoost = typeof QuotaBoost.Type;
+/**
+ * Boosts by account key, so two clients writing at once merge instead of one
+ * erasing the other. Null marks one that ended: a patch can only add or
+ * replace a key, so ending is written as null. One value per account keeps
+ * the map bounded.
+ */
+export const QuotaBoosts = Schema.Record(TrimmedNonEmptyString, Schema.NullOr(QuotaBoost));
+export type QuotaBoosts = typeof QuotaBoosts.Type;
+
 /** What a subscription costs a month, by account key; only weighs the efficiency score. */
 export const SubscriptionPrices = Schema.Record(
   TrimmedNonEmptyString,
@@ -1667,6 +1705,14 @@ export const ProviderLimitTargetOrder = Schema.Literals([
 ]);
 export type ProviderLimitTargetOrder = typeof ProviderLimitTargetOrder.Type;
 
+/**
+ * What a project's new threads start on when no model is named: the first
+ * available entry of the track for the task ("tracks"), or the one model the
+ * project saved ("model"). Absent means "model", as projects ran before tracks.
+ */
+export const ThreadModelMode = Schema.Literals(["tracks", "model"]);
+export type ThreadModelMode = typeof ThreadModelMode.Type;
+
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "agentInstructions",
   "claudeWorkflowMode",
@@ -1675,6 +1721,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "worktreeLocationMode",
   "worktreesDirectory",
   "defaultModelSelection",
+  "threadModelMode",
   "defaultModelProviders",
   "defaultRuntimeMode",
   "defaultThreadEnvMode",
@@ -1734,6 +1781,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   worktreeLocationMode: Schema.optionalKey(WorktreeLocationMode),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  threadModelMode: Schema.optionalKey(ThreadModelMode),
   defaultModelProviders: Schema.optionalKey(DefaultModelProviders),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
@@ -1916,6 +1964,10 @@ export const ServerSettings = Schema.Struct({
   ),
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** See `ThreadModelMode`. A project sets it; "model" keeps how threads started before tracks. */
+  threadModelMode: ThreadModelMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("model" as const)),
   ),
   /**
    * Other providers that serve the default model, in the order a thread
@@ -2161,6 +2213,10 @@ export const ServerSettings = Schema.Struct({
   /** Warn when subscription quota is about to reset unused; see `quotaAlerts` in shared. */
   quotaAlertsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   quotaAlertDismissals: QuotaAlertDismissals.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Read the public feed of reset announcements; off stops every request to it. */
+  resetAnnouncementsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Running "use it until it resets" overrides; see `QuotaBoost`. */
+  quotaBoosts: QuotaBoosts.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
    * Retired environment tier for the new-thread workspace, which is now each
    * project's own choice (its override, then its specweave-studio.json, then
@@ -2506,6 +2562,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  threadModelMode: Schema.optionalKey(ThreadModelMode),
   defaultModelProviders: Schema.optionalKey(DefaultModelProviders),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   /**
@@ -2586,6 +2643,9 @@ export const ServerSettingsPatch = Schema.Struct({
   quotaAlertsEnabled: Schema.optionalKey(Schema.Boolean),
   /** Merged by alert key. */
   quotaAlertDismissals: Schema.optionalKey(QuotaAlertDismissals),
+  resetAnnouncementsEnabled: Schema.optionalKey(Schema.Boolean),
+  /** Merged by account key; null ends one. */
+  quotaBoosts: Schema.optionalKey(QuotaBoosts),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newProjectThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),

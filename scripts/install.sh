@@ -61,7 +61,32 @@ EOF
 
 fail() {
   printf '\nspecwithcode install: %s\n' "$1" >&2
+  report_line "$1"
   exit 1
+}
+
+# Percent-encodes one value for a URL query, byte by byte, in one awk pass (a shell loop spawns
+# processes per character and takes seconds on a slow runner). Under LC_ALL=C awk reads bytes, so
+# a multibyte letter becomes its UTF-8 bytes and [A-Za-z] means ASCII letters only.
+urlencode() {
+  printf '%s' "$1" | LC_ALL=C awk '
+    BEGIN { RS = "\001"; for (i = 1; i < 256; i++) ord[sprintf("%c", i)] = i }
+    {
+      for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        if (c ~ /[A-Za-z0-9._~-]/) printf "%s", c
+        else printf "%%%02X", ord[c]
+      }
+    }'
+}
+
+# One line with a GitHub new-issue link prefilled with the error, version and platform. Only
+# printed: nothing is sent unless the person opens the link and submits the issue themselves.
+report_line() {
+  report_body="$(printf 'install.sh failed: %s\n\nVersion: %s\nPlatform: %s-%s\nChannel: %s\n' \
+    "$1" "${version:-unknown}" "${platform:-$(uname -s 2>/dev/null)}" "${arch:-$(uname -m 2>/dev/null)}" "${STUDIO_CHANNEL:-stable}")"
+  printf 'Report this failure: https://github.com/anton-abyzov/specwithcode/issues/new?title=%s&body=%s\n' \
+    "$(urlencode "install.sh: $1")" "$(urlencode "$report_body")" >&2
 }
 
 # Single-quotes a value for the generated launcher.
@@ -309,10 +334,46 @@ mb() {
   printf '%s.%s' "$((tenths / 10))" "$((tenths % 10))"
 }
 
-# download URL FILE: fetch, with a progress bar on a terminal. Polls the file the downloader
-# writes; no progress-output parsing or extra request.
+# download URL FILE: one try, then, when it stopped part way, one more that resumes from the
+# bytes already there (curl -C -, wget -c). A 404 or an empty file is not retried. The caller
+# checks the checksum afterwards, so a bad resume can only fail, never install the wrong bytes.
 download() {
-  if ! "$interactive"; then fetch "$1" "$2"; return; fi
+  download_result=0
+  download_once "$1" "$2" || download_result=$?
+  if [ "$download_result" -eq 0 ] || [ "$download_result" -eq 44 ] || [ ! -s "$2" ]; then
+    return "$download_result"
+  fi
+  printf '  %sThe download stopped at %s MB; resuming...%s\n' "$muted" "$(mb "$(wc -c < "$2")")" "$reset" >&2
+  if command -v curl >/dev/null 2>&1; then
+    case "$1" in
+      https://*) curl -fsSL --proto '=https' -C - "$1" -o "$2" ;;
+      *) curl -fsSL -C - "$1" -o "$2" ;;
+    esac
+  else
+    case "$1" in
+      https://*) wget -q -c --https-only "$1" -O "$2" ;;
+      *) wget -q -c "$1" -O "$2" ;;
+    esac
+  fi
+}
+
+# download_once URL FILE: fetch, with a progress bar on a terminal. Polls the file the downloader
+# writes; no progress-output parsing or extra request. Exit 44 on a 404. curl runs with -f, so
+# an error page never lands in FILE and a resume only ever appends to real bytes.
+download_once() {
+  if ! "$interactive"; then
+    if command -v curl >/dev/null 2>&1; then
+      once_status=0
+      case "$1" in
+        https://*) once_code="$(curl -fsSL --proto '=https' -w '%{http_code}' "$1" -o "$2")" || once_status=$? ;;
+        *) once_code="$(curl -fsSL -w '%{http_code}' "$1" -o "$2")" || once_status=$? ;;
+      esac
+      if [ "$once_code" = 404 ]; then return 44; fi
+      return "$once_status"
+    fi
+    fetch "$1" "$2"
+    return
+  fi
   if command -v curl >/dev/null 2>&1; then
     case "$1" in
       https://*) curl -fsSL --proto '=https' -D "$2.headers" "$1" -o "$2" 2>"$2.errors" & ;;

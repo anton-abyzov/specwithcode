@@ -24,6 +24,8 @@
 import {
   ProjectWorkspaceError,
   ThreadId,
+  type ProjectBoardInput,
+  type ProjectBoardResult,
   type ProjectIncrementsListInput,
   type ProjectIncrementsListResult,
   type ThreadIncrementLinkInput,
@@ -42,6 +44,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { readProjectBoard } from "./ProjectBoard.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import {
@@ -64,6 +67,9 @@ export class ThreadIncrementProgressService extends Context.Service<
     readonly listIncrements: (
       input: ProjectIncrementsListInput,
     ) => Effect.Effect<ProjectIncrementsListResult, ProjectWorkspaceError>;
+    readonly board: (
+      input: ProjectBoardInput,
+    ) => Effect.Effect<ProjectBoardResult, ProjectWorkspaceError>;
     readonly link: (
       input: ThreadIncrementLinkInput,
     ) => Effect.Effect<ThreadIncrementLinkResult, ProjectWorkspaceError>;
@@ -969,6 +975,21 @@ export const make = Effect.gen(function* () {
       };
     }).pipe(asWorkspaceError(input.projectId));
 
+  /** The project's increments as a board, read from its planning root. */
+  const board = (input: ProjectBoardInput) =>
+    Effect.gen(function* () {
+      const project = yield* projectOf(input.projectId);
+      const now = yield* Clock.currentTimeMillis;
+      const result = yield* Effect.promise(() =>
+        readProjectBoard(project.workspaceRoot, {
+          now,
+          ...(input.query === undefined ? {} : { query: input.query }),
+          ...(input.doneLimit === undefined ? {} : { doneLimit: input.doneLimit }),
+        }),
+      );
+      return { projectId: input.projectId, ...result };
+    }).pipe(asWorkspaceError(input.projectId));
+
   const link = (input: ThreadIncrementLinkInput) =>
     Effect.gen(function* () {
       const project = yield* projectOf(input.projectId);
@@ -997,7 +1018,7 @@ export const make = Effect.gen(function* () {
       return input;
     }).pipe(asWorkspaceError(input.projectId));
 
-  return ThreadIncrementProgressService.of({ read, listIncrements, link });
+  return ThreadIncrementProgressService.of({ read, listIncrements, board, link });
 });
 
 export const layer = Layer.effect(ThreadIncrementProgressService, make);

@@ -75,7 +75,8 @@ const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 // prefixes. A repository or global diff.noprefix or diff.mnemonicPrefix would
 // otherwise leak into the patch and leave every parsed file unnamed.
 export const PATCH_RENDER_PREFIX_ARGS = ["--src-prefix=a/", "--dst-prefix=b/"] as const;
-// Shared by review previews and status totals, so the Changes row matches the Changes view.
+// Shared by review previews; status totals pass the same flags to `git diff-index`, so the
+// Changes row matches the Changes view.
 const REVIEW_DIFF_ARGS = [
   "diff",
   "--find-renames",
@@ -425,15 +426,6 @@ function parseTrackingBranchByUpstreamRef(stdout: string, upstreamRef: string): 
   }
 
   return null;
-}
-
-function deriveLocalBranchNameFromRemoteRef(branchName: string): string | null {
-  const separatorIndex = branchName.indexOf("/");
-  if (separatorIndex <= 0 || separatorIndex === branchName.length - 1) {
-    return null;
-  }
-  const localBranch = branchName.slice(separatorIndex + 1).trim();
-  return localBranch.length > 0 ? localBranch : null;
 }
 
 function gitCommandContext(
@@ -1371,11 +1363,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // `--no-auto-gc` (a synonym of `--no-auto-maintenance` that older Git also knows) keeps
     // this poll from starting `git gc --auto`. When that gc fails, for example on a repository
     // with missing objects, Git retries it on every fetch and leaves a full-size `tmp_pack_*`
-    // behind each time, so a background poll could fill the disk.
+    // behind each time, so a background poll could fill the disk. FETCH_HEAD is written without
+    // a lock, so `--no-write-fetch-head` keeps this poll from breaking an overlapping `git pull`.
     return executeGit(
       "GitVcsDriver.fetchRemoteForStatus",
       fetchCwd,
-      ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", "--no-auto-gc", remoteName],
+      [
+        "--git-dir",
+        gitCommonDir,
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-auto-gc",
+        "--no-write-fetch-head",
+        remoteName,
+      ],
       {
         env: STATUS_UPSTREAM_REFRESH_ENV,
         fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
@@ -2374,17 +2376,46 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     Effect.fn("prepareCommitContext")(function* (cwd, filePaths) {
       return yield* Effect.scoped(
         Effect.gen(function* () {
-          const indexValue = yield* runGitStdout(
-            "GitVcsDriver.prepareCommitContext.indexPath",
+          const [indexValue = "", objectsValue = ""] = (yield* runGitStdout(
+            "GitVcsDriver.prepareCommitContext.gitPaths",
             cwd,
-            ["rev-parse", "--git-path", "index"],
-          );
+            ["rev-parse", "--git-path", "index", "--git-path", "objects"],
+          )).split("\n");
           const indexPath = path.resolve(cwd, indexValue.trim());
           const directory = yield* fileSystem.makeTempDirectoryScoped({
             prefix: "studio-commit-index-",
           });
           const tempIndexPath = path.join(directory, "index");
-          const env = { GIT_INDEX_FILE: tempIndexPath } satisfies NodeJS.ProcessEnv;
+          // Staging writes blobs. They go to the temp directory, so a draft that is never
+          // committed leaves nothing in the repository. The repository's object directory and
+          // every alternate Git resolved are listed flat: nesting them one level deeper could
+          // pass Git's alternate depth limit.
+          const countObjects = yield* runGitStdout(
+            "GitVcsDriver.prepareCommitContext.alternates",
+            cwd,
+            ["count-objects", "-v"],
+          );
+          // Git prints an entry C-quoted when it needs quoting; quote the rest the same way, so a
+          // path holding the list separator stays one entry.
+          const quoteAlternate = (entry: string) =>
+            entry.startsWith('"') ? entry : `"${entry.replace(/[\\"]/g, "\\$&")}"`;
+          const alternates = [
+            path.resolve(cwd, objectsValue.trim()),
+            ...countObjects
+              .split("\n")
+              .flatMap((line) =>
+                line.startsWith("alternate: ") ? [line.slice("alternate: ".length)] : [],
+              ),
+          ];
+          const tempObjectsPath = path.join(directory, "objects");
+          yield* fileSystem.makeDirectory(tempObjectsPath);
+          const env = {
+            GIT_INDEX_FILE: tempIndexPath,
+            GIT_OBJECT_DIRECTORY: tempObjectsPath,
+            GIT_ALTERNATE_OBJECT_DIRECTORIES: alternates
+              .map(quoteAlternate)
+              .join((yield* HostProcessPlatform) === "win32" ? ";" : ":"),
+          } satisfies NodeJS.ProcessEnv;
           const config = [
             "-c",
             "core.splitIndex=false",
@@ -2984,7 +3015,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       executeGit(
         "GitVcsDriver.readBranchChangeTotals",
         cwd,
-        [...REVIEW_DIFF_ARGS, "--numstat", "-z", ref, "--"],
+        // Plumbing: porcelain `git diff` refreshes and rewrites the real index, taking index.lock.
+        [
+          "diff-index",
+          "--find-renames",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--minimal",
+          "--numstat",
+          "-z",
+          ref,
+          "--",
+        ],
         {
           allowNonZeroExit: true,
           maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
@@ -4530,29 +4572,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           )
         : null;
 
-      const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(input.refName);
-      const localTrackedBranchTargetExists =
-        remoteExists && localTrackedBranchCandidate
-          ? yield* executeGit(
-              "GitVcsDriver.switchRef.localTrackedBranchTargetExists",
-              input.cwd,
-              ["show-ref", "--verify", "--quiet", `refs/heads/${localTrackedBranchCandidate}`],
-              {
-                timeoutMs: 5_000,
-                allowNonZeroExit: true,
-              },
-            ).pipe(Effect.map((result) => result.exitCode === 0))
-          : false;
-
+      // A remote branch always lands on a local branch. When a same-named local branch exists
+      // but does not track this remote, `--track` refuses instead of silently detaching HEAD.
       const checkoutArgs = localInputExists
         ? ["checkout", input.refName]
-        : remoteExists && !localTrackingBranch && localTrackedBranchTargetExists
-          ? ["checkout", input.refName]
-          : remoteExists && !localTrackingBranch
-            ? ["checkout", "--track", input.refName]
-            : remoteExists && localTrackingBranch
-              ? ["checkout", localTrackingBranch]
-              : ["checkout", input.refName];
+        : remoteExists && !localTrackingBranch
+          ? ["checkout", "--track", input.refName]
+          : remoteExists && localTrackingBranch
+            ? ["checkout", localTrackingBranch]
+            : ["checkout", input.refName];
 
       // A stale ref must not turn into a path checkout that discards local edits.
       yield* executeGit("GitVcsDriver.switchRef.checkout", input.cwd, [...checkoutArgs, "--"], {

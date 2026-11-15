@@ -53,7 +53,12 @@ export const mapDpopReplayStoreError = (
         cause: error,
       });
 
-export const verifyRequestDpopProof = (input: {
+/**
+ * Checks a request's DPoP proof without recording it. `consume` records the
+ * proof's jti, so run it only once the rest of the request is accepted; a
+ * second `consume` of the same proof fails as a replay.
+ */
+export const checkRequestDpopProof = (input: {
   readonly request: HttpServerRequest.HttpServerRequest;
   readonly expectedThumbprint?: string;
   readonly expectedAccessToken?: string;
@@ -85,42 +90,51 @@ export const verifyRequestDpopProof = (input: {
       });
     }
     const secretStore = yield* ServerSecretStore.ServerSecretStore;
-    const replayKey = yield* Crypto.Crypto.pipe(
-      Effect.flatMap((crypto) =>
-        crypto.digest("SHA-256", new TextEncoder().encode(`${result.thumbprint}:${result.jti}`)),
-      ),
-      Effect.map(Base64Url.encode),
-      Effect.mapError(
-        (cause) =>
-          new ServerAuthDpopReplayKeyCalculationError({
-            cause,
-          }),
-      ),
-    );
-    yield* secretStore
-      .create(
-        `${DPOP_REPLAY_MARKER_PREFIX}${replayKey}`,
-        new TextEncoder().encode(
-          [
-            `thumbprint=${result.thumbprint}`,
-            `jti=${result.jti}`,
-            `iat=${result.iat}`,
-            `consumedAt=${DateTime.formatIso(now)}`,
-          ].join("\n"),
-        ),
-      )
-      .pipe(
-        Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
-          Effect.gen(function* () {
-            const mapped = mapDpopReplayStoreError(error);
-            if (mapped._tag === "ServerAuthInvalidCredentialError") {
-              yield* Effect.annotateCurrentSpan({
-                "environment.dpop.failure_code": mapped.dpopFailureReason,
-              });
-            }
-            return yield* mapped;
-          }),
-        ),
-      );
-    return result.thumbprint;
+    const crypto = yield* Crypto.Crypto;
+    const consume: Effect.Effect<void, ServerAuthInvalidCredentialError | ServerAuthInternalError> =
+      Effect.gen(function* () {
+        const replayKey = yield* crypto
+          .digest("SHA-256", new TextEncoder().encode(`${result.thumbprint}:${result.jti}`))
+          .pipe(
+            Effect.map(Base64Url.encode),
+            Effect.mapError(
+              (cause) =>
+                new ServerAuthDpopReplayKeyCalculationError({
+                  cause,
+                }),
+            ),
+          );
+        yield* secretStore
+          .create(
+            `${DPOP_REPLAY_MARKER_PREFIX}${replayKey}`,
+            new TextEncoder().encode(
+              [
+                `thumbprint=${result.thumbprint}`,
+                `jti=${result.jti}`,
+                `iat=${result.iat}`,
+                `consumedAt=${DateTime.formatIso(now)}`,
+              ].join("\n"),
+            ),
+          )
+          .pipe(
+            Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
+              Effect.gen(function* () {
+                const mapped = mapDpopReplayStoreError(error);
+                if (mapped._tag === "ServerAuthInvalidCredentialError") {
+                  yield* Effect.annotateCurrentSpan({
+                    "environment.dpop.failure_code": mapped.dpopFailureReason,
+                  });
+                }
+                return yield* mapped;
+              }),
+            ),
+          );
+      });
+    return { thumbprint: result.thumbprint, consume };
   });
+
+/** Checks a request's DPoP proof and records it at once, refusing a replay. */
+export const verifyRequestDpopProof = (input: Parameters<typeof checkRequestDpopProof>[0]) =>
+  checkRequestDpopProof(input).pipe(
+    Effect.flatMap((proof) => Effect.as(proof.consume, proof.thumbprint)),
+  );

@@ -446,6 +446,52 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("skips blank lines between agent messages", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const outcome = yield* Deferred.make<string>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onTermination: (error) => Deferred.succeed(outcome, error._tag).pipe(Effect.asVoid),
+      });
+      yield* transport.incoming.pipe(
+        Stream.runForEach((notification) => Deferred.succeed(outcome, notification._tag)),
+        Effect.forkScoped,
+      );
+
+      const update = encodeUnknownJsonString({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: "session-1", update: { sessionUpdate: "plan", entries: [] } },
+      });
+      yield* Queue.offer(input, encoder.encode(`\n\r\n \t\n${update}\n\n`));
+
+      assert.equal(yield* Deferred.await(outcome), "SessionUpdate");
+    }),
+  );
+
+  it.effect("answers a pending request from a final response without a trailing newline", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      });
+      const pending = yield* transport
+        .request("x/test", { hello: "world" })
+        .pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* Queue.offer(
+        input,
+        encoder.encode(encodeUnknownJsonString({ jsonrpc: "2.0", id: 1, result: { ok: true } })),
+      );
+      yield* Queue.end(input);
+
+      assert.deepEqual(yield* Fiber.join(pending), { ok: true });
+    }),
+  );
+
   it.effect("does not correlate a string response id with a numeric extension request id", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();

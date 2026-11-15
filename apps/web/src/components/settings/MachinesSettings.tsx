@@ -1,5 +1,6 @@
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
+import { CommandLineCard } from "./CommandLineCard";
 import { ConnectionsSettings } from "./ConnectionsSettings";
 import type { FleetMachineCardExtras } from "./StudioFleetConnections";
 import { MachineRemoteControl } from "./MachineRemoteControl";
@@ -253,7 +254,10 @@ export function MachinesSettingsPanel() {
       onConnect={(machine) => void connect(machine)}
       remoteControl={
         row.seen.state === "this-machine" ? null : (
-          <MachineRemoteControl environmentId={row.environmentId} name={row.label} />
+          <MachineRemoteControl
+            environmentId={row.environmentId}
+            name={machineName(row.environmentId, row.label)}
+          />
         )
       }
       addForAgents={
@@ -363,6 +367,7 @@ export function MachinesSettingsPanel() {
               <HandoffModeSettings environmentId={fleet.primaryEnvironmentId} />
             ) : null}
             {parts.routing}
+            <CommandLineCard />
             <ThisMachineAdvanced>
               {parts.thisMachine}
               {parts.savedConnections}
@@ -590,13 +595,7 @@ function MachineChip({
  * folder with the home folder as "~" and the end kept. Pressing it lists every
  * copy with its machine, status, role and full folder.
  */
-function ProjectWhere({
-  project,
-  here,
-}: {
-  project: MachineProject;
-  here: MachineHere;
-}) {
+function ProjectWhere({ project, here }: { project: MachineProject; here: MachineHere }) {
   const tx = useTx();
   const identities = useMachineIdentities();
   const shown = project.elsewhere.slice(0, MAX_MACHINE_CHIPS);
@@ -1124,7 +1123,7 @@ function AddForAgents({
     if (adding || added) return;
     // Fail closed: no mounted confirm host means no grant.
     const confirmed = await requestConfirmDialog(
-      `Let this machine manage ${row.label}?\nThis machine's server gets a key to ${row.label} for a year, which can manage its access, updates and skills. Agents still cannot start work there until you allow workers.`,
+      `Let this machine manage ${nickname}?\nThis machine's server gets a key to ${nickname} for a year, which can manage its access, updates and skills. Agents still cannot start work there until you allow workers.`,
     );
     if (confirmed !== true) return;
     setAdding(true);

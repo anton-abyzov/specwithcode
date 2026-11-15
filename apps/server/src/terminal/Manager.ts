@@ -21,6 +21,7 @@ import {
   TerminalResizeError,
   TerminalSessionLookupError,
   TerminalWriteError,
+  terminalHistoryTail,
   type TerminalAttachInput,
   type TerminalAttachStreamEvent,
   type TerminalClearInput,
@@ -450,6 +451,26 @@ function shouldPublishTerminalMetadataEvent(event: TerminalEvent): boolean {
     case "cleared":
       return false;
   }
+}
+
+/** Sends a client that states its buffer size only the history it keeps. */
+function boundAttachHistory(
+  maxHistoryBytes: number | undefined,
+  listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
+): (event: TerminalAttachStreamEvent) => Effect.Effect<void> {
+  if (maxHistoryBytes === undefined) return listener;
+  return (event) =>
+    listener(
+      "snapshot" in event
+        ? {
+            ...event,
+            snapshot: {
+              ...event.snapshot,
+              history: terminalHistoryTail(event.snapshot.history, maxHistoryBytes),
+            },
+          }
+        : event,
+    );
 }
 
 function terminalEventToAttachEvent(event: TerminalEvent): TerminalAttachStreamEvent | null {
@@ -3015,7 +3036,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   };
 
   const attachStream: TerminalManager["Service"]["attachStream"] = (input, listener) =>
-    streamSession(input, withSpawnAdmission(openOrAttachForStream(input)), listener);
+    streamSession(
+      input,
+      withSpawnAdmission(openOrAttachForStream(input)),
+      boundAttachHistory(input.maxHistoryBytes, listener),
+    );
 
   const observeStream: TerminalManager["Service"]["observeStream"] = (input, listener) =>
     streamSession(
@@ -3024,7 +3049,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         input.threadId,
         requireSession(input.threadId, input.terminalId).pipe(Effect.map(snapshot)),
       ),
-      listener,
+      boundAttachHistory(input.maxHistoryBytes, listener),
     );
 
   const metadataEventFromTerminalEvent = (

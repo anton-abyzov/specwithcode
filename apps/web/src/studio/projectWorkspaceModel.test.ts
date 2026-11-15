@@ -529,6 +529,44 @@ describe("Project admission and retry", () => {
       /Reconnecting to this host/,
     );
     expect(projectAdmissionReason(settings, false, true, { phase: "offline" })).toMatch(/offline/);
+    // The refused-send reason follows the reach judgement the status line shows.
+    const grace = { isThisDevice: false, graceElapsed: true, machineLabel: "Build Mac" };
+    expect(
+      projectAdmissionReason(
+        settings,
+        false,
+        true,
+        { phase: "connecting" },
+        {
+          ...grace,
+          reach: "reconnecting",
+        },
+      ),
+    ).toBe("Reconnecting to Build Mac. Send once it is back; nothing is sent to another machine.");
+    expect(
+      projectAdmissionReason(
+        settings,
+        false,
+        true,
+        { phase: "offline" },
+        {
+          ...grace,
+          reach: "no-network",
+        },
+      ),
+    ).toBe("This device has no network.");
+    expect(
+      projectAdmissionReason(
+        settings,
+        false,
+        true,
+        { phase: "connecting" },
+        {
+          ...grace,
+          reach: "not-answering",
+        },
+      ),
+    ).toMatch(/Build Mac is unreachable/);
     expect(hostDisconnectedLabel({ phase: "error", blockedReason: "authentication" })).toBe(
       "Signed out",
     );
@@ -538,9 +576,15 @@ describe("Project admission and retry", () => {
       /Connecting to this host/,
     );
     expect(hostDisconnectedLabel({ phase: "error", blockedReason: "configuration" })).toBe(
-      "Disconnected",
+      "Connection failed",
     );
-    expect(hostDisconnectedLabel(undefined)).toBe("Disconnected");
+    expect(hostDisconnectedLabel(undefined)).toBe("Not connected");
+    expect(
+      hostDisconnectedLabel(
+        { phase: "reconnecting" },
+        { isThisDevice: false, graceElapsed: true, reach: "not-answering" },
+      ),
+    ).toBe("Not answering");
     expect(projectAdmissionReason(settings, true, false)).toMatch(/read-only/);
     expect(projectAdmissionReason(null, true, true)).toMatch(/loading/);
     expect(projectAdmissionReason({ ...settings, paused: true }, true, true)).toMatch(/Resume/);
@@ -598,7 +642,7 @@ describe("Project admission and retry", () => {
         "Connecting to this host.",
       );
       expect(hostDisconnectedLabel({ phase: "reconnecting" }, remote)).toBe("Reconnecting");
-      expect(hostDisconnectedLabel({ phase: "offline" }, remote)).toBe("Offline");
+      expect(hostDisconnectedLabel({ phase: "offline" }, remote)).toBe("No network");
     }
   });
   it("refuses a message to a named machine that dropped, saying nothing goes elsewhere", () => {

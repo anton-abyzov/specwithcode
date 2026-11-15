@@ -389,12 +389,30 @@ export function ModelLanesSettings({ part }: { readonly part?: "quota" | "learne
               settingKeys={["quotaAlertsEnabled"]}
               id="quota-alerts"
               title="Warn before quota resets unused"
-              description="Shows a banner above the project list, and one notification, when a subscription is about to lose quota: a weekly window within a day of its reset with at least 40% left (a 5-hour window within 90 minutes), a banked reset in its last day, a renewal within a day with quota unused, or a limit the provider reset early. Dismissing it holds until the next reset."
+              description="Shows a banner above the project list, and one notification, when a subscription is about to lose quota: a weekly or monthly window in its last two days that your pace will leave at least 40% unused, a banked reset in its last day, a limit the provider reset early, or a reset a provider promised for today. A 5-hour window never warns. Dismissing it holds until the next reset."
               control={
                 <Switch
                   aria-label="Warn before quota resets unused"
                   checked={settings.quotaAlertsEnabled}
                   onCheckedChange={(quotaAlertsEnabled) => updateSettings({ quotaAlertsEnabled })}
+                />
+              }
+            />
+          )}
+          {isProjectScope ? null : (
+            <SettingsRow
+              serverScoped
+              settingKeys={["resetAnnouncementsEnabled"]}
+              id="reset-announcements"
+              title="Read reset announcements"
+              description="Every half hour this machine reads a public feed of posts in which a provider resets limits, grants a banked reset or promises a reset (airesets.dev). Nothing about you is sent. Off stops every request; Usage > Limits > Subscriptions keeps what was already read."
+              control={
+                <Switch
+                  aria-label="Read reset announcements"
+                  checked={settings.resetAnnouncementsEnabled}
+                  onCheckedChange={(resetAnnouncementsEnabled) =>
+                    updateSettings({ resetAnnouncementsEnabled })
+                  }
                 />
               }
             />

@@ -7,6 +7,7 @@ import type {
   ConnectionTarget,
   SupervisorConnectionState,
 } from "./model.ts";
+import { connectionLossCause, type ConnectionLossCause } from "./reach.ts";
 import { connectionRouteId, connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
 
 export type EnvironmentConnectionPhase =
@@ -26,6 +27,18 @@ export interface EnvironmentConnectionPresentation {
   readonly blockedReason?: ConnectionBlockedReason;
   /** The host no longer accepts this device's approval, such as after an update. */
   readonly reapprovalRequired?: boolean;
+  /**
+   * Since when this device has had no session with the machine while wanting
+   * one (epoch ms). Absent while connected, when nobody asked for a
+   * connection, and on a presentation built without a supervisor.
+   */
+  readonly lostAt?: number;
+  /** When this device last had a session with the machine in this run (epoch ms). */
+  readonly lastConnectedAt?: number;
+  /** When the next automatic attempt starts (epoch ms), while waiting between attempts. */
+  readonly retryAt?: number;
+  /** Why the latest attempt failed; kept through an explicit retry. */
+  readonly cause?: ConnectionLossCause;
 }
 
 export interface EnvironmentPresentation {
@@ -34,7 +47,32 @@ export interface EnvironmentPresentation {
   readonly serverConfig: ServerConfig | null;
 }
 
+/** The reach facts of a state, each left out when the supervisor has none. */
+function reachFacts(
+  state: SupervisorConnectionState,
+): Pick<EnvironmentConnectionPresentation, "lostAt" | "lastConnectedAt" | "retryAt" | "cause"> {
+  const cause =
+    state.phase === "available" || state.phase === "connected"
+      ? undefined
+      : connectionLossCause(
+          state.lossFailure ?? state.lastFailure,
+          state.phase === "offline" ? "offline" : "online",
+        );
+  return {
+    ...(state.lostAt == null ? {} : { lostAt: state.lostAt }),
+    ...(state.lastConnectedAt == null ? {} : { lastConnectedAt: state.lastConnectedAt }),
+    ...(state.retryAt === null ? {} : { retryAt: state.retryAt }),
+    ...(cause === undefined ? {} : { cause }),
+  };
+}
+
 export function presentConnectionState(
+  state: SupervisorConnectionState,
+): EnvironmentConnectionPresentation {
+  return { ...presentConnectionPhase(state), ...reachFacts(state) };
+}
+
+function presentConnectionPhase(
   state: SupervisorConnectionState,
 ): EnvironmentConnectionPresentation {
   switch (state.phase) {
@@ -94,7 +132,7 @@ export function settlingConnectionPresentation(
   switch (connection.phase) {
     case "available":
     case "reconnecting":
-      return { phase: "connecting", error: null, traceId: null };
+      return { ...connection, phase: "connecting", error: null, traceId: null };
     default:
       return connection;
   }

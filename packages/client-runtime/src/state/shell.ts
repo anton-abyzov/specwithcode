@@ -6,10 +6,13 @@ import {
   type ServerConfig,
 } from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -49,6 +52,15 @@ function shellStatusForSnapshot(
   return Option.isSome(snapshot) ? "cached" : "empty";
 }
 
+/**
+ * How long a subscription that asked for the server's "synchronized" marker
+ * may go without any traffic before the list counts as caught up. A server
+ * that is still replaying events is left alone; one that has gone quiet has
+ * nothing more to send, and without a limit a dropped marker would leave a
+ * connected machine's list resyncing forever.
+ */
+export const SHELL_RESUME_COMPLETION_TIMEOUT_MS = 15_000;
+
 const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
 
 export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")(function* () {
@@ -74,6 +86,12 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     error: Option.none(),
   });
   const awaitingCompletion = yield* Ref.make(false);
+  // When the stream last delivered anything, so the completion watchdog
+  // measures silence rather than time since subscribing.
+  const lastStreamActivityAt = yield* Ref.make(0);
+  // One writer at a time: a stream batch and the watchdog both decide the
+  // status from `awaitingCompletion`.
+  const applyLock = yield* Semaphore.make(1);
   const lastAuthoritativeSession = yield* Ref.make<RpcSession | null>(null);
   const activeSubscriptionSession = yield* Ref.make<RpcSession | null>(null);
   const latestLiveSnapshot = yield* Ref.make<Option.Option<OrchestrationV2ShellSnapshot>>(
@@ -158,9 +176,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   // Apply each received batch with one state write. The RPC client's bounded
   // buffer can split a server chunk, so a bulk action can still need several
   // writes, but each write includes every event in that batch.
-  const applyItems = Effect.fn("EnvironmentShellState.applyItems")(function* (
+  const applyItemsLocked = Effect.fn("EnvironmentShellState.applyItems")(function* (
     items: ReadonlyArray<OrchestrationV2ShellStreamItem>,
   ) {
+    yield* Ref.set(lastStreamActivityAt, yield* Clock.currentTimeMillis);
     const initial = yield* SubscriptionRef.get(state);
     let waiting = yield* Ref.get(awaitingCompletion);
     let next = initial;
@@ -215,6 +234,48 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       yield* Queue.offer(persistence, next.snapshot.value);
     }
   });
+  const applyItems = (items: ReadonlyArray<OrchestrationV2ShellStreamItem>) =>
+    applyLock.withPermits(1)(applyItemsLocked(items));
+
+  // Completion watchdog. A subscription that asked for the "synchronized"
+  // marker and then goes quiet for the timeout without it, on the same
+  // session, is treated as caught up: the snapshot is authoritative and a
+  // silent stream has nothing left to replay. Every received batch restarts
+  // the wait, and a late marker changes nothing.
+  const watchdogScope = yield* Scope.Scope;
+  const completionWatchdog = yield* Ref.make<Fiber.Fiber<void> | undefined>(undefined);
+  const armCompletionWatchdog = Effect.fn("EnvironmentShellState.armCompletionWatchdog")(function* (
+    session: RpcSession,
+  ) {
+    const previous = yield* Ref.getAndSet(completionWatchdog, undefined);
+    if (previous !== undefined) yield* Fiber.interrupt(previous);
+    yield* Ref.set(lastStreamActivityAt, yield* Clock.currentTimeMillis);
+    const watchdog = yield* Effect.gen(function* () {
+      for (;;) {
+        const quietMs = (yield* Clock.currentTimeMillis) - (yield* Ref.get(lastStreamActivityAt));
+        if (quietMs >= SHELL_RESUME_COMPLETION_TIMEOUT_MS) break;
+        yield* Effect.sleep(SHELL_RESUME_COMPLETION_TIMEOUT_MS - quietMs);
+      }
+      yield* applyLock.withPermits(1)(
+        Effect.gen(function* () {
+          if (!(yield* Ref.get(awaitingCompletion))) return;
+          if ((yield* Ref.get(activeSubscriptionSession)) !== session) return;
+          const currentSession = yield* SubscriptionRef.get(supervisor.session);
+          if (Option.isNone(currentSession) || currentSession.value !== session) return;
+          yield* Effect.logWarning(
+            "Environment shell resume never confirmed synchronization; treating the list as caught up.",
+          ).pipe(Effect.annotateLogs({ environmentId }));
+          yield* Ref.set(awaitingCompletion, false);
+          yield* SubscriptionRef.update(state, (current) =>
+            Option.isSome(current.snapshot) && current.status === "synchronizing"
+              ? { ...current, status: "live" as const, error: Option.none() }
+              : current,
+          );
+        }),
+      );
+    }).pipe(Effect.forkIn(watchdogScope));
+    yield* Ref.set(completionWatchdog, watchdog);
+  });
 
   const foregroundResubscriptions = Option.match(wakeups, {
     onNone: () => Stream.never,
@@ -263,6 +324,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
             current = yield* SubscriptionRef.get(state);
           }
         }
+
+        // The wait for the marker starts once the request is ready to go out.
+        if (supportsCompletionMarker) yield* armCompletionWatchdog(session);
 
         // If the authoritative refresh failed, omit the cached cursor so the
         // socket fallback sends a complete snapshot for this new session.

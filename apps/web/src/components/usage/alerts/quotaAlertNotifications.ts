@@ -50,19 +50,21 @@ export function notifyQuotaAlert(input: {
   readonly body: string;
   readonly onOpen: () => void;
 }): void {
+  if (quotaAlertNotified(input.key, input.periodEnd)) {
+    // The same period, re-read with a later end: follow it, so small drifts cannot add up.
+    // Done before the focus and permission checks, which would otherwise skip it and let
+    // one period notify twice.
+    if ((readNotified()[input.key] ?? 0) < input.periodEnd) {
+      recordQuotaAlertNotification(input.key, input.periodEnd);
+    }
+    return;
+  }
   if (!notificationsConnected() || document.hasFocus()) return;
   // The desktop's own notification call opens a thread, and an alert has none, so both the
   // desktop app and a browser use the web notification here.
   const availability = notificationAvailability();
   if (typeof Notification === "undefined") return;
   if (availability !== "native" && availability !== "granted") return;
-  if (quotaAlertNotified(input.key, input.periodEnd)) {
-    // The same period, re-read with a later end: follow it, so small drifts cannot add up.
-    if ((readNotified()[input.key] ?? 0) < input.periodEnd) {
-      recordQuotaAlertNotification(input.key, input.periodEnd);
-    }
-    return;
-  }
   // Without storage it would notify on every pass; the banner is enough then.
   if (!recordQuotaAlertNotification(input.key, input.periodEnd)) return;
   try {

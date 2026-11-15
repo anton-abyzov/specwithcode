@@ -493,8 +493,11 @@ export function auditPreservedPayloads(root, upstream) {
     const current = readFileSync(join(root, currentPath), "utf8");
     if (ownedVectors.has(currentPath)) {
       assert.doesNotMatch(current, /base64,|M33\.4509/);
-      // The page-and-prompt mark of assets/brand/specwithcode-mark.svg (b130c0d2b).
-      assert.match(current, /M29 10H60L78 28/);
+      // The current mark of assets/brand/specwithcode-mark.svg.
+      const mark = /<path[^>]*\sd="([^"]+)"/.exec(
+        readFileSync(join(root, "assets/brand/specwithcode-mark.svg"), "utf8"),
+      )?.[1];
+      assert.ok(mark && current.includes(mark), `Owned vector lost the brand mark: ${currentPath}`);
       continue;
     }
     const removed = removedWithUpstreamArtwork.get(currentPath) ?? [];

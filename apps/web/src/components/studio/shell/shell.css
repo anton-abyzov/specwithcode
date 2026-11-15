@@ -385,6 +385,10 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 [data-model-chip] [data-model-chip-part="mark"] {
   display: flex;
 }
+/* A split chip's usage ring is a button of its own; it keeps its flex row. */
+[data-model-chip] [data-model-usage-button] {
+  display: flex;
+}
 /* The ring and the number sit in the chip's row as parts of their own. */
 [data-model-chip] [data-model-usage-meter] {
   display: contents;
@@ -694,15 +698,15 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-side-row > .sws-model-mark {
   width: 18px;
 }
-/* A column every chat row shares, so machines scan top to bottom. */
+/* The machine a row runs on, as wide as its name and against the row's end: a short
+   name never keeps room made for a longer one in another row. */
 .sws-row-machine {
   flex: none;
-  /* Capped, because every character here comes off the chat's title. "ch" is a digit's
+  /* Capped, because every character here comes off the row's name. "ch" is a digit's
      width, wider than most letters, so "→ ministorm" still fits. */
-  width: min(var(--sws-chat-machine-col, 6ch), 9.5ch);
+  max-width: 9.5ch;
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 3px;
   font-size: var(--text-xs);
   color: var(--sidebar-muted-foreground);
@@ -724,22 +728,22 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   height: 13px;
   color: var(--warning-foreground, var(--sidebar-muted-foreground));
 }
-/* A narrow sidebar keeps the name's first letters; the tooltip has the rest. */
+/* A narrow sidebar keeps the machine's colored square and gives the name's room to the
+   chat; the tooltip has the name. A machine with no color keeps its first letters. */
 @container sidechats (width < 224px) {
-  .sws-row-machine {
-    width: 3ch;
-  }
-  .sws-row-machine:has(svg[data-offline]) {
-    width: calc(3ch + 15px);
-  }
-  .sws-row-machine-name {
-    text-overflow: clip;
-  }
-  .sws-row-machine-arrow {
+  .sws-row-machine[data-machine-color] > :is(.sws-row-machine-name, .sws-row-machine-arrow) {
     display: none;
   }
-  /* The chat's name wins: an open plan's count steps aside; the hover keeps it. */
-  .sws-chat-row .sws-thread-plan {
+  .sws-row-machine:not([data-machine-color]) {
+    max-width: 3ch;
+  }
+  .sws-row-machine:not([data-machine-color]):has(svg[data-offline]) {
+    max-width: calc(3ch + 15px);
+  }
+  .sws-row-machine:not([data-machine-color]) > .sws-row-machine-name {
+    text-overflow: clip;
+  }
+  .sws-row-machine:not([data-machine-color]) > .sws-row-machine-arrow {
     display: none;
   }
 }
@@ -755,6 +759,46 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A chat's name and its plan count share the room before the marks. The name comes
+   first: a count that does not fit beside the name's floor wraps whole onto the hidden
+   line and the name takes its room. */
+.sws-side-row-main {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: flex-start;
+}
+/* Keeps the first line as tall as the row, so the name stays centered once the count wraps. */
+.sws-side-row-main::before {
+  content: "";
+  flex: 0 0 0;
+  height: 100%;
+}
+.sws-side-row-main > .sws-side-row-label {
+  flex: 1 1 min(12ch, 55cqi);
+}
+/* The actions button pads the row by 22px (8px to 30px). Drop the name's floor by
+   that much while the button has the room, or the count wraps off at the default
+   sidebar width. A touch screen shows the button on every row. */
+@media (hover: hover) {
+  .sws-chat-row:is(:hover, :has(.sws-chat-menu:is(:focus-visible, [data-popup-open])))
+    .sws-side-row-main
+    > .sws-side-row-label {
+    flex-basis: max(0px, calc(min(12ch, 55cqi) - 22px));
+  }
+}
+@media (hover: none) {
+  .sws-chat-row .sws-side-row-main > .sws-side-row-label {
+    flex-basis: max(0px, calc(min(12ch, 55cqi) - 22px));
+  }
+}
+.sws-side-row-main > .sws-thread-plan {
+  margin-inline-start: 8px;
 }
 /* An offer, not a project yet: quieter than the rows above it. */
 .sws-side-row-quiet {
@@ -938,11 +982,21 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 /* The same repository on another machine, not linked yet: a link offer. */
 .sws-side-row > .sws-side-row-link-suggestion {
+  flex: none;
   display: inline-flex;
-  width: 14px;
-  height: 14px;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  line-height: 1;
   cursor: pointer;
   color: var(--primary);
+}
+.sws-side-row > .sws-side-row-link-suggestion:hover {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
 }
 .sws-side-row > .sws-side-row-link-suggestion > svg {
   width: 12px;
@@ -1162,12 +1216,8 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   height: 1px;
   background: var(--border);
 }
-/* The main machine of a project with no copy here, sized to its name; "+N" for the
-   others only where the sidebar has room. */
-.sws-project-row .sws-row-machine.sws-project-elsewhere[data-machine-color] {
-  width: auto;
-  max-width: calc(9.5ch + 10px);
-}
+/* A project with no copy here names its main machine; "+N" for the others only where
+   the sidebar has room. */
 .sws-row-machine-more {
   flex: none;
 }
@@ -3154,10 +3204,16 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   .sws-thread-machine:not([data-execution="unknown"]) svg {
     display: none;
   }
+  /* No room for a shared column either: the machine is as wide as its name, as in the
+     sidebar, so a short name leaves its room to the thread's title. */
+  .sws-thread-machine {
+    width: auto;
+    max-width: calc(var(--sws-machine-col, 6ch) + 1ch + 16px);
+  }
 }
 @container threadlist (width < 360px) {
   .sws-thread-machine {
-    width: calc(min(var(--sws-machine-col, 6ch), 6ch) + 1ch);
+    max-width: 7ch;
   }
   .sws-thread-machine-arrow {
     display: none;
@@ -3211,9 +3267,13 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 .sws-thread-action:hover {
   border-color: var(--input);
 }
-.sws-thread-action:disabled {
+.sws-thread-action:disabled,
+.sws-thread-action[aria-disabled="true"] {
   cursor: not-allowed;
   color: var(--muted-foreground);
+}
+.sws-thread-action[aria-disabled="true"]:hover {
+  border-color: var(--border);
 }
 /* Resolve takes the age's place; the title and meta end before it, not under it. On
    hover the meta line's end is kept clear by a spacer inside the line, so the line's

@@ -72,8 +72,22 @@ export const makeReceiver = Effect.gen(function* () {
     );
 
   return LinkedMemoryPeerReceiver.of({
-    memoryExport: (caller, input) =>
+    memoryExport: (caller, { forProjectId, ...input }) =>
       copyFor(caller, input.projectId).pipe(
+        // A copy that joined but is not listed here yet (a link waiting for its
+        // commit) reads nothing, even when another project on its machine is listed.
+        Effect.andThen((project) =>
+          forProjectId === undefined ||
+          project.workspaceSettings?.logicalProject?.members.some(
+            (member) =>
+              member.environmentId === caller.sourceEnvironmentId &&
+              member.projectId === forProjectId,
+          )
+            ? Effect.void
+            : Effect.fail(
+                refuse(403, "needs_grant", "Only a linked copy of this project may sync it."),
+              ),
+        ),
         Effect.andThen(memory.memoryExport(input).pipe(Effect.mapError(fromLinkError))),
       ),
     memoryMerge: (caller, input) =>

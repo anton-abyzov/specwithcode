@@ -525,6 +525,8 @@ const layerProjectLinkProvided = ProjectLink.layer.pipe(
       layerCoordinatorRoleProvided,
       // The standby keeps the routines its coordinator sends.
       layerRoutineCopiesProvided,
+      // A link records the note versions its review set aside, for the first memory merge.
+      LinkedMemoryHistory.layer,
     ),
   ),
 );

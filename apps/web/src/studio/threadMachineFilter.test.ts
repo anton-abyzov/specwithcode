@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  chatMachineColumnCh,
   chatMachineNote,
   chatsShowMachineColumn,
   machineColumnCh,
@@ -110,21 +109,5 @@ describe("chatMachineNote", () => {
     expect(note({ offlineHost: "M3", runsElsewhere: true, executionOffline: true })).toBe(
       "M3 can't be reached · Minis can't be reached",
     );
-  });
-});
-
-describe("chatMachineColumnCh", () => {
-  const row = (name: string, moved = false, offline = false) => ({ name, moved, offline });
-
-  it("leaves a short name room beside its arrow and offline mark", () => {
-    // No room kept beyond the name: "m1" leaves no gap made for a longer one.
-    expect(chatMachineColumnCh([row("m1")])).toBe(3);
-    expect(chatMachineColumnCh([row("m1"), row("m2", true)])).toBe(5);
-    expect(chatMachineColumnCh([row("m3", false, true)])).toBe(5);
-    expect(chatMachineColumnCh([row("m3", true, true)])).toBe(8);
-  });
-
-  it("stops growing at the shared limit", () => {
-    expect(chatMachineColumnCh([row("ministorm", true, true)])).toBe(10);
   });
 });

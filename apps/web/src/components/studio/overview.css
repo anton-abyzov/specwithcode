@@ -141,8 +141,8 @@
   margin-left: auto;
   text-align: right;
 }
+/* The title leads a chat row; the project is one of the facts under it. */
 .studio-session-project {
-  font-weight: 600;
   color: var(--desk-ink);
 }
 .studio-fleet {
@@ -699,6 +699,30 @@ a.studio-row:focus-visible {
   font-weight: 600;
   color: var(--desk-ink);
 }
+/* A machine named in its color behind a square of it, as the sidebar's chat rows do. */
+.studio-machine-mark {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-weight: 600;
+}
+.studio-machine-mark::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--machine, currentColor);
+}
+/* The machines that hold a project, side by side. */
+.studio-row-machines {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 10px;
+  white-space: normal;
+}
 .studio-row-meta svg {
   display: inline;
   vertical-align: -2px;
@@ -734,7 +758,8 @@ a.studio-row:focus-visible {
 }
 .studio-pill {
   display: inline-block;
-  max-width: 190px;
+  /* Wide enough for "Waiting on a delegated task · 1h 15m" in one piece. */
+  max-width: 270px;
   padding: 2px 8px;
   border-radius: 9999px;
   font-size: var(--text-xs);
@@ -883,12 +908,67 @@ button.studio-pill[aria-pressed="true"] {
   grid-template-columns: 24px minmax(0, 1fr) auto;
   min-height: 50px;
 }
+/* A machine: its icon in its color, then who it is, whether it answers and what runs there. */
 .studio-machine {
-  grid-template-columns: 10px minmax(0, 1fr) auto;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: start;
+  padding-block: 10px;
 }
 .studio-machine.selected {
   background: var(--secondary);
-  box-shadow: inset 2px 0 0 var(--desk-moss);
+  box-shadow: inset 2px 0 0 var(--machine, var(--desk-moss));
+}
+.studio-machine-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--machine-edge, var(--desk-line));
+  background: var(--machine-surface, var(--secondary));
+  color: var(--machine-text, var(--desk-muted));
+}
+.studio-machine-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.studio-machine-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.studio-machine-state .studio-state-dot {
+  width: 6px;
+  height: 6px;
+}
+.studio-machine-state.amber {
+  color: var(--desk-amber);
+}
+.studio-machine-state.red {
+  color: var(--desk-red);
+}
+.studio-machine-version.update {
+  color: var(--desk-amber);
+}
+/* The count and the gear sit beside the name only, so the lines under it keep the row's width. */
+.studio-machine {
+  position: relative;
+}
+.studio-machine .studio-row-main {
+  grid-column: 2 / -1;
+}
+.studio-machine .studio-row-title {
+  padding-inline-end: 66px;
+}
+.studio-machine .studio-row-counts {
+  position: absolute;
+  inset-block-start: 6px;
+  inset-inline-end: 8px;
+}
+/* The personal assistant: its own card, set apart from projects and machines. */
+.studio-assistant-list {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--desk-moss) 4%, var(--desk-panel));
 }
 .studio-project-icon {
   width: 24px !important;
@@ -968,7 +1048,7 @@ button.studio-pill[aria-pressed="true"] {
     grid-template-columns: 24px minmax(0, 1fr) auto;
   }
   .studio-machine {
-    grid-template-columns: 10px minmax(0, 1fr) auto;
+    grid-template-columns: 26px minmax(0, 1fr) auto;
   }
   .studio-notice {
     flex-wrap: wrap;

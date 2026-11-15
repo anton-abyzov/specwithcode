@@ -101,6 +101,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsThreadReportsRead]: AuthFilesystemReadScope,
   [WS_METHODS.projectsThreadIncrementProgressRead]: AuthFilesystemReadScope,
   [WS_METHODS.projectsIncrementsList]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsBoard]: AuthFilesystemReadScope,
   [WS_METHODS.projectsThreadIncrementLink]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsThreadReportSave]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsMemoryWrite]: AuthOrchestrationOperateScope,
@@ -174,6 +175,7 @@ export const RPC_REQUIRED_SCOPES = {
   // The same quota the server config already carries, kept over time.
   [WS_METHODS.usageLimitsHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.usageLimitsResets]: AuthOrchestrationReadScope,
+  [WS_METHODS.resetAnnouncementsList]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRefreshUsageRates]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverSignalProcess]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,

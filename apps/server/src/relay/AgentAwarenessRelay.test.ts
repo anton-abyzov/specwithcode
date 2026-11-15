@@ -12,6 +12,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@specweave-studio/contracts";
@@ -712,6 +713,191 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications.length, 1);
     }),
   );
+  it("publishes when a card that waits on the person changes, and not for other items", () => {
+    for (const type of ["secret_request", "access_request"] as const) {
+      assert.isTrue(
+        AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+          type: "turn-item.updated",
+          payload: { type, status: "waiting" },
+        }),
+      );
+    }
+    assert.isFalse(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+        type: "turn-item.updated",
+        payload: { type: "assistant_message", status: "running" },
+      }),
+    );
+  });
+
+  it.effect("tells the owner when a delegated worker waits on a secret, then clears it", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+      const pulls = yield* Queue.unbounded<void>();
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: (threadId) => store.getThreadShell(threadId).pipe(Effect.orDie),
+        domainEvents: Stream.fromEffectRepeat(
+          Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+        ),
+      });
+      yield* relay.start();
+      yield* Queue.take(pulls);
+      const deliver = Effect.fnUntraced(function* (event: OrchestrationV2DomainEvent) {
+        yield* store.apply(event);
+        yield* Queue.offer(events, event);
+        yield* Queue.take(pulls);
+        yield* relay.drain;
+      });
+
+      const now = yield* DateTime.now;
+      const parentId = ThreadId.make("relay-parent-thread");
+      const runId = RunId.make("run:worker-secret");
+      const run = {
+        id: runId,
+        threadId: THREAD_ID,
+        ordinal: 1,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:worker-secret"),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "running" as const,
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      const secretCard = (
+        secretStatus: "pending" | "saved",
+        status: "waiting" | "completed",
+      ): OrchestrationV2TurnItem => ({
+        id: TurnItemId.make("item:worker-secret"),
+        threadId: THREAD_ID,
+        runId,
+        nodeId: NodeId.make("node:worker-secret"),
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        title: null,
+        startedAt: now,
+        completedAt: status === "completed" ? now : null,
+        updatedAt: now,
+        type: "secret_request",
+        label: "Deploy token",
+        reason: "Needed to publish the build",
+        secretStatus,
+        status,
+      });
+
+      yield* deliver({
+        id: EventId.make("event:worker-secret:thread"),
+        type: "thread.created",
+        threadId: THREAD_ID,
+        occurredAt: now,
+        payload: {
+          createdBy: "agent",
+          creationSource: "mcp",
+          id: THREAD_ID,
+          projectId: PROJECT_ID,
+          title: "Worker",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            rootThreadId: parentId,
+            parentThreadId: parentId,
+            relationshipToParent: "subagent",
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* deliver({
+        id: EventId.make("event:worker-secret:run"),
+        type: "run.created",
+        threadId: THREAD_ID,
+        runId,
+        occurredAt: now,
+        payload: run,
+      });
+      // A worker that is only running raises nothing.
+      assert.deepEqual(publications, []);
+
+      yield* deliver({
+        id: EventId.make("event:worker-secret:asked"),
+        type: "turn-item.updated",
+        threadId: THREAD_ID,
+        runId,
+        occurredAt: now,
+        payload: secretCard("pending", "waiting"),
+      });
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase),
+        ["waiting_for_input"],
+      );
+      assert.equal(publications[0]?.state?.threadId, THREAD_ID);
+      assert.notEqual(publications[0]?.state?.quiet, true);
+
+      // Once answered, the worker is only running again and its row clears.
+      yield* deliver({
+        id: EventId.make("event:worker-secret:answered"),
+        type: "turn-item.updated",
+        threadId: THREAD_ID,
+        runId,
+        occurredAt: now,
+        payload: secretCard("saved", "completed"),
+      });
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase ?? null),
+        ["waiting_for_input", null],
+      );
+    }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
+  );
+
+  it.effect("publishes the waiting row of a delegated worker that needs an approval", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* Ref.set(
+        currentShell,
+        shell({
+          creationSource: "mcp",
+          lineage: {
+            rootThreadId: SECOND_THREAD_ID,
+            parentThreadId: SECOND_THREAD_ID,
+            relationshipToParent: "subagent",
+          },
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("request:worker-approval"),
+            kind: "command",
+            createdAt: yield* DateTime.now,
+          },
+        }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase),
+        ["waiting_for_approval"],
+      );
+    }),
+  );
+
   it.effect("publishes a held completion when its background item ends, not on tool output", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;

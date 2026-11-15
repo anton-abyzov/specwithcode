@@ -88,6 +88,12 @@ With a standby armed, the lease loop also sends the standby the project's coordi
 
 `ScheduledTaskCoordinatorGate.ts` reads `CoordinatorRole.roleOf` before every fire of a coordinator-owned routine: `transferring` waits (stays due), a copy that is not active rests (moves to its next time with a note, cleared on `took-over`), an active copy fenced by `CoordinatorWakeGate` waits. Unlinked projects, webhook and worker-bound routines are not gated. A daily or monthly run missed by more than 10 minutes records a skip note in `lastRunError` (`missedRunNote` in `Schedule.ts`). Limits: the linked sync path does not carry routines, so a person's takeover on a copy that was never the standby starts without them.
 
+A copy that joins a link as a member keeps its own routines, unmarked, and they rest like any other. `projectLink.preview` lists them as `routines` (`RoutineCopies.owned`) and the link review names them. The single-writer refusal on a resting copy covers every change to a marked routine; an unmarked one, which no other machine holds, can be turned off or deleted there (`isCoordinatorCopy` in `ScheduledTaskService.ts`). Turning it on, editing and running it stay refused.
+
+### Link review choices and the first memory merge
+
+Linking writes the review's note choices into the kept copy only (`noteWrites` in `apps/web/src/studio/projectLink.ts`); the joining copy keeps its notes. A note both copies hold with different text would reach the two-way memory merge as two unrelated edits. So `projectLink.preview` sends each note's `contentSha256`, and the client's commit names, as `superseded`, the joining versions the review set aside ("keep the kept machine's" and "keep both"). The kept copy records each as an earlier version of its own note in `LinkedMemoryHistory` (`ProjectLinkNotes.ts`), so the merge reads the kept text as the newer version and the joining copy takes it, with no conflict copy. Both fields are optional: with a server that predates them, or if the record cannot be written, the merge keeps both texts as before.
+
 ### Two-way memory
 
 Members that each run a coordinator write project memory independently, so memory also replicates in both directions. Each server keeps the last 50 sha256 hashes every memory file has had on that machine, and a tombstone with that history when a file is deleted, in `linked-memory/<hash of project id>.json` in its state directory (`apps/server/src/project/LinkedMemoryHistory.ts`; owner-only, atomic rewrite, database untouched). Every memory write and delete records its version there; a lost or damaged history file never loses content, because files it can no longer order are merged as concurrent edits, which keep both versions.
@@ -114,11 +120,11 @@ A linked project can run an active coordinator on every member machine, so the p
 
 The machine switcher under the project composer (`apps/web/src/components/studio/OrchestratorSwitcher.tsx`) has three separate actions:
 
-| Action                         | What it does                                                                                                                                                             | What moves                                                            |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| Action                                | What it does                                                                                                                                                             | What moves                                                            |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
 | _machine_, under View this project on | Reads that machine's coordinator conversation, threads, plan and memory from its own server. A message typed there is sent to and handled by that machine's coordinator. | Nothing. The device only remembers which orchestrator it last viewed. |
-| Move to _machine_… | Opens the checked handoff in [Switching the coordinator](#switching-the-coordinator) for review before anything moves.                                                   | The coordinator, recorded as a transfer.                              |
-| Move running threads… | Moves selected threads through thread handoff, with a preflight result per thread. Disabled until thread handoff ships.                                                  | Only the threads chosen.                                              |
+| Move to _machine_…                    | Opens the checked handoff in [Switching the coordinator](#switching-the-coordinator) for review before anything moves.                                                   | The coordinator, recorded as a transfer.                              |
+| Move running threads…                 | Moves selected threads through thread handoff, with a preflight result per thread. Disabled until thread handoff ships.                                                  | Only the threads chosen.                                              |
 
 ### Online and offline
 

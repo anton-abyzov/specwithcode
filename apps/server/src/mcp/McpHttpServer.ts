@@ -17,6 +17,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -55,6 +56,8 @@ import { OfficeToolkit } from "./toolkits/office/tools.ts";
 import * as OfficeHandlers from "./toolkits/office/handlers.ts";
 import { ReportToolkit } from "./toolkits/report/tools.ts";
 import * as ReportHandlers from "./toolkits/report/handlers.ts";
+import { ResetAnnouncementToolkit } from "./toolkits/resetAnnouncements/tools.ts";
+import * as ResetAnnouncementHandlers from "./toolkits/resetAnnouncements/handlers.ts";
 import { MachinesToolkit } from "./toolkits/machines/tools.ts";
 import * as FileTransferHandlers from "./toolkits/fileTransfer/handlers.ts";
 import { FileTransferToolkit } from "./toolkits/fileTransfer/tools.ts";
@@ -238,8 +241,9 @@ const looksLikeProviderToken = (token: string) => token.length > 0 && !token.inc
 const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
-  return Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
-    const request = yield* HttpServerRequest.HttpServerRequest;
+  const authenticateRequest = Effect.fn("McpHttpServer.authenticateRequest")(function* (
+    request: HttpServerRequest.HttpServerRequest,
+  ) {
     const authorization = request.headers.authorization;
     const token =
       authorization?.startsWith("Bearer ") === true
@@ -301,8 +305,15 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
           Option.isSome(clients) && (dpopToken.length > 0 || !looksLikeProviderToken(token)),
       });
     }
+    return invocation;
+  });
+  // Untraced: a span here would wrap the tool call, and the toolkit annotates
+  // the current span with the raw arguments. The HTTP server span covers it.
+  return Effect.fnUntraced(function* (httpEffect) {
+    const admitted = yield* authenticateRequest(yield* HttpServerRequest.HttpServerRequest);
+    if (HttpServerResponse.isHttpServerResponse(admitted)) return admitted;
     return yield* httpEffect.pipe(
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, admitted),
       Effect.map(normalizeMcpHttpResponse),
     );
   }) satisfies McpAuthMiddleware;
@@ -1017,6 +1028,46 @@ const withAdvertisedSchemas = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, advertisingServer));
   });
 
+/** Each tool call gets a span named for its tool; arguments stay out, as they carry prompts and IDs. */
+const withToolSpans = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const tracingServer = McpServer.McpServer.of({
+      ...server,
+      addTool: (options) => {
+        const name = options.tool.name;
+        return server.addTool({
+          ...options,
+          // The toolkit annotates the current span with the raw arguments, so
+          // the handler runs under an external reference to the tool span:
+          // its spans still nest there, and that annotation lands nowhere.
+          handle: (payload) =>
+            Effect.useSpan(
+              `mcp.tool.${name}`,
+              {
+                attributes: {
+                  "rpc.system": "mcp",
+                  "rpc.method": "tools/call",
+                  "mcp.tool.name": name,
+                },
+              },
+              (span) =>
+                options.handle(payload).pipe(
+                  Effect.withParentSpan(
+                    Tracer.externalSpan({
+                      spanId: span.spanId,
+                      traceId: span.traceId,
+                      sampled: span.sampled,
+                    }),
+                  ),
+                ),
+            ),
+        });
+      },
+    });
+    return yield* registration.pipe(Effect.provideService(McpServer.McpServer, tracingServer));
+  });
+
 /**
  * `McpServer.toolkit` for handlers that declared their access (see
  * `McpToolAccess`). Every toolkit on `/mcp` registers through this.
@@ -1027,8 +1078,10 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   inputDecoding: "json" | "schema" = "json",
 ) =>
   Layer.effectDiscard(
-    withAdvertisedSchemas(
-      McpServer.registerToolkit(inputDecoding === "json" ? decodeAsAdvertised(toolkit) : toolkit),
+    withToolSpans(
+      withAdvertisedSchemas(
+        McpServer.registerToolkit(inputDecoding === "json" ? decodeAsAdvertised(toolkit) : toolkit),
+      ),
     ),
   ).pipe(
     Layer.provide(McpServer.McpServer.layer),
@@ -1039,7 +1092,10 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
 const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, EX, RX>(
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
-) => Layer.effectDiscard(register).pipe(Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)));
+) =>
+  Layer.effectDiscard(withToolSpans(register)).pipe(
+    Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
+  );
 
 export const layerDesignToolkit = Layer.mergeAll(
   toolkitRegistration(DesignToolkit, DesignHandlers.layer),
@@ -1156,6 +1212,7 @@ export const layer = Layer.mergeAll(
   toolkitRegistration(DecisionToolkit, DecisionHandlers.layer),
   layerProjectMemoryRegistration,
   toolkitRegistration(ReportToolkit, ReportHandlers.layer),
+  toolkitRegistration(ResetAnnouncementToolkit, ResetAnnouncementHandlers.layer),
   toolkitRegistration(OfficeToolkit, OfficeHandlers.layer),
   toolkitRegistration(ProjectPlanToolkit, ProjectPlanHandlers.layer),
   toolkitRegistration(ProjectConnectionsToolkit, ProjectConnectionsHandlers.layer),

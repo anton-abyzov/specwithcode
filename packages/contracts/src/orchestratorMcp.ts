@@ -363,7 +363,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   ),
   timeoutMs: Schema.optional(Schema.Finite).annotate({
     description:
-      "Wait budget for mode=wait only. Default 10 minutes. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
+      "Wait budget for mode=wait only. Default 4 minutes. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
   }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
@@ -671,7 +671,10 @@ export const OrchestratorMcpThreadReadInput = Schema.Struct({
   itemId: Schema.optional(TurnItemId),
   textOffset: Schema.optional(NonNegativeInt),
   view: Schema.optional(Schema.Literals(["messages", "activity"])),
-  afterPosition: Schema.optional(NonNegativeInt),
+  /** Reads forward from after this position; -1 starts at the oldest item. */
+  afterPosition: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(-1))),
+  /** Reads back: the newest items before this position (a result's earlierPosition). Without either cursor a read ends at the newest item. */
+  beforePosition: Schema.optional(NonNegativeInt),
   limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(100))),
   runLimit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(50))),
   maxCharsPerItem: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(50_000))),
@@ -759,6 +762,10 @@ export const OrchestratorMcpThreadReadResult = Schema.Struct({
   items: Schema.Array(OrchestratorMcpThreadTimelineItem),
   nextPosition: Schema.NullOr(NonNegativeInt),
   hasMore: Schema.Boolean,
+  /** A backward read's older items left out to fit the result size limit; earlierPosition reaches them. A forward read reports them through hasMore instead. */
+  omittedItems: Schema.optional(PositiveInt),
+  /** A backward read continues with beforePosition set to this; null or omitted when nothing is older. */
+  earlierPosition: Schema.optional(Schema.NullOr(NonNegativeInt)),
 });
 export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadResult.Type;
 
@@ -1040,8 +1047,20 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   usage: Schema.optional(OrchestratorMcpProviderUsage),
   /** Whether the caller's work grant lets it run this provider. Omitted without a grant. */
   allowedByGrant: Schema.optional(Schema.Boolean),
+  /** Every model this instance has, when models lists fewer to fit the result size limit. */
+  modelCount: Schema.optional(NonNegativeInt),
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
+
+export const OrchestratorMcpCapabilitiesInput = Schema.Struct({
+  providerInstanceId: Schema.optional(
+    ProviderInstanceId.annotate({ description: "One instance in full, with model options." }),
+  ),
+  modelOffset: Schema.optional(
+    NonNegativeInt.annotate({ description: "With providerInstanceId: nextModelOffset." }),
+  ),
+});
+export type OrchestratorMcpCapabilitiesInput = typeof OrchestratorMcpCapabilitiesInput.Type;
 
 export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   /** The calling thread, or null when the caller is not a Studio thread. */
@@ -1074,6 +1093,18 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
     /** Most delegate_task levels below the thread that started the chain. */
     maxDelegationDepth: Schema.optional(Schema.Number),
   }),
+  /**
+   * What this result left out to fit the result size limit: "compact" lists
+   * model ids without options, "instance" is one instance in full. Older
+   * machines omit it and list everything.
+   */
+  detail: Schema.optional(
+    Schema.Struct({
+      view: Schema.Literals(["compact", "instance"]),
+      note: Schema.optional(Schema.String),
+      nextModelOffset: Schema.optional(Schema.NullOr(NonNegativeInt)),
+    }),
+  ),
 });
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;
 

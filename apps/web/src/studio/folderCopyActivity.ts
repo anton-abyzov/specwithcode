@@ -130,6 +130,8 @@ export interface CopyWatch {
   readonly projectName?: string;
   /** Restored after a reload: a copy already finished is not announced again. */
   readonly restored?: boolean;
+  /** Closed at its review: shown as waiting, never approved or announced by the watcher. */
+  readonly reviewOnly?: boolean;
 }
 
 export const copyActivityKey = (environmentId: string, projectId: string) =>

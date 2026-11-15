@@ -13,6 +13,7 @@ import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
 import { ProjectFolderHealthNotice } from "./ProjectFolderHealthNotice";
 import { toggleProjectThreadResolution } from "../../studio/projectThreadResolution";
 import { threadRenameBlockedReason } from "../../studio/threadTitles";
+import { useThreadResolveBlockedReason } from "../../studio/useThreadResolveAccess";
 import { ProjectWorkspaceColumns } from "./ProjectWorkspaceColumns";
 import { createCoordinatorSelectionTracker } from "../../studio/coordinatorContinuation";
 import { useCoordinatorModelSave } from "../../studio/coordinatorModelSave";
@@ -164,6 +165,8 @@ import { ThreadsPane } from "./shell/ThreadsPane";
 import { bulkThreadTargets } from "../../studio/bulkThreadControl";
 import { useBulkThreadControl } from "../../studio/useBulkThreadControl";
 import { useComposerAppCommands } from "../../studio/useComposerAppCommands";
+import { BoardPane } from "./shell/BoardPane";
+import { ProjectSpecweaveSetting } from "./ProjectSpecweaveSetting";
 import { LibraryPane } from "./shell/LibraryPane";
 import { LIBRARY_SECTIONS, type LibrarySection } from "../../studio/projectArtifacts";
 import { ProjectArtifactShelf } from "./shell/ProjectArtifactShelf";
@@ -206,7 +209,7 @@ import {
 import { useMachineNickname } from "../../studio/machineNickname";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { useUnreachableHosts } from "../../studio/unreachableHosts";
+import { useHostReach, useUnreachableHosts } from "../../studio/unreachableHosts";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import {
   environmentWaitsForReconnectGrace,
@@ -459,11 +462,16 @@ export function ProjectWorkspaceSurface({
   const sendShortcut = useClientSettings((settings) => settings.sendShortcut);
   const findRef = useRef<HTMLInputElement>(null);
   const [findOpen, setFindOpen] = useState(false);
-  const [paneTab, setPaneTab] = useLocalStorage<ProjectPaneTab, ProjectPaneTab>(
+  const [storedPaneTab, setPaneTab] = useLocalStorage<ProjectPaneTab, ProjectPaneTab>(
     PANE_TAB_STORAGE_KEY,
     "threads",
     PaneTabSchema,
   );
+  // The remembered tab is shared by every project, and not every project has a Board tab.
+  // A code project always has the tab: without SpecWeave it offers to turn the board on.
+  // An older server (no flag) and the personal project have none.
+  const hasBoard = snapshot?.specweave !== undefined && snapshot.settings.kind !== "personal";
+  const paneTab = storedPaneTab === "board" && !hasBoard ? "threads" : storedPaneTab;
   // The panel takes the whole width, as the desktop app's expand does; never remembered.
   const [paneExpanded, setPaneExpanded] = useState(false);
   // The open thread's header slot that the embedded chat portals its panel toggles into.
@@ -598,6 +606,7 @@ export function ProjectWorkspaceSurface({
     environmentWaitsForReconnectGrace(hostPhase, hostIsThisDevice)
       ? project.environmentId
       : null;
+  const hostReach = useHostReach(project.environmentId);
   const [graceElapsedEnvironmentId, setGraceElapsedEnvironmentId] = useState<string | null>(null);
   useEffect(() => {
     setGraceElapsedEnvironmentId(null);
@@ -613,6 +622,7 @@ export function ProjectWorkspaceSurface({
   };
   const admissionContext = {
     ...hostAdmission,
+    ...(hostReach === undefined ? {} : { reach: hostReach }),
     accessPending: operateAccess === "unknown",
     ...(environment?.label || machineName !== project.environmentId
       ? { machineLabel: machineName }
@@ -1589,6 +1599,8 @@ export function ProjectWorkspaceSurface({
       ),
     [iconCheckouts, checkouts],
   );
+  // Resolve runs on each thread's own machine, so every thread asks about its own.
+  const resolveBlockedReason = useThreadResolveBlockedReason(machineLabels);
   // Every copy of the repository, linked or not, merges through pull requests
   // on the shared remote, so the PRs tab lists them all with their machine.
   const prMachineCount = machineLabels.size;
@@ -1676,26 +1688,29 @@ export function ProjectWorkspaceSurface({
     expanded: paneExpanded,
     onToggleExpanded: () => setPaneExpanded((value) => !value),
     onClose: hideOverview,
+    ...(hasBoard ? {} : { hiddenTabs: ["board"] as const }),
   };
   const overviewShortcut = shortcutLabelForCommand(keybindings, "rightPanel.toggle");
   const paneOpen = overviewOpen || selectedThread !== null;
   // The desktop app's primary host is this Mac, so its owner is the person looking;
   // a browser may be paired with someone else's server.
   const greetsByName = isElectron && project.environmentId === primaryEnvironmentId;
+  // Puts a request in the coordinator's composer for the person to send or edit.
+  const draftForCoordinator = (text: string) => {
+    setPrompt((current) => quickStartDraft(current, text));
+    // Typing continues at the end of the filled-in request.
+    requestAnimationFrame(() => {
+      const field = document.getElementById("project-prompt");
+      if (!(field instanceof HTMLTextAreaElement)) return;
+      field.focus();
+      field.setSelectionRange(field.value.length, field.value.length);
+    });
+  };
   const quickStarts = (
     <CoordinatorQuickStarts
       // Hidden sends can't be appended to: a chip waits while a message is on its way.
       disabled={!canOperate || !connected || sending || preparing}
-      onPrompt={(text) => {
-        setPrompt((current) => quickStartDraft(current, text));
-        // Typing continues at the end of the filled-in request.
-        requestAnimationFrame(() => {
-          const field = document.getElementById("project-prompt");
-          if (!(field instanceof HTMLTextAreaElement)) return;
-          field.focus();
-          field.setSelectionRange(field.value.length, field.value.length);
-        });
-      }}
+      onPrompt={draftForCoordinator}
       onConnections={() => setTab("environment")}
     />
   );
@@ -1839,6 +1854,14 @@ export function ProjectWorkspaceSurface({
                   projectKey={projectKey}
                   projectTitle={projectTitle}
                   onOpenPlan={() => setPlanOpen(true)}
+                  onOpenBoard={
+                    hasBoard
+                      ? () => {
+                          showPaneTab("board");
+                          setPaneExpanded(true);
+                        }
+                      : undefined
+                  }
                   onOpenSettingsTab={setTab}
                   designHere={project.environmentId === primaryEnvironmentId}
                 />
@@ -2062,7 +2085,7 @@ export function ProjectWorkspaceSurface({
                       isThisDevice={hostIsThisDevice}
                       disconnectedLabel={hostDisconnectedLabel(
                         environment?.connection,
-                        hostAdmission,
+                        admissionContext,
                       )}
                       current={`${project.environmentId}:${project.id}`}
                       copies={checkouts}
@@ -2236,6 +2259,7 @@ export function ProjectWorkspaceSurface({
                       canOperate &&
                       connected &&
                       selectedThread.environmentId === project.environmentId,
+                    resolveBlockedReason: resolveBlockedReason(selectedThread),
                     renameBlockedReason: threadRenameBlockedReason({
                       canOperate: canOperateSelectedThread,
                       connection: selectedThreadEnvironment?.connection,
@@ -2256,6 +2280,39 @@ export function ProjectWorkspaceSurface({
                     onOpenPullRequest: (url) => void openLink(url).catch(() => undefined),
                     toolsSlotRef: setThreadToolsSlot,
                   }}
+                />
+              ) : paneTab === "board" ? (
+                <BoardPane
+                  environmentId={project.environmentId}
+                  projectId={project.id}
+                  workspaceRoot={project.workspaceRoot}
+                  bar={paneBar}
+                  specweave={snapshot?.specweave === true}
+                  setup={
+                    <ProjectSpecweaveSetting
+                      project={project}
+                      specweave={snapshot?.specweave}
+                      disabled={!canOperate || !connected}
+                      onChanged={query.refresh}
+                    />
+                  }
+                  threads={workers}
+                  machineLabels={machineLabels}
+                  onOpenThread={(thread) => openThread(thread.id, thread.environmentId)}
+                  onAsk={
+                    canOperate && connected
+                      ? (text) => {
+                          // The composer sits behind an expanded panel, and on a phone
+                          // behind the panel itself.
+                          setPaneExpanded(false);
+                          if (phone) {
+                            setSelected(null);
+                            setOverviewOpen(false);
+                          }
+                          draftForCoordinator(text);
+                        }
+                      : undefined
+                  }
                 />
               ) : paneTab === "designs" ? (
                 <ProjectDesignsPane
@@ -2335,6 +2392,7 @@ export function ProjectWorkspaceSurface({
                   canChangeThread={(thread) =>
                     thread.environmentId === project.environmentId && canOperate && connected
                   }
+                  resolveBlockedReason={resolveBlockedReason}
                   machineLabels={machineLabels}
                   starters={workers.length === 0 ? starterList : null}
                   bulk={

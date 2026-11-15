@@ -69,6 +69,8 @@ export function threadMachinePresentation(input: {
   readonly isThisMachine: boolean;
   readonly phase: Parameters<typeof machineStatus>[0]["phase"];
   readonly error: string | null;
+  /** The whole connection, so a machine inside its reconnect grace reads as reconnecting. */
+  readonly connection?: Parameters<typeof machineStatus>[0] | undefined;
   readonly canOperate: boolean;
   /** How the thread's own menu offers "Move thread…" now; the tip says no more than that. */
   readonly handoff: ThreadMachineHandoff;
@@ -79,7 +81,7 @@ export function threadMachinePresentation(input: {
   const facts = [host, os].filter((fact): fact is string => fact !== null).join(", ");
   const where = input.isThisMachine ? `this computer, ${input.name}` : input.name;
   const status = machineStatus(
-    { phase: input.phase, error: input.error },
+    input.connection ?? { phase: input.phase, error: input.error },
     input.canOperate,
     input.isThisMachine,
   );
@@ -91,9 +93,7 @@ export function threadMachinePresentation(input: {
       ? null
       : input.isThisMachine
         ? status.text
-        : status.retryable
-          ? "Can't reach"
-          : status.text;
+        : status.short;
   // The menu greys out "Move thread…" for a viewer who cannot operate the machine.
   const handoff = input.handoff === "available" && !input.canOperate ? "none" : input.handoff;
   return {
@@ -135,6 +135,7 @@ export function useThreadMachine(
       isThisMachine: isThisMachineTarget(environment.entry),
       phase: environment.connection.phase,
       error: environment.connection.error ?? null,
+      connection: environment.connection,
       canOperate,
       handoff,
     });

@@ -84,8 +84,11 @@ export function useHostLimitBlocks(
 function statusText(block: HostLimitBlock, now: number): string {
   const read = block.readAt === null ? null : formatAgo(block.readAt, now);
   if (block.status === "online") return read ? `Online · read ${read}` : "Online";
-  if (block.status === "connecting") return read ? `Connecting · last read ${read}` : "Connecting";
-  return read ? `Offline · last read ${read}` : "Offline · no saved reading";
+  if (block.status === "connecting")
+    return read ? `${block.statusWord} · last read ${read}` : block.statusWord;
+  return read
+    ? `${block.statusWord} · last read ${read}`
+    : `${block.statusWord} · no saved reading`;
 }
 
 function ProviderIcon({ row, size }: { row: HostProviderRow; size: "sm" | "md" }) {
@@ -341,8 +344,10 @@ export function MachineLimitBlocksView({
 
 function compactStatus(block: HostLimitBlock, now: number): string {
   if (block.status === "online") return "Online";
-  if (block.status === "connecting") return "Connecting";
-  return block.readAt === null ? "Offline" : `Offline · ${formatAgo(block.readAt, now)}`;
+  if (block.status === "connecting") return block.statusWord;
+  return block.readAt === null
+    ? block.statusWord
+    : `${block.statusWord} · ${formatAgo(block.readAt, now)}`;
 }
 
 const lowerFirstWord = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);

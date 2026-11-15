@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off -- The reconnect grace is display timing read by UI atoms with fake timers.
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import { EnvironmentId, type ServerConfig } from "@specweave-studio/contracts";
 import * as Option from "effect/Option";
@@ -10,6 +11,7 @@ import {
   type SupervisorConnectionState,
 } from "../connection/model.ts";
 import { CONNECTION_WARNING_GRACE_MS } from "../connection/presentation.ts";
+import { machineReach, RECONNECT_GRACE_MS } from "../connection/reach.ts";
 import {
   createEnvironmentPresentationAtoms,
   createEnvironmentSummaryAtoms,
@@ -297,6 +299,40 @@ describe("startup connection grace", () => {
     const h = graceHarness(false);
     try {
       expect(h.phase()?.phase).toBe("available");
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("publishes a new presentation when the reconnect grace of a lost machine ends", () => {
+    const h = graceHarness();
+    try {
+      const lostAt = Date.now();
+      h.setState({
+        phase: "backoff",
+        desired: true,
+        attempt: 2,
+        lastFailure: failure,
+        lostAt,
+        lastConnectedAt: lostAt,
+        lossFailure: failure,
+      });
+      const during = h.phase();
+      expect(during).toMatchObject({ phase: "reconnecting", lostAt, cause: "not-answering" });
+      expect(machineReach(during!, Date.now()).state).toBe("reconnecting");
+
+      vi.advanceTimersByTime(RECONNECT_GRACE_MS - 1);
+      expect(h.phase()).toBe(during);
+      vi.advanceTimersByTime(1);
+      // Nothing in the connection changed; readers are told to judge it again.
+      const after = h.phase();
+      expect(after).not.toBe(during);
+      expect(after).toEqual(during);
+      expect(machineReach(after!, Date.now()).state).toBe("not-answering");
+
+      // Past the grace there is nothing left to wait for.
+      vi.advanceTimersByTime(RECONNECT_GRACE_MS * 3);
+      expect(h.phase()).toBe(after);
     } finally {
       h.dispose();
     }

@@ -161,6 +161,7 @@ export function HandoffFolderCopy({
     readonly mode: FolderCopyMode;
     readonly machine: EnvironmentId | null;
     readonly done: boolean;
+    readonly review?: boolean;
   }) => void;
   readonly canMove: boolean;
   /** Uncommitted files in the source, named in What comes along; null when unknown. */

@@ -146,8 +146,14 @@ beforeEach(() => {
       input.projectId === "here"
         ? previewOf(here, {
             lastCoordinatorActivityAt: "2026-10-18T10:00:00.000Z",
+            routines: [{ id: "routine-1", title: "M4 nightly" }],
             notes: [
-              { name: "plan.md", revision: 1, content: "M4 plan" },
+              {
+                name: "plan.md",
+                revision: 1,
+                content: "M4 plan",
+                contentSha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              },
               { name: "only-m4.md", revision: 1, content: "from M4" },
             ],
             goal: "Ship the M4 goal",
@@ -213,6 +219,10 @@ it("ranks copies by fingerprint, keeps the most recent coordinator and merges no
   const conflict = document.querySelector('[data-slot="note-conflict"]');
   expect(conflict?.textContent).toContain("M3 plan");
   expect(conflict?.textContent).toContain("M4 plan");
+  // The joining copy's routines rest after the link, and the review says so.
+  const routines = document.querySelector('[aria-label="Routines"]');
+  expect(routines?.textContent).toContain("1 routine on M4 stops running.");
+  expect(routines?.textContent).toContain("M4 nightly");
 
   await click(document.querySelector<HTMLElement>('[role="checkbox"]')!);
   expect(button("Link, keep coordinator on M3").disabled).toBe(true);
@@ -232,6 +242,13 @@ it("ranks copies by fingerprint, keeps the most recent coordinator and merges no
   expect(state.calls.at(-1)?.input.notes).toEqual([
     { name: "only-m4.md", content: "from M4", expectedRevision: null },
     { name: "plan-m4.md", content: "M4 plan", expectedRevision: null, createOnly: true },
+  ]);
+  // The kept copy learns which joining version the choice set aside.
+  expect(state.calls.at(-1)?.input.superseded).toEqual([
+    {
+      name: "plan.md",
+      contentSha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    },
   ]);
   expect(text()).toContain("Projects linked");
   expect(localStorage.length).toBe(0);

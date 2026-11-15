@@ -80,6 +80,7 @@ import {
   ProjectThreadReportsInput,
   ProjectThreadReportsSnapshot,
 } from "./projectLibrary.ts";
+import { ProjectBoardInput, ProjectBoardResult } from "./projectBoard.ts";
 import {
   ProjectStarterSuggestionsInput,
   ProjectStarterSuggestionsResult,
@@ -158,6 +159,7 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsThreadReportSave: "projects.threadReportSave",
   projectsThreadIncrementProgressRead: "projects.threadIncrementProgressRead",
   projectsIncrementsList: "projects.incrementsList",
+  projectsBoard: "projects.board",
   projectsThreadIncrementLink: "projects.threadIncrementLink",
 } as const;
 const error = Schema.Union([ProjectWorkspaceError, EnvironmentAuthorizationError]);
@@ -372,6 +374,11 @@ export const projectPlanningRpcs = [
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsIncrementsList, {
     payload: ProjectIncrementsListInput,
     success: ProjectIncrementsListResult,
+    error,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsBoard, {
+    payload: ProjectBoardInput,
+    success: ProjectBoardResult,
     error,
   }),
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsThreadIncrementLink, {

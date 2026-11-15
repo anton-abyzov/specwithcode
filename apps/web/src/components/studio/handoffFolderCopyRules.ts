@@ -128,6 +128,8 @@ export function useCopyReporting({
         readonly mode: FolderCopyMode;
         readonly machine: EnvironmentId | null;
         readonly done: boolean;
+        /** The copy waits at its review: measured, nothing approved yet. */
+        readonly review?: boolean;
       }) => void)
     | undefined;
   readonly onCloseLockChange?: ((locked: boolean) => void) | undefined;
@@ -140,7 +142,11 @@ export function useCopyReporting({
     stage === "moving";
   useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
   const done = stage === "done";
-  useEffect(() => onChoicesChange?.({ mode, machine, done }), [mode, machine, done]);
+  const review = stage === "preview";
+  useEffect(
+    () => onChoicesChange?.({ mode, machine, done, review }),
+    [mode, machine, done, review],
+  );
   // Measuring, comparing and copying run on the machines; only the short context
   // transfer and the steps that release a fence keep the dialog open.
   const closeLocked = stage === "moving" || (working && !CLOSABLE_WHILE_WORKING.has(stage));
