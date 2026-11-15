@@ -253,6 +253,29 @@ describe("syncTerminalPath", () => {
     expect(await sync()).toBe("added");
   });
 
+  it("leaves the old shell's block when its record update loses a race", async () => {
+    touch(NodePath.join(home, ".local/bin/claude"));
+    await sync();
+    const block = read();
+    let lose = true;
+    const racing: TerminalPathFs = {
+      ...nodeTerminalPathFs,
+      replace: async (file, ...rest) => {
+        if (file === terminalPathStateFile(home) && lose) {
+          lose = false;
+          return false;
+        }
+        return nodeTerminalPathFs.replace(file, ...rest);
+      },
+    };
+    touch(NodePath.join(home, ".bash_profile"), `${TERMINAL_PATH_START}\nmine\n`);
+    expect(await sync({ shell: "/bin/bash", fs: racing })).toBe("busy");
+    expect(read()).toBe(block);
+    expect(await sync({ shell: "/bin/bash" })).toBe("malformed");
+    expect(read()).not.toContain(TERMINAL_PATH_START);
+    expect(await sync()).toBe("added");
+  });
+
   it("keeps folders a second, duplicate block listed", async () => {
     const other = pinned(NodePath.join(home, ".specweave-studio")).specweave;
     touch(NodePath.join(other, "specweave"));

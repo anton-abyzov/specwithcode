@@ -316,12 +316,16 @@ async function readState(
   }
 }
 
-async function writeState(home: string, files: ReadonlyArray<string>, fs: TerminalPathFs) {
+/** False when another writer changed the record meanwhile. */
+async function writeState(
+  home: string,
+  files: ReadonlyArray<string>,
+  fs: TerminalPathFs,
+): Promise<boolean> {
   const file = terminalPathStateFile(home);
   const info = await fs.inspect(file);
   const bytes = Buffer.from(`${JSON.stringify({ files: [...new Set(files)] })}\n`, "utf8");
-  // Lost to a concurrent writer: the next pass records it again.
-  await fs.replace(file, bytes, 0o644, info.stamp);
+  return fs.replace(file, bytes, 0o644, info.stamp);
 }
 
 /** A startup file the app may edit: a regular file this account owns, or none yet. */
@@ -335,16 +339,15 @@ const asByteString = (text: string) => Buffer.from(text, "utf8").toString("latin
 const fromByteString = (text: string) => Buffer.from(text, "latin1").toString("utf8");
 
 /**
- * Take the block out of a startup file the shell no longer reads. True only when a block was
- * removed: a file without one may be a deleted block, so its record stays as the opt-out.
+ * A startup file the shell no longer reads, with its block taken out, or null when it has none
+ * to take: a file without one may be a deleted block, so its record stays as the opt-out.
  */
-async function removeStaleBlock(file: string, fs: TerminalPathFs): Promise<boolean> {
+async function staleBlockRemoval(file: string, fs: TerminalPathFs) {
   const info = await fs.inspect(file);
-  if (info.kind !== "file" || !editable(info)) return false;
+  if (info.kind !== "file" || !editable(info)) return null;
   const text = (await fs.readBytes(file)).toString("latin1");
   const { text: next } = applyTerminalPathBlock(text, null, true);
-  if (next === null) return false;
-  return fs.replace(file, toBytes(next), info.mode, info.stamp);
+  return next === null ? null : { file, info, next };
 }
 
 /** Bring the startup file's block in line with what is installed now. */
@@ -355,15 +358,23 @@ export async function syncTerminalPath(input: TerminalPathInput): Promise<Termin
   const state = await readState(home, fs);
   let recorded = state === "unknown" ? [] : [...state];
 
-  // A changed login shell: the file it no longer reads keeps no stale block.
-  if (state !== "unknown")
-    for (const stale of state.filter((entry) => entry !== file))
-      if (await removeStaleBlock(stale, fs)) recorded = recorded.filter((entry) => entry !== stale);
-  // Saved now: a pass that stops below must not leave a block the app removed looking deleted.
+  // A changed login shell: the file it no longer reads keeps no stale block. The record lets go
+  // of it first, so a block the app removes never reads as one the person deleted; a block whose
+  // removal then fails is recorded again when that shell comes back.
   let persisted: ReadonlyArray<string> | "unknown" = state;
-  if (state !== "unknown" && recorded.join("\n") !== state.join("\n")) {
-    await writeState(home, recorded, fs);
-    persisted = [...recorded];
+  if (state !== "unknown") {
+    const removals: Array<NonNullable<Awaited<ReturnType<typeof staleBlockRemoval>>>> = [];
+    for (const stale of state.filter((entry) => entry !== file)) {
+      const removal = await staleBlockRemoval(stale, fs);
+      if (removal) removals.push(removal);
+    }
+    if (removals.length > 0) {
+      recorded = recorded.filter((entry) => !removals.some((removal) => removal.file === entry));
+      if (!(await writeState(home, recorded, fs))) return "busy";
+      persisted = [...recorded];
+      for (const { file: stale, info, next } of removals)
+        await fs.replace(stale, toBytes(next), info.mode, info.stamp);
+    }
   }
 
   const info = await fs.inspect(file);
@@ -404,6 +415,7 @@ export async function syncTerminalPath(input: TerminalPathInput): Promise<Termin
   }
   const changed =
     persisted === "unknown" ? recorded.length > 0 : recorded.join("\n") !== persisted.join("\n");
+  // Lost to another writer: a block found without a record is recorded on the next pass.
   if (changed) await writeState(home, recorded, fs);
   return action;
 }
