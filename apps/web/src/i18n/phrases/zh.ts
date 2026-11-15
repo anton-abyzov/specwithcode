@@ -977,21 +977,12 @@ export const zh: PhraseCatalog = {
   "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}":
     "从上到下依次尝试；由作者所属系列之外第一个就绪的模型进行审查。{policyTooltip}",
   "reviewer order": "审查者顺序",
-  "Customize reviewer order": "自定义审查者顺序",
-  Customize: "自定义",
   "No providers available": "没有可用的提供方",
-  "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.":
-    "{badge}每个提供方的{tierWord}模型，其他系列优先。自定义可重新排序、添加或移除模型。",
   Default: "默认",
-  "Reviewer order steps": "审查者顺序步骤",
-  "No provider on this machine has a {tierWord} model to review with.":
-    "此电脑上没有提供方拥有可用于审查的{tierWord}模型。",
   "{value}Availability follows the {button} rules.": "{value}可用性遵循{button}规则。",
   "This project's own order; reset it to use the {button}.":
     "此项目自己的顺序；重置后将使用{button}。",
   "app-wide reviewer order": "应用级审查者顺序",
-  "Uses the {button}; customize to give this project its own.":
-    "使用{button}；自定义可为此项目设置独立顺序。",
   "App-wide for this machine; a project can set its own in its settings.":
     "对此电脑上的整个应用生效；项目可以在其设置中单独设置。",
   "fallback order": "备用顺序",
