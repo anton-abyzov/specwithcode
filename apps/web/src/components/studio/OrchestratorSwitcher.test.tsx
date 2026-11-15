@@ -127,7 +127,7 @@ it("lists a machine that kept its coordinator once, as paused, with nothing to s
   const calls = handlers();
   await renderSwitcher(calls);
   const rows = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
-  expect(rows.map((row) => row.textContent)).toEqual(["M4coordinator", "Miniscoordinator paused"]);
+  expect(rows.map((row) => row.textContent)).toEqual(["M4Main", "Miniscoordinator paused"]);
   expect(rows[1]?.title).toBe(
     "Minis kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.",
   );

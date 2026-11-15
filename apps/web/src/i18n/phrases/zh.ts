@@ -4401,7 +4401,6 @@ export const zh: PhraseCatalog = {
   "Machine access settings": "电脑访问设置",
   "{machine} offline": "{machine} 离线",
   "workers only": "仅工作节点",
-  "move pending": "移动待确认",
   coordinator: "协调者",
   "not linked": "未关联",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":

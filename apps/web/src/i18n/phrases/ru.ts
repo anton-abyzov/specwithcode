@@ -4575,7 +4575,6 @@ export const ru: PhraseCatalog = {
   "Machine access settings": "Настройки доступа между машинами",
   "{machine} offline": "{machine} не в сети",
   "workers only": "только исполнители",
-  "move pending": "перенос не подтверждён",
   coordinator: "координатор",
   "not linked": "не связан",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":

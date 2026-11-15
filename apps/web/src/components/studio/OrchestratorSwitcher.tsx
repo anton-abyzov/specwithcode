@@ -65,8 +65,9 @@ function AfterUnmount({ pending }: { pending: { current: (() => void) | null } }
  * machine's server and moves nothing; every move is its own confirmed action.
  *
  * Each machine appears once, in the view list, with a note naming its state:
- * coordinator, workers only, coordinator paused (it kept its coordinator from
- * before; its own page offers to run it again), or not linked. The only
+ * the badge Settings > Machines shows for it (Main, Copy · main on X, Moving
+ * main), coordinator paused (it kept its coordinator from before; its own page
+ * offers to run it again), or not linked. The only
  * coordinator item below is "Move coordinator to X…", for a machine whose copy
  * runs workers only and kept nothing.
  */

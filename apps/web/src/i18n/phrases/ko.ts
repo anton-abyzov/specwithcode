@@ -4527,7 +4527,6 @@ export const ko: PhraseCatalog = {
   "Machine access settings": "컴퓨터 접근 설정",
   "{machine} offline": "{machine} 오프라인",
   "workers only": "워커 전용",
-  "move pending": "이동 대기 중",
   coordinator: "코디네이터",
   "not linked": "따로 등록됨",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":

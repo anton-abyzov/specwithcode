@@ -4580,7 +4580,6 @@ export const ja: PhraseCatalog = {
   "Machine access settings": "マシンのアクセス設定",
   "{machine} offline": "{machine} はオフライン",
   "workers only": "ワーカーのみ",
-  "move pending": "移動の確認待ち",
   coordinator: "コーディネーター",
   "not linked": "未リンク",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":

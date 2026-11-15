@@ -4601,7 +4601,6 @@ export const es: PhraseCatalog = {
   "Machine access settings": "Ajustes de acceso entre equipos",
   "{machine} offline": "{machine} sin conexión",
   "workers only": "solo workers",
-  "move pending": "traslado pendiente",
   coordinator: "coordinador",
   "not linked": "sin vincular",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
