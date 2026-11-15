@@ -6,6 +6,7 @@ import * as NodeOS from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixtures run the real relaunch script and real renames in a scratch folder.
 import * as NodePath from "node:path";
 
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import type { BundleIdentity } from "../updates/macSwapInstall.ts";
@@ -374,7 +375,11 @@ function fakeTools(overrides: Partial<SelfInstallTools> = {}): SelfInstallTools 
   };
 }
 
-describe("installBundle", () => {
+// Installing from a disk image exists only on macOS. The swap renames a real bundle through
+// POSIX paths and the relaunch script runs under /bin/sh; a Windows host has neither.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+
+describe.skipIf(windowsHost)("installBundle", () => {
   it("copies beside the target, verifies, swaps and trashes the old copy last", async () => {
     const root = makeScratch();
     const source = NodePath.join(root, "dmg", "SpecWithCode.app");
@@ -556,7 +561,7 @@ describe("installBundle", () => {
   });
 });
 
-describe("RELAUNCH_SCRIPT", () => {
+describe.skipIf(windowsHost)("RELAUNCH_SCRIPT", () => {
   it("waits for the app to exit, opens the installed copy, then ejects the disk image", () => {
     const dir = makeScratch();
     const script = NodePath.join(dir, "relaunch.sh");
@@ -585,6 +590,10 @@ describe("RELAUNCH_SCRIPT", () => {
 });
 
 describe("runMacSelfInstall", () => {
+  /** Where the app installs under a home folder: joined with forward slashes on every host. */
+  const installedIn = (home: string) =>
+    NodePath.posix.join(home, "Applications", "SpecWithCode.app");
+
   const setup = (input: {
     readonly answers: ReadonlyArray<number>;
     readonly running?: ReadonlyArray<string>;
@@ -651,21 +660,20 @@ describe("runMacSelfInstall", () => {
   it("offers to open a newer installed copy and quits this one", async () => {
     // fakeTools only sees bundles that exist, so the newer copy is a real folder.
     const { host, opened, prompts } = setup({ answers: [0] });
-    const apps = NodePath.join(host.homeDir, "Applications");
-    fakeBundle(NodePath.join(apps, "SpecWithCode.app"), "1.0.400");
+    const installed = installedIn(host.homeDir);
+    fakeBundle(installed, "1.0.400");
     const result = await runMacSelfInstall({
       ...host,
       writable: (path) => path !== "/Applications",
     });
     expect(prompts[0]?.title).toBe("SpecWithCode is already installed");
     expect(result).toEqual({ kind: "exit", reason: "open-installed" });
-    expect(opened).toEqual([NodePath.join(apps, "SpecWithCode.app")]);
+    expect(opened).toEqual([installed]);
   });
 
   it("asks to quit a running older copy, checks again, then installs", async () => {
     const root = makeScratch();
-    const apps = NodePath.join(root, "home", "Applications");
-    const target = NodePath.join(apps, "SpecWithCode.app");
+    const target = installedIn(NodePath.join(root, "home"));
     const { host, prompts, relaunches } = setup({
       answers: [0, 0],
       running: [`${target}/Contents/MacOS/SpecWithCode`, ""],
@@ -689,7 +697,7 @@ describe("runMacSelfInstall", () => {
 
   it("still quits for the installed copy when re-registration or the relaunch script fails", async () => {
     const root = makeScratch();
-    const target = NodePath.join(root, "home", "Applications", "SpecWithCode.app");
+    const target = installedIn(NodePath.join(root, "home"));
     const { host, opened } = setup({
       answers: [0],
       tools: {
