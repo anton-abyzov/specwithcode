@@ -100,6 +100,14 @@ describe("scanProjectCredentials", () => {
     expect((await scanProjectCredentials(root)).found.size).toBe(0);
   });
 
+  it("does not read a Git config that is a link", async () => {
+    const outside = NodePath.join(base, "outside-config");
+    await NodeFSP.writeFile(outside, `[remote "origin"]\n\turl = git@github.com:acme/app.git\n`);
+    await NodeFSP.mkdir(NodePath.join(root, ".git"));
+    await NodeFSP.symlink(outside, NodePath.join(root, ".git", "config"));
+    expect((await scanProjectCredentials(root)).found.size).toBe(0);
+  });
+
   it("reads workflows, a Makefile and package.json scripts", async () => {
     await put(".github/workflows/release.yml", "steps:\n  - run: npm publish\n");
     await put("Makefile", "deploy:\n\tdocker push registry.example.com/app\n");
