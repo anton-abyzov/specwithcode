@@ -26,7 +26,7 @@ export type ThreadResolveTarget = Pick<
 export function useThreadResolveBlockedReason(
   machineLabels?: ReadonlyMap<string, string>,
 ): (thread: ThreadResolveTarget) => string | null {
-  const { environments } = useEnvironments();
+  const { environments, isReady } = useEnvironments();
   const environmentIds = useMemo(
     () => environments.map((environment) => environment.environmentId),
     [environments],
@@ -45,6 +45,7 @@ export function useThreadResolveBlockedReason(
       return threadResolveBlockedReason({
         access: access.get(thread.environmentId) ?? "unknown",
         connection: environment?.connection,
+        machinesLoaded: isReady,
         supportsSettlement:
           config === undefined
             ? undefined
@@ -57,6 +58,6 @@ export function useThreadResolveBlockedReason(
         ...threadResolveAction(thread),
       });
     },
-    [environments, access, configs, machineLabels],
+    [environments, isReady, access, configs, machineLabels],
   );
 }

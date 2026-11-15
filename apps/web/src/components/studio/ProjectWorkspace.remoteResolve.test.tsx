@@ -3,7 +3,7 @@
 // grant and version, never the viewed project's.
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
-import { state, container, render, shell } from "./ProjectWorkspace.test-fixtures";
+import { alertText, state, container, render, shell } from "./ProjectWorkspace.test-fixtures";
 import { toastManager } from "../ui/toast";
 
 const REMOTE = { environmentId: "laptop", threadId: "laptop-worker" };
@@ -178,9 +178,48 @@ describe("Resolve on a thread that runs on another machine", () => {
       expect(rowResolve().getAttribute("aria-label")).toBe("Reopen");
       expect(rowResolve().getAttribute("aria-disabled")).toBeNull();
       await act(async () => rowResolve().click());
-      // The fixture runs restore and reopen through one spy; restore goes first.
-      expect(state.settle.mock.calls[0]).toEqual([REMOTE, { navigate: false }]);
+      expect(state.settle.mock.calls).toEqual([[REMOTE, { navigate: false }]]);
       expect(state.archivedRefresh).toHaveBeenCalledOnce();
+      // That machine then refuses to clear a settlement it never had: not a failed reopen.
+      expect(alertText()).toBe("");
+    });
+
+    it("reports a restore that failed there", async () => {
+      history({ archivedAt: "2026-10-14T00:00:00Z" });
+      await render();
+      await showResolved();
+      state.settle.mockResolvedValueOnce({ _tag: "Failure", error: new Error("offline") });
+      await act(async () => rowResolve().click());
+      expect(alertText()).toContain("offline");
+      expect(state.archivedRefresh).not.toHaveBeenCalled();
+    });
+
+    it("waits for that machine's details before restoring anything", async () => {
+      history({ archivedAt: "2026-10-14T00:00:00Z" });
+      state.settlementUnsupportedHosts = [];
+      state.serverConfigPendingHosts = ["laptop"];
+      await render();
+      await showResolved();
+      expect(rowResolve().getAttribute("aria-disabled")).toBe("true");
+      await act(async () => rowResolve().click());
+      expect(state.settle).not.toHaveBeenCalled();
+      expect(warnings().at(-1)?.[0].description).toBe(
+        "Still loading that machine's details. Try again in a moment.",
+      );
+    });
+
+    it("still reports that machine's refusal for history that was resolved and is now supported", async () => {
+      // Resolved history reaches the reopen only on a machine that supports it; any refusal
+      // there is a real failure and must show.
+      history({ archivedAt: "2026-10-14T00:00:00Z", settledOverride: "settled" });
+      state.settlementUnsupportedHosts = [];
+      await render();
+      await showResolved();
+      state.settle
+        .mockResolvedValueOnce({ _tag: "Success", value: undefined })
+        .mockResolvedValueOnce({ _tag: "Failure", error: new Error("still running") });
+      await act(async () => rowResolve().click());
+      expect(alertText()).toContain("still running");
     });
 
     it("says why a thread that was also resolved there cannot be reopened", async () => {

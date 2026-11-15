@@ -34,6 +34,7 @@ describe("threadResolveBlockedReason", () => {
   const base: ThreadResolveAccessInput = {
     access: "granted",
     connection: { phase: "connected" },
+    machinesLoaded: true,
     supportsSettlement: true,
     environmentId: "dd2fc230",
     machineLabel: "Ministorm",
@@ -75,6 +76,15 @@ describe("threadResolveBlockedReason", () => {
       );
   });
 
+  it("does not call a machine unpaired while the list of machines is still loading", () => {
+    for (const connection of [null, undefined])
+      expect(threadResolveBlockedReason({ ...base, connection, machinesLoaded: false })).toBe(
+        "Still loading Ministorm's details. Try again in a moment.",
+      );
+    // A machine already listed speaks for itself, loaded list or not.
+    expect(threadResolveBlockedReason({ ...base, machinesLoaded: false })).toBeNull();
+  });
+
   it("tells a grant or a machine that is still loading from a refusal", () => {
     expect(threadResolveBlockedReason({ ...base, access: "unknown" })).toBe(
       "Still checking this browser's access to Ministorm. Try again in a moment.",
@@ -90,9 +100,11 @@ describe("threadResolveBlockedReason", () => {
   it("restores history a server only archived, whatever that server's version", () => {
     const archivedOnly = { ...base, action: "reopen", needsSettlement: false } as const;
     expect(threadResolveBlockedReason({ ...archivedOnly, supportsSettlement: false })).toBeNull();
-    expect(
-      threadResolveBlockedReason({ ...archivedOnly, supportsSettlement: undefined }),
-    ).toBeNull();
+    // Not while the version is still unknown: a server that does resolve threads must
+    // also clear the settlement, and reopening then would skip that without a word.
+    expect(threadResolveBlockedReason({ ...archivedOnly, supportsSettlement: undefined })).toBe(
+      "Still loading Ministorm's details. Try again in a moment.",
+    );
     // The restore still runs on that machine, so its connection and grant still decide.
     expect(threadResolveBlockedReason({ ...archivedOnly, access: "denied" })).toBe(
       "This connection can't change threads on Ministorm.",

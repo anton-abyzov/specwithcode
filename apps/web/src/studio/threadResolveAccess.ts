@@ -19,6 +19,8 @@ export interface ThreadResolveAccessInput {
     | { readonly phase: string; readonly blockedReason?: string | undefined }
     | null
     | undefined;
+  /** False while this app is still loading its list of machines: none is known yet. */
+  readonly machinesLoaded: boolean;
   /**
    * Whether that machine's server resolves threads: true or false once its
    * details loaded, undefined while they have not.
@@ -30,7 +32,7 @@ export interface ThreadResolveAccessInput {
   readonly action: "resolve" | "reopen";
   /**
    * False for history a server only archived: restoring it needs no settlement
-   * support, so a machine that predates Resolve can still reopen it.
+   * support, so a machine known to predate Resolve can still reopen it.
    */
   readonly needsSettlement: boolean;
 }
@@ -55,7 +57,10 @@ export function threadResolveBlockedReason(input: ThreadResolveAccessInput): str
   const label = machineLabel && machineLabel !== environmentId ? machineLabel : null;
   const done = action === "reopen" ? "reopened" : "resolved";
   const signedOut = `This browser is signed out of ${label ?? "that machine"}. Sign in to it again to ${action} this thread.`;
+  const loading = `Still loading ${label ?? "that machine"}'s details. Try again in a moment.`;
   if (connection === null || connection === undefined) {
+    // Before the list of machines arrives every machine is unknown, paired or not.
+    if (!input.machinesLoaded) return loading;
     // Reconnecting never helps here: this app holds no connection to that machine at all.
     return `This device is not paired with ${label ?? "that machine"}, so this thread can't be ${done} from here.`;
   }
@@ -70,10 +75,10 @@ export function threadResolveBlockedReason(input: ThreadResolveAccessInput): str
   if (access === "denied") {
     return `This connection can't change threads ${label ? `on ${label}` : "there"}.`;
   }
+  // Asked of every thread, restored history included: until the details arrive nobody
+  // knows whether reopening must also clear a settlement there.
+  if (supportsSettlement === undefined) return loading;
   if (!input.needsSettlement) return null;
-  if (supportsSettlement === undefined) {
-    return `Still loading ${label ?? "that machine"}'s details. Try again in a moment.`;
-  }
   if (!supportsSettlement) {
     return `${label ?? "That machine"} runs an older version that can't ${action} threads. Update it first.`;
   }

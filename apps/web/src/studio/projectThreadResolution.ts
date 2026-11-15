@@ -6,9 +6,9 @@ import type { useThreadActions } from "../hooks/useThreadActions";
 
 function isSettlementUnsupported(result: unknown): boolean {
   if (typeof result !== "object" || result === null) return false;
-  const { _tag, cause } = result as { _tag?: unknown; cause?: Cause.Cause<unknown> };
-  if (_tag !== "Failure" || cause === undefined) return false;
-  const error = squashAtomCommandFailure({ cause });
+  const failure = result as { _tag?: unknown; cause?: Cause.Cause<unknown> };
+  if (failure._tag !== "Failure" || failure.cause === undefined) return false;
+  const error = squashAtomCommandFailure({ ...failure, cause: failure.cause });
   return (
     typeof error === "object" &&
     error !== null &&
@@ -32,7 +32,8 @@ export async function toggleProjectThreadResolution(
     const reopened = await actions.unsettleThread(ref);
     refresh();
     // History a server only archived is back once restored: a server that predates
-    // Resolve has no settlement to clear, so its refusal is not a failed reopen.
+    // Resolve has no settlement to clear, so its refusal is not a failed reopen. The
+    // button waits for that server's details, so this is never a version still loading.
     if (thread.settledOverride !== "settled" && isSettlementUnsupported(reopened)) return restored;
     return reopened;
   }

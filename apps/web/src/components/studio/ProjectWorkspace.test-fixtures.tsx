@@ -1,9 +1,11 @@
 import * as DateTime from "effect/DateTime";
 // @vitest-environment jsdom
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { AsyncResult } from "effect/reactivity";
 import { act, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, vi } from "vite-plus/test";
@@ -480,10 +482,24 @@ vi.mock("../../state/use-atom-query-runner", () => ({
 vi.mock("../../state/threads", () => ({
   threadEnvironment: { loadEarlierHistory: {}, updateMetadata: {}, startTurn: {} },
 }));
+/** The failure unsettleThread answers with, in the shape this file's squash mock reads. */
+function settlementUnsupportedFailure() {
+  const error = Object.assign(
+    new Error(
+      "This environment's server does not support resolving threads yet. Update the server to use Resolve.",
+    ),
+    { _tag: "ThreadSettlementUnsupportedError" },
+  );
+  return { ...AsyncResult.failure(Cause.fail(error)), _tag: "Failure" as const, error };
+}
 vi.mock("../../hooks/useThreadActions", () => ({
   useThreadActions: () => ({
     settleThread: state.settle,
-    unsettleThread: state.settle,
+    // Like the real action: a server that predates Resolve refuses before sending anything.
+    unsettleThread: (ref: { environmentId: string }) =>
+      state.settlementUnsupportedHosts.includes(ref.environmentId)
+        ? Promise.resolve(settlementUnsupportedFailure())
+        : state.settle(ref),
     unarchiveThread: state.settle,
   }),
 }));
