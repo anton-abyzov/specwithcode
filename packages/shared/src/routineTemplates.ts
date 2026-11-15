@@ -7,6 +7,7 @@ import type {
 
 import { isPaidModel, modelBilling } from "./modelBilling.ts";
 import { carryModelOptions } from "./modelOptionCarry.ts";
+import { sameModelOn } from "./modelIdentity.ts";
 import { tierModelFor } from "./modelTiers.ts";
 
 /**
@@ -59,6 +60,8 @@ export type RoutineModelChoice =
       readonly note: string | null;
       /** The saved model bills per token, so a scheduled run does not use plan limits. */
       readonly perToken: boolean;
+      /** The saved model is proven to bill to a plan, so a scheduled run uses its limits. */
+      readonly planBilled: boolean;
     };
 
 function optionDescriptors(provider: ServerProvider, slug: string) {
@@ -98,6 +101,10 @@ export function routineTemplateModel(
     selection,
     note,
     perToken: provider !== undefined && isPaidModel(provider, selection.model),
+    planBilled:
+      provider !== undefined &&
+      !isPaidModel(provider, selection.model) &&
+      modelBilling(provider, selection.model) === "subscription",
   });
   if (template.modelTier !== "everyday") return ready(coordinator, null);
   if (providers === undefined) return { kind: "loading" };
@@ -111,7 +118,9 @@ export function routineTemplateModel(
   if (isPaidModel(provider, model)) return keep(`The everyday model ${model} is billed per token`);
   const chosen = tiers?.[provider.instanceId]?.regular ?? tiers?.[provider.driver]?.regular;
   const unpriced = modelBilling(provider, model) === "unknown";
-  if (unpriced && chosen !== model) {
+  // The saved choice in any spelling of the same model (claude-opus-5.5 is claude-opus-5-5).
+  const personChose = chosen !== undefined && sameModelOn(provider, { slug: chosen }) === model;
+  if (unpriced && !personChose) {
     return keep(`The everyday model ${model} does not say how it is billed`);
   }
   const carried = carryModelOptions({

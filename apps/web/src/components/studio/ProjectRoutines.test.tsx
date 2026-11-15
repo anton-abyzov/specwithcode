@@ -312,7 +312,18 @@ describe("Personal routines", () => {
     expect(container.textContent).toContain(
       "The everyday model fixture-everyday is billed per token, so it uses fixture, the coordinator's model.",
     );
+    // Scheduled on the plan-billed coordinator: the form names the plan's limits.
+    await act(async () =>
+      container
+        .querySelectorAll<HTMLInputElement>('.sws-routine-form input[type="radio"]')[1]!
+        .click(),
+    );
+    expect(container.textContent).toContain("Each scheduled run uses your plan's limits.");
     await click("Save routine");
+    expect(state.upsert.mock.calls[0]![0].input.schedule).toEqual({
+      type: "interval",
+      everyMs: 2 * 60 * 60_000,
+    });
     expect(state.upsert.mock.calls[0]![0].input.modelSelection).toEqual({
       instanceId: "claudeAgent",
       model: "fixture",

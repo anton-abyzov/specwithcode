@@ -91,18 +91,26 @@ describe("routine templates", () => {
     expect(routineTemplateModel(watch, coordinator, [provider], tiers)).toEqual({
       kind: "ready",
       perToken: false,
+      planBilled: false,
       selection: { instanceId: "codex", model: "gpt-everyday" },
       note: "It uses gpt-everyday, the everyday model. Its billing is not reported; you chose it in Settings. gpt-everyday has not listed its options yet, so they start at its defaults.",
     });
     // Other templates keep the coordinator; no coordinator is "none"; no providers yet is loading.
     expect(
       routineTemplateModel(routineTemplate("research-brief")!, coordinator, [provider], tiers),
-    ).toEqual({ kind: "ready", selection: coordinator, note: null, perToken: false });
+    ).toEqual({
+      kind: "ready",
+      selection: coordinator,
+      note: null,
+      perToken: false,
+      planBilled: false,
+    });
     expect(routineTemplateModel(watch, null, [provider], tiers)).toEqual({ kind: "none" });
     expect(routineTemplateModel(watch, coordinator, undefined, tiers)).toEqual({ kind: "loading" });
     expect(routineTemplateModel(watch, coordinator, [], tiers)).toEqual({
       kind: "ready",
       perToken: false,
+      planBilled: false,
       selection: coordinator,
       note: "The coordinator's provider is not listed here, so it uses gpt-frontier, the coordinator's model.",
     });
@@ -125,12 +133,14 @@ describe("routine templates", () => {
     expect(routineTemplateModel(watch, coordinator, [provider("paid-router")], tiers)).toEqual({
       kind: "ready",
       perToken: false,
+      planBilled: true,
       selection: coordinator,
       note: "The everyday model gpt-6.1-sol is billed per token, so it uses gpt-6-astra, the coordinator's model.",
     });
     expect(routineTemplateModel(watch, coordinator, [provider(undefined)], tiers)).toEqual({
       kind: "ready",
       perToken: false,
+      planBilled: false,
       selection: { instanceId: "copilot", model: "gpt-6.1-sol" },
       note: "It uses gpt-6.1-sol, the everyday model. Its billing is not reported; you chose it in Settings.",
     });
@@ -145,6 +155,7 @@ describe("routine templates", () => {
     expect(routineTemplateModel(watch, onCodex, [codex], undefined)).toEqual({
       kind: "ready",
       perToken: false,
+      planBilled: false,
       selection: onCodex,
       note: "The everyday model gpt-6.1-sol does not say how it is billed, so it uses gpt-6-astra, the coordinator's model.",
     });
@@ -173,6 +184,7 @@ describe("routine templates", () => {
     expect(routineTemplateModel(watch, coordinator, [bare as never], undefined)).toMatchObject({
       kind: "ready",
       perToken: false,
+      planBilled: false,
       selection: coordinator,
       note: "No everyday model is listed for this provider, so it uses gpt-6-astra, the coordinator's model.",
     });
@@ -215,12 +227,34 @@ describe("routine templates", () => {
     expect(routineTemplateModel(watch, coordinator, [provider], tiers)).toEqual({
       kind: "ready",
       perToken: false,
+      planBilled: true,
       selection: {
         instanceId: "codex",
         model: "gpt-everyday",
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       },
       note: "It uses gpt-everyday, the everyday model.",
+    });
+  });
+
+  it("knows the person's everyday choice in any spelling of the model (1340 AC-09)", () => {
+    const watch = routineTemplate("reset-announcement-watch")!;
+    const provider = {
+      instanceId: "p",
+      driver: "acpRegistry",
+      auth: { status: "authenticated" },
+      models: [{ slug: "frontier-x-1", billing: "subscription" }, { slug: "claude-opus-5-5" }],
+    } as never;
+    expect(
+      routineTemplateModel(watch, { instanceId: "p", model: "frontier-x-1" } as never, [provider], {
+        p: { regular: "claude-opus-5.5" },
+      } as never),
+    ).toEqual({
+      kind: "ready",
+      perToken: false,
+      planBilled: false,
+      selection: { instanceId: "p", model: "claude-opus-5-5" },
+      note: "It uses claude-opus-5-5, the everyday model. Its billing is not reported; you chose it in Settings.",
     });
   });
 
@@ -245,6 +279,7 @@ describe("routine templates", () => {
     ).toEqual({
       kind: "ready",
       perToken: false,
+      planBilled: true,
       selection: { instanceId: "p", model: "everyday" },
       note: "It uses everyday, the everyday model.",
     });
