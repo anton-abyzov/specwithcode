@@ -646,6 +646,7 @@ export function resolveViewedImageAsset(
     threadId: input.threadId,
     workspaceRoot: input.workspaceRoot,
     resolvedFilePath,
+    resolvedFileRelative: imageSource.relative === true,
   });
   if (media === null || media.access !== "environment") return null;
   return { resource: media.resource, alt: media.name, srcFragment: media.srcFragment };
