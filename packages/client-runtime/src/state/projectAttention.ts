@@ -203,6 +203,11 @@ function inheritRootSettlement(
         : rootSettledAt,
   };
 }
+/** The attention label while a machine cannot be reached at all. */
+export const MACHINES_UNREACHABLE_LABEL = "Some machines can't be reached";
+/** The attention label while every machine is reachable and one is still reading its list. */
+export const MACHINES_CATCHING_UP_LABEL = "Catching up with your machines";
+
 export interface AttentionMember {
   readonly environmentId: string;
   readonly projectId: string;
@@ -418,6 +423,11 @@ export function aggregateProjectAttention(input: {
     return { ...root, ownerMachineId, raised: input.raises(root.thread, ownerMachineId) };
   });
   const everyMemberLive = input.members.every((m) => m.freshness === "live");
+  // A machine that is connected and still reading its list is catching up; only
+  // one the app cannot reach, or may not read, is named as such.
+  const someMemberDown = input.members.some(
+    (m) => m.freshness === "offline" || m.freshness === "unauthorized",
+  );
   const needing = result.filter((root) => root.actions.length > 0);
   const count = needing.filter((root) => root.raised !== false).length;
   return {
@@ -434,6 +444,8 @@ export function aggregateProjectAttention(input: {
         ? `${needsYouLabel(count)} · partial`
         : everyMemberLive && input.members.length > 0
           ? "Some threads could not be read"
-          : "Some machines are offline",
+          : someMemberDown || input.members.length === 0
+            ? MACHINES_UNREACHABLE_LABEL
+            : MACHINES_CATCHING_UP_LABEL,
   };
 }
