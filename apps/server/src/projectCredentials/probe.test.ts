@@ -16,9 +16,17 @@ import {
   probeCredential,
   probeEnvironment,
   probeFolders,
-  resolveProbeBinary,
+  resolveProbeBinary as resolveProbeBinaryOn,
   spawnProbe,
 } from "./probe.ts";
+
+/** Linux rules unless a test names a platform: folder names keep their case. */
+const resolveProbeBinary = (
+  binary: string,
+  folders: ReadonlyArray<string>,
+  projectRoots: ReadonlyArray<string>,
+  platform: NodeJS.Platform = "linux",
+) => resolveProbeBinaryOn(binary, folders, projectRoots, platform);
 
 let base: string;
 let tools: string;

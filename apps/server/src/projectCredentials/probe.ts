@@ -135,7 +135,7 @@ export async function resolveProbeBinary(
   binary: string,
   folders: ReadonlyArray<string>,
   projectRoots: ReadonlyArray<string>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Promise<string | null> {
   if (binary.includes("/") || binary.includes("\\")) return null;
   const roots = await realProjectRoots(projectRoots, platform);
