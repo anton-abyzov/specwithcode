@@ -1491,7 +1491,8 @@ describe("cleaning up the projects list", () => {
       } as Partial<EnvironmentThreadShell>),
     ];
     await render();
-    expect(projectNames()).toEqual(["Atlas", "Borealis"]);
+    const main = [...container.querySelectorAll('[aria-label="Projects"] .sws-side-row-label')];
+    expect(main.map((label) => label.textContent)).toEqual(["Atlas", "Borealis"]);
     const list = container.querySelector('[aria-label="Open or waiting projects"]')!;
     expect(list.textContent).toContain("client-demo");
     expect(list.querySelector(".sws-count-waiting")).not.toBeNull();
