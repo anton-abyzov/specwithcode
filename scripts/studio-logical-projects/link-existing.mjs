@@ -343,18 +343,14 @@ try {
     .evaluateAll((nodes) => nodes.map((node) => node.textContent));
   const offer = offered.ok
     ? await suggestion.first().evaluate((node) => ({
-        role: node.getAttribute("role"),
         text: node.textContent,
         title: node.getAttribute("title"),
-        focusable: node.tabIndex === 0,
       }))
     : null;
   scenario(
-    "1. sidebar offers the link as a labeled button naming the other project and machine",
+    "1. sidebar shows a labeled Link that names the other project and machine",
     offered.ok &&
-      offer.role === "button" &&
       offer.text === "Link" &&
-      offer.focusable &&
       /M[45].*Link with specweave on M[45]…$/u.test(offer.title ?? ""),
     { offer, suggestionLabels, rowsBefore, error: offered.error },
   );

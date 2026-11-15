@@ -134,6 +134,8 @@ export const ProjectLinkNote = Schema.Struct({
 export type ProjectLinkNote = typeof ProjectLinkNote.Type;
 
 /** A routine this copy's coordinator owns, as the link review names it. */
+/** Most routines a link preview names; a copy with more lists the first ones. */
+export const PROJECT_LINK_ROUTINES_MAX = 200;
 export const ProjectLinkRoutine = Schema.Struct({
   id: bounded(256),
   title: bounded(1000),
@@ -239,7 +241,9 @@ export const ProjectLinkPreview = Schema.Struct({
    * The routines this copy's coordinator owns. They stop running when this copy
    * joins another as a member. Absent from servers that do not report them.
    */
-  routines: Schema.optional(Schema.Array(ProjectLinkRoutine).check(Schema.isMaxLength(200))),
+  routines: Schema.optional(
+    Schema.Array(ProjectLinkRoutine).check(Schema.isMaxLength(PROJECT_LINK_ROUTINES_MAX)),
+  ),
 });
 export type ProjectLinkPreview = typeof ProjectLinkPreview.Type;
 

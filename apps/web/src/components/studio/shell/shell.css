@@ -954,10 +954,6 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-side-row > .sws-side-row-link-suggestion:hover {
   background: color-mix(in srgb, var(--primary) 12%, transparent);
 }
-.sws-side-row > .sws-side-row-link-suggestion:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 1px;
-}
 .sws-side-row > .sws-side-row-link-suggestion > svg {
   width: 12px;
   height: 12px;

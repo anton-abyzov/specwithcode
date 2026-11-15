@@ -97,31 +97,43 @@ const suggestion = () => ({
 });
 const offer = () => container.querySelector<HTMLElement>("[data-link-suggestion]")!;
 
-it("offers the link as a labeled button that names the other project and machine", async () => {
+it("shows the offer as a labeled Link that names the other project and machine", async () => {
   await render(suggestion(), () => {});
-  expect(offer().getAttribute("role")).toBe("button");
-  expect(offer().tabIndex).toBe(0);
   expect(offer().textContent).toBe("Link");
   expect(offer().title).toBe(
     "Same repository (acme/first) as firstproject on M5. Link with firstproject on M5…",
   );
-  expect(offer().getAttribute("aria-label")).toBe(offer().title);
+  // The row is a link: the shortcut is for the mouse, and the row's name carries the offer.
+  expect(offer().getAttribute("aria-hidden")).toBe("true");
+  expect(offer().closest("a")?.querySelector("[role='button'], button, [tabindex]")).toBeNull();
+  expect(offer().closest("a")?.textContent).toContain(
+    ", Same repository (acme/first) as firstproject on M5",
+  );
 });
 
-it("opens the link dialog from a click or Enter without opening the project", async () => {
+it("opens the link dialog from a click without opening the project", async () => {
   const link = suggestion();
   const onOpen = vi.fn<() => void>();
   await render(link, onOpen);
   await act(async () => offer().click());
   expect(link.onLink).toHaveBeenCalledTimes(1);
-  await act(async () =>
-    offer().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
-  );
-  expect(link.onLink).toHaveBeenCalledTimes(2);
-  // Other keys are the row's own.
-  await act(async () =>
-    offer().dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true })),
-  );
-  expect(link.onLink).toHaveBeenCalledTimes(2);
   expect(onOpen).not.toHaveBeenCalled();
+});
+
+it("holds the same action in the row's menu, for the keyboard and screen readers", async () => {
+  const link = suggestion();
+  await render(link, () => {});
+  const trigger = container.querySelector<HTMLButtonElement>(
+    "button[aria-label='Actions for firstproject']",
+  )!;
+  await act(async () => {
+    trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    trigger.click();
+  });
+  const item = [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find(
+    (entry) => entry.textContent === "Link with firstproject on M5…",
+  );
+  await act(async () => item!.click());
+  expect(link.onLink).toHaveBeenCalledTimes(1);
 });

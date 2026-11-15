@@ -31,7 +31,12 @@ import { isCoordinatorOwnedRoutine } from "./ScheduledTaskCopies.ts";
  * and a webhook routine stays with the machine its URL points to.
  */
 export type RoutineCoordinatorHold =
-  | { readonly kind: "rest"; readonly note: string }
+  | {
+      readonly kind: "rest";
+      readonly note: string;
+      /** The shared project this copy rests in, when it is linked. */
+      readonly logicalProjectId?: string | null;
+    }
   | { readonly kind: "wait"; readonly reason: string };
 
 export const RESTING_ROUTINE_NOTE =
@@ -77,7 +82,12 @@ export const makeRoutineCoordinatorGate =
       if (Option.isNone(role)) return null;
       if (role.value.state === "transferring")
         return { kind: "wait", reason: HANDOFF_ROUTINE_WAIT } as const;
-      if (!role.value.active) return { kind: "rest", note: RESTING_ROUTINE_NOTE } as const;
+      if (!role.value.active)
+        return {
+          kind: "rest",
+          note: RESTING_ROUTINE_NOTE,
+          logicalProjectId: role.value.logicalProjectId,
+        } as const;
       const coordinatorThread = (row.value.workspaceSettings?.coordinatorThreadId ??
         `project-coordinator:${task.projectId}`) as ThreadId;
       const fenced = yield* deps.wakeGate.check(coordinatorThread);

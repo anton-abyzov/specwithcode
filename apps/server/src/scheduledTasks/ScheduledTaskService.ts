@@ -1959,12 +1959,16 @@ export const layer = Layer.effect(
      * before this copy joined another project's coordinator. No replica holds
      * it, so nothing replaces the change.
      */
-    const isCoordinatorCopy = (id: ScheduledTaskId) =>
+    const isCoordinatorCopy = (id: ScheduledTaskId, logicalProjectId: string | null | undefined) =>
       sql<{ readonly copied: string | null }>`
         SELECT json_extract(run_policy_json, '$.copiedFrom') AS copied
         FROM scheduled_tasks WHERE task_id = ${id}
       `.pipe(
-        Effect.map((rows) => rows[0]?.copied != null),
+        // A mark left by an earlier shared project is not this coordinator's copy.
+        Effect.map((rows) => {
+          const copied = rows[0]?.copied ?? null;
+          return copied !== null && (logicalProjectId == null || copied === logicalProjectId);
+        }),
         // Unknown counts as a copy: the refusal stands.
         Effect.orElseSucceed(() => true),
       );
@@ -1984,7 +1988,7 @@ export const layer = Layer.effect(
             hold?.kind === "rest" &&
             options?.ownRemovable === true &&
             "id" in target &&
-            !(yield* isCoordinatorCopy(target.id))
+            !(yield* isCoordinatorCopy(target.id, hold.logicalProjectId))
           )
             continue;
           const refusal =

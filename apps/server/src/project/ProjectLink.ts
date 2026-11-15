@@ -75,7 +75,7 @@ import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
 import * as WorkerEpochStore from "../fleet/WorkerEpochStore.ts";
 import * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
-import { isSuperseded, withSuperseded } from "./ProjectLinkNotes.ts";
+import { isSuperseded, withSuperseded, type SupersededByKept } from "./ProjectLinkNotes.ts";
 import { CoordinatorRearmStore } from "./CoordinatorRearmStore.ts";
 import * as CoordinatorRole from "./CoordinatorRole.ts";
 import { CoordinatorStandbyStore } from "./CoordinatorStandbyStore.ts";
@@ -416,12 +416,16 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       if (memoryHistory === undefined || superseded.length === 0) return 0;
-      const known: ProjectLinkSupersededNote[] = [];
+      const known: SupersededByKept[] = [];
       for (const note of superseded) {
         const current = yield* workspace
           .readMemory({ projectId, name: note.name })
           .pipe(Effect.option);
-        if (Option.isSome(current) && isSuperseded(current.value.content, note)) known.push(note);
+        if (Option.isSome(current) && isSuperseded(current.value.content, note))
+          known.push({
+            ...note,
+            keptSha256: LinkedMemoryHistory.memoryContentHash(current.value.content),
+          });
       }
       if (known.length === 0) return 0;
       yield* memoryHistory.modify(projectId, (state) => withSuperseded(state, known));

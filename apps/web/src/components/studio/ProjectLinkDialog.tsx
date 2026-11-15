@@ -4,6 +4,7 @@ import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
   logicalProjectTitle,
+  PROJECT_LINK_ROUTINES_MAX,
   repositoryGroupingKeyOf,
   type EnvironmentId,
   type ProjectId,
@@ -691,7 +692,9 @@ function LinkReview({
           <p className="text-muted-foreground">
             {sides.joining.routines!.length === 1
               ? `1 routine on ${joiningLabel} stops running.`
-              : `${sides.joining.routines!.length} routines on ${joiningLabel} stop running.`}{" "}
+              : sides.joining.routines!.length >= PROJECT_LINK_ROUTINES_MAX
+                ? `${PROJECT_LINK_ROUTINES_MAX} or more routines on ${joiningLabel} stop running; the first ${PROJECT_LINK_ROUTINES_MAX} are listed.`
+                : `${sides.joining.routines!.length} routines on ${joiningLabel} stop running.`}{" "}
             A project&apos;s routines run only on the coordinator&apos;s machine, {keptLabel}. They
             stay listed on {joiningLabel}, where you can turn them off or delete them; create the
             ones you still need on {keptLabel}.

@@ -1,7 +1,10 @@
-import type { ProjectLinkSupersededNote } from "@specweave-studio/contracts";
+import {
+  LINKED_MEMORY_HISTORY_LIMIT,
+  type ProjectLinkSupersededNote,
+} from "@specweave-studio/contracts";
 
 import { memoryContentHash } from "./LinkedMemoryHistory.ts";
-import { unionHistory, type MemoryHistoryState } from "./linkedMemoryMerge.ts";
+import type { MemoryHistoryState } from "./linkedMemoryMerge.ts";
 
 /**
  * Link review choices and the memory merge that follows.
@@ -19,10 +22,20 @@ import { unionHistory, type MemoryHistoryState } from "./linkedMemoryMerge.ts";
 export const isSuperseded = (keptContent: string, note: ProjectLinkSupersededNote) =>
   memoryContentHash(keptContent) !== note.contentSha256;
 
-/** `state` with each joining version placed before the kept note's own versions. */
+/** A set-aside joining version with the hash of the kept note's current text. */
+export interface SupersededByKept extends ProjectLinkSupersededNote {
+  readonly keptSha256: string;
+}
+
+/**
+ * `state` with each joining version placed just before the kept note's current
+ * version. The history keeps only its newest entries, so the joining version goes
+ * next to the newest: at the front, a note edited often enough to fill its history
+ * would drop it at once.
+ */
 export const withSuperseded = (
   state: MemoryHistoryState,
-  superseded: ReadonlyArray<ProjectLinkSupersededNote>,
+  superseded: ReadonlyArray<SupersededByKept>,
 ): MemoryHistoryState => ({
   ...state,
   files: {
@@ -32,7 +45,13 @@ export const withSuperseded = (
         note.name,
         {
           ...state.files[note.name],
-          history: unionHistory(state.files[note.name]?.history ?? [], [note.contentSha256]),
+          history: [
+            ...(state.files[note.name]?.history ?? []).filter(
+              (hash) => hash !== note.contentSha256 && hash !== note.keptSha256,
+            ),
+            note.contentSha256,
+            note.keptSha256,
+          ].slice(-LINKED_MEMORY_HISTORY_LIMIT),
         },
       ]),
     ),

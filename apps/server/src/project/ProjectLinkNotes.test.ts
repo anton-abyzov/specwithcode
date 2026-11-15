@@ -1,4 +1,4 @@
-import type { LinkedMemoryExport } from "@specweave-studio/contracts";
+import { LINKED_MEMORY_HISTORY_LIMIT, type LinkedMemoryExport } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import { memoryContentHash } from "./LinkedMemoryHistory.ts";
@@ -59,8 +59,11 @@ const exported = (
 /** Links the pair, sending `commit` what the review chose. */
 const linked = async (
   commit: Pick<Parameters<ProjectLink.ProjectLink["Service"]["commit"]>[0], "notes" | "superseded">,
+  keptHistory?: Pick<MemoryHistoryState, "files">,
 ) => {
   const pair = legacyPair();
+  if (keptHistory)
+    pair.m4.memoryHistory.set(pair.kept.projectId, { ...emptyMemoryHistory, ...keptHistory });
   const kept = pair.m4.notes(pair.kept.projectId);
   const joining = pair.m3.notes(pair.joining.projectId);
   kept.set("decisions.md", { content: "M4 decision", revision: 2 });
@@ -127,7 +130,7 @@ describe("ProjectLink note choices and the first memory merge", () => {
       superseded: [{ name: "decisions.md", contentSha256: M3_HASH }],
     });
     expect(result.notesWritten).toBe(0);
-    expect(keptState.files["decisions.md"]?.history).toEqual([M3_HASH]);
+    expect(keptState.files["decisions.md"]?.history).toEqual([M3_HASH, M4_HASH]);
     // The kept copy keeps its text; at most it remembers versions.
     expect(onKept.steps.filter((step) => step.kind !== "history")).toEqual([]);
     const step = onJoining.steps.find((entry) => entry.name === "decisions.md");
@@ -149,6 +152,23 @@ describe("ProjectLink note choices and the first memory merge", () => {
       ["decisions-macbook-pro-m3.md", "M3 decision", undefined],
       ["decisions.md", "M4 decision", undefined],
     ]);
+  });
+
+  it("keeps the choice for a note whose history is already full", async () => {
+    const full = Array.from({ length: LINKED_MEMORY_HISTORY_LIMIT - 1 }, (_, index) =>
+      memoryContentHash(`older ${index}`),
+    );
+    const { keptState, onKept, onJoining } = await linked(
+      { notes: [], superseded: [{ name: "decisions.md", contentSha256: M3_HASH }] },
+      { files: { "decisions.md": { history: [...full, M4_HASH], authoredAt: UPDATED_AT } } },
+    );
+    const history = keptState.files["decisions.md"]?.history ?? [];
+    expect(history).toHaveLength(LINKED_MEMORY_HISTORY_LIMIT);
+    expect(history.slice(-2)).toEqual([M3_HASH, M4_HASH]);
+    expect(onKept.steps.filter((step) => step.kind !== "history")).toEqual([]);
+    const step = onJoining.steps.find((entry) => entry.name === "decisions.md");
+    expect(step).toMatchObject({ kind: "write", content: "M4 decision" });
+    expect(step?.kind === "write" ? step.conflictCopy : "none").toBeUndefined();
   });
 
   it("ignores a choice for a note the kept copy lacks or holds with the same text", async () => {
