@@ -4323,11 +4323,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const { runs } = yield* loadProjectionForCommand(command, ["runs"], { turnItemTypes: [] });
       for (const run of runs) {
         // A starting run has no stream to break yet; its start opens a new session.
+        // A workspace move detaches every session of the thread, so any running
+        // run streams on a released one (its provider threads are not loaded).
         if (
           run.status !== "running" ||
           run.rootNodeId === null ||
           run.providerThreadId === null ||
-          !releasedProviderThreadIds.has(run.providerThreadId)
+          (!workspaceMove && !releasedProviderThreadIds.has(run.providerThreadId))
         ) {
           continue;
         }
