@@ -18,6 +18,7 @@ import {
   type RoutingDecision,
 } from "@specweave-studio/shared/decisionModel";
 import { classifyLane, resolveLaneRouting } from "@specweave-studio/shared/modelLanes";
+import { isHeldSource, launchTrackLanes } from "@specweave-studio/shared/modelTracks";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
   classifyTask,
@@ -55,10 +56,15 @@ export function autoRoutingApplies(input: {
   readonly isCoordinator: boolean;
   readonly taskClass: TaskClass | undefined;
   readonly taskLane?: ModelLane | undefined;
+  /** The project starts unnamed workers on its tracks, whoever launches them. */
+  readonly tracks?: boolean | undefined;
 }): boolean {
   return (
     !input.pinned &&
-    (input.isCoordinator || input.taskClass !== undefined || input.taskLane !== undefined)
+    (input.tracks === true ||
+      input.isCoordinator ||
+      input.taskClass !== undefined ||
+      input.taskLane !== undefined)
   );
 }
 
@@ -94,13 +100,45 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
   const preferences = Option.isSome(settings)
     ? yield* settings.value.getSettings.pipe(Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS))
     : DEFAULT_SERVER_SETTINGS;
-  const rule = resolveProjectSettings(preferences, input.project.id, input.project).settings;
+  const resolved = resolveProjectSettings(preferences, input.project.id, input.project).settings;
+  // A project on Tracks routes by its tracks even when nobody saved one: the
+  // built-in order, fitted to what is installed here, stands in for an empty
+  // track, and each model is tried on every account that runs it, in Sources order.
+  const tracks = resolved.threadModelMode === "tracks";
+  const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+  const rule = tracks
+    ? {
+        ...resolved,
+        modelLanes: launchTrackLanes(
+          resolved.modelLanes,
+          input.providers,
+          resolved.defaultModelProviders,
+          nowMs,
+        ),
+      }
+    : resolved;
+  // On Tracks nobody named the worker's starting model, so a model billed per
+  // token or with unknown billing is never what it falls back to.
+  const baselineProvider = input.providers.find(
+    (provider) => provider.instanceId === input.baseline.instanceId,
+  );
+  const heldBaseline =
+    tracks &&
+    baselineProvider !== undefined &&
+    isHeldSource(baselineProvider, input.baseline.model);
+  const refuseHeldBaseline = () =>
+    new OrchestratorMcpFailure({
+      code: "model_unavailable",
+      message: `No model on this project's tracks can run now, and ${input.baseline.model} here is billed per use, so it is never started automatically. Name a model, or sign in to a plan in Settings > Models.`,
+    });
   const lanesSet =
     rule.modelLanes.complex.length > 0 ||
     rule.modelLanes.routine.length > 0 ||
     rule.learnedModelPreferences.length > 0;
-  if (rule.taskRouting.mode !== "auto" && !lanesSet) return null;
-  const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+  if (rule.taskRouting.mode !== "auto" && !lanesSet) {
+    if (heldBaseline) return yield* refuseHeldBaseline();
+    return null;
+  }
   const limited = new Set<string>(simulatedUsageLimitInstances(yield* ProviderFallbackEnv));
   // A provider that reports no usage but stopped a thread on its limit
   // (Copilot's monthly quota) reads as ready: no new worker starts there.
@@ -179,10 +217,14 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
         code: "model_unavailable",
         message: `No permitted ${lane.decision.lane} model can run now. Baseline ${input.baseline.model}: ${lane.baselineUnavailable}. Update the model lane or learned preference before retrying.`,
       });
+    if (!lane.found && heldBaseline) return yield* refuseHeldBaseline();
     yield* logDecision(input.project, lane.decision);
     return lane.decision;
   }
-  if (rule.taskRouting.mode !== "auto") return null;
+  if (rule.taskRouting.mode !== "auto") {
+    if (heldBaseline) return yield* refuseHeldBaseline();
+    return null;
+  }
   const tiered = resolveTaskRouting({
     policy: rule.taskRouting,
     classification,
@@ -196,6 +238,8 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
       ? {}
       : { runnableInstanceIds: input.runnableInstanceIds }),
   });
+  // Auto kept the baseline: on Tracks that is still nobody's spending choice.
+  if (!tiered.moved && heldBaseline) return yield* refuseHeldBaseline();
   yield* logDecision(input.project, tiered);
   return tiered;
 });

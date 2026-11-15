@@ -3,7 +3,11 @@ import { act, createContext, useContext } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
-import { ProviderInstanceId, type ProjectWorkspaceReadResult } from "@specweave-studio/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
+  type ProjectWorkspaceReadResult,
+} from "@specweave-studio/contracts";
 import {
   findProjectSettingsAnchor,
   PROJECT_SETTINGS_SEARCH_ROWS,
@@ -30,6 +34,7 @@ const state = vi.hoisted(() => ({
   connectionCheck: vi.fn(),
   connectionRevoke: vi.fn(),
   providers: [] as unknown[],
+  hostSettings: undefined as Record<string, unknown> | undefined,
   initialFocus: null as React.RefObject<HTMLElement | null> | null,
   fleet: null as Record<string, unknown> | null,
   environment: {
@@ -102,7 +107,7 @@ vi.mock("../../studio/fleet", () => ({
 vi.mock("../../state/environments", () => ({
   useEnvironment: () => ({
     connection: { phase: "connected" },
-    serverConfig: { providers: state.providers },
+    serverConfig: { providers: state.providers, settings: state.hostSettings },
   }),
 }));
 vi.mock("../../state/projects", () => ({
@@ -193,6 +198,9 @@ vi.mock("../settings/ProviderLimitSettings", () => ({
 }));
 vi.mock("../settings/AdversarialReviewSettings", () => ({
   AdversarialReviewSettings: () => null,
+}));
+vi.mock("../settings/ThreadModelModeSetting", () => ({
+  ThreadModelModeSetting: () => <p data-thread-model-mode="">New threads use</p>,
 }));
 vi.mock("../settings/RecommendedModelProviders", () => ({
   RecommendedModelProviders: () => <h3>Also served by</h3>,
@@ -304,6 +312,7 @@ beforeEach(() => {
   for (const value of Object.values(state)) if (typeof value === "function") value.mockReset();
   state.update.mockResolvedValue({ _tag: "Success", value: {} });
   state.fleet = null;
+  state.hostSettings = undefined;
   state.threadCount = 3;
   // A dry run lists the threads a delete would remove.
   state.threadsDelete.mockImplementation(async ({ input }: { input: { dryRun?: boolean } }) => ({
@@ -625,6 +634,26 @@ describe("project settings and memory", () => {
   it("falls back to the worker default, then the host default, with no coordinator thread", async () => {
     await render("general", true, { kind: "code", coordinatorModelSelection: null });
     expect(container.textContent).toContain("Coordinator model: codex-worker");
+  });
+  it("shows the model a saved override really starts threads on", async () => {
+    state.hostSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        project: { defaultModelSelection: { instanceId: "codex", model: "codex-override" } },
+      },
+    };
+    await render();
+    expect(container.textContent).toContain(": codex-override");
+  });
+  it("replaces the one-model picker with the track note on a Tracks project", async () => {
+    state.hostSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { project: { threadModelMode: "tracks" } },
+    };
+    await render();
+    expect(container.querySelector("[data-thread-model-mode]")).not.toBeNull();
+    expect(container.textContent).not.toContain(": codex-worker");
+    expect(container.textContent).toContain("first available model of their track");
   });
   it("saves the displayed revision and preserves edits after a conflict", async () => {
     state.update.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Revision changed") });

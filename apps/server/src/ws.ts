@@ -233,6 +233,11 @@ import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
+import {
+  routeUnnamedLaunch,
+  type UnnamedLaunchInput,
+  type UnnamedLaunchModel,
+} from "./project/TracksLaunch.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import { projectMutationOperation } from "./project/ProjectMutation.ts";
 import * as ProjectActionRequests from "./project/ProjectActionRequests.ts";
@@ -1423,6 +1428,45 @@ const layerWsRpc = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      // A thread sent without a model pick starts on its project's tracks (TracksLaunch.ts).
+      const unnamedLaunchModel = (input: UnnamedLaunchInput) =>
+        input.modelUnnamed !== true
+          ? Effect.succeed<UnnamedLaunchModel>({
+              modelSelection: input.modelSelection,
+              routing: null,
+              refused: null,
+            })
+          : Effect.all([
+              projectStore.get(input.projectId).pipe(
+                Effect.map(Option.getOrUndefined),
+                Effect.orElseSucceed(() => undefined),
+              ),
+              providerRegistry.getProviders,
+            ]).pipe(
+              Effect.flatMap(([project, providers]) =>
+                routeUnnamedLaunch({
+                  project,
+                  providers,
+                  modelSelection: input.modelSelection,
+                  title: input.title,
+                  text: input.initialMessage?.text ?? "",
+                  settings: Option.some(serverSettings),
+                }),
+              ),
+              // Nothing on the tracks can run and the shown model is billed per use.
+              Effect.flatMap(
+                (model): Effect.Effect<UnnamedLaunchModel, OrchestrationV2ThreadLaunchError> =>
+                  model.refused === null
+                    ? Effect.succeed(model)
+                    : Effect.fail(
+                        new OrchestrationV2ThreadLaunchError({
+                          commandId: input.commandId,
+                          projectId: input.projectId,
+                          message: model.refused,
+                        }),
+                      ),
+              ),
+            );
       const projectRuntimeAccess = yield* ProjectRuntimeAccess.ProjectRuntimeAccess;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const adversarialReview = yield* AdversarialReviewService.AdversarialReviewService;
@@ -2153,44 +2197,50 @@ const layerWsRpc = (
             Effect.andThen(
               startup
                 .enqueueCommand(
-                  ThreadMessageIntake.launchThread({
-                    commandId: input.commandId,
-                    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-                    ...(input.reuseExistingThread === undefined
-                      ? {}
-                      : { reuseExistingThread: input.reuseExistingThread }),
-                    projectId: input.projectId,
-                    title: input.title,
-                    ...(input.generateTitle === undefined
-                      ? {}
-                      : { generateTitle: input.generateTitle }),
-                    modelSelection: input.modelSelection,
-                    runtimeMode: input.runtimeMode,
-                    interactionMode: input.interactionMode,
-                    workspaceStrategy: input.workspaceStrategy,
-                    ...(input.initialMessage === undefined
-                      ? {}
-                      : {
-                          initialMessage: {
-                            ...(input.initialMessage.manualCodexCreditIntent
-                              ? {
-                                  manualCodexCreditIntent:
-                                    input.initialMessage.manualCodexCreditIntent,
-                                }
-                              : {}),
-                            ...(input.initialMessage.messageId === undefined
-                              ? {}
-                              : { messageId: input.initialMessage.messageId }),
-                            text: input.initialMessage.text,
-                            attachments: input.initialMessage.attachments,
-                            ...(input.initialMessage.context === undefined
-                              ? {}
-                              : { context: input.initialMessage.context }),
-                          },
-                        }),
-                    createdBy: "user",
-                    creationSource: input.creationSource ?? "web",
-                  }).pipe(Effect.provide(intakeContext)),
+                  unnamedLaunchModel(input).pipe(
+                    Effect.flatMap((launchModel) =>
+                      ThreadMessageIntake.launchThread({
+                        commandId: input.commandId,
+                        ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+                        ...(input.reuseExistingThread === undefined
+                          ? {}
+                          : { reuseExistingThread: input.reuseExistingThread }),
+                        projectId: input.projectId,
+                        title: input.title,
+                        ...(input.generateTitle === undefined
+                          ? {}
+                          : { generateTitle: input.generateTitle }),
+                        modelSelection: launchModel.modelSelection,
+                        ...(launchModel.routing === null ? {} : { routing: launchModel.routing }),
+                        runtimeMode: input.runtimeMode,
+                        interactionMode: input.interactionMode,
+                        workspaceStrategy: input.workspaceStrategy,
+                        ...(input.initialMessage === undefined
+                          ? {}
+                          : {
+                              initialMessage: {
+                                ...(input.initialMessage.manualCodexCreditIntent
+                                  ? {
+                                      manualCodexCreditIntent:
+                                        input.initialMessage.manualCodexCreditIntent,
+                                    }
+                                  : {}),
+                                ...(input.initialMessage.messageId === undefined
+                                  ? {}
+                                  : { messageId: input.initialMessage.messageId }),
+                                text: input.initialMessage.text,
+                                attachments: input.initialMessage.attachments,
+                                ...(input.initialMessage.context === undefined
+                                  ? {}
+                                  : { context: input.initialMessage.context }),
+                              },
+                            }),
+                        createdBy: "user",
+                        creationSource: input.creationSource ?? "web",
+                      }),
+                    ),
+                    Effect.provide(intakeContext),
+                  ),
                 )
                 .pipe(
                   Effect.tap(() =>

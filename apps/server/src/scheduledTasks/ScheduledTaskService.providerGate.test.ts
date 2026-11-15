@@ -1115,3 +1115,111 @@ it.effect("follows a routine's run into a fallback continuation a steer restarte
     assert.deepInclude(own, { type: "succeeded", runId: "run-own" });
   }).pipe(Effect.provide(Sqlite.layerMemory)),
 );
+
+const opus = { slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false };
+const sol = { slug: "gpt-6.1-sol", name: "GPT-6.1 Sol", isCustom: false };
+const claudePlan = provider("claudeAgent", "claudeAgent", {
+  auth: { status: "authenticated", type: "max" },
+  models: [{ ...opus, capabilities: null }],
+});
+const codexPlan = provider("codex", "codex", {
+  auth: { status: "authenticated", type: "chatgpt" },
+  models: [{ ...sol, capabilities: null }],
+});
+const tracksSettings = {
+  ...DEFAULT_SERVER_SETTINGS,
+  projectSettingsOverrides: { aide: { threadModelMode: "tracks" } },
+} as typeof DEFAULT_SERVER_SETTINGS;
+
+it.effect("starts an unpinned routine's own thread on its project's Daily track", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(START);
+    const { state, run, fireNext } = yield* harness([claudePlan, codexPlan], tracksSettings);
+    yield* run((service) =>
+      Effect.gen(function* () {
+        // Saved on Sol before the project moved to Tracks; Daily starts with Opus.
+        yield* service.upsert(
+          taskInput({
+            threadId: null,
+            ownThread: true,
+            modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" },
+          }),
+        );
+        yield* fireNext;
+        assert.deepEqual(state.launched, ["claudeAgent"]);
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("keeps a routine set to a specific model on it in a Tracks project", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(START);
+    const { state, run, fireNext } = yield* harness([claudePlan, codexPlan], tracksSettings);
+    yield* run((service) =>
+      Effect.gen(function* () {
+        yield* service.upsert(
+          taskInput({
+            threadId: null,
+            ownThread: true,
+            modelPinned: true,
+            modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" },
+          }),
+        );
+        yield* fireNext;
+        assert.deepEqual(state.launched, ["codex"]);
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("leaves an unpinned routine on its model in a One model project", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(START);
+    const { state, run, fireNext } = yield* harness(
+      [claudePlan, codexPlan],
+      DEFAULT_SERVER_SETTINGS,
+    );
+    yield* run((service) =>
+      Effect.gen(function* () {
+        yield* service.upsert(
+          taskInput({
+            threadId: null,
+            ownThread: true,
+            modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" },
+          }),
+        );
+        yield* fireNext;
+        assert.deepEqual(state.launched, ["codex"]);
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("fails an unpinned routine instead of starting it on a per-token model", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(START);
+    const apiKey = provider("claude-api", "claudeAgent", {
+      auth: { status: "authenticated", type: "apiKey", apiKeyBilling: true },
+      models: [{ ...opus, capabilities: null }],
+    });
+    // The only account is an API key: nothing on the tracks can run.
+    const { state, run, fireNext, taskRow } = yield* harness([apiKey], tracksSettings);
+    yield* run((service) =>
+      Effect.gen(function* () {
+        yield* service.upsert(
+          taskInput({
+            threadId: null,
+            ownThread: true,
+            modelSelection: { instanceId: "claude-api", model: "claude-opus-5-5" },
+          }),
+        );
+        yield* fireNext;
+        assert.deepEqual(state.launched, []);
+        const row = yield* taskRow;
+        assert.equal(row.last_run_status, "failed");
+        assert.include(String(row.last_run_error), "billed per use");
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);

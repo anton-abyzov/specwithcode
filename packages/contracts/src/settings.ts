@@ -1697,6 +1697,14 @@ export const ProviderLimitTargetOrder = Schema.Literals([
 ]);
 export type ProviderLimitTargetOrder = typeof ProviderLimitTargetOrder.Type;
 
+/**
+ * What a project's new threads start on when no model is named: the first
+ * available entry of the track for the task ("tracks"), or the one model the
+ * project saved ("model"). Absent means "model", as projects ran before tracks.
+ */
+export const ThreadModelMode = Schema.Literals(["tracks", "model"]);
+export type ThreadModelMode = typeof ThreadModelMode.Type;
+
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "agentInstructions",
   "claudeWorkflowMode",
@@ -1705,6 +1713,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "worktreeLocationMode",
   "worktreesDirectory",
   "defaultModelSelection",
+  "threadModelMode",
   "defaultModelProviders",
   "defaultRuntimeMode",
   "defaultThreadEnvMode",
@@ -1764,6 +1773,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   worktreeLocationMode: Schema.optionalKey(WorktreeLocationMode),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  threadModelMode: Schema.optionalKey(ThreadModelMode),
   defaultModelProviders: Schema.optionalKey(DefaultModelProviders),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
@@ -1946,6 +1956,10 @@ export const ServerSettings = Schema.Struct({
   ),
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** See `ThreadModelMode`. A project sets it; "model" keeps how threads started before tracks. */
+  threadModelMode: ThreadModelMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("model" as const)),
   ),
   /**
    * Other providers that serve the default model, in the order a thread
@@ -2538,6 +2552,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  threadModelMode: Schema.optionalKey(ThreadModelMode),
   defaultModelProviders: Schema.optionalKey(DefaultModelProviders),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   /**
