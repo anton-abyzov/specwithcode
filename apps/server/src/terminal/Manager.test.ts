@@ -515,6 +515,57 @@ it.layer(
     }),
   );
 
+  it.effect("sends at most the stated history budget to attach and observe streams", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(10_000);
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // Two-byte characters make an odd budget land inside a code point.
+      const output = Array.from({ length: 400 }, (_, line) => `line ${line} \u00e9\u00e9\n`).join("");
+      process.emitData(output);
+      yield* waitFor(
+        manager.open(openInput()).pipe(Effect.map((snapshot) => snapshot.history === output)),
+      );
+
+      const historyFrom = (
+        stream: typeof manager.attachStream,
+        maxHistoryBytes: number | undefined,
+      ) =>
+        Effect.gen(function* () {
+          const events = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+          const unsubscribe = yield* stream(
+            {
+              threadId: "thread-1",
+              terminalId: DEFAULT_TERMINAL_ID,
+              ...(maxHistoryBytes === undefined ? {} : { maxHistoryBytes }),
+            },
+            (event) => Ref.update(events, (current) => [...current, event]),
+          );
+          unsubscribe();
+          const first = (yield* Ref.get(events))[0];
+          return first?.type === "snapshot" ? first.snapshot.history : null;
+        });
+
+      const budget = 1_001;
+      const fullBytes = Buffer.byteLength(output);
+      expect(fullBytes).toBeGreaterThan(budget * 4);
+      for (const stream of [manager.attachStream, manager.observeStream]) {
+        assert.equal(yield* historyFrom(stream, undefined), output);
+        const bounded = yield* historyFrom(stream, budget);
+        expect(bounded).not.toBeNull();
+        if (bounded === null) return;
+        expect(Buffer.byteLength(bounded)).toBeLessThanOrEqual(budget);
+        expect(Buffer.byteLength(bounded)).toBeGreaterThanOrEqual(budget - 3);
+        expect(output.endsWith(bounded)).toBe(true);
+        expect(bounded.includes("\ufffd")).toBe(false);
+        assert.equal(yield* historyFrom(stream, 0), "");
+      }
+    }),
+  );
+
   it.effect("keeps attach streams live when a terminal id is closed and reopened", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
