@@ -1392,7 +1392,8 @@ describe("release-windows-linux.yml", () => {
   };
 
   describe.each([
-    ["Plan", planBlock, "skip=true\n"],
+    // A skipped Plan still names the version, for the macOS checksums signature job.
+    ["Plan", planBlock, `skip=true\nversion=${VERSION}\ndry_run=false\n`],
     ["Read the releases", publishBlock, "already=true\n"],
   ] as const)("catch-up check in %s", (_name, script, flag) => {
     it("skips when both releases hold a complete attach", () => {
