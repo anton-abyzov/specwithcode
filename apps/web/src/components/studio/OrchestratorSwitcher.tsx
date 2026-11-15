@@ -10,24 +10,27 @@ import {
   ChevronDownIcon,
   CopyPlusIcon,
   DoorOpenIcon,
+  Link2Icon,
   MessageSquareShareIcon,
   MoveRightIcon,
   Settings2Icon,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTx } from "../../i18n";
 import { randomUUID } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { highestEpoch, projectLink } from "../../studio/projectLink";
+import { useProjects } from "../../state/entities";
+import { highestEpoch, projectLink, sameRepositoryLinkOffers } from "../../studio/projectLink";
 import {
   checkoutKeyEnvironmentId,
   type OrchestratorCopy,
 } from "../../studio/projectCoordinatorMachine";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
-import { useMachineNickname } from "../../studio/machineNickname";
+import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { requestAway } from "../../studio/awayRequest";
 import { requestMigrateProjectThreads } from "../handoff/HandOffMachineDialog";
 import { toastManager } from "../ui/toast";
+import { ProjectLinkDialog, type ProjectLinkTarget } from "./ProjectLinkDialog";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -94,6 +97,8 @@ export function OrchestratorSwitcher({
   onAllowWorkers,
   onMigrate = null,
   onCopy = null,
+  links = [],
+  onLink = null,
   onLeave = null,
   identity = null,
 }: {
@@ -121,6 +126,13 @@ export function OrchestratorSwitcher({
    * dialog asks where the coordinator runs, so adding, moving and syncing all start here.
    */
   onCopy?: (() => void) | null;
+  /**
+   * Projects on other machines that track the same repository and are not part of this
+   * one, at most one per machine: each gets "Link with the project on X…".
+   */
+  links?: ReadonlyArray<{ key: string; machine: string }>;
+  /** Opens the link dialog on that project; null when linking cannot be offered. */
+  onLink?: ((key: string) => void) | null;
   /** "Leave this machine…": Away mode for everything live here. */
   onLeave?: (() => void) | null;
 }) {
@@ -152,7 +164,8 @@ export function OrchestratorSwitcher({
   );
   const listed = copies.filter((copy) => isProjectFolder(copy.folder));
   const viewable = (listed.length >= 2 || unknown.length > 0) && onView !== null;
-  const machineActions = onCopy !== null || onLeave !== null;
+  const machineActions =
+    onCopy !== null || onLeave !== null || (onLink !== null && links.length > 0);
   if (!viewable && !machineActions)
     return (
       <span
@@ -185,8 +198,10 @@ export function OrchestratorSwitcher({
     );
     if (move) coordinatorActions.push(move);
   }
-  // Copy and the coordinator actions act on this project; threads and Leave on the machine.
-  const projectActions = onCopy !== null || coordinatorActions.length > 0;
+  // Linking is what makes two projects for one repository one project; nothing is copied.
+  const linkActions = onLink ? links : [];
+  // Copy, link and the coordinator actions act on this project; threads and Leave on the machine.
+  const projectActions = onCopy !== null || coordinatorActions.length > 0 || linkActions.length > 0;
   return (
     <Menu>
       <span className="project-muted sws-host sws-execution-control">
@@ -240,10 +255,10 @@ export function OrchestratorSwitcher({
                       )
                     : copy.role === "independent"
                       ? tx(
-                            "Not linked: {machine} runs its own coordinator, threads and memory for this repository.",
-                            { machine: nameOf(copy) },
-                          )
-                        : nameOf(copy),
+                          "Not linked: {machine} runs its own coordinator, threads and memory for this repository.",
+                          { machine: nameOf(copy) },
+                        )
+                      : nameOf(copy),
                 })),
                 // Linked, but this app has no connection to it, so it has no copy to show.
                 ...unknown.map((ref) => ({
@@ -291,6 +306,22 @@ export function OrchestratorSwitcher({
                   {tx("Copy to another machine…")}
                 </MenuItem>
               ) : null}
+              {linkActions.map((link) => (
+                <MenuItem
+                  key={link.key}
+                  data-orchestrator-link={link.key}
+                  title={tx(
+                    "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.",
+                    { machine: link.machine },
+                  )}
+                  onClick={() => {
+                    pendingView.current = () => onLink?.(link.key);
+                  }}
+                >
+                  <Link2Icon aria-hidden />
+                  {tx("Link with the project on {machine}…", { machine: link.machine })}
+                </MenuItem>
+              ))}
               {coordinatorActions.map((copy) => (
                 <MenuItem
                   key={copy.key}
@@ -385,34 +416,63 @@ export function ProjectOrchestratorSwitcher({
   // A nickname shows as typed; only a host label drops its owner.
   const name = useMachineNickname(project.environmentId, label);
   const identity = useMachineIdentity(project.environmentId, label);
+  const [linkTarget, setLinkTarget] = useState<ProjectLinkTarget | null>(null);
+  const projects = useProjects();
+  const nickname = useMachineNicknames();
+  // Linking needs what copying needs: a project this person can operate, not a private one.
+  const offers = useMemo(
+    // A machine's "No project" folder has no repository, so it never matches: no lookup needed.
+    () => (onCopy ? sameRepositoryLinkOffers(projects, project, () => null) : []),
+    [onCopy, projects, project],
+  );
   return (
-    <OrchestratorSwitcher
-      identity={identity}
-      label={name}
-      hostLabel={label}
-      connected={connected}
-      // The line above the message box says the rest once; the chip names the state.
-      statusDetail={disconnectedLabel}
-      current={current}
-      copies={copies}
-      unknown={unknown}
-      savedMachineMissing={savedMachineMissing}
-      onView={onView}
-      onMove={onMove}
-      onCopy={onCopy}
-      // Away mode runs on this device's machine, so it is offered only there.
-      onLeave={isThisDevice ? () => requestAway("away") : null}
-      onAllowWorkers={() => void navigate({ to: "/settings/connections" })}
-      onMigrate={
-        connected
-          ? () =>
-              requestMigrateProjectThreads(project.environmentId, {
-                id: project.id,
-                title: project.title,
-              })
-          : null
-      }
-    />
+    <>
+      <OrchestratorSwitcher
+        identity={identity}
+        label={name}
+        hostLabel={label}
+        connected={connected}
+        // The line above the message box says the rest once; the chip names the state.
+        statusDetail={disconnectedLabel}
+        current={current}
+        copies={copies}
+        unknown={unknown}
+        savedMachineMissing={savedMachineMissing}
+        onView={onView}
+        onMove={onMove}
+        onCopy={onCopy}
+        links={offers.map((offer) => ({
+          key: `${offer.environmentId}:${offer.id}`,
+          machine: nickname(offer.environmentId),
+        }))}
+        onLink={(key) => {
+          const offer = offers.find((item) => `${item.environmentId}:${item.id}` === key);
+          if (offer) setLinkTarget({ environmentId: offer.environmentId, projectId: offer.id });
+        }}
+        // Away mode runs on this device's machine, so it is offered only there.
+        onLeave={isThisDevice ? () => requestAway("away") : null}
+        onAllowWorkers={() => void navigate({ to: "/settings/connections" })}
+        onMigrate={
+          connected
+            ? () =>
+                requestMigrateProjectThreads(project.environmentId, {
+                  id: project.id,
+                  title: project.title,
+                })
+            : null
+        }
+      />
+      {linkTarget !== null && (
+        <ProjectLinkDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setLinkTarget(null);
+          }}
+          project={project}
+          initialCandidate={linkTarget}
+        />
+      )}
+    </>
   );
 }
 

@@ -1952,18 +1952,45 @@ export const layer = Layer.effect(
      * copy that travels. Every target is judged: the stored row and, for a
      * save, the routine it would become. Only the public methods check;
      * replicas and Away write through the internal ones.
+     *
+     * `ownRemovable`: turning off and deleting stay possible for a resting
+     * routine that is this copy's own, not a copy from the coordinator (no
+     * `copiedFrom` mark). It has no runner to change it on: it was made here
+     * before this copy joined another project's coordinator. No replica holds
+     * it, so nothing replaces the change.
      */
+    const isCoordinatorCopy = (id: ScheduledTaskId, logicalProjectId: string | null | undefined) =>
+      sql<{ readonly copied: string | null }>`
+        SELECT json_extract(run_policy_json, '$.copiedFrom') AS copied
+        FROM scheduled_tasks WHERE task_id = ${id}
+      `.pipe(
+        // A mark left by an earlier shared project is not this coordinator's copy.
+        Effect.map((rows) => {
+          const copied = rows[0]?.copied ?? null;
+          return copied !== null && (logicalProjectId == null || copied === logicalProjectId);
+        }),
+        // Unknown counts as a copy: the refusal stands.
+        Effect.orElseSucceed(() => true),
+      );
     const onRunner = <A>(
       targets: ReadonlyArray<
         | { readonly id: ScheduledTaskId }
         | Pick<ScheduledTask, "projectId" | "ownThread" | "schedule">
       >,
       change: Effect.Effect<A, ScheduledTaskError>,
+      options?: { readonly ownRemovable: boolean },
     ) =>
       Effect.gen(function* () {
         for (const target of targets) {
           const task = "id" in target ? yield* findTask(target.id) : target;
           const hold = task === null ? null : yield* coordinatorHold(task);
+          if (
+            hold?.kind === "rest" &&
+            options?.ownRemovable === true &&
+            "id" in target &&
+            !(yield* isCoordinatorCopy(target.id, hold.logicalProjectId))
+          )
+            continue;
           const refusal =
             hold?.kind === "rest"
               ? RESTING_ROUTINE_CHANGE_REFUSAL
@@ -1997,8 +2024,9 @@ export const layer = Layer.effect(
           ],
           upsert(input, options),
         ),
-      setEnabled: (input) => onRunner([{ id: input.id }], setEnabled(input)),
-      delete: (input) => onRunner([{ id: input.id }], deleteTask(input)),
+      setEnabled: (input) =>
+        onRunner([{ id: input.id }], setEnabled(input), { ownRemovable: !input.enabled }),
+      delete: (input) => onRunner([{ id: input.id }], deleteTask(input), { ownRemovable: true }),
       runNow,
       rotateWebhookToken,
       listWebhookDeliveries: webhooks.listWebhookDeliveries,

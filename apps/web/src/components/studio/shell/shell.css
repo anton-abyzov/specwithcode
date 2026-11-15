@@ -938,11 +938,21 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 /* The same repository on another machine, not linked yet: a link offer. */
 .sws-side-row > .sws-side-row-link-suggestion {
+  flex: none;
   display: inline-flex;
-  width: 14px;
-  height: 14px;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  line-height: 1;
   cursor: pointer;
   color: var(--primary);
+}
+.sws-side-row > .sws-side-row-link-suggestion:hover {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
 }
 .sws-side-row > .sws-side-row-link-suggestion > svg {
   width: 12px;

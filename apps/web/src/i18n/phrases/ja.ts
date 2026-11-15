@@ -3164,6 +3164,10 @@ export const ja: PhraseCatalog = {
   "Auto balance matching projects": "一致するプロジェクトを自動で分散",
   "Add to another machine…": "別のマシンに追加…",
   "Copy to another machine…": "別のマシンにコピー…",
+  Link: "リンク",
+  "Link with the project on {machine}…": "{machine} のプロジェクトとリンク…",
+  "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
+    "このプロジェクトと {machine} のプロジェクトを、コーディネーターが 1 つの同じプロジェクトにします。スレッドとファイルはそのまま残ります。",
   "Leave this machine…": "このマシンを離れる…",
   "Another project or no project": "別のプロジェクトまたはプロジェクトなし",
   "Rename a machine": "マシンの名前を変更",

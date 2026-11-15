@@ -3178,6 +3178,10 @@ export const de: PhraseCatalog = {
   "Auto balance matching projects": "Passende Projekte automatisch verteilen",
   "Add to another machine…": "Auf anderem Rechner hinzufügen…",
   "Copy to another machine…": "Auf anderen Rechner kopieren…",
+  Link: "Verknüpfen",
+  "Link with the project on {machine}…": "Mit dem Projekt auf {machine} verknüpfen…",
+  "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
+    "Macht aus diesem Projekt und dem auf {machine} ein Projekt mit einem Koordinator. Threads und Dateien bleiben, wo sie sind.",
   "Leave this machine…": "Diesen Rechner verlassen…",
   "Another project or no project": "Anderes Projekt oder kein Projekt",
   "Rename a machine": "Rechner umbenennen",

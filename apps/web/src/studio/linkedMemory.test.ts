@@ -10,11 +10,27 @@ vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: null }));
 const { linkedMemory, linkedMemoryGroups, syncLinkedMemory } = await import("./linkedMemory");
 type Member = Parameters<typeof syncLinkedMemory>[0][number][number];
 
-const project = (environmentId: string, id: string, logicalProjectId?: string) =>
+/** `members`: the copies this one lists, as "machine:project"; by default the usual pair. */
+const project = (
+  environmentId: string,
+  id: string,
+  logicalProjectId?: string,
+  members: ReadonlyArray<string> = ["m3:kept", "m4:joined", "m5:offline", "m4:a", "m4:b"],
+) =>
   ({
     environmentId,
     id,
-    workspaceSettings: logicalProjectId ? { logicalProject: { id: logicalProjectId } } : {},
+    workspaceSettings: logicalProjectId
+      ? {
+          logicalProject: {
+            id: logicalProjectId,
+            members: members.map((entry) => {
+              const [machine, projectId] = entry.split(":");
+              return { environmentId: machine, projectId };
+            }),
+          },
+        }
+      : {},
   }) as unknown as EnvironmentProject;
 const member = (environmentId: string, projectId = `${environmentId}-copy`): Member => ({
   environmentId: environmentId as EnvironmentId,
@@ -153,6 +169,38 @@ describe("linked memory sync", () => {
         { environmentId: "m4", projectId: "joined", label: "Machine m4" },
       ],
     ]);
+  });
+
+  it("leaves out a copy that joined a link until the kept copy lists it", () => {
+    const label = (environmentId: string) => environmentId;
+    // Accepted on m5, not yet committed on m4: m5 lists m4, m4 lists only itself.
+    const joining = project("m5", "old", "logical:9", ["m4:new", "m5:old"]);
+    expect(
+      linkedMemoryGroups(
+        [project("m4", "new", "logical:9", ["m4:new"]), joining],
+        () => true,
+        label,
+      ),
+    ).toEqual([]);
+    expect(
+      linkedMemoryGroups(
+        [project("m4", "new", "logical:9", ["m4:new", "m5:old"]), joining],
+        () => true,
+        label,
+      ).map((group) => group.map((entry) => entry.environmentId)),
+    ).toEqual([["m4", "m5"]]);
+    // A third copy joining leaves the two linked ones syncing.
+    expect(
+      linkedMemoryGroups(
+        [
+          project("m4", "new", "logical:9", ["m4:new", "m5:old"]),
+          joining,
+          project("m3", "third", "logical:9", ["m4:new", "m5:old", "m3:third"]),
+        ],
+        () => true,
+        label,
+      ).map((group) => group.map((entry) => entry.environmentId)),
+    ).toEqual([["m4", "m5"]]);
   });
 
   it("exports both sides of every pair before merging either way", async () => {

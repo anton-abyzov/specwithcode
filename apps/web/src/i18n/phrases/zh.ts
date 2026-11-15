@@ -3054,6 +3054,10 @@ export const zh: PhraseCatalog = {
   "Auto balance matching projects": "自动均衡匹配的项目",
   "Add to another machine…": "添加到另一台电脑…",
   "Copy to another machine…": "复制到另一台电脑…",
+  Link: "关联",
+  "Link with the project on {machine}…": "与 {machine} 上的项目关联…",
+  "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
+    "让此项目与 {machine} 上的项目成为同一个项目，只有一个协调者。会话和文件保持原位。",
   "Leave this machine…": "离开这台电脑…",
   "Another project or no project": "其他项目或不使用项目",
   "Rename a machine": "重命名电脑",
