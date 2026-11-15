@@ -147,8 +147,8 @@ const layerElectron = Layer.mergeAll(
   ElectronMacSwapUpdater.shouldUseMacSwapUpdater()
     ? ElectronMacSwapUpdater.layer
     : ElectronUpdater.layer,
-  ElectronWindow.layer,
-  DesktopIpc.layer(Electron.ipcMain),
+  // Desktop IPC answers only app windows, so it reads the same window service.
+  DesktopIpc.layer(Electron.ipcMain).pipe(Layer.provideMerge(ElectronWindow.layer)),
 );
 
 const layerDesktopFoundation = Layer.mergeAll(
