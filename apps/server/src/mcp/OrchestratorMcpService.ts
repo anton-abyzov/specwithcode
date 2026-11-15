@@ -1356,9 +1356,13 @@ const make = Effect.gen(function* () {
   ) =>
     (Option.isNone(serverSettings)
       ? Effect.succeed(project)
-      : Effect.all([serverSettings.value.getSettings, providerRegistry.getProviders]).pipe(
-          Effect.map(([settings, providers]) =>
-            withProjectWorkerModel(settings, project, providers, Date.now()),
+      : Effect.all([
+          serverSettings.value.getSettings,
+          providerRegistry.getProviders,
+          DateTime.now,
+        ]).pipe(
+          Effect.map(([settings, providers, now]) =>
+            withProjectWorkerModel(settings, project, providers, DateTime.toEpochMillis(now)),
           ),
           Effect.orElseSucceed(() => project),
         )
@@ -2202,7 +2206,12 @@ const make = Effect.gen(function* () {
       const boost =
         settings === null || targetPinsModel(input.requested)
           ? null
-          : quotaBoostWorkerModel(settings, input.project, input.providers, Date.now());
+          : quotaBoostWorkerModel(
+              settings,
+              input.project,
+              input.providers,
+              DateTime.toEpochMillis(yield* DateTime.now),
+            );
       if (
         boost !== null &&
         boost.instanceId === input.baseline.modelSelection.instanceId &&

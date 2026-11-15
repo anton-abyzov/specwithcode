@@ -206,11 +206,18 @@ describe("quota boost", () => {
       quotaBoosts: { "codex:pro": value },
       ...extra,
     }) as typeof DEFAULT_SERVER_SETTINGS;
-  const codexProvider = (slugs: ReadonlyArray<string>, enabled = true) =>
+  const codexProvider = (
+    slugs: ReadonlyArray<string>,
+    enabled = true,
+    over: Record<string, unknown> = {},
+  ) =>
     ({
       instanceId: codex,
+      driver: "codex",
       enabled,
+      auth: { status: "authenticated", type: "chatgpt" },
       models: slugs.map((slug) => ({ slug, name: slug, isCustom: false, capabilities: null })),
+      ...over,
     }) as unknown as ServerProvider;
   const listed = [codexProvider(["gpt-6.1-sol"])];
   const sol = { instanceId: codex, model: "gpt-6.1-sol" };
@@ -243,6 +250,35 @@ describe("quota boost", () => {
       quotaBoostWorkerModel(settings, project, [codexProvider(["gpt-6.1-sol"], false)], now),
     ).toBeNull();
     expect(newWorkerModel(settings, project, [codexProvider(["gpt-6-astra"])], now)).toEqual(saved);
+  });
+
+  it("never starts a worker on a source the boost was not written for", () => {
+    const settings = withBoost(boost({ accountKey: "codex:me@example.com" }));
+    const model = (over: Record<string, unknown>) =>
+      newWorkerModel(settings, project, [codexProvider(["gpt-6.1-sol"], true, over)], now);
+    const sameAccount = { status: "authenticated", type: "chatgpt", email: "me@example.com" };
+    expect(model({ auth: sameAccount })).toEqual(sol);
+    // Signed out, signed in to another account, or switched to an API key since.
+    expect(model({ auth: { status: "unauthenticated" } })).toEqual(saved);
+    expect(model({ auth: { ...sameAccount, email: "other@example.com" } })).toEqual(saved);
+    expect(model({ auth: { status: "authenticated", type: "apiKey" } })).toEqual(saved);
+    // The account now bills this one model per use, or cannot say how it bills it.
+    for (const billing of ["api", "paid-router", "unknown"])
+      expect(
+        model({
+          auth: sameAccount,
+          models: [{ slug: "gpt-6.1-sol", name: "Sol", isCustom: false, billing }],
+        }),
+      ).toEqual(saved);
+  });
+
+  it("starts on the listed slug when the boost names an alias", () => {
+    const aliased = codexProvider([], true, {
+      models: [{ slug: "gpt-6.1-sol", name: "Sol", isCustom: false, aliases: ["sol"] }],
+    });
+    expect(newWorkerModel(withBoost(boost({ model: "sol" })), project, [aliased], now)).toEqual(
+      sol,
+    );
   });
 
   it("leaves open threads and the limit rule on the project's own model", () => {

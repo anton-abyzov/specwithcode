@@ -213,7 +213,7 @@ const projectWorkerModelOf = Effect.fn("mcp.projectWorkerModelOf")(function* (
   if (settings === null) return project.defaultModelSelection;
   // A running quota boost starts new workers on its model (see newWorkerModel).
   const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
-  return newWorkerModel(settings, project, providers, Date.now());
+  return newWorkerModel(settings, project, providers, DateTime.toEpochMillis(yield* DateTime.now));
 });
 
 /** Whether the project starts unnamed workers on its tracks (see projectUsesTracks). */

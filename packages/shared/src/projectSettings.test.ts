@@ -523,6 +523,14 @@ describe("projectThreadModel", () => {
     );
   });
 
+  it("names no single model for a project on Tracks", () => {
+    const onTracks = {
+      ...enabled,
+      projectSettingsOverrides: { [projectId]: { threadModelMode: "tracks" as const } },
+    };
+    expect(projectThreadModel(onTracks, projectId, { defaultModelSelection: saved })).toBeNull();
+  });
+
   it("is null when only the machine default applies or the provider is off", () => {
     const machine = { ...enabled, defaultModelSelection: saved, projectSettingsFolded: true };
     expect(projectThreadModel(machine, projectId, { defaultModelSelection: null })).toBeNull();

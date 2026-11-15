@@ -6,8 +6,10 @@ import type {
   ServerSettings,
   ThreadId,
 } from "@specweave-studio/contracts";
+import { isHeldSource } from "@specweave-studio/shared/modelTracks";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
-import { currentQuotaBoost } from "@specweave-studio/shared/quotaBoost";
+import { liveQuotaBoosts } from "@specweave-studio/shared/quotaBoost";
+import { limitAccountKey } from "@specweave-studio/shared/usageLimits";
 import { isModelSelectionProviderEnabled } from "@specweave-studio/shared/serverSettings";
 import { accountInGrant } from "../fleet/workGrantPolicy.ts";
 
@@ -35,10 +37,12 @@ export function projectWorkerModel(
 
 /**
  * The model a quota boost ("Use it for new threads until it resets") starts
- * this project's new worker threads on at `nowMs`, else null. A boost whose
- * provider is switched off, or whose account no longer lists the model, does
- * not count: the worker starts as if there were no boost. Only new worker
- * launches read this; the coordinator and threads already open keep their model.
+ * this project's new worker threads on at `nowMs`, else null. The boost is
+ * judged again here, where threads launch, and not trusted as written: it
+ * counts only while its provider is on, signed in to the same account, still
+ * lists the model and bills it by plan. Anything else and the worker starts
+ * as if there were no boost, so a boost can never spend per use. Only new
+ * worker launches read this; the coordinator and open threads keep their model.
  */
 export function quotaBoostWorkerModel(
   settings: ServerSettings,
@@ -46,16 +50,31 @@ export function quotaBoostWorkerModel(
   providers: ReadonlyArray<ServerProvider>,
   nowMs: number,
 ): ModelSelection | null {
-  const boost = currentQuotaBoost(settings.quotaBoosts, project.id, nowMs);
-  if (boost === null) return null;
-  const selection: ModelSelection = { instanceId: boost.instanceId, model: boost.model };
-  if (!isModelSelectionProviderEnabled(settings, selection)) return null;
-  const provider = providers.find((entry) => entry.instanceId === boost.instanceId);
-  if (provider === undefined || !provider.enabled) return null;
-  const listed = provider.models.some(
-    (model) => model.slug === boost.model || model.aliases?.includes(boost.model) === true,
-  );
-  return listed ? selection : null;
+  // The quota lost first leads; the first boost that still holds wins.
+  for (const boost of liveQuotaBoosts(settings.quotaBoosts, nowMs)) {
+    if (boost.projectIds.length > 0 && !boost.projectIds.includes(project.id)) continue;
+    if (
+      !isModelSelectionProviderEnabled(settings, {
+        instanceId: boost.instanceId,
+        model: boost.model,
+      })
+    )
+      continue;
+    const provider = providers.find((entry) => entry.instanceId === boost.instanceId);
+    if (provider === undefined || !provider.enabled) continue;
+    if (provider.auth.status === "unauthenticated") continue;
+    // Signed in to another account since: that quota is not the one the person chose.
+    const account = limitAccountKey(provider.driver, provider.auth.email, provider.usageLimits);
+    if (account !== null && account !== boost.accountKey) continue;
+    const listed = provider.models.find(
+      (model) => model.slug === boost.model || model.aliases?.includes(boost.model) === true,
+    );
+    if (listed === undefined) continue;
+    // Per token, a paid router, Gemini or Vertex spend, or billing nobody can read.
+    if (isHeldSource(provider, listed.slug)) continue;
+    return { instanceId: boost.instanceId, model: listed.slug };
+  }
+  return null;
 }
 
 /**
@@ -142,8 +161,8 @@ export function workerModelUnderGrant(
 export function withProjectWorkerModel<P extends Pick<Project, "id" | "defaultModelSelection">>(
   settings: ServerSettings,
   project: P,
-  providers: ReadonlyArray<ServerProvider> = [],
-  nowMs = 0,
+  providers: ReadonlyArray<ServerProvider>,
+  nowMs: number,
 ): P {
   return {
     ...project,
