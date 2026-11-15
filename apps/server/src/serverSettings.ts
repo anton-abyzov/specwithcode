@@ -1789,11 +1789,15 @@ const make = Effect.gen(function* () {
       const changes: SecretChange[] = [];
 
       const nextSecretKeys = new Set<string>();
+      // A redacted sensitive row keeps its stored secret, so a duplicate row with the
+      // same name (plain or empty) must not remove it.
+      const keptSecretKeys = new Set<string>();
       for (const [instanceId, instance] of Object.entries(next.providerInstances)) {
         if (!instance.environment) continue;
         const environment: ProviderInstanceEnvironmentVariable[] = [];
         for (const variable of instance.environment) {
           const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
+          if (variable.sensitive && variable.valueRedacted) keptSecretKeys.add(secretName);
           if (!variable.sensitive) {
             changes.push({
               kind: "remove",
@@ -2011,7 +2015,9 @@ const make = Effect.gen(function* () {
           voice,
           decisionModel,
         },
-        changes,
+        changes: changes.filter(
+          (change) => change.kind === "write" || !keptSecretKeys.has(change.secretName),
+        ),
       };
     });
 
