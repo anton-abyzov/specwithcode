@@ -5,6 +5,7 @@ import {
   applyFeedReadings,
   decodeAnnouncementFile,
   fetchFeed,
+  listedAnnouncements,
   mergeAnnouncements,
   parseConfirmedFeed,
   parsePromisedFeed,
@@ -94,6 +95,18 @@ describe("reset announcement feeds", () => {
     expect(mergeAnnouncements([{ ...older!, publishedAt: "2026-11-16T00:00:00.000Z" as never }], [], now)).toEqual([]);
     // Past the retention it leaves the list.
     expect(mergeAnnouncements([older!], [], now + 200 * DAY)).toEqual([]);
+  });
+
+  it("lists a saved file without a post dated ahead of now, with no check run", () => {
+    const [kept] = parseConfirmedFeed(feed(item()), now);
+    const ahead = { ...kept!, id: "ahead", sourceUrl: "https://x.com/example/status/9", publishedAt: "2026-11-16T00:00:00.000Z" };
+    const saved = decodeAnnouncementFile(
+      JSON.stringify({ ...EMPTY_ANNOUNCEMENT_FILE, announcements: [ahead, kept] }),
+    );
+    expect(saved.announcements).toHaveLength(2);
+    expect(listedAnnouncements(saved, now).map((entry) => entry.id)).toEqual([kept!.id]);
+    // Once its date has passed, it is listed.
+    expect(listedAnnouncements(saved, now + 2 * DAY).map((entry) => entry.id)).toEqual(["ahead", kept!.id]);
   });
 
   it("folds a read into the file and keeps what it knew when a feed fails or is unchanged", () => {

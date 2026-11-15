@@ -226,6 +226,13 @@ export function decodeAnnouncementFile(raw: string): AnnouncementFile {
   }
 }
 
+/**
+ * What the list shows from a saved file at `now`. The file is read as saved, so this
+ * drops a post dated ahead of now or past the retention even when no check has run.
+ */
+export const listedAnnouncements = (file: AnnouncementFile, now: number): ResetAnnouncement[] =>
+  mergeAnnouncements(file.announcements, [], now);
+
 export const encodeAnnouncementFile = (file: AnnouncementFile): string => `${JSON.stringify(file)}\n`;
 
 /**

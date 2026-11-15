@@ -37,6 +37,7 @@ import {
   PROMISED_FEED_URL,
   applyFeedReadings,
   decodeAnnouncementFile,
+  listedAnnouncements,
   encodeAnnouncementFile,
   fetchFeed,
 } from "./feeds.ts";
@@ -120,8 +121,11 @@ export const makeWith = (fetcher: typeof globalThis.fetch) =>
     const list = Effect.gen(function* () {
       const loaded = yield* current;
       const on = yield* enabled;
+      const now = yield* Clock.currentTimeMillis;
       return {
-        announcements: loaded.announcements,
+        // Filtered on read too: the saved file may hold a post dated ahead of now or past
+        // the retention, and no check may have run since (announcements off, or offline).
+        announcements: listedAnnouncements(loaded, now),
         enabled: on,
         ...(on && loaded.checkedAt !== null
           ? { checkedAt: isoAt(loaded.checkedAt) }
