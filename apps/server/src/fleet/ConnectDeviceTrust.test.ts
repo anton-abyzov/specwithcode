@@ -284,6 +284,37 @@ it.effect("the first start keeps devices with a live session, flagged for one re
   ),
 );
 
+it.effect(
+  "the first start keeps a hub-linked phone; a Connect session with no key asks again",
+  () =>
+    withMachine(
+      Effect.gen(function* () {
+        const auth = yield* EnvironmentAuth.EnvironmentAuth;
+        yield* auth.issueSession({
+          subject: "phone-link:hub-1:session-9",
+          scopes: AuthStandardClientScopes,
+          label: "iPhone",
+        });
+        // Stored before Connect sessions recorded their key, and not used since.
+        yield* auth.issueSession({ subject: "cloud-connect", scopes: AuthStandardClientScopes });
+        yield* forgetSetup;
+        const trust = yield* ConnectDeviceTrust.make;
+        expect((yield* trust.snapshot).devices.map((device) => device.key)).toEqual([
+          "link:phone-link:hub-1:session-9",
+        ]);
+        expect(yield* trust.check({ subject: "phone-link:hub-1:session-9" })).toEqual({
+          _tag: "allowed",
+        });
+        // No key names that device, so the update cannot keep it: it is asked to
+        // sign in again and then waits for one approval, like a new device.
+        const keyless = yield* trust.check({ subject: "cloud-connect" });
+        expect(keyless).toMatchObject({ _tag: "refused" });
+        expect(keyless).not.toHaveProperty("approvalCode");
+        refusedCode(yield* trust.check(connect("old-key")));
+      }),
+    ),
+);
+
 it.effect("a device that signs in after the start is never kept by the update", () =>
   withMachine(
     Effect.gen(function* () {
