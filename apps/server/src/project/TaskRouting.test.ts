@@ -13,7 +13,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { projectFixture } from "./ProjectWorkspace.testkit.ts";
 import type * as ServerSettings from "../serverSettings.ts";
-import { routeWorkerTask } from "./TaskRouting.ts";
+import { routedTarget, routeWorkerTask } from "./TaskRouting.ts";
 
 const projectId = ProjectId.make("project:paid-preference");
 const claudeMax = ProviderInstanceId.make("claudeAgent");
@@ -431,3 +431,26 @@ it.effect("refuses a per-token baseline on Tracks with Auto routing on too", () 
     assert.strictEqual(failure.code, "model_unavailable");
   }),
 );
+
+it("starts a routed worker at its track entry's saved effort, over the baseline's", () => {
+  const decision = {
+    moved: true,
+    selection: {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-fable-5-2",
+      options: [{ id: "effort", value: "xhigh" }],
+    },
+    baseline: {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5-5",
+      options: [{ id: "effort", value: "medium" }],
+    },
+  } as unknown as Parameters<typeof routedTarget>[0];
+  assert.deepStrictEqual(routedTarget(decision, undefined), {
+    providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "claude-fable-5-2",
+    effort: "xhigh",
+  });
+  // An effort the caller named still wins.
+  assert.strictEqual(routedTarget(decision, { effort: "low" } as never)?.effort, "low");
+});

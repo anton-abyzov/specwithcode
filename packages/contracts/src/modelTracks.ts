@@ -29,6 +29,8 @@ export interface DefaultTrackModel {
    * used for Complex or Review work.
    */
   readonly free?: true;
+  /** The reasoning effort the entry starts at, matched to the nearest level the model offers. */
+  readonly effort?: string;
 }
 
 /**
@@ -48,8 +50,8 @@ export const DEFAULT_MODEL_TRACKS: Readonly<Record<ModelTrack, ReadonlyArray<Def
       { model: "gpt-6-astra", name: "GPT-6 Astra" },
     ],
     review: [
+      { model: "muse-wonder-1.0", name: "Muse Wonder 1.0", effort: "xhigh" },
       { model: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
-      { model: "muse-wonder-1.0", name: "Muse Wonder 1.0" },
       { model: "gemini-4-carbon", name: "Gemini 4 Carbon" },
     ],
   };

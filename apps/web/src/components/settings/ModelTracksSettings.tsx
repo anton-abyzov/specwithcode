@@ -25,6 +25,11 @@ import {
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import { createModelSelection } from "@specweave-studio/shared/model";
+import {
+  findEffortDescriptor,
+  modelSelectionEffortValue,
+  withEffortSelection,
+} from "@specweave-studio/shared/effortLevel";
 import { describeModel } from "@specweave-studio/shared/modelIdentity";
 import {
   addTrackEntry,
@@ -59,6 +64,7 @@ import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { clock } from "./FallbackOrderList";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -134,6 +140,60 @@ const TRACK_FIRST: Record<ModelTrack, string> = {
   complex: "Hard work starts here",
   review: "Reviews first",
 };
+
+/**
+ * The reasoning effort one track entry starts at, from the levels its source
+ * offers. Hidden for a model with no effort setting. Unset shows the model's
+ * own default; a pick is saved on the entry and every launch from it.
+ */
+function EffortSelect(props: {
+  readonly selection: ModelSelection;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly label: string;
+  readonly disabled: boolean;
+  readonly onChange: (selection: ModelSelection) => void;
+}) {
+  const descriptor = findEffortDescriptor(
+    props.providers
+      .find((provider) => provider.instanceId === props.selection.instanceId)
+      ?.models.find((model) => model.slug === props.selection.model)?.capabilities
+      ?.optionDescriptors,
+  );
+  if (descriptor === undefined) return null;
+  const value =
+    modelSelectionEffortValue(props.selection) ??
+    descriptor.options.find((choice) => choice.isDefault)?.id ??
+    null;
+  return (
+    <Select
+      value={value}
+      disabled={props.disabled}
+      onValueChange={(next) => {
+        if (typeof next !== "string" || next === value) return;
+        props.onChange({
+          ...props.selection,
+          options: withEffortSelection(props.selection.options, {
+            optionId: descriptor.id,
+            value: next,
+          }),
+        });
+      }}
+    >
+      <SelectTrigger size="xs" className="w-auto min-w-0" aria-label={props.label}>
+        <SelectValue>
+          {descriptor.options.find((choice) => choice.id === value)?.label ?? value ?? ""}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="end" alignItemWithTrigger={false}>
+        {descriptor.options.map((choice) => (
+          <SelectItem key={choice.id} value={choice.id}>
+            {choice.label}
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
+}
 
 /** A grip, a position and the row's content; the grip also reorders by keyboard. */
 function SortableRow(props: {
@@ -370,6 +430,19 @@ function TrackCard(props: {
                 )}
               </ul>
             </div>
+            {row.selection !== null ? (
+              <EffortSelect
+                selection={row.selection}
+                providers={providers}
+                label={`${tx("Effort for")} ${row.name}`}
+                disabled={props.mixed}
+                onChange={(selection) =>
+                  props.onSave(
+                    current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
+                  )
+                }
+              />
+            ) : null}
             {row.selection !== null ? (
               <Button
                 type="button"

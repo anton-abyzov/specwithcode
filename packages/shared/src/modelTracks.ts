@@ -8,6 +8,7 @@
  *
  * @module modelTracks
  */
+import { resolveEffort, withEffortSelection } from "./effortLevel.ts";
 import {
   DEFAULT_MODEL_TRACKS,
   isPaidModelBilling,
@@ -176,8 +177,27 @@ export function defaultTrackSelections(
       ({ provider, slug }) =>
         !isHeldSource(provider as Partial<ServerProvider> as ServerProvider, slug),
     );
-    return best === undefined ? [] : [{ instanceId: best.provider.instanceId, model: best.slug }];
+    return best === undefined ? [] : [builtInTrackSelection(entry, best.provider, best.slug)];
   });
+}
+
+/**
+ * A built-in entry on one source: its effort at the nearest level that source
+ * offers, none when the model has no effort setting. The Models page and the
+ * resolvers build rows with this, so saving a built-in list keeps the effort.
+ */
+export function builtInTrackSelection(
+  entry: { readonly effort?: string | undefined },
+  provider: Pick<TrackProvider, "instanceId" | "models">,
+  slug: string,
+): ModelSelection {
+  const selection = { instanceId: provider.instanceId, model: slug };
+  const descriptors = provider.models.find((model) => model.slug === slug)?.capabilities
+    ?.optionDescriptors;
+  const effort = entry.effort === undefined ? null : resolveEffort(entry.effort, descriptors);
+  return effort === null || !effort.ok
+    ? selection
+    : { ...selection, options: withEffortSelection(undefined, effort) };
 }
 
 export interface EffectiveModelLanes {
@@ -269,7 +289,16 @@ export function launchTrackLanes(
       })) {
         if (provider.instanceId === entry.instanceId) continue;
         if (isHeldSource(provider as ServerProvider, slug)) continue;
-        push({ instanceId: provider.instanceId, model: slug });
+        // The entry's effort carries to another account of the same driver, whose options match.
+        const sameDriver =
+          entry.options !== undefined &&
+          providers.find((source) => source.instanceId === entry.instanceId)?.driver ===
+            provider.driver;
+        push({
+          instanceId: provider.instanceId,
+          model: slug,
+          ...(sameDriver ? { options: entry.options } : {}),
+        });
       }
     }
     return out;

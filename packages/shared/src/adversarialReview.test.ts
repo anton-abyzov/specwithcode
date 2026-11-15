@@ -155,8 +155,8 @@ describe("tierModelFor", () => {
 describe("reviewerChain", () => {
   it("starts with the built-in Review track, then the other providers by family", () => {
     expect(defaultReviewerChain({ providers, tier: "regular" })).toEqual([
-      sel("codex", "gpt-6.1-sol"),
       sel("muse", "muse-wonder-1.0"),
+      sel("codex", "gpt-6.1-sol"),
       sel("copilot", "gpt-6.1-sol"),
       sel("claudeAgent", "claude-opus-5-5"),
     ]);
@@ -170,7 +170,7 @@ describe("reviewerChain", () => {
 });
 
 describe("resolveReviewer", () => {
-  it("picks Codex Sol for work Claude did", () => {
+  it("picks Muse Wonder for work Claude did, the top of the built-in Review track", () => {
     const result = resolveReviewer({
       providers,
       author,
@@ -178,9 +178,75 @@ describe("resolveReviewer", () => {
       tier: "regular",
       nowMs: now,
     });
-    expect(result.reviewer).toEqual(sel("codex", "gpt-6.1-sol"));
+    expect(result.reviewer).toEqual(sel("muse", "muse-wonder-1.0"));
     expect(result.authorFamily).toBe("claude");
     expect(result.skipped).toEqual([]);
+  });
+
+  it("keeps a saved first reviewer whose usage is unread ahead of a later one with room", () => {
+    // Muse reports no percent; Sol on Codex has known room. The saved order wins.
+    const unread: ServerProvider = {
+      ...muse,
+      usageLimits: {
+        checkedAt: fresh,
+        windows: [],
+        unavailable: { reason: "probeFailed", message: "Usage could not be read." },
+      },
+    };
+    const result = resolveReviewer({
+      providers: [claude, codex, copilot, unread],
+      author,
+      reviewers: [sel("muse", "muse-wonder-full-1.0"), sel("codex", "gpt-6.1-sol")],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(result.reviewer).toEqual(sel("muse", "muse-wonder-full-1.0"));
+    expect(result.skipped).toEqual([]);
+  });
+
+  it("lets a stale or denied reading yield to a later reviewer with room", () => {
+    const stale: ServerProvider = {
+      ...muse,
+      usageLimits: {
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 10 * 60_000)),
+        windows: [
+          {
+            id: "seven_day",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 10,
+            resetsAt: "2026-11-06T00:00:00.000Z",
+          },
+        ],
+      },
+    };
+    const result = resolveReviewer({
+      providers: [claude, codex, stale],
+      author,
+      reviewers: [sel("muse", "muse-wonder-1.0"), sel("codex", "gpt-6.1-sol")],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(result.reviewer).toEqual(sel("codex", "gpt-6.1-sol"));
+  });
+
+  it("gives a reviewer's alternate on the same driver the entry's effort", () => {
+    const second = provider("codex2", "codex", ["gpt-6.1-sol"], 5);
+    const effortful = {
+      ...sel("codex", "gpt-6.1-sol"),
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    };
+    expect(
+      reviewerChain({
+        providers: [codex, second, copilot],
+        reviewers: [effortful],
+        tier: "regular",
+      }),
+    ).toEqual([
+      effortful,
+      { ...sel("codex2", "gpt-6.1-sol"), options: effortful.options },
+      sel("copilot", "gpt-6.1-sol"),
+    ]);
   });
 
   it("falls through to Sol on Copilot when Codex is limited", () => {
@@ -315,11 +381,11 @@ describe("describeReviewerOrder", () => {
         alternates: group.alternates.map((step) => [step.selection.instanceId, step.status]),
       })),
     ).toEqual([
-      { primary: ["codex", "full", "openai"], alternates: [["copilot", "ready"]] },
       { primary: ["muse", "ready", "meta"], alternates: [] },
+      { primary: ["codex", "full", "openai"], alternates: [["copilot", "ready"]] },
       { primary: ["claudeAgent", "ready", "claude"], alternates: [["copilot", "ready"]] },
     ]);
-    expect(view.groups[0]!.primary.resetAt).toBe(Date.parse("2026-11-06T00:00:00.000Z"));
+    expect(view.groups[1]!.primary.resetAt).toBe(Date.parse("2026-11-06T00:00:00.000Z"));
   });
 
   it("marks unknown billing unless listed, and keeps a set order as written", () => {
