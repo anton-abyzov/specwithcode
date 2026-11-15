@@ -116,6 +116,14 @@ const makeHarness = (
     existingCopyChecks: 0,
     /** Why the destination's existing copy cannot reach the source heads; null updates it. */
     existingCopyRefusal: null as HandoffGitError | null,
+    /** The folders the copy's update touches; null is the project folder alone. */
+    existingCopyFolders: null as ReadonlyArray<string> | null,
+    /** Threads of other projects and where they work, as the thread projection lists them. */
+    threadWorktrees: [] as Array<{
+      projectId: string;
+      workspaceRoot: string;
+      worktreePath: string;
+    }>,
     /** Runs inside an existing copy's update, as work starting elsewhere would. */
     duringExistingCopyUpdate: null as Effect.Effect<void> | null,
     starts: [] as Array<{ commandId: string; projectId: string; prompt: string }>,
@@ -244,7 +252,7 @@ const makeHarness = (
                     running: 1,
                   },
                 ]
-              : [],
+              : state.threadWorktrees,
           )) as unknown as SqlClient.SqlClient),
     Layer.succeed(ProjectService.ProjectService, {
       getById: (pid: ProjectId) => Effect.succeed(Option.fromNullishOr(projects.get(pid))),
@@ -441,6 +449,8 @@ const makeHarness = (
           state.existingCopyChecks++;
           return state.existingCopyRefusal ? Effect.fail(state.existingCopyRefusal) : Effect.void;
         }),
+      existingCopyFolders: (input) =>
+        Effect.sync(() => state.existingCopyFolders ?? [input.workspaceRoot]),
       inspect: (input) =>
         Effect.sync(() => {
           state.inspects.push({ allowChanges: input.allowChanges });

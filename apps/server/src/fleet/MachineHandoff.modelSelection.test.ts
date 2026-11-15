@@ -319,6 +319,7 @@ const fixture = Effect.gen(function* () {
     reportWorkerCheckpoints: () =>
       Effect.die("Destination receive must not inspect source workers"),
     checkExistingCopy: () => Effect.void,
+    existingCopyFolders: (input) => Effect.succeed([input.workspaceRoot]),
     verifyRootIdentity: () => Effect.void,
     preflight: () => Effect.void,
     materialize: () =>
