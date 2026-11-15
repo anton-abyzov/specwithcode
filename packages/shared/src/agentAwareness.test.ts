@@ -186,6 +186,24 @@ describe("projectThreadAwarenessV2", () => {
     ).toBeNull();
   });
 
+  it("keeps a delegated worker quiet while the app answers its tool call", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          creationSource: "mcp",
+          lineage: delegatedLineage,
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("request-worker-tool"),
+            kind: "dynamic_tool_call",
+            createdAt: updatedAt,
+          },
+        }),
+      }),
+    ).toBeNull();
+  });
+
   it("leaves a provider's own subagent request to its parent thread", () => {
     expect(
       projectThreadAwarenessV2({
