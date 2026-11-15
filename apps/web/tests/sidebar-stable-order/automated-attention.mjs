@@ -72,8 +72,8 @@ try {
     await page.goto(
       `http://127.0.0.1:${server.address().port}/?theme=${theme}&live=off&scenario=automated-attention`,
     );
-    // Projects checks made stay out of the sidebar; the open one is listed alone.
-    await page.locator('[aria-label="Open project"] .sws-project-row').waitFor();
+    // Projects checks made stay out of the sidebar, but the open one and any that wait on the person are listed.
+    await page.locator('[aria-label="Open or waiting projects"] .sws-project-row').waitFor();
     const folded = await page
       .locator("aside button")
       .evaluateAll((items) =>
