@@ -7,7 +7,7 @@ import kotlin.math.pow
 /**
  * Weave color values as plain ARGB data, free of Compose so the contrast math runs in plain
  * unit tests. Ported from the iOS `WeavePalette`, with the accent moved to the iris/indigo
- * family around #5B6CFF that the Android launcher icon uses.
+ * family around #5B6CFF, between the two ends of the launcher icon's gradient tile.
  */
 enum class WeaveToken(val light: Long, val dark: Long) {
     Canvas(0xFFF8F7FA, 0xFF14131C),

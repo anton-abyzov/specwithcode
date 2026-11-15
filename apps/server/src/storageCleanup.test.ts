@@ -422,6 +422,87 @@ describe("storage cleanup keeps folders of open threads", () => {
   );
 });
 
+describe("storage cleanup keeps work that Git status does not show", () => {
+  EffectVitest.it.effect(
+    "keeps a settled thread's folder with edits to files marked assume-unchanged or skip-worktree",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const assumed = yield* f.addWorktree("hidden-assumed");
+        const skipped = yield* f.addWorktree("hidden-skipped");
+        const flaggedClean = yield* f.addWorktree("hidden-flagged-clean");
+        for (const [worktree, flag] of [
+          [assumed, "--assume-unchanged"],
+          [skipped, "--skip-worktree"],
+          [flaggedClean, "--assume-unchanged"],
+        ] as const)
+          yield* f.run(worktree, ["update-index", flag, "file.txt"]);
+        yield* f.fs.writeFileString(f.path.join(assumed, "file.txt"), "edited, hidden\n");
+        yield* f.fs.writeFileString(f.path.join(skipped, "file.txt"), "edited, skipped\n");
+        // Git status shows none of these edits, and a plain worktree remove deletes them.
+        for (const worktree of [assumed, skipped])
+          expect((yield* f.run(worktree, ["status", "--porcelain"])).stdout).toBe("");
+        yield* f.addThread("assumed", "hidden-assumed", assumed, "settled");
+        yield* f.addThread("skipped", "hidden-skipped", skipped, "settled");
+        yield* f.addThread("flagged-clean", "hidden-flagged-clean", flaggedClean, "settled");
+        yield* f.sweep;
+        expect(f.removed).toEqual([flaggedClean]);
+        expect(yield* f.fs.readFileString(f.path.join(assumed, "file.txt"))).toBe(
+          "edited, hidden\n",
+        );
+        expect(yield* f.fs.readFileString(f.path.join(skipped, "file.txt"))).toBe(
+          "edited, skipped\n",
+        );
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "keeps a settled thread's folder that holds a repository inside an ignored dependency folder",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        yield* f.fs.writeFileString(
+          f.path.join(f.repo, ".git", "info", "exclude"),
+          "node_modules/\n",
+        );
+        const withClone = yield* f.addWorktree("nested-clone");
+        const withBare = yield* f.addWorktree("nested-bare");
+        const plain = yield* f.addWorktree("nested-none");
+        const clone = f.path.join(withClone, "node_modules", "tool");
+        yield* f.fs.makeDirectory(clone, { recursive: true });
+        yield* f.run(clone, ["init", "-b", "main"]);
+        yield* f.fs.writeFileString(f.path.join(clone, "work.txt"), "only here\n");
+        const bare = f.path.join(withBare, "node_modules", "cache.git");
+        yield* f.fs.makeDirectory(bare, { recursive: true });
+        yield* f.run(bare, ["init", "--bare", "-b", "main"]);
+        yield* f.fs.makeDirectory(f.path.join(plain, "node_modules", "dep"), { recursive: true });
+        yield* f.fs.writeFileString(f.path.join(plain, "node_modules", "dep", "index.js"), "x\n");
+        yield* f.addThread("with-clone", "nested-clone", withClone, "settled");
+        yield* f.addThread("with-bare", "nested-bare", withBare, "settled");
+        yield* f.addThread("plain", "nested-none", plain, "settled");
+        yield* f.sweep;
+        expect(f.removed).toEqual([plain]);
+        expect(yield* f.fs.exists(f.path.join(clone, "work.txt"))).toBe(true);
+        expect(yield* f.fs.exists(f.path.join(bare, "HEAD"))).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "treats two spellings of one checkout through a symlinked parent as one shared folder",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const shared = yield* f.addWorktree("two-spellings", { linked: true });
+        // Neither thread is open, so only grouping by real path finds them sharing it.
+        yield* f.addThread("spelling-linked", "two-spellings", shared, "settled");
+        yield* f.addThread("spelling-real", "two-spellings", f.realSpelling(shared), "archived");
+        yield* f.sweep;
+        expect(f.removed).toEqual([]);
+        expect(yield* f.fs.exists(shared)).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+});
+
 describe("storage cleanup removes worktrees of PRs closed without merging", () => {
   EffectVitest.it.effect(
     "removes a closed PR's worktree only when nothing on it is unpushed and the PR is not open",
@@ -677,6 +758,33 @@ describe("storage cleanup removes finished worktrees no thread records", () => {
       expect(f.removed).toEqual([]);
       expect(yield* f.fs.exists(f.path.join(worktree, "node_modules", "kept.txt"))).toBe(true);
     }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "keeps a finished worktree with hidden tracked edits or a repository in its dependencies",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        yield* f.fs.writeFileString(
+          f.path.join(f.repo, ".git", "info", "exclude"),
+          "node_modules/\n",
+        );
+        const hidden = yield* f.addWorktree("agent-hidden-edit");
+        yield* f.run(hidden, ["update-index", "--skip-worktree", "file.txt"]);
+        yield* f.fs.writeFileString(f.path.join(hidden, "file.txt"), "edited, skipped\n");
+        const nested = yield* f.addWorktree("agent-nested-repo");
+        const clone = f.path.join(nested, "node_modules", "tool");
+        yield* f.fs.makeDirectory(clone, { recursive: true });
+        yield* f.run(clone, ["init", "-b", "main"]);
+        const finished = yield* f.addWorktree("agent-plain");
+        yield* age(f, [hidden, nested, finished]);
+        yield* f.sweep;
+        expect(f.removed).toEqual([finished]);
+        expect(yield* f.fs.readFileString(f.path.join(hidden, "file.txt"))).toBe(
+          "edited, skipped\n",
+        );
+        expect(yield* f.fs.exists(f.path.join(clone, ".git"))).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
   );
 });
 

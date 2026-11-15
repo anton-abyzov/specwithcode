@@ -1,9 +1,8 @@
-import type { ClientConnectionMethod, EnvironmentId } from "@specweave-studio/contracts";
+import type { EnvironmentId } from "@specweave-studio/contracts";
 import type { RelayProtectedError } from "@specweave-studio/contracts/relay";
 import type { ManagedRelayClientError } from "../relay/managedRelay.ts";
 import { dpopFailureMessage, relayProtectedErrorMessage } from "../relay/errorPresentation.ts";
 import type { RemoteEnvironmentAuthError } from "../authorization/remote.ts";
-import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import {
   ConnectionBlockedError,
   type ConnectionAttemptError,
@@ -86,15 +85,19 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
       if (error.relayError) {
         return relayProtectedError(error.relayError);
       }
+      // Only a request that never got an answer says nothing about the
+      // machine; a status the relay sent means the relay was reached.
       return new ConnectionTransientError({
         reason: "relay-unavailable",
         detail: error.message,
         ...(error.traceId ? { traceId: error.traceId } : {}),
+        ...(error.transportFailed === true ? { relayUnreachable: true } : {}),
       });
     case "ManagedRelayRequestTimeoutError":
       return new ConnectionTransientError({
         reason: "timeout",
         detail: error.message,
+        relayUnreachable: true,
       });
     case "ManagedRelayUrlInvalidError":
       return new ConnectionBlockedError({
@@ -116,11 +119,16 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
   }
 }
 
+/**
+ * Map a failed request to the machine itself. It never adds the DNS or
+ * firewall hint, whatever route the request took: the relay has already
+ * answered by the time a request goes to the machine's Connect address, and a
+ * silent or restarting service fails the same way a blocked network would.
+ * Only a relay request with no answer earns the hint (`mapManagedRelayError`).
+ */
 export function mapRemoteEnvironmentError(
   error: RemoteEnvironmentAuthError,
-  connectionMethod: ClientConnectionMethod = "direct",
 ): ConnectionAttemptError {
-  const networkHint = connectionMethod === "relay" ? ` ${NETWORK_BLOCKING_HINT}` : "";
   switch (error._tag) {
     case "EnvironmentAuthInvalidError":
       return new ConnectionBlockedError({
@@ -158,12 +166,12 @@ export function mapRemoteEnvironmentError(
     case "RemoteEnvironmentAuthTimeoutError":
       return new ConnectionTransientError({
         reason: "timeout",
-        detail: `${error.message}${networkHint}`,
+        detail: error.message,
       });
     case "RemoteEnvironmentAuthFetchError":
       return new ConnectionTransientError({
         reason: "network",
-        detail: `${error.message}${networkHint}`,
+        detail: error.message,
       });
     case "EnvironmentInternalError":
       return new ConnectionTransientError({
@@ -205,5 +213,5 @@ export function mapRemoteDpopEnvironmentError(
       traceId: error.traceId,
     });
   }
-  return mapRemoteEnvironmentError(error, "relay");
+  return mapRemoteEnvironmentError(error);
 }

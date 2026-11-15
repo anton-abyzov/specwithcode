@@ -434,6 +434,90 @@ describe("EventNdjsonLogger", () => {
     }),
   );
 
+  it.effect("drops Cursor streamed deltas and keeps Cursor lifecycle updates", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
+        const native = store.logger("native");
+        const threadId = ThreadId.make("thread-cursor");
+        const cursorUpdate = (update: unknown) => ({
+          provider: "cursor",
+          protocol: "cursor-agent-sdk.local",
+          kind: "protocol",
+          providerSessionId: "session-cursor",
+          event: {
+            direction: "incoming",
+            stage: "decoded",
+            payload: { type: "interaction.update", runId: "run-1", update },
+          },
+        });
+        const streamed = [
+          { type: "text-delta", text: "Hel" },
+          { type: "token-delta", tokens: 3 },
+          { type: "thinking-delta", text: "pondering" },
+          { type: "shell-output-delta", event: { stdout: "line" } },
+          { type: "partial-tool-call", callId: "call-1", toolCall: {} },
+          {
+            type: "tool-call-delta",
+            callId: "call-2",
+            taskUpdate: { type: "text-delta", text: "sub" },
+          },
+          {
+            type: "tool-call-delta",
+            callId: "call-2",
+            taskUpdate: { type: "thinking-delta", text: "sub" },
+          },
+        ];
+        for (let index = 0; index < 20; index += 1) {
+          for (const update of streamed) {
+            yield* native.write(cursorUpdate(update), threadId);
+          }
+        }
+        const kept = [
+          { type: "tool-call-started", callId: "call-1" },
+          {
+            type: "tool-call-delta",
+            callId: "call-2",
+            taskUpdate: { type: "tool-call-completed", callId: "inner" },
+          },
+          { type: "thinking-completed" },
+          { type: "turn-ended" },
+        ];
+        for (const update of kept) {
+          yield* native.write(cursorUpdate(update), threadId);
+        }
+        yield* native.write(
+          {
+            provider: "cursor",
+            kind: "protocol",
+            event: { direction: "outgoing", stage: "decoded", payload: { type: "run.start" } },
+          },
+          threadId,
+        );
+        yield* store.close();
+
+        const lines = NodeFS.readFileSync(ownedLogPath(basePath, "thread-cursor"), "utf8")
+          .trim()
+          .split("\n")
+          .map(parseLogLine)
+          .map(({ payload }) => decodeUnknownJson(payload) as { event: { payload: unknown } });
+
+        assert.deepEqual(
+          lines.map(({ event }) => event.payload),
+          [
+            ...kept.map((update) => ({ type: "interaction.update", runId: "run-1", update })),
+            { type: "run.start" },
+          ],
+        );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("summarizes large histories without reading their items", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-provider-log-"));

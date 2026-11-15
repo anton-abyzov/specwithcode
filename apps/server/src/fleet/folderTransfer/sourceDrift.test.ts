@@ -208,7 +208,7 @@ it("lists a new tag, note or remote-tracking ref as the repository's refs", asyn
   expect(await repository()).toEqual([]);
 });
 
-it("lists a changed Git setting, exclude rule or hook as the repository's settings", async () => {
+it("lists a changed Git setting or exclude rule as the repository's settings; hooks never travel", async () => {
   await committed();
   const config = Path.join(folder, ".git/config");
   const exclude = Path.join(folder, "repositories/svc/.git/info/exclude");
@@ -226,10 +226,69 @@ it("lists a changed Git setting, exclude rule or hook as the repository's settin
   await FSP.writeFile(config, original.config);
   await FSP.writeFile(exclude, original.exclude);
   expect(await changed()).toEqual([]);
+  // Hooks and settings the copy never carries are not changes to it.
   write(hook, "#!/bin/sh\nexit 0\n");
-  expect(await changed()).toEqual(["repositories/svc"]);
-  await FSP.rm(hook);
+  git(folder, "config", "core.pager", "less -R");
   expect(await changed()).toEqual([]);
+  // A per-worktree config the copy would carry is a change.
+  const worktreeConfig = Path.join(folder, ".git/config.worktree");
+  await FSP.writeFile(worktreeConfig, "[core]\n\tautocrlf = input\n");
+  expect(await changed()).toEqual(["."]);
+  await FSP.rm(worktreeConfig);
+  expect(await changed()).toEqual([]);
+});
+
+it("compares Git settings as the copy carried them: submodule rules, no uncarried worktrees", async () => {
+  const gitDir = Path.join(folder, ".git");
+  // Git reads no config.worktree without the extension; the copy drops a main core.worktree.
+  write(Path.join(gitDir, "config.worktree"), "[core]\n\tworktree = ../docs\n");
+  const module = Path.join(gitDir, "modules/lib");
+  write(Path.join(module, "HEAD"), "ref: refs/heads/main\n");
+  await FSP.mkdir(Path.join(module, "objects"), { recursive: true });
+  write(Path.join(module, "config"), "[core]\n\tbare = false\n");
+  await committed();
+  const changed = async () => (await sources.driftSince(id)).rows.map((row) => row.path);
+  expect(await changed()).toEqual([]);
+  // A worktree admin folder the copy never carried is no change.
+  write(Path.join(gitDir, "worktrees/later/config.worktree"), "[core]\n\tautocrlf = input\n");
+  expect(await changed()).toEqual([]);
+  await FSP.rm(Path.join(gitDir, "worktrees"), { recursive: true });
+  // A submodule's sparse-checkout rules are a change.
+  write(Path.join(module, "info/sparse-checkout"), "/src/\n");
+  expect(await changed()).toEqual(["."]);
+});
+
+it("reads a remote branch named config as a ref, not a Git setting", async () => {
+  git(folder, "update-ref", "refs/remotes/origin/HEAD", "HEAD");
+  git(folder, "update-ref", "refs/remotes/origin/config", "HEAD");
+  await committed();
+  write(Path.join(folder, "docs/guide.md"), "guide, edited\n");
+  git(folder, "commit", "-qam", "second");
+  git(folder, "update-ref", "refs/remotes/origin/config", "HEAD");
+  const drift = await sources.driftSince(id);
+  expect(
+    drift.rows.some((row) => row.kind === "repository" && row.repository?.settingsChanged),
+  ).toBe(false);
+});
+
+it("reads a dormant submodule's remote ref named config as a ref when refs are packed", async () => {
+  const module = Path.join(folder, ".git/modules/lib");
+  const sha = git(folder, "rev-parse", "HEAD").trim();
+  write(Path.join(module, "HEAD"), "ref: refs/heads/main\n");
+  await FSP.mkdir(Path.join(module, "objects"), { recursive: true });
+  write(Path.join(module, "config"), "[core]\n\tbare = true\n");
+  const origin = Path.join(module, "refs/remotes/origin");
+  write(Path.join(origin, "HEAD"), "ref: refs/remotes/origin/main\n");
+  for (const name of ["main", "objects/topic", "config"])
+    write(Path.join(origin, name), `${sha}\n`);
+  await committed();
+  // Packing the refs removes the loose `config` ref; no Git setting changed.
+  await FSP.rm(Path.join(origin, "config"));
+  write(Path.join(module, "packed-refs"), `${sha} refs/remotes/origin/config\n`);
+  const drift = await sources.driftSince(id);
+  expect(
+    drift.rows.some((row) => row.kind === "repository" && row.repository?.settingsChanged),
+  ).toBe(false);
 });
 
 it.skipIf(process.platform === "win32")(

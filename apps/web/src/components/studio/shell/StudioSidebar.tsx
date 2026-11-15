@@ -55,7 +55,7 @@ import {
   SquarePenIcon,
   WifiOffIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { isCommandPaletteOpen, openCommandPalette } from "../../../commandPaletteBus";
 import { isElectron } from "../../../env";
@@ -92,7 +92,6 @@ import { projectEnvironment } from "../../../state/projects";
 import { ChatFilterMenu } from "./ChatFilterMenu";
 import { threadLocation } from "../../../studio/threadLocation";
 import {
-  chatMachineColumnCh,
   chatMachineNote,
   chatsShowMachineColumn,
   machineColumnLabel,
@@ -564,22 +563,6 @@ export default function StudioSidebar() {
       primaryEnvironmentId,
       anyMoved: chatsAnyState.some((thread) => locateChat(thread).moved),
     });
-  // Sized per group by what its rows show, so "→ Minis" fits as well as "M4".
-  const machineColumnStyle = (threads: readonly EnvironmentThreadShell[]) =>
-    ({
-      "--sws-chat-machine-col": `${chatMachineColumnCh(
-        threads.map((thread) => {
-          const location = locateChat(thread);
-          return {
-            name: location.label.split(" → ").at(-1)!,
-            moved: location.moved,
-            offline:
-              location.executionMachineId !== primaryEnvironmentId &&
-              unreachable.has(location.executionMachineId),
-          };
-        }),
-      )}ch`,
-    }) as CSSProperties;
   const chatTotal = chatGroups.reduce((sum, group) => sum + group.threads.length, 0);
   // Only worked out for an empty list: whether project threads are all that is left out.
   const hiddenProjectThreads = useMemo(
@@ -906,6 +889,11 @@ export default function StudioSidebar() {
   );
   const arranged = { pinned: ordered.pinned, unpinned: localCopiesFirst(ordered.unpinned) };
   const codeProjects = [...arranged.pinned, ...arranged.unpinned];
+  // What "use it until it resets" can cover: each listed project, on every machine.
+  const boostProjects = codeProjects.map((group) => ({
+    name: displayNameOf(group, displayedCheckouts.get(group.projectKey)),
+    ids: [...new Set([group.id, ...(group.memberProjectRefs ?? []).map((ref) => ref.projectId)])],
+  }));
   const nameHints = sameNameHints(codeProjects, (group) =>
     displayNameOf(group, displayedCheckouts.get(group.projectKey)),
   );
@@ -1065,7 +1053,7 @@ export default function StudioSidebar() {
             </Link>
           </div>
 
-          <QuotaAlerts onOpen={closeMobile} />
+          <QuotaAlerts onOpen={closeMobile} projects={boostProjects} />
 
           <div className="sws-side-section" role="group" aria-labelledby="sws-side-projects">
             <div className="sws-side-heading">
@@ -1117,7 +1105,12 @@ export default function StudioSidebar() {
                 onOpen={closeMobile}
                 onMove={moveProjectTo}
                 onStep={(projectKey, direction) => {
-                  const target = stepProjectInSection(listedKeys, elsewhereKeys, projectKey, direction);
+                  const target = stepProjectInSection(
+                    listedKeys,
+                    elsewhereKeys,
+                    projectKey,
+                    direction,
+                  );
                   if (target) moveProjectTo(projectKey, target);
                 }}
                 canStep={(projectKey, direction) =>
@@ -1263,7 +1256,7 @@ export default function StudioSidebar() {
                         </h3>
                       </div>
                     ) : null}
-                    <ul className="sws-side-list" style={machineColumnStyle(rows)}>
+                    <ul className="sws-side-list">
                       {rows.map((thread) => {
                         const key = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -1355,6 +1348,11 @@ export default function StudioSidebar() {
                                 provider={label.provider}
                               />
                             }
+                            plan={
+                              rowPlan ? (
+                                <PlanProgressChip plan={rowPlan} tip={false} compact />
+                              ) : null
+                            }
                             onOpen={() => openChat(thread)}
                             rename={chatRenameFor(thread)}
                             menuItems={
@@ -1408,7 +1406,6 @@ export default function StudioSidebar() {
                               </>
                             }
                           >
-                            {rowPlan ? <PlanProgressChip plan={rowPlan} tip={false} compact /> : null}
                             <span className="sr-only">
                               , {label.full}
                               {stateDescription}, {tx(THREAD_TONE_LABELS[tone])}
@@ -1418,7 +1415,7 @@ export default function StudioSidebar() {
                               <span className="sws-dot" data-tone={tone} aria-hidden />
                             ) : null}
                             {showMachineColumn ? (
-                              // After the dot, so a dot appearing never moves the column.
+                              // Last, so every row's machine ends at the same edge.
                               <span
                                 className="sws-row-machine machine-mark"
                                 data-machine-color={

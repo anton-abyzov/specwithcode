@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
@@ -27,13 +28,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import com.specwithcode.android.R
 import com.specwithcode.android.app.SignInState
@@ -43,7 +45,6 @@ import com.specwithcode.android.ui.theme.Weave
 import com.specwithcode.android.ui.theme.WeaveRadius
 import com.specwithcode.android.ui.theme.WeaveSize
 import com.specwithcode.android.ui.theme.WeaveSpacing
-import com.specwithcode.android.ui.theme.WeaveToken
 
 /** First launch: sign in with Connect, pair with a code, or look around with sample data. */
 @Composable
@@ -60,10 +61,16 @@ fun WelcomeScreen(signIn: SignInState, onSignIn: () -> Unit, onPair: () -> Unit,
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(WeaveSpacing.s4),
         ) {
+            // The launcher icon: the brand gradient tile, and the foreground layer whose central
+            // 72dp of 108dp holds the mark.
             Box(
-                Modifier.size(72.dp).clip(RoundedCornerShape(20.dp)).background(Color(WeaveToken.BRAND)).clearAndSetSemantics {},
+                Modifier
+                    .size(72.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Brush.verticalGradient(listOf(colorResource(R.color.brand_tile_top), colorResource(R.color.brand_tile_bottom))))
+                    .clearAndSetSemantics {},
                 contentAlignment = Alignment.Center,
-            ) { Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null, modifier = Modifier.size(72.dp)) }
+            ) { Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null, modifier = Modifier.requiredSize(108.dp)) }
             Text(
                 "SpecWithCode",
                 style = MaterialTheme.typography.headlineMedium,

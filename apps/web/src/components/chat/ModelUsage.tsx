@@ -535,6 +535,7 @@ export function ModelUsageMeter({
   nextOnLimit,
   hideValueClassName,
   chip,
+  ringPart = true,
 }: {
   readonly state: ModelAvailability;
   readonly text: AvailabilityText;
@@ -544,6 +545,8 @@ export function ModelUsageMeter({
   readonly hideValueClassName?: string;
   /** The number is a part of an enclosing model chip, whose fit decides when it shows. */
   readonly chip?: boolean;
+  /** False when the chip's usage button is the ring's part, so the ring is not one twice. */
+  readonly ringPart?: boolean;
 }) {
   const parts = meterParts(state, text, { nowMs, nextOnLimit: nextOnLimit ?? null });
   if (parts === null) return null;
@@ -558,7 +561,7 @@ export function ModelUsageMeter({
       data-model-usage-meter={state.kind}
       aria-hidden
     >
-      {perToken ? null : <MeterRing {...ring} chip={chip} />}
+      {perToken ? null : <MeterRing {...ring} chip={chip === true && ringPart} />}
       {quiet ? null : (
         <span
           className={cn(

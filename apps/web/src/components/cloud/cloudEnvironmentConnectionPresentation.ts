@@ -3,6 +3,8 @@ import {
   type EnvironmentConnectionPresentation,
 } from "@specweave-studio/client-runtime/connection";
 
+import { environmentConnectionStatusText } from "../../lib/machineStatus";
+
 export interface SavedCloudEnvironmentConnectionPresentation {
   readonly buttonLabel: string;
   readonly statusText: string;
@@ -27,13 +29,15 @@ export function presentSavedCloudEnvironmentConnection(
     case "connecting":
       return {
         buttonLabel: "Connecting…",
-        statusText: connectionStatusText(connection),
+        // Inside the reconnect grace the failure is not news yet.
+        statusText: environmentConnectionStatusText(connection, false),
         tone: "connecting",
       };
     case "reconnecting":
       return {
         buttonLabel: "Reconnecting…",
-        statusText: connectionStatusText(connection),
+        // Inside the reconnect grace the failure is not news yet.
+        statusText: environmentConnectionStatusText(connection, false),
         tone: "connecting",
       };
     // Not a failure: the machine is fine, this build just cannot talk to it.

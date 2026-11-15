@@ -3,9 +3,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import type * as Electron from "electron";
+
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
 
 export interface DesktopIpcInvokeEvent {
   readonly sender: { readonly id: number };
+  // The frame that sent the request. Only an app window's main frame is trusted.
+  readonly senderFrame?: unknown;
 }
 
 export interface DesktopIpcSyncEvent {
@@ -13,7 +18,15 @@ export interface DesktopIpcSyncEvent {
   // The renderer that sent the request. Optional: test doubles and callers
   // that only need the reply leave it out.
   readonly sender?: { readonly id: number };
+  readonly senderFrame?: unknown;
 }
+
+export interface DesktopIpcSender {
+  readonly sender?: { readonly id: number };
+  readonly senderFrame?: unknown;
+}
+
+export type DesktopIpcSenderGuard = (event: DesktopIpcSender) => Effect.Effect<boolean>;
 
 export type DesktopIpcHandleListener = (
   event: DesktopIpcInvokeEvent,
@@ -55,6 +68,15 @@ export class DesktopIpcUnregistrationError extends Schema.TaggedError<DesktopIpc
   }
 }
 
+export class DesktopIpcUntrustedSenderError extends Schema.TaggedError<DesktopIpcUntrustedSenderError>()(
+  "DesktopIpcUntrustedSenderError",
+  { channel: Schema.String },
+) {
+  override get message(): string {
+    return `Rejected ${this.channel} from a sender that is not an app window.`;
+  }
+}
+
 export const DesktopIpcError = Schema.Union([
   DesktopIpcRegistrationError,
   DesktopIpcUnregistrationError,
@@ -83,7 +105,12 @@ export class DesktopIpc extends Context.Service<
   }
 >()("@specweave-studio/desktop/ipc/DesktopIpc") {}
 
-export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
+// ipcMain is shared by every webContents, including preview guests that load
+// arbitrary pages, so every handler first checks who is calling.
+export const make = (
+  ipcMain: DesktopIpcMain,
+  isTrustedSender: DesktopIpcSenderGuard,
+): DesktopIpc["Service"] =>
   DesktopIpc.of({
     handle: Effect.fn("desktop.ipc.registerInvoke")(function* <E, R>({
       channel,
@@ -101,6 +128,9 @@ export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
               runPromise(
                 Effect.gen(function* () {
                   yield* Effect.annotateCurrentSpan({ channel });
+                  if (!(yield* isTrustedSender(event))) {
+                    return yield* new DesktopIpcUntrustedSenderError({ channel });
+                  }
                   return yield* handler(raw, event);
                 }).pipe(Effect.annotateLogs({ channel }), Effect.withSpan("desktop.ipc.invoke")),
               ),
@@ -134,6 +164,13 @@ export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
               event.returnValue = runSync(
                 Effect.gen(function* () {
                   yield* Effect.annotateCurrentSpan({ channel });
+                  // Throwing here would surface as an uncaught main-process exception.
+                  if (!(yield* isTrustedSender(event))) {
+                    yield* Effect.logWarning(
+                      "Ignored sync IPC from a sender that is not an app window.",
+                    );
+                    return undefined;
+                  }
                   return yield* handler(
                     event.sender === undefined ? undefined : { sender: event.sender },
                   );
@@ -157,7 +194,47 @@ export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
     }),
   });
 
-export const layer = (ipcMain: DesktopIpcMain) => Layer.succeed(DesktopIpc, make(ipcMain));
+// Trusted: the main frame of a live app window (the main window or a project
+// window). The window list is read on every call, so windows opened or closed
+// after registration are seen at once.
+export const isAppWindowSender = (
+  windows: readonly Electron.BrowserWindow[],
+  event: DesktopIpcSender,
+): boolean => {
+  const sender = event.sender;
+  if (sender === undefined || event.senderFrame === undefined || event.senderFrame === null) {
+    return false;
+  }
+  try {
+    return windows.some(
+      (window) =>
+        !window.isDestroyed() &&
+        !window.webContents.isDestroyed() &&
+        window.webContents.id === sender.id &&
+        window.webContents.mainFrame === event.senderFrame,
+    );
+  } catch {
+    return false;
+  }
+};
+
+export const layer = (ipcMain: DesktopIpcMain) =>
+  Layer.effect(
+    DesktopIpc,
+    Effect.gen(function* () {
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+      return make(ipcMain, (event) =>
+        Effect.map(electronWindow.appWindows, (windows) => isAppWindowSender(windows, event)),
+      );
+    }),
+  );
+
+// For tests that drive handlers with fake senders.
+export const layerTest = (ipcMain: DesktopIpcMain) =>
+  Layer.succeed(
+    DesktopIpc,
+    make(ipcMain, () => Effect.succeed(true)),
+  );
 
 /**
  * Convenience helpers for creating IPC methods

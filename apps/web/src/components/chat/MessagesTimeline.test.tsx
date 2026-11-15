@@ -2998,7 +2998,7 @@ describe("MessagesTimeline", () => {
 
     // The Studio wordmark replaces the generic tool icon for Studio MCP calls.
     expect(markup).toContain('aria-label="SpecWithCode"');
-    expect(markup).toContain('viewBox="0 0 64 64"');
+    expect(markup).toContain('viewBox="0 0 1024 1024"');
     expect(markup).toContain("Read a SpecWithCode thread");
     expect(markup).not.toContain("mcp__studio-code__studio_thread_read");
   });

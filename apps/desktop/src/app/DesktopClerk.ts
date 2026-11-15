@@ -128,6 +128,13 @@ export const make = Effect.gen(function* () {
           }),
       }).pipe(Effect.orDie),
   );
+  // Chromium opens its GPU caches at the first event-loop turn, before ready, so
+  // this runs here, synchronously. Only the instance holding the profile lock
+  // may touch them; outside Electron (tests) there is no version to key on.
+  const electronVersion: string | undefined = process.versions.electron;
+  if (bridge.isPrimaryInstance && electronVersion !== undefined) {
+    yield* DesktopUserData.clearStaleGpuCaches({ userDataPath, electronVersion });
+  }
 
   return DesktopClerk.of({
     configure: Effect.gen(function* () {

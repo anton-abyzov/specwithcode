@@ -11,6 +11,7 @@ import {
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
 import {
+  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   applyTerminalAttachStreamEvent,
   applyTerminalMetadataStreamEvent,
   nextTerminalAttachSeedState,
@@ -41,18 +42,22 @@ export function createTerminalEnvironmentAtoms<R, E>(
       label: "environment-data:terminal:observe",
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalObserve>) =>
         Stream.suspend(() =>
-          subscribe(WS_METHODS.terminalObserve, input).pipe(
-            Stream.scan(nextTerminalAttachSeedState, applyTerminalAttachStreamEvent),
-          ),
+          subscribe(WS_METHODS.terminalObserve, {
+            ...input,
+            // The scan below keeps this much; the server sends no more history than that.
+            maxHistoryBytes: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+          }).pipe(Stream.scan(nextTerminalAttachSeedState, applyTerminalAttachStreamEvent)),
         ),
     }),
     attach: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:attach",
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalAttach>) =>
         Stream.suspend(() =>
-          subscribe(WS_METHODS.terminalAttach, input).pipe(
-            Stream.scan(nextTerminalAttachSeedState, applyTerminalAttachStreamEvent),
-          ),
+          subscribe(WS_METHODS.terminalAttach, {
+            ...input,
+            // The scan below keeps this much; the server sends no more history than that.
+            maxHistoryBytes: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+          }).pipe(Stream.scan(nextTerminalAttachSeedState, applyTerminalAttachStreamEvent)),
         ),
     }),
     events: createEnvironmentRpcSubscriptionAtomFamily(runtime, {

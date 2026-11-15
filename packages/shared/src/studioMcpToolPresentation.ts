@@ -469,6 +469,10 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
   show_visual: tool(["Make", "Making", "Made", "a visual"], "html-visual"),
   studio_report_save: tool(["Save", "Saving", "Saved", "a report"], "report-save"),
+  studio_reset_announcement_record: tool(
+    ["Record", "Recording", "Recorded", "a reset announcement"],
+    "environment-update",
+  ),
   sheet_write: tool(["Write", "Writing", "Wrote", "a sheet"], "sheet-write"),
   sheet_read: tool(["Read", "Reading", "Read", "a sheet"], "sheet-read"),
   design_list: tool(["List", "Listing", "Listed", "designs"], "design-read"),
@@ -508,7 +512,31 @@ function normalizeStudioMcpToolLabel(value: string): string {
  * agents. The prefix match is deliberately loose because the display-name
  * inventory is the real gate; unknown tools stay on the generic renderer.
  */
+/**
+ * Timelines resolve every row's tool name on each update and the same names
+ * repeat, so results are kept per input string. The resolver reads only its
+ * input and the fixed tool inventory. Long labels (ACP titles can carry whole
+ * commands) are resolved but not kept, and the cache starts over at its limit.
+ */
+const studioMcpToolNameCache = new Map<string, string | null>();
+const STUDIO_MCP_TOOL_NAME_CACHE_LIMIT = 2_000;
+const STUDIO_MCP_TOOL_NAME_CACHE_MAX_KEY_LENGTH = 256;
+
 function resolveStudioMcpToolName(value: string): string | null {
+  if (value.length > STUDIO_MCP_TOOL_NAME_CACHE_MAX_KEY_LENGTH) {
+    return parseStudioMcpToolName(value);
+  }
+  const cached = studioMcpToolNameCache.get(value);
+  if (cached !== undefined) return cached;
+  const name = parseStudioMcpToolName(value);
+  if (studioMcpToolNameCache.size >= STUDIO_MCP_TOOL_NAME_CACHE_LIMIT) {
+    studioMcpToolNameCache.clear();
+  }
+  studioMcpToolNameCache.set(value, name);
+  return name;
+}
+
+function parseStudioMcpToolName(value: string): string | null {
   const label = normalizeStudioMcpToolLabel(value);
   const mcpMatch = /^mcp__(?<server>.+?)__(?<tool>.+)$/i.exec(label);
   if (mcpMatch?.groups) {

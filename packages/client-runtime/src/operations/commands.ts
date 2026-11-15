@@ -201,6 +201,8 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
     readonly context?: import("@specweave-studio/contracts").OrchestrationMessageContext;
   };
   readonly modelSelection?: ModelSelection;
+  /** The model is the composer's default, not a pick: a project on Tracks may choose it. */
+  readonly modelUnnamed?: boolean;
   readonly titleSeed?: string;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -786,6 +788,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       title: input.titleSeed ?? thread.title,
       generateTitle: input.titleSeed !== undefined,
       modelSelection: input.modelSelection ?? thread.modelSelection,
+      ...(bootstrap !== undefined && input.modelUnnamed === true ? { modelUnnamed: true } : {}),
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
       workspaceStrategy,

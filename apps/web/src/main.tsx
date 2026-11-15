@@ -14,7 +14,7 @@ import {
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
 import { applyPlatform, platformOf } from "./lib/platformConventions";
-import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+import { reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 import {
   raiseErrorStackTraceLimit,
   recordRenderErrorComponentStack,
@@ -39,11 +39,9 @@ if (isElectron) {
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
 // A failed split-chunk fetch usually means the hashed assets went stale under
-// a deploy; one guarded reload picks up the fresh index.html.
-let chunkLoadFailed = false;
+// a deploy; one guarded reload per build picks up the fresh index.html.
 let reloadScheduled = false;
 window.addEventListener("vite:preloadError", (event) => {
-  chunkLoadFailed = true;
   if (reloadOnceForChunkLoadError()) {
     reloadScheduled = true;
     event.preventDefault();
@@ -64,7 +62,7 @@ const managedAuthShellModule =
     : null;
 
 // The account button renders on every route. Fetching its Connect chunk here
-// lets a failure reach the reload guard below, before the guard is cleared.
+// lets a failure reach the reload guard during boot, before the first paint.
 const connectAccountMenuModule = managedAuthShellModule
   ? import("./components/clerk/ConnectSidebarAccountMenu").catch(() => null)
   : null;
@@ -82,10 +80,10 @@ export const startup = Promise.all([
   .then(([ManagedAuthShell]) => {
     // A route chunk failure still resolves router.load(): the error is parked in
     // the lazy component and surfaces through the route error boundary. Skip the
-    // paint when a reload is on its way, and only re-arm the guard after a boot
-    // that fetched every chunk it asked for.
+    // paint when a reload is on its way. The guard is never cleared here: a
+    // chunk fetched after boot can fail on every visit, and clearing it on each
+    // good boot would reload that page forever.
     if (reloadScheduled) return;
-    if (!chunkLoadFailed) clearChunkReloadGuard();
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement, {
       // Keep React's console report, and keep the component stack for the
       // route error page's "Copy error" report.

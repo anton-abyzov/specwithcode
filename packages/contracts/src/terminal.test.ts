@@ -8,6 +8,8 @@ import {
   TerminalCloseInput,
   TerminalEvent,
   TerminalError,
+  terminalHistoryTail,
+  TerminalObserveInput,
   TerminalOpenInput,
   TerminalProviderEnvironmentError,
   TerminalResizeInput,
@@ -163,6 +165,32 @@ describe("TerminalAttachInput", () => {
     });
 
     expect(parsed.restartIfNotRunning).toBe(true);
+  });
+
+  it("carries an optional history budget that older inputs omit", () => {
+    for (const schema of [TerminalAttachInput, TerminalObserveInput]) {
+      const base = { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID };
+      expect(decodeSync(schema, base).maxHistoryBytes).toBeUndefined();
+      expect(decodeSync(schema, { ...base, maxHistoryBytes: 524_288 }).maxHistoryBytes).toBe(
+        524_288,
+      );
+      expect(decodes(schema, { ...base, maxHistoryBytes: -1 })).toBe(false);
+      expect(decodes(schema, { ...base, maxHistoryBytes: 1.5 })).toBe(false);
+    }
+  });
+});
+
+describe("terminalHistoryTail", () => {
+  it("keeps the newest bytes from a code point boundary", () => {
+    const history = "ab\u00e9\u{1f600}cd";
+    expect(terminalHistoryTail(history, 100)).toBe(history);
+    expect(terminalHistoryTail(history, 0)).toBe("");
+    // "ab" 2, "\u00e9" 2, the emoji 4 and "cd" 2 bytes: 10 in total.
+    expect(terminalHistoryTail(history, 10)).toBe(history);
+    expect(terminalHistoryTail(history, 8)).toBe("\u00e9\u{1f600}cd");
+    // A cut inside a multi-byte character moves past it.
+    expect(terminalHistoryTail(history, 7)).toBe("\u{1f600}cd");
+    expect(terminalHistoryTail(history, 5)).toBe("cd");
   });
 });
 

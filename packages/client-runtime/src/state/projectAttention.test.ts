@@ -350,7 +350,10 @@ describe("project conversation aggregation", () => {
         complete: false,
         count: 0,
         staleCount: 1,
-        label: "Some machines are offline",
+        label:
+          freshness === "offline" || freshness === "unauthorized"
+            ? "Some machines can't be reached"
+            : "Catching up with your machines",
       });
       expect(
         aggregateProjectAttention({ members: [member], roots, threads: [thread("a")] }),

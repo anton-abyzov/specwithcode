@@ -109,8 +109,15 @@ try {
   // AC-01..AC-05, AC-08: one meter per chip, its words, its fit, its states.
   const chip = (name) =>
     page.locator(`[data-chip-case="${name}"] [data-chat-provider-model-picker]`);
+  // The control that names the model: the model half of a chip whose usage ring is its
+  // own button, else the whole chip.
+  const model = (name) =>
+    page.locator(
+      `[data-chip-case="${name}"] :is([data-model-chip-main], [data-chat-provider-model-picker]:not([data-model-chip-split]))`,
+    );
+  const ringOf = (name) => chip(name).locator("[data-model-usage-meter] svg");
   const described = async (name) => {
-    const id = await chip(name).getAttribute("aria-describedby");
+    const id = await model(name).getAttribute("aria-describedby");
     return id ? page.locator(`[id="${id}"]`).textContent() : null;
   };
   const visibleText = (name, part) =>
@@ -174,20 +181,19 @@ try {
   );
   check("AC-01 one meter per chip, the running model's on a fallback");
   // AC-02: short name, long description, no email.
-  const threadName = await chip("thread").getAttribute("aria-label");
+  const threadName = await model("thread").getAttribute("aria-label");
   assert.match(
     threadName,
     /^Model: Claude Code · Opus 5\.5, 5% of 5-hour limit left\. Change model$/,
   );
   const threadDescription = await described("thread");
-  assert.match(threadDescription, /Claude Max account on Studio Mac/);
+  assert.match(threadDescription, /Claude account on Studio Mac/);
   assert.match(threadDescription, /including use from other machines and apps/);
-  assert.doesNotMatch(threadDescription, /@/);
-  check("AC-02 name and description", `${threadName} | ${threadDescription}`);
+  // The description ends with who is signed in, as the chip's tooltip does.
+  assert.match(threadDescription, /Signed in as pat@example\.com$/);
+  check("AC-02 name and description, signed-in account", `${threadName} | ${threadDescription}`);
   // AC-08: 5% left is amber, never red.
-  const threadRing = await chip("thread")
-    .locator('[data-model-chip-part="usage-ring"]')
-    .getAttribute("class");
+  const threadRing = await ringOf("thread").getAttribute("class");
   assert.match(threadRing, /stroke-warning/);
   assert.doesNotMatch(threadRing, /stroke-destructive/);
   check("AC-08 5% left is amber");
@@ -196,31 +202,39 @@ try {
   assert.deepEqual(await visibleText("spent", "usage-detail"), ["· resets in 2d 5h"]);
   assert.deepEqual(await visibleText("spent-next", "usage-detail"), ["· next on GPT-6.1-Sol"]);
   assert.match(
-    await chip("spent-next").getAttribute("aria-label"),
+    await model("spent-next").getAttribute("aria-label"),
     /the next turn runs on GPT-6\.1-Sol/,
   );
   assert.deepEqual(await visibleText("extra", "usage-value"), ["Extra"]);
-  const extraRing = await chip("extra")
-    .locator('[data-model-chip-part="usage-ring"]')
-    .getAttribute("class");
+  const extraRing = await ringOf("extra").getAttribute("class");
   assert.match(extraRing, /stroke-warning/);
   check("AC-03 Limit · resets in, next on, extra usage amber");
   // AC-05: states.
-  assert.deepEqual(await visibleText("stale", "usage-value"), ["~42%"]);
-  assert.equal(
-    await chip("stale")
-      .locator('[data-model-chip-part="usage-ring"] circle[stroke-dasharray]')
-      .count(),
-    1,
-  );
-  assert.deepEqual(await visibleText("loading", "usage-value"), ["Checking"]);
-  assert.deepEqual(await visibleText("unknown", "usage-value"), ["Usage unavailable"]);
-  assert.deepEqual(await visibleText("offline", "usage-value"), ["Offline"]);
+  // A quiet state is the ring alone on a chip; its words are in the tooltip and the name.
+  assert.deepEqual(await visibleText("stale", "usage-value"), []);
+  assert.equal(await ringOf("stale").locator("circle[stroke-dasharray]").count(), 1);
+  assert.deepEqual(await visibleText("loading", "usage-value"), []);
+  assert.deepEqual(await visibleText("unknown", "usage-value"), []);
+  assert.deepEqual(await visibleText("offline", "usage-value"), []);
   assert.deepEqual(await visibleText("pertoken", "usage-value"), ["per token"]);
   assert.equal(await chip("pertoken").locator('[data-model-chip-part="usage-ring"]').count(), 0);
   assert.equal(await chip("switch").locator("[data-model-usage-meter]").count(), 0);
-  assert.doesNotMatch(await chip("switch").getAttribute("aria-label"), /%/);
+  assert.doesNotMatch(await model("switch").getAttribute("aria-label"), /%/);
   check("AC-05 stale, loading, unknown, offline, per token, account switch");
+  // The usage ring is its own button: it opens this account's usage, the model opens the picker.
+  const ring = chip("home").locator("[data-model-usage-button]");
+  assert.match(await ring.getAttribute("aria-label"), /^Usage: .+\. Show usage$/);
+  await ring.click();
+  await page.locator("[data-model-usage-popup] [data-model-picker-usage-band]").waitFor();
+  assert.equal(await page.locator("[data-model-picker-content]").count(), 0);
+  await page.keyboard.press("Escape");
+  await page.locator("[data-model-usage-popup]").waitFor({ state: "detached" });
+  await model("home").click();
+  await page.locator("[data-model-picker-content]").waitFor();
+  assert.equal(await page.locator("[data-model-usage-popup]").count(), 0);
+  await page.keyboard.press("Escape");
+  await page.locator("[data-model-picker-content]").waitFor({ state: "detached" });
+  check("usage ring is its own button");
 
   // AC-06: the limits view by account.
   for (const width of [390, 1280]) {

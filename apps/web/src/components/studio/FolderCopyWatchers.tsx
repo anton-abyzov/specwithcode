@@ -84,6 +84,7 @@ export function FolderCopyWatchers() {
               : watch.sourceLabel
           }
           restored={watch.restored ?? false}
+          reviewOnly={watch.reviewOnly ?? false}
           onDone={() => unwatchCopy(key)}
         />
       ))}

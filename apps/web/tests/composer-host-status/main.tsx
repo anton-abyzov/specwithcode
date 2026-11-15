@@ -205,7 +205,6 @@ function Harness() {
               savedMachineMissing={false}
               onView={() => {}}
               onMove={null}
-              onStart={null}
               onAllowWorkers={null}
             />
             <ComposerVoiceMenu

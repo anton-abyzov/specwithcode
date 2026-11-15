@@ -3054,6 +3054,10 @@ export const zh: PhraseCatalog = {
   "Auto balance matching projects": "自动均衡匹配的项目",
   "Add to another machine…": "添加到另一台电脑…",
   "Copy to another machine…": "复制到另一台电脑…",
+  Link: "关联",
+  "Link with the project on {machine}…": "与 {machine} 上的项目关联…",
+  "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
+    "让此项目与 {machine} 上的项目成为同一个项目，只有一个协调者。会话和文件保持原位。",
   "Leave this machine…": "离开这台电脑…",
   "Another project or no project": "其他项目或不使用项目",
   "Rename a machine": "重命名电脑",
@@ -3867,7 +3871,6 @@ export const zh: PhraseCatalog = {
   "Nothing is ready on {machines}, so chats there will not start.":
     "{machines} 上没有可用的智能体，所以那里的聊天无法开始。",
   "{agent} on {machine}": "{machine} 上的 {agent}",
-  "Can’t connect": "无法连接",
   "Catching up": "正在同步",
   "Chats that need you": "需要你处理的对话",
   "Chats that need you or are working are listed above.": "需要你处理或正在进行的对话列在上方。",
@@ -4404,14 +4407,17 @@ export const zh: PhraseCatalog = {
   "Installs from npm": "npm 安装量",
   "View this project on": "查看此项目的电脑",
   "Move coordinator to {machine}…": "将协调器移到 {machine}…",
-  "Open coordinator on {machine}": "打开 {machine} 上的协调者",
-  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.":
-    "{machine} 保留了之前的协调者。打开会让它在这个协调者旁边再次运行；不会移动任何内容。",
+  "coordinator paused": "协调器已暂停",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
+    "{machine} 保留了之前的协调器，现在只运行 worker。查看它以阅读那段对话或重新运行。",
   "Machine access settings": "电脑访问设置",
   "{machine} offline": "{machine} 离线",
   "workers only": "仅工作节点",
   "move pending": "移动待确认",
-  "separate project": "独立项目",
+  coordinator: "协调者",
+  "not linked": "未关联",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
+    "未关联：{machine} 为此仓库运行自己的协调者、线程和记忆。",
   "{value}Messages go to Percy. {value2}": "{value}消息会发送给 Percy。{value2}",
   "Show only topics that need you in {project}": "只显示 {project} 中需要你处理的主题",
   "New topic in {title}": "在 {title} 中新建主题",
@@ -4821,4 +4827,106 @@ export const zh: PhraseCatalog = {
   "Sheet tabs": "工作表标签",
   "This sheet is too large to open here.": "此表格太大，无法在此打开。",
   Sheet: "表格",
+  "Can’t reach it · retrying": "无法连接 · 正在重试",
+  "Chats and projects not counted": "聊天和项目未计入",
+  "Nothing running": "没有正在运行的任务",
+  "update available": "有可用更新",
+  current: "最新",
+  "{version} is available": "{version} 可用",
+  "still reading {machines}": "仍在读取 {machines}",
+  "catching up": "正在同步",
+  connecting: "正在连接",
+  "not reachable": "无法连接",
+  "unable to connect": "无法建立连接",
+  extra: "额外",
+  "Reconnecting to {machine}…": "正在重新连接 {machine}…",
+  "Catching up with {machine}…": "正在与 {machine} 同步…",
+  "{machine} isn't answering": "{machine} 没有响应",
+  "Can't reach {machine}": "无法访问 {machine}",
+  "This device has no network": "此设备没有网络",
+  "Connection to {machine} failed": "连接 {machine} 失败",
+  "{machine} is not connected": "{machine} 未连接",
+  "{machine} needs an app update": "{machine} 需要更新应用",
+  "{machine} is connected": "{machine} 已连接",
+  "Not answering": "无响应",
+  "No network": "无网络",
+  "Retrying by itself": "正在自动重试",
+  "Reconnects when the network is back": "网络恢复后会重新连接",
+  "Last answered just now": "刚刚有过响应",
+  "Last answered {age} ago": "上次响应在 {age} 前",
+  "Reconnecting to this host…": "正在重新连接此主机…",
+  "This host isn't answering": "此主机没有响应",
+  "Can't reach this host": "无法访问此主机",
+  "Some machines can't be reached": "部分机器无法访问",
+  "not answering": "无响应",
+  reconnecting: "正在重新连接",
+  "This host is connected": "此主机已连接",
+  "Catching up with this host…": "正在与此主机同步…",
+  "Connection to this host failed": "连接此主机失败",
+  "This host is not connected": "此主机未连接",
+  "Installed, matches this app ({version}).": "已安装，与此应用一致（{version}）。",
+  "Installed, version {version}; this app is {appVersion}.":
+    "已安装，版本 {version}；此应用为 {appVersion}。",
+  "Installed.": "已安装。",
+  "Installed, but it runs another copy of the app at {path}.":
+    "已安装，但它运行的是 {path} 处的另一个应用副本。",
+  "The command points at a copy of the app that is gone ({path}). Repair points it at this app.":
+    "该命令指向一个已不存在的应用副本（{path}）。修复会让它指向此应用。",
+  "{path} comes from the command-line install of SpecWithCode, which keeps it up to date. The app leaves it as it is.":
+    "{path} 来自 SpecWithCode 的命令行安装，由它保持最新。应用不会改动它。",
+  "Something else is already at {path}. The app will not replace it; move it away to install the app's command there.":
+    "{path} 已有其他文件。应用不会替换它；把它移走后才能在那里安装应用的命令。",
+  "Not installed.": "未安装。",
+  "Open a new terminal window to use it.": "打开一个新的终端窗口即可使用。",
+  "{folder} is not on your terminal's PATH yet, so a new terminal will not find the command.":
+    "{folder} 还不在终端的 PATH 中，新终端找不到该命令。",
+  "The app could not read your terminal's PATH. If a new terminal says command not found, add this line.":
+    "应用无法读取终端的 PATH。如果新终端提示 command not found，请添加这一行。",
+  "Add it to {file}": "添加到 {file}",
+  "Adds only this line, marked as added by SpecWithCode. Remove takes it out again.":
+    "只添加这一行，并标记为 SpecWithCode 添加。移除会再删掉它。",
+  "Added to {file}. Open a new terminal window to use it.":
+    "已添加到 {file}。打开新的终端窗口即可使用。",
+  "The specwithcode command is this app driven from a terminal: the same version as the app, talking to the app that is already running. It is not a second copy and needs no separate sign-in. Use it over SSH, on a machine with no screen, or in scripts and agents.":
+    "specwithcode 命令就是在终端里操作此应用：版本相同，并与已在运行的应用通信。它不是第二个副本，也不需要单独登录。可用于 SSH、没有屏幕的机器、脚本和代理。",
+  "What is this?": "这是什么？",
+  "Installing writes {path}, which runs the command inside the app, and adds {folder} to your user PATH. No administrator password.":
+    "安装会写入 {path}（它运行应用内的命令），并把 {folder} 加入你的用户 PATH。无需管理员密码。",
+  "Installing adds {path}, a link to the command inside the app. Nothing else changes, and no administrator password is needed.":
+    "安装会添加 {path}，即指向应用内命令的链接。其他都不变，也不需要管理员密码。",
+  "Install command-line tool": "安装命令行工具",
+  "Use this copy": "使用此副本",
+  "A different specwithcode at {path} comes first on your PATH, so a terminal runs that one instead. The app did not change it.":
+    "{path} 处另一个 specwithcode 在 PATH 中排在前面，终端会运行它。应用没有改动它。",
+  "Command line": "命令行",
+  "A development build has no command to install.": "开发版本没有可安装的命令。",
+  "This copy of the app runs from a disk image or a temporary folder. Move SpecWithCode to Applications and open it from there first.":
+    "此应用副本从磁盘映像或临时文件夹运行。请先把 SpecWithCode 移到“应用程序”并从那里打开。",
+  "This copy of the app has no specwithcode command inside it. Reinstall the app.":
+    "此应用副本中没有 specwithcode 命令。请重新安装应用。",
+  "Add to PATH": "添加到 PATH",
+  "permission denied": "没有权限",
+  "not found": "未找到",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "应用处理期间 {path} 发生了变化，因此没有替换任何内容。请检查后重试。",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "应用不知道此 shell 的启动文件。请自行添加这一行。",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path} 已存在，未作更改。请自行添加这一行。",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "无法完整读取 {path}，因此应用没有修改它。请自行添加这一行。",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "无法修改 {path}（{error}）。请自行添加这一行。",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "命令已删除，但无法移除 {path} 中的那一行（{error}）。请自行删除标有 Added by SpecWithCode 的行。",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "命令已删除，但 {folder} 仍在你的用户 PATH 中。请在“环境变量”中自行移除。",
+  "Could not read your user PATH.": "无法读取你的用户 PATH。",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "无法更新你的用户 PATH。请自行添加 {folder}。",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "应用更新期间你的用户 PATH 发生了变化。未作任何更改，请重试。",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "无法把 AppImage 的路径写入命令。请把 AppImage 移到更简单的文件夹，再从那里打开。",
+  "Could not write {path} ({error}).": "无法写入 {path}（{error}）。",
 };

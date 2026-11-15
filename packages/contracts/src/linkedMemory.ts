@@ -51,6 +51,12 @@ export const LinkedMemoryExportInput = Schema.Struct({
   ),
   /** Only `digest` is wanted: no files or tombstones are sent. Older servers ignore it. */
   digestOnly: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The asking machine's own copy, when another machine's server asks. The
+   * answering copy must list that exact copy, not only its machine. Older
+   * servers neither send nor check it.
+   */
+  forProjectId: Schema.optionalKey(ProjectId),
 });
 export type LinkedMemoryExportInput = typeof LinkedMemoryExportInput.Type;
 

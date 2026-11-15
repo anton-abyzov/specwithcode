@@ -14,7 +14,10 @@ import {
   mapRemoteEnvironmentError,
 } from "./errors.ts";
 import { DPOP_RETRY_HINT, DPOP_UNKNOWN_HINT } from "../relay/errorPresentation.ts";
-import { ManagedRelayRequestFailedError } from "../relay/managedRelay.ts";
+import {
+  ManagedRelayRequestFailedError,
+  ManagedRelayRequestTimeoutError,
+} from "../relay/managedRelay.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import { RemoteEnvironmentAuthFetchError, RemoteEnvironmentAuthTimeoutError } from "../rpc/http.ts";
 
@@ -36,6 +39,55 @@ describe("mapManagedRelayError", () => {
       detail: "Relay timed out while contacting the environment endpoint.",
       traceId: "trace-server-timeout",
     });
+  });
+
+  it("marks only a relay request with no answer as relay unreachable, with the network hint", () => {
+    const noAnswer = mapManagedRelayError(
+      new ManagedRelayRequestFailedError({
+        action: "connect relay environment",
+        transportFailed: true,
+        cause: new TypeError("Failed to fetch"),
+      }),
+    );
+    expect(noAnswer).toMatchObject({ reason: "relay-unavailable", relayUnreachable: true });
+    expect(noAnswer.message).toContain(NETWORK_BLOCKING_HINT);
+
+    const timedOut = mapManagedRelayError(
+      new ManagedRelayRequestTimeoutError({
+        activity: "Relay environment connection",
+        timeoutMs: 10_000,
+        traceId: null,
+      }),
+    );
+    expect(timedOut).toMatchObject({ reason: "timeout", relayUnreachable: true });
+    expect(timedOut.message).toContain(NETWORK_BLOCKING_HINT);
+  });
+
+  it("does not blame this device's network when the relay answered about the machine", () => {
+    const silentService = new RelayEnvironmentEndpointTimedOutError({
+      code: "environment_endpoint_timed_out",
+      traceId: "trace-silent",
+    });
+    const answered = [
+      mapManagedRelayError(
+        new ManagedRelayRequestFailedError({
+          action: "connect relay environment",
+          cause: silentService,
+          relayError: silentService,
+        }),
+      ),
+      // A status the relay sent, such as its own deadline (HTTP 504), with no decoded error.
+      mapManagedRelayError(
+        new ManagedRelayRequestFailedError({
+          action: "connect relay environment",
+          cause: new Error("HTTP 504"),
+        }),
+      ),
+    ];
+    for (const mapped of answered) {
+      expect(mapped.message).not.toContain(NETWORK_BLOCKING_HINT);
+      expect(mapped._tag === "ConnectionTransientError" && mapped.relayUnreachable).toBeFalsy();
+    }
   });
 
   it("presents clock skew as one possible cause for a generic DPoP error", () => {
@@ -85,9 +137,7 @@ describe("mapRemoteDpopEnvironmentError", () => {
       reason: "invalid_credential",
       traceId: "trace-descriptor",
     });
-    expect(mapRemoteEnvironmentError(error, "relay").message).toBe(
-      "The environment credential is invalid.",
-    );
+    expect(mapRemoteEnvironmentError(error).message).toBe("The environment credential is invalid.");
     expect(mapRemoteDpopEnvironmentError(error).message).toBe(
       `The environment credential is invalid. ${DPOP_UNKNOWN_HINT}`,
     );
@@ -99,12 +149,13 @@ describe("mapRemoteDpopEnvironmentError", () => {
       cause: new TypeError("Failed to fetch"),
     }),
     new RemoteEnvironmentAuthTimeoutError("https://environment.example.test", 10_000),
-  ])("suggests another network when the relay endpoint cannot be reached: $_tag", (error) => {
+  ])("does not blame this device's network when the machine's address fails: $_tag", (error) => {
+    // The relay already answered; a silent or restarting service fails the
+    // same way a blocked network would.
     const mapped = mapRemoteDpopEnvironmentError(error);
-    expect(mapped).toMatchObject({
-      _tag: "ConnectionTransientError",
-      detail: `${error.message} ${NETWORK_BLOCKING_HINT}`,
-    });
+    expect(mapped).toMatchObject({ _tag: "ConnectionTransientError", detail: error.message });
+    expect(mapped.message).not.toContain(NETWORK_BLOCKING_HINT);
+    expect(mapped._tag === "ConnectionTransientError" && mapped.relayUnreachable).toBeFalsy();
   });
 
   it("does not present a generic environment auth error as confirmed clock skew", () => {
@@ -139,11 +190,7 @@ it("preserves the required device reapproval reason for direct and relay connect
     reason: "device_reapproval_required",
     traceId: "trace-reapprove",
   });
-  for (const mapped of [
-    mapRemoteEnvironmentError(error),
-    mapRemoteEnvironmentError(error, "relay"),
-    mapRemoteDpopEnvironmentError(error),
-  ]) {
+  for (const mapped of [mapRemoteEnvironmentError(error), mapRemoteDpopEnvironmentError(error)]) {
     expect(mapped.message).toContain("Approve this device again");
     // Says so as data, so a fleet machine can be paired again on its own.
     expect(mapped._tag === "ConnectionBlockedError" && mapped.reapprovalRequired).toBe(true);
@@ -162,7 +209,6 @@ describe("mapRemoteEnvironmentError rate limits", () => {
   it("keeps retry-after so the supervisor waits it out", () => {
     const mapped = mapRemoteEnvironmentError(
       new EnvironmentRateLimitedError({ code: "rate_limited", retryAfterSeconds: 173 }),
-      "relay",
     );
     expect(mapped).toMatchObject({
       _tag: "ConnectionTransientError",

@@ -87,7 +87,7 @@ Tests:
 
 ## App notes
 
-- The launcher icon is adaptive. The foreground is `apps/mobile/assets/android-icon-foreground.png`, the background is `#5B6CFF`, and the monochrome layer (for themed icons) is `android-icon-mark.png`.
+- The launcher icon is adaptive. The foreground and monochrome layers (`res/drawable-xxxhdpi/ic_launcher_foreground.png` and `ic_launcher_monochrome.png`) and the gradient background (`res/drawable/ic_launcher_background.xml`, `#6E7DFF` to `#4A58E8`) are written by `vp run brand:rollout` from `assets/brand`.
 - `res/xml/network_security_config.xml` allows plain `http`, because manual pairing reaches machines on the local network by IP address. Connect links use `https`.
 - Credentials and the Connect session are sealed with an AES-GCM key that lives in the Android Keystore and kept in `files/datastore/credentials.preferences_pb`. The DPoP key for Connect is an EC P-256 Keystore key; its DER signatures are converted to raw `r || s`. `res/xml/backup_rules.xml` (Android 11 and older) and `res/xml/data_extraction_rules.xml` (Android 12 and newer) keep that file, `machines.json` and the install's Connect device id out of cloud backup and device transfer.
 - Connect sign-in uses the account service's frontend API: OAuth (Google by default) opens in a Custom Tab and returns to `clerk://com.specwithcode.android.callback`, the redirect the Expo app used. The vendor's Android SDK is not used because its current release needs Kotlin 2.4 and OkHttp 5. Sign-in against the hosted service has not been tried from this build; it needs a person at the sign-in page.

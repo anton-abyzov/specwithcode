@@ -1,7 +1,12 @@
 import { ThreadId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveMediaSource } from "./mediaSource.ts";
+import { classifyMarkdownImageSource } from "./markdownImages.ts";
+import {
+  isWorkspaceRelativeMediaSource,
+  markdownImageResource,
+  resolveMediaSource,
+} from "./mediaSource.ts";
 
 const threadId = ThreadId.make("thread-1");
 const attachmentId =
@@ -89,7 +94,7 @@ describe("resolveMediaSource", () => {
         },
         srcFragment: "#mark",
         access: "environment",
-        resource: { _tag: "media-file", threadId, path: "/repo/screens/logo.svg" },
+        resource: { _tag: "media-file", threadId, path: "/repo/screens/logo.svg", hostOnly: true },
       });
     });
 
@@ -104,6 +109,55 @@ describe("resolveMediaSource", () => {
         access: "environment",
         resource: { _tag: "media-file", path: "/repo/docs/logo.svg" },
         reference: { relativePath: "docs/logo.svg" },
+      });
+    });
+
+    it("keeps a caller-resolved path host-only when its source was workspace-relative", () => {
+      const resolve = (resolvedFileRelative: boolean) =>
+        resolveMediaSource("/repo/docs/logo.svg", {
+          threadId,
+          workspaceRoot: "/repo",
+          resolvedFilePath: "/repo/docs/logo.svg",
+          resolvedFileRelative,
+        });
+      expect(resolve(true)).toMatchObject({
+        resource: { _tag: "media-file", path: "/repo/docs/logo.svg", hostOnly: true },
+      });
+      expect(resolve(false)).toMatchObject({
+        resource: { _tag: "media-file", path: "/repo/docs/logo.svg" },
+      });
+      expect(resolve(false)).not.toHaveProperty("resource.hostOnly");
+    });
+
+    it.each([
+      ["docs/logo.svg", true],
+      ["./docs/logo.svg", true],
+      ["docs\\logo.svg", true],
+      ["/repo/docs/logo.svg", false],
+      ["file:///repo/docs/logo.svg", false],
+      ["C:\\repo\\logo.svg", false],
+      ["https://example.com/logo.svg", false],
+      ["~/logo.svg", false],
+    ])("tells whether %s was written relative to the workspace", (source, relative) => {
+      expect(isWorkspaceRelativeMediaSource(source)).toBe(relative);
+    });
+
+    it("builds an embedded image's resource host-only exactly when it was relative", () => {
+      const resource = (source: string) => {
+        const classified = classifyMarkdownImageSource(source, "/repo");
+        if (classified._tag !== "WorkspaceFile") throw new Error(`${source} is not a host file`);
+        return markdownImageResource(threadId, classified);
+      };
+      expect(resource("docs/logo.svg")).toEqual({
+        _tag: "media-file",
+        threadId,
+        path: "/repo/docs/logo.svg",
+        hostOnly: true,
+      });
+      expect(resource("/repo/docs/logo.svg")).toEqual({
+        _tag: "media-file",
+        threadId,
+        path: "/repo/docs/logo.svg",
       });
     });
 

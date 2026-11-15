@@ -140,6 +140,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setNotificationBadge: (badge) =>
     ipcRenderer.invoke(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, badge),
   setKeepAwake: (state) => ipcRenderer.invoke(IpcChannels.SET_KEEP_AWAKE_CHANNEL, state),
+  commandLineTool: (action) => ipcRenderer.invoke(IpcChannels.COMMAND_LINE_TOOL_CHANNEL, action),
   ...(clientPlatform === "darwin"
     ? {
         runComputerUseAction: async (action) => {

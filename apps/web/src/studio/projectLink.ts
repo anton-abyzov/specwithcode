@@ -9,9 +9,11 @@ import {
   allocateNoteName,
   ProjectLinkError,
   logicalProjectMemberKey,
+  repositoryGroupingKeyOf,
   type LogicalProjectMember,
   type ProjectLinkNote,
   type ProjectLinkNoteWrite,
+  type ProjectLinkSupersededNote,
   type EnvironmentId,
   type ProjectId,
   type ProjectLinkAcceptInput,
@@ -35,6 +37,7 @@ import {
   pendingSupersede,
 } from "@specweave-studio/shared/linkedPairSync";
 import { connectionAtomRuntime } from "../connection/runtime";
+import { repositoryRelativePath } from "./duplicateProjectLink";
 import { isProjectFolder } from "./projectMachineFolders";
 import { isOrdinaryProjectChoice, type ScratchRootLookup } from "./projectListVisibility";
 
@@ -310,6 +313,48 @@ export function linkCandidates<P extends EnvironmentProject>(
   });
 }
 
+/**
+ * Projects on other machines that track exactly the same repository as `project`
+ * (a fork is another repository) at the same place inside it (apps/web and
+ * apps/api in one monorepo are different work), and are not part of it or of
+ * another shared project: what "Link with the project on <machine>…" offers.
+ * One per machine, the most recently updated; the dialog lists that machine's
+ * others. Nothing is offered for a project whose repository has no remote to
+ * compare or whose place in it is unknown.
+ */
+export function sameRepositoryLinkOffers<P extends EnvironmentProject>(
+  projects: ReadonlyArray<P>,
+  project: Pick<
+    EnvironmentProject,
+    "environmentId" | "workspaceSettings" | "repositoryIdentity" | "workspaceRoot"
+  >,
+  scratchRootFor: ScratchRootLookup,
+): P[] {
+  const keyOf = (item: Pick<EnvironmentProject, "repositoryIdentity" | "workspaceRoot">) => {
+    const inside = repositoryRelativePath(item);
+    return item.repositoryIdentity && inside !== null
+      ? `${repositoryGroupingKeyOf(item.repositoryIdentity).toLowerCase()}\u0000${inside}`
+      : null;
+  };
+  const key = keyOf(project);
+  if (key === null) return [];
+  const offers = new Map<string, P>();
+  for (const item of linkCandidates(projects, project, scratchRootFor, null)) {
+    if (keyOf(item) !== key) continue;
+    // A copy of another shared project has to leave that one first; the dialog says so.
+    if (
+      (item.workspaceSettings?.logicalProject?.members ?? []).some(
+        (member) => member.environmentId !== item.environmentId || member.projectId !== item.id,
+      )
+    )
+      continue;
+    const listed = offers.get(item.environmentId);
+    if (!listed || item.updatedAt.localeCompare(listed.updatedAt) > 0)
+      offers.set(item.environmentId, item);
+  }
+  return [...offers.values()];
+}
+
 /** The copy that keeps its coordinator by default: the one used most recently. */
 export function defaultKeptSide(
   here: Pick<ProjectLinkPreview, "lastCoordinatorActivityAt" | "keepRefusal">,
@@ -409,6 +454,39 @@ export function noteWrites(
     if (row.kind === "conflict" && row.joining && row.kept && choices[row.name] === "both")
       pushKeptBoth(writes, taken, row.name, row.joining.content, joiningMachine);
   return writes;
+}
+
+/**
+ * The joining versions the review set aside in favour of the kept copy's text
+ * ("keep the kept machine's" and "keep both"). The kept copy records each as an
+ * earlier version of its note, so the first memory sync hands the joining copy
+ * the kept text instead of marking the note as edited on both machines. Empty
+ * when the joining server sends no hashes.
+ */
+export function supersededNotes(
+  rows: ReadonlyArray<NoteMergeRow>,
+  choices: Readonly<Record<string, NoteChoice>>,
+): ProjectLinkSupersededNote[] {
+  return rows.flatMap((row) => {
+    const choice = choices[row.name];
+    const hash = row.joining?.contentSha256;
+    const keptHash = row.kept?.contentSha256;
+    return row.kind === "conflict" &&
+      row.kept &&
+      hash !== undefined &&
+      /^[0-9a-f]{64}$/u.test(hash) &&
+      (choice === "kept" || choice === "both")
+      ? [
+          {
+            name: row.name,
+            contentSha256: hash,
+            ...(keptHash !== undefined && /^[0-9a-f]{64}$/u.test(keptHash)
+              ? { keptSha256: keptHash }
+              : {}),
+          },
+        ]
+      : [];
+  });
 }
 
 /**

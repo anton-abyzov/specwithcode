@@ -10,25 +10,27 @@ import {
   ChevronDownIcon,
   CopyPlusIcon,
   DoorOpenIcon,
+  Link2Icon,
   MessageSquareShareIcon,
   MoveRightIcon,
-  SquareArrowOutUpRightIcon,
   Settings2Icon,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTx } from "../../i18n";
 import { randomUUID } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { highestEpoch, projectLink } from "../../studio/projectLink";
+import { useProjects } from "../../state/entities";
+import { highestEpoch, projectLink, sameRepositoryLinkOffers } from "../../studio/projectLink";
 import {
   checkoutKeyEnvironmentId,
   type OrchestratorCopy,
 } from "../../studio/projectCoordinatorMachine";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
-import { useMachineNickname } from "../../studio/machineNickname";
+import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { requestAway } from "../../studio/awayRequest";
 import { requestMigrateProjectThreads } from "../handoff/HandOffMachineDialog";
 import { toastManager } from "../ui/toast";
+import { ProjectLinkDialog, type ProjectLinkTarget } from "./ProjectLinkDialog";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -43,12 +45,18 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 
+// What each machine's copy is, beside its name. "not linked": a checkout of the same
+// repository registered on its own, with its own coordinator, threads and memory.
 const ROLE_NOTE: Record<OrchestratorCopy["role"], string> = {
-  coordinator: "",
+  coordinator: "coordinator",
   workers: "workers only",
   pending: "move pending",
-  independent: "separate project",
+  independent: "not linked",
 };
+
+/** A workers-only copy that kept its coordinator from before says so: it is paused, not gone. */
+const noteOf = (copy: OrchestratorCopy) =>
+  copy.canStart ? "coordinator paused" : ROLE_NOTE[copy.role];
 
 /** Runs the pending action once the popup holding this has left the DOM. */
 function AfterUnmount({ pending }: { pending: { current: (() => void) | null } }) {
@@ -69,12 +77,11 @@ function AfterUnmount({ pending }: { pending: { current: (() => void) | null } }
  * with the viewed machine (move its running threads, leave). Viewing reads that
  * machine's server and moves nothing; every move is its own confirmed action.
  *
- * Each other machine gets at most one coordinator action, named by its state:
- * a copy that kept its own coordinator from before (its binding was handed
- * over, so it can start again) gets "Open coordinator on X", which runs that
- * coordinator again and shows it; a copy that only runs workers gets "Move
- * coordinator to X…"; a copy that already runs a coordinator gets none, since
- * viewing it above is how it is opened.
+ * Each machine appears once, in the view list, with a note naming its state:
+ * coordinator, workers only, coordinator paused (it kept its coordinator from
+ * before; its own page offers to run it again), or not linked. The only
+ * coordinator item below is "Move coordinator to X…", for a machine whose copy
+ * runs workers only and kept nothing.
  */
 export function OrchestratorSwitcher({
   label,
@@ -87,10 +94,11 @@ export function OrchestratorSwitcher({
   savedMachineMissing,
   onView,
   onMove,
-  onStart,
   onAllowWorkers,
   onMigrate = null,
   onCopy = null,
+  links = [],
+  onLink = null,
   onLeave = null,
   identity = null,
 }: {
@@ -110,11 +118,6 @@ export function OrchestratorSwitcher({
   onView: ((key: string) => void) | null;
   /** Opens the confirmed coordinator move; null when it cannot be offered. */
   onMove: ((key: string) => void) | null;
-  /**
-   * Runs the coordinator a copy kept from before again; resolves true once it runs,
-   * and the switcher then shows that copy.
-   */
-  onStart: ((key: string) => Promise<boolean> | void) | null;
   onAllowWorkers: (() => void) | null;
   /** Opens "Move running threads" for the viewed machine's threads; null while it is offline. */
   onMigrate?: (() => void) | null;
@@ -123,6 +126,13 @@ export function OrchestratorSwitcher({
    * dialog asks where the coordinator runs, so adding, moving and syncing all start here.
    */
   onCopy?: (() => void) | null;
+  /**
+   * Projects on other machines that track the same repository and are not part of this
+   * one, at most one per machine: each gets "Link with the project on X…".
+   */
+  links?: ReadonlyArray<{ key: string; machine: string }>;
+  /** Opens the link dialog on that project; null when linking cannot be offered. */
+  onLink?: ((key: string) => void) | null;
   /** "Leave this machine…": Away mode for everything live here. */
   onLeave?: (() => void) | null;
 }) {
@@ -130,18 +140,6 @@ export function OrchestratorSwitcher({
   // left is hidden under an Activity, and a menu hidden mid-close stays mounted
   // as an invisible layer that catches clicks.
   const pendingView = useRef<(() => void) | null>(null);
-  // Open shows the started copy only while this switcher still shows the copy it was
-  // clicked on: a start that settles after the person viewed another copy or left the
-  // project never pulls them back.
-  const shown = useRef({ mounted: true, current });
-  shown.current.current = current;
-  useEffect(() => {
-    const state = shown.current;
-    state.mounted = true;
-    return () => {
-      state.mounted = false;
-    };
-  }, []);
   const tx = useTx();
   const runsOn = tx("Runs on {machine}", { machine: label });
   // The chip names the machine and shows its state by the dot alone, in the machine's own
@@ -166,7 +164,8 @@ export function OrchestratorSwitcher({
   );
   const listed = copies.filter((copy) => isProjectFolder(copy.folder));
   const viewable = (listed.length >= 2 || unknown.length > 0) && onView !== null;
-  const machineActions = onCopy !== null || onLeave !== null;
+  const machineActions =
+    onCopy !== null || onLeave !== null || (onLink !== null && links.length > 0);
   if (!viewable && !machineActions)
     return (
       <span
@@ -183,25 +182,26 @@ export function OrchestratorSwitcher({
   const nameOf = (copy: OrchestratorCopy) =>
     ambiguous(copy.machine) ? `${copy.machine} · ${copy.folder}` : copy.machine;
   const others = listed.filter((copy) => copy.key !== current);
-  // One coordinator action per machine. A copy that kept its coordinator from before is
-  // opened (run again); moving this one there would leave two conversations for one
-  // place. A machine where any copy runs its own coordinator, listed or not, already has
-  // one: viewing it opens it, so it gets nothing here.
+  // One coordinator item per machine at most. A machine where any copy runs its own
+  // coordinator, or kept one (paused), gets none: viewing it opens it, and a paused one
+  // offers to run again on its own page. Moving this one there would leave two
+  // conversations for one place.
   const hostOf = (copy: OrchestratorCopy) => checkoutKeyEnvironmentId(copy.key);
-  const coordinating = new Set(copies.filter((copy) => copy.role === "coordinator").map(hostOf));
-  const coordinatorActions: Array<{ copy: OrchestratorCopy; kind: "open" | "move" }> = [];
+  const coordinating = new Set(
+    copies.filter((copy) => copy.role === "coordinator" || copy.canStart).map(hostOf),
+  );
+  const coordinatorActions: OrchestratorCopy[] = [];
   for (const host of new Set(others.map(hostOf))) {
-    if (coordinating.has(host)) continue;
-    const there = others.filter((copy) => hostOf(copy) === host);
-    const open = onStart ? there.find((copy) => copy.canStart) : undefined;
-    const move = onMove
-      ? there.find((copy) => copy.role === "workers" || copy.role === "independent")
-      : undefined;
-    if (open) coordinatorActions.push({ copy: open, kind: "open" });
-    else if (move) coordinatorActions.push({ copy: move, kind: "move" });
+    if (coordinating.has(host) || !onMove) continue;
+    const move = others.find(
+      (copy) => hostOf(copy) === host && (copy.role === "workers" || copy.role === "independent"),
+    );
+    if (move) coordinatorActions.push(move);
   }
-  // Copy and the coordinator actions act on this project; threads and Leave on the machine.
-  const projectActions = onCopy !== null || coordinatorActions.length > 0;
+  // Linking is what makes two projects for one repository one project; nothing is copied.
+  const linkActions = onLink ? links : [];
+  // Copy, link and the coordinator actions act on this project; threads and Leave on the machine.
+  const projectActions = onCopy !== null || coordinatorActions.length > 0 || linkActions.length > 0;
   return (
     <Menu>
       <span className="project-muted sws-host sws-execution-control">
@@ -247,8 +247,18 @@ export function OrchestratorSwitcher({
                 ...listed.map((copy) => ({
                   key: copy.key,
                   name: nameOf(copy),
-                  note: ROLE_NOTE[copy.role],
-                  hint: nameOf(copy),
+                  note: noteOf(copy),
+                  hint: copy.canStart
+                    ? tx(
+                        "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.",
+                        { machine: nameOf(copy) },
+                      )
+                    : copy.role === "independent"
+                      ? tx(
+                          "Not linked: {machine} runs its own coordinator, threads and memory for this repository.",
+                          { machine: nameOf(copy) },
+                        )
+                      : nameOf(copy),
                 })),
                 // Linked, but this app has no connection to it, so it has no copy to show.
                 ...unknown.map((ref) => ({
@@ -296,39 +306,32 @@ export function OrchestratorSwitcher({
                   {tx("Copy to another machine…")}
                 </MenuItem>
               ) : null}
-              {coordinatorActions.map(({ copy, kind }) =>
-                kind === "open" ? (
-                  <MenuItem
-                    key={copy.key}
-                    data-orchestrator-start={copy.key}
-                    title={tx(
-                      "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.",
-                      { machine: nameOf(copy) },
-                    )}
-                    onClick={() => {
-                      const from = current;
-                      const opened = onStart?.(copy.key);
-                      void Promise.resolve(opened).then((ok) => {
-                        const state = shown.current;
-                        if (ok && onView && state.mounted && state.current === from)
-                          onView(copy.key);
-                      });
-                    }}
-                  >
-                    <SquareArrowOutUpRightIcon aria-hidden />
-                    {tx("Open coordinator on {machine}", { machine: nameOf(copy) })}
-                  </MenuItem>
-                ) : (
-                  <MenuItem
-                    key={copy.key}
-                    data-orchestrator-move={copy.key}
-                    onClick={() => onMove?.(copy.key)}
-                  >
-                    <MoveRightIcon aria-hidden />
-                    {tx("Move coordinator to {machine}…", { machine: nameOf(copy) })}
-                  </MenuItem>
-                ),
-              )}
+              {linkActions.map((link) => (
+                <MenuItem
+                  key={link.key}
+                  data-orchestrator-link={link.key}
+                  title={tx(
+                    "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.",
+                    { machine: link.machine },
+                  )}
+                  onClick={() => {
+                    pendingView.current = () => onLink?.(link.key);
+                  }}
+                >
+                  <Link2Icon aria-hidden />
+                  {tx("Link with the project on {machine}…", { machine: link.machine })}
+                </MenuItem>
+              ))}
+              {coordinatorActions.map((copy) => (
+                <MenuItem
+                  key={copy.key}
+                  data-orchestrator-move={copy.key}
+                  onClick={() => onMove?.(copy.key)}
+                >
+                  <MoveRightIcon aria-hidden />
+                  {tx("Move coordinator to {machine}…", { machine: nameOf(copy) })}
+                </MenuItem>
+              ))}
             </MenuGroup>
           </>
         ) : null}
@@ -384,7 +387,6 @@ export function OrchestratorSwitcher({
  */
 export function ProjectOrchestratorSwitcher({
   project,
-  members,
   label,
   connected,
   isThisDevice,
@@ -398,7 +400,6 @@ export function ProjectOrchestratorSwitcher({
   onCopy = null,
 }: {
   project: EnvironmentProject;
-  members: readonly EnvironmentProject[];
   label: string;
   connected: boolean;
   isThisDevice: boolean;
@@ -415,36 +416,63 @@ export function ProjectOrchestratorSwitcher({
   // A nickname shows as typed; only a host label drops its owner.
   const name = useMachineNickname(project.environmentId, label);
   const identity = useMachineIdentity(project.environmentId, label);
-  const start = useStartCoordinator(members, copies);
+  const [linkTarget, setLinkTarget] = useState<ProjectLinkTarget | null>(null);
+  const projects = useProjects();
+  const nickname = useMachineNicknames();
+  // Linking needs what copying needs: a project this person can operate, not a private one.
+  const offers = useMemo(
+    // A machine's "No project" folder has no repository, so it never matches: no lookup needed.
+    () => (onCopy ? sameRepositoryLinkOffers(projects, project, () => null) : []),
+    [onCopy, projects, project],
+  );
   return (
-    <OrchestratorSwitcher
-      identity={identity}
-      label={name}
-      hostLabel={label}
-      connected={connected}
-      // The line above the message box says the rest once; the chip names the state.
-      statusDetail={disconnectedLabel}
-      current={current}
-      copies={copies}
-      unknown={unknown}
-      savedMachineMissing={savedMachineMissing}
-      onView={onView}
-      onMove={onMove}
-      onCopy={onCopy}
-      // Away mode runs on this device's machine, so it is offered only there.
-      onLeave={isThisDevice ? () => requestAway("away") : null}
-      onStart={start}
-      onAllowWorkers={() => void navigate({ to: "/settings/connections" })}
-      onMigrate={
-        connected
-          ? () =>
-              requestMigrateProjectThreads(project.environmentId, {
-                id: project.id,
-                title: project.title,
-              })
-          : null
-      }
-    />
+    <>
+      <OrchestratorSwitcher
+        identity={identity}
+        label={name}
+        hostLabel={label}
+        connected={connected}
+        // The line above the message box says the rest once; the chip names the state.
+        statusDetail={disconnectedLabel}
+        current={current}
+        copies={copies}
+        unknown={unknown}
+        savedMachineMissing={savedMachineMissing}
+        onView={onView}
+        onMove={onMove}
+        onCopy={onCopy}
+        links={offers.map((offer) => ({
+          key: `${offer.environmentId}:${offer.id}`,
+          machine: nickname(offer.environmentId),
+        }))}
+        onLink={(key) => {
+          const offer = offers.find((item) => `${item.environmentId}:${item.id}` === key);
+          if (offer) setLinkTarget({ environmentId: offer.environmentId, projectId: offer.id });
+        }}
+        // Away mode runs on this device's machine, so it is offered only there.
+        onLeave={isThisDevice ? () => requestAway("away") : null}
+        onAllowWorkers={() => void navigate({ to: "/settings/connections" })}
+        onMigrate={
+          connected
+            ? () =>
+                requestMigrateProjectThreads(project.environmentId, {
+                  id: project.id,
+                  title: project.title,
+                })
+            : null
+        }
+      />
+      {linkTarget !== null && (
+        <ProjectLinkDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setLinkTarget(null);
+          }}
+          project={project}
+          initialCandidate={linkTarget}
+        />
+      )}
+    </>
   );
 }
 

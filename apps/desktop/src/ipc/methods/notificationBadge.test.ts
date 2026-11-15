@@ -234,7 +234,7 @@ it.effect("validates IPC and clears on native focus, quit, and disposal", () =>
       Effect.provide([
         ElectronApp.layer,
         layerAppWindows,
-        DesktopIpc.layer({
+        DesktopIpc.layerTest({
           handle: (channel, handler) => {
             handlers.set(channel, handler);
           },

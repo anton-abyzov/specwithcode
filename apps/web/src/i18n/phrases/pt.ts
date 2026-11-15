@@ -3169,6 +3169,10 @@ export const pt: PhraseCatalog = {
   "Auto balance matching projects": "Balancear automaticamente os projetos correspondentes",
   "Add to another machine…": "Adicionar a outra máquina…",
   "Copy to another machine…": "Copiar para outra máquina…",
+  Link: "Vincular",
+  "Link with the project on {machine}…": "Vincular ao projeto em {machine}…",
+  "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
+    "Torna este projeto e o de {machine} um só projeto com um coordenador. Os threads e os arquivos ficam onde estão.",
   "Leave this machine…": "Sair desta máquina…",
   "Another project or no project": "Outro projeto ou nenhum projeto",
   "Rename a machine": "Renomear uma máquina",
@@ -4023,7 +4027,6 @@ export const pt: PhraseCatalog = {
   "Nothing is ready on {machines}, so chats there will not start.":
     "Nada está pronto em {machines}, então os chats lá não vão iniciar.",
   "{agent} on {machine}": "{agent} em {machine}",
-  "Can’t connect": "Não foi possível conectar",
   "Catching up": "Atualizando",
   "Chats that need you": "Chats que precisam de você",
   "Chats that need you or are working are listed above.":
@@ -4589,14 +4592,17 @@ export const pt: PhraseCatalog = {
   "Installs from npm": "Instalações pelo npm",
   "View this project on": "Ver este projeto em",
   "Move coordinator to {machine}…": "Mover o coordenador para {machine}…",
-  "Open coordinator on {machine}": "Abrir o coordenador em {machine}",
-  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.":
-    "{machine} manteve o coordenador de antes. Abrir executa-o novamente ao lado deste; nada é movido.",
+  "coordinator paused": "coordenador pausado",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
+    "{machine} manteve o coordenador de antes e agora só executa workers. Abra-o para ler essa conversa ou executá-lo de novo.",
   "Machine access settings": "Configurações de acesso entre máquinas",
   "{machine} offline": "{machine} offline",
   "workers only": "apenas workers",
   "move pending": "mudança pendente",
-  "separate project": "projeto separado",
+  coordinator: "coordenador",
+  "not linked": "não vinculado",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
+    "Não vinculado: {machine} tem o próprio coordenador, threads e memória para este repositório.",
   "{value}Messages go to Percy. {value2}": "{value}As mensagens vão para o Percy. {value2}",
   "Show only topics that need you in {project}":
     "Mostrar só os tópicos que precisam de você em {project}",
@@ -5023,4 +5029,107 @@ export const pt: PhraseCatalog = {
   "Sheet tabs": "Abas da planilha",
   "This sheet is too large to open here.": "Esta planilha é grande demais para abrir aqui.",
   Sheet: "Planilha",
+  "Can’t reach it · retrying": "Sem resposta · tentando de novo",
+  "Chats and projects not counted": "Chats e projetos não contados",
+  "Nothing running": "Nada em execução",
+  "update available": "atualização disponível",
+  current: "atual",
+  "{version} is available": "{version} está disponível",
+  "still reading {machines}": "ainda lendo {machines}",
+  "catching up": "atualizando",
+  connecting: "conectando",
+  "not reachable": "inacessível",
+  "unable to connect": "sem conseguir conectar",
+  extra: "extra",
+  "Reconnecting to {machine}…": "Reconectando a {machine}…",
+  "Catching up with {machine}…": "Sincronizando com {machine}…",
+  "{machine} isn't answering": "{machine} não está respondendo",
+  "Can't reach {machine}": "Não é possível acessar {machine}",
+  "This device has no network": "Este dispositivo está sem rede",
+  "Connection to {machine} failed": "A conexão com {machine} falhou",
+  "{machine} is not connected": "{machine} não está conectado",
+  "{machine} needs an app update": "{machine} precisa atualizar o app",
+  "{machine} is connected": "{machine} está conectado",
+  "Not answering": "Sem resposta",
+  "No network": "Sem rede",
+  "Retrying by itself": "Tentando de novo sozinho",
+  "Reconnects when the network is back": "Reconecta quando a rede voltar",
+  "Last answered just now": "Respondeu agora há pouco",
+  "Last answered {age} ago": "Respondeu pela última vez há {age}",
+  "Reconnecting to this host…": "Reconectando a este host…",
+  "This host isn't answering": "Este host não está respondendo",
+  "Can't reach this host": "Não é possível acessar este host",
+  "Some machines can't be reached": "Algumas máquinas estão inacessíveis",
+  "not answering": "sem resposta",
+  reconnecting: "reconectando",
+  "This host is connected": "Este host está conectado",
+  "Catching up with this host…": "Sincronizando com este host…",
+  "Connection to this host failed": "A conexão com este host falhou",
+  "This host is not connected": "Este host não está conectado",
+  "Installed, matches this app ({version}).": "Instalado, igual a este app ({version}).",
+  "Installed, version {version}; this app is {appVersion}.":
+    "Instalado, versão {version}; este app é {appVersion}.",
+  "Installed.": "Instalado.",
+  "Installed, but it runs another copy of the app at {path}.":
+    "Instalado, mas executa outra cópia do app em {path}.",
+  "The command points at a copy of the app that is gone ({path}). Repair points it at this app.":
+    "O comando aponta para uma cópia do app que não existe mais ({path}). Reparar aponta para este app.",
+  "{path} comes from the command-line install of SpecWithCode, which keeps it up to date. The app leaves it as it is.":
+    "{path} vem da instalação por linha de comando do SpecWithCode, que o mantém atualizado. O app não mexe nele.",
+  "Something else is already at {path}. The app will not replace it; move it away to install the app's command there.":
+    "Já existe outra coisa em {path}. O app não vai substituir; mova para instalar ali o comando do app.",
+  "Not installed.": "Não instalado.",
+  "Open a new terminal window to use it.": "Abra uma nova janela do terminal para usar.",
+  "{folder} is not on your terminal's PATH yet, so a new terminal will not find the command.":
+    "{folder} ainda não está no PATH do terminal, então um terminal novo não vai achar o comando.",
+  "The app could not read your terminal's PATH. If a new terminal says command not found, add this line.":
+    "O app não conseguiu ler o PATH do terminal. Se um terminal novo disser command not found, adicione esta linha.",
+  "Add it to {file}": "Adicionar a {file}",
+  "Adds only this line, marked as added by SpecWithCode. Remove takes it out again.":
+    "Adiciona só esta linha, marcada como adicionada pelo SpecWithCode. Remover tira ela de novo.",
+  "Added to {file}. Open a new terminal window to use it.":
+    "Adicionado a {file}. Abra uma nova janela do terminal para usar.",
+  "The specwithcode command is this app driven from a terminal: the same version as the app, talking to the app that is already running. It is not a second copy and needs no separate sign-in. Use it over SSH, on a machine with no screen, or in scripts and agents.":
+    "O comando specwithcode é este app usado pelo terminal: a mesma versão, falando com o app que já está aberto. Não é uma segunda cópia e não precisa de outro login. Use via SSH, numa máquina sem tela ou em scripts e agentes.",
+  "What is this?": "O que é isto?",
+  "Installing writes {path}, which runs the command inside the app, and adds {folder} to your user PATH. No administrator password.":
+    "Instalar cria {path}, que executa o comando dentro do app, e adiciona {folder} ao PATH do seu usuário. Sem senha de administrador.",
+  "Installing adds {path}, a link to the command inside the app. Nothing else changes, and no administrator password is needed.":
+    "Instalar adiciona {path}, um link para o comando dentro do app. Nada mais muda e não precisa de senha de administrador.",
+  "Install command-line tool": "Instalar ferramenta de linha de comando",
+  "Use this copy": "Usar esta cópia",
+  "A different specwithcode at {path} comes first on your PATH, so a terminal runs that one instead. The app did not change it.":
+    "Outro specwithcode em {path} vem antes no seu PATH, então o terminal executa esse. O app não mexeu nele.",
+  "Command line": "Linha de comando",
+  "A development build has no command to install.":
+    "Uma build de desenvolvimento não tem comando para instalar.",
+  "This copy of the app runs from a disk image or a temporary folder. Move SpecWithCode to Applications and open it from there first.":
+    "Esta cópia do app roda de uma imagem de disco ou pasta temporária. Primeiro mova o SpecWithCode para Aplicativos e abra de lá.",
+  "This copy of the app has no specwithcode command inside it. Reinstall the app.":
+    "Esta cópia do app não tem o comando specwithcode. Reinstale o app.",
+  "Add to PATH": "Adicionar ao PATH",
+  "permission denied": "permissão negada",
+  "not found": "não encontrado",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "Algo mudou em {path} enquanto o app trabalhava, então nada foi substituído. Verifique e tente de novo.",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "O app não conhece o arquivo de inicialização deste shell. Adicione a linha você mesmo.",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path} já existe e não foi alterado. Adicione a linha você mesmo.",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "Não foi possível ler {path} por inteiro, então o app não o alterou. Adicione a linha você mesmo.",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "Não foi possível alterar {path} ({error}). Adicione a linha você mesmo.",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "O comando foi removido, mas não foi possível tirar a linha de {path} ({error}). Apague você mesmo a linha marcada Added by SpecWithCode.",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "O comando foi removido, mas {folder} ainda está no seu PATH de usuário. Remova-o você mesmo em Variáveis de Ambiente.",
+  "Could not read your user PATH.": "Não foi possível ler seu PATH de usuário.",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "Não foi possível atualizar seu PATH de usuário. Adicione {folder} você mesmo.",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "Seu PATH de usuário mudou enquanto o app o atualizava. Nada foi alterado; tente de novo.",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "O caminho do AppImage não pode ser gravado no comando. Mova o AppImage para uma pasta mais simples e abra-o de lá.",
+  "Could not write {path} ({error}).": "Não foi possível gravar {path} ({error}).",
 };

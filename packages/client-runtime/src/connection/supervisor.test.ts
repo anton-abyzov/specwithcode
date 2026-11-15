@@ -44,7 +44,6 @@ import * as RpcSession from "../rpc/session.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 import { connectionRouteId, entryWithRoutes, isLearned, mergeLearnedRoutes } from "./routes.ts";
-import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -389,6 +388,35 @@ describe("retryMaxDelayMs", () => {
   });
 });
 
+describe("retryMaxDelayMs for a machine that was just connected", () => {
+  const silent = new ConnectionTransientError({ reason: "timeout", detail: "silent" });
+  const offline = new ConnectionTransientError({
+    reason: "endpoint-unavailable",
+    detail: "offline",
+    machineOffline: true,
+  });
+
+  it("asks again within a minute for 30 minutes after the last session", () => {
+    for (const error of [silent, offline]) {
+      expect(EnvironmentSupervisor.retryMaxDelayMs(false, error, 0)).toBe(60_000);
+      expect(EnvironmentSupervisor.retryMaxDelayMs(false, error, 30 * 60_000 - 1)).toBe(60_000);
+    }
+  });
+
+  it("keeps the long ceilings for a machine not seen for longer, or never in this run", () => {
+    expect(EnvironmentSupervisor.retryMaxDelayMs(false, silent, 30 * 60_000)).toBe(300_000);
+    expect(EnvironmentSupervisor.retryMaxDelayMs(false, offline, 30 * 60_000)).toBe(600_000);
+    expect(EnvironmentSupervisor.retryMaxDelayMs(false, silent, null)).toBe(300_000);
+    expect(EnvironmentSupervisor.retryMaxDelayMs(false, offline)).toBe(600_000);
+  });
+
+  it("never lengthens the ladder of the server on this machine", () => {
+    expect(EnvironmentSupervisor.retryMaxDelayMs(true, silent, 0)).toBe(
+      EnvironmentSupervisor.LOOPBACK_RETRY_MAX_DELAY_MS,
+    );
+  });
+});
+
 describe("retryAfterFloorMs", () => {
   it("holds a retry until a rate-limiting machine's retry-after has passed", () => {
     const limited = new ConnectionTransientError({
@@ -717,7 +745,7 @@ describe("EnvironmentSupervisor", () => {
   );
 
   it.effect(
-    "shows a network hint for a stalled relay connection and clears it after recovery",
+    "names a stalled relay connection without blaming the network, and clears it after recovery",
     () =>
       Effect.gen(function* () {
         const harness = yield* makeHarness({
@@ -732,7 +760,7 @@ describe("EnvironmentSupervisor", () => {
         yield* TestClock.adjust("15 seconds");
         const failed = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
         expect(failed.lastFailure?.message).toBe(
-          `Test environment did not respond during connection setup. ${NETWORK_BLOCKING_HINT}`,
+          "Test environment did not respond during connection setup.",
         );
 
         yield* TestClock.adjust("3 seconds");
@@ -1596,7 +1624,7 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("an explicit retry shortens a stalled desktop foreground probe", () =>
+  it.effect("an explicit retry does not shorten a stalled desktop foreground probe", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
@@ -1609,8 +1637,9 @@ describe("EnvironmentSupervisor", () => {
       yield* harness.wake("application-active");
       yield* TestClock.adjust("5 seconds");
       yield* supervisor.retryNow;
-      // The retry's 3 second limit applies, not the 10 seconds left of the 15.
-      yield* TestClock.adjust("2999 millis");
+      // The retry asks for the full tolerance too, so the 10 seconds left of
+      // the running probe's 15 still apply.
+      yield* TestClock.adjust("9999 millis");
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
       yield* TestClock.adjust("1 milli");
       yield* awaitState(
@@ -2724,7 +2753,7 @@ describe("EnvironmentSupervisor for a server on this machine", () => {
         if ((yield* Ref.get(probeCount)) > 0) break;
         yield* Effect.yieldNow;
       }
-      // A remote host would be replaced here, after 3 seconds without an answer.
+      // An offline report or a mobile resume would replace a remote host here.
       yield* TestClock.adjust("3 seconds");
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
       expect(yield* Ref.get(harness.releaseCount)).toBe(0);
@@ -2787,7 +2816,7 @@ describe("EnvironmentSupervisor for a server on this machine", () => {
     }),
   );
 
-  it.effect("gives a forwarded primary the quick retry probe", () =>
+  it.effect("gives a forwarded primary the remote offline probe", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         prepare: preparedForTarget,
@@ -2798,8 +2827,11 @@ describe("EnvironmentSupervisor for a server on this machine", () => {
       }).pipe(Effect.provide(harness.dependencies));
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      yield* supervisor.retryNow;
+      // A session to this machine ignores an offline report; a forward to
+      // another machine is questioned, with the quick limit.
+      yield* harness.setNetworkStatus("offline");
       yield* TestClock.adjust("3 seconds");
+      yield* harness.setNetworkStatus("online");
       yield* awaitState(
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2,

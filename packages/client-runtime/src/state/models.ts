@@ -16,6 +16,7 @@ import type {
   OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadProjectMoveLink,
+  OrchestrationV2ActiveWorkKind,
   OrchestrationV2ThreadShell,
   PlanId,
   ProjectId,
@@ -248,6 +249,7 @@ export interface EnvironmentThreadShell {
         readonly label: string;
         readonly startedAt: string;
         readonly waitThreadId?: string;
+        readonly kind?: OrchestrationV2ActiveWorkKind;
       }
     | null
     | undefined;
@@ -467,6 +469,7 @@ export function presentThreadShell(
               ...(thread.activeWork.waitThreadId === undefined
                 ? {}
                 : { waitThreadId: thread.activeWork.waitThreadId }),
+              ...(thread.activeWork.kind === undefined ? {} : { kind: thread.activeWork.kind }),
             },
     providerInstanceHistory: thread.providerInstanceHistory ?? [],
     goal: thread.goal ?? null,
@@ -605,6 +608,7 @@ export function threadRunHealth(
             label: thread.activeWork.label,
             startedAtMs: Number.isFinite(startedAtMs) ? startedAtMs : lastActivityMs,
             waitThreadId: thread.activeWork.waitThreadId,
+            kind: thread.activeWork.kind,
           },
     activeWorkUnknown: thread.activeWork === undefined,
     nowMs,

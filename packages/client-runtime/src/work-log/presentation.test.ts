@@ -855,6 +855,7 @@ describe("resolveViewedImageAsset", () => {
         _tag: "media-file",
         threadId,
         path: "/workspace/screens/logo.svg",
+        hostOnly: true,
       },
       alt: "logo.svg",
       srcFragment: "#mark",

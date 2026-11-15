@@ -25,6 +25,11 @@ import {
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import { createModelSelection } from "@specweave-studio/shared/model";
+import {
+  findEffortDescriptor,
+  modelSelectionEffortValue,
+  withEffortSelection,
+} from "@specweave-studio/shared/effortLevel";
 import { describeModel } from "@specweave-studio/shared/modelIdentity";
 import {
   addTrackEntry,
@@ -59,6 +64,7 @@ import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { clock } from "./FallbackOrderList";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -77,7 +83,7 @@ const TRACK_HINTS: Record<ModelTrack, string> = {
   review: "A different model family checks finished work",
 };
 
-const ENTRY_REFUSALS: Record<TrackEntryRefusal, string> = {
+export const TRACK_ENTRY_REFUSALS: Record<TrackEntryRefusal, string> = {
   duplicate: "That model is already in this list.",
   full: "This list is full. Remove a model first.",
   "free-in-hard-track": "Free models only close Daily. Hard work and reviews wait for a reset.",
@@ -126,6 +132,67 @@ function statusChip(
     case "not-ready":
       return { label: tx("Not ready"), variant: "outline" };
   }
+}
+
+/** What the top entry of each track is for; the entries under it are its fallbacks. */
+const TRACK_FIRST: Record<ModelTrack, string> = {
+  daily: "New threads start here",
+  complex: "Hard work starts here",
+  review: "Reviews first",
+};
+
+/**
+ * The reasoning effort one track entry starts at, from the levels its source
+ * offers. Hidden for a model with no effort setting. Unset shows the model's
+ * own default; a pick is saved on the entry and every launch from it.
+ */
+function EffortSelect(props: {
+  readonly selection: ModelSelection;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly label: string;
+  readonly disabled: boolean;
+  readonly onChange: (selection: ModelSelection) => void;
+}) {
+  const descriptor = findEffortDescriptor(
+    props.providers
+      .find((provider) => provider.instanceId === props.selection.instanceId)
+      ?.models.find((model) => model.slug === props.selection.model)?.capabilities
+      ?.optionDescriptors,
+  );
+  if (descriptor === undefined) return null;
+  const value =
+    modelSelectionEffortValue(props.selection) ??
+    descriptor.options.find((choice) => choice.isDefault)?.id ??
+    null;
+  return (
+    <Select
+      value={value}
+      disabled={props.disabled}
+      onValueChange={(next) => {
+        if (typeof next !== "string" || next === value) return;
+        props.onChange({
+          ...props.selection,
+          options: withEffortSelection(props.selection.options, {
+            optionId: descriptor.id,
+            value: next,
+          }),
+        });
+      }}
+    >
+      <SelectTrigger size="xs" className="w-auto min-w-0" aria-label={props.label}>
+        <SelectValue>
+          {descriptor.options.find((choice) => choice.id === value)?.label ?? value ?? ""}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="end" alignItemWithTrigger={false}>
+        {descriptor.options.map((choice) => (
+          <SelectItem key={choice.id} value={choice.id}>
+            {choice.label}
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
 }
 
 /** A grip, a position and the row's content; the grip also reorders by keyboard. */
@@ -306,6 +373,12 @@ function TrackCard(props: {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="truncate text-sm font-medium">{row.name}</span>
+                {row.selection !== null &&
+                rows.findIndex((entry) => entry.selection !== null) === index ? (
+                  <Badge variant="outline" size="sm">
+                    {tx(TRACK_FIRST[track])}
+                  </Badge>
+                ) : null}
                 {row.free ? (
                   <Badge variant="info" size="sm">
                     {tx("Free, used last")}
@@ -358,6 +431,19 @@ function TrackCard(props: {
               </ul>
             </div>
             {row.selection !== null ? (
+              <EffortSelect
+                selection={row.selection}
+                providers={providers}
+                label={`${tx("Effort for")} ${row.name}`}
+                disabled={props.mixed}
+                onChange={(selection) =>
+                  props.onSave(
+                    current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
+                  )
+                }
+              />
+            ) : null}
+            {row.selection !== null ? (
               <Button
                 type="button"
                 variant="ghost-muted"
@@ -383,7 +469,7 @@ function TrackCard(props: {
           </span>
         )}
       </div>
-      {refusal !== null ? <Note tone="warning">{tx(ENTRY_REFUSALS[refusal])}</Note> : null}
+      {refusal !== null ? <Note tone="warning">{tx(TRACK_ENTRY_REFUSALS[refusal])}</Note> : null}
       {saved.length === 0 && unlisted.length > 0 ? (
         <Note>
           {`${tx("Changing this list saves it as yours without")} ${unlisted
@@ -477,9 +563,10 @@ function SourcesCard(props: {
  * The three model tracks and the Sources order: which model does routine
  * work, hard work and reviews, and which harness or subscription each model
  * runs on first. Lists reorder by drag and by keyboard; a move that cannot
- * work is refused with its reason.
+ * work is refused with its reason. `sources={false}` leaves the Sources order
+ * out, for a project dialog: that order is one list for the whole machine.
  */
-export function ModelTracksSettings() {
+export function ModelTracksSettings({ sources = true }: { readonly sources?: boolean } = {}) {
   const tx = useTx();
   const { target } = useSettingsScope();
   const settings = useScopedSettings();
@@ -582,13 +669,15 @@ export function ModelTracksSettings() {
           }
         />
       ))}
-      <SourcesCard
-        rows={describeSources({ providers, order: sourceOrder, nowMs })}
-        order={sourceOrder}
-        saved={sourceOrder.length > 0}
-        sourceName={sourceName}
-        onSave={(order) => updateSettings({ defaultModelProviders: [...order] })}
-      />
+      {sources ? (
+        <SourcesCard
+          rows={describeSources({ providers, order: sourceOrder, nowMs })}
+          order={sourceOrder}
+          saved={sourceOrder.length > 0}
+          sourceName={sourceName}
+          onSave={(order) => updateSettings({ defaultModelProviders: [...order] })}
+        />
+      ) : null}
     </div>
   );
 }

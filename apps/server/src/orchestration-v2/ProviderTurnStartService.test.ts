@@ -463,6 +463,8 @@ function makeLocalCommandHarness(input: {
   readonly writeFailure?: unknown;
   /** Loads the thread and starts the run, then fails every later state read. */
   readonly failReadsAfterRunning?: boolean;
+  /** Starts the root run without failing later state reads. */
+  readonly startsRootRun?: boolean;
   readonly realCreditExecution?: boolean;
   readonly projectContext?: ProjectContextDelivery.ProjectContextDelivery["Service"];
 }) {
@@ -750,7 +752,9 @@ function makeLocalCommandHarness(input: {
                   ),
                 ),
               )
-            : input.failReadsAfterRunning === true || input.realCreditExecution === true
+            : input.failReadsAfterRunning === true ||
+                input.startsRootRun === true ||
+                input.realCreditExecution === true
               ? Effect.succeed({
                   driver: providerThread.driver,
                   providerSession: {
@@ -774,10 +778,11 @@ function makeLocalCommandHarness(input: {
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
   >(() =>
-    input.failReadsAfterRunning === true
+    input.failReadsAfterRunning === true || input.startsRootRun === true
       ? Effect.void
       : Effect.die("A local command must not start a native turn."),
   );
+  const storeReads = { recoveryProjection: 0, singleRun: 0 };
   const failReadIfRunning = Effect.suspend(() =>
     input.failReadsAfterRunning === true &&
     projection.runs.find((candidate) => candidate.id === runId)?.status === "running"
@@ -858,13 +863,16 @@ function makeLocalCommandHarness(input: {
               ),
             }),
           getRuntimeRecoveryProjection: () =>
-            Effect.as(failReadIfRunning, {
-              ...projection,
-              hasConversation: projection.messages.some(
-                (m) =>
-                  m.role === "user" &&
-                  (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
-              ),
+            Effect.suspend(() => {
+              storeReads.recoveryProjection += 1;
+              return Effect.as(failReadIfRunning, {
+                ...projection,
+                hasConversation: projection.messages.some(
+                  (m) =>
+                    m.role === "user" &&
+                    (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
+                ),
+              });
             }),
           getTurnStartHistory: () =>
             Effect.fail(
@@ -873,7 +881,17 @@ function makeLocalCommandHarness(input: {
                 cause: input.historyReadFailureAfterFallback,
               }),
             ),
-          getThreadRecords: () => Effect.sync(() => projection as never),
+          getThreadRecords: (_threadId, _fields, filter) =>
+            filter?.runIds === undefined
+              ? Effect.sync(() => projection as never)
+              : // A run-scoped read: only the named runs, like the SQL store.
+                Effect.suspend(() => {
+                  storeReads.singleRun += 1;
+                  return Effect.as(failReadIfRunning, {
+                    thread: projection.thread,
+                    runs: projection.runs.filter((run) => filter.runIds!.includes(run.id)),
+                  } as never);
+                }),
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open }),
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
@@ -912,6 +930,7 @@ function makeLocalCommandHarness(input: {
     oldInstanceId,
     newInstanceId,
     attemptId,
+    storeReads,
     projection: () => projection,
     editProjection: (
       edit: (value: OrchestrationV2ThreadProjection) => OrchestrationV2ThreadProjection,
@@ -1443,6 +1462,66 @@ effectIt.effect("does not mistake a failed state read for a superseded run", () 
     const finalizeCheck = yield* Effect.flip(controls.shouldFinalizeRun!());
     expect(startCheck._tag).toBe("ProjectionStoreReadError");
     expect(finalizeCheck._tag).toBe("ProjectionStoreReadError");
+  }),
+);
+
+effectIt.effect("checks the current attempt with one run read, not the recovery projection", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Continue", startsRootRun: true });
+
+    yield* harness.start;
+
+    expect(harness.projection().runs.at(-1)?.status).toBe("running");
+    // The start reads the recovery projection once, for inherited background
+    // work; its attempt check reads only the run.
+    expect(harness.storeReads).toEqual({ recoveryProjection: 1, singleRun: 1 });
+    const controls = harness.startRootRun.mock.calls[0]?.[0];
+    expect(controls).toBeDefined();
+    if (controls === undefined) return;
+
+    expect(yield* controls.shouldStartProviderTurn!()).toBe(true);
+    expect(yield* controls.shouldFinalizeRun!()).toBe(true);
+    expect(harness.storeReads).toEqual({ recoveryProjection: 1, singleRun: 3 });
+  }),
+);
+
+effectIt.effect("reports a moved-on or missing run as no longer current", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Continue", startsRootRun: true });
+    yield* harness.start;
+    const controls = harness.startRootRun.mock.calls[0]?.[0];
+    expect(controls).toBeDefined();
+    if (controls === undefined) return;
+    const original = harness.projection();
+
+    // Another attempt took the run over.
+    harness.editProjection((value) => ({
+      ...value,
+      runs: value.runs.map((run) => ({
+        ...run,
+        activeAttemptId: RunAttemptId.make("attempt-native-account-command-retry"),
+      })),
+    }));
+    expect(yield* controls.shouldStartProviderTurn!()).toBe(false);
+    expect(yield* controls.shouldFinalizeRun!()).toBe(false);
+
+    // The run finished.
+    harness.editProjection(() => ({
+      ...original,
+      runs: original.runs.map((run) => ({ ...run, status: "completed" as const })),
+    }));
+    expect(yield* controls.shouldStartProviderTurn!()).toBe(false);
+    expect(yield* controls.shouldFinalizeRun!()).toBe(false);
+
+    // The run is gone.
+    harness.editProjection(() => ({ ...original, runs: [] }));
+    expect(yield* controls.shouldStartProviderTurn!()).toBe(false);
+    expect(yield* controls.shouldFinalizeRun!()).toBe(false);
+
+    // Back to the matching run and attempt.
+    harness.editProjection(() => original);
+    expect(yield* controls.shouldStartProviderTurn!()).toBe(true);
+    expect(harness.storeReads.recoveryProjection).toBe(1);
   }),
 );
 

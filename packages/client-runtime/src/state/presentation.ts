@@ -17,6 +17,7 @@ import {
   type EnvironmentConnectionPhase,
   type EnvironmentPresentation,
 } from "../connection/presentation.ts";
+import { RECONNECT_GRACE_MS } from "../connection/reach.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { hasRelayRoute } from "../connection/routes.ts";
 
@@ -75,6 +76,16 @@ export function createEnvironmentPresentationAtoms<E>(input: {
             const timer = setTimeout(() => get.refreshSelf(), until - at);
             get.addFinalizer(() => clearTimeout(timer));
           }
+        }
+        // What a machine without a session reads as changes when its
+        // reconnect grace ends (`machineReach`), with no state change to say
+        // so. A new presentation then makes every reader judge it again.
+        if (connection.lostAt !== undefined && at < connection.lostAt + RECONNECT_GRACE_MS) {
+          const timer = setTimeout(
+            () => get.refreshSelf(),
+            connection.lostAt + RECONNECT_GRACE_MS - at,
+          );
+          get.addFinalizer(() => clearTimeout(timer));
         }
       }
       return {

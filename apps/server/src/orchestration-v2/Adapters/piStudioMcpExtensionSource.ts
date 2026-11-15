@@ -32,6 +32,7 @@ export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
 export const PI_STUDIO_MCP_EXTENSION_SOURCE = `\
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import * as NodeCrypto from "node:crypto";
 import { Type } from "typebox";
 
 const URL_ENV = ${JSON.stringify(STUDIO_MCP_URL_ENV)};
@@ -80,12 +81,19 @@ function responseStyleInstructions(): string {
   return env(RESPONSE_STYLE_ENV) === "detailed" ? DETAILED_RESPONSE_STYLE : CONCISE_RESPONSE_STYLE;
 }
 
+// SpecWithCode keys "Always allow this session" on this text, so a cut summary ends
+// with the full input's hash: calls that differ only past the cut get separate grants.
 function toolInputSummary(input: unknown): string {
+  let text: string;
   try {
-    return JSON.stringify(input, null, 2).slice(0, 4_000);
+    text = JSON.stringify(input, null, 2) ?? String(input);
   } catch {
-    return String(input).slice(0, 4_000);
+    text = String(input);
   }
+  if (text.length <= 4_000) return text;
+  const hash = NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
+  return text.slice(0, 4_000) + "\\n... " + (text.length - 4_000) +
+    " more characters not shown (sha256 " + hash + ")";
 }
 
 function parseSseOrJson(body: string, contentType: string): JsonRpcResponse {

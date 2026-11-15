@@ -552,12 +552,12 @@ it("says why a machine is unreachable and retries it instead of selecting it", a
   };
   await render();
   await openOther();
-  const m1Row = button("M1Can't reach");
+  const m1Row = button("M1Not answering");
   expect(m1Row.textContent).toContain("M1 could not establish a WebSocket connection.");
   expect(m1Row.textContent).toContain("Retry");
   expect(m1Row.hasAttribute("data-disabled")).toBe(false);
   expect(button("M3Connecting…").hasAttribute("data-disabled")).toBe(true);
-  await click("M1Can't reach");
+  await click("M1Not answering");
   expect(runtime.retry).toHaveBeenCalledExactlyOnceWith(m1);
   expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
   expect(runtime.scratch).not.toHaveBeenCalled();
@@ -573,7 +573,7 @@ it("shows on the closed picker when the chosen machine can't be reached", async 
   const control = document.querySelector('button[data-composer-shortcut="composer.host"]')!;
   expect(control.getAttribute("aria-label")).toBe("Run on: M4, Connection failed");
   expect(control.querySelector("[data-draft-machine-unreachable]")?.textContent).toBe(
-    "Can't reach",
+    "Connection failed",
   );
 });
 

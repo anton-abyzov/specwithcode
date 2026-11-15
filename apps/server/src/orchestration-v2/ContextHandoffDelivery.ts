@@ -74,12 +74,12 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         (handoff) =>
           `Context handoff (${handoff.strategy === "fork_delta_summary" ? "merge_back / fork_delta_summary" : handoff.strategy}):\n${
             handoff.history?.coverage ??
-            `From thread ${handoff.threadId}, runs ${handoff.coveredRunOrdinals.from}-${handoff.coveredRunOrdinals.to}. Recover history with studio_thread_read, view=activity; paginate with afterPosition, and use itemId/textOffset for long items.`
+            `From thread ${handoff.threadId}, runs ${handoff.coveredRunOrdinals.from}-${handoff.coveredRunOrdinals.to}. Recover history with studio_thread_read, view=activity: it returns the newest items, beforePosition=earlierPosition reads older ones, and itemId/textOffset reads long items.`
           }`,
       )
       .join("\n");
     const strategies = Array.from(new Set(pending.map((handoff) => handoff.strategy)));
-    const compactCoverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover history with studio_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. Follow fork/handoff source references in activity. For long items use itemId and textOffset=nextTextOffset until null.`;
+    const compactCoverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover history with studio_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); it returns the newest items; read older ones with beforePosition=earlierPosition until it is null. Follow fork/handoff source references in activity. For long items use itemId and textOffset=nextTextOffset until null.`;
     // Repeated failures can accumulate many recovery markers. Keep a single
     // thread-level entry point when detailed coverage would crowd out history;
     // its activity includes the original handoff/fork source references.

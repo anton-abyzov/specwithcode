@@ -3164,6 +3164,10 @@ export const ja: PhraseCatalog = {
   "Auto balance matching projects": "一致するプロジェクトを自動で分散",
   "Add to another machine…": "別のマシンに追加…",
   "Copy to another machine…": "別のマシンにコピー…",
+  Link: "リンク",
+  "Link with the project on {machine}…": "{machine} のプロジェクトとリンク…",
+  "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
+    "このプロジェクトと {machine} のプロジェクトを、コーディネーターが 1 つの同じプロジェクトにします。スレッドとファイルはそのまま残ります。",
   "Leave this machine…": "このマシンを離れる…",
   "Another project or no project": "別のプロジェクトまたはプロジェクトなし",
   "Rename a machine": "マシンの名前を変更",
@@ -4012,7 +4016,6 @@ export const ja: PhraseCatalog = {
   "Nothing is ready on {machines}, so chats there will not start.":
     "{machines} では何も準備できていないため、そこではチャットは開始されません。",
   "{agent} on {machine}": "{machine} の {agent}",
-  "Can’t connect": "接続できません",
   "Catching up": "同期中",
   "Chats that need you": "対応が必要なチャット",
   "Chats that need you or are working are listed above.":
@@ -4583,14 +4586,17 @@ export const ja: PhraseCatalog = {
   "Installs from npm": "npm からのインストール",
   "View this project on": "このプロジェクトを表示するマシン",
   "Move coordinator to {machine}…": "コーディネーターを {machine} に移動…",
-  "Open coordinator on {machine}": "{machine} のコーディネーターを開く",
-  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.":
-    "{machine} には以前のコーディネーターが残っています。開くとこのコーディネーターと並んで再び動きます。何も移動しません。",
+  "coordinator paused": "コーディネーター一時停止中",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
+    "{machine} は以前のコーディネーターを保持しており、現在はワーカーのみを実行しています。表示してその会話を読むか、再実行できます。",
   "Machine access settings": "マシンのアクセス設定",
   "{machine} offline": "{machine} はオフライン",
   "workers only": "ワーカーのみ",
   "move pending": "移動の確認待ち",
-  "separate project": "別のプロジェクト",
+  coordinator: "コーディネーター",
+  "not linked": "未リンク",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
+    "未リンク: {machine} はこのリポジトリ用に独自のコーディネーター、スレッド、メモリを持っています。",
   "{value}Messages go to Percy. {value2}": "{value}メッセージは Percy に届きます。{value2}",
   "Show only topics that need you in {project}": "{project} で対応が必要なトピックのみ表示",
   "New topic in {title}": "{title} で新しいトピック",
@@ -5019,4 +5025,108 @@ export const ja: PhraseCatalog = {
   "Sheet tabs": "シートのタブ",
   "This sheet is too large to open here.": "このシートは大きすぎてここでは開けません。",
   Sheet: "シート",
+  "Can’t reach it · retrying": "接続できません · 再試行中",
+  "Chats and projects not counted": "チャットとプロジェクトは未集計",
+  "Nothing running": "実行中なし",
+  "update available": "アップデートあり",
+  current: "最新",
+  "{version} is available": "{version} が利用可能",
+  "still reading {machines}": "{machines} を読み込み中",
+  "catching up": "更新中",
+  connecting: "接続中",
+  "not reachable": "接続不可",
+  "unable to connect": "接続できない状態",
+  extra: "追加",
+  "Reconnecting to {machine}…": "{machine} に再接続中…",
+  "Catching up with {machine}…": "{machine} と同期中…",
+  "{machine} isn't answering": "{machine} が応答しません",
+  "Can't reach {machine}": "{machine} に接続できません",
+  "This device has no network": "このデバイスはネットワークに接続していません",
+  "Connection to {machine} failed": "{machine} への接続に失敗しました",
+  "{machine} is not connected": "{machine} は接続されていません",
+  "{machine} needs an app update": "{machine} はアプリの更新が必要です",
+  "{machine} is connected": "{machine} は接続済みです",
+  "Not answering": "応答なし",
+  "No network": "ネットワークなし",
+  "Retrying by itself": "自動で再試行しています",
+  "Reconnects when the network is back": "ネットワークが戻ると再接続します",
+  "Last answered just now": "最後の応答: たった今",
+  "Last answered {age} ago": "最後の応答: {age} 前",
+  "Reconnecting to this host…": "このホストに再接続中…",
+  "This host isn't answering": "このホストは応答しません",
+  "Can't reach this host": "このホストに接続できません",
+  "Some machines can't be reached": "一部のマシンに接続できません",
+  "not answering": "応答なし",
+  reconnecting: "再接続中",
+  "This host is connected": "このホストは接続済みです",
+  "Catching up with this host…": "このホストと同期中…",
+  "Connection to this host failed": "このホストへの接続に失敗しました",
+  "This host is not connected": "このホストは接続されていません",
+  "Installed, matches this app ({version}).":
+    "インストール済み。このアプリと同じバージョンです（{version}）。",
+  "Installed, version {version}; this app is {appVersion}.":
+    "インストール済み（{version}）。このアプリは {appVersion} です。",
+  "Installed.": "インストール済み。",
+  "Installed, but it runs another copy of the app at {path}.":
+    "インストール済みですが、{path} にある別のアプリを実行します。",
+  "The command points at a copy of the app that is gone ({path}). Repair points it at this app.":
+    "コマンドは、もう存在しないアプリ（{path}）を指しています。修復するとこのアプリを指すようになります。",
+  "{path} comes from the command-line install of SpecWithCode, which keeps it up to date. The app leaves it as it is.":
+    "{path} は SpecWithCode のコマンドラインインストールによるもので、そちらが最新に保ちます。アプリは変更しません。",
+  "Something else is already at {path}. The app will not replace it; move it away to install the app's command there.":
+    "{path} には別のものがあります。アプリは置き換えません。そこにアプリのコマンドを入れるには、移動してください。",
+  "Not installed.": "未インストール。",
+  "Open a new terminal window to use it.": "使うには新しいターミナルウィンドウを開いてください。",
+  "{folder} is not on your terminal's PATH yet, so a new terminal will not find the command.":
+    "{folder} はまだターミナルの PATH に入っていないため、新しいターミナルではコマンドが見つかりません。",
+  "The app could not read your terminal's PATH. If a new terminal says command not found, add this line.":
+    "アプリはターミナルの PATH を読み取れませんでした。新しいターミナルで command not found と出たら、この行を追加してください。",
+  "Add it to {file}": "{file} に追加",
+  "Adds only this line, marked as added by SpecWithCode. Remove takes it out again.":
+    "この1行だけを SpecWithCode が追加した印付きで追加します。削除で元に戻ります。",
+  "Added to {file}. Open a new terminal window to use it.":
+    "{file} に追加しました。新しいターミナルウィンドウを開いてください。",
+  "The specwithcode command is this app driven from a terminal: the same version as the app, talking to the app that is already running. It is not a second copy and needs no separate sign-in. Use it over SSH, on a machine with no screen, or in scripts and agents.":
+    "specwithcode コマンドは、このアプリをターミナルから操作するものです。アプリと同じバージョンで、起動中のアプリと通信します。別のコピーではなく、別途サインインも不要です。SSH 経由、画面のないマシン、スクリプトやエージェントで使えます。",
+  "What is this?": "これは何？",
+  "Installing writes {path}, which runs the command inside the app, and adds {folder} to your user PATH. No administrator password.":
+    "インストールすると、アプリ内のコマンドを実行する {path} を作成し、{folder} をユーザーの PATH に追加します。管理者パスワードは不要です。",
+  "Installing adds {path}, a link to the command inside the app. Nothing else changes, and no administrator password is needed.":
+    "インストールすると、アプリ内のコマンドへのリンク {path} を追加します。ほかは何も変わらず、管理者パスワードも不要です。",
+  "Install command-line tool": "コマンドラインツールをインストール",
+  "Use this copy": "このアプリを使う",
+  "A different specwithcode at {path} comes first on your PATH, so a terminal runs that one instead. The app did not change it.":
+    "{path} にある別の specwithcode が PATH の先にあるため、ターミナルではそちらが実行されます。アプリは変更していません。",
+  "Command line": "コマンドライン",
+  "A development build has no command to install.":
+    "開発ビルドにはインストールできるコマンドがありません。",
+  "This copy of the app runs from a disk image or a temporary folder. Move SpecWithCode to Applications and open it from there first.":
+    "このアプリはディスクイメージか一時フォルダから実行されています。先に SpecWithCode をアプリケーションに移動し、そこから開いてください。",
+  "This copy of the app has no specwithcode command inside it. Reinstall the app.":
+    "このアプリには specwithcode コマンドが入っていません。アプリを再インストールしてください。",
+  "Add to PATH": "PATH に追加",
+  "permission denied": "アクセス権がありません",
+  "not found": "見つかりません",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "処理中に {path} が変更されたため、何も置き換えていません。確認してからもう一度お試しください。",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "このシェルの起動ファイルが分かりません。行を自分で追加してください。",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path} は既にあるため変更していません。行を自分で追加してください。",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "{path} を最後まで読めなかったため変更していません。行を自分で追加してください。",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "{path} を変更できませんでした（{error}）。行を自分で追加してください。",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "コマンドは削除しましたが、{path} の行を取り除けませんでした（{error}）。Added by SpecWithCode と書かれた行を自分で削除してください。",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "コマンドは削除しましたが、{folder} がユーザー PATH に残っています。環境変数から自分で削除してください。",
+  "Could not read your user PATH.": "ユーザー PATH を読み取れませんでした。",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "ユーザー PATH を更新できませんでした。{folder} を自分で追加してください。",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "更新中にユーザー PATH が変わりました。何も変更していません。もう一度お試しください。",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "AppImage のパスをコマンドに書き込めません。AppImage を単純なフォルダーに移動し、そこから開いてください。",
+  "Could not write {path} ({error}).": "{path} を書き込めませんでした（{error}）。",
 };

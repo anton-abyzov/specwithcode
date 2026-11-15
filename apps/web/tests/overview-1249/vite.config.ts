@@ -26,6 +26,7 @@ const MOCKED = new Set(
     "components/studio/CapacityFleet",
     "components/studio/shell/ModelBadge",
     "studio/useThreadIncrementProgress",
+    "studio/machineIdentity",
     "studio/projectPaneThreads",
     "components/ui/select",
   ].map((path) => NodePath.resolve(appSource, path)),

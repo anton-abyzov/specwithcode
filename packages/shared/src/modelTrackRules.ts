@@ -19,6 +19,7 @@ import {
 import { describeModel, isSameModel } from "./modelIdentity.ts";
 import { newerOfFamily } from "./modelTiers.ts";
 import {
+  builtInTrackSelection,
   isFreePlanProvider,
   isFreeTrackModel,
   providerHomeFamily,
@@ -281,7 +282,7 @@ export function describeTrack(input: {
     const first = sources.find((source) => source.used);
     return {
       selection:
-        first === undefined ? null : { instanceId: first.provider.instanceId, model: first.slug },
+        first === undefined ? null : builtInTrackSelection(entry, first.provider, first.slug),
       model: entry.model,
       name:
         first === undefined

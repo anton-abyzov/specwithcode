@@ -60,16 +60,32 @@ try {
     const items = await page.locator('[role="menuitem"]').allTextContents();
     results.push({ theme, items, file });
     if (!before) {
-      // One action per machine: m1 kept its coordinator, linux-mini runs its own.
+      // Each machine once: m1 kept its coordinator (paused), linux-mini runs its own, so
+      // neither gets a coordinator item; viewing m1 is the way to its coordinator.
       assert.deepEqual(
         items.filter((text) => /coordinator/i.test(text)),
-        ["Open coordinator on m1"],
+        [],
       );
-      await page.getByRole("menuitem", { name: "Open coordinator on m1" }).click();
+      const rows = await page.locator('[role="menuitemradio"]').allTextContents();
+      assert.deepEqual(rows, ["m1coordinator paused", "linux-minicoordinator", "m4coordinator"]);
+      await page.locator('[role="menuitemradio"]', { hasText: "m1" }).click();
       await page.locator('[data-viewing="m1:p"]').waitFor();
       assert.match(await page.locator(".sws-host-name").textContent(), /Runs on m1/);
-      await page.screenshot({ path: path.join(output, `coordinator-menu-opened-m1-${theme}.png`) });
+      await page.screenshot({ path: path.join(output, `coordinator-menu-viewed-m1-${theme}.png`) });
     }
+    await page.close();
+  }
+  if (!before) {
+    // Checkouts of one repository that were never linked: each says so.
+    const page = await browser.newPage({ viewport: { width: 520, height: 560 } });
+    await page.goto(`${origin}/?theme=dark&case=unlinked`);
+    await page.locator("[data-coordinator-machine]").click();
+    await page.locator('[role="menu"]').waitFor();
+    await page.waitForTimeout(250);
+    const rows = await page.locator('[role="menuitemradio"]').allTextContents();
+    assert.deepEqual(rows, ["m1not linked", "m3not linked", "m4not linked"]);
+    await page.screenshot({ path: path.join(output, "coordinator-menu-unlinked-after-dark.png") });
+    results.push({ theme: "dark", case: "unlinked", rows });
     await page.close();
   }
 } finally {

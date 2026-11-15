@@ -131,6 +131,7 @@ import * as MachineLimitHandoff from "./orchestration-v2/MachineLimitHandoff.ts"
 import * as DeviceSignInHttp from "./auth/deviceSignInHttp.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
 import * as UsageLimitHistory from "./usage/UsageLimitHistory.ts";
+import * as ResetAnnouncementMonitor from "./resetAnnouncements/ResetAnnouncementMonitor.ts";
 import * as UsageResetLedger from "./usage/UsageResetLedger.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
@@ -215,6 +216,8 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
+import * as AgentMemoryLimit from "./resourceTelemetry/AgentMemoryLimit.ts";
+import * as AgentMemoryNotice from "./resourceTelemetry/AgentMemoryNotice.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as MemoryGuard from "./resourceTelemetry/MemoryGuard.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
@@ -355,6 +358,7 @@ const layerUsage = UsageService.layer.pipe(Layer.provide(layerServerSettings));
 const layerResourceDiagnostics = Layer.mergeAll(
   HostResources.layer,
   MemoryGuard.layer,
+  AgentMemoryLimit.layer,
   layerResourceTelemetry,
   ProcessDiagnostics.layer.pipe(Layer.provide(layerResourceTelemetry)),
   ProcessResourceMonitor.layer.pipe(Layer.provide(layerResourceTelemetry)),
@@ -753,6 +757,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(ScheduledTaskRunReactor.start),
   // Wakes the thread that launched a worker on this machine when the worker's run ends.
   Layer.effectDiscard(LaunchedWorkerWake.start),
+  // Tells a thread when its command was ended for passing the agent memory limit.
+  Layer.effectDiscard(AgentMemoryNotice.start),
   // Starts the background checks of whether iOS Simulators and Xcode builds run here, which machines report to each other.
   Layer.effectDiscard(
     Effect.map(HostProcessPlatform, (platform) => {
@@ -906,6 +912,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   UsageLimitHistory.layer,
   // What each subscription window had used when it reset, kept for a year.
   UsageResetLedger.layer,
+  // Posts announcing a limits reset, read from the public feed every half hour.
+  ResetAnnouncementMonitor.layerStart.pipe(Layer.provideMerge(ResetAnnouncementMonitor.layer)),
   layerProviderInstallationRefresh,
   // Looks for installed agents once at start, and turns on the signed-in ones nobody decided on.
   ProviderDiscovery.layer,
