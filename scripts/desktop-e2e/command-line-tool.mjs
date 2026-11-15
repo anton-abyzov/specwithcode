@@ -1,9 +1,8 @@
-// @effect-diagnostics nodeBuiltinImport:off - A standalone check script, run with plain Node against an installed app.
 /**
  * Proves "Install command-line tool" against an installed desktop app, with the app's own code
  * (apps/desktop/src/cli/commandLineTool.ts) and a throwaway home:
  *
- *   node scripts/desktop-e2e/command-line-tool.ts --resources <app resources dir> --app-version <x.y.z> --result <file.json>
+ *   node scripts/desktop-e2e/command-line-tool.mjs --resources <app resources dir> --app-version <x.y.z> --result <file.json>
  *
  * Install, then `specwithcode --version` in a new login shell (a new PowerShell with the user
  * PATH from the registry on Windows) prints the app's version; install refuses to replace a
@@ -17,12 +16,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
-import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
-
 import * as Tool from "../../apps/desktop/src/cli/commandLineTool.ts";
 import { makeNodeCommandLineToolHost } from "../../apps/desktop/src/cli/commandLineToolHost.ts";
 
-const HOST_PLATFORM = HostProcessPlatform.defaultValue();
+// oxlint-disable-next-line studio/no-global-process-runtime -- a standalone check script, outside the Effect runtime.
+const HOST_PLATFORM = NodeOS.platform();
 const { values } = NodeUtil.parseArgs({
   options: {
     resources: { type: "string" },
@@ -34,7 +32,7 @@ const { values } = NodeUtil.parseArgs({
 });
 const resources = values.resources;
 /** "auto": what the bundle's own CLI reports when started directly, without the shim. */
-const directVersion = (dir: string): string | undefined => {
+const directVersion = (dir) => {
   const root = NodePath.dirname(dir);
   const candidates =
     HOST_PLATFORM === "darwin"
@@ -84,8 +82,8 @@ if (platform === "win32" && !values["allow-user-path"] && process.env.GITHUB_ACT
 const home = NodeFS.realpathSync(
   NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-cli-home-")),
 );
-const steps: Array<{ step: string; ok: boolean; detail: unknown }> = [];
-const check = (step: string, ok: boolean, detail: unknown) => {
+const steps = [];
+const check = (step, ok, detail) => {
   steps.push({ step, ok, detail });
   console.log(`${ok ? "ok  " : "FAIL"} ${step}${ok ? "" : `: ${JSON.stringify(detail)}`}`);
 };
@@ -104,7 +102,7 @@ const host = makeNodeCommandLineToolHost({
 if (host === null) throw new Error(`unsupported platform ${platform}`);
 
 /** `specwithcode --version` as a person would run it in a brand-new terminal. */
-const freshTerminalVersion = (): { code: number | null; out: string } => {
+const freshTerminalVersion = () => {
   if (platform === "win32") {
     const script =
       "$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); specwithcode --version";
@@ -113,7 +111,7 @@ const freshTerminalVersion = (): { code: number | null; out: string } => {
       ["-NoProfile", "-Command", script],
       {
         encoding: "utf8",
-        env: { ...process.env, LOCALAPPDATA: process.env.LOCALAPPDATA! },
+        env: { ...process.env, LOCALAPPDATA: process.env.LOCALAPPDATA },
         timeout: 60_000,
       },
     );

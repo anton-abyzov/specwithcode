@@ -193,7 +193,7 @@ jobs:
       - name: Command-line tool from the installed .deb app
         run: |
           exe="$(readlink -f /usr/bin/specweave-studio-desktop)"
-          node scripts/desktop-e2e/command-line-tool.ts --resources "$(dirname "$exe")/resources" \
+          node scripts/desktop-e2e/command-line-tool.mjs --resources "$(dirname "$exe")/resources" \
             --app-version auto --result "$RUNNER_TEMP/linux-deb-command-line.json"
 
       - name: Launch the installed .deb app
@@ -267,7 +267,7 @@ jobs:
           appimage="$PWD/$(ls release/*.AppImage | head -1)"
           (cd "$RUNNER_TEMP" && "$appimage" --appimage-extract >/dev/null)
           "$RUNNER_TEMP/squashfs-root/resources/cli/specwithcode" --version
-          node scripts/desktop-e2e/command-line-tool.ts --resources "$RUNNER_TEMP/squashfs-root/resources" \
+          node scripts/desktop-e2e/command-line-tool.mjs --resources "$RUNNER_TEMP/squashfs-root/resources" \
             --app-image "$appimage" --app-version auto --result "$RUNNER_TEMP/linux-appimage-command-line.json"
 
       # The same end-to-end check on the AppImage's own payload: what
@@ -455,7 +455,7 @@ jobs:
       - name: Command-line tool from the unpacked app
         if: ${{ success() || failure() }}
         run: |
-          node scripts/desktop-e2e/command-line-tool.ts --resources "$RUNNER_TEMP/macos-app/SpecWithCode.app/Contents/Resources" \
+          node scripts/desktop-e2e/command-line-tool.mjs --resources "$RUNNER_TEMP/macos-app/SpecWithCode.app/Contents/Resources" \
             --app-version auto --result "$RUNNER_TEMP/macos-command-line.json"
 
       # The release's verify stage in its fresh mode (scripts/release/verify-built-app.mjs):
@@ -649,7 +649,7 @@ jobs:
         shell: pwsh
         run: |
           $resources = Join-Path (Split-Path $env:STUDIO_INSTALLED_EXE) "resources"
-          node scripts/desktop-e2e/command-line-tool.ts --resources $resources --app-version auto --result "$env:RUNNER_TEMP\windows-command-line.json"
+          node scripts/desktop-e2e/command-line-tool.mjs --resources $resources --app-version auto --result "$env:RUNNER_TEMP\windows-command-line.json"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Launch the installed app
