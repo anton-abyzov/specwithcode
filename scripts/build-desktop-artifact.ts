@@ -3125,6 +3125,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.toolsets = { appimage: "1.0.3" };
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    // Drops group and world write bits the Electron zip can carry before the
+    // .deb and AppImage are built from the unpacked app.
+    buildConfig.afterPack = path.join(repoRoot, "scripts/linux-after-pack.ts");
     buildConfig.linux = {
       // The .deb is built from the same unpacked app after the AppImage.
       // electron-builder lists both in latest-linux.yml and writes

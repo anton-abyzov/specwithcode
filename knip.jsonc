@@ -18,9 +18,11 @@
     },
     "scripts": {
       // Knip loads its preprocessor through a CLI option; native verification and
-      // worktree setup (from specweave-studio.json) run directly.
+      // worktree setup (from specweave-studio.json) run directly, and
+      // electron-builder loads the Linux afterPack hook by path.
       "entry": [
         "knip-schemas.ts",
+        "linux-after-pack.ts",
         "mobile-native-client.ts",
         "setup-worktree.ts",
         // Standalone verifiers and reports run directly with node.
