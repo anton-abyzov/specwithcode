@@ -320,6 +320,55 @@ if (rowsFixture && new URLSearchParams(window.location.search).has("remote")) {
     member.workspaceSettings = { ...member.workspaceSettings, logicalProject };
   }
 }
+/* `?rows&remote&reach=<state>`: the project's other machine, Build Mac, in one reach state
+   (reconnecting | not-answering | offline | cant-reach | catching-up), as the connection
+   layer presents it, with the clock frozen. Its two threads ask for an answer and work. */
+export const reachFixture = new URLSearchParams(window.location.search).get("reach");
+export const REACH_NOW = Date.parse("2026-11-15T18:00:00Z");
+const REACH_FACTS = {
+  reconnecting: { phase: "reconnecting", secondsAgo: 20, cause: "not-answering" },
+  "not-answering": { phase: "reconnecting", secondsAgo: 240, cause: "not-answering" },
+  offline: { phase: "reconnecting", secondsAgo: 240, cause: "no-service" },
+  "cant-reach": { phase: "reconnecting", secondsAgo: 240, cause: "relay-unreachable" },
+  "catching-up": { phase: "connected", secondsAgo: 0, cause: undefined },
+};
+/** The connection the presentation atom would publish for Build Mac. */
+export function reachConnection(state = reachFixture) {
+  const facts = REACH_FACTS[state];
+  if (!facts) return { phase: "connected", error: null, traceId: null };
+  if (facts.phase === "connected")
+    return { phase: "connected", error: null, traceId: null, lastConnectedAt: REACH_NOW };
+  const at = REACH_NOW - facts.secondsAgo * 1_000;
+  return {
+    phase: facts.phase,
+    error: "Build Mac stopped responding.",
+    traceId: null,
+    lostAt: at,
+    lastConnectedAt: at,
+    cause: facts.cause,
+  };
+}
+if (reachFixture) {
+  Date.now = () => REACH_NOW;
+  machineLabels.m1 = "Build Mac";
+  machineLabels.host = "Studio Mac";
+  shells = [
+    shell("coord", "Project coordinator"),
+    shell("host-idle", "Write the release notes", { createdBy: "agent" }),
+    shell("m1-ask", "Approve the schema migration", {
+      createdBy: "agent",
+      projectId: "project-m1",
+      environmentId: "m1",
+      hasPendingUserInput: true,
+    }),
+    shell("m1-run", "Profile the importer", {
+      createdBy: "agent",
+      projectId: "project-m1",
+      environmentId: "m1",
+      runtime: { status: "running" },
+    }),
+  ];
+}
 const memberProjects = rowsFixture
   ? [project, otherMachineProject]
   : new URLSearchParams(window.location.search).has("machines") || overridesFixture
@@ -478,7 +527,7 @@ export const useThreadHistory = () => ({ hasMoreHistory: switchFixture, loading:
 export const useThreadStatus = () => "live";
 export const useEnvironment = (environmentId) => ({
   label: memberProjects.length > 1 ? machineLabels[environmentId] : "Development Mac",
-  connection: { phase: "connected" },
+  connection: reachFixture && environmentId === "m1" ? reachConnection() : { phase: "connected" },
   ...(recovery
     ? {
         serverConfig: {
@@ -542,6 +591,18 @@ export const useEnvironmentShellLive = (environmentId) => environmentId !== null
 // Threads never move between projects in this fixture.
 export const waitForThreadMoveOutcome = async () => null;
 export const useEnvironmentScopeAccess = () => "granted";
+export const readEnvironmentScopeAccess = () => "granted";
+export const environmentScopeAccess = () => "granted";
+export const providerManageBlockedText = () => null;
+export const useEnvironmentAcceptsBrowserSignIn = () => true;
+// Every machine grants operate; one Map per id list, as the real hook keeps it stable.
+const scopeAccessMaps = new Map();
+export const useEnvironmentsScopeAccess = (environmentIds) => {
+  const key = environmentIds.join("\n");
+  if (!scopeAccessMaps.has(key))
+    scopeAccessMaps.set(key, new Map(environmentIds.map((id) => [id, "granted"])));
+  return scopeAccessMaps.get(key);
+};
 export const useEnvironmentsWithScope = (environments) =>
   new Set(environments.map((environment) => environment.environmentId));
 const connections = [];
@@ -1332,6 +1393,8 @@ export const useAllEnvironmentShellsBootstrapped = () => true;
 // Every fixture host is reachable.
 const NO_UNREACHABLE_ENVIRONMENTS: ReadonlySet<string> = new Set();
 export const useUnreachableEnvironmentIds = () => NO_UNREACHABLE_ENVIRONMENTS;
+const NO_REACH_STATES = new Map();
+export const useMachineReachStates = () => NO_REACH_STATES;
 const overridesEnvironment = (environmentId, projectId, overrides, app) => ({
   environmentId,
   label: machineLabels[environmentId],
@@ -1377,9 +1440,27 @@ const OVERRIDES_ENVIRONMENTS = [
     { threadFinishAction: "pull_request", defaultRuntimeMode: "approval-required" },
   ),
 ];
+const REACH_ENVIRONMENTS = reachFixture
+  ? [
+      {
+        environmentId: "host",
+        label: machineLabels.host,
+        entry: { target: { _tag: "PrimaryConnectionTarget", label: machineLabels.host } },
+        connection: { phase: "connected", error: null, traceId: null },
+      },
+      {
+        environmentId: "m1",
+        label: machineLabels.m1,
+        entry: { target: { _tag: "RelayConnectionTarget", label: machineLabels.m1 } },
+        connection: reachConnection(),
+      },
+    ]
+  : [];
 export const useEnvironments = () => ({
   isReady: true,
-  environments: overridesFixture
+  environments: reachFixture
+    ? REACH_ENVIRONMENTS
+    : overridesFixture
     ? OVERRIDES_ENVIRONMENTS
     : new URLSearchParams(location.search).has("attention")
       ? [{ environmentId: "host", label: "Fixture host", connection: { phase: "connected" } }]

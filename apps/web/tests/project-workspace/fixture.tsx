@@ -1,4 +1,5 @@
 import { AttentionFixture } from "./attention-fixture";
+import { ReachBannerFixture, ReachProviders } from "./reach-fixture";
 /* Isolated UI fixture: all host/provider operations are explicit in-memory fakes. */
 import React, { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -257,7 +258,15 @@ function SidebarLayout(props: { children: React.ReactNode }) {
 }
 const search = new URLSearchParams(location.search);
 createRoot(document.getElementById("root")!).render(
-  search.has("attention") ? (
+  search.has("banner") ? (
+    <ReachBannerFixture state={search.get("banner")!} />
+  ) : search.has("reach") ? (
+    <ToastProvider>
+      <ReachProviders state={search.get("reach")!}>
+        <ProjectWorkspace projectKey="atlas" />
+      </ReachProviders>
+    </ToastProvider>
+  ) : search.has("attention") ? (
     <AttentionFixture />
   ) : search.has("connections") ? (
     <ConnectionsFixture />
