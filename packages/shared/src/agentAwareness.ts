@@ -1,8 +1,9 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2ThreadShell,
-  Project,
-  ThreadId,
+import {
+  isProviderNativeSubagentThread,
+  type EnvironmentId,
+  type OrchestrationV2ThreadShell,
+  type Project,
+  type ThreadId,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -43,6 +44,7 @@ export interface ProjectThreadAwarenessV2Input {
   readonly thread: Pick<
     OrchestrationV2ThreadShell,
     | "activityRunStatus"
+    | "creationSource"
     | "id"
     | "lineage"
     | "modelSelection"
@@ -54,12 +56,41 @@ export interface ProjectThreadAwarenessV2Input {
   >;
 }
 
+/**
+ * The request kinds only the person can answer. A dynamic tool call is answered
+ * by the app and a sign-in refresh by the account's own flow, so a worker
+ * waiting on one of those is working, not waiting on the person.
+ */
+const PERSON_ANSWERED_REQUEST_KINDS: ReadonlySet<
+  NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>["kind"]
+> = new Set(["command", "file-read", "file-change", "permission", "mcp-elicitation", "user_input"]);
+
+/**
+ * A worker a coordinator delegated to that is stopped on the person: an
+ * approval, a question, a secret or an access card. Only the person can
+ * answer those, so the worker's own row reaches the owner like a top-level
+ * thread's. A provider's own subagents ask through their parent thread.
+ */
+export function delegatedThreadAwaitsPerson(
+  thread: Pick<OrchestrationV2ThreadShell, "creationSource" | "lineage" | "pendingRuntimeRequest">,
+): boolean {
+  const kind = thread.pendingRuntimeRequest?.kind;
+  return (
+    thread.lineage.relationshipToParent === "subagent" &&
+    !isProviderNativeSubagentThread(thread) &&
+    kind !== undefined &&
+    PERSON_ANSWERED_REQUEST_KINDS.has(kind)
+  );
+}
+
 /** Build relay activity directly from the V2 shell projection. */
 export function projectThreadAwarenessV2(
   input: ProjectThreadAwarenessV2Input,
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
-  if (thread.lineage.relationshipToParent === "subagent") return null;
+  // A delegated worker that is merely working or done stays off the phone.
+  if (thread.lineage.relationshipToParent === "subagent" && !delegatedThreadAwaitsPerson(thread))
+    return null;
   const phase = resolveThreadAwarenessPhaseV2(thread);
   if (phase === null) {
     return null;
