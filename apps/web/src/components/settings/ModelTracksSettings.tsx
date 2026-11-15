@@ -128,6 +128,13 @@ function statusChip(
   }
 }
 
+/** What the top entry of each track is for; the entries under it are its fallbacks. */
+const TRACK_FIRST: Record<ModelTrack, string> = {
+  daily: "New threads start here",
+  complex: "Hard work starts here",
+  review: "Reviews first",
+};
+
 /** A grip, a position and the row's content; the grip also reorders by keyboard. */
 function SortableRow(props: {
   readonly id: string;
@@ -306,6 +313,11 @@ function TrackCard(props: {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="truncate text-sm font-medium">{row.name}</span>
+                {index === 0 && row.selection !== null ? (
+                  <Badge variant="outline" size="sm">
+                    {tx(TRACK_FIRST[track])}
+                  </Badge>
+                ) : null}
                 {row.free ? (
                   <Badge variant="info" size="sm">
                     {tx("Free, used last")}
@@ -477,9 +489,10 @@ function SourcesCard(props: {
  * The three model tracks and the Sources order: which model does routine
  * work, hard work and reviews, and which harness or subscription each model
  * runs on first. Lists reorder by drag and by keyboard; a move that cannot
- * work is refused with its reason.
+ * work is refused with its reason. `sources={false}` leaves the Sources order
+ * out, for a project dialog: that order is one list for the whole machine.
  */
-export function ModelTracksSettings() {
+export function ModelTracksSettings({ sources = true }: { readonly sources?: boolean } = {}) {
   const tx = useTx();
   const { target } = useSettingsScope();
   const settings = useScopedSettings();
@@ -582,13 +595,15 @@ export function ModelTracksSettings() {
           }
         />
       ))}
-      <SourcesCard
-        rows={describeSources({ providers, order: sourceOrder, nowMs })}
-        order={sourceOrder}
-        saved={sourceOrder.length > 0}
-        sourceName={sourceName}
-        onSave={(order) => updateSettings({ defaultModelProviders: [...order] })}
-      />
+      {sources ? (
+        <SourcesCard
+          rows={describeSources({ providers, order: sourceOrder, nowMs })}
+          order={sourceOrder}
+          saved={sourceOrder.length > 0}
+          sourceName={sourceName}
+          onSave={(order) => updateSettings({ defaultModelProviders: [...order] })}
+        />
+      ) : null}
     </div>
   );
 }

@@ -65,7 +65,10 @@ import { ProjectConnections } from "./ProjectConnections";
 import { useProjectIconEditor } from "./ProjectIconEditor";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { CharacterCount } from "../ui/character-count";
+import { FoldedSettingsSection } from "../settings/FoldedSettingsSection";
+import { ModelTracksSettings } from "../settings/ModelTracksSettings";
 import { ProviderLimitSettings } from "../settings/ProviderLimitSettings";
+import { SettingsGroup } from "../settings/SettingsGroup";
 import { AdversarialReviewSettings } from "../settings/AdversarialReviewSettings";
 import { RecommendedModelProviders } from "../settings/RecommendedModelProviders";
 import { ThreadModelModeSetting } from "../settings/ThreadModelModeSetting";
@@ -584,11 +587,33 @@ export function ProjectWorkspaceSettings({
                   <SettingsScopeProvider search={limitScope} onChange={keepProjectScope}>
                     <ThreadModelModeSetting />
                     {usesTracks ? (
-                      <p className="project-muted">
-                        {say(
-                          "Threads the coordinator starts, including the ones a routine needs, run on the first available model of their track. Edit the tracks in Settings > Models.",
-                        )}
-                      </p>
+                      <>
+                        <p className="project-muted">
+                          {say(
+                            "Threads the coordinator starts, including the ones a routine needs, start on the top model of their track and move down the list when it runs out. Daily is regular work, Complex the hardest work, Review the adversarial reviewer.",
+                          )}
+                        </p>
+                        {/* One place for this project's models: the top of a track is where a
+                            thread starts and the rest are its fallbacks. */}
+                        <ModelTracksSettings sources={false} />
+                        <SettingsSection
+                          id="project-provider-limits"
+                          title="When a limit hits"
+                          className="pt-3"
+                        >
+                          <ProviderLimitSettings part="policy" />
+                        </SettingsSection>
+                        <FoldedSettingsSection
+                          id="project-model-advanced"
+                          title="Advanced"
+                          summary="Custom fallback order, exclusions, spending, review depth"
+                        >
+                          <SettingsGroup>
+                            <ProviderLimitSettings part="advanced" />
+                            <AdversarialReviewSettings part="depth" />
+                          </SettingsGroup>
+                        </FoldedSettingsSection>
+                      </>
                     ) : (
                       <>
                         <ProjectModels
@@ -604,25 +629,25 @@ export function ProjectWorkspaceSettings({
                             "Threads the coordinator starts, including the ones a routine needs, run on this model, on whichever provider serving it has room.",
                           )}
                         </p>
+                        {/* One chain under the models it guards: the same model elsewhere, then the
+                        rules for another model, then recovery for a thread that stops anyway. */}
+                        <SettingsSection
+                          id="project-provider-limits"
+                          title="When a model runs out"
+                          className="pt-3"
+                        >
+                          <RecommendedModelProviders model={worker} />
+                          <ProviderLimitSettings />
+                        </SettingsSection>
+                        <SettingsSection
+                          id="project-adversarial-review"
+                          title="Adversarial review"
+                          className="pt-3"
+                        >
+                          <AdversarialReviewSettings />
+                        </SettingsSection>
                       </>
                     )}
-                    {/* One chain under the models it guards: the same model elsewhere, then the
-                      rules for another model, then recovery for a thread that stops anyway. */}
-                    <SettingsSection
-                      id="project-provider-limits"
-                      title="When a model runs out"
-                      className="pt-3"
-                    >
-                      <RecommendedModelProviders model={worker} />
-                      <ProviderLimitSettings />
-                    </SettingsSection>
-                    <SettingsSection
-                      id="project-adversarial-review"
-                      title="Adversarial review"
-                      className="pt-3"
-                    >
-                      <AdversarialReviewSettings />
-                    </SettingsSection>
                   </SettingsScopeProvider>
                   <label className="project-checkbox">
                     <input

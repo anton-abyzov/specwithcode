@@ -196,6 +196,22 @@ vi.mock("../settings/settingsLayout", () => ({
 vi.mock("../settings/ProviderLimitSettings", () => ({
   ProviderLimitSettings: () => <p>When a provider runs out</p>,
 }));
+vi.mock("../settings/ModelTracksSettings", () => ({
+  ModelTracksSettings: ({ sources }: { sources?: boolean }) => (
+    <p data-model-tracks={String(sources ?? true)}>Daily Complex Review</p>
+  ),
+}));
+vi.mock("../settings/FoldedSettingsSection", () => ({
+  FoldedSettingsSection: ({ title, children }: React.PropsWithChildren<{ title: string }>) => (
+    <section>
+      <h3>{title}</h3>
+      {children}
+    </section>
+  ),
+}));
+vi.mock("../settings/SettingsGroup", () => ({
+  SettingsGroup: ({ children }: React.PropsWithChildren) => <div>{children}</div>,
+}));
 vi.mock("../settings/AdversarialReviewSettings", () => ({
   AdversarialReviewSettings: () => null,
 }));
@@ -645,7 +661,7 @@ describe("project settings and memory", () => {
     await render();
     expect(container.textContent).toContain(": codex-override");
   });
-  it("replaces the one-model picker with the track note on a Tracks project", async () => {
+  it("shows the three tracks as the one model list on a Tracks project", async () => {
     state.hostSettings = {
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: { project: { threadModelMode: "tracks" } },
@@ -653,7 +669,15 @@ describe("project settings and memory", () => {
     await render();
     expect(container.querySelector("[data-thread-model-mode]")).not.toBeNull();
     expect(container.textContent).not.toContain(": codex-worker");
-    expect(container.textContent).toContain("first available model of their track");
+    expect(container.textContent).toContain("start on the top model of their track");
+    // The tracks replace the thread model, its providers and the separate fallback list.
+    expect(container.querySelector("[data-model-tracks]")?.getAttribute("data-model-tracks")).toBe(
+      "false",
+    );
+    expect(container.textContent).not.toContain("Recommended model for threads");
+    expect(container.textContent).not.toContain("Also served by");
+    expect(container.textContent).toContain("When a limit hits");
+    expect(container.textContent).toContain("Advanced");
   });
   it("saves the displayed revision and preserves edits after a conflict", async () => {
     state.update.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Revision changed") });

@@ -3,6 +3,7 @@ import {
   DEFAULT_PROVIDER_LIMIT_WAIT_UNDER_MINUTES,
   PROVIDER_LIMIT_SWITCH_AT_PERCENT_MAX,
   PROVIDER_LIMIT_SWITCH_AT_PERCENT_MIN,
+  type ModelLanes,
   type ModelSelection,
   type ProviderLimitAction,
 } from "@specweave-studio/contracts";
@@ -18,6 +19,12 @@ import {
 } from "@specweave-studio/shared/fallbackOptions";
 import { useId, useState } from "react";
 
+import { describeModel } from "@specweave-studio/shared/modelIdentity";
+import {
+  addTrackEntry,
+  describeTrack,
+  trackEntryRefusal,
+} from "@specweave-studio/shared/modelTrackRules";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -153,6 +160,36 @@ export function ProviderLimitSettings({ part }: { readonly part?: "policy" | "ad
       providerLimitFallbackModels: [...order],
       providerLimitFallbackModelSelection: order[0] ?? null,
     });
+  // Folds a saved order into Daily, behind what Daily holds now, and clears it: one list
+  // to set. An entry Daily refuses (already there, billed per token) is left out.
+  const addOrderToDaily = () => {
+    let daily = describeTrack({
+      track: "daily",
+      saved: settings.modelLanes?.routine ?? [],
+      providers,
+      sourceOrder: settings.defaultModelProviders,
+      nowMs,
+    }).flatMap((row) => (row.selection === null ? [] : [row.selection]));
+    for (const entry of fallbackOrder) {
+      const refused = trackEntryRefusal({
+        track: "daily",
+        model: describeModel(
+          providers.find((provider) => provider.instanceId === entry.instanceId),
+          entry.model,
+        ),
+        existing: daily,
+        providers,
+        instanceId: entry.instanceId,
+      });
+      if (refused === null)
+        daily = [...addTrackEntry({ track: "daily", entries: daily, providers, entry })];
+    }
+    updateSettings({
+      modelLanes: { routine: [...daily] } as unknown as ModelLanes,
+      providerLimitFallbackModels: [],
+      providerLimitFallbackModelSelection: null,
+    });
+  };
   const pickerSelection = resolveDefaultProviderModelSelection(providers, fallbackOrder[0] ?? null);
   const modelOptions = getCustomModelOptionsByInstance(
     settings,
@@ -380,7 +417,10 @@ export function ProviderLimitSettings({ part }: { readonly part?: "policy" | "ad
                 />
               </SettingsRow>
               {part !== undefined ? (
-                <div className="px-3 pb-2">
+                <div className="flex flex-wrap gap-2 px-3 pb-2">
+                  <Button type="button" size="xs" variant="outline" onClick={addOrderToDaily}>
+                    {tx("Add to Daily")}
+                  </Button>
                   <Button
                     type="button"
                     size="xs"
@@ -399,7 +439,7 @@ export function ProviderLimitSettings({ part }: { readonly part?: "policy" | "ad
               settingKeys={["providerLimitFallbackListOnly"]}
               mixed={mixedListOnly}
               id="provider-limit-fallback-list-only"
-              title={t("limitSettings.listOnly.title")}
+              title={usesTiers ? tx("Stay on my tracks") : t("limitSettings.listOnly.title")}
               description={
                 usesTiers
                   ? t("limitSettings.listOnly.descriptionTiers")

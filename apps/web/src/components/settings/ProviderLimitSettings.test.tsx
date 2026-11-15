@@ -307,7 +307,7 @@ it("follows the model tiers when no fallback order is set, and offers Only these
   };
   act(() => renderer!.update(<ProviderLimitSettings />));
   expect(section("Fallback order")[0]!.props["data-status"]).toBe("Uses your model tiers");
-  expect(section("Only these models")).toHaveLength(1);
+  expect(section("Stay on my tracks")).toHaveLength(1);
 });
 
 const switchAtSection = () =>
