@@ -77,7 +77,7 @@ const TRACK_HINTS: Record<ModelTrack, string> = {
   review: "A different model family checks finished work",
 };
 
-const ENTRY_REFUSALS: Record<TrackEntryRefusal, string> = {
+export const TRACK_ENTRY_REFUSALS: Record<TrackEntryRefusal, string> = {
   duplicate: "That model is already in this list.",
   full: "This list is full. Remove a model first.",
   "free-in-hard-track": "Free models only close Daily. Hard work and reviews wait for a reset.",
@@ -127,6 +127,13 @@ function statusChip(
       return { label: tx("Not ready"), variant: "outline" };
   }
 }
+
+/** What the top entry of each track is for; the entries under it are its fallbacks. */
+const TRACK_FIRST: Record<ModelTrack, string> = {
+  daily: "New threads start here",
+  complex: "Hard work starts here",
+  review: "Reviews first",
+};
 
 /** A grip, a position and the row's content; the grip also reorders by keyboard. */
 function SortableRow(props: {
@@ -306,6 +313,12 @@ function TrackCard(props: {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="truncate text-sm font-medium">{row.name}</span>
+                {row.selection !== null &&
+                rows.findIndex((entry) => entry.selection !== null) === index ? (
+                  <Badge variant="outline" size="sm">
+                    {tx(TRACK_FIRST[track])}
+                  </Badge>
+                ) : null}
                 {row.free ? (
                   <Badge variant="info" size="sm">
                     {tx("Free, used last")}
@@ -383,7 +396,7 @@ function TrackCard(props: {
           </span>
         )}
       </div>
-      {refusal !== null ? <Note tone="warning">{tx(ENTRY_REFUSALS[refusal])}</Note> : null}
+      {refusal !== null ? <Note tone="warning">{tx(TRACK_ENTRY_REFUSALS[refusal])}</Note> : null}
       {saved.length === 0 && unlisted.length > 0 ? (
         <Note>
           {`${tx("Changing this list saves it as yours without")} ${unlisted
@@ -477,9 +490,10 @@ function SourcesCard(props: {
  * The three model tracks and the Sources order: which model does routine
  * work, hard work and reviews, and which harness or subscription each model
  * runs on first. Lists reorder by drag and by keyboard; a move that cannot
- * work is refused with its reason.
+ * work is refused with its reason. `sources={false}` leaves the Sources order
+ * out, for a project dialog: that order is one list for the whole machine.
  */
-export function ModelTracksSettings() {
+export function ModelTracksSettings({ sources = true }: { readonly sources?: boolean } = {}) {
   const tx = useTx();
   const { target } = useSettingsScope();
   const settings = useScopedSettings();
@@ -582,13 +596,15 @@ export function ModelTracksSettings() {
           }
         />
       ))}
-      <SourcesCard
-        rows={describeSources({ providers, order: sourceOrder, nowMs })}
-        order={sourceOrder}
-        saved={sourceOrder.length > 0}
-        sourceName={sourceName}
-        onSave={(order) => updateSettings({ defaultModelProviders: [...order] })}
-      />
+      {sources ? (
+        <SourcesCard
+          rows={describeSources({ providers, order: sourceOrder, nowMs })}
+          order={sourceOrder}
+          saved={sourceOrder.length > 0}
+          sourceName={sourceName}
+          onSave={(order) => updateSettings({ defaultModelProviders: [...order] })}
+        />
+      ) : null}
     </div>
   );
 }
