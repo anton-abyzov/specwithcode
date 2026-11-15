@@ -7,6 +7,7 @@
 @import "./components/studio/shell/voice.css";
 @import "./components/studio/shell/threadCards.css";
 @import "./components/studio/shell/handoff.css";
+@import "./components/office/office.css";
 
 :root {
   color-scheme: light;

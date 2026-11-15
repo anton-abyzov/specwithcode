@@ -24,6 +24,7 @@ import {
   PaletteIcon,
   PinIcon,
   PresentationIcon,
+  TableIcon,
 } from "lucide-react";
 import {
   createContext,
@@ -80,6 +81,7 @@ const KIND_ICON: Record<ProjectArtifactKind, typeof FileTextIcon> = {
   data: DatabaseIcon,
   code: CodeIcon,
   link: LinkIcon,
+  sheet: TableIcon,
 };
 
 function extensionOf(artifact: ProjectArtifact): string | null {

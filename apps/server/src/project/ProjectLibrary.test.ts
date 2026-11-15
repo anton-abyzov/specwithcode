@@ -147,6 +147,29 @@ describe("readProjectLibrary", () => {
     ]);
   });
 
+  it("lists sheets saved in the artifacts folder", async () => {
+    const root = await project();
+    const file = NodePath.join(root, ".specweave/artifacts/budget.sheet.json");
+    await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+    await NodeFSP.writeFile(file, "x".repeat(10));
+    await NodeFSP.utimes(file, 1_800_000_000, 1_800_000_000);
+    await NodeFSP.mkdir(NodePath.join(root, ".specweave/artifacts/nested"));
+    await NodeFSP.writeFile(
+      NodePath.join(root, ".specweave/artifacts/nested/deep.sheet.json"),
+      "x",
+    );
+
+    const library = await readProjectLibrary(root);
+    expect(library.outputs).toEqual([
+      {
+        path: ".specweave/artifacts/budget.sheet.json",
+        byteLength: 10,
+        modifiedAt: new Date(1_800_000_000_000).toISOString(),
+        increment: null,
+      },
+    ]);
+  });
+
   it("finds a new file in an old increment's subfolder past a large reports tree", async () => {
     const root = await project();
     const bulk = NodePath.join(root, ".specweave/reports/bulk");

@@ -7,6 +7,7 @@ import { DecisionToolkit } from "./toolkits/decision/tools.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import { GoogleToolkit } from "./toolkits/google/tools.ts";
 import { HtmlToolkit } from "./toolkits/html/tools.ts";
+import { OfficeToolkit } from "./toolkits/office/tools.ts";
 import { MachinesToolkit } from "./toolkits/machines/tools.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
@@ -33,6 +34,7 @@ const TOOLS = [
   EnvironmentToolkit,
   PreviewControlsToolkit,
   HtmlToolkit,
+  OfficeToolkit,
   MachinesToolkit,
   DecisionToolkit,
   DesignToolkit,

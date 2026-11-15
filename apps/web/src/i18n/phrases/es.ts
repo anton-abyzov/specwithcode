@@ -4605,7 +4605,8 @@ export const es: PhraseCatalog = {
   "View this project on": "Ver este proyecto en",
   "Move coordinator to {machine}…": "Mover el coordinador a {machine}…",
   "Open coordinator on {machine}": "Abrir el coordinador en {machine}",
-  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.": "{machine} conservó su coordinador de antes. Abrirlo lo vuelve a ejecutar junto a este; nada se mueve.",
+  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.":
+    "{machine} conservó su coordinador de antes. Abrirlo lo vuelve a ejecutar junto a este; nada se mueve.",
   "Machine access settings": "Ajustes de acceso entre equipos",
   "{machine} offline": "{machine} sin conexión",
   "workers only": "solo workers",
@@ -4954,8 +4955,7 @@ export const es: PhraseCatalog = {
   "Last time it was signed in.": "La última vez tenía la sesión iniciada.",
   "Not signed in": "Sin iniciar sesión",
   "Sign in with {account}": "Iniciar sesión con {account}",
-  "Switch account":
-    "Cambiar de cuenta",
+  "Switch account": "Cambiar de cuenta",
   "This is the Codex command line's sign-in on this machine. The Codex app signs in separately, so changing accounts there does not change it here.":
     "Este es el inicio de sesión de la línea de comandos de Codex en este equipo. La app de Codex inicia sesión por separado, así que cambiar de cuenta allí no lo cambia aquí.",
   "Using another ChatGPT account in the Codex app? It signs in separately. Switch account to use it here.":
@@ -5022,4 +5022,26 @@ export const es: PhraseCatalog = {
     "La copia de SpecWithCode es la versión {version}, anterior a la que usa esta versión.",
   "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
     "Las herramientas se quedan en cada equipo y no se copian. {machineName} aún necesita algunas antes de que los agentes puedan trabajar allí en este proyecto.",
+  Other: "Otros",
+  Total: "Total",
+  "Remove chart": "Quitar gráfico",
+  "This chart's range is not valid.": "El rango de este gráfico no es válido.",
+  "This chart has no numbers to draw.": "Este gráfico no tiene números que dibujar.",
+  "This sheet could not be read.": "No se pudo leer esta hoja.",
+  "The chart could not be saved.": "No se pudo guardar el gráfico.",
+  "Formula bar": "Barra de fórmulas",
+  "Select the cells to chart first.": "Primero selecciona las celdas para el gráfico.",
+  "Insert chart": "Insertar gráfico",
+  "Chart type": "Tipo de gráfico",
+  Bar: "Barras",
+  Line: "Líneas",
+  Donut: "Anillo",
+  "Chart title": "Título del gráfico",
+  "Add chart": "Añadir gráfico",
+  "Showing the first {rows} rows and {columns} columns.":
+    "Se muestran las primeras {rows} filas y {columns} columnas.",
+  Charts: "Gráficos",
+  "Sheet tabs": "Pestañas de la hoja",
+  "This sheet is too large to open here.": "Esta hoja es demasiado grande para abrirla aquí.",
+  Sheet: "Hoja",
 };

@@ -172,6 +172,10 @@
       "types": "./src/htmlRender.ts",
       "import": "./src/htmlRender.ts"
     },
+    "./officeSheet": {
+      "types": "./src/officeSheet/index.ts",
+      "import": "./src/officeSheet/index.ts"
+    },
     "./favicon": {
       "types": "./src/favicon.ts",
       "import": "./src/favicon.ts"
