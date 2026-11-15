@@ -211,6 +211,26 @@ describe("BoardPane", () => {
     expect(container.textContent).toContain('No increment matches "login".');
   });
 
+  it("starts each column at its first page again after a new search", async () => {
+    const done = Array.from({ length: 30 }, (_, index) =>
+      card(`${String(100 + index).padStart(4, "0")}-done`, "done"),
+    );
+    runtime.reply = board(done, { done: 558 });
+    await render();
+    await act(async () =>
+      column("done").querySelector<HTMLButtonElement>(".sws-board-more")!.click(),
+    );
+    expect(runtime.inputs.at(-1)).toMatchObject({ doneLimit: 90 });
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Find an increment"]')!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "login");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => vi.advanceTimersByTime(300));
+    expect(runtime.inputs.at(-1)).toEqual({ projectId, query: "login" });
+  });
+
   it("asks again every 30 seconds while the page is visible", async () => {
     runtime.reply = board([card("0002-build", "active")]);
     await render();

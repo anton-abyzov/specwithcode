@@ -53,9 +53,16 @@ export function BoardPane({
   const [shown, setShown] = useState<Partial<Record<ProjectBoardCard["column"], number>>>({});
   const [opened, setOpened] = useState<{ path: string; name: string } | null>(null);
   useEffect(() => {
-    const timer = window.setTimeout(() => setSearched(filter.trim()), 250);
+    const next = filter.trim();
+    if (next === searched) return;
+    const timer = window.setTimeout(() => {
+      setSearched(next);
+      // A new search starts each column at its first page again.
+      setShown({});
+      setDoneLimit(PROJECT_BOARD_DONE_DEFAULT);
+    }, 250);
     return () => window.clearTimeout(timer);
-  }, [filter]);
+  }, [filter, searched]);
   const query = useEnvironmentQuery(
     useMemo(
       () =>

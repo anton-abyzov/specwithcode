@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { boardColumn, ledgerPullRequests, readProjectBoard } from "./ProjectBoard.ts";
+import { boardColumn, boardStatus, ledgerPullRequests, readProjectBoard } from "./ProjectBoard.ts";
 
 const roots: string[] = [];
 const NOW = Date.parse("2026-11-14T12:00:00Z");
@@ -79,6 +79,17 @@ describe("boardColumn", () => {
     expect(boardColumn("ready_for_review", { total: 3, done: 1 })).toBe("review");
     expect(boardColumn("completed", { total: 3, done: 1 })).toBe("done");
   });
+
+  it("reads the status spellings older increments and other tools wrote", () => {
+    expect(boardColumn("in_progress", { total: 3, done: 1 })).toBe("active");
+    expect(boardColumn("ready-for-review", { total: 3, done: 1 })).toBe("review");
+    expect(boardColumn("Done", { total: 3, done: 1 })).toBe("done");
+    expect(boardColumn("closed", { total: 0, done: 0 })).toBe("done");
+    expect(boardStatus("cancelled")).toBe("dropped");
+    expect(boardStatus("superseded")).toBe("dropped");
+    expect(boardStatus("abandoned")).toBe("dropped");
+    expect(boardStatus("something else")).toBe("planned");
+  });
 });
 
 describe("ledgerPullRequests", () => {
@@ -113,6 +124,7 @@ describe("readProjectBoard", () => {
     await increment(root, "0004-done", { status: "completed", tasks: 1 });
     await increment(root, "0005-abandoned", { status: "abandoned", tasks: 1 });
     await increment(root, "0006-paused", { status: "paused" });
+    await increment(root, "0007-cancelled", { status: "cancelled", tasks: 1 });
     await NodeFSP.mkdir(NodePath.join(root, ".specweave", "increments", "notes"));
 
     const board = await readProjectBoard(root, { now: NOW });

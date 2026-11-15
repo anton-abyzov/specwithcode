@@ -161,18 +161,43 @@ async function inBatches<A, B>(items: ReadonlyArray<A>, read: (item: A) => Promi
   return results;
 }
 
+/**
+ * What a `metadata.json` status means for the board, across the spellings
+ * older increments and other tools wrote (`in_progress`, `done`, `cancelled`).
+ * `dropped` increments are left off the board.
+ */
+export type BoardStatus = "planned" | "active" | "paused" | "review" | "completed" | "dropped";
+const STATUS_MEANINGS: Readonly<Record<string, BoardStatus>> = {
+  active: "active",
+  "in-progress": "active",
+  started: "active",
+  paused: "paused",
+  "ready-for-review": "review",
+  "in-review": "review",
+  review: "review",
+  completed: "completed",
+  complete: "completed",
+  done: "completed",
+  closed: "completed",
+  abandoned: "dropped",
+  cancelled: "dropped",
+  canceled: "dropped",
+  superseded: "dropped",
+  archived: "dropped",
+};
+export function boardStatus(status: string): BoardStatus {
+  return STATUS_MEANINGS[status.trim().toLowerCase().replaceAll(/[_\s]+/gu, "-")] ?? "planned";
+}
+
 /** The column an increment sits in, from its metadata status and its task counts. */
 export function boardColumn(
   status: string,
   tasks: { readonly total: number; readonly done: number },
 ): ProjectBoardColumn {
-  if (status === "completed") return "done";
-  if (status === "ready_for_review" || (tasks.total > 0 && tasks.done === tasks.total)) {
-    return "review";
-  }
-  return status === "active" || status === "in-progress" || status === "paused"
-    ? "active"
-    : "planned";
+  const meaning = boardStatus(status);
+  if (meaning === "completed") return "done";
+  if (meaning === "review" || (tasks.total > 0 && tasks.done === tasks.total)) return "review";
+  return meaning === "active" || meaning === "paused" ? "active" : "planned";
 }
 
 const newestFirst = (left: ProjectBoardCard, right: ProjectBoardCard) =>
@@ -192,10 +217,11 @@ export async function readProjectBoard(
   const closed: Array<{ id: string; meta: Meta }> = [];
   ids.forEach((id, index) => {
     const meta = metas[index]!;
-    if (meta.status === "abandoned") return;
+    const meaning = boardStatus(meta.status);
+    if (meaning === "dropped") return;
     const haystack = `${id} ${meta.title ?? ""}`.toLowerCase();
     if (!words.every((word) => haystack.includes(word))) return;
-    (meta.status === "completed" ? closed : open).push({ id, meta });
+    (meaning === "completed" ? closed : open).push({ id, meta });
   });
   const doneLimit = Math.min(
     PROJECT_BOARD_DONE_MAX,
@@ -212,7 +238,8 @@ export async function readProjectBoard(
     const folder = folderOf(id);
     const detail = await readDetail(root, folder, input.now);
     const tasks = { total: detail.total, done: detail.done };
-    const completed = meta.status === "completed";
+    const meaning = boardStatus(meta.status);
+    const completed = meaning === "completed";
     const updatedAt =
       !completed && detail.ledgerAt !== null && detail.ledgerAt > (meta.updatedAt ?? "")
         ? detail.ledgerAt
@@ -223,7 +250,7 @@ export async function readProjectBoard(
       status: meta.status,
       column: boardColumn(meta.status, tasks),
       tasks,
-      blocked: !completed && (detail.blocked || meta.status === "paused"),
+      blocked: !completed && (detail.blocked || meaning === "paused"),
       updatedAt,
       pullRequests: [...detail.pullRequests],
       specPath: detail.hasSpec ? NodePath.join(folder, "spec.md") : null,
