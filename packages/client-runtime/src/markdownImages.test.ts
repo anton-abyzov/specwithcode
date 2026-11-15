@@ -42,9 +42,11 @@ describe("classifyMarkdownImageSource", () => {
     ["file://localhost/C:/Users/dara/project/image.png", null, "C:/Users/dara/project/image.png"],
     ["file://server/share/image.png", null, "\\\\server\\share\\image.png"],
   ])("maps %s to a workspace file", (source, workspaceRoot, path) => {
+    // Only a path resolved against the workspace is relative; an absolute one names any machine.
     expect(classifyMarkdownImageSource(source, workspaceRoot)).toEqual({
       _tag: "WorkspaceFile",
       path,
+      ...(workspaceRoot === null ? {} : { relative: true }),
     });
   });
 

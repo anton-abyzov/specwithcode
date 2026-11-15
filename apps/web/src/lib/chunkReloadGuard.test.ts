@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./chunkReloadGuard";
+import { isChunkLoadError, reloadOnceForChunkLoadError } from "./chunkReloadGuard";
 
 function createStorageStub(): Storage {
   const store = new Map<string, string>();
@@ -25,21 +25,22 @@ describe("reloadOnceForChunkLoadError", () => {
     const storage = createStorageStub();
     const reload = vi.fn();
 
-    expect(reloadOnceForChunkLoadError(() => storage, reload)).toBe(true);
+    expect(reloadOnceForChunkLoadError(() => storage, reload, "1.0.0")).toBe(true);
     expect(reload).toHaveBeenCalledTimes(1);
 
-    expect(reloadOnceForChunkLoadError(() => storage, reload)).toBe(false);
+    expect(reloadOnceForChunkLoadError(() => storage, reload, "1.0.0")).toBe(false);
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("reloads again after a successful boot cleared the guard", () => {
+  it("reloads again once a different build is running", () => {
     const storage = createStorageStub();
     const reload = vi.fn();
 
-    reloadOnceForChunkLoadError(() => storage, reload);
-    clearChunkReloadGuard(() => storage);
+    reloadOnceForChunkLoadError(() => storage, reload, "1.0.0");
 
-    expect(reloadOnceForChunkLoadError(() => storage, reload)).toBe(true);
+    expect(reloadOnceForChunkLoadError(() => storage, reload, "1.0.1")).toBe(true);
+    expect(reload).toHaveBeenCalledTimes(2);
+    expect(reloadOnceForChunkLoadError(() => storage, reload, "1.0.1")).toBe(false);
     expect(reload).toHaveBeenCalledTimes(2);
   });
 
@@ -49,8 +50,25 @@ describe("reloadOnceForChunkLoadError", () => {
       throw new DOMException("blocked", "SecurityError");
     };
 
-    expect(reloadOnceForChunkLoadError(blocked, reload)).toBe(false);
+    expect(reloadOnceForChunkLoadError(blocked, reload, "1.0.0")).toBe(false);
     expect(reload).not.toHaveBeenCalled();
-    expect(() => clearChunkReloadGuard(blocked)).not.toThrow();
+  });
+});
+
+describe("isChunkLoadError", () => {
+  it("recognizes a failed split-chunk load in each browser engine", () => {
+    for (const message of [
+      "Failed to fetch dynamically imported module: https://app.example.com/assets/route-a1b2.js",
+      "error loading dynamically imported module: https://app.example.com/assets/route-a1b2.js",
+      "Importing a module script failed.",
+    ]) {
+      expect(isChunkLoadError(new TypeError(message))).toBe(true);
+    }
+  });
+
+  it("leaves other errors to the route retry", () => {
+    expect(isChunkLoadError(new Error("Thread not found"))).toBe(false);
+    expect(isChunkLoadError("Failed to fetch dynamically imported module")).toBe(false);
+    expect(isChunkLoadError(undefined)).toBe(false);
   });
 });

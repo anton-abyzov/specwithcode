@@ -89,7 +89,7 @@ describe("resolveMediaSource", () => {
         },
         srcFragment: "#mark",
         access: "environment",
-        resource: { _tag: "media-file", threadId, path: "/repo/screens/logo.svg" },
+        resource: { _tag: "media-file", threadId, path: "/repo/screens/logo.svg", hostOnly: true },
       });
     });
 
