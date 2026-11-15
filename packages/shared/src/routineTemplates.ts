@@ -53,18 +53,37 @@ export interface RoutineTemplate {
 export type RoutineModelChoice =
   | { readonly kind: "loading" }
   | { readonly kind: "none" }
-  | { readonly kind: "ready"; readonly selection: ModelSelection; readonly note: string | null };
+  | {
+      readonly kind: "ready";
+      readonly selection: ModelSelection;
+      readonly note: string | null;
+      /** The saved model bills per token, so a scheduled run does not use plan limits. */
+      readonly perToken: boolean;
+    };
 
 function optionDescriptors(provider: ServerProvider, slug: string) {
   return provider.models.find((entry) => entry.slug === slug)?.capabilities?.optionDescriptors;
 }
 
+/** Whether any of `selection`'s options is on or away from its default, so moving it loses something. */
+function hasSetOptions(provider: ServerProvider, selection: ModelSelection): boolean {
+  const descriptors = optionDescriptors(provider, selection.model);
+  return (selection.options ?? []).some((option) => {
+    if (option.value === false) return false;
+    const descriptor = descriptors?.find((candidate) => candidate.id === option.id);
+    return !(
+      descriptor?.type === "select" &&
+      descriptor.options.some((choice) => choice.id === option.value && choice.isDefault)
+    );
+  });
+}
+
 /**
  * The coordinator's model, or for an everyday template that provider's regular
- * tier model. The swap never lands on a model billed per token, nor moves from
- * a model known to bill to the plan onto one whose billing is unknown: the
- * routine may run unattended. Options move with `carryModelOptions`, and what
- * the everyday model cannot run is named.
+ * tier model. The routine may run unattended, so the swap never lands on a
+ * model billed per token, and lands on one whose billing nobody reports only
+ * when the person chose it as their everyday model, saying so. Options move
+ * with `carryModelOptions`, and what the everyday model cannot run is named.
  */
 export function routineTemplateModel(
   template: Pick<RoutineTemplate, "modelTier">,
@@ -73,25 +92,26 @@ export function routineTemplateModel(
   tiers: ProviderModelTiers | undefined,
 ): RoutineModelChoice {
   if (coordinator === null) return { kind: "none" };
-  if (template.modelTier !== "everyday")
-    return { kind: "ready", selection: coordinator, note: null };
-  if (providers === undefined) return { kind: "loading" };
-  const keep = (why: string): RoutineModelChoice => ({
+  const provider = providers?.find((entry) => entry.instanceId === coordinator.instanceId);
+  const ready = (selection: ModelSelection, note: string | null): RoutineModelChoice => ({
     kind: "ready",
-    selection: coordinator,
-    note: `${why}, so it uses ${coordinator.model}, the coordinator's model.`,
+    selection,
+    note,
+    perToken: provider !== undefined && isPaidModel(provider, selection.model),
   });
-  const provider = providers.find((entry) => entry.instanceId === coordinator.instanceId);
+  if (template.modelTier !== "everyday") return ready(coordinator, null);
+  if (providers === undefined) return { kind: "loading" };
+  const keep = (why: string) =>
+    ready(coordinator, `${why}, so it uses ${coordinator.model}, the coordinator's model.`);
   if (provider === undefined) return keep("The coordinator's provider is not listed here");
   const model = tierModelFor(provider, "regular", tiers);
   if (model === undefined) return keep("No everyday model is listed for this provider");
   const everyday = `It uses ${model}, the everyday model.`;
-  if (model === coordinator.model) return { kind: "ready", selection: coordinator, note: everyday };
+  if (model === coordinator.model) return ready(coordinator, everyday);
   if (isPaidModel(provider, model)) return keep(`The everyday model ${model} is billed per token`);
-  if (
-    modelBilling(provider, model) === "unknown" &&
-    modelBilling(provider, coordinator.model) !== "unknown"
-  ) {
+  const chosen = tiers?.[provider.instanceId]?.regular ?? tiers?.[provider.driver]?.regular;
+  const unpriced = modelBilling(provider, model) === "unknown";
+  if (unpriced && chosen !== model) {
     return keep(`The everyday model ${model} does not say how it is billed`);
   }
   const carried = carryModelOptions({
@@ -99,20 +119,27 @@ export function routineTemplateModel(
     previousDescriptors: optionDescriptors(provider, coordinator.model),
     nextDescriptors: optionDescriptors(provider, model),
   });
-  const lost = carried.unknown === true ? ["its options"] : carried.dropped;
-  return {
-    kind: "ready",
-    selection: (carried.options.length > 0
+  const options =
+    carried.unknown === true
+      ? hasSetOptions(provider, coordinator)
+        ? `${model} has not listed its options yet, so they start at its defaults.`
+        : null
+      : carried.dropped.length > 0
+        ? `It runs without ${carried.dropped.join(", ")}.`
+        : null;
+  return ready(
+    (carried.options.length > 0
       ? { instanceId: coordinator.instanceId, model, options: carried.options }
       : { instanceId: coordinator.instanceId, model }) as ModelSelection,
-    note: [
+    [
       everyday,
-      lost.length > 0 ? `It runs without ${lost.join(", ")}.` : null,
+      unpriced ? "Its billing is not reported; you chose it in Settings." : null,
+      options,
       carried.adjusted.length > 0 ? `Changed: ${carried.adjusted.join(", ")}.` : null,
     ]
       .filter((line) => line !== null)
       .join(" "),
-  };
+  );
 }
 
 /** The title the proactive briefing routine keeps, so the assistant can find it again. */

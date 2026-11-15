@@ -90,17 +90,19 @@ describe("routine templates", () => {
     const tiers = { codex: { regular: "gpt-everyday", frontier: "gpt-frontier" } } as never;
     expect(routineTemplateModel(watch, coordinator, [provider], tiers)).toEqual({
       kind: "ready",
+      perToken: false,
       selection: { instanceId: "codex", model: "gpt-everyday" },
-      note: "It uses gpt-everyday, the everyday model. It runs without its options.",
+      note: "It uses gpt-everyday, the everyday model. Its billing is not reported; you chose it in Settings. gpt-everyday has not listed its options yet, so they start at its defaults.",
     });
     // Other templates keep the coordinator; no coordinator is "none"; no providers yet is loading.
     expect(
       routineTemplateModel(routineTemplate("research-brief")!, coordinator, [provider], tiers),
-    ).toEqual({ kind: "ready", selection: coordinator, note: null });
+    ).toEqual({ kind: "ready", selection: coordinator, note: null, perToken: false });
     expect(routineTemplateModel(watch, null, [provider], tiers)).toEqual({ kind: "none" });
     expect(routineTemplateModel(watch, coordinator, undefined, tiers)).toEqual({ kind: "loading" });
     expect(routineTemplateModel(watch, coordinator, [], tiers)).toEqual({
       kind: "ready",
+      perToken: false,
       selection: coordinator,
       note: "The coordinator's provider is not listed here, so it uses gpt-frontier, the coordinator's model.",
     });
@@ -122,14 +124,45 @@ describe("routine templates", () => {
     const tiers = { copilot: { regular: "gpt-6.1-sol" } } as never;
     expect(routineTemplateModel(watch, coordinator, [provider("paid-router")], tiers)).toEqual({
       kind: "ready",
+      perToken: false,
       selection: coordinator,
       note: "The everyday model gpt-6.1-sol is billed per token, so it uses gpt-6-astra, the coordinator's model.",
     });
     expect(routineTemplateModel(watch, coordinator, [provider(undefined)], tiers)).toEqual({
       kind: "ready",
-      selection: coordinator,
+      perToken: false,
+      selection: { instanceId: "copilot", model: "gpt-6.1-sol" },
+      note: "It uses gpt-6.1-sol, the everyday model. Its billing is not reported; you chose it in Settings.",
+    });
+    // A built-in default nobody chose, with no billing reported on either model: keep the coordinator.
+    const codex = {
+      instanceId: "cx",
+      driver: "codex",
+      auth: { status: "authenticated" },
+      models: [{ slug: "gpt-6-astra" }, { slug: "gpt-6.1-sol" }],
+    } as never;
+    const onCodex = { instanceId: "cx", model: "gpt-6-astra" } as never;
+    expect(routineTemplateModel(watch, onCodex, [codex], undefined)).toEqual({
+      kind: "ready",
+      perToken: false,
+      selection: onCodex,
       note: "The everyday model gpt-6.1-sol does not say how it is billed, so it uses gpt-6-astra, the coordinator's model.",
     });
+    // A coordinator that itself bills per token is flagged, so the form drops the plan-limits line.
+    const keyed = {
+      instanceId: "p",
+      driver: "acpRegistry",
+      auth: { status: "authenticated", type: "apiKey" },
+      models: [
+        { slug: "frontier", billing: "api" },
+        { slug: "everyday", billing: "api" },
+      ],
+    } as never;
+    expect(
+      routineTemplateModel(watch, { instanceId: "p", model: "frontier" } as never, [keyed], {
+        p: { regular: "everyday" },
+      } as never),
+    ).toMatchObject({ kind: "ready", perToken: true, selection: { model: "frontier" } });
     // A provider that lists no regular model keeps the coordinator and says so.
     const bare = {
       instanceId: "copilot",
@@ -139,6 +172,7 @@ describe("routine templates", () => {
     };
     expect(routineTemplateModel(watch, coordinator, [bare as never], undefined)).toMatchObject({
       kind: "ready",
+      perToken: false,
       selection: coordinator,
       note: "No everyday model is listed for this provider, so it uses gpt-6-astra, the coordinator's model.",
     });
@@ -165,19 +199,54 @@ describe("routine templates", () => {
       driver: "codex",
       auth: { status: "authenticated" },
       models: [
-        { slug: "gpt-frontier", capabilities: { optionDescriptors: [effort] } },
-        { slug: "gpt-everyday", capabilities: { optionDescriptors: [effort] } },
+        {
+          slug: "gpt-frontier",
+          billing: "subscription",
+          capabilities: { optionDescriptors: [effort] },
+        },
+        {
+          slug: "gpt-everyday",
+          billing: "subscription",
+          capabilities: { optionDescriptors: [effort] },
+        },
       ],
     } as never;
     const tiers = { codex: { regular: "gpt-everyday" } } as never;
     expect(routineTemplateModel(watch, coordinator, [provider], tiers)).toEqual({
       kind: "ready",
+      perToken: false,
       selection: {
         instanceId: "codex",
         model: "gpt-everyday",
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       },
       note: "It uses gpt-everyday, the everyday model.",
+    });
+  });
+
+  it("names no lost options when the coordinator's were off (1340 AC-09)", () => {
+    const watch = routineTemplate("reset-announcement-watch")!;
+    const provider = {
+      instanceId: "p",
+      driver: "acpRegistry",
+      auth: { status: "authenticated" },
+      models: [
+        { slug: "frontier", billing: "subscription" },
+        { slug: "everyday", billing: "subscription" },
+      ],
+    } as never;
+    const coordinator = {
+      instanceId: "p",
+      model: "frontier",
+      options: [{ id: "fastMode", value: false }],
+    } as never;
+    expect(
+      routineTemplateModel(watch, coordinator, [provider], { p: { regular: "everyday" } } as never),
+    ).toEqual({
+      kind: "ready",
+      perToken: false,
+      selection: { instanceId: "p", model: "everyday" },
+      note: "It uses everyday, the everyday model.",
     });
   });
 

@@ -237,7 +237,11 @@ export function RoutineQuickForm({
       <p className="project-muted">
         Runs in a thread of its own, named after the routine; each run continues it.
         {routineModel.kind === "ready" && routineModel.note !== null ? ` ${routineModel.note}` : ""}
-        {scheduled ? " Each scheduled run uses your plan's limits." : ""}
+        {scheduled
+          ? routineModel.kind === "ready" && routineModel.perToken
+            ? " Each scheduled run is billed per token."
+            : " Each scheduled run uses your plan's limits."
+          : ""}
       </p>
       {error ? <p role="alert">{error}</p> : null}
       <div className="project-actions">
