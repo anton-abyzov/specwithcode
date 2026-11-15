@@ -275,14 +275,26 @@ try {
   await page.waitForLoadState("networkidle").catch(() => undefined);
   // 1.0.7x lists check-made projects under "Automated"; open the project, then its thread.
   const automated = page.getByText(/^Automated \(\d+\)$/).first();
+  // From 1.0.306 the sidebar leaves it out and Settings > Archive lists it.
+  const atlas = page.getByText("Atlas Studio", { exact: true }).first();
   if (
     await automated.waitFor({ timeout: 15000 }).then(
       () => true,
       () => false,
     )
-  )
+  ) {
     await automated.click();
-  await page.getByText("Atlas Studio", { exact: true }).first().click();
+    await atlas.click();
+  } else if (await atlas.isVisible().catch(() => false)) {
+    await atlas.click();
+  } else {
+    await page.goto(`${origin}/settings/archived`);
+    await page
+      .locator("[data-automated-projects], [data-archived-projects]")
+      .getByRole("link", { name: "Atlas Studio", exact: true })
+      .first()
+      .click();
+  }
   // An imported thread with no live turn is listed under the collapsed "Resolved" group.
   const resolved = page.getByText(/^Resolved\s*\d+$/).first();
   await page

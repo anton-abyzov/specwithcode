@@ -1353,7 +1353,7 @@ describe("cleaning up the projects list", () => {
     await render();
     const main = [...container.querySelectorAll('[aria-label="Projects"] .sws-side-row-label')];
     expect(main.map((label) => label.textContent)).toEqual(["Atlas", "Borealis"]);
-    const open = container.querySelector('[aria-label="Open project"]')!;
+    const open = container.querySelector('[aria-label="Open or waiting projects"]')!;
     const row = open.querySelector("a")!;
     expect(row.textContent).toContain("Routing samples");
     expect(row.getAttribute("aria-current")).toBe("page");
@@ -1376,7 +1376,7 @@ describe("cleaning up the projects list", () => {
     await render();
     const main = [...container.querySelectorAll('[aria-label="Projects"] .sws-side-row-label')];
     expect(main.map((label) => label.textContent)).toEqual(["Atlas", "Borealis"]);
-    const open = container.querySelector('[aria-label="Open project"]')!;
+    const open = container.querySelector('[aria-label="Open or waiting projects"]')!;
     expect(open.textContent).toContain("Routing samples");
     expect(open.querySelector(".sws-count")).toBeNull();
   });
@@ -1449,7 +1449,7 @@ describe("cleaning up the projects list", () => {
     root = createRoot(container);
     state.params = { projectKey: automatedSample.projectKey };
     await render();
-    const list = container.querySelector('[aria-label="Open project"]')!;
+    const list = container.querySelector('[aria-label="Open or waiting projects"]')!;
     expect(list.querySelector("a")?.getAttribute("aria-current")).toBe("page");
     const trigger = list.querySelector<HTMLButtonElement>(
       '[aria-label="Actions for Run shell acceptance 357"]',
@@ -1466,6 +1466,36 @@ describe("cleaning up the projects list", () => {
       environmentId: "host",
       input: { projectId: "run-shell", workspaceSettings: { expectedRevision: 1, origin: "user" } },
     });
+  });
+
+  it("keeps a project only guessed as made by checks in the sidebar while it waits on the person", async () => {
+    state.groups.push({
+      projectKey: "host:/Users/me/Projects/client-demo",
+      displayName: "client-demo",
+      workspaceRoot: "/Users/me/Projects/client-demo",
+      memberProjects: [
+        {
+          environmentId: "host",
+          id: "client",
+          workspaceRoot: "/Users/me/Projects/client-demo",
+          workspaceSettings: { kind: "code" as const, archived: false, revision: 1 },
+        },
+      ],
+    } as (typeof state.groups)[number]);
+    state.shells = [
+      shell("client-ask", {
+        environmentId: "host" as EnvironmentThreadShell["environmentId"],
+        projectId: "client" as EnvironmentThreadShell["projectId"],
+        hasPendingUserInput: true,
+        createdBy: "agent",
+      } as Partial<EnvironmentThreadShell>),
+    ];
+    await render();
+    const main = [...container.querySelectorAll('[aria-label="Projects"] .sws-side-row-label')];
+    expect(main.map((label) => label.textContent)).toEqual(["Atlas", "Borealis"]);
+    const list = container.querySelector('[aria-label="Open or waiting projects"]')!;
+    expect(list.textContent).toContain("client-demo");
+    expect(list.querySelector(".sws-count-waiting")).not.toBeNull();
   });
 
   it("lists an archived personal assistant only in its own entry, with no count", async () => {

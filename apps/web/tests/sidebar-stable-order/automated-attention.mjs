@@ -72,10 +72,13 @@ try {
     await page.goto(
       `http://127.0.0.1:${server.address().port}/?theme=${theme}&live=off&scenario=automated-attention`,
     );
-    const toggle = page.getByRole("button", { name: /^Automated \(3\)/ });
-    await toggle.waitFor();
-    const folded = (await toggle.textContent()).trim();
-    await toggle.click();
+    // Projects checks made stay out of the sidebar, but the open one and any that wait on the person are listed.
+    await row(page, "1164 handoff move check").waitFor();
+    const folded = await page
+      .locator("aside button")
+      .evaluateAll((items) =>
+        items.map((item) => item.textContent ?? "").filter((t) => /^Automated \(/.test(t)),
+      );
     const seen = {};
     for (const name of [
       "EasyChamp",
@@ -92,6 +95,7 @@ try {
     await page.locator("aside").screenshot({ path: join(output, `${width}-${theme}.png`) });
     receipt.cases.push({ width, theme, folded, seen, initials, errors });
     if (!args.includes("--capture-only")) {
+      assert.deepEqual(folded, []);
       assert.equal(seen.EasyChamp, "1");
       assert.equal(seen.specweave, null);
       assert.equal(seen["1164 handoff move check"], null);

@@ -954,6 +954,20 @@ export default function StudioSidebar() {
         .filter((member) => member.workspaceSettings?.kind === "personal"),
       ownEnvironmentId: primaryEnvironmentId,
     });
+  // Set-aside projects the sidebar still lists: the open one, and any project checks
+  // made that waits on the person (a folder-name guess may be real work), so its count
+  // is never hidden. Archived ones never ask for anything here.
+  const setAsideRows = [
+    ...(openSetAside ? [openSetAside] : []),
+    ...automatedProjects
+      .filter(
+        (group) =>
+          group.projectKey !== activeProjectKey &&
+          projectShowsWaitingCount(notificationsFor(group)) &&
+          (waitingByProject.get(group.projectKey) ?? 0) > 0,
+      )
+      .map((group) => ({ group, archived: false })),
+  ];
   const newChatShortcut = shortcutLabelForCommand(keybindings, "chat.new");
   const searchShortcut = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
 
@@ -1067,7 +1081,7 @@ export default function StudioSidebar() {
                 </button>
               </Tip>
             </div>
-            {codeProjects.length === 0 && !openSetAside ? (
+            {codeProjects.length === 0 && setAsideRows.length === 0 ? (
               <p className="sws-side-empty">
                 {automatedProjects.length + archivedProjects.length > 0 ? (
                   <Link to="/settings/archived" onClick={closeMobile} data-set-aside-link="">
@@ -1131,26 +1145,34 @@ export default function StudioSidebar() {
             ) : null}
             {/* Archived and automated projects live in Settings > Archive. The one open
                 now stays here, so the page's project is never missing from the list. */}
-            {openSetAside ? (
-              <ul className="sws-side-list" aria-label={tx("Open project")}>
-                <ProjectRow
-                  key={openSetAside.group.projectKey}
-                  group={openSetAside.group}
-                  displayedProject={displayedCheckouts.get(openSetAside.group.projectKey)}
-                  archived={openSetAside.archived}
-                  automated={!openSetAside.archived}
-                  waiting={0}
-                  current
-                  onOpen={closeMobile}
-                  onArchive={(archived) => void setGroupArchived(openSetAside.group, archived)}
-                  onOriginChange={
-                    openSetAside.archived
-                      ? undefined
-                      : (origin) => void setGroupOrigin(openSetAside.group, origin)
-                  }
-                  rename={renameFor(openSetAside.group)}
-                  designsProjectId={designsFor(openSetAside.group)}
-                />
+            {setAsideRows.length > 0 ? (
+              <ul className="sws-side-list" aria-label={tx("Open or waiting projects")}>
+                {setAsideRows.map(({ group, archived }) => (
+                  <ProjectRow
+                    key={group.projectKey}
+                    group={group}
+                    displayedProject={displayedCheckouts.get(group.projectKey)}
+                    archived={archived}
+                    automated={!archived}
+                    waiting={archived ? 0 : (waitingByProject.get(group.projectKey) ?? 0)}
+                    attentionLabel={
+                      archived ? undefined : attentionByProject.get(group.projectKey)?.label
+                    }
+                    attentionComplete={
+                      archived ? undefined : attentionByProject.get(group.projectKey)?.complete
+                    }
+                    current={group.projectKey === activeProjectKey}
+                    onOpen={closeMobile}
+                    onArchive={(next) => void setGroupArchived(group, next)}
+                    onOriginChange={
+                      archived ? undefined : (origin) => void setGroupOrigin(group, origin)
+                    }
+                    notifications={notificationsFor(group)}
+                    onNotificationsChange={(level) => void setGroupNotifications(group, level)}
+                    rename={renameFor(group)}
+                    designsProjectId={designsFor(group)}
+                  />
+                ))}
               </ul>
             ) : null}
           </div>
