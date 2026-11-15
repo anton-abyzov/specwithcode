@@ -18,6 +18,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   MAX_LANE_MODELS,
   MODEL_TRACK_LABELS,
+  type ModelLanes,
   type ModelSelection,
   type ModelTrack,
   type ProviderInstanceId,
@@ -506,7 +507,10 @@ export function ModelTracksSettings() {
   const save = (track: ModelTrack, models: ReadonlyArray<ModelSelection>) =>
     track === "review"
       ? updateSettings({ adversarialReview: { reviewers: [...models] } })
-      : updateSettings({ modelLanes: { ...lanes, [TRACK_LANES[track]]: [...models] } });
+      : // Only the edited lane: every machine and project keeps its own other lane.
+        updateSettings({
+          modelLanes: { [TRACK_LANES[track]]: [...models] } as unknown as ModelLanes,
+        });
 
   const sourceName = (provider: ServerProvider) =>
     entries.find((entry) => entry.instanceId === provider.instanceId)?.displayName ??

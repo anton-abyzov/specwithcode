@@ -136,6 +136,7 @@ export function reviewDelegationTarget(input: ReviewDelegationInput): ReviewDele
     reviewers: input.reviewers,
     tier: input.tier,
     tiers: input.tiers,
+    sourceOrder: input.sourceOrder,
   });
   if (policy?.model !== undefined) {
     const pinned = policyModelSelections(input.providers, policy.model);

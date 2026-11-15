@@ -250,9 +250,20 @@ describe("the chain a limited thread follows with nothing saved", () => {
       rule: noRule,
       nowMs: now,
     });
+    // The built-in order names no entry on it at all, so nothing can land there.
+    expect(entries.some((entry) => entry.selection.instanceId === devin.instanceId)).toBe(false);
     expect(
-      entries.find((entry) => entry.selection.instanceId === devin.instanceId)?.unavailable,
-    ).toBe("per-token");
+      defaultTrackSelections("daily", [codexPaid, devin]).map((entry) => entry.instanceId),
+    ).not.toContain(devin.instanceId);
+  });
+
+  it("keeps a built-in entry off a per-token source a saved Sources order ranks first", () => {
+    const apiClaude = provider("claude-api", "claudeAgent", ["claude-opus-5-5"], null, {
+      auth: { status: "authenticated", apiKeyBilling: true },
+    });
+    expect(defaultTrackSelections("daily", [apiClaude, claude], [apiClaude.instanceId])[0]).toEqual(
+      sel("claudeAgent", "claude-opus-5-5"),
+    );
   });
 
   it("never spends on a per-token account for a built-in entry", () => {

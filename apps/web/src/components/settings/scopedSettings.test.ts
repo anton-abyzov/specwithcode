@@ -751,58 +751,118 @@ describe("partial object patches at project scope", () => {
   });
 
   it("stores only the track a project changed, so the others keep following the machine", () => {
-    const environmentId = EnvironmentId.make("laptop");
     const projectId = ProjectId.make("fleet");
-    const sol = { instanceId: "codex", model: "gpt-6.1-sol" };
-    const fable = { instanceId: "claudeAgent", model: "claude-fable-5-2" };
-    const opus = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
-    const planFor = (patch: Parameters<typeof planScopedSettingsPatch>[2]) =>
-      planScopedSettingsPatch(
-        {
-          kind: "project",
-          group: {} as never,
-          environmentId: null,
-          label: "fleet",
-          members: [{ id: projectId, environmentId } as never],
-          environmentIds: [environmentId],
-        },
-        [
-          {
-            environmentId,
-            label: "Laptop",
-            connection: { phase: "connected" },
-            serverConfig: {
-              settings: {
-                ...DEFAULT_SERVER_SETTINGS,
-                modelLanes: { complex: [fable], routine: [sol] },
-              },
-              environment: { capabilities: { projectSettingsOverrides: true } },
+    const laptop = EnvironmentId.make("laptop");
+    const server = EnvironmentId.make("server");
+    const pick = (instanceId: string, model: string) => ({ instanceId, model });
+    const sol = pick("codex", "gpt-6.1-sol");
+    const fable = pick("claudeAgent", "claude-fable-5-2");
+    const astra = pick("codex", "gpt-6-astra");
+    const opus = pick("claudeAgent", "claude-opus-5-5");
+    const machine = (
+      environmentId: EnvironmentId,
+      complex: unknown,
+      over: { partial?: boolean; own?: Record<string, unknown> } = {},
+    ) =>
+      ({
+        environmentId,
+        label: environmentId,
+        connection: { phase: "connected" },
+        serverConfig: {
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            modelLanes: { complex: [complex], routine: [sol] },
+            ...(over.own ? { projectSettingsOverrides: { [projectId]: over.own } } : {}),
+          },
+          environment: {
+            capabilities: {
+              projectSettingsOverrides: true,
+              projectTrackOverrides: over.partial !== false,
             },
-          } as never,
-        ],
-        patch,
-      );
-    const plan = planFor({ modelLanes: { complex: [fable], routine: [opus, sol] } as never });
-    expect(plan.serverWrites[0]?.patch).toEqual({
-      projectSettingsOverrides: {
-        [projectId]: { modelLanes: { routine: [opus, sol] } },
-      },
-    });
+          },
+        },
+      }) as never;
+    const scope = (ids: EnvironmentId[]) =>
+      ({
+        kind: "project",
+        group: {} as never,
+        environmentId: null,
+        label: "fleet",
+        members: ids.map((environmentId) => ({ id: projectId, environmentId }) as never),
+        environmentIds: ids,
+      }) as never;
+    const written = (plan: ReturnType<typeof planScopedSettingsPatch>, at = 0) =>
+      (plan.serverWrites[at]?.patch as { projectSettingsOverrides: Record<string, unknown> })
+        .projectSettingsOverrides[projectId];
+    const daily = { modelLanes: { routine: [opus, sol] } as never };
+
+    // The page sends the one lane it edited.
+    expect(
+      written(planScopedSettingsPatch(scope([laptop]), [machine(laptop, fable)], daily)),
+    ).toEqual({ modelLanes: { routine: [opus, sol] } });
+    // Two machines with different Complex orders: neither gets the other's.
+    const both = planScopedSettingsPatch(
+      scope([laptop, server]),
+      [machine(laptop, fable), machine(server, astra)],
+      daily,
+    );
+    expect(written(both, 0)).toEqual({ modelLanes: { routine: [opus, sol] } });
+    expect(written(both, 1)).toEqual({ modelLanes: { routine: [opus, sol] } });
+    // A member's own override keeps its other lane.
+    expect(
+      written(
+        planScopedSettingsPatch(
+          scope([laptop]),
+          [machine(laptop, fable, { own: { modelLanes: { complex: [astra] } } })],
+          daily,
+        ),
+      ),
+    ).toEqual({ modelLanes: { complex: [astra], routine: [opus, sol] } });
     // "Use the built-in order" is a choice of its own: the empty list is stored.
     expect(
-      planFor({ modelLanes: { complex: [], routine: [sol] } as never }).serverWrites[0]?.patch,
-    ).toEqual({
-      projectSettingsOverrides: { [projectId]: { modelLanes: { complex: [] } } },
-    });
+      written(
+        planScopedSettingsPatch(scope([laptop]), [machine(laptop, fable)], {
+          modelLanes: { complex: [] } as never,
+        }),
+      ),
+    ).toEqual({ modelLanes: { complex: [] } });
     // One review field never freezes the others.
     expect(
-      planFor({ adversarialReview: { reviewers: [opus] } as never }).serverWrites[0]?.patch,
-    ).toEqual({
-      projectSettingsOverrides: { [projectId]: { adversarialReview: { reviewers: [opus] } } },
+      written(
+        planScopedSettingsPatch(scope([laptop]), [machine(laptop, fable)], {
+          adversarialReview: { tier: "frontier" },
+        }),
+      ),
+    ).toEqual({ adversarialReview: { tier: "frontier" } });
+    // An older server would fill a partial value with defaults: it gets the whole object.
+    expect(
+      written(
+        planScopedSettingsPatch(
+          scope([laptop]),
+          [machine(laptop, fable, { partial: false })],
+          daily,
+        ),
+      ),
+    ).toEqual({ modelLanes: { complex: [fable], routine: [opus, sol] } });
+  });
+
+  it("completes a one-lane save from each machine's own lanes at machine scope", () => {
+    const sol = { instanceId: "codex", model: "gpt-6.1-sol" };
+    const settingsWith = (complex: string) => ({
+      ...DEFAULT_SERVER_SETTINGS,
+      modelLanes: { complex: [{ instanceId: "codex", model: complex }], routine: [] },
     });
-    expect(planFor({ adversarialReview: { tier: "frontier" } }).serverWrites[0]?.patch).toEqual({
-      projectSettingsOverrides: { [projectId]: { adversarialReview: { tier: "frontier" } } },
+    const m4 = environment("M4", { settings: settingsWith("m4-complex") as never });
+    const m1 = environment("M1", { settings: settingsWith("m1-complex") as never });
+    const plan = planScopedSettingsPatch(resolveSettingsScope({}, [], [m4, m1]), [m4, m1], {
+      modelLanes: { routine: [sol] } as never,
     });
+    expect(
+      plan.serverWrites.map((write) => (write.patch as { modelLanes?: unknown }).modelLanes),
+    ).toEqual([
+      { complex: [{ instanceId: "codex", model: "m4-complex" }], routine: [sol] },
+      { complex: [{ instanceId: "codex", model: "m1-complex" }], routine: [sol] },
+    ]);
   });
 });
 

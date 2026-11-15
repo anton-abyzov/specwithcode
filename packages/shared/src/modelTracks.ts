@@ -20,6 +20,11 @@ import {
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import { isSameModel, sameModelOn } from "./modelIdentity.ts";
+import {
+  isGeminiSpendProvider,
+  isPerTokenProvider,
+  isUnknownBillingAgent,
+} from "./providerFallback.ts";
 import { type ModelFamily, modelFamily } from "./modelVendor.ts";
 
 type TrackProvider = Pick<ServerProvider, "instanceId" | "driver" | "enabled" | "models"> &
@@ -126,6 +131,17 @@ export function providersForModel<P extends TrackProvider>(input: {
     .map((entry) => entry.choice);
 }
 
+/** A source the app never starts work on by itself: billed per token, or billing unknown. */
+export function isHeldSource(provider: ServerProvider): boolean {
+  // A provider described without its sign-in (a bare list of models) says nothing about billing.
+  if ((provider as Partial<ServerProvider>).auth === undefined) return false;
+  return (
+    isPerTokenProvider(provider) ||
+    isGeminiSpendProvider(provider) ||
+    isUnknownBillingAgent(provider)
+  );
+}
+
 /** Whether `model` is a built-in free entry: it closes Daily and never serves Complex or Review. */
 export function isFreeTrackModel(model: ModelNames): boolean {
   return DEFAULT_MODEL_TRACKS.daily.some(
@@ -145,12 +161,14 @@ export function defaultTrackSelections(
   order?: ReadonlyArray<ProviderInstanceId> | null,
 ): ReadonlyArray<ModelSelection> {
   return DEFAULT_MODEL_TRACKS[track].flatMap((entry) => {
+    // Never a source billed per token or with unknown billing: a built-in
+    // entry is nobody's spending choice, whatever a saved Sources order ranks first.
     const best = providersForModel({
       providers,
       model: { slug: entry.model },
       order: order ?? undefined,
       preferFree: entry.free,
-    })[0];
+    }).find(({ provider }) => !isHeldSource(provider as Partial<ServerProvider> as ServerProvider));
     return best === undefined ? [] : [{ instanceId: best.provider.instanceId, model: best.slug }];
   });
 }
