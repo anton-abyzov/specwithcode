@@ -1,11 +1,7 @@
 import { useTx } from "../../i18n";
 import { useState, type ReactNode } from "react";
 import { ArrowRightIcon, ChevronRightIcon, InfoIcon, RefreshCwIcon, RouteIcon } from "lucide-react";
-import {
-  AuthAccessWriteScope,
-  type EnvironmentId,
-  type ProjectId,
-} from "@specweave-studio/contracts";
+import { type EnvironmentId, type ProjectId } from "@specweave-studio/contracts";
 import {
   type StudioWorkGrant,
   type StudioWorkGrantDuration,
@@ -14,7 +10,6 @@ import {
   type StudioWorkGrantsSnapshot,
   type StudioWorkGrantUpdateInput,
 } from "@specweave-studio/contracts/studioFleet";
-import { requestConfirmDialog } from "../../confirmDialog";
 import {
   WORK_GRANT_DURATION_CHOICES,
   formatTime,
@@ -23,14 +18,12 @@ import {
   workGrantAllowsNoProject,
   workGrantHopPath,
   workGrantRoutinesNote,
-  workGrantMachineLabel,
   workGrantProjectsSummary,
   workGrantSummary,
   workGrantUnavailableNote,
 } from "./machineWorkGrants.logic";
-import { changeMachineWorkGrant, type useMachineWorkGrants } from "../../studio/fleet";
-import { machineNickname } from "../../studio/machineNickname";
-import { useEnvironmentScope } from "../../state/session";
+import type { useMachineWorkGrants } from "../../studio/fleet";
+import type { GrantChange, WorkGrantChanges } from "./MachineCardDirections";
 import { SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { Badge } from "../ui/badge";
@@ -53,13 +46,6 @@ export {
   workGrantProjectsSummary,
   workGrantStatus,
 } from "./machineWorkGrants.logic";
-
-type GrantChange =
-  | { readonly action: "update"; readonly input: StudioWorkGrantUpdateInput }
-  | {
-      readonly action: "revoke" | "restore";
-      readonly input: { readonly coordinatorEnvironmentId: EnvironmentId };
-    };
 
 const OWNER_LABELS: Record<StudioWorkGrantOwner, string> = {
   self: "My machine",
@@ -662,83 +648,30 @@ export function MachineWorkGrantsList({
 /**
  * "Who can run work here" in Settings > Machines: every coordinator
  * machine with a worker grant on this server's machine, what it may use, and
- * Revoke. This machine owns and enforces these grants; the page reads them
- * once for this section and its machine rows.
+ * Stop. This machine owns and enforces these grants; the page reads them
+ * once for this section and its machine cards, which share `changes`.
  */
 export function MachineWorkGrants({
-  environmentId,
   grants,
+  changes,
 }: {
-  environmentId: EnvironmentId;
   grants: ReturnType<typeof useMachineWorkGrants>;
+  changes: WorkGrantChanges;
 }) {
   const { snapshot, loading, failed, refresh } = grants;
-  const canManage = useEnvironmentScope(environmentId, AuthAccessWriteScope);
-  const [pending, setPending] = useState<EnvironmentId | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   // A server from before scoped grants has no such list; show nothing for it.
   if (!snapshot && !loading) return null;
-  async function change(next: GrantChange) {
-    if (pending || !canManage) return;
-    if (next.action === "revoke") {
-      const grant = snapshot?.grants.find(
-        (candidate) => candidate.coordinatorEnvironmentId === next.input.coordinatorEnvironmentId,
-      );
-      const label = grant?.machineLabel ?? "this machine";
-      // Fail closed: no mounted confirm host means no revoke.
-      const confirmed = await requestConfirmDialog(
-        `Stop ${label}?\n${label} can no longer start work here. Threads it started here stop in 2 minutes; their worktrees and changes stay. To undo, choose a time limit here, then, on ${label}, choose Allow on this machine's card.`,
-        { variant: "destructive" },
-      );
-      if (confirmed !== true) return;
-    }
-    const wasRevoked =
-      snapshot?.grants.find(
-        (candidate) => candidate.coordinatorEnvironmentId === next.input.coordinatorEnvironmentId,
-      )?.status === "revoked";
-    setPending(next.input.coordinatorEnvironmentId);
-    setError(null);
-    setNotice(null);
-    try {
-      const changed = await changeMachineWorkGrant(environmentId, next);
-      const grant = {
-        ...changed,
-        machineLabel:
-          snapshot?.grants.find(
-            (candidate) => candidate.coordinatorEnvironmentId === changed.coordinatorEnvironmentId,
-          )?.machineLabel ?? workGrantMachineLabel(changed, (id) => machineNickname(id)),
-      };
-      if (next.action === "revoke")
-        setNotice(
-          grant.runningThreads > 0 && grant.interruptAt
-            ? `${grant.machineLabel} can no longer start work here. Its ${grant.runningThreads} running thread${grant.runningThreads === 1 ? "" : "s"} stop at ${formatTime(grant.interruptAt)}.`
-            : `${grant.machineLabel} can no longer start work here.`,
-        );
-      else if (
-        next.action === "restore" ||
-        (next.action === "update" && next.input.duration !== undefined && wasRevoked)
-      )
-        setNotice(
-          `${grant.machineLabel} may be allowed again. On ${grant.machineLabel}, open Settings > Machines and choose Allow on this machine's card.`,
-        );
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Could not save this change.");
-    } finally {
-      setPending(null);
-    }
-  }
   return (
     <MachineWorkGrantsList
       snapshot={snapshot}
       loading={loading}
       failed={failed}
-      canManage={canManage}
-      pending={pending}
-      error={error}
-      notice={notice}
+      canManage={changes.canManage}
+      pending={changes.pending}
+      error={changes.error}
+      notice={changes.notice}
       onRefresh={refresh}
-      onChange={(next) => void change(next)}
+      onChange={(next) => void changes.change(next)}
     />
   );
 }

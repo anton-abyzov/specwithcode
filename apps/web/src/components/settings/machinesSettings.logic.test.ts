@@ -210,7 +210,7 @@ describe("machine rows", () => {
     });
     expect(rows.map((row) => [row.label, row.seen.state, row.seen.text])).toEqual([
       ["M4MAX", "this-machine", "This machine"],
-      ["MacBook Pro", "connected", "This app can see it"],
+      ["MacBook Pro", "connected", "Online"],
       ["M1Max", "reachable", "Reachable · not open in this window"],
     ]);
     // Connect only for the machine this app cannot see; both ways only for a connected private machine.
@@ -328,7 +328,7 @@ describe("machine rows", () => {
         {
           environmentId: m3,
           name: "MacBook Pro",
-          seen: { state: "connected", text: "This app can see it" },
+          seen: { state: "connected", text: "Online" },
           folder: "/Users/a/easychamp",
           roleLabel: "Copy · main on {machine}",
           roleValues: { machine: "M4MAX" },
