@@ -577,7 +577,14 @@ export class DestinationCopies {
         },
       );
     const manifest = await readManifestFile(this.paths(operationId).manifest);
-    const currentPlan = await this.plan(record, manifest, new AbortController().signal);
+    // The preview's origin answers stand: approving re-checks the folders, not the network,
+    // so a host that stopped answering for a moment cannot read as a changed destination.
+    const currentPlan = await this.plan(
+      record,
+      manifest,
+      new AbortController().signal,
+      plan.cloneOrigins,
+    );
     const assertSamePreview = async () => {
       if (
         JSON.stringify(await this.require(operationId)) !== JSON.stringify(record) ||
@@ -588,7 +595,10 @@ export class DestinationCopies {
           "The copy changed while checking its preview. Review it again.",
         );
     };
-    if (JSON.stringify(currentPlan) !== JSON.stringify(plan)) {
+    // A preview saved before plans kept their origin answers is compared without them.
+    const { cloneOrigins: _answers, ...withoutAnswers } = currentPlan;
+    const comparable = plan.cloneOrigins === undefined ? withoutAnswers : currentPlan;
+    if (JSON.stringify(comparable) !== JSON.stringify(plan)) {
       await this.locked(operationId, async () => {
         await assertSamePreview();
         await writeJson(this.paths(operationId).plan, currentPlan);
@@ -1106,26 +1116,32 @@ export class DestinationCopies {
     const check =
       this.hooks.reachableOrigin ??
       ((origin: string, stop: AbortSignal) => reachableOrigin(origin, NodeOS.homedir(), stop));
-    await Promise.all(
-      manifest.header.repositories.map(async (repo) => {
-        const id = repoRowId(repo.path);
-        if (!chosen.has(id) || !repo.origin) return;
-        let answer = this.origins.get(repo.origin);
-        if (!answer) {
-          answer = check(repo.origin, signal).catch(() => null);
-          this.origins.set(repo.origin, answer);
-        }
-        result[id] = await answer;
-        if (result[id] === null) this.origins.delete(repo.origin);
-      }),
+    const repositories = manifest.header.repositories.filter(
+      (repo) => chosen.has(repoRowId(repo.path)) && repo.origin,
     );
-    return result;
+    // A few at a time: Git hosts drop bursts of SSH connections, which would read as refusals.
+    await forEachLimited(repositories, ORIGIN_CHECKS_AT_ONCE, async (repo) => {
+      const origin = repo.origin!;
+      const id = repoRowId(repo.path);
+      let answer = this.origins.get(origin);
+      if (!answer) {
+        answer = check(origin, signal).catch(() => null);
+        this.origins.set(origin, answer);
+      }
+      result[id] = await answer;
+      if (result[id] === null) this.origins.delete(origin);
+    });
+    signal.throwIfAborted();
+    // Sorted, so the same answers always write the same plan.
+    return Object.fromEntries(Object.entries(result).sort(([a], [b]) => a.localeCompare(b)));
   }
 
   private async plan(
     record: DestinationRecord,
     manifest: Manifest,
     signal: AbortSignal,
+    /** Origin answers already shown in the preview; probed again when absent. */
+    checked?: Plan["cloneOrigins"],
   ): Promise<Plan> {
     const client = this.client(record, signal);
     const destination = await scanDestination(record.targetFolder, manifest.entries);
@@ -1135,6 +1151,7 @@ export class DestinationCopies {
       destination.repositories,
       (repo, commits) => client.ancestry(repo, commits),
     );
+    const cloneOrigins = checked ?? (await this.cloneOrigins(record, manifest, signal));
     return {
       ...planReconcile({
         sourceMachine: record.sourceMachine,
@@ -1146,7 +1163,7 @@ export class DestinationCopies {
         caseInsensitive: destination.caseInsensitive,
         decisions: record.decisions,
         clone: record.clone,
-        cloneOrigins: await this.cloneOrigins(record, manifest, signal),
+        cloneOrigins,
         skip: record.skip ?? [],
         mirror: record.mirror,
         // Only a copy the person reviews in the Copy files dialog may take theirs on a
@@ -1156,6 +1173,7 @@ export class DestinationCopies {
       ...(destination.fingerprint !== undefined
         ? { destinationFingerprint: destination.fingerprint }
         : {}),
+      ...(Object.keys(cloneOrigins).length > 0 ? { cloneOrigins } : {}),
     };
   }
 
@@ -1455,6 +1473,22 @@ function canUndo(record: DestinationRecord) {
     (record.state === "failed" &&
       (record.failedStep === "applying" || record.failedStep === "applied"))
   );
+}
+
+/** How many origins the preview asks at once. */
+const ORIGIN_CHECKS_AT_ONCE = 4;
+
+/** Runs `run` over `items` with at most `limit` running at once. */
+export async function forEachLimited<T>(
+  items: ReadonlyArray<T>,
+  limit: number,
+  run: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await run(items[next++]!);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
 const SOURCE_MOVED =

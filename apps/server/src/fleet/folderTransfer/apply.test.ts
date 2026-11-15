@@ -727,3 +727,66 @@ describe("Apply journal durability", () => {
     expect(tree(target)).toEqual({ "zz/": "", "zz/old0.txt": "original 0\n" });
   }, 60_000);
 });
+
+describe("Clone chosen for a path that already holds files", () => {
+  it("replaces the folder whole instead of cloning over it, and Undo puts the files back", async () => {
+    const target = NodePath.join(base, "scratch", "clone-occupied");
+    write(NodePath.join(target, "repositories/svc-a/notes.txt"), "mine before the copy\n");
+    // Also on the source, byte for byte: the replaced folder must still receive it.
+    const sourceScratch = NodePath.join(fixture.root, "repositories/svc-a/scratch.txt");
+    write(sourceScratch, "same on both\n");
+    write(NodePath.join(target, "repositories/svc-a/scratch.txt"), "same on both\n");
+    try {
+      const copy = await prepareCopy(target);
+      const id = repoRowId("repositories/svc-a");
+      // A hosted origin, so the clone choice would otherwise be available.
+      const repositories = copy.manifest.header.repositories.map((repo) =>
+        repo.path === "repositories/svc-a"
+          ? { ...repo, identity: "example.com/acme/svc-a" }
+          : repo,
+      );
+      const destination = await scanDestination(target, copy.manifest.entries);
+      const plan = planReconcile({
+        sourceMachine: "M4MAX",
+        repositories,
+        entries: copy.manifest.entries,
+        targetRoot: target,
+        destination,
+        relations: await repositoryRelations(
+          target,
+          repositories,
+          destination.repositories,
+          (repo, commits) => copy.client.ancestry(repo, commits),
+        ),
+        caseInsensitive: destination.caseInsensitive,
+        decisions: { [id]: "take-theirs" },
+        clone: [id],
+        cloneOrigins: { [id]: NodePath.join(fixture.origins, "svc-a.git") },
+      });
+      expect(plan.git.find((step) => step.repo === "repositories/svc-a")?.kind).toBe("replace");
+      expect(planReady(plan)).toBe(true);
+      const result = await transferAndApply(copy, target, plan);
+      expect(result.checks.filter((check) => !check.ok)).toEqual([]);
+      const copied = NodePath.join(target, "repositories/svc-a");
+      expect(git(copied, "rev-parse", "HEAD")).toBe(
+        git(NodePath.join(fixture.root, "repositories/svc-a"), "rev-parse", "HEAD"),
+      );
+      expect(NodeFS.existsSync(NodePath.join(copied, "notes.txt"))).toBe(false);
+      expect(NodeFS.readFileSync(NodePath.join(copied, "scratch.txt"), "utf8")).toBe(
+        "same on both\n",
+      );
+      const undo = await undoApply({
+        targetRoot: target,
+        backupRoot: NodePath.join(copy.state, "backups"),
+        journalFile: NodePath.join(copy.state, "journal.ndjson"),
+      });
+      expect(undo.problems).toEqual([]);
+      expect(NodeFS.readdirSync(copied).sort()).toEqual(["notes.txt", "scratch.txt"]);
+      expect(NodeFS.readFileSync(NodePath.join(copied, "notes.txt"), "utf8")).toBe(
+        "mine before the copy\n",
+      );
+    } finally {
+      NodeFS.rmSync(sourceScratch, { force: true });
+    }
+  }, 120_000);
+});

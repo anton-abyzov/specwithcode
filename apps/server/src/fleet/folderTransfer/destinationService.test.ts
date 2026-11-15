@@ -7,7 +7,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { folderCopyAllConflictsKey } from "@specweave-studio/contracts";
 
-import { CopyError, DestinationCopies, type DestinationRecord } from "./destinationService.ts";
+import {
+  CopyError,
+  DestinationCopies,
+  forEachLimited,
+  type DestinationRecord,
+} from "./destinationService.ts";
 import { git, makeUmbrella, write, type UmbrellaFixture } from "./folderFixture.testkit.ts";
 import { repoRowId } from "./reconcile.ts";
 import { SourceTransfers, type SourceOperationRecord } from "./sourceService.ts";
@@ -452,6 +457,38 @@ describe("Clone from origin on a machine without access", () => {
     );
   }, 120_000);
 
+  it("approves with the origin answers the preview showed, without asking the network again", async () => {
+    let probes = 0;
+    const copies = new DestinationCopies(NodePath.join(base, "dest-state-probe-drift"), {
+      ...fast,
+      // Unreachable for the preview; any later answer would change the plan.
+      reachableOrigin: async (origin) => (++probes === 1 ? null : origin),
+    });
+    const target = NodePath.join(base, "targets", "probe-drift");
+    const operationId = await previewWithClone(copies, target);
+    const probed = probes;
+    expect((await copies.readPlan(operationId))?.cloneOrigins).toEqual({
+      [repoRowId("repositories/svc-a")]: null,
+    });
+    await copies.approve(operationId);
+    expect(probes).toBe(probed);
+    const applied = await settle(copies, operationId, ["applied", "failed"]);
+    expect(applied.error).toBeNull();
+  }, 120_000);
+
+  it("approves a preview saved before plans kept their origin answers", async () => {
+    const state = NodePath.join(base, "dest-state-old-preview");
+    const copies = new DestinationCopies(state, { ...fast, reachableOrigin: async () => null });
+    const target = NodePath.join(base, "targets", "old-preview");
+    const operationId = await previewWithClone(copies, target);
+    const file = NodePath.join(state, "folder-copies", operationId, "plan.json");
+    const { cloneOrigins: _answers, ...older } = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+    NodeFS.writeFileSync(file, JSON.stringify(older));
+    await copies.approve(operationId);
+    const applied = await settle(copies, operationId, ["applied", "failed"]);
+    expect(applied.error).toBeNull();
+  }, 120_000);
+
   it("names the repository when a clone still fails, and Retry tries it again", async () => {
     const copies = new DestinationCopies(NodePath.join(base, "dest-state-clone-fails"), {
       ...fast,
@@ -470,4 +507,21 @@ describe("Clone from origin on a machine without access", () => {
     const again = await settle(copies, operationId, ["applied", "failed"]);
     expect(again.error?.message).toContain("Cloning repositories/svc-a");
   }, 120_000);
+});
+
+describe("forEachLimited", () => {
+  it("runs at most the limit at once and every item once", async () => {
+    let running = 0;
+    let most = 0;
+    const seen: Array<number> = [];
+    await forEachLimited([1, 2, 3, 4, 5, 6, 7, 8, 9], 4, async (item) => {
+      running += 1;
+      most = Math.max(most, running);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      seen.push(item);
+      running -= 1;
+    });
+    expect(most).toBe(4);
+    expect(seen.sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  });
 });

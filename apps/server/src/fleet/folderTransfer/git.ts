@@ -127,16 +127,19 @@ export async function gitList(cwd: string, args: ReadonlyArray<string>): Promise
 
 /**
  * The URLs to try for an origin: itself, then its HTTPS form when it is an SSH
- * address (`git@host:owner/repo`, `ssh://git@host/owner/repo`). A machine without
+ * address (`git@host:owner/repo`, `ssh://git@host[:22]/owner/repo`). A machine without
  * an SSH key can often still clone over HTTPS: a public repository needs no
  * sign-in, and a private one uses the Git credential helper (such as `gh auth`).
  */
 export function originCandidates(origin: string): Array<string> {
   const scp = /^[^@/]+@([^:/]+):(?!\/)(.+?)(?:\.git)?\/?$/.exec(origin);
-  const ssh = /^ssh:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/(.+?)(?:\.git)?\/?$/.exec(origin);
-  const match = scp ?? ssh;
-  if (!match) return [origin];
-  return [origin, `https://${match[1]}/${match[2]}.git`];
+  const ssh = /^ssh:\/\/(?:[^@/]+@)?([^/:]+)(?::(\d+))?\/(.+?)(?:\.git)?\/?$/.exec(origin);
+  // A custom SSH port says nothing about where, or under which path, HTTPS is served.
+  if (ssh?.[2] !== undefined && ssh[2] !== "22") return [origin];
+  const host = scp?.[1] ?? ssh?.[1];
+  const path = scp?.[2] ?? ssh?.[3];
+  if (!host || !path) return [origin];
+  return [origin, `https://${host}/${path}.git`];
 }
 
 /** SSH never asks for a password or passphrase; an unreachable host fails fast. */

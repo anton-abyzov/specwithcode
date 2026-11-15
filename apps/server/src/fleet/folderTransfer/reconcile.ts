@@ -157,6 +157,11 @@ export interface GitStep {
 export interface Plan {
   /** Inventory reviewed on the destination, including resolved conflict contents. */
   readonly destinationFingerprint?: string;
+  /**
+   * The origin answers the preview showed, by repository row, for repositories
+   * chosen to clone. Approve plans with them again instead of asking the network.
+   */
+  readonly cloneOrigins?: Readonly<Record<string, string | null>>;
   readonly rows: ReadonlyArray<PlanRow>;
   readonly actions: ReadonlyArray<FileAction>;
   readonly git: ReadonlyArray<GitStep>;
@@ -313,14 +318,23 @@ export function planReconcile(input: PlanInput): Plan {
     }
     if (!destination) {
       const blocked = source.path !== "." && occupied(source.path);
+      // The root is merged, never replaced: a target already holding anything copies it
+      // with its history, since cloning beside those entries would let Undo carry them off.
+      const rootOccupied =
+        source.path === "." &&
+        (input.destination.files.length > 0 || input.destination.repositories.length > 0);
       const cloneOrigin = input.cloneOrigins?.[id];
       // Chosen, but this machine cannot read the origin: copied whole instead of failing late.
       const unreachable = clone.has(id) && cloneOrigin === null;
+      // Files that were here before the copy are never cloned over: taking theirs
+      // replaces the folder whole (see the blocked row below), so Undo puts them back.
       const cloneAvailable =
         source.kind === "main" &&
         source.identity !== null &&
         !source.identity.startsWith("file://") &&
-        !unreachable;
+        !unreachable &&
+        !blocked &&
+        !rootOccupied;
       const cloned = cloneAvailable && clone.has(id);
       const cloneStep = () =>
         step({ kind: "clone", ...(cloneOrigin ? { origin: cloneOrigin } : {}) });
@@ -336,18 +350,17 @@ export function planReconcile(input: PlanInput): Plan {
             choices,
             decision,
             needsDecision: decision === null,
-            cloneAvailable,
-            clone: cloned,
+            cloneAvailable: false,
+            clone: false,
           },
-          step:
-            decision === "take-theirs" ? (cloned ? cloneStep() : step({ kind: "replace" })) : null,
+          step: decision === "take-theirs" ? step({ kind: "replace" }) : null,
           copyWhole: decision === "take-theirs",
           headMoves: false,
           sameHead: false,
           sourceDirty,
           destinationDirty,
-          skipGitData: cloned,
-          cloned,
+          skipGitData: false,
+          cloned: false,
         });
         continue;
       }
