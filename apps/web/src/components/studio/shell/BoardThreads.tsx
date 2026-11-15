@@ -49,12 +49,17 @@ export function useBoardThreads(input: {
   readonly machineLabels?: ReadonlyMap<string, string> | undefined;
 }): {
   readonly byIncrement: ReadonlyMap<string, ReadonlyArray<BoardThread>>;
+  /**
+   * False until this machine's threads have said which increment each works
+   * on: an empty card then means "not known yet", not "nobody is on it".
+   */
+  readonly answered: boolean;
   /** Threads run on more than one machine, so each line names its own. */
   readonly multiMachine: boolean;
   readonly loaders: ReactNode;
 } {
   const { environmentId, threads, machineLabels } = input;
-  const { progress } = useProjectThreadIncrementProgress(environmentId, threads);
+  const { progress, answered } = useProjectThreadIncrementProgress(environmentId, threads);
   const elsewhere = useMemo(
     () => threads.filter((thread) => thread.environmentId !== environmentId),
     [environmentId, threads],
@@ -64,7 +69,7 @@ export function useBoardThreads(input: {
   const { environments } = useEnvironments();
   const nickname = useMachineNicknames();
   const identity = useMachineIdentities();
-  return useMemo(() => {
+  const joined = useMemo(() => {
     const labels = new Map<string, string>();
     for (const environment of environments)
       labels.set(environment.environmentId, environment.label);
@@ -110,13 +115,11 @@ export function useBoardThreads(input: {
     return {
       byIncrement: grouped,
       multiMachine: machines.size > 1 || (machineLabels?.size ?? 0) > 1,
-      loaders,
     };
   }, [
     environmentId,
     environments,
     identity,
-    loaders,
     machineLabels,
     nickname,
     plans,
@@ -124,6 +127,7 @@ export function useBoardThreads(input: {
     threads,
     unreachable,
   ]);
+  return { ...joined, answered, loaders };
 }
 
 /** Where a thread runs, in its machine's color; "→ name" once it moved there. */

@@ -21,6 +21,7 @@ const runtime = vi.hoisted(() => ({
   working: {
     byIncrement: new Map<string, unknown[]>(),
     multiMachine: false,
+    answered: true,
     loaders: null,
   },
 }));
@@ -110,7 +111,7 @@ describe("BoardPane", () => {
     runtime.error = null;
     runtime.refresh.mockClear();
     runtime.openLink.mockClear();
-    runtime.working = { byIncrement: new Map(), multiMachine: false, loaders: null };
+    runtime.working = { byIncrement: new Map(), multiMachine: false, answered: true, loaders: null };
     opened.length = 0;
     asked.length = 0;
   });
@@ -231,6 +232,7 @@ describe("BoardPane", () => {
     runtime.working = {
       byIncrement: new Map([["0002-build", [working("t1", "working")]]]),
       multiMachine: false,
+      answered: true,
       loaders: null,
     };
     await render();
@@ -263,6 +265,7 @@ describe("BoardPane", () => {
         ],
       ]),
       multiMachine: true,
+      answered: true,
       loaders: null,
     };
     await render();
@@ -308,6 +311,11 @@ describe("BoardPane", () => {
       "Verify, review and close increment 0003-check.",
     ]);
     expect(column("done").querySelector(".sws-board-chip-ask")).toBeNull();
+    // Before the threads have said what they work on, a card is not offered as free.
+    runtime.working = { byIncrement: new Map(), multiMachine: false, answered: false, loaders: null };
+    await render();
+    expect(container.querySelector(".sws-board-chip-ask")).toBeNull();
+    runtime.working = { byIncrement: new Map(), multiMachine: false, answered: true, loaders: null };
     // Someone who cannot send gets no such button.
     await render({ canAsk: false });
     expect(container.querySelector(".sws-board-chip-ask")).toBeNull();

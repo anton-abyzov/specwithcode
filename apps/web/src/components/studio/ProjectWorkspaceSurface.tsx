@@ -465,8 +465,7 @@ export function ProjectWorkspaceSurface({
     "threads",
     PaneTabSchema,
   );
-  // The Board tab lists SpecWeave increments; a project without them has no such tab,
-  // and the remembered tab is shared by every project.
+  // The remembered tab is shared by every project, and not every project has a Board tab.
   // A code project always has the tab: without SpecWeave it offers to turn the board on.
   // An older server (no flag) and the personal project have none.
   const hasBoard = snapshot?.specweave !== undefined && snapshot.settings.kind !== "personal";

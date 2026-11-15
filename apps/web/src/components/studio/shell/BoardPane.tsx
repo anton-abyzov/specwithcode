@@ -212,7 +212,11 @@ function BoardCards({
                       const cardThreads = working.byIncrement.get(card.incrementId) ?? [];
                       const lead = cardThreads[0];
                       const target = boardCardTarget({ threads: cardThreads.length, specPath });
-                      const ask = cardThreads.length === 0 && onAsk ? boardAsk(card) : null;
+                      // Until the threads have answered, an empty card is not known to be free.
+                      const ask =
+                        cardThreads.length === 0 && working.answered && onAsk
+                          ? boardAsk(card)
+                          : null;
                       const openSpec =
                         specPath === null
                           ? null
