@@ -22,6 +22,7 @@ import {
 } from "@specweave-studio/contracts";
 import { describeModel, isSameModel, sameModelOn } from "./modelIdentity.ts";
 import {
+  chainNamedByPerson,
   effectiveFallbackOrder,
   fallbackModelOrder,
   fallbackSelectionKey,
@@ -644,14 +645,17 @@ export function describeFallbackOrder(input: {
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
   readonly contextFit?: ContextFitRequirement | undefined;
 }): ReadonlyArray<FallbackOrderEntry> {
-  const chain = effectiveFallbackOrder(input.rule, input.currentModel, input.providers);
+  const chain = effectiveFallbackOrder(input.rule, input.currentModel, input.providers, {
+    usedPercent: (provider, slug) => providerUsedPercent(provider, input.nowMs, slug),
+  });
   // An expansion is eligible for an unknown-billing agent only if the person
-  // named this exact model on that provider in the effective tier chain.
+  // named this exact model on that provider in the effective tier chain. A
+  // built-in track entry is nobody's choice, so it gets the expansion's trust.
   const namedTiers = chain.fromTiers
     ? new Set(
-        namedFallbackOrder(input.rule, input.currentModel, input.providers).order.map(
-          fallbackSelectionKey,
-        ),
+        namedFallbackOrder(input.rule, input.currentModel, input.providers)
+          .order.map(fallbackSelectionKey)
+          .filter((key) => !chain.builtIn.has(key)),
       )
     : null;
   return chain.order.map((selection) => {
@@ -809,7 +813,11 @@ function resolveProviderFallbackPass(input: {
     const used = providerUsedPercent(provider, input.nowMs, model);
     return used !== null && (input.belowPercent == null || used < input.belowPercent);
   };
-  const firstAvailable = () =>
+  const isReportsNoUsage = (selection: ModelSelection) => {
+    const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+    return provider !== undefined && reportsNoUsage(provider);
+  };
+  const firstAvailable = (allow: (selection: ModelSelection) => boolean = () => true) =>
     describeFallbackOrder({
       providers: input.providers,
       currentInstanceId: input.currentInstanceId,
@@ -823,7 +831,8 @@ function resolveProviderFallbackPass(input: {
       (entry) =>
         entry.unavailable === null &&
         !(verifiedOnly && entry.guess === true) &&
-        !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)),
+        !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)) &&
+        allow(entry.selection),
     )?.selection;
   const home = (allowUnreported = !verifiedOnly) => {
     const selection = input.rule.defaultModelSelection;
@@ -848,14 +857,21 @@ function resolveProviderFallbackPass(input: {
   // "Only these models" makes even the legacy single model the whole chain.
   // With no order set, ranked model tiers are the chain (see `modelTiers`).
   const chain = namedFallbackOrder(input.rule, input.currentModel, input.providers);
-  const listOnly = input.rule.providerLimitFallbackListOnly === true && chain.order.length > 0;
+  // The full chain marks the same-model copies of built-in entries too.
+  const orderChain = effectiveFallbackOrder(input.rule, input.currentModel, input.providers);
+  // Only a list the person wrote can be "the whole chain"; the built-in tracks never are.
+  const listOnly =
+    input.rule.providerLimitFallbackListOnly === true && chainNamedByPerson(chain);
   const explicitOrder =
     (input.rule.providerLimitFallbackModels?.length ?? 0) > 0 ||
     listOnly ||
-    (chain.fromTiers && chain.order.length > 0);
+    (chain.fromTiers && chainNamedByPerson(chain));
   const legacyOnly = !explicitOrder && fallbackModelOrder(input.rule).length > 0;
   if (explicitOrder) {
-    const ordered = firstAvailable();
+    // "Only these models" means the person's own list: no built-in track entry.
+    const ordered = firstAvailable(
+      (selection) => !listOnly || !orderChain.builtIn.has(fallbackSelectionKey(selection)),
+    );
     if (ordered !== undefined) return ordered;
     // The user said this list is the whole chain: past it the thread waits.
     if (listOnly) return null;
@@ -957,6 +973,17 @@ function resolveProviderFallbackPass(input: {
     }
   }
   if (!input.anyReady) return perTokenHome;
+  // Nothing the person named can take the thread: the built-in tracks rank
+  // what is left, ahead of the guess below.
+  // Like that guess, they never keep the thread on the account that stopped it.
+  if (!explicitOrder && chain.fromTiers && chain.order.length > 0) {
+    const ranked = firstAvailable(
+      (selection) =>
+        selection.instanceId !== input.currentInstanceId &&
+        (perTokenHome === null || !isReportsNoUsage(selection)),
+    );
+    if (ranked !== undefined) return ranked;
+  }
   const driver = input.providers.find(
     (provider) => provider.instanceId === input.currentInstanceId,
   )?.driver;
@@ -1097,7 +1124,7 @@ export function resolveWorkerLaunchSelection(input: {
     return { selection: preferred, reason: "preferred-resets-soon" };
   const listOnly =
     input.rule.providerLimitFallbackListOnly === true &&
-    effectiveFallbackOrder(input.rule, preferred.model).order.length > 0;
+    chainNamedByPerson(effectiveFallbackOrder(input.rule, preferred.model));
   const same = listOnly
     ? null
     : resolveSameModelElsewhere({
@@ -1433,7 +1460,9 @@ export function resolveCoordinatorTurnSelection(input: {
       chain.fromTiers &&
       chain.order.some(
         (selection) =>
-          selection.instanceId === thread.instanceId && selection.model === thread.model,
+          selection.instanceId === thread.instanceId &&
+          selection.model === thread.model &&
+          !chain.builtIn.has(fallbackSelectionKey(selection)),
       );
     const paid =
       isGeminiSpendProvider(current) ||

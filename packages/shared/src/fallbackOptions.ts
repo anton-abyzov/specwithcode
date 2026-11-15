@@ -32,8 +32,9 @@ import {
   usageDeniesTurn,
   usageResetAt,
 } from "./providerFallback.ts";
+import { type ModelFamily, modelFamily } from "./modelVendor.ts";
 
-export type ModelFamily = "claude" | "openai" | "google" | "xai" | "meta" | "other";
+export { type ModelFamily, modelFamily };
 
 export const MODEL_FAMILY_LABELS: Record<ModelFamily, string> = {
   claude: "Claude",
@@ -52,27 +53,6 @@ const FAMILY_ORDER: ReadonlyArray<ModelFamily> = [
   "meta",
   "other",
 ];
-
-const FAMILY_RULES: ReadonlyArray<readonly [RegExp, ModelFamily]> = [
-  [/claude|opus|sonnet|haiku|fable/, "claude"],
-  [/(?:^|[^a-z])(?:gpt|codex|o\d+)(?:$|[^a-z])/, "openai"],
-  [/gemini|gemma|argon/, "google"],
-  [/grok/, "xai"],
-  [/llama|wonder|muse|(?:^|[^a-z])meta(?:$|[^a-z])/, "meta"],
-];
-
-/** The family a model belongs to, from its slug or name; never from the provider. */
-export function modelFamily(model: {
-  readonly slug: string;
-  readonly name?: string | undefined;
-}): ModelFamily {
-  for (const spelling of [model.slug, model.name]) {
-    if (spelling === undefined) continue;
-    const key = spelling.toLowerCase();
-    for (const [pattern, family] of FAMILY_RULES) if (pattern.test(key)) return family;
-  }
-  return "other";
-}
 
 /** Whether a limited thread may continue on this model now, or why not. */
 export type FallbackOptionStatus =

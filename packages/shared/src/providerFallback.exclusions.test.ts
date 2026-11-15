@@ -179,8 +179,10 @@ describe("excluded models in the usage-limit fallback", () => {
 
   it("without Copilot, never picks an excluded Grok with more room over Codex", () => {
     const providers = [claude, grok, codex];
+    // With nothing saved the built-in Daily track ranks GPT-6.1 Sol; Grok's
+    // extra room no longer decides.
     expect(resolveProviderFallback({ ...limitStop, providers, rule: base })?.instanceId).toBe(
-      grok.instanceId,
+      codex.instanceId,
     );
     const rule = { ...base, providerLimitExcludedModels: [{ model: "grok-4-7" }] };
     expect(resolveProviderFallback({ ...limitStop, providers, rule })).toEqual({
@@ -291,8 +293,14 @@ describe("excluded models in the usage-limit fallback", () => {
       ["claude-fable-5-1", "Fable 5.1"],
     ]);
     const rule = { ...base, providerLimitExcludedModels: [{ model: "claude-opus-5-5" }] };
+    // Without the built-in tracks' next model, the driver's other account takes it.
+    expect(resolveProviderFallback({ ...limitStop, providers: [claude, second], rule })).toEqual({
+      instanceId: second.instanceId,
+      model: "claude-fable-5-1",
+    });
+    // The built-in Daily track ranks GPT-6.1 Sol next, ahead of that guess.
     expect(
       resolveProviderFallback({ ...limitStop, providers: [claude, second, codex], rule }),
-    ).toEqual({ instanceId: second.instanceId, model: "claude-fable-5-1" });
+    ).toEqual({ instanceId: codex.instanceId, model: "gpt-6.1-sol" });
   });
 });

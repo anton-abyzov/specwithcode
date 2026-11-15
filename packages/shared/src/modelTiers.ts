@@ -20,6 +20,12 @@ import {
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import { isSameModel, sameModelOn } from "./modelIdentity.ts";
+import {
+  defaultLaneOfModel,
+  effectiveModelLanes,
+  isFreeTrackModel,
+  providersForModel,
+} from "./modelTracks.ts";
 
 export const MODEL_TIER_LABELS: Record<ModelLane, string> = {
   routine: "Everyday work",
@@ -49,17 +55,19 @@ export function tierOfModel(
   lanes: ModelLanes | null | undefined,
   model: string | undefined,
 ): ModelLane | null {
-  if (lanes == null || model === undefined) return null;
+  if (model === undefined) return null;
   // An exact entry wins over a newer release an older entry follows.
   for (const covers of [
     (entry: string) => isSameModel({ slug: entry }, { slug: model }),
     (entry: string) => laneEntryCovers(entry, model),
   ]) {
     for (const lane of ["complex", "routine"] as const) {
-      if ((lanes[lane] ?? []).some((entry) => covers(entry.model))) return lane;
+      if ((lanes?.[lane] ?? []).some((entry) => covers(entry.model))) return lane;
     }
   }
-  return null;
+  // A track the person never saved ranks the built-in models.
+  const builtIn = defaultLaneOfModel({ slug: model }, laneEntryCovers);
+  return builtIn !== null && (lanes?.[builtIn] ?? []).length === 0 ? builtIn : null;
 }
 
 /**
@@ -104,47 +112,79 @@ export function tierFallbackOrder(
   input: TierFallbackInput,
   currentModel: string | undefined,
   providers: ReadonlyArray<ServerProvider> = [],
+  options: TierChainOptions = {},
 ): ReadonlyArray<ModelSelection> {
-  const lanes = input.modelLanes;
-  if (lanes == null) return [];
+  return tierFallbackChain(input, currentModel, providers, options).order;
+}
+
+export interface TierChainOptions {
+  /** Add each ranked model on the other providers that serve it (default true). */
+  readonly expand?: boolean;
+  /** A room reading per provider and model: more room goes first among equals. */
+  readonly usedPercent?: (provider: ServerProvider, slug: string) => number | null;
+}
+
+/** The tier chain, with the keys of the entries that come from a built-in track. */
+function tierFallbackChain(
+  input: TierFallbackInput,
+  currentModel: string | undefined,
+  providers: ReadonlyArray<ServerProvider>,
+  options: TierChainOptions,
+): { readonly order: ReadonlyArray<ModelSelection>; readonly builtIn: ReadonlySet<string> } {
+  const saved = input.modelLanes;
+  const { lanes, builtIn: builtInLane } = effectiveModelLanes(saved, providers);
   const first =
-    tierOfModel(lanes, currentModel) ??
-    tierOfModel(lanes, input.defaultModelSelection?.model) ??
+    tierOfModel(saved, currentModel) ??
+    tierOfModel(saved, input.defaultModelSelection?.model) ??
     "routine";
-  const ranked = followNewestReleases(
-    [...(lanes[first] ?? []), ...(lanes[first === "complex" ? "routine" : "complex"] ?? [])],
-    providers,
-  );
-  const providerRank = (instanceId: ProviderInstanceId) => {
-    const index = input.defaultModelProviders?.indexOf(instanceId) ?? -1;
-    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
-  };
-  const elsewhere = providers
-    .filter((provider) => provider.enabled)
-    .sort((a, b) => providerRank(a.instanceId) - providerRank(b.instanceId));
+  const other = first === "complex" ? "routine" : "complex";
+  // Hard work never continues on a free model: the wait for a reset costs less.
+  const rest =
+    first === "complex"
+      ? lanes[other].filter((entry) => !isFreeTrackModel({ slug: entry.model }))
+      : lanes[other];
+  const ranked = [
+    ...followNewestReleases(lanes[first], providers).map((entry) => ({
+      entry,
+      builtIn: builtInLane[first],
+    })),
+    ...followNewestReleases(rest, providers).map((entry) => ({
+      entry,
+      builtIn: builtInLane[other],
+    })),
+  ];
   const seen = new Set<string>();
   const order: ModelSelection[] = [];
-  const push = (selection: ModelSelection) => {
+  const builtIn = new Set<string>();
+  const push = (selection: ModelSelection, fromBuiltIn: boolean) => {
     const key = fallbackSelectionKey(selection);
     if (seen.has(key)) return;
     seen.add(key);
     order.push(selection);
+    if (fromBuiltIn) builtIn.add(key);
   };
   // The thread's own model on another provider keeps its work where it is
   // before any change of model; then the ranking from the top.
   const own =
-    currentModel !== undefined && tierOfModel(lanes, currentModel) !== null
-      ? ranked.filter((entry) => isSameModel({ slug: entry.model }, { slug: currentModel }))
+    currentModel !== undefined && tierOfModel(saved, currentModel) !== null
+      ? ranked.filter(({ entry }) => isSameModel({ slug: entry.model }, { slug: currentModel }))
       : [];
-  for (const entry of [...own, ...ranked]) {
-    push(entry);
-    for (const provider of elsewhere) {
-      if (provider.instanceId === entry.instanceId) continue;
-      const slug = sameModelOn(provider, { slug: entry.model });
-      if (slug !== undefined) push({ instanceId: provider.instanceId, model: slug });
+  for (const { entry, builtIn: fromBuiltIn } of [...own, ...ranked]) {
+    push(entry, fromBuiltIn);
+    if (options.expand === false) continue;
+    // The same model elsewhere: its maker first, then the most room.
+    for (const { provider, slug } of providersForModel({
+      providers,
+      model: { slug: entry.model },
+      order: input.defaultModelProviders,
+      preferFree: isFreeTrackModel({ slug: entry.model }),
+      usedPercent: options.usedPercent as Parameters<typeof providersForModel>[0]["usedPercent"],
+    })) {
+      if (provider.instanceId !== entry.instanceId)
+        push({ instanceId: provider.instanceId, model: slug }, fromBuiltIn);
     }
   }
-  return order;
+  return { order, builtIn };
 }
 
 /**
@@ -156,10 +196,30 @@ export function effectiveFallbackOrder(
   rule: FallbackOrderRule & TierFallbackInput,
   currentModel: string | undefined,
   providers: ReadonlyArray<ServerProvider> = [],
-): { readonly order: ReadonlyArray<ModelSelection>; readonly fromTiers: boolean } {
+  options: TierChainOptions = {},
+): FallbackChain {
   const explicit = fallbackModelOrder(rule);
-  if (explicit.length > 0) return { order: explicit, fromTiers: false };
-  return { order: tierFallbackOrder(rule, currentModel, providers), fromTiers: true };
+  if (explicit.length > 0) return { order: explicit, fromTiers: false, builtIn: NO_KEYS };
+  return { ...tierFallbackChain(rule, currentModel, providers, options), fromTiers: true };
+}
+
+const NO_KEYS: ReadonlySet<string> = new Set();
+
+export interface FallbackChain {
+  readonly order: ReadonlyArray<ModelSelection>;
+  /** The chain is the model tracks, not a fallback order the person wrote. */
+  readonly fromTiers: boolean;
+  /**
+   * Entries (`fallbackSelectionKey`) that come from a built-in track. The
+   * person named none of them, so none may spend money or outrank a provider
+   * with a verified usage reading.
+   */
+  readonly builtIn: ReadonlySet<string>;
+}
+
+/** Whether the person wrote any of the chain: a saved order or a saved track. */
+export function chainNamedByPerson(chain: FallbackChain): boolean {
+  return chain.order.some((entry) => !chain.builtIn.has(fallbackSelectionKey(entry)));
 }
 
 /**
@@ -306,12 +366,9 @@ export function followNewestReleases(
 export function namedFallbackOrder(
   rule: FallbackOrderRule & TierFallbackInput,
   currentModel: string | undefined,
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "models">>,
-): { readonly order: ReadonlyArray<ModelSelection>; readonly fromTiers: boolean } {
-  const chain = effectiveFallbackOrder(rule, currentModel);
-  return chain.fromTiers
-    ? { ...chain, order: followNewestReleases(chain.order, providers) }
-    : chain;
+  providers: ReadonlyArray<ServerProvider>,
+): FallbackChain {
+  return effectiveFallbackOrder(rule, currentModel, providers, { expand: false });
 }
 
 /** Drivers whose tier models a provider without its own entry borrows, in order. */

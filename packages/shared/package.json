@@ -280,6 +280,14 @@
       "types": "./src/providerUsageLinks.ts",
       "import": "./src/providerUsageLinks.ts"
     },
+    "./modelTracks": {
+      "types": "./src/modelTracks.ts",
+      "import": "./src/modelTracks.ts"
+    },
+    "./modelVendor": {
+      "types": "./src/modelVendor.ts",
+      "import": "./src/modelVendor.ts"
+    },
     "./modelTiers": {
       "types": "./src/modelTiers.ts",
       "import": "./src/modelTiers.ts"

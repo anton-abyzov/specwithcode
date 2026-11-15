@@ -89,7 +89,12 @@ describe("tierOfModel", () => {
     expect(tierOfModel(lanes, "claude-opus-5.5")).toBe("complex");
     expect(tierOfModel(lanes, "gpt-6.1-sol")).toBe("routine");
     expect(tierOfModel(lanes, "unranked")).toBeNull();
-    expect(tierOfModel(null, "gpt-6.1-sol")).toBeNull();
+    // A track nobody saved ranks the built-in models.
+    expect(tierOfModel(null, "gpt-6.1-sol")).toBe("routine");
+    expect(tierOfModel(null, "claude-fable-5-2")).toBe("complex");
+    expect(tierOfModel(null, "unranked")).toBeNull();
+    // A saved track replaces its built-in order.
+    expect(tierOfModel({ complex: [], routine: lanes.routine }, "claude-opus-5-5")).toBeNull();
   });
 });
 
@@ -127,8 +132,16 @@ describe("tierFallbackOrder", () => {
     );
   });
 
-  it("is empty without tiers", () => {
-    expect(tierFallbackOrder({ modelLanes: null }, "x", providers)).toEqual([]);
+  it("uses the built-in tracks without saved tiers, and nothing without providers", () => {
+    expect(tierFallbackOrder({ modelLanes: null }, "x")).toEqual([]);
+    // Daily first: Opus 5.5 on its maker, then elsewhere, then Sol; Complex after.
+    expect(tierFallbackOrder({ modelLanes: null }, "x", providers)).toEqual([
+      sel("claudeAgent", "claude-opus-5-5"),
+      sel("copilot-enterprise", "claude-opus-5.5"),
+      sel("codex", "gpt-6.1-sol"),
+      sel("codex", "gpt-6-astra"),
+      sel("copilot-enterprise", "gpt-6-astra"),
+    ]);
   });
 });
 
@@ -138,6 +151,7 @@ describe("effectiveFallbackOrder", () => {
     expect(effectiveFallbackOrder(explicit, "claude-opus-5-5", providers)).toEqual({
       order: [sel("codex", "gpt-6.1-sol")],
       fromTiers: false,
+      builtIn: new Set(),
     });
     expect(effectiveFallbackOrder(rule, "claude-opus-5-5", providers).fromTiers).toBe(true);
   });
