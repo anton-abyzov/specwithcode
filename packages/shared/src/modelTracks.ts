@@ -132,7 +132,10 @@ export function providersForModel<P extends TrackProvider>(input: {
 }
 
 /** A source the app never starts work on by itself: billed per token, or billing unknown. */
-export function isHeldSource(provider: ServerProvider): boolean {
+export function isHeldSource(provider: ServerProvider, slug?: string | undefined): boolean {
+  // The model's own billing counts too: a plan source can list one model it bills per use.
+  const billing = providerModelBilling(provider, slug);
+  if (billing === "unknown" || isPaidModelBilling(billing)) return true;
   // A provider described without its sign-in (a bare list of models) says nothing about billing.
   if ((provider as Partial<ServerProvider>).auth === undefined) return false;
   return (
@@ -168,7 +171,10 @@ export function defaultTrackSelections(
       model: { slug: entry.model },
       order: order ?? undefined,
       preferFree: entry.free,
-    }).find(({ provider }) => !isHeldSource(provider as Partial<ServerProvider> as ServerProvider));
+    }).find(
+      ({ provider, slug }) =>
+        !isHeldSource(provider as Partial<ServerProvider> as ServerProvider, slug),
+    );
     return best === undefined ? [] : [{ instanceId: best.provider.instanceId, model: best.slug }];
   });
 }

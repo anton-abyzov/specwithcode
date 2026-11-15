@@ -201,6 +201,20 @@ describe("track rows", () => {
     expect(first("review")).toMatchObject({ hold: "per-token", used: false });
   });
 
+  it("holds a plan source for the one model it bills per use", () => {
+    const routed = {
+      ...copilot,
+      models: copilot.models.map((model) =>
+        model.slug === "claude-opus-5.5" ? { ...model, billing: "paid-router" as const } : model,
+      ),
+    };
+    const rows = describeTrack({ track: "daily", saved: [], providers: [routed], nowMs: now });
+    expect(rows[0]).toMatchObject({ selection: null });
+    expect(rows[0]?.sources).toMatchObject([{ hold: "per-token", used: false }]);
+    // The same source still runs the models it bills by plan.
+    expect(rows[1]?.sources[0]).toMatchObject({ hold: null, used: true });
+  });
+
   it("flags a free model stored in Complex", () => {
     const rows = describeTrack({
       track: "complex",

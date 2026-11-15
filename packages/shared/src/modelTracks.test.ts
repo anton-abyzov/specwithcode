@@ -257,6 +257,14 @@ describe("the chain a limited thread follows with nothing saved", () => {
     ).not.toContain(devin.instanceId);
   });
 
+  it("keeps a built-in entry off a model its source bills per use, by router or unknown", () => {
+    for (const billing of ["api", "paid-router", "unknown"] as const) {
+      const base = provider("pi", "acpRegistry", ["claude-opus-5-5"], 10);
+      const pi = { ...base, models: base.models.map((model) => ({ ...model, billing })) };
+      expect(defaultTrackSelections("daily", [pi])).toEqual([]);
+    }
+  });
+
   it("keeps a built-in entry off a per-token source a saved Sources order ranks first", () => {
     const apiClaude = provider("claude-api", "claudeAgent", ["claude-opus-5-5"], null, {
       auth: { status: "authenticated", apiKeyBilling: true },

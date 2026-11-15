@@ -255,7 +255,8 @@ describe("resolveReviewer", () => {
       nowMs: now,
     });
     expect(byDefault.reviewer).toEqual(sel("muse", "muse-wonder-1.0"));
-    expect(byDefault.skipped).toEqual([{ selection: listed, reason: "unknown-billing" }]);
+    // The built-in order never names it, so there is nothing to pass over.
+    expect(byDefault.skipped).toEqual([]);
     const named = resolveReviewer({
       providers: [claude, unknown, muse],
       author,

@@ -8,7 +8,9 @@
  */
 import {
   DEFAULT_MODEL_TRACKS,
+  isPaidModelBilling,
   MAX_LANE_MODELS,
+  providerModelBilling,
   type ModelSelection,
   type ModelTrack,
   type ProviderInstanceId,
@@ -61,9 +63,19 @@ export function sourceStatus(
 /** Why a source is never picked on its own, or null when it may be. */
 export type SourceHold = "per-token" | "unknown-billing";
 
-export function sourceHold(provider: ServerProvider): SourceHold | null {
-  if (isPerTokenProvider(provider) || isGeminiSpendProvider(provider)) return "per-token";
-  return isUnknownBillingAgent(provider) ? "unknown-billing" : null;
+export function sourceHold(
+  provider: ServerProvider,
+  /** The model as this source spells it: its own billing can hold a plan source. */
+  slug?: string | undefined,
+): SourceHold | null {
+  const billing = providerModelBilling(provider, slug);
+  if (
+    isPerTokenProvider(provider) ||
+    isGeminiSpendProvider(provider) ||
+    isPaidModelBilling(billing)
+  )
+    return "per-token";
+  return isUnknownBillingAgent(provider, slug) ? "unknown-billing" : null;
 }
 
 export interface SourceRow {
@@ -218,7 +230,7 @@ export function describeTrack(input: {
           : {}),
       });
     const open = (list: ReturnType<typeof ranked>) =>
-      list.filter(({ provider }) => sourceHold(provider) === null);
+      list.filter((choice) => sourceHold(choice.provider, choice.slug) === null);
     const first =
       named ?? open(ranked(false))[0]?.provider.instanceId ?? ranked(false)[0]?.provider.instanceId;
     const all = ranked(true);
@@ -226,10 +238,11 @@ export function describeTrack(input: {
       ...all.filter(({ provider }) => provider.instanceId === first),
       ...open(all).filter(({ provider }) => provider.instanceId !== first),
       ...all.filter(
-        ({ provider }) => provider.instanceId !== first && sourceHold(provider) !== null,
+        (choice) =>
+          choice.provider.instanceId !== first && sourceHold(choice.provider, choice.slug) !== null,
       ),
     ].map(({ provider, slug: served }) => {
-      const hold = sourceHold(provider);
+      const hold = sourceHold(provider, served);
       return {
         provider,
         slug: served,
@@ -308,7 +321,7 @@ export function trackEntryRefusal(input: {
   if (input.existing.length >= MAX_LANE_MODELS) return "full";
   if (input.track !== "daily" && isFreeTrackModel(input.model)) return "free-in-hard-track";
   const source = input.providers.find((entry) => entry.instanceId === input.instanceId);
-  return source === undefined ? null : sourceHold(source);
+  return source === undefined ? null : sourceHold(source, input.model.slug);
 }
 
 /**
