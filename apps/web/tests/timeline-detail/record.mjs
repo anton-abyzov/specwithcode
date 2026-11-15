@@ -72,15 +72,22 @@ async function walk(page, width) {
   await pick("Everything", "last");
   await note("Everything for every thread");
   await openMenu();
+  // Give the thread its own level: older builds list the levels twice, thread first.
+  if (await pick("This thread")) await page.waitForTimeout(PAUSE);
   await pick("Results only");
-  await note("Results only chosen first in the menu");
+  await note("Results only for this thread");
   await page.keyboard.press("Meta+Alt+KeyO");
   await note("shortcut once");
   await page.keyboard.press("Meta+Alt+KeyO");
   await note("shortcut twice");
   await openMenu();
-  if ((await pick("Use default")) || (await pick("Every thread"))) await note("back to the default");
-  else await page.keyboard.press("Escape");
+  // Older builds close on "Use default"; the scope choice keeps the menu open.
+  if (await pick("Use default")) await note("back to the default");
+  else {
+    if (await pick("Every thread")) await page.waitForTimeout(PAUSE);
+    await page.keyboard.press("Escape");
+    await note("back to the default");
+  }
   await openMenu();
   await page.keyboard.press("Escape");
   await note("end");
