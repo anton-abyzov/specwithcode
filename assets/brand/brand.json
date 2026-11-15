@@ -1,0 +1,6 @@
+{
+  "name": "SpecWithCode",
+  "tile": { "top": "#6E7DFF", "bottom": "#4A58E8" },
+  "darkTile": { "top": "#2A2F5C", "bottom": "#14172E" },
+  "smallMarkMaxPx": 32
+}
