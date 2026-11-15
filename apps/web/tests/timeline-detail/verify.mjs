@@ -274,6 +274,8 @@ try {
       );
       await openMenu(page);
       await menuFits(page, `${width}-${theme}-project`);
+      await page.getByRole("menuitemradio", { name: /^Detailed/ }).waitFor();
+      await page.waitForTimeout(300);
       await page.screenshot({ path: shot("menu-project") });
       await page.getByRole("menuitemradio", { name: /^Detailed/ }).click();
       await page.waitForFunction(
