@@ -354,6 +354,7 @@ export const MachineHandoffUpdateSkipped = Schema.Struct({
 export type MachineHandoffUpdateSkipped = typeof MachineHandoffUpdateSkipped.Type;
 export type MachineHandoffUpdateSkipReason =
   | "unsafe-git-config"
+  | "external-storage"
   | "detached-head"
   | "dirty"
   | "local-commits"

@@ -47,6 +47,7 @@ export class HandoffGitError extends Schema.TaggedError<HandoffGitError>()("Hand
     "in-use",
     "needs-lfs",
     "lfs-failed",
+    "external-git-storage",
   ]),
   /** The manifest repository it stopped at, relative to the project folder. */
   repository: Schema.optional(Schema.String),

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - disposable real Git repositories for the existing-copy update.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, describe, expect, it } from "@effect/vitest";
@@ -9,6 +10,14 @@ import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as HandoffGit from "./handoffGit.ts";
+import {
+  alternatePaths,
+  ambientFilters,
+  filtersOff,
+  lfsEndpoint,
+  unsafeExistingCopyConfig,
+  unsafeLfsConfig,
+} from "./handoffGitConfig.ts";
 import {
   changeCode,
   commit,
@@ -24,6 +33,8 @@ import type { HandoffGitError, HandoffGitManifest } from "./handoffGitTypes.ts";
 const calls: Array<ProcessRunner.ProcessRunInput> = [];
 /** Replaces PATH for Git calls, so a test can run Git without Git LFS. */
 let pathOverride: string | undefined;
+/** This machine's own Git settings for Git calls; none unless a test writes some. */
+let globalConfig: string | undefined;
 const live = HandoffGit.layer.pipe(
   Layer.provide(
     Layer.effect(
@@ -37,7 +48,7 @@ const live = HandoffGit.layer.pipe(
               ...input,
               env: {
                 ...input.env,
-                GIT_CONFIG_GLOBAL: "/dev/null",
+                GIT_CONFIG_GLOBAL: globalConfig ?? "/dev/null",
                 GIT_CONFIG_NOSYSTEM: "1",
                 ...(pathOverride ? { PATH: pathOverride } : {}),
               },
@@ -57,6 +68,7 @@ afterEach(() => {
     NodeFS.rmSync(directory, { recursive: true, force: true });
   calls.length = 0;
   pathOverride = undefined;
+  globalConfig = undefined;
 });
 
 describe("existing copy update (1326)", () => {
@@ -312,7 +324,7 @@ describe("existing copy update (1326)", () => {
 
   it("judges a copy's own config for what it runs, not for what it carries", () => {
     expect(
-      HandoffGit.unsafeExistingCopyConfig([
+      unsafeExistingCopyConfig([
         ["core.repositoryformatversion", "0"],
         ["remote.origin.url", "/srv/git/app.git"],
         ["remote.origin.pushurl", "https://token@example.com/app.git"],
@@ -325,7 +337,7 @@ describe("existing copy update (1326)", () => {
       ]),
     ).toEqual([]);
     expect(
-      HandoffGit.unsafeExistingCopyConfig([
+      unsafeExistingCopyConfig([
         ["remote.origin.url", "ext::sh -c touch% /tmp/x"],
         ["remote.origin.uploadpack", "evil"],
         ["branch.main.mergeoptions", "-s evil"],
@@ -483,31 +495,39 @@ describe("existing copy update (1326)", () => {
       const f = lfsFixture();
       const manifest = yield* sync(f);
       yield* publishSync(f, manifest);
-      // The origin lost its LFS store after the source published.
-      NodeFS.rmSync(NodePath.join(f.rootRemote, "lfs"), { recursive: true, force: true });
+      // The origin's LFS store is out of reach after the source published.
+      const store = NodePath.join(f.rootRemote, "lfs");
+      NodeFS.renameSync(store, `${store}.away`);
       expect(yield* refusal(update(f, manifest))).toMatchObject({
         reason: "lfs-failed",
         repository: ".",
       });
-      // The commits arrived; a retry of the same operation downloads only the files.
+      // The commits arrived, and the file is still a pointer.
       expect(git(f.destination, "rev-parse", "HEAD")).toBe(manifest.repositories[0]!.head);
+      const model = NodePath.join(f.destination, "assets", "model.bin");
+      expect(NodeFS.readFileSync(model, "utf8")).toContain("git-lfs.github.com/spec");
+      // A retry of the same operation, once the store is back, downloads only the files.
+      NodeFS.rmSync(store, { recursive: true, force: true });
+      NodeFS.renameSync(`${store}.away`, store);
+      calls.length = 0;
+      yield* update(f, manifest);
+      expect(NodeFS.readFileSync(model, "utf8")).toBe("real model bytes\n".repeat(64));
+      expect(calls.some((call) => call.args.includes("merge"))).toBe(false);
     }),
   );
 
   it("pins the LFS endpoint Git LFS derives from each origin form", () => {
-    expect(HandoffGit.lfsEndpoint("https://github.com/owner/app")).toBe(
+    expect(lfsEndpoint("https://github.com/owner/app")).toBe(
       "https://github.com/owner/app.git/info/lfs",
     );
-    expect(HandoffGit.lfsEndpoint("https://github.com/owner/app.git/")).toBe(
+    expect(lfsEndpoint("https://github.com/owner/app.git/")).toBe(
       "https://github.com/owner/app.git/info/lfs",
     );
-    expect(HandoffGit.lfsEndpoint("git@github.com:owner/app.git")).toBe(
-      "ssh://git@github.com/owner/app.git",
-    );
-    expect(HandoffGit.lfsEndpoint("/srv/git/app.git")).toBe("file:///srv/git/app.git");
-    expect(HandoffGit.lfsEndpoint("ext::sh -c evil")).toBeNull();
+    expect(lfsEndpoint("git@github.com:owner/app.git")).toBe("ssh://git@github.com/owner/app.git");
+    expect(lfsEndpoint("/srv/git/app.git")).toBe("file:///srv/git/app.git");
+    expect(lfsEndpoint("ext::sh -c evil")).toBeNull();
     expect(
-      HandoffGit.unsafeLfsConfig([
+      unsafeLfsConfig([
         ["lfs.url", "x"],
         ["remote.origin.lfsurl", "x"],
         ["lfs.fetchexclude", "x"],
@@ -517,4 +537,335 @@ describe("existing copy update (1326)", () => {
       ]),
     ).toEqual(["include.path", "lfs.customtransfer.evil.path", "lfs.https://example.com/.access"]);
   });
+
+  // --- Review findings on #366, second pass ---
+
+  /** A program this machine's own Git settings name as a filter; it records that it ran. */
+  const ambientFilter = (f: ReturnType<typeof fixture>, name: string) => {
+    const marker = NodePath.join(f.base, `${name}-filter-ran`);
+    const script = NodePath.join(f.base, `${name}-filter.sh`);
+    write(script, `#!/bin/sh\ntouch ${marker}\ncat\n`);
+    NodeFS.chmodSync(script, 0o755);
+    globalConfig = NodePath.join(f.base, "global.gitconfig");
+    NodeFS.appendFileSync(
+      globalConfig,
+      `[filter "${name}"]\n\tclean = ${script}\n\tsmudge = ${script}\n\trequired = true\n`,
+    );
+    return marker;
+  };
+
+  it.effect("never runs a filter this machine's own Git settings define", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      const marker = ambientFilter(f, "stamp");
+      // The incoming commit's attributes choose that filter for the files it changes.
+      write(NodePath.join(f.source, ".gitattributes"), "*.ts filter=stamp\n");
+      changeCode(f);
+      const manifest = yield* sync(f);
+      yield* publishSync(f, manifest);
+      // The copy's own attributes choose it too, and status re-reads a file changed on disk.
+      write(NodePath.join(f.destination, ".git", "info", "attributes"), "*.ts filter=stamp\n");
+      const later = 4_102_444_800;
+      NodeFS.utimesSync(NodePath.join(f.destination, "root.ts"), later, later);
+      yield* check(f, manifest);
+      yield* update(f, manifest);
+      expect(NodeFS.existsSync(marker)).toBe(false);
+      expect(git(f.destination, "rev-parse", "HEAD")).toBe(manifest.repositories[0]!.head);
+      expect(NodeFS.readFileSync(NodePath.join(f.destination, "root.ts"), "utf8")).toBe(
+        "export const value = 42;\n",
+      );
+      // Sanity: plain Git with the same settings does run it.
+      NodeFS.utimesSync(NodePath.join(f.destination, "root.ts"), later + 60, later + 60);
+      NodeChildProcess.execFileSync("git", ["-C", f.destination, "status", "--porcelain"], {
+        env: { ...process.env, GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: "1" },
+      });
+      expect(NodeFS.existsSync(marker)).toBe(true);
+    }),
+  );
+
+  it("reads the filters of this machine's own settings, not the repository's", () => {
+    const scoped = [
+      ["global", "filter.stamp.clean\nstamp --clean"],
+      ["global", "filter.stamp.required\ntrue"],
+      ["system", "filter.Crypt.smudge\ngit-crypt smudge"],
+      ["command", "filter.off.clean\n"],
+      ["global", "filter.lfs.clean\ngit-lfs clean -- %f"],
+      ["global", "filter.lfs.smudge\ngit-lfs smudge --skip -- %f"],
+      ["global", "filter.lfs.process\ngit-lfs filter-process --skip"],
+      ["local", "filter.local.clean\nrun-me"],
+      ["local", "filter.stamp.smudge\nstamp --smudge"],
+      ["worktree", "filter.tree.smudge\nrun-me"],
+      ["global", "user.name\nSomeone"],
+    ]
+      .map(([scope, entry]) => `${scope}\0${entry}\0`)
+      .join("");
+    expect([...ambientFilters(scoped)]).toEqual([
+      ["stamp", ["filter.stamp.clean", "filter.stamp.smudge"]],
+      ["Crypt", ["filter.Crypt.smudge"]],
+    ]);
+    expect([
+      ...ambientFilters("global\0filter.lfs.smudge\nmy-lfs smudge %f\0global\0x.y\nz\0"),
+    ]).toEqual([["lfs", ["filter.lfs.smudge"]]]);
+    // The repository's own standard entry is what Git uses, so LFS is left alone.
+    expect([
+      ...ambientFilters(
+        "global\0filter.lfs.smudge\nmy-lfs smudge %f\0local\0filter.lfs.smudge\ngit-lfs smudge -- %f\0",
+      ),
+    ]).toEqual([]);
+    expect(filtersOff(["a"])).toEqual([
+      "filter.a.clean=",
+      "filter.a.smudge=",
+      "filter.a.process=",
+      "filter.a.required=false",
+    ]);
+    expect(alternatePaths("# shared\n/srv/a/objects\n\n../../b/objects\r\n")).toEqual([
+      "/srv/a/objects",
+      "../../b/objects",
+    ]);
+    expect(alternatePaths('"/srv/quoted\\040path"\n')).toBeNull();
+  });
+
+  it.effect("refuses objects borrowed from a repository outside the project folder", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      changeCode(f);
+      const manifest = yield* sync(f);
+      yield* publishSync(f, manifest);
+      const outside = NodePath.join(f.base, "outside");
+      git(f.base, "clone", f.rootRemote, outside);
+      const alternates = NodePath.join(f.destination, ".git", "objects", "info", "alternates");
+      write(alternates, `${NodePath.join(outside, ".git", "objects")}\n`);
+      const before = git(f.destination, "rev-parse", "HEAD");
+      const external = { reason: "external-git-storage", repository: ".", unsafeConfig: undefined };
+      expect(yield* refusal(check(f, manifest))).toEqual(external);
+      expect(yield* refusal(update(f, manifest))).toEqual(external);
+      // A store that itself borrows from outside is refused through the chain.
+      write(alternates, `${NodePath.join(f.destinationNested, ".git", "objects")}\n`);
+      write(
+        NodePath.join(f.destinationNested, ".git", "objects", "info", "alternates"),
+        `${NodePath.join(outside, ".git", "objects")}\n`,
+      );
+      expect(yield* refusal(check(f, manifest))).toEqual(external);
+      NodeFS.rmSync(NodePath.join(f.destinationNested, ".git", "objects", "info", "alternates"));
+      NodeFS.rmSync(alternates);
+      // The object store itself linked out of the folder.
+      const objects = NodePath.join(f.destination, ".git", "objects");
+      const moved = NodePath.join(f.base, "moved-objects");
+      NodeFS.renameSync(objects, moved);
+      NodeFS.symlinkSync(moved, objects);
+      expect(yield* refusal(check(f, manifest))).toEqual(external);
+      expect(git(f.destination, "rev-parse", "HEAD")).toBe(before);
+      expect(calls.some((call) => call.args.includes("fetch"))).toBe(false);
+    }),
+  );
+
+  it.effect("updates a copy whose repositories share objects inside the project folder", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      changeCode(f);
+      const manifest = yield* sync(f);
+      yield* publishSync(f, manifest);
+      write(
+        NodePath.join(f.destinationNested, ".git", "objects", "info", "alternates"),
+        `${NodePath.join(f.destination, ".git", "objects")}\n`,
+      );
+      yield* check(f, manifest);
+      yield* update(f, manifest);
+      expect(git(f.destinationNested, "rev-parse", "HEAD")).toBe(manifest.repositories[1]!.head);
+    }),
+  );
+
+  it.effect("updates a copy that is a linked worktree, and refuses a folder posing as one", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      const linked = NodePath.join(f.base, "linked");
+      git(f.destination, "worktree", "add", "-b", "copy", linked);
+      write(NodePath.join(f.source, "root.ts"), "export const value = 42;\n");
+      commit(f.source);
+      const full = yield* sync(f);
+      yield* publishSync(f, full);
+      const manifest = { ...full, repositories: full.repositories.slice(0, 1) };
+      const at = (workspaceRoot: string) =>
+        run((service) =>
+          service.materialize({
+            workspaceRoot,
+            worktreeParent: f.outputs,
+            manifest,
+            useProjectFolder: true,
+            existingCopy: idle,
+          }),
+        );
+      // A folder whose `.git` names that worktree's Git folder, which names `linked` back.
+      const posing = NodePath.join(f.base, "posing");
+      NodeFS.mkdirSync(posing);
+      NodeFS.copyFileSync(NodePath.join(linked, ".git"), NodePath.join(posing, ".git"));
+      expect(yield* refusal(at(posing))).toMatchObject({
+        reason: "external-git-storage",
+        repository: ".",
+      });
+      yield* at(linked);
+      expect(git(linked, "rev-parse", "HEAD")).toBe(manifest.repositories[0]!.head);
+      expect(git(linked, "rev-parse", "--abbrev-ref", "HEAD")).toBe("copy");
+    }),
+  );
+
+  it.effect("checks a submodule the update adds before status enters its folder", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      const marker = NodePath.join(f.base, "added-submodule-filter-ran");
+      git(f.source, "submodule", "add", f.nestedRemote, "vendor/lib");
+      commit(f.source);
+      const full = yield* sync(f);
+      yield* publishSync(f, full);
+      // An older source names only the root. The copy already holds a repository there,
+      // hidden from status by its own exclude file.
+      const manifest = { ...full, repositories: full.repositories.slice(0, 1) };
+      const existing = NodePath.join(f.destination, "vendor", "lib");
+      NodeFS.mkdirSync(NodePath.join(f.destination, "vendor"));
+      git(f.base, "clone", f.nestedRemote, existing);
+      write(NodePath.join(f.destination, ".git", "info", "exclude"), "/vendor/\n");
+      git(existing, "config", "filter.evil.clean", `touch ${marker}`);
+      write(NodePath.join(existing, ".git", "info", "attributes"), "* filter=evil\n");
+      const later = 4_102_444_800;
+      NodeFS.utimesSync(NodePath.join(existing, "feature.ts"), later, later);
+      expect(yield* refusal(update(f, manifest))).toEqual({
+        reason: "unsafe-git-config",
+        repository: "vendor/lib",
+        unsafeConfig: ["filter.evil.clean"],
+      });
+      expect(NodeFS.existsSync(marker)).toBe(false);
+    }),
+  );
+
+  it.effect("leaves worker worktrees and second clones of an origin out of the manifest", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      NodeFS.appendFileSync(NodePath.join(f.source, ".gitignore"), "/.worktrees/\n/copies/\n");
+      commit(f.source);
+      git(f.source, "push", "origin", "main");
+      // A worker's linked worktree, a second clone of the root's origin, and a second
+      // clone of the nested origin: each is a checkout of its own.
+      git(
+        f.source,
+        "worktree",
+        "add",
+        "-b",
+        "worker",
+        NodePath.join(f.source, ".worktrees/worker"),
+      );
+      NodeFS.mkdirSync(NodePath.join(f.source, "copies"));
+      git(f.base, "clone", f.rootRemote, NodePath.join(f.source, "copies/app"));
+      git(f.base, "clone", f.nestedRemote, NodePath.join(f.source, "copies/nested"));
+      write(NodePath.join(f.source, "copies/nested/feature.ts"), "export const answer = 7;\n");
+      commit(NodePath.join(f.source, "copies/nested"));
+      // Two clones of the nested origin: nothing says which one the destination holds,
+      // so neither is named, and neither is folded into the other.
+      expect((yield* sync(f)).repositories.map((repository) => repository.relativePath)).toEqual([
+        ".",
+      ]);
+      NodeFS.rmSync(NodePath.join(f.source, "copies/nested"), { recursive: true, force: true });
+      const manifest = yield* sync(f);
+      expect(manifest.repositories.map((repository) => repository.relativePath)).toEqual([
+        ".",
+        "repositories/nested",
+      ]);
+      yield* publishSync(f, manifest);
+      yield* update(f, manifest);
+      expect(git(f.destination, "rev-parse", "HEAD")).toBe(manifest.repositories[0]!.head);
+    }),
+  );
+
+  it.effect("needs nothing from origin when the copy is already at the source heads", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      // An older source, or one without push access, publishes no ref for the move.
+      const manifest = yield* sync(f);
+      const before = snapshot(f.destination);
+      calls.length = 0;
+      yield* check(f, manifest);
+      yield* update(f, manifest);
+      expect(snapshot(f.destination)).toEqual(before);
+      expect(
+        calls.some((call) =>
+          ["fetch", "ls-remote", "merge"].some((arg) => call.args.includes(arg)),
+        ),
+      ).toBe(false);
+    }),
+  );
+
+  it.effect("finds LFS files chosen by the copy's own attributes file", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      write(NodePath.join(f.source, "model.bin"), "binary\n");
+      commit(f.source);
+      const manifest = yield* sync(f);
+      yield* publishSync(f, manifest);
+      write(NodePath.join(f.destination, ".git", "info", "attributes"), "*.bin filter=lfs\n");
+      pathOverride = NodeChildProcess.execFileSync("git", ["--exec-path"], {
+        encoding: "utf8",
+      }).trim();
+      const before = git(f.destination, "rev-parse", "HEAD");
+      expect(yield* refusal(update(f, manifest))).toMatchObject({ reason: "needs-lfs" });
+      expect(git(f.destination, "rev-parse", "HEAD")).toBe(before);
+    }),
+  );
+
+  it.effect.skipIf(!lfsInstalled)("refuses a Git LFS filter this machine's settings changed", () =>
+    Effect.gen(function* () {
+      const f = lfsFixture();
+      const manifest = yield* sync(f);
+      yield* publishSync(f, manifest);
+      const marker = ambientFilter(f, "lfs");
+      // The copy's own standard LFS entries would win over this machine's; without them
+      // Git would run the changed filter.
+      git(f.destination, "config", "--remove-section", "filter.lfs");
+      const before = git(f.destination, "rev-parse", "HEAD");
+      const changed = {
+        reason: "unsafe-git-config",
+        repository: ".",
+        unsafeConfig: ["filter.lfs.clean", "filter.lfs.smudge"].map(
+          (key) => `${key} (this machine's Git settings)`,
+        ),
+      };
+      expect(yield* refusal(update(f, manifest))).toEqual(changed);
+      expect(git(f.destination, "rev-parse", "HEAD")).toBe(before);
+      expect(NodeFS.existsSync(marker)).toBe(false);
+    }),
+  );
+
+  it.effect.skipIf(!lfsInstalled)("never contacts the LFS server .lfsconfig names", () =>
+    Effect.gen(function* () {
+      const f = lfsFixture();
+      const requests: Array<string> = [];
+      const server = NodeHttp.createServer((request, response) => {
+        requests.push(`${request.method} ${request.url} ${request.headers.authorization ?? ""}`);
+        response.statusCode = 401;
+        response.setHeader("WWW-Authenticate", 'Basic realm="lfs"');
+        response.end();
+      });
+      yield* Effect.promise(
+        () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
+      );
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      write(
+        NodePath.join(f.source, ".lfsconfig"),
+        `[lfs]\n\turl = http://127.0.0.1:${port}/elsewhere/lfs\n\tfetchexclude = assets/**\n` +
+          `[remote "origin"]\n\tlfsurl = http://127.0.0.1:${port}/elsewhere/lfs\n`,
+      );
+      commit(f.source);
+      const manifest = yield* sync(f);
+      yield* publishSync(f, manifest);
+      yield* update(f, manifest).pipe(
+        Effect.ensuring(
+          Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
+        ),
+      );
+      expect(requests).toEqual([]);
+      // Every file arrived, though `.lfsconfig` asked to leave this folder out.
+      expect(NodeFS.readFileSync(NodePath.join(f.destination, "assets", "model.bin"), "utf8")).toBe(
+        "real model bytes\n".repeat(64),
+      );
+    }),
+  );
 });

@@ -36,6 +36,10 @@ const SKIPPED: Partial<
     "unsafe-git-config",
     "its Git settings could run commands, so they were not used",
   ],
+  "external-git-storage": [
+    "external-storage",
+    "its Git data is kept outside the project folder, or borrows objects from another repository",
+  ],
   "detached-head": ["detached-head", "its checkout is not on a branch (detached HEAD)"],
   "dirty-repository": ["dirty", "it has uncommitted changes"],
   "uninitialized-repository": ["dirty", "a submodule in it is not checked out"],
