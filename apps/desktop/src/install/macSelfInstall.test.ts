@@ -497,6 +497,55 @@ describe("installBundle", () => {
     expect(removed).not.toContain(`${target}.install-old`);
   });
 
+  it("names a leftover it cannot move and leaves no staging copy", async () => {
+    const root = makeScratch();
+    const source = NodePath.join(root, "dmg", "SpecWithCode.app");
+    const apps = NodePath.join(root, "Applications");
+    const target = NodePath.join(apps, "SpecWithCode.app");
+    fakeBundle(source, "1.0.307");
+    fakeBundle(target, "1.0.200");
+    fakeBundle(`${target}.install-old`, "1.0.100");
+    await expect(
+      installBundle({
+        source,
+        target,
+        own,
+        trash: [],
+        tools: fakeTools({
+          trash: async () => {
+            throw new Error("Trash is not available");
+          },
+        }),
+      }),
+    ).rejects.toThrow("Move SpecWithCode.app.install-old out of");
+    expect(versionOf(target)).toBe("1.0.200");
+    expect(NodeFS.readdirSync(apps).sort()).toEqual([
+      "SpecWithCode.app",
+      "SpecWithCode.app.install-old",
+    ]);
+  });
+
+  it("keeps an earlier-named copy that was opened during the install", async () => {
+    const root = makeScratch();
+    const source = NodePath.join(root, "dmg", "SpecWithCode.app");
+    const apps = NodePath.join(root, "Applications");
+    const target = NodePath.join(apps, "SpecWithCode.app");
+    const legacy = NodePath.join(apps, "SpecWeave Studio (Alpha).app");
+    fakeBundle(source, "1.0.307");
+    fakeBundle(legacy, "1.0.100");
+    const result = await installBundle({
+      source,
+      target,
+      own,
+      trash: [legacy],
+      tools: fakeTools(),
+      isRunning: async (bundle) => bundle === legacy,
+    });
+    expect(result.trashed).toEqual([]);
+    expect(versionOf(legacy)).toBe("1.0.100");
+    expect(versionOf(target)).toBe("1.0.307");
+  });
+
   it("creates ~/Applications when it is missing", async () => {
     const root = makeScratch();
     const source = NodePath.join(root, "dmg", "SpecWithCode.app");

@@ -477,7 +477,16 @@ export async function installBundle(input: {
         `${BundlePath.basename(target)} was opened while installing. Quit it and try again.`,
       );
     }
-    NodeFS.renameSync(target, old);
+    try {
+      NodeFS.renameSync(target, old);
+    } catch (error) {
+      await tools.remove(staging).catch(() => undefined);
+      throw exists(old)
+        ? new Error(
+            `Move ${BundlePath.basename(old)} out of ${BundlePath.dirname(old)}, then try again.`,
+          )
+        : error;
+    }
     try {
       NodeFS.renameSync(staging, target);
     } catch (error) {
@@ -494,6 +503,9 @@ export async function installBundle(input: {
   }
   const trashed: string[] = [];
   for (const path of input.trash) {
+    // An earlier-named copy opened meanwhile stays; the installed app trashes
+    // it on a later launch.
+    if (input.isRunning !== undefined && (await input.isRunning(path))) continue;
     try {
       await tools.trash(path);
       trashed.push(path);
