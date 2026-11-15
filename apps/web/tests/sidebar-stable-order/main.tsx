@@ -115,11 +115,7 @@ if (params.get("scenario") === "elsewhere") {
       projectKey: `logical:${key}`,
       displayName: name,
       workspaceRoot: `/Users/me/Projects/${key}`,
-      environmentPresence: here
-        ? machines.length > 1
-          ? "mixed"
-          : "local-only"
-        : "remote-only",
+      environmentPresence: here ? (machines.length > 1 ? "mixed" : "local-only") : "remote-only",
       allRemoteMembersAreDesktopLocal: false,
       memberProjects: machines.map((environmentId) => ({
         environmentId,
@@ -412,9 +408,21 @@ if (params.get("scenario") === "reviewers") {
         },
       } as EnvironmentThreadShell,
       shell("verify", "Verify M4 to M5 specweave handoff", on("m5", { createdAt: minutesAgo(50) })),
-      shell("appstore", "App Store screenshots for 1039", on("m1", { createdAt: minutesAgo(60 * 26) })),
-      shell("sweep", "Sweep idle threads, finish the queue", on("m1", { createdAt: minutesAgo(60 * 27) })),
-      shell("build", "Build the Linux desktop package", on("linux-mini", { createdAt: minutesAgo(60 * 24 * 3) })),
+      shell(
+        "appstore",
+        "App Store screenshots for 1039",
+        on("m1", { createdAt: minutesAgo(60 * 26) }),
+      ),
+      shell(
+        "sweep",
+        "Sweep idle threads, finish the queue",
+        on("m1", { createdAt: minutesAgo(60 * 27) }),
+      ),
+      shell(
+        "build",
+        "Build the Linux desktop package",
+        on("linux-mini", { createdAt: minutesAgo(60 * 24 * 3) }),
+      ),
     ],
     plans: new Map<string, unknown>([
       ["m5:review-354", checklist(4, 4)],
@@ -425,6 +433,48 @@ if (params.get("scenario") === "reviewers") {
       ["m5:review-343", checklist(4, 4)],
       ["m1:appstore", increment("1039-app-store-screenshots", 5, 6)],
       ["linux-mini:build", increment("0001-linux-desktop", 26, 26)],
+    ]),
+  });
+}
+
+// `?scenario=row-room`: the November 15, 2026 report. One date group mixes machines
+// with short and long names, and two of its chats carry an open plan count.
+if (params.get("scenario") === "row-room") {
+  const on = (environmentId: string, minutes: number) => ({
+    environmentId,
+    projectId: `${environmentId}-scratch`,
+    createdAt: minutesAgo(minutes),
+    updatedAt: minutesAgo(minutes),
+  });
+  const day = 60 * 24;
+  const tasks = (label: string, completed: number, total: number) => ({
+    source: "increment",
+    label,
+    completed,
+    total,
+    current: "Capture the remaining screens",
+    next: null,
+  });
+  publish({
+    environments: [
+      { environmentId: "host", label: "m4" },
+      { environmentId: "m1", label: "m1" },
+      { environmentId: "linux-mini", label: "linux-mini" },
+    ],
+    params: { environmentId: "host", threadId: "briefing" },
+    shells: [
+      shell("hourly", "Hourly alert sweep for the staging cluster", on("m1", 30)),
+      shell("briefing", "Proactive briefing", on("host", day + 60)),
+      shell("appstore", "App Store review notes and screenshots", on("m1", day * 2)),
+      shell("sweep", "Sweep idle threads, finish the queue", on("m1", day * 2 + 10)),
+      shell("camera", "Two-camera capture for match highlights", on("m1", day * 2 + 20)),
+      shell("club", "1024 club app onboarding flow", on("m1", day * 2 + 30)),
+      shell("pin", "Pin the model version for one provider", on("host", day * 3)),
+      shell("linux", "Build the Linux desktop package", on("linux-mini", day * 3 + 10)),
+    ],
+    plans: new Map<string, unknown>([
+      ["m1:appstore", tasks("1039-app-store-review", 5, 6)],
+      ["m1:club", tasks("1024-club-app", 7, 8)],
     ]),
   });
 }

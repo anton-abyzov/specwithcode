@@ -201,6 +201,10 @@ export const serverEnvironment = new Proxy(
   {},
   { get: () => () => ({ name: "server-environment" }) },
 ) as Record<string, (...args: unknown[]) => unknown>;
+// The quota banner reads its switch before asking whether settings have a server.
+const NO_PRIMARY_SETTINGS: Record<string, unknown> = {};
+export const usePrimarySettings = <T,>(select?: (s: typeof NO_PRIMARY_SETTINGS) => T) =>
+  select ? select(NO_PRIMARY_SETTINGS) : NO_PRIMARY_SETTINGS;
 export const usePrimarySettingsAvailable = () => false;
 export const useUpdatePrimarySettings = () => () => {};
 export const useScratchProject = () => ({
