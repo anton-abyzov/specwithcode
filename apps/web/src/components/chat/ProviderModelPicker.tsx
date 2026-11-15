@@ -598,8 +598,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           <Popover
             open={isUsageOpen}
             onOpenChange={(open) => {
+              // Every opening starts on this account, however the last one closed.
+              if (open) setShowingAllLimits(false);
               setIsUsageOpen(open);
-              if (!open) setShowingAllLimits(false);
             }}
           >
             <Tooltip disabled={isUsageOpen}>
