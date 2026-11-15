@@ -629,6 +629,12 @@ const streamStaticFile = (file: FileSystem.File, size: bigint) =>
     }),
   );
 
+// The app approves agents and starts threads in one click, so no other site may frame it.
+const SPA_FRAME_HEADERS = {
+  "Content-Security-Policy": "frame-ancestors 'none'",
+  "X-Frame-Options": "DENY",
+};
+
 const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
   function* (immutableBuildAssets: ReadonlySet<string>) {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -710,6 +716,7 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
       immutableBuildAssets.has(relativePath);
     const headers: Record<string, string> = {
       "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
+      ...(isHtml ? SPA_FRAME_HEADERS : {}),
     };
     // Deployments can preserve HTML size and mtime while changing its bundle URLs.
     const modifiedAt = isHtml ? undefined : Option.getOrUndefined(fileInfo.mtime);

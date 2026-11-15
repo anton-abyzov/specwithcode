@@ -1,5 +1,6 @@
 import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@specweave-studio/contracts";
 
+import { isWebUrl } from "./browser/webUrl";
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
@@ -27,6 +28,8 @@ function createBrowserLocalApi(): LocalApi {
           return;
         }
 
+        // A `javascript:` or `data:` URL would run as the app.
+        if (!isWebUrl(url)) throw new Error("Unable to open link.");
         window.open(url, "_blank", "noopener,noreferrer");
       },
       // Only the desktop shell can reach the OS; the web build (and older
