@@ -164,6 +164,8 @@ import { ThreadsPane } from "./shell/ThreadsPane";
 import { bulkThreadTargets } from "../../studio/bulkThreadControl";
 import { useBulkThreadControl } from "../../studio/useBulkThreadControl";
 import { useComposerAppCommands } from "../../studio/useComposerAppCommands";
+import { BoardPane } from "./shell/BoardPane";
+import { ProjectSpecweaveSetting } from "./ProjectSpecweaveSetting";
 import { LibraryPane } from "./shell/LibraryPane";
 import { LIBRARY_SECTIONS, type LibrarySection } from "../../studio/projectArtifacts";
 import { ProjectArtifactShelf } from "./shell/ProjectArtifactShelf";
@@ -459,11 +461,16 @@ export function ProjectWorkspaceSurface({
   const sendShortcut = useClientSettings((settings) => settings.sendShortcut);
   const findRef = useRef<HTMLInputElement>(null);
   const [findOpen, setFindOpen] = useState(false);
-  const [paneTab, setPaneTab] = useLocalStorage<ProjectPaneTab, ProjectPaneTab>(
+  const [storedPaneTab, setPaneTab] = useLocalStorage<ProjectPaneTab, ProjectPaneTab>(
     PANE_TAB_STORAGE_KEY,
     "threads",
     PaneTabSchema,
   );
+  // The remembered tab is shared by every project, and not every project has a Board tab.
+  // A code project always has the tab: without SpecWeave it offers to turn the board on.
+  // An older server (no flag) and the personal project have none.
+  const hasBoard = snapshot?.specweave !== undefined && snapshot.settings.kind !== "personal";
+  const paneTab = storedPaneTab === "board" && !hasBoard ? "threads" : storedPaneTab;
   // The panel takes the whole width, as the desktop app's expand does; never remembered.
   const [paneExpanded, setPaneExpanded] = useState(false);
   // The open thread's header slot that the embedded chat portals its panel toggles into.
@@ -1676,26 +1683,29 @@ export function ProjectWorkspaceSurface({
     expanded: paneExpanded,
     onToggleExpanded: () => setPaneExpanded((value) => !value),
     onClose: hideOverview,
+    ...(hasBoard ? {} : { hiddenTabs: ["board"] as const }),
   };
   const overviewShortcut = shortcutLabelForCommand(keybindings, "rightPanel.toggle");
   const paneOpen = overviewOpen || selectedThread !== null;
   // The desktop app's primary host is this Mac, so its owner is the person looking;
   // a browser may be paired with someone else's server.
   const greetsByName = isElectron && project.environmentId === primaryEnvironmentId;
+  // Puts a request in the coordinator's composer for the person to send or edit.
+  const draftForCoordinator = (text: string) => {
+    setPrompt((current) => quickStartDraft(current, text));
+    // Typing continues at the end of the filled-in request.
+    requestAnimationFrame(() => {
+      const field = document.getElementById("project-prompt");
+      if (!(field instanceof HTMLTextAreaElement)) return;
+      field.focus();
+      field.setSelectionRange(field.value.length, field.value.length);
+    });
+  };
   const quickStarts = (
     <CoordinatorQuickStarts
       // Hidden sends can't be appended to: a chip waits while a message is on its way.
       disabled={!canOperate || !connected || sending || preparing}
-      onPrompt={(text) => {
-        setPrompt((current) => quickStartDraft(current, text));
-        // Typing continues at the end of the filled-in request.
-        requestAnimationFrame(() => {
-          const field = document.getElementById("project-prompt");
-          if (!(field instanceof HTMLTextAreaElement)) return;
-          field.focus();
-          field.setSelectionRange(field.value.length, field.value.length);
-        });
-      }}
+      onPrompt={draftForCoordinator}
       onConnections={() => setTab("environment")}
     />
   );
@@ -1839,6 +1849,14 @@ export function ProjectWorkspaceSurface({
                   projectKey={projectKey}
                   projectTitle={projectTitle}
                   onOpenPlan={() => setPlanOpen(true)}
+                  onOpenBoard={
+                    hasBoard
+                      ? () => {
+                          showPaneTab("board");
+                          setPaneExpanded(true);
+                        }
+                      : undefined
+                  }
                   onOpenSettingsTab={setTab}
                   designHere={project.environmentId === primaryEnvironmentId}
                 />
@@ -2256,6 +2274,26 @@ export function ProjectWorkspaceSurface({
                     onOpenPullRequest: (url) => void openLink(url).catch(() => undefined),
                     toolsSlotRef: setThreadToolsSlot,
                   }}
+                />
+              ) : paneTab === "board" ? (
+                <BoardPane
+                  environmentId={project.environmentId}
+                  projectId={project.id}
+                  workspaceRoot={project.workspaceRoot}
+                  bar={paneBar}
+                  specweave={snapshot?.specweave === true}
+                  setup={
+                    <ProjectSpecweaveSetting
+                      project={project}
+                      specweave={snapshot?.specweave}
+                      disabled={!canOperate || !connected}
+                      onChanged={query.refresh}
+                    />
+                  }
+                  threads={workers}
+                  machineLabels={machineLabels}
+                  onOpenThread={(thread) => openThread(thread.id, thread.environmentId)}
+                  onAsk={canOperate && connected ? draftForCoordinator : undefined}
                 />
               ) : paneTab === "designs" ? (
                 <ProjectDesignsPane
