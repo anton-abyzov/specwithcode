@@ -542,11 +542,15 @@ describe("linkCandidates", () => {
   });
 
   it("offers a link to the newest same-repository project on each other machine", () => {
-    const repo = (canonicalKey: string) => ({
-      repositoryIdentity: { canonicalKey, locator: { remoteUrl: `https://${canonicalKey}.git` } },
+    const repo = (canonicalKey: string, rootPath: string) => ({
+      repositoryIdentity: {
+        canonicalKey,
+        rootPath,
+        locator: { remoteUrl: `https://${canonicalKey}.git` },
+      },
     });
     const at = (item: EnvironmentProject, updatedAt: string, key = "github.com/acme/app") =>
-      ({ ...item, updatedAt, ...repo(key) }) as unknown as EnvironmentProject;
+      ({ ...item, updatedAt, ...repo(key, item.workspaceRoot) }) as unknown as EnvironmentProject;
     const own = at(copy("m4", "local", undefined), "2026-11-01T00:00:00.000Z");
     const all = [
       own,
@@ -565,6 +569,7 @@ describe("linkCandidates", () => {
         updatedAt: "2026-11-10T00:00:00.000Z",
         repositoryIdentity: {
           canonicalKey: "github.com/acme/app",
+          rootPath: item.workspaceRoot,
           locator: { remoteUrl: "https://github.com/acme/app.git" },
           origin: { canonicalKey: origin },
         },
@@ -582,17 +587,45 @@ describe("linkCandidates", () => {
     expect(ids(sameRepositoryLinkOffers(forks, own, scratchRootFor as never))).toEqual([
       "m3:upstream",
     ]);
+    // Two places in one monorepo are different work, however recent the other one is.
+    const inside = (item: EnvironmentProject, place: string, updatedAt: string) =>
+      ({
+        ...at(item, updatedAt),
+        workspaceRoot: `${item.workspaceRoot}/${place}`,
+      }) as unknown as EnvironmentProject;
+    const web = inside(copy("m4", "web", undefined), "apps/web", "2026-11-01T00:00:00.000Z");
+    const mono = [
+      web,
+      inside(project("m3", "api"), "apps/api", "2026-11-12T00:00:00.000Z"),
+      inside(project("m3", "web"), "apps/web", "2026-10-01T00:00:00.000Z"),
+      at(project("m5", "root"), "2026-11-12T00:00:00.000Z"),
+    ];
+    expect(ids(sameRepositoryLinkOffers(mono, web, scratchRootFor as never))).toEqual(["m3:web"]);
+    // A repository whose root is unknown gives no place to compare.
+    const rootless = {
+      ...own,
+      repositoryIdentity: { canonicalKey: "github.com/acme/app" },
+    } as unknown as EnvironmentProject;
+    expect(sameRepositoryLinkOffers(all, rootless, scratchRootFor as never)).toEqual([]);
+    // A copy of another shared project is not offered: it has to leave that one first.
+    const elsewhere = at(
+      copy("m3", "taken", identity("other", [member("m3", "taken"), member("m9", "x")])),
+      "2026-11-20T00:00:00.000Z",
+    );
+    expect(
+      ids(sameRepositoryLinkOffers([...all, elsewhere], own, scratchRootFor as never)),
+    ).toEqual(["m3:new"]);
     // A project with no remote has nothing to compare.
     expect(
       sameRepositoryLinkOffers(all, copy("m4", "local", undefined), scratchRootFor as never),
     ).toEqual([]);
     // Copies already in this project are not offered again.
     const shared = identity("shared", []);
-    const member = { ...at(copy("m3", "new", shared), "2026-11-10T00:00:00.000Z") };
+    const listed = { ...at(copy("m3", "new", shared), "2026-11-10T00:00:00.000Z") };
     expect(
       ids(
         sameRepositoryLinkOffers(
-          [member],
+          [listed],
           at(copy("m4", "local", shared), "2026-11-01T00:00:00.000Z"),
           scratchRootFor as never,
         ),

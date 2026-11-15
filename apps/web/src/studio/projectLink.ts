@@ -37,6 +37,7 @@ import {
   pendingSupersede,
 } from "@specweave-studio/shared/linkedPairSync";
 import { connectionAtomRuntime } from "../connection/runtime";
+import { repositoryRelativePath } from "./duplicateProjectLink";
 import { isProjectFolder } from "./projectMachineFolders";
 import { isOrdinaryProjectChoice, type ScratchRootLookup } from "./projectListVisibility";
 
@@ -314,23 +315,39 @@ export function linkCandidates<P extends EnvironmentProject>(
 
 /**
  * Projects on other machines that track exactly the same repository as `project`
- * (a fork is another repository) and are not part of it: what "Link with the
- * project on <machine>…" offers. One per machine, the most recently updated; the
- * dialog lists that machine's others. Nothing is offered for a project whose
- * repository has no remote to compare.
+ * (a fork is another repository) at the same place inside it (apps/web and
+ * apps/api in one monorepo are different work), and are not part of it or of
+ * another shared project: what "Link with the project on <machine>…" offers.
+ * One per machine, the most recently updated; the dialog lists that machine's
+ * others. Nothing is offered for a project whose repository has no remote to
+ * compare or whose place in it is unknown.
  */
 export function sameRepositoryLinkOffers<P extends EnvironmentProject>(
   projects: ReadonlyArray<P>,
-  project: Pick<EnvironmentProject, "environmentId" | "workspaceSettings" | "repositoryIdentity">,
+  project: Pick<
+    EnvironmentProject,
+    "environmentId" | "workspaceSettings" | "repositoryIdentity" | "workspaceRoot"
+  >,
   scratchRootFor: ScratchRootLookup,
 ): P[] {
-  const keyOf = (item: Pick<EnvironmentProject, "repositoryIdentity">) =>
-    item.repositoryIdentity ? repositoryGroupingKeyOf(item.repositoryIdentity).toLowerCase() : null;
+  const keyOf = (item: Pick<EnvironmentProject, "repositoryIdentity" | "workspaceRoot">) => {
+    const inside = repositoryRelativePath(item);
+    return item.repositoryIdentity && inside !== null
+      ? `${repositoryGroupingKeyOf(item.repositoryIdentity).toLowerCase()}\u0000${inside}`
+      : null;
+  };
   const key = keyOf(project);
   if (key === null) return [];
   const offers = new Map<string, P>();
   for (const item of linkCandidates(projects, project, scratchRootFor, null)) {
     if (keyOf(item) !== key) continue;
+    // A copy of another shared project has to leave that one first; the dialog says so.
+    if (
+      (item.workspaceSettings?.logicalProject?.members ?? []).some(
+        (member) => member.environmentId !== item.environmentId || member.projectId !== item.id,
+      )
+    )
+      continue;
     const listed = offers.get(item.environmentId);
     if (!listed || item.updatedAt.localeCompare(listed.updatedAt) > 0)
       offers.set(item.environmentId, item);
