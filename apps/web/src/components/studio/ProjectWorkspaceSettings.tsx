@@ -404,6 +404,44 @@ export function ProjectWorkspaceSettings({
   const tabs = projectSettingsTabs(personal);
   // A remembered or linked tab this project does not have.
   if (!tabs.includes(tab)) setTab("general");
+  // Percy has no Use worktrees switch, so its Environment names none.
+  const environmentPanel = (useWorktrees: boolean | null) => (
+    <ProjectEnvironment
+      useWorktrees={useWorktrees}
+      onOpenGeneral={() => setTab("general")}
+      project={project}
+      projectKey={projectKey}
+      kind={snapshot.settings.kind ?? "code"}
+      value={environment}
+      revision={baseRevision}
+      dirty={dirty}
+      navigationBlocked={
+        disabled || dirty || memoryDirty || environmentDraftDirty || connectionDirty
+      }
+      disabled={disabled}
+      admissionBlocked={snapshot.settings.paused || snapshot.settings.archived}
+      onChange={(v) => {
+        change(setEnvironment, v);
+        setEnvironmentEdited(true);
+        // The rejected entry is being edited; the next save checks it again.
+        if (environmentEntryError) {
+          setEnvironmentEntryError(null);
+          setError(null);
+        }
+      }}
+      onPrepared={(revision, value) => {
+        setBaseRevision(revision);
+        setEnvironment(value);
+        setEnvironmentEdited(false);
+        onSaved();
+      }}
+      onDraftChange={setEnvironmentDraftDirty}
+      onBusyChange={setEnvironmentBusy}
+      entryError={environmentEntryError}
+      onFieldErrorsChange={reportFieldErrors}
+      resetKey={discards}
+    />
+  );
   return (
     <Dialog
       open
@@ -776,40 +814,17 @@ export function ProjectWorkspaceSettings({
                 )}
               </div>
               <div hidden={tab !== "environment"}>
-                <ProjectEnvironment
-                  onOpenGeneral={() => setTab("general")}
-                  project={project}
-                  projectKey={projectKey}
-                  kind={snapshot.settings.kind ?? "code"}
-                  value={environment}
-                  revision={baseRevision}
-                  dirty={dirty}
-                  navigationBlocked={
-                    disabled || dirty || memoryDirty || environmentDraftDirty || connectionDirty
-                  }
-                  disabled={disabled}
-                  admissionBlocked={snapshot.settings.paused || snapshot.settings.archived}
-                  onChange={(v) => {
-                    change(setEnvironment, v);
-                    setEnvironmentEdited(true);
-                    // The rejected entry is being edited; the next save checks it again.
-                    if (environmentEntryError) {
-                      setEnvironmentEntryError(null);
-                      setError(null);
-                    }
-                  }}
-                  onPrepared={(revision, value) => {
-                    setBaseRevision(revision);
-                    setEnvironment(value);
-                    setEnvironmentEdited(false);
-                    onSaved();
-                  }}
-                  onDraftChange={setEnvironmentDraftDirty}
-                  onBusyChange={setEnvironmentBusy}
-                  entryError={environmentEntryError}
-                  onFieldErrorsChange={reportFieldErrors}
-                  resetKey={discards}
-                />
+                {/* Use worktrees comes from the project's scoped setting, the one General
+                    shows and launches read, never the old project column. */}
+                {personal ? (
+                  environmentPanel(null)
+                ) : (
+                  <SettingsScopeProvider search={limitScope} onChange={keepProjectScope}>
+                    <WithProjectWorktreesSwitch>
+                      {(worktrees) => environmentPanel(worktrees.on)}
+                    </WithProjectWorktreesSwitch>
+                  </SettingsScopeProvider>
+                )}
                 <ProjectConnections
                   environmentId={project.environmentId}
                   projectId={project.id}

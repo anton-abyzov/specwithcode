@@ -37,6 +37,7 @@ const state = vi.hoisted(() => ({
   hostSettings: undefined as Record<string, unknown> | undefined,
   initialFocus: null as React.RefObject<HTMLElement | null> | null,
   fleet: null as Record<string, unknown> | null,
+  worktreesOn: true as boolean | null,
   environment: {
     revision: 7,
     workspaceRoot: "/scratch/atlas",
@@ -218,7 +219,7 @@ vi.mock("../settings/ProjectDefaultsSettings", () => ({
     children,
   }: {
     children: (state: { on: boolean | null; set: (on: boolean) => void }) => React.ReactNode;
-  }) => children({ on: true, set: () => {} }),
+  }) => children({ on: state.worktreesOn, set: () => {} }),
 }));
 vi.mock("./ProjectRoutines", () => ({ ProjectRoutines: () => <p>Project routines</p> }));
 vi.mock("./ProjectFolderChange", () => ({
@@ -312,6 +313,7 @@ beforeEach(() => {
   for (const value of Object.values(state)) if (typeof value === "function") value.mockReset();
   state.update.mockResolvedValue({ _tag: "Success", value: {} });
   state.fleet = null;
+  state.worktreesOn = true;
   state.hostSettings = undefined;
   state.threadCount = 3;
   // A dry run lists the threads a delete would remove.
@@ -1021,6 +1023,21 @@ describe("project settings and memory", () => {
         }),
       }),
     );
+  });
+  // linux-mini's specweave project: the old project column is unset while the scoped
+  // setting that General shows and launches read decides Use worktrees.
+  const worktreesOff =
+    "Use worktrees is off for this project, so threads work in the project folder.";
+  it("keeps Environment quiet about worktrees when the scoped setting is on and the old column is unset", async () => {
+    expect(project.defaultThreadEnvMode).toBeUndefined();
+    await render("environment", true, { kind: "code" });
+    expect(container.textContent).toContain("code · example/atlas");
+    expect(container.textContent).not.toContain(worktreesOff);
+  });
+  it("says Use worktrees is off in Environment when the scoped setting is off", async () => {
+    state.worktreesOn = false;
+    await render("environment", true, { kind: "code" });
+    expect(container.textContent).toContain(worktreesOff);
   });
   it("preserves environment edits on conflict and keeps unsaved preparation disabled", async () => {
     state.update.mockResolvedValueOnce({
