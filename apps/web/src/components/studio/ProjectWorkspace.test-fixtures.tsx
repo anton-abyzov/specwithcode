@@ -127,6 +127,12 @@ const state = vi.hoisted(() => ({
   offlineHosts: [] as string[],
   /** Other machines this device is paired with; each is connected unless offline. */
   pairedHosts: [] as string[],
+  /** Paired machines this browser may operate; a paired machine is read-only until listed. */
+  operableHosts: [] as string[],
+  /** Machines whose server predates Resolve. */
+  settlementUnsupportedHosts: [] as string[],
+  /** Machines whose server details have not loaded yet. */
+  serverConfigPendingHosts: [] as string[],
   /** Paired machines that are connected but have not sent their projects since. */
   syncingHosts: [] as string[],
   /** What the project page's folder check reports, unless the real check runs. */
@@ -232,8 +238,33 @@ vi.mock("../../state/entities", () => ({
   useThreadHistory: () => ({ hasMoreHistory: false }),
   useThreadStatus: () => state.detailStatus,
   // The More menu reads each machine's scratch folder to leave Design off "No project".
-  useServerConfigs: () => new Map(),
+  // Resolve reads each machine's version: one that predates it cannot resolve threads.
+  useServerConfigs: () => serverConfigsByHost(),
 }));
+const keptServerConfigs = vi.hoisted(() => ({ key: "", configs: new Map<string, unknown>() }));
+/** Every machine's server details, as one list that keeps its identity while nothing changed. */
+function serverConfigsByHost() {
+  const hosts = ["host", ...state.recoveryHosts, ...state.pairedHosts].filter(
+    (host) => !state.serverConfigPendingHosts.includes(host),
+  );
+  const key = `${hosts.join("|")}#${state.settlementUnsupportedHosts.join("|")}`;
+  if (keptServerConfigs.key !== key) {
+    keptServerConfigs.key = key;
+    keptServerConfigs.configs = new Map(
+      hosts.map((host) => [
+        host,
+        {
+          environment: {
+            capabilities: state.settlementUnsupportedHosts.includes(host)
+              ? {}
+              : { threadSettlement: true },
+          },
+        },
+      ]),
+    );
+  }
+  return keptServerConfigs.configs;
+}
 const noUnreachableEnvironments = vi.hoisted(() => new Set<string>());
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
@@ -361,7 +392,12 @@ vi.mock("../files/AttachmentFilePreview", () => ({
 vi.mock("../../state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/session")>()),
   readEnvironmentScope: () => state.canOperate,
-  useEnvironmentsWithScope: () => new Set(state.canOperate ? ["host", ...state.recoveryHosts] : []),
+  useEnvironmentsWithScope: () =>
+    new Set(
+      state.canOperate
+        ? ["host", ...state.recoveryHosts, ...state.operableHosts]
+        : [],
+    ),
   useEnvironmentScope: (_environmentId: string, scope: string) =>
     scope === "source-control:write"
       ? (state.canWriteSourceControl ?? state.canOperate)
@@ -859,6 +895,9 @@ beforeEach(() => {
   state.recoveryHosts = [];
   state.offlineHosts = [];
   state.pairedHosts = [];
+  state.operableHosts = [];
+  state.settlementUnsupportedHosts = [];
+  state.serverConfigPendingHosts = [];
   state.syncingHosts = [];
   state.folderHealth = "unknown";
   state.realFolderHealth = false;

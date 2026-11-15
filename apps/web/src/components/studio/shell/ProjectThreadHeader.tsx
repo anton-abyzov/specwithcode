@@ -102,9 +102,15 @@ export function ProjectThreadHeader(props: {
   onPeekSubagent: (threadId: ThreadId) => void;
   providerEntry: Parameters<typeof ModelBadge>[0]["entry"];
   projectCwd: string;
+  /** Whether this thread's handoff can be acted on from here; that runs on this machine. */
   canChange: boolean;
   /** Why this thread cannot be renamed from here, or null when it can. */
   renameBlockedReason: string | null;
+  /**
+   * Why this thread cannot be resolved or reopened from here, or null when it can. A thread
+   * resolves on the machine that runs it, which need not be the viewed project's.
+   */
+  resolveBlockedReason: string | null;
   expanded: boolean;
   onBack: () => void;
   onToggleResolved: () => void;
@@ -172,6 +178,19 @@ export function ProjectThreadHeader(props: {
   const settled = thread.settledOverride === "settled";
   const archived = thread.archivedAt !== null;
   const resolveLabel = archived || settled ? "Reopen" : "Resolve";
+  const { resolveBlockedReason, onToggleResolved } = props;
+  // Blocked stays focusable and says why on hover and on click: a disabled button does neither.
+  const toggleResolved = () => {
+    if (resolveBlockedReason === null) {
+      onToggleResolved();
+      return;
+    }
+    toastManager.add({
+      type: "warning",
+      title: say(`Can't ${resolveLabel.toLowerCase()} this thread`),
+      description: say(resolveBlockedReason),
+    });
+  };
   const link = resolveThreadCurrentPullRequestLink(thread.pullRequests);
   const prState =
     link?.snapshot?.state === "open" && link.snapshot.isDraft
@@ -299,15 +318,19 @@ export function ProjectThreadHeader(props: {
         project={headerProject}
       />
       <span ref={setToolsSlot} className="sws-thread-head-tools" />
-      <Tip label={say(`${resolveLabel} thread`)}>
+      <Tip
+        label={
+          resolveBlockedReason === null ? say(`${resolveLabel} thread`) : say(resolveBlockedReason)
+        }
+      >
         <button
           type="button"
           className="sws-icon-button sws-thread-resolve"
           style={{ width: "auto", paddingInline: 8, gap: 5, flexShrink: 0 }}
           data-state={settled || archived ? "resolved" : "open"}
           aria-label={say(`${resolveLabel} thread`)}
-          disabled={!props.canChange}
-          onClick={props.onToggleResolved}
+          aria-disabled={resolveBlockedReason !== null || undefined}
+          onClick={toggleResolved}
         >
           {settled || archived ? <RotateCcwIcon aria-hidden /> : <CheckCircle2Icon aria-hidden />}
           <span className="sws-thread-resolve-label">{resolveLabel}</span>
