@@ -27,6 +27,8 @@ export const keepTerminalCommandsReachable = (baseDir: string) =>
   Effect.gen(function* () {
     const env = process.env;
     if (env.VITEST || env.SPECWITHCODE_TERMINAL_PATH === "off") return;
+    // Say what changed once, not every pass.
+    let last: string | null = null;
     const once = Effect.tryPromise(() =>
       syncTerminalPath({
         home: NodeOS.homedir(),
@@ -40,12 +42,20 @@ export const keepTerminalCommandsReachable = (baseDir: string) =>
         fs: nodeTerminalPathFs,
       }),
     ).pipe(
-      Effect.tap((action) =>
-        action === "added" || action === "updated" || action === "removed"
+      Effect.tap((action) => {
+        const changed = action !== last;
+        last = action;
+        return changed && action !== "unchanged" && action !== "busy"
           ? Effect.logInfo("terminal commands path", { action })
-          : Effect.void,
-      ),
-      Effect.catch((error) => Effect.logWarning("terminal commands path failed", { error })),
+          : Effect.void;
+      }),
+      Effect.catch((error) => {
+        const changed = last !== "failed";
+        last = "failed";
+        return changed
+          ? Effect.logWarning("terminal commands path failed", { error })
+          : Effect.void;
+      }),
     );
     yield* once.pipe(Effect.repeat(Schedule.spaced("2 minutes")));
   });

@@ -9,14 +9,23 @@
  * not found". This keeps one marked block in the login shell's startup file
  * that appends those folders to PATH. Appending keeps the person's own
  * installs first. A block the person deletes is never added back.
+ *
+ * The person's file is handled as bytes (latin1 maps each byte to one
+ * character), never decoded, and replaced atomically only if nobody changed it
+ * since it was read. Every app home on this account shares one block: each
+ * writer merges its folders with the ones already listed, in a fixed order,
+ * so two servers settle on the same text instead of taking turns.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import { managedToolDirs } from "./machineTools.ts";
+import { existingManagedToolDirs } from "./machineTools.ts";
 
 export const TERMINAL_PATH_START = "# >>> SpecWithCode commands >>>";
 export const TERMINAL_PATH_END = "# <<< SpecWithCode commands <<<";
+/** A startup file larger than this is someone's own machinery; leave it alone. */
+export const TERMINAL_PATH_MAX_BYTES = 1024 * 1024;
 
 /** A folder joins the block only when it holds one of these. */
 const COMMANDS = [
@@ -30,12 +39,32 @@ const COMMANDS = [
   "specweave-studio",
 ] as const;
 
+export interface StartupFileInfo {
+  /** `other` is a symlink, folder, FIFO or anything but a regular file. */
+  readonly kind: "missing" | "file" | "other";
+  readonly size: number;
+  readonly mode: number;
+  /** Owned by the account the server runs as. */
+  readonly owned: boolean;
+  /** Changes whenever the file does; null when missing. */
+  readonly stamp: string | null;
+}
+
 export interface TerminalPathFs {
-  /** The file's text, or null when it does not exist. */
-  readonly readText: (file: string) => Promise<string | null>;
-  readonly writeText: (file: string, text: string) => Promise<void>;
-  readonly isSymlink: (file: string) => Promise<boolean>;
+  /** The file itself, never following a link. */
+  readonly inspect: (file: string) => Promise<StartupFileInfo>;
+  readonly readBytes: (file: string) => Promise<Buffer>;
+  /** Atomically replace `file`, only if its stamp is still `expected`; false when it changed. */
+  readonly replace: (
+    file: string,
+    bytes: Buffer,
+    mode: number,
+    expected: string | null,
+  ) => Promise<boolean>;
+  /** A regular file, following links (the Claude installer links `~/.local/bin/claude`). */
   readonly isFile: (file: string) => Promise<boolean>;
+  readonly exists: (path: string) => Promise<boolean>;
+  readonly listDir: (path: string) => Promise<string[]>;
 }
 
 export interface TerminalPathInput {
@@ -56,6 +85,8 @@ export type TerminalPathAction =
   | "removed"
   | "unchanged"
   | "opted-out"
+  | "busy"
+  | "malformed"
   | "unsupported";
 
 /** The startup file a new Terminal reads for this shell, or null where none is known. */
@@ -74,14 +105,20 @@ export function terminalStartupFile(
   return null;
 }
 
+/** Shared by every app home on this account, so one block has one history. */
+export function terminalPathStateFile(home: string): string {
+  return NodePath.posix.join(home, ".local", "share", "specweave", "terminal-path.json");
+}
+
 const VERSION = /^[\w.+-]+$/u;
 
 async function activeCodexDir(baseDir: string, fs: TerminalPathFs): Promise<string | null> {
   const root = NodePath.posix.join(baseDir, "tools", "codex");
-  const text = await fs.readText(NodePath.posix.join(root, "active.json"));
-  if (text === null) return null;
+  const pointer = NodePath.posix.join(root, "active.json");
+  if ((await fs.inspect(pointer)).kind !== "file") return null;
   try {
-    const version: unknown = (JSON.parse(text) as { version?: unknown }).version;
+    const parsed: unknown = JSON.parse((await fs.readBytes(pointer)).toString("utf8"));
+    const version = (parsed as { version?: unknown } | null)?.version;
     return typeof version === "string" && VERSION.test(version)
       ? NodePath.posix.join(root, version, "bin")
       : null;
@@ -90,28 +127,48 @@ async function activeCodexDir(baseDir: string, fs: TerminalPathFs): Promise<stri
   }
 }
 
-/** The folders, in order, that hold a command the app installed or found. */
+async function holdsCommand(dir: string, fs: TerminalPathFs): Promise<boolean> {
+  for (const command of COMMANDS)
+    if (await fs.isFile(NodePath.posix.join(dir, command))) return true;
+  return false;
+}
+
+/** Folders of this app home's own versioned copies; another home's are never pruned here. */
+function ownManagedRoots(baseDir: string): ReadonlyArray<string> {
+  return [
+    ["runtime", "node"],
+    ["tools", "gh"],
+    ["tools", "specweave"],
+    ["tools", "codex"],
+  ].map((parts) => `${NodePath.posix.join(baseDir, ...parts)}/`);
+}
+
+/** The folders this app home has that hold a command: the same copies its own PATH uses. */
 export async function terminalCommandDirs(
   input: Omit<TerminalPathInput, "shell">,
 ): Promise<ReadonlyArray<string>> {
   const { home, baseDir, platform, arch, glibc, fs } = input;
   const codex = await activeCodexDir(baseDir, fs);
+  const managed = await existingManagedToolDirs(fs, { home: baseDir, platform, arch, glibc });
   const candidates = [
     NodePath.posix.join(home, ".local", "bin"),
     NodePath.posix.join(home, ".local", "share", "specweave", "providers", "bin"),
-    ...managedToolDirs({ home: baseDir, platform, arch, glibc }),
+    ...managed,
     ...(codex ? [codex] : []),
   ];
   const dirs: Array<string> = [];
-  for (const dir of new Set(candidates)) {
-    for (const command of COMMANDS) {
-      if (await fs.isFile(NodePath.posix.join(dir, command))) {
-        dirs.push(dir);
-        break;
-      }
-    }
-  }
+  for (const dir of new Set(candidates)) if (await holdsCommand(dir, fs)) dirs.push(dir);
   return dirs;
+}
+
+/** The person's own folders first, then the rest by name: the same order for every writer. */
+function blockOrder(home: string) {
+  const first = [
+    NodePath.posix.join(home, ".local", "bin"),
+    NodePath.posix.join(home, ".local", "share", "specweave", "providers", "bin"),
+  ];
+  const rank = (dir: string) => (first.includes(dir) ? first.indexOf(dir) : first.length);
+  return (a: string, b: string) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0);
 }
 
 /** A folder as a double-quoted shell word, with the home folder spelled `$HOME`. */
@@ -123,14 +180,41 @@ function shellWord(dir: string, home: string): string {
     : `"${escape(dir)}"`;
 }
 
+const LOOP_START = "for _swc_dir in ";
+const LOOP_END = "; do";
+
+/** The folders a block written by terminalPathBlock lists; [] for anything else. */
+export function terminalPathBlockDirs(block: string, home: string): ReadonlyArray<string> {
+  const line = block
+    .split("\n")
+    .map((text) => text.replace(/\r$/u, ""))
+    .find((text) => text.startsWith(LOOP_START));
+  if (!line?.endsWith(LOOP_END)) return [];
+  const words = line.slice(LOOP_START.length, -LOOP_END.length);
+  const word = /"((?:[^"\\]|\\[\\"$`])*)"(?: |$)/uy;
+  const dirs: Array<string> = [];
+  let match: RegExpExecArray | null;
+  while ((match = word.exec(words)) !== null) {
+    let dir = match[1]!;
+    const homeRelative = dir.startsWith("$HOME/");
+    if (homeRelative) dir = dir.slice("$HOME/".length);
+    dir = dir.replace(/\\([\\"$`])/gu, "$1");
+    if (homeRelative) dir = NodePath.posix.join(home, dir);
+    if (NodePath.posix.isAbsolute(dir)) dirs.push(dir);
+    if (word.lastIndex >= words.length) break;
+  }
+  return dirs;
+}
+
 /** The block for these folders, or null when there is nothing to add. */
 export function terminalPathBlock(dirs: ReadonlyArray<string>, home: string): string | null {
-  if (dirs.length === 0) return null;
+  const listed = dirs.filter((dir) => !dir.includes("\n") && !dir.includes("\r"));
+  if (listed.length === 0) return null;
   return [
     TERMINAL_PATH_START,
     "# Lets Terminal run the tools SpecWithCode installed. Your own installs stay first.",
     "# Delete this block to stop; SpecWithCode will not add it back.",
-    `for _swc_dir in ${dirs.map((dir) => shellWord(dir, home)).join(" ")}; do`,
+    `${LOOP_START}${listed.map((dir) => shellWord(dir, home)).join(" ")}${LOOP_END}`,
     '  case ":$PATH:" in *":$_swc_dir:"*) ;; *) PATH="$PATH:$_swc_dir" ;; esac',
     "done",
     "unset _swc_dir",
@@ -140,67 +224,170 @@ export function terminalPathBlock(dirs: ReadonlyArray<string>, home: string): st
   ].join("\n");
 }
 
+interface BlockRange {
+  /** Offset of the start marker line. */
+  readonly from: number;
+  /** Offset just past the end marker line and its newline. */
+  readonly to: number;
+}
+
+/** The well-formed blocks, matched as whole lines, or null when markers do not pair up. */
+export function findTerminalPathBlocks(text: string): ReadonlyArray<BlockRange> | null {
+  const blocks: Array<BlockRange> = [];
+  let open: number | null = null;
+  let offset = 0;
+  while (offset < text.length) {
+    const newline = text.indexOf("\n", offset);
+    const next = newline === -1 ? text.length : newline + 1;
+    const line = text.slice(offset, newline === -1 ? text.length : newline).replace(/\r$/u, "");
+    if (line === TERMINAL_PATH_START) {
+      if (open !== null) return null;
+      open = offset;
+    } else if (line === TERMINAL_PATH_END) {
+      if (open === null) return null;
+      blocks.push({ from: open, to: next });
+      open = null;
+    }
+    offset = next;
+  }
+  return open === null ? blocks : null;
+}
+
 /**
- * The startup file's new text. A present block is replaced or removed. A missing one is added
- * only if the app never wrote one there: a person who deleted it opted out.
+ * The startup file's new text. Present blocks collapse into one, replaced or removed. A missing
+ * one is added only if the app never wrote one there: a person who deleted it opted out.
  */
 export function applyTerminalPathBlock(
-  existing: string | null,
+  existing: string,
   block: string | null,
   writtenBefore: boolean,
 ): { readonly text: string | null; readonly action: TerminalPathAction } {
-  const text = existing ?? "";
-  const start = text.indexOf(TERMINAL_PATH_START);
-  const end = start === -1 ? -1 : text.indexOf(TERMINAL_PATH_END, start);
-  if (start !== -1 && end === -1) return { text: null, action: "unchanged" };
-  if (start !== -1) {
-    let after = end + TERMINAL_PATH_END.length;
-    if (text[after] === "\n") after += 1;
-    const next = `${text.slice(0, start)}${block ?? ""}${text.slice(after)}`;
-    if (next === text) return { text: null, action: "unchanged" };
+  const blocks = findTerminalPathBlocks(existing);
+  if (blocks === null) return { text: null, action: "malformed" };
+  if (blocks.length > 0) {
+    let next = "";
+    let from = 0;
+    blocks.forEach((range, index) => {
+      const before = existing.slice(from, range.from);
+      // Removing the block also takes the blank line added in front of it.
+      const gapped = block === null && before.endsWith("\n\n");
+      next += gapped ? before.slice(0, -1) : before;
+      if (index === 0 && block !== null) next += block;
+      from = range.to;
+    });
+    next += existing.slice(from);
+    if (next === existing) return { text: null, action: "unchanged" };
     return { text: next, action: block === null ? "removed" : "updated" };
   }
   if (writtenBefore) return { text: null, action: "opted-out" };
   if (block === null) return { text: null, action: "unchanged" };
-  if (text.length === 0) return { text: block, action: "added" };
-  const gap = text.endsWith("\n") ? "\n" : "\n\n";
-  return { text: `${text}${gap}${block}`, action: "added" };
+  if (existing.length === 0) return { text: block, action: "added" };
+  const gap = existing.endsWith("\n") ? "\n" : "\n\n";
+  return { text: `${existing}${gap}${block}`, action: "added" };
 }
 
-interface TerminalPathState {
-  readonly file: string;
+/** Startup files the app wrote a block into; "unknown" when the record cannot be read. */
+async function readState(
+  home: string,
+  fs: TerminalPathFs,
+): Promise<ReadonlyArray<string> | "unknown"> {
+  const file = terminalPathStateFile(home);
+  const info = await fs.inspect(file);
+  if (info.kind === "missing") return [];
+  if (info.kind !== "file") return "unknown";
+  try {
+    const parsed: unknown = JSON.parse((await fs.readBytes(file)).toString("utf8"));
+    const files = (parsed as { files?: unknown } | null)?.files;
+    return Array.isArray(files) && files.every((entry) => typeof entry === "string")
+      ? files
+      : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+async function writeState(home: string, files: ReadonlyArray<string>, fs: TerminalPathFs) {
+  const file = terminalPathStateFile(home);
+  const info = await fs.inspect(file);
+  const bytes = Buffer.from(`${JSON.stringify({ files: [...new Set(files)] })}\n`, "utf8");
+  // Lost to a concurrent writer: the next pass records it again.
+  await fs.replace(file, bytes, 0o644, info.stamp);
+}
+
+/** A startup file the app may edit: a regular file this account owns, or none yet. */
+const editable = (info: StartupFileInfo) =>
+  info.kind === "missing" ||
+  (info.kind === "file" && info.owned && info.size <= TERMINAL_PATH_MAX_BYTES);
+
+const toBytes = (text: string) => Buffer.from(text, "latin1");
+/** UTF-8 text as the byte string the person's file is handled in, and back. */
+const asByteString = (text: string) => Buffer.from(text, "utf8").toString("latin1");
+const fromByteString = (text: string) => Buffer.from(text, "latin1").toString("utf8");
+
+/** Take the block out of a startup file the shell no longer reads. True when none is left. */
+async function removeStaleBlock(file: string, fs: TerminalPathFs): Promise<boolean> {
+  const info = await fs.inspect(file);
+  if (info.kind === "missing") return true;
+  if (!editable(info)) return false;
+  const text = (await fs.readBytes(file)).toString("latin1");
+  const { text: next, action } = applyTerminalPathBlock(text, null, true);
+  if (action === "malformed") return false;
+  if (next === null) return true;
+  return fs.replace(file, toBytes(next), info.mode, info.stamp);
 }
 
 /** Bring the startup file's block in line with what is installed now. */
 export async function syncTerminalPath(input: TerminalPathInput): Promise<TerminalPathAction> {
-  const file = terminalStartupFile(input.home, input.platform, input.shell);
+  const { home, fs } = input;
+  const file = terminalStartupFile(home, input.platform, input.shell);
   if (file === null) return "unsupported";
-  // A linked startup file belongs to someone's dotfiles; never edit through it.
-  if (await input.fs.isSymlink(file)) return "unsupported";
-  const statePath = NodePath.posix.join(input.baseDir, "terminal-path.json");
-  let writtenBefore = false;
-  const stateText = await input.fs.readText(statePath);
-  if (stateText !== null) {
-    try {
-      writtenBefore = (JSON.parse(stateText) as Partial<TerminalPathState>).file === file;
-    } catch {
-      writtenBefore = false;
-    }
+  const state = await readState(home, fs);
+  let recorded = state === "unknown" ? [] : [...state];
+
+  // A changed login shell: the file it no longer reads keeps no stale block.
+  if (state !== "unknown")
+    for (const stale of state.filter((entry) => entry !== file))
+      if (await removeStaleBlock(stale, fs)) recorded = recorded.filter((entry) => entry !== stale);
+
+  const info = await fs.inspect(file);
+  if (!editable(info)) return "unsupported";
+  const text = info.kind === "missing" ? "" : (await fs.readBytes(file)).toString("latin1");
+  const blocks = findTerminalPathBlocks(text);
+  if (blocks === null) return "malformed";
+
+  const first = blocks[0];
+  const listed = first
+    ? terminalPathBlockDirs(fromByteString(text.slice(first.from, first.to)), home)
+    : [];
+  const own = await terminalCommandDirs(input);
+  const ownRoots = ownManagedRoots(input.baseDir);
+  const others: Array<string> = [];
+  for (const dir of listed) {
+    if (own.includes(dir) || ownRoots.some((root) => dir.startsWith(root))) continue;
+    // Another app home's folder stays while it still holds a command.
+    if (await holdsCommand(dir, fs)) others.push(dir);
   }
-  const block = terminalPathBlock(await terminalCommandDirs(input), input.home);
-  const { text, action } = applyTerminalPathBlock(
-    await input.fs.readText(file),
-    block,
+  const dirs = [...new Set([...own, ...others])].toSorted(blockOrder(home));
+  const block = terminalPathBlock(dirs, home);
+  const writtenBefore = state === "unknown" || state.includes(file);
+  const { text: next, action } = applyTerminalPathBlock(
+    text,
+    block === null ? null : asByteString(block),
     writtenBefore,
   );
-  if (text === null) return action;
-  // Record first: if the write lands and the record did not, a deleted block would come back.
-  if (!writtenBefore)
-    await input.fs.writeText(
-      statePath,
-      `${JSON.stringify({ file } satisfies TerminalPathState)}\n`,
-    );
-  await input.fs.writeText(file, text);
+
+  if (next === null) {
+    // A block written before a lost record still counts as written.
+    if (blocks.length > 0 && !recorded.includes(file)) recorded.push(file);
+  } else {
+    const mode = info.kind === "file" ? info.mode : 0o644;
+    if (!(await fs.replace(file, toBytes(next), mode, info.stamp))) return "busy";
+    recorded = recorded.filter((entry) => entry !== file);
+    if (action !== "removed") recorded.push(file);
+  }
+  const changed =
+    state === "unknown" ? recorded.length > 0 : recorded.join("\n") !== state.join("\n");
+  if (changed) await writeState(home, recorded, fs);
   return action;
 }
 
@@ -208,25 +395,46 @@ const missing = (error: unknown) =>
   (error as NodeJS.ErrnoException | null)?.code === "ENOENT" ||
   (error as NodeJS.ErrnoException | null)?.code === "ENOTDIR";
 
+async function inspectFile(file: string): Promise<StartupFileInfo> {
+  try {
+    const info = await NodeFSP.lstat(file);
+    const uid = process.getuid?.();
+    return {
+      kind: info.isFile() ? "file" : "other",
+      size: info.size,
+      mode: info.mode & 0o7777,
+      owned: uid === undefined || info.uid === uid,
+      stamp: `${info.ino}:${info.size}:${info.mtimeMs}`,
+    };
+  } catch (error) {
+    if (missing(error)) return { kind: "missing", size: 0, mode: 0, owned: true, stamp: null };
+    throw error;
+  }
+}
+
 /** The real file system. */
 export const nodeTerminalPathFs: TerminalPathFs = {
-  readText: async (file) => {
+  inspect: inspectFile,
+  readBytes: (file) => NodeFSP.readFile(file),
+  replace: async (file, bytes, mode, expected) => {
+    const dir = NodePath.dirname(file);
+    await NodeFSP.mkdir(dir, { recursive: true });
+    const temporary = NodePath.join(
+      dir,
+      `.${NodePath.basename(file)}.swc-${NodeCrypto.randomUUID()}.tmp`,
+    );
+    await NodeFSP.writeFile(temporary, bytes, { mode, flag: "wx" });
     try {
-      return await NodeFSP.readFile(file, "utf8");
+      await NodeFSP.chmod(temporary, mode);
+      // Someone saved the file since it was read: keep theirs and try again next pass.
+      if ((await inspectFile(file)).stamp !== expected) {
+        await NodeFSP.rm(temporary, { force: true });
+        return false;
+      }
+      await NodeFSP.rename(temporary, file);
+      return true;
     } catch (error) {
-      if (missing(error)) return null;
-      throw error;
-    }
-  },
-  writeText: async (file, text) => {
-    await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
-    await NodeFSP.writeFile(file, text, "utf8");
-  },
-  isSymlink: async (file) => {
-    try {
-      return (await NodeFSP.lstat(file)).isSymbolicLink();
-    } catch (error) {
-      if (missing(error)) return false;
+      await NodeFSP.rm(temporary, { force: true });
       throw error;
     }
   },
@@ -235,6 +443,21 @@ export const nodeTerminalPathFs: TerminalPathFs = {
       return (await NodeFSP.stat(file)).isFile();
     } catch {
       return false;
+    }
+  },
+  exists: async (path) => {
+    try {
+      await NodeFSP.lstat(path);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  listDir: async (path) => {
+    try {
+      return await NodeFSP.readdir(path);
+    } catch {
+      return [];
     }
   },
 };
