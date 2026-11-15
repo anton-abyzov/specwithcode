@@ -35,6 +35,8 @@ export interface QuotaAlertWindow {
   readonly title: string;
   readonly leftPercent: number;
   readonly resetsAt: number | null;
+  /** Caps one model only (Claude's "Weekly · Fable"), so it is not the subscription's quota. */
+  readonly scoped?: boolean;
   /** How long one period of it lasts; null when unknown, and then the pace cannot be read. */
   readonly durationMs?: number | null;
   /** A weekly or monthly window. A short one refills many times before a renewal, so it never ends with one. */
@@ -45,7 +47,9 @@ export interface QuotaAlertWindow {
  * The share of a window that will still be unused at its reset if the person
  * keeps the pace of the period so far: what is left now, less what that pace
  * uses in the time that remains. With no known length the pace is unknown and
- * what is left now stands.
+ * what is left now stands. The period is taken to have begun one length before
+ * its reset; after an early reset on an unmoved anchor that overstates the time
+ * elapsed and so understates the pace, which errs toward a warning.
  */
 export function projectedUnusedPercent(
   window: Pick<QuotaAlertWindow, "leftPercent" | "resetsAt" | "durationMs">,
@@ -67,7 +71,7 @@ export function projectedUnusedPercent(
  * anyone reads the warning it has reset.
  */
 export function quotaGoingUnused(window: QuotaAlertWindow, now: number): boolean {
-  if (!window.long || window.resetsAt === null) return false;
+  if (!window.long || window.scoped === true || window.resetsAt === null) return false;
   const remaining = window.resetsAt - now;
   if (remaining < QUOTA_ALERT_MIN_TIME_TO_ACT_MS || remaining > QUOTA_ALERT_LEAD_MS) return false;
   return projectedUnusedPercent(window, now) >= EXPIRING_QUOTA_MIN_LEFT_PERCENT;
@@ -104,8 +108,10 @@ export interface QuotaAlert {
   readonly machines: readonly string[];
   /** The window whose quota is about to go; absent for a banked reset. */
   readonly windowId?: string;
-  /** When that window resets: the period end for a window alert, near the renewal for a renewal. */
+  /** When that window resets; the period end of a window or renewal alert. */
   readonly windowResetsAt?: number;
+  /** When the plan renews, for a renewal alert's sentence. */
+  readonly renewsAt?: number;
   /** The window's title; absent for a banked reset. */
   readonly windowTitle?: string;
   /** What is left to use, 0..100; absent for a banked reset and an early reset. */
@@ -155,57 +161,39 @@ export function quotaAlerts(
         });
       }
     }
-    // One line per subscription. A renewal within a day says it best: it names the day
-    // the plan ends and the quota that ends with it.
-    const renewsAt = account.renewal?.at ?? null;
-    let renewing = false;
-    if (
-      renewsAt !== null &&
-      renewsAt - now >= QUOTA_ALERT_MIN_TIME_TO_ACT_MS &&
-      renewsAt - now <= QUOTA_ALERT_HORIZON_MS
-    ) {
-      // The quota a renewal ends is the weekly or monthly window that resets with it: the
-      // one whose reset is nearest the renewal. A window that resets well before or after
-      // it keeps its quota through the renewal, and a 5-hour one refills long before.
-      const ending = account.windows
-        .flatMap((window) =>
-          window.resetsAt === null || !window.long
-            ? []
-            : [{ window, apart: Math.abs(window.resetsAt - renewsAt) }],
-        )
-        .filter((entry) => entry.apart <= RENEWAL_WINDOW_APART_MS)
-        .toSorted((left, right) => left.apart - right.apart)[0]?.window;
-      if (ending !== undefined && ending.leftPercent >= EXPIRING_QUOTA_MIN_LEFT_PERCENT) {
-        renewing = true;
-        alerts.push({
-          ...base,
-          key: `${accountKey}|renewal`,
-          periodEnd: renewsAt,
-          kind: "renewal",
-          windowId: ending.id,
-          ...(ending.resetsAt !== null ? { windowResetsAt: ending.resetsAt } : {}),
-          windowTitle: ending.title,
-          leftPercent: ending.leftPercent,
-        });
-      }
-    }
-    if (!renewing) {
-      // The window that resets first speaks for the subscription.
-      const going = account.windows
-        .filter((window) => quotaGoingUnused(window, now))
-        .toSorted((left, right) => (left.resetsAt ?? 0) - (right.resetsAt ?? 0))[0];
-      if (going !== undefined && going.resetsAt !== null) {
-        alerts.push({
-          ...base,
-          key: `${accountKey}|window:${going.id}`,
-          periodEnd: going.resetsAt,
-          kind: "window",
-          windowId: going.id,
-          windowResetsAt: going.resetsAt,
-          windowTitle: going.title,
-          leftPercent: going.leftPercent,
-        });
-      }
+    // One line per subscription: the window that resets first speaks for it.
+    const going = account.windows
+      .filter((window) => quotaGoingUnused(window, now))
+      .toSorted((left, right) => (left.resetsAt ?? 0) - (right.resetsAt ?? 0))[0];
+    if (going !== undefined && going.resetsAt !== null) {
+      // When the plan renews within a day and this is the window that ends with it (the
+      // long window whose reset is nearest the renewal), the line says so. It is still
+      // the same window and period, so a dismissal or a notification holds either way.
+      const renewsAt = account.renewal?.at ?? null;
+      const endsWithRenewal =
+        renewsAt !== null &&
+        renewsAt - now >= QUOTA_ALERT_MIN_TIME_TO_ACT_MS &&
+        renewsAt - now <= QUOTA_ALERT_HORIZON_MS &&
+        going.leftPercent >= EXPIRING_QUOTA_MIN_LEFT_PERCENT &&
+        account.windows
+          .flatMap((window) =>
+            window.resetsAt === null || !window.long || window.scoped === true
+              ? []
+              : [{ window, apart: Math.abs(window.resetsAt - renewsAt) }],
+          )
+          .filter((entry) => entry.apart <= RENEWAL_WINDOW_APART_MS)
+          .toSorted((left, right) => left.apart - right.apart)[0]?.window === going;
+      alerts.push({
+        ...base,
+        key: `${accountKey}|window:${going.id}`,
+        periodEnd: going.resetsAt,
+        kind: endsWithRenewal ? "renewal" : "window",
+        windowId: going.id,
+        windowResetsAt: going.resetsAt,
+        windowTitle: going.title,
+        leftPercent: going.leftPercent,
+        ...(endsWithRenewal && renewsAt !== null ? { renewsAt } : {}),
+      });
     }
   }
   for (const reset of earlyResets) {
@@ -281,7 +269,7 @@ export function describeQuotaAlert(alert: QuotaAlert, label: string, now: number
     case "bankedReset":
       return `${where}: ${alert.count === 1 ? "a banked reset expires" : `${alert.count} banked resets, the next expires`} in ${inTime}`;
     case "renewal":
-      return `${where}: renews in ${inTime} with ${left}% of its ${window} quota unused`;
+      return `${where}: renews in ${duration((alert.renewsAt ?? alert.periodEnd) - now)} with ${left}% of its ${window} quota unused`;
     case "earlyReset":
       return `${where} reset early: ${window} back to 100%`;
   }

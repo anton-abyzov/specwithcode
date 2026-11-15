@@ -55,9 +55,9 @@ added this view; earlier resets are not shown.
 
 A banner above the project list says when a subscription is about to lose quota, the soonest loss first:
 
-- a weekly or monthly window in its last two days that your pace so far will leave at least 40% unused, while there is still at least an hour to use it. Nothing used with two days to go warns; steady use that will finish the quota does not. A 5-hour window never warns: it refills within hours;
+- a weekly or monthly window in its last two days that your pace so far will leave at least 40% unused, while there is still at least an hour to use it. Nothing used with two days to go warns; steady use that will finish the quota does not. A 5-hour window never warns: it refills within hours. Neither does a window that caps one model only;
 - a banked reset in its last day;
-- a subscription renewing within a day with at least 40% of its quota unused, in place of the window line;
+- when the plan also renews within a day and that window ends with it, the same line says "renews in" instead; it is one warning, so dismissing either form holds;
 - a limit the provider reset early, for six hours after it happened.
 
 The banner shows the two soonest and counts the rest; a subscription takes one line. "See subscriptions" opens this page. The X dismisses the lines shown until the next reset of the windows they named. When the app is not in front and notifications are connected, each warning also raises one notification per period, on one machine: the first of the machines the account is signed in on.

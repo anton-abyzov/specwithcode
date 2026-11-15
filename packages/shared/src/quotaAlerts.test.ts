@@ -137,10 +137,43 @@ describe("quotaAlerts", () => {
     const [alert] = quotaAlerts([account({ windows: weekly, renewal: { at: now + 20 * HOUR } })], [], now);
     expect(alert).toMatchObject({
       kind: "renewal",
-      periodEnd: now + 20 * HOUR,
+      key: "codex:pro@example.com|window:weekly",
+      periodEnd: now + 26 * HOUR,
+      renewsAt: now + 20 * HOUR,
       windowId: "weekly",
       windowResetsAt: now + 26 * HOUR,
     });
+  });
+
+  it("keeps one identity for a window whether or not its line names the renewal", () => {
+    const weekly = [
+      { id: "weekly", title: "Weekly", leftPercent: 90, resetsAt: now + 30 * HOUR, long: true, durationMs: 7 * DAY },
+    ];
+    const subscription = account({ windows: weekly, renewal: { at: now + 28 * HOUR } });
+    const [first] = quotaAlerts([subscription], [], now);
+    expect(first?.kind).toBe("window");
+    // Eight hours on the renewal is within a day and the line changes; the dismissal holds.
+    const later = quotaAlerts([subscription], [], now + 8 * HOUR);
+    expect(later.map((entry) => entry.kind)).toEqual(["renewal"]);
+    expect(visibleQuotaAlerts(later, { [first!.key]: first!.periodEnd })).toEqual([]);
+  });
+
+  it("lets the window that resets first speak, renewal or not", () => {
+    const windows = [
+      { id: "weekly", title: "Weekly", leftPercent: 90, resetsAt: now + 10 * HOUR, long: true, durationMs: 7 * DAY },
+      { id: "monthly", title: "Monthly", leftPercent: 50, resetsAt: now + 20 * HOUR, long: true, durationMs: 30 * DAY },
+    ];
+    const [alert, ...rest] = quotaAlerts([account({ windows, renewal: { at: now + 20 * HOUR } })], [], now);
+    expect(rest).toEqual([]);
+    expect(alert).toMatchObject({ kind: "window", windowId: "weekly" });
+  });
+
+  it("ignores a window that caps one model only", () => {
+    const windows = [
+      { id: "secondary", title: "Weekly", leftPercent: 5, resetsAt: now + 24 * HOUR, long: true },
+      { id: "seven_day_fable", title: "Fable weekly", leftPercent: 90, resetsAt: now + 24 * HOUR, long: true, scoped: true },
+    ];
+    expect(quotaAlerts([account({ windows })], [], now)).toEqual([]);
   });
 
   it("names the window the renewal ends, and stays quiet when none resets with it", () => {

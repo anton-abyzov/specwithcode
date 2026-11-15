@@ -15,7 +15,12 @@ import {
   remainingPercent,
 } from "@specweave-studio/shared/usageLimits";
 import { lossIsUpperBound } from "@specweave-studio/shared/usageResetLedger";
-import { isLiveWindow, windowName, windowTitle } from "@specweave-studio/shared/usageWindows";
+import {
+  isLiveWindow,
+  windowModelScope,
+  windowName,
+  windowTitle,
+} from "@specweave-studio/shared/usageWindows";
 
 export interface SubscriptionWindow {
   readonly id: string;
@@ -27,6 +32,8 @@ export interface SubscriptionWindow {
   readonly expiring: boolean;
   /** A weekly or monthly window, not a short one that refills within hours. */
   readonly long: boolean;
+  /** Caps one model only, not the whole subscription. */
+  readonly scoped: boolean;
   /** How long one period lasts, for reading the pace; null when the provider does not say. */
   readonly durationMs: number | null;
 }
@@ -109,6 +116,7 @@ function windowsOf(account: LimitAccount, now: number): SubscriptionWindow[] {
         window.kind === "weekly" ||
         window.kind === "monthly" ||
         (window.kind !== "session" && (window.windowDurationMins ?? 0) > 6 * 60),
+      scoped: windowModelScope(window) !== null,
       durationMs:
         window.windowDurationMins !== undefined && window.windowDurationMins > 0
           ? window.windowDurationMins * 60_000
