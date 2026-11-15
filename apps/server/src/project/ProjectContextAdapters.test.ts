@@ -277,6 +277,12 @@ const testLayer = Layer.merge(IdAllocator.layer, NodeServices.layer);
 const openCodex = (
   transcript: CodexReplay.CodexAppServerReplayTranscript,
   onRequest: (method: string, params: unknown) => void = () => {},
+  observe: {
+    // Runs once the app-server answered the request.
+    readonly answered?: (method: string) => Effect.Effect<void>;
+    // Runs once the adapter's handler for the notification returned.
+    readonly handled?: (method: string) => Effect.Effect<void>;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const adapter = CodexAdapterV2.makeCodexAdapterV2({
@@ -300,6 +306,13 @@ const openCodex = (
                   request: (method, params) =>
                     Effect.sync(() => onRequest(method, params)).pipe(
                       Effect.andThen(client.request(method, params)),
+                      Effect.tap(() => observe.answered?.(method) ?? Effect.void),
+                    ),
+                  handleServerNotification: (method, handler) =>
+                    client.handleServerNotification(method, (payload) =>
+                      handler(payload).pipe(
+                        Effect.andThen(observe.handled?.(method) ?? Effect.void),
+                      ),
                     ),
                 }) satisfies CodexClient.CodexAppServerClient["Service"],
             ),
@@ -587,6 +600,8 @@ it.effect(
       const nativeThreadId = "compact-native";
       const nativeTurnId = "compact-turn";
       const completed = yield* Deferred.make<void>();
+      const restoreAnswered = yield* Deferred.make<void>();
+      const lateDuplicateHandled = yield* Deferred.make<void>();
       const compacted: CodexReplay.CodexAppServerReplayEntry = {
         type: "emit_inbound",
         label: "compacted",
@@ -599,8 +614,21 @@ it.effect(
           },
         },
       };
+      // The restore waits for turn/completed, so each one below is a chance to restore.
+      const turnCompleted: CodexReplay.CodexAppServerReplayEntry = {
+        type: "emit_inbound",
+        label: "done",
+        frame: {
+          method: "turn/completed",
+          params: {
+            threadId: nativeThreadId,
+            turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+          },
+        },
+      };
       let restored = 0;
       let injected = 0;
+      let turnsCompleted = 0;
       let memory = "old";
       const harness = yield* openCodex(
         makeCodexReplayTranscript({
@@ -609,6 +637,7 @@ it.effect(
             ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" }),
             compacted,
             compacted,
+            turnCompleted,
             {
               type: "expect_outbound",
               label: "restore",
@@ -628,23 +657,24 @@ it.effect(
               },
             },
             { type: "emit_inbound", label: "restored", frame: { id: 4, result: {} } },
+            // The same compaction reported again after its restore was answered.
             compacted,
-            {
-              type: "emit_inbound",
-              label: "done",
-              frame: {
-                method: "turn/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
-                },
-              },
-            },
+            turnCompleted,
           ],
         }),
         (method) => {
           if (method === "turn/start") memory = "fresh project memory";
           if (method === "thread/inject_items") injected++;
+        },
+        {
+          answered: (method) =>
+            method === "thread/inject_items"
+              ? Deferred.succeed(restoreAnswered, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          handled: (method) =>
+            method === "turn/completed" && ++turnsCompleted === 2
+              ? Deferred.succeed(lateDuplicateHandled, undefined).pipe(Effect.asVoid)
+              : Effect.void,
         },
       );
       yield* harness.runtime.events.pipe(
@@ -669,6 +699,8 @@ it.effect(
         },
       });
       yield* Deferred.await(completed);
+      yield* Deferred.await(restoreAnswered);
+      yield* Deferred.await(lateDuplicateHandled);
       assert.equal(injected, 1);
       assert.equal(restored, 1);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
