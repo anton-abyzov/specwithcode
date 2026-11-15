@@ -99,11 +99,58 @@ const FUTURE_ALLOWANCE_MS = 5 * 60_000;
 const text = (value: unknown): string | null =>
   typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 
+export const X_HOSTS: ReadonlySet<string> = new Set([
+  "x.com",
+  "www.x.com",
+  "mobile.x.com",
+  "twitter.com",
+  "www.twitter.com",
+  "mobile.twitter.com",
+]);
+const X_POST = /^\/([A-Za-z0-9_]{1,15})\/status\/(\d{1,25})(?:\/.*)?$/u;
+/** Query keys that only say where a reader came from. */
+const TRACKING_KEY = /^(utm_.+|s|t|ref|ref_src|ref_url|fbclid|gclid)$/u;
+const UNRESERVED_ESCAPE =
+  /%(2[DdEe]|3[0-9]|4[1-9A-Fa-f]|5[0-9Aa]|5[Ff]|6[1-9A-Fa-f]|7[0-9Aa]|7[Ee])/gu;
+
+/** An X post as `{ handle, id }` from a parsed link, or null for anything else on X or off it. */
+export function xPost(url: URL): { readonly handle: string; readonly id: string } | null {
+  if (!X_HOSTS.has(url.hostname.toLowerCase())) return null;
+  const post = X_POST.exec(url.pathname);
+  if (post === null) return null;
+  return { handle: post[1]!.toLowerCase(), id: post[2]!.replace(/^0+(?=\d)/u, "") };
+}
+
+/**
+ * One spelling per post, so the feed and a recording of the same post are one
+ * announcement: an X post becomes `https://x.com/{handle}/status/{id}`; any other
+ * page loses its fragment, a leading `www.`, repeated or trailing slashes,
+ * escapes of plain characters and tracking parameters.
+ */
+export function canonicalLink(url: URL): string {
+  const post = xPost(url);
+  if (post !== null) return `https://x.com/${post.handle}/status/${post.id}`;
+  const hostname = url.hostname.toLowerCase();
+  const host = hostname.startsWith("www.") ? hostname.slice(4) : hostname;
+  const path = url.pathname
+    .replace(UNRESERVED_ESCAPE, (escape) =>
+      String.fromCharCode(Number.parseInt(escape.slice(1), 16)),
+    )
+    .replace(/\/{2,}/gu, "/")
+    .replace(/\/+$/u, "");
+  const query = [...url.searchParams]
+    .filter(([key]) => !TRACKING_KEY.test(key.toLowerCase()))
+    .toSorted(([left], [right]) => left.localeCompare(right));
+  const search = query.length === 0 ? "" : `?${new URLSearchParams(query).toString()}`;
+  return `https://${host}${url.port === "" ? "" : `:${url.port}`}${path}${search}`;
+}
+
 const httpsLink = (value: unknown): string | null => {
   const link = text(value);
   if (link === null || link.length > LINK_MAX) return null;
   try {
-    return new URL(link).protocol === "https:" ? link : null;
+    const url = new URL(link);
+    return url.protocol === "https:" ? canonicalLink(url) : null;
   } catch {
     return null;
   }
@@ -215,16 +262,22 @@ export function decodeAnnouncementFile(raw: string): AnnouncementFile {
   try {
     const parsed = JSON.parse(raw) as Partial<AnnouncementFile> | null;
     const announcements = Array.isArray(parsed?.announcements)
-      ? parsed.announcements.filter(
-          (entry): entry is ResetAnnouncement =>
-            typeof entry?.id === "string" &&
-            typeof entry.provider === "string" &&
-            typeof entry.headline === "string" &&
-            httpsLink(entry.sourceUrl) !== null &&
-            Number.isFinite(Date.parse(entry.publishedAt)) &&
-            ["full_reset", "banked_grant", "limit_change", "expected_reset"].includes(entry.kind) &&
-            (entry.origin === undefined || entry.origin === "recorded"),
-        )
+      ? parsed.announcements
+          .filter(
+            (entry): entry is ResetAnnouncement =>
+              typeof entry?.id === "string" &&
+              typeof entry.provider === "string" &&
+              typeof entry.headline === "string" &&
+              httpsLink(entry.sourceUrl) !== null &&
+              Number.isFinite(Date.parse(entry.publishedAt)) &&
+              ["full_reset", "banked_grant", "limit_change", "expected_reset"].includes(
+                entry.kind,
+              ) &&
+              (entry.origin === undefined || entry.origin === "recorded"),
+          )
+          // A file saved before links were canonical gets one spelling per post; the
+          // merge on the next list or read then keeps one of each.
+          .map((entry) => ({ ...entry, sourceUrl: httpsLink(entry.sourceUrl)! }))
       : [];
     const etag = (value: unknown) => (typeof value === "string" ? value : null);
     return {

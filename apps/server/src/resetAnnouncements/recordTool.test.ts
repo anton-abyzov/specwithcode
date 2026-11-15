@@ -1,7 +1,7 @@
 import type { ResetAnnouncement, ResetAnnouncementKind } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { EMPTY_ANNOUNCEMENT_FILE, mergeAnnouncements } from "./feeds.ts";
+import { EMPTY_ANNOUNCEMENT_FILE, mergeAnnouncements, parseConfirmedFeed } from "./feeds.ts";
 import { announcementToRecord, canonicalPostLink, recordIntoFile } from "./recordTool.ts";
 
 const now = Date.parse("2026-11-15T07:00:00.000Z");
@@ -124,6 +124,55 @@ describe("recording a reset announcement (1340 AC-09)", () => {
     // And a later recording does not replace the feed's item.
     const file = { ...EMPTY_ANNOUNCEMENT_FILE, announcements: [feed] };
     expect(recordIntoFile(file, mine, now)).toEqual({ file, recorded: false });
+  });
+
+  it("spells feed links the same way, so the feed and a recording of one post are one", () => {
+    const feedItem = (sourceUrl: string, id = "codex-reset") =>
+      JSON.stringify({
+        items: [
+          {
+            id,
+            provider: "codex",
+            kind: "hard-reset",
+            evidence: "verified",
+            headline: "Codex reset usage limits",
+            sourceUrl,
+            publishedAt: "2026-11-15T06:30:00.000Z",
+          },
+        ],
+      });
+    const [feed] = parseConfirmedFeed(feedItem("https://twitter.com/OpenAI/status/0001?s=20"), now);
+    expect(feed?.sourceUrl).toBe("https://x.com/openai/status/1");
+    const mine = recorded({ sourceUrl: "https://mobile.x.com/OpenAI/status/1" });
+    expect(mergeAnnouncements([mine], [feed!], now)).toEqual([feed]);
+    const [again] = parseConfirmedFeed(
+      feedItem("https://x.com/openai/status/1#a", "other-id"),
+      now,
+    );
+    expect(mergeAnnouncements([feed!], [again!], now)).toHaveLength(1);
+    // A page keeps what tells it apart, and loses what does not.
+    const [page] = parseConfirmedFeed(
+      feedItem("https://www.openai.com//index/%69ndex/?utm_source=x&p=2#top"),
+      now,
+    );
+    expect(page?.sourceUrl).toBe("https://openai.com/index/index?p=2");
+  });
+
+  it("records a page once under its plain spelling", () => {
+    for (const spelling of [
+      "https://openai.com/index/reset",
+      "https://openai.com//index/reset",
+      "https://openai.com/index//reset/",
+      "https://openai.com/%69ndex/reset",
+      "https://www.openai.com/index/reset?p=2",
+    ])
+      expect(link(spelling)).toBe("https://openai.com/index/reset");
+  });
+
+  it("refuses a calendar day that does not exist", () => {
+    expect(refusal({ publishedAt: "2026-02-31T06:30:00Z" })).toMatch(/ISO date and time/);
+    expect(refusal({ publishedAt: "2026-11-31T06:30:00Z" })).toMatch(/ISO date and time/);
+    expect(refusal({ publishedAt: "2024-02-29T06:30:00Z" })).toBeNull();
   });
 
   it("does not record a post past the retention", () => {
