@@ -42,7 +42,7 @@ export function setTimelineDetail(detail: TimelineDetail, options: { announce?: 
   void persistClientSettingsPatch({ timelineDetail: detail }).catch(() => {
     toastManager.add({
       type: "error",
-      title: "Couldn't save timeline detail",
+      title: "Couldn't save what threads show",
       description: "Try again.",
     });
   });
@@ -105,7 +105,7 @@ export function setThreadTimelineDetail(threadKey: string, detail: TimelineDetai
   void persistClientSettingsPatch({ threadTimelineDetail }).catch(() => {
     toastManager.add({
       type: "error",
-      title: "Couldn't save timeline detail",
+      title: "Couldn't save what this thread shows",
       description: "Try again.",
     });
   });
@@ -116,12 +116,85 @@ export function useTimelineDetail(threadKey: string | null | undefined): Timelin
   return useClientSettings((settings) => resolveTimelineDetail(settings, threadKey));
 }
 
-/** Moves to the next level and announces it, for the keyboard shortcut. */
+/** Threads whose header is on screen, by the header that registered them. */
+const shownThreads = new Map<symbol, string>();
+
+/**
+ * Marks a thread as on screen while its header is mounted, so the shortcut
+ * knows which conversations the person is looking at.
+ */
+export function useShownTimelineThread(threadKey: string | null | undefined) {
+  useEffect(() => {
+    if (!threadKey) return;
+    const token = Symbol(threadKey);
+    shownThreads.set(token, threadKey);
+    return () => {
+      shownThreads.delete(token);
+    };
+  }, [threadKey]);
+}
+
+export interface TimelineDetailCycle {
+  /** The new default for every thread, when a thread on screen follows it. */
+  readonly timelineDetail?: TimelineDetail;
+  /** The new per-thread levels, when a thread on screen has its own. */
+  readonly threadTimelineDetail?: Record<string, TimelineDetail>;
+  /** What the toast says changed. */
+  readonly title: string;
+}
+
+/**
+ * One press of the shortcut: every conversation on screen moves to its next
+ * level. A thread with its own level moves that level; the others move the
+ * default for every thread, which also moves with no thread on screen.
+ */
+export function planTimelineDetailCycle(
+  settings: DetailSettings,
+  shownThreadKeys: Iterable<string>,
+): TimelineDetailCycle {
+  const shown = [...new Set(shownThreadKeys)];
+  const own = shown.filter((key) => threadHasOwnTimelineDetail(settings, key));
+  const cyclesDefault = own.length < shown.length || shown.length === 0;
+  let threadTimelineDetail: Record<string, TimelineDetail> | undefined;
+  const ownLabels: string[] = [];
+  for (const key of own) {
+    const next = nextTimelineDetail(settings.threadTimelineDetail[key]!);
+    threadTimelineDetail = nextThreadTimelineDetails(
+      threadTimelineDetail ?? settings.threadTimelineDetail,
+      key,
+      next,
+    );
+    if (!ownLabels.includes(TIMELINE_DETAIL_LABELS[next])) {
+      ownLabels.push(TIMELINE_DETAIL_LABELS[next]);
+    }
+  }
+  const nextDefault = cyclesDefault ? nextTimelineDetail(settings.timelineDetail) : undefined;
+  const ownTitle = ownLabels.length > 0 ? `this thread: ${ownLabels.join(", ")}` : null;
+  const title =
+    nextDefault === undefined
+      ? `Show in ${ownTitle}`
+      : ownTitle === null
+        ? `Show: ${TIMELINE_DETAIL_LABELS[nextDefault]}`
+        : `Show: ${TIMELINE_DETAIL_LABELS[nextDefault]} · ${ownTitle}`;
+  return {
+    ...(nextDefault === undefined ? {} : { timelineDetail: nextDefault }),
+    ...(threadTimelineDetail === undefined ? {} : { threadTimelineDetail }),
+    title,
+  };
+}
+
+/** Moves the conversations on screen to their next level and announces it, for the keyboard shortcut. */
 export function useCycleTimelineDetail() {
   return useCallback(() => {
-    setTimelineDetail(nextTimelineDetail(getClientSettings().timelineDetail), {
-      announce: true,
+    const { title, ...patch } = planTimelineDetailCycle(getClientSettings(), shownThreads.values());
+    void persistClientSettingsPatch(patch).catch(() => {
+      toastManager.add({
+        type: "error",
+        title: "Couldn't save what threads show",
+        description: "Try again.",
+      });
     });
+    toastManager.add({ id: "timeline-detail-cycle", title, timeout: 1500 });
   }, []);
 }
 

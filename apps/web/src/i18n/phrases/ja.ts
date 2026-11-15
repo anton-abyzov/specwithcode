@@ -288,7 +288,7 @@ export const ja: PhraseCatalog = {
   "This machine": "このマシン",
   "Thread notifications": "スレッドの通知",
   "Time format": "時刻の形式",
-  "Timeline detail": "タイムラインの詳細度",
+  "What threads show": "スレッドに表示する内容",
   "Top Span Names": "上位のスパン名",
   "Trace Diagnostics": "トレース診断",
   "Try first": "最初に試す",
@@ -1027,8 +1027,8 @@ export const ja: PhraseCatalog = {
     "このマシンのアプリ全体に適用されます。プロジェクトは自身の設定で独自に指定できます。",
   "fallback order": "フォールバック順序",
   "response style": "応答スタイル",
-  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. Timeline detail only changes how much of their work is shown. New turns use the saved style.":
-    "すべてのプロバイダーで、コーディネーター、ワーカー、スレッドが書く内容を変えます。スレッドやプロジェクトのヘッダーにある返信ボタンで、そのプロジェクト用に設定できます。タイムラインの詳細度は、作業をどれだけ表示するかだけを変えます。新しいターンは保存したスタイルを使います。",
+  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. The Show setting only changes how much of their work is shown. New turns use the saved style.":
+    "すべてのプロバイダーで、コーディネーター、ワーカー、スレッドが書く内容を変えます。スレッドやプロジェクトのヘッダーにある返信ボタンで、そのプロジェクト用に設定できます。「スレッドに表示する内容」は、作業をどれだけ表示するかだけを変えます。新しいターンは保存したスタイルを使います。",
   "Applies to Claude Code providers with native workflow support. Workers already running keep their launch settings.":
     "ネイティブのワークフローに対応した Claude Code プロバイダーに適用されます。実行中のワーカーは起動時の設定を保ちます。",
   "agent instructions": "エージェントへの指示",
@@ -2585,7 +2585,7 @@ export const ja: PhraseCatalog = {
   "Comfortable (default)": "標準（デフォルト）",
   Wide: "広い",
   Full: "全幅",
-  "timeline detail": "タイムラインの詳細度",
+  "what threads show": "スレッドに表示する内容",
   "{panelAnimationDurationMs} ms": "{panelAnimationDurationMs} ミリ秒",
   "Panel animation duration": "パネルアニメーションの長さ",
   "panel animations": "パネルアニメーション",
@@ -3502,10 +3502,12 @@ export const ja: PhraseCatalog = {
   "Agent replies in this project": "このプロジェクトでのエージェントの返信",
   "This connection cannot change project settings.":
     "この接続ではプロジェクト設定を変更できません。",
-  "Show in this thread": "このスレッドで表示",
-  "Use default ({value})": "デフォルトを使用（{value}）",
-  "Show in every thread": "すべてのスレッドで表示",
-  "Cycle what every thread shows": "すべてのスレッドの表示内容を切り替え",
+  "Conversation shows": "会話に表示する内容",
+  "Applies to": "適用先",
+  "This thread": "このスレッド",
+  "Every thread": "すべてのスレッド",
+  "Other threads show {value}.": "ほかのスレッドの表示: {value}。",
+  "Next level": "次のレベル",
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     'プロンプトの本文に "ultrathink" が含まれています。この設定を変えるには削除してください。',
   "Not set: follows the Claude workflow mode": "未設定: Claude のワークフローモードに従う",
