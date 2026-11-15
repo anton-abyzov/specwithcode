@@ -3134,6 +3134,10 @@ export const ko: PhraseCatalog = {
   "Auto balance matching projects": "일치하는 프로젝트 자동 분산",
   "Add to another machine…": "다른 컴퓨터에 추가…",
   "Copy to another machine…": "다른 컴퓨터로 복사…",
+  Link: "연결",
+  "Link with the project on {machine}…": "{machine}의 프로젝트와 연결…",
+  "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
+    "이 프로젝트와 {machine}의 프로젝트를 코디네이터가 하나인 한 프로젝트로 만듭니다. 스레드와 파일은 그대로 있습니다.",
   "Leave this machine…": "이 컴퓨터 떠나기…",
   "Another project or no project": "다른 프로젝트 또는 프로젝트 없음",
   "Rename a machine": "컴퓨터 이름 변경",

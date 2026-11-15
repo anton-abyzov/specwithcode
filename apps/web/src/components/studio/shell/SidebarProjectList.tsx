@@ -734,17 +734,29 @@ export function ProjectRow(props: {
               ) : null}
               {props.linkSuggestion && !shared ? (
                 // Opens the link dialog, which compares both folders before anything links.
+                // A span, since the row is a link; it takes focus and Enter like a button.
                 <span
-                  className="sws-side-row-pin sws-side-row-link-suggestion"
-                  role="img"
-                  aria-label={`${props.linkSuggestion.label}. Link them?`}
+                  className="sws-side-row-link-suggestion"
+                  role="button"
+                  tabIndex={0}
+                  data-link-suggestion=""
+                  aria-label={`${props.linkSuggestion.label}. ${props.linkSuggestion.action}`}
+                  title={`${props.linkSuggestion.label}. ${props.linkSuggestion.action}`}
                   onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    props.linkSuggestion?.onLink();
+                  }}
+                  onDoubleClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
                     event.preventDefault();
                     event.stopPropagation();
                     props.linkSuggestion?.onLink();
                   }}
                 >
                   <Link2Icon aria-hidden />
+                  {tx("Link")}
                 </span>
               ) : null}
               {shared ? (

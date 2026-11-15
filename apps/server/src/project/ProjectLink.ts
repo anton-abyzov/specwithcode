@@ -29,6 +29,7 @@ import {
   ProjectFaviconPath,
   type ProjectLinkNoteWrite,
   type ProjectLinkSharedIcon,
+  type ProjectLinkSupersededNote,
   type ProjectLinkPrepareInput,
   type ProjectLinkSyncMembersInput,
   type ProjectLinkPrepareResult,
@@ -73,6 +74,8 @@ import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands
 import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
 import * as WorkerEpochStore from "../fleet/WorkerEpochStore.ts";
 import * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
+import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
+import { isSuperseded, withSuperseded } from "./ProjectLinkNotes.ts";
 import { CoordinatorRearmStore } from "./CoordinatorRearmStore.ts";
 import * as CoordinatorRole from "./CoordinatorRole.ts";
 import { CoordinatorStandbyStore } from "./CoordinatorStandbyStore.ts";
@@ -304,6 +307,9 @@ const make = Effect.gen(function* () {
   const rearmStore = yield* CoordinatorRearmStore;
   const publishRole = yield* CoordinatorRole.publisher;
   const routineCopies = Option.getOrUndefined(yield* Effect.serviceOption(RoutineCopies));
+  const memoryHistory = Option.getOrUndefined(
+    yield* Effect.serviceOption(LinkedMemoryHistory.LinkedMemoryHistory),
+  );
   let membersSync: LinkedMembersSync | undefined;
   const expedite = (projectId: ProjectId) =>
     Effect.suspend(() =>
@@ -403,6 +409,31 @@ const make = Effect.gen(function* () {
           );
       return pending.length;
     });
+
+  const recordSuperseded = (
+    projectId: ProjectId,
+    superseded: ReadonlyArray<ProjectLinkSupersededNote>,
+  ) =>
+    Effect.gen(function* () {
+      if (memoryHistory === undefined || superseded.length === 0) return 0;
+      const known: ProjectLinkSupersededNote[] = [];
+      for (const note of superseded) {
+        const current = yield* workspace
+          .readMemory({ projectId, name: note.name })
+          .pipe(Effect.option);
+        if (Option.isSome(current) && isSuperseded(current.value.content, note)) known.push(note);
+      }
+      if (known.length === 0) return 0;
+      yield* memoryHistory.modify(projectId, (state) => withSuperseded(state, known));
+      return known.length;
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not record the notes a link superseded", {
+          projectId,
+          cause,
+        }).pipe(Effect.as(0)),
+      ),
+    );
 
   const fingerprintOf = (workspaceRoot: string) => fingerprintFolder(workspaceRoot);
 
@@ -513,6 +544,11 @@ const make = Effect.gen(function* () {
       const shell = yield* coordinatorShell(member);
       const refusals = linkRefusals(project, shell?.activeRunId != null);
       const activity = shell?.latestRunRequestedAt ?? shell?.latestUserMessageAt ?? null;
+      // Named in the link review: they rest once this copy joins another as a member.
+      const routines =
+        routineCopies?.owned === undefined
+          ? undefined
+          : yield* routineCopies.owned(projectId).pipe(Effect.orElseSucceed(() => undefined));
       return {
         member,
         title: project.workspaceSettings?.logicalProject?.title ?? project.title,
@@ -522,8 +558,12 @@ const make = Effect.gen(function* () {
         fingerprint: yield* fingerprintOf(project.workspaceRoot),
         goal,
         instructions,
-        notes,
+        notes: notes.map((note) => ({
+          ...note,
+          contentSha256: LinkedMemoryHistory.memoryContentHash(note.content),
+        })),
         notesTruncated,
+        ...(routines === undefined ? {} : { routines }),
         lastCoordinatorActivityAt: activity === null ? null : DateTime.formatIso(activity),
         keepRefusal: refusals.keep,
         joinRefusal: refusals.join,
@@ -679,6 +719,7 @@ const make = Effect.gen(function* () {
         if (refusal) return yield* fail(refusal);
         const listed = identity.members.some((member) => sameMember(member, input.joining));
         const notesWritten = yield* writeNotes(project.id, input.notes);
+        yield* recordSuperseded(project.id, input.superseded ?? []);
         if (listed)
           return {
             operationId: input.operationId,

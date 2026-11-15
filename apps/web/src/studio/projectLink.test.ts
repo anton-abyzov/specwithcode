@@ -19,6 +19,8 @@ const {
   noteMergeComplete,
   noteMergeRows,
   noteWrites,
+  sameRepositoryLinkOffers,
+  supersededNotes,
   pendingSupersedes,
   replicaMembers,
   takeoverAvailability,
@@ -123,6 +125,22 @@ describe("notes", () => {
       { name: "new.md", content: "new", expectedRevision: null },
       { name: "plan-m4-2.md", content: "joining plan", expectedRevision: null, createOnly: true },
     ]);
+  });
+
+  it("names the joining versions a choice sets aside, for the first memory sync", () => {
+    const sha = "b".repeat(64);
+    const rows = noteMergeRows(kept, [
+      { ...note("plan.md", "joining plan"), contentSha256: sha },
+      { ...note("new.md", "new"), contentSha256: "c".repeat(64) },
+    ]);
+    const set = [{ name: "plan.md", contentSha256: sha }];
+    expect(supersededNotes(rows, { "plan.md": "kept" })).toEqual(set);
+    expect(supersededNotes(rows, { "plan.md": "both" })).toEqual(set);
+    // Keeping the joining text writes it to the kept copy; nothing is set aside.
+    expect(supersededNotes(rows, { "plan.md": "joining" })).toEqual([]);
+    expect(supersededNotes(rows, {})).toEqual([]);
+    // A joining server that sends no hash links as before.
+    expect(supersededNotes(noteMergeRows(kept, joining), { "plan.md": "kept" })).toEqual([]);
   });
 
   it("never lands a kept-both copy on a note the user chose to keep", () => {
@@ -508,6 +526,41 @@ describe("linkCandidates", () => {
 
   it("offers only the person's own code projects on other machines", () => {
     expect(ids(linkCandidates(projects, here, scratchRootFor as never, null))).toEqual(["m3:own"]);
+  });
+
+  it("offers a link to the newest same-repository project on each other machine", () => {
+    const repo = (canonicalKey: string) => ({
+      repositoryIdentity: { canonicalKey, locator: { remoteUrl: `https://${canonicalKey}.git` } },
+    });
+    const at = (item: EnvironmentProject, updatedAt: string, key = "github.com/acme/app") =>
+      ({ ...item, updatedAt, ...repo(key) }) as unknown as EnvironmentProject;
+    const own = at(copy("m4", "local", undefined), "2026-11-01T00:00:00.000Z");
+    const all = [
+      own,
+      at(project("m3", "old"), "2026-10-01T00:00:00.000Z"),
+      at(project("m3", "new"), "2026-11-10T00:00:00.000Z"),
+      at(project("m5", "other"), "2026-11-10T00:00:00.000Z", "github.com/acme/other"),
+      at(project("m5", "automated", { origin: "automated" }), "2026-11-10T00:00:00.000Z"),
+      at(project("m4", "second"), "2026-11-10T00:00:00.000Z"),
+      project("m1", "no-remote"),
+    ];
+    expect(ids(sameRepositoryLinkOffers(all, own, scratchRootFor as never))).toEqual(["m3:new"]);
+    // A project with no remote has nothing to compare.
+    expect(
+      sameRepositoryLinkOffers(all, copy("m4", "local", undefined), scratchRootFor as never),
+    ).toEqual([]);
+    // Copies already in this project are not offered again.
+    const shared = identity("shared", []);
+    const member = { ...at(copy("m3", "new", shared), "2026-11-10T00:00:00.000Z") };
+    expect(
+      ids(
+        sameRepositoryLinkOffers(
+          [member],
+          at(copy("m4", "local", shared), "2026-11-01T00:00:00.000Z"),
+          scratchRootFor as never,
+        ),
+      ),
+    ).toEqual([]);
   });
 
   it("keeps the named copy even when it is already linked, archived or automated", () => {

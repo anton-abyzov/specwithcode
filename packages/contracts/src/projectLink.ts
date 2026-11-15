@@ -128,8 +128,28 @@ export const ProjectLinkNote = Schema.Struct({
   name: ProjectMemoryName,
   revision: NonNegativeInt,
   content: bounded(PROJECT_MEMORY_FILE_BYTES),
+  /** The hash memory merges compare, from servers that send it (a link preview). */
+  contentSha256: Schema.optional(bounded(64)),
 });
 export type ProjectLinkNote = typeof ProjectLinkNote.Type;
+
+/** A routine this copy's coordinator owns, as the link review names it. */
+export const ProjectLinkRoutine = Schema.Struct({
+  id: bounded(256),
+  title: bounded(1000),
+});
+export type ProjectLinkRoutine = typeof ProjectLinkRoutine.Type;
+
+/**
+ * A joining copy's version of a note the person chose not to keep. The kept copy
+ * records it as an earlier version of its own note, so the first memory merge
+ * replaces it on the joining copy instead of treating the two as concurrent edits.
+ */
+export const ProjectLinkSupersededNote = Schema.Struct({
+  name: ProjectMemoryName,
+  contentSha256: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
+});
+export type ProjectLinkSupersededNote = typeof ProjectLinkSupersededNote.Type;
 
 /** Why this copy cannot take a role; the UI names the fix. */
 export const ProjectLinkRefusal = Schema.Literals([
@@ -215,6 +235,11 @@ export const ProjectLinkPreview = Schema.Struct({
   replica: Schema.optional(Schema.NullOr(ProjectCoordinatorReplica)),
   /** After a takeover: coordinator turns this copy ran while it was unreachable. */
   ranWhileDisconnected: Schema.optional(Schema.Array(ProjectDisconnectedTurn)),
+  /**
+   * The routines this copy's coordinator owns. They stop running when this copy
+   * joins another as a member. Absent from servers that do not report them.
+   */
+  routines: Schema.optional(Schema.Array(ProjectLinkRoutine).check(Schema.isMaxLength(200))),
 });
 export type ProjectLinkPreview = typeof ProjectLinkPreview.Type;
 
@@ -286,6 +311,10 @@ export const ProjectLinkCommitInput = Schema.Struct({
   projectId: ProjectId,
   joining: LogicalProjectMember,
   notes: NoteWrites,
+  /** The joining copy's versions the person chose not to keep; older servers ignore it. */
+  superseded: Schema.optional(
+    Schema.Array(ProjectLinkSupersededNote).check(Schema.isMaxLength(4096)),
+  ),
 });
 export type ProjectLinkCommitInput = typeof ProjectLinkCommitInput.Type;
 export const ProjectLinkCommitResult = Schema.Struct({

@@ -54,6 +54,16 @@ export class RoutineCopies extends Context.Service<
       readonly logicalProjectId: string;
       readonly routines: ReadonlyArray<CoordinatorRoutineCopy>;
     }) => Effect.Effect<void, ScheduledTaskError>;
+    /**
+     * The project's coordinator-owned routines that are turned on, by title, for
+     * the link review. Reads only: unlike `snapshot` it marks nothing.
+     */
+    readonly owned?: (
+      projectId: ProjectId,
+    ) => Effect.Effect<
+      ReadonlyArray<{ readonly id: string; readonly title: string }>,
+      ScheduledTaskError
+    >;
   }
 >()("specweave-studio/scheduledTasks/ScheduledTaskCopies/RoutineCopies") {}
 
@@ -308,5 +318,21 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
         );
       });
 
-    return RoutineCopies.of({ snapshot, replace });
+    const owned: NonNullable<RoutineCopies["Service"]["owned"]> = (projectId) =>
+      deps.listTasks.pipe(
+        Effect.map((tasks) =>
+          tasks
+            .filter(
+              (task) =>
+                task.projectId === projectId &&
+                task.enabled &&
+                isCoordinatorOwnedRoutine(task) &&
+                task.schedule.type !== "webhook",
+            )
+            .slice(0, COORDINATOR_ROUTINE_COPIES_MAX)
+            .map((task) => ({ id: task.id, title: task.title.slice(0, 1000) })),
+        ),
+      );
+
+    return RoutineCopies.of({ snapshot, replace, owned });
   });

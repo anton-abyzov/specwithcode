@@ -10,8 +10,10 @@ import {
   ProjectLinkError,
   logicalProjectMemberKey,
   type LogicalProjectMember,
+  repositoryGroupingKeyOf,
   type ProjectLinkNote,
   type ProjectLinkNoteWrite,
+  type ProjectLinkSupersededNote,
   type EnvironmentId,
   type ProjectId,
   type ProjectLinkAcceptInput,
@@ -310,6 +312,33 @@ export function linkCandidates<P extends EnvironmentProject>(
   });
 }
 
+/**
+ * Projects on other machines that track the same repository as `project` and are
+ * not part of it: what "Link with the project on <machine>…" offers. One per
+ * machine, the most recently updated. Nothing is offered for a project whose
+ * repository has no remote to compare.
+ */
+export function sameRepositoryLinkOffers<P extends EnvironmentProject>(
+  projects: ReadonlyArray<P>,
+  project: Pick<EnvironmentProject, "environmentId" | "workspaceSettings" | "repositoryIdentity">,
+  scratchRootFor: ScratchRootLookup,
+): P[] {
+  const keyOf = (item: Pick<EnvironmentProject, "repositoryIdentity">) =>
+    item.repositoryIdentity
+      ? (repositoryGroupingKeyOf(item.repositoryIdentity)?.toLowerCase() ?? null)
+      : null;
+  const key = keyOf(project);
+  if (key === null) return [];
+  const offers = new Map<string, P>();
+  for (const item of linkCandidates(projects, project, scratchRootFor, null)) {
+    if (keyOf(item) !== key) continue;
+    const listed = offers.get(item.environmentId);
+    if (!listed || item.updatedAt.localeCompare(listed.updatedAt) > 0)
+      offers.set(item.environmentId, item);
+  }
+  return [...offers.values()];
+}
+
 /** The copy that keeps its coordinator by default: the one used most recently. */
 export function defaultKeptSide(
   here: Pick<ProjectLinkPreview, "lastCoordinatorActivityAt" | "keepRefusal">,
@@ -409,6 +438,30 @@ export function noteWrites(
     if (row.kind === "conflict" && row.joining && row.kept && choices[row.name] === "both")
       pushKeptBoth(writes, taken, row.name, row.joining.content, joiningMachine);
   return writes;
+}
+
+/**
+ * The joining versions the review set aside in favour of the kept copy's text
+ * ("keep the kept machine's" and "keep both"). The kept copy records each as an
+ * earlier version of its note, so the first memory sync hands the joining copy
+ * the kept text instead of marking the note as edited on both machines. Empty
+ * when the joining server sends no hashes.
+ */
+export function supersededNotes(
+  rows: ReadonlyArray<NoteMergeRow>,
+  choices: Readonly<Record<string, NoteChoice>>,
+): ProjectLinkSupersededNote[] {
+  return rows.flatMap((row) => {
+    const choice = choices[row.name];
+    const hash = row.joining?.contentSha256;
+    return row.kind === "conflict" &&
+      row.kept &&
+      hash !== undefined &&
+      /^[0-9a-f]{64}$/u.test(hash) &&
+      (choice === "kept" || choice === "both")
+      ? [{ name: row.name, contentSha256: hash }]
+      : [];
+  });
 }
 
 /**

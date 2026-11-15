@@ -23,6 +23,7 @@ import {
   noteMergeComplete,
   noteMergeRows,
   noteWrites,
+  supersededNotes,
   linkCandidates,
   projectLink,
   projectLinkStorageKey,
@@ -336,6 +337,7 @@ export function ProjectLinkDialog({
           projectId: sides.kept.member.projectId,
           joining: accepted.value.member,
           notes: noteWrites(rows, choices, sides.joiningLabel, sides.kept.notes),
+          superseded: supersededNotes(rows, choices),
         },
       });
       if (committed._tag === "Failure") throw squashAtomCommandFailure(committed);
@@ -513,6 +515,11 @@ export function ProjectLinkDialog({
             )}
           </DialogFooter>
         )}
+        {complete && (
+          <DialogFooter>
+            <Button onClick={() => onOpenChange(false)}>Done</Button>
+          </DialogFooter>
+        )}
       </DialogPopup>
     </Dialog>
   );
@@ -678,6 +685,26 @@ function LinkReview({
           </p>
         )}
       </section>
+      {(sides.joining.routines?.length ?? 0) > 0 && (
+        <section aria-label="Routines" className="space-y-2">
+          <h3 className="font-medium">Routines</h3>
+          <p className="text-muted-foreground">
+            {sides.joining.routines!.length === 1
+              ? `1 routine on ${joiningLabel} stops running.`
+              : `${sides.joining.routines!.length} routines on ${joiningLabel} stop running.`}{" "}
+            A project&apos;s routines run only on the coordinator&apos;s machine, {keptLabel}. They
+            stay listed on {joiningLabel}, where you can turn them off or delete them; create the
+            ones you still need on {keptLabel}.
+          </p>
+          <ul className="space-y-1">
+            {sides.joining.routines!.map((routine) => (
+              <li key={routine.id} className="break-all rounded-lg border p-2">
+                {routine.title}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {(["goal", "instructions"] as const).map((field) =>
         sides.joining[field].trim() && sides.joining[field] !== sides.kept[field] ? (
           <details key={field} className="rounded-lg border p-3">
