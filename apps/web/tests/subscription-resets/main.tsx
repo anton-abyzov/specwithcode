@@ -1,0 +1,177 @@
+// The real Subscriptions rows and reset report over fictional accounts.
+// `?case=empty` shows the states before any reading; `?theme=dark` the theme.
+// The clock is the one the verifier freezes. Nothing here talks to a server.
+import { createRoot } from "react-dom/client";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  type ServerProviderUsageWindow,
+  type UsageResetPeriod,
+} from "@specweave-studio/contracts";
+import type { LimitAccount } from "@specweave-studio/shared/usageLimits";
+import { limitAccountKey } from "@specweave-studio/shared/usageLimits";
+import { barColor } from "../../src/components/usage/UsageLimits";
+import { ResetReport } from "../../src/components/usage/subscriptions/ResetReport";
+import { SubscriptionRow } from "../../src/components/usage/subscriptions/SubscriptionRow";
+import { subscriptionLabel } from "../../src/components/usage/subscriptions/SubscriptionsView";
+import { resetReport } from "../../src/components/usage/subscriptions/resetReportModel";
+import { subscriptionRows } from "../../src/components/usage/subscriptions/subscriptionRows";
+import "./fixture.css";
+
+const params = new URLSearchParams(location.search);
+const dark = params.get("theme") === "dark";
+document.documentElement.classList.toggle("dark", dark);
+const empty = params.get("case") === "empty";
+
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+const now = Date.now();
+const iso = (at: number) => new Date(at).toISOString();
+const codex = ProviderDriverKind.make("codex");
+const claude = ProviderDriverKind.make("claudeAgent");
+
+const window = (
+  id: string,
+  kind: ServerProviderUsageWindow["kind"],
+  label: string,
+  minutes: number,
+  usedPercent: number,
+  resetsIn: number,
+): ServerProviderUsageWindow => ({
+  id,
+  kind,
+  label,
+  windowDurationMins: minutes,
+  usedPercent,
+  resetsAt: iso(now + resetsIn),
+});
+
+const account = (
+  key: string,
+  driver: LimitAccount["driver"],
+  email: string,
+  plan: string,
+  machine: string,
+  limits: Omit<LimitAccount["limits"], "checkedAt"> & { readonly checkedAt?: string },
+  offline = false,
+): LimitAccount => ({
+  key,
+  driver,
+  displayName: null,
+  email,
+  plan,
+  accentColor: undefined,
+  environments: [{ environmentId: EnvironmentId.make(`env-${machine}`), label: machine }],
+  sourceLabel: null,
+  offline,
+  redeem: null,
+  limits: { checkedAt: iso(now - 4 * 60_000), ...limits },
+});
+
+const accounts: LimitAccount[] = empty
+  ? []
+  : [
+      account("claude", claude, "ada@example.com", "Max 20x", "studio-mac", {
+        windows: [
+          window("five_hour", "session", "Session", 300, 29, 2 * HOUR + 10 * 60_000),
+          window("seven_day", "weekly", "Weekly", 10_080, 82, 2 * DAY + 5 * HOUR),
+        ],
+        renewsAt: iso(now + 3 * DAY),
+      }),
+      account("codex", codex, "ada@example.com", "Pro", "mini", {
+        windows: [window("secondary", "weekly", "Weekly", 10_080, 38, 9 * HOUR)],
+        resetCredits: { availableCount: 2, nextExpiresAt: iso(now + 7 * DAY) },
+      }),
+      account(
+        "codex-2",
+        codex,
+        "team@example.com",
+        "Plus",
+        "linux-box",
+        {
+          checkedAt: iso(now - 3 * HOUR),
+          windows: [window("secondary", "weekly", "Weekly", 10_080, 60, 4 * DAY)],
+        },
+        true,
+      ),
+    ];
+
+const period = (
+  accountKey: string,
+  driver: UsageResetPeriod["driver"],
+  windowId: string,
+  weeksAgo: number,
+  used: number,
+  lastReadBefore = HOUR,
+): UsageResetPeriod => {
+  const endedAt = now - weeksAgo * 7 * DAY - 2 * DAY;
+  return {
+    accountKey,
+    driver,
+    windowId,
+    windowKind: "weekly",
+    startedAt: iso(endedAt - 7 * DAY),
+    endedAt: iso(endedAt),
+    lastReadAt: iso(endedAt - lastReadBefore),
+    usedPercentAtReset: used,
+    lostPercent: 100 - used,
+    cause: "scheduled",
+  };
+};
+
+const periods: UsageResetPeriod[] = empty
+  ? []
+  : [
+      ...[82, 95, 90, 96].map((used, index) =>
+        period("claudeAgent:ada@example.com", claude, "seven_day", 3 - index, used),
+      ),
+      ...[40, 55, 48, 59].map((used, index) =>
+        period("codex:ada@example.com", codex, "secondary", 3 - index, used),
+      ),
+      period("codex:team@example.com", codex, "secondary", 1, 27, 9 * HOUR),
+    ];
+
+const byKey = new Map(
+  accounts.map((entry) => [limitAccountKey(entry.driver, entry.email, entry.limits) ?? "", entry]),
+);
+const labelOf = (key: string) => {
+  const entry = byKey.get(key);
+  return entry ? subscriptionLabel(entry) : key;
+};
+const colorOf = (key: string) => {
+  const entry = byKey.get(key);
+  return entry ? barColor(entry.driver) : "var(--foreground)";
+};
+const rows = subscriptionRows(accounts, periods, { "codex:ada@example.com": 2 }, now);
+const report = resetReport(periods, now, {
+  // 300M tokens behind Claude's used share; Codex has two accounts, so no estimate.
+  tokensSpent: ({ driver }) => (driver === claude ? 300_000_000 : null),
+});
+
+createRoot(document.getElementById("root")!).render(
+  <div className="min-h-screen bg-background text-foreground">
+  <main className="mx-auto flex max-w-5xl flex-col gap-6 p-4" data-fixture-ready="">
+    {rows.length === 0 ? (
+      <p className="text-sm text-muted-foreground" data-fixture-empty="">
+        No subscription reports its limits yet. Sign in to a provider on a connected machine.
+      </p>
+    ) : (
+      <div className="rounded-lg border border-border/60">
+        {rows.map((row) => (
+          <SubscriptionRow
+            key={row.key}
+            row={row}
+            color={colorOf(row.accountKey ?? "")}
+            now={now}
+            onSetDay={() => undefined}
+          />
+        ))}
+      </div>
+    )}
+    <section className="flex flex-col gap-3">
+      <h3 className="text-sm font-medium">Used against lost at each reset</h3>
+      <ResetReport report={report} labelOf={labelOf} colorOf={colorOf} />
+    </section>
+  </main>
+  </div>,
+);
