@@ -187,6 +187,8 @@ if (params.get("scenario") === "automated-attention") {
   ] as const;
   const asking = ["easychamp", "move-check", "hello", "client"];
   publish({
+    // The check's project is open: the sidebar lists it alone under the projects.
+    params: { projectKey: "host:/Users/me/Projects/scratch/swc-1164-handoff3" },
     groups: projects.map(([id, name, root, settings]) => ({
       projectKey: `host:${root}`,
       displayName: name,

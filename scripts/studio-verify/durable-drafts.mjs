@@ -265,14 +265,20 @@ try {
   const page = await first.context.newPage();
   await page.goto(origin, { waitUntil: "networkidle" });
   const projectLink = page.getByRole("link", { name: "Durable drafts proof", exact: true });
-  // A project in a scratch folder is listed under the collapsed Automated group.
-  if (!(await projectLink.isVisible().catch(() => false))) {
+  // A project in a scratch folder is made by checks: Settings > Archive lists it.
+  const listed = await projectLink
+    .waitFor({ timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+  if (listed) await projectLink.click();
+  else {
+    await page.goto(new URL("/settings/archived", origin).href, { waitUntil: "networkidle" });
     await page
-      .getByRole("button", { name: /^Automated/ })
+      .locator("[data-automated-projects], [data-archived-projects]")
+      .getByRole("link", { name: "Durable drafts proof", exact: true })
       .first()
       .click();
   }
-  await projectLink.click();
   await page.locator("#project-prompt").waitFor();
   const projectUrl = page.url();
   await page.locator("#project-prompt").fill(COORDINATOR_TEXT);

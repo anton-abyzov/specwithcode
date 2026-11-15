@@ -249,12 +249,23 @@ try {
   });
   await page.goto(`${origin}/`);
   await page.waitForLoadState("networkidle").catch(() => undefined);
-  await page
-    .getByText(/^Automated \(\d+\)$/)
-    .first()
-    .click();
+  // A check's project is not in the sidebar (1.0.306+); Settings > Archive lists it.
+  // Older builds folded it under "Automated (N)".
   const sidebarProject = (title) => page.getByText(title, { exact: true }).first();
-  await sidebarProject("Atlas Studio").click();
+  const automated = page.getByText(/^Automated \(\d+\)$/).first();
+  if (await automated.isVisible().catch(() => false)) {
+    await automated.click();
+    await sidebarProject("Atlas Studio").click();
+  } else if (await sidebarProject("Atlas Studio").isVisible().catch(() => false)) {
+    await sidebarProject("Atlas Studio").click();
+  } else {
+    await page.goto(`${origin}/settings/archived`);
+    await page
+      .locator("[data-automated-projects], [data-archived-projects]")
+      .getByRole("link", { name: "Atlas Studio", exact: true })
+      .first()
+      .click();
+  }
   const prompt = page.locator("#project-prompt:visible");
   // A loaded machine can answer "busy, your draft is kept": send again until the
   // composer empties, which is when the host has taken the message.

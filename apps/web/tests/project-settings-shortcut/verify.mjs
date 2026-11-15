@@ -286,19 +286,29 @@ async function main() {
         await page.screenshot({ path: NodePath.join(reportDir, "start-failed.png") });
         throw error;
       });
-    // Seeded projects sit in the sidebar's collapsed Automated group.
+    // Seeded projects are made by checks: older builds fold them under "Automated (N)",
+    // newer ones list them in Settings > Archive instead of the sidebar.
+    const readLinks = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll("a[href]")].map((a) => ({
+          href: a.getAttribute("href"),
+          text: a.textContent.trim().slice(0, 60),
+        })),
+      );
     await page
       .getByText(/^Automated \(\d+\)$/)
       .first()
-      .click()
+      .click({ timeout: 3000 })
       .catch(() => {});
     await sleep(500);
-    const links = await page.evaluate(() =>
-      [...document.querySelectorAll("a[href]")].map((a) => ({
-        href: a.getAttribute("href"),
-        text: a.textContent.trim().slice(0, 60),
-      })),
-    );
+    let links = await readLinks();
+    if (!links.some((link) => link.href.startsWith("/projects/") && link.text.endsWith("load-bench-2"))) {
+      await page.goto(origin + "/settings/archived");
+      await page.locator("[data-automated-projects] a").first().waitFor({ timeout: 30_000 }).catch(() => {});
+      links = [...links, ...(await readLinks())];
+      await page.goto(origin + "/");
+      await page.getByText("Bench thread", { exact: false }).first().waitFor({ timeout: 90_000 });
+    }
     NodeFS.writeFileSync(NodePath.join(reportDir, "links.json"), JSON.stringify(links, null, 2));
     const projectLink = links.find(
       (link) => link.href.startsWith("/projects/") && link.text.endsWith("load-bench-2"),
