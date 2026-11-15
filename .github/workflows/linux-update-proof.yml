@@ -104,7 +104,7 @@ jobs:
         env:
           PHASES: ${{ inputs.phases || 'update,retry,replaced,signed' }}
         # The versioned .deb by name: from 1.0.311 the artifact and the release also carry the
-        # version-free SpecWithCode-amd64.deb, so a *-amd64.deb glob matches two files.
+        # version-free SpecWithCode-amd64.deb, so a glob on the amd64 suffix matches two files.
         run: |
           node scripts/linux-update-proof.mjs \
             --previous "$RUNNER_TEMP/previous/SpecWithCode-$PREVIOUS-amd64.deb" \
