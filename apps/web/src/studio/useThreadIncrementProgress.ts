@@ -22,6 +22,14 @@ import { useEnvironmentScope, useEnvironmentScopeAccess } from "../state/session
 import { projectWorkspace } from "./projectWorkspace";
 
 const REFRESH_MS = 15_000;
+/**
+ * A machine that takes seconds to answer is busy; polling it at the usual
+ * rate only adds to its queue. After a slow read, the next one waits this
+ * many times as long as that read took.
+ */
+const SLOW_READ_BACKOFF = 4;
+/** The longest a slow machine waits between timed reads. */
+const MAX_REFRESH_MS = 5 * 60_000;
 
 /** Bumped after every hand-made link change, so increment progress queries read again. */
 export const incrementLinkRevisionAtom = Atom.make(0).pipe(
@@ -72,6 +80,11 @@ export function makeProgressRefreshGate(options: {
   // The query reads once on mount.
   let lastRefreshAt = now();
   let pending = false;
+  let readStartedAt: number | null = null;
+  let lastReadMs = 0;
+  /** The refresh period, stretched while the machine answers slowly. */
+  const effectivePeriod = () =>
+    Math.max(periodMs, Math.min(MAX_REFRESH_MS, lastReadMs * SLOW_READ_BACKOFF));
   let wanted: "none" | "after-period" | "now" = "none";
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -84,7 +97,7 @@ export function makeProgressRefreshGate(options: {
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
     if (wanted === "none" || pending) return;
-    const wait = wanted === "now" ? 0 : lastRefreshAt + periodMs - now();
+    const wait = wanted === "now" ? 0 : lastRefreshAt + effectivePeriod() - now();
     if (wait > 0) timer = setTimeout(flush, wait);
     else run();
   };
@@ -102,10 +115,18 @@ export function makeProgressRefreshGate(options: {
     },
     /** The slow timer fired while the page is visible. */
     tick: () => {
-      if (!pending) run();
+      if (pending) return;
+      const period = effectivePeriod();
+      if (period > periodMs && now() - lastRefreshAt < period) return;
+      run();
     },
     /** Whether the query is reading; a refresh owed meanwhile runs when it settles. */
     setPending: (next: boolean) => {
+      if (next && !pending) readStartedAt = now();
+      if (!next && pending && readStartedAt !== null) {
+        lastReadMs = now() - readStartedAt;
+        readStartedAt = null;
+      }
       pending = next;
       flush();
     },

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   acknowledgeRpcRequest,
   getSlowRpcAckRequests,
+  groupSlowRpcAckRequests,
   resetRequestLatencyStateForTests,
   trackRpcRequestSent,
   LONG_RUNNING_RPC_ACK_THRESHOLD_MS,
@@ -93,6 +94,23 @@ describe("requestLatencyState", () => {
         thresholdMs: LONG_RUNNING_RPC_ACK_THRESHOLD_MS,
       },
     ]);
+  });
+
+  it("remembers which machine a slow request went to and groups by machine", () => {
+    trackRpcRequestSent("a1", "git.status", "git.status", "env-m4");
+    trackRpcRequestSent("b1", "git.status", "git.status", "env-m1");
+    trackRpcRequestSent("a2", "server.getConfig", "server.getConfig", "env-m4");
+    trackRpcRequestSent("n1", "server.getConfig");
+    vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS);
+
+    const groups = groupSlowRpcAckRequests(getSlowRpcAckRequests());
+    expect(groups.map((group) => group.environmentId)).toEqual(["env-m4", "env-m1", null]);
+    expect(groups[0]?.requests.map((request) => request.requestId)).toEqual(["a1", "a2"]);
+
+    acknowledgeRpcRequest("b1");
+    expect(
+      groupSlowRpcAckRequests(getSlowRpcAckRequests()).map((group) => group.environmentId),
+    ).toEqual(["env-m4", null]);
   });
 
   it("evicts the oldest pending requests once the tracker reaches capacity", () => {
