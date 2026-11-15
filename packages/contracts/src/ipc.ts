@@ -463,9 +463,34 @@ export const DesktopCommandLineToolActionSchema = Schema.Literals([
 ]);
 export type DesktopCommandLineToolAction = typeof DesktopCommandLineToolActionSchema.Type;
 
+export const DesktopCommandLineToolReasonSchema = Schema.Struct({
+  code: Schema.Literals([
+    "development",
+    "temporary-location",
+    "missing-shim",
+    "blocked-managed",
+    "blocked-other",
+    "changed",
+    "unknown-shell",
+    "fish-file-exists",
+    "startup-file-unreadable",
+    "startup-file-write",
+    "remove-partial",
+    "remove-partial-path",
+    "path-read",
+    "path-write",
+    "path-changed",
+    "unsafe-path",
+    "write-failed",
+  ]),
+  path: Schema.NullOr(Schema.String),
+  errno: Schema.NullOr(Schema.String),
+});
+export type DesktopCommandLineToolReason = typeof DesktopCommandLineToolReasonSchema.Type;
+
 export const DesktopCommandLineToolResultSchema = Schema.Struct({
   ok: Schema.Boolean,
-  reason: Schema.NullOr(Schema.String),
+  reason: Schema.NullOr(DesktopCommandLineToolReasonSchema),
   state: DesktopCommandLineToolStateSchema,
 });
 export type DesktopCommandLineToolResult = typeof DesktopCommandLineToolResultSchema.Type;

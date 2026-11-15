@@ -5057,4 +5057,29 @@ export const ru: PhraseCatalog = {
     "Эта копия приложения запущена с образа диска или из временной папки. Сначала перенесите SpecWithCode в «Программы» и откройте оттуда.",
   "This copy of the app has no specwithcode command inside it. Reinstall the app.":
     "В этой копии приложения нет команды specwithcode. Переустановите приложение.",
+  "Add to PATH": "Добавить в PATH",
+  "permission denied": "нет доступа",
+  "not found": "не найден",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "Пока приложение работало, в {path} что-то изменилось, поэтому ничего не заменено. Проверьте и попробуйте снова.",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "Приложение не знает файл запуска этой оболочки. Добавьте строку сами.",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path} уже существует и не изменён. Добавьте строку сами.",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "{path} не удалось прочитать полностью, поэтому приложение его не изменило. Добавьте строку сами.",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "Не удалось изменить {path} ({error}). Добавьте строку сами.",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "Команда удалена, но строку в {path} убрать не удалось ({error}). Удалите строку с пометкой Added by SpecWithCode сами.",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "Команда удалена, но {folder} всё ещё в вашем пользовательском PATH. Уберите его сами в переменных среды.",
+  "Could not read your user PATH.": "Не удалось прочитать ваш пользовательский PATH.",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "Не удалось обновить ваш пользовательский PATH. Добавьте в него {folder} сами.",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "Ваш пользовательский PATH изменился, пока приложение его обновляло. Ничего не изменено; попробуйте снова.",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "Путь к AppImage нельзя записать в команду. Переместите AppImage в папку с простым путём и откройте его оттуда.",
+  "Could not write {path} ({error}).": "Не удалось записать {path} ({error}).",
 };

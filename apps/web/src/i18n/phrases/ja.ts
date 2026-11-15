@@ -5061,4 +5061,29 @@ export const ja: PhraseCatalog = {
     "このアプリはディスクイメージか一時フォルダから実行されています。先に SpecWithCode をアプリケーションに移動し、そこから開いてください。",
   "This copy of the app has no specwithcode command inside it. Reinstall the app.":
     "このアプリには specwithcode コマンドが入っていません。アプリを再インストールしてください。",
+  "Add to PATH": "PATH に追加",
+  "permission denied": "アクセス権がありません",
+  "not found": "見つかりません",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "処理中に {path} が変更されたため、何も置き換えていません。確認してからもう一度お試しください。",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "このシェルの起動ファイルが分かりません。行を自分で追加してください。",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path} は既にあるため変更していません。行を自分で追加してください。",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "{path} を最後まで読めなかったため変更していません。行を自分で追加してください。",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "{path} を変更できませんでした（{error}）。行を自分で追加してください。",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "コマンドは削除しましたが、{path} の行を取り除けませんでした（{error}）。Added by SpecWithCode と書かれた行を自分で削除してください。",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "コマンドは削除しましたが、{folder} がユーザー PATH に残っています。環境変数から自分で削除してください。",
+  "Could not read your user PATH.": "ユーザー PATH を読み取れませんでした。",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "ユーザー PATH を更新できませんでした。{folder} を自分で追加してください。",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "更新中にユーザー PATH が変わりました。何も変更していません。もう一度お試しください。",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "AppImage のパスをコマンドに書き込めません。AppImage を単純なフォルダーに移動し、そこから開いてください。",
+  "Could not write {path} ({error}).": "{path} を書き込めませんでした（{error}）。",
 };

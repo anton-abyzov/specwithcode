@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off globalDate:off -- The child-process deadline and clock live at this Node boundary, outside any Effect fiber.
 // @effect-diagnostics nodeBuiltinImport:off - Exclusive creates, no-follow reads and in-place appends on the user's own files, which effect/FileSystem cannot express.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -31,6 +32,20 @@ const nodeFileSystem: CommandLineToolFileSystem = {
     NodeFSP.stat(path).then(
       () => true,
       () => false,
+    ),
+  realpath: (path) => NodeFSP.realpath(path).catch(() => null),
+  isExecutableFile: async (path) => {
+    const info = await NodeFSP.stat(path).catch(() => null);
+    if (info === null || !info.isFile()) return false;
+    return NodeFSP.access(path, NodeFS.constants.X_OK).then(
+      () => true,
+      () => false,
+    );
+  },
+  isOnReadOnlyVolume: (path) =>
+    NodeFSP.access(path, NodeFS.constants.W_OK).then(
+      () => false,
+      (error: NodeJS.ErrnoException) => error.code === "EROFS",
     ),
   readFile: async (path, maxBytes) => {
     // O_NONBLOCK: a FIFO at this path must not wait for a writer.
@@ -73,41 +88,78 @@ const nodeFileSystem: CommandLineToolFileSystem = {
   rewriteFile: (path, text) => NodeFSP.writeFile(path, text),
 };
 
-const run: CommandLineToolHost["run"] = (command, args, options) =>
-  new Promise<RunResult | null>((resolve) => {
-    let settled = false;
-    const done = (value: RunResult | null) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-    try {
-      const child = NodeChildProcess.execFile(
-        command,
-        [...args],
-        {
-          timeout: options.timeoutMs,
-          maxBuffer: MAX_OUTPUT_BYTES,
+/** How long to wait for output after the program itself exits, when something it started holds the pipes. */
+const DRAIN_AFTER_EXIT_MS = 250;
+
+const makeRun =
+  (platform: CommandLineToolPlatform): CommandLineToolHost["run"] =>
+  (command, args, options) =>
+    new Promise<RunResult | null>((resolve) => {
+      // Its own process group on macOS and Linux, so a timeout stops whatever the shell started.
+      const detached = platform !== "win32";
+      let settled = false;
+      let child: NodeChildProcess.ChildProcess;
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      let size = 0;
+      const collect = (into: Buffer[]) => (chunk: Buffer) => {
+        size += chunk.length;
+        if (size <= MAX_OUTPUT_BYTES) into.push(chunk);
+      };
+      const stop = () => {
+        try {
+          if (detached && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+          else child.kill("SIGKILL");
+        } catch {
+          // Already gone.
+        }
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      };
+      const done = (value: RunResult | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const finish = (code: number | null) =>
+        done({
+          code,
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8"),
+        });
+      try {
+        child = NodeChildProcess.spawn(command, [...args], {
+          detached,
+          stdio: ["ignore", "pipe", "pipe"],
           windowsHide: true,
           windowsVerbatimArguments: command.toLowerCase().endsWith("cmd.exe"),
           env:
             options.inheritEnv === false
               ? { ...options.env }
               : { ...process.env, ...options.env, ELECTRON_RUN_AS_NODE: undefined },
-        },
-        (error, stdout, stderr) => {
-          if (error && (error as { killed?: boolean }).killed) return done(null);
-          const code = error === null ? 0 : typeof error.code === "number" ? error.code : null;
-          if (code === null && error !== null) return done(null);
-          done({ code, stdout: String(stdout), stderr: String(stderr) });
-        },
-      );
-      // A shell probe must never wait on input.
-      child.stdin?.end();
-    } catch {
-      done(null);
-    }
-  });
+        });
+      } catch {
+        resolve(null);
+        return;
+      }
+      const timer = setTimeout(() => {
+        stop();
+        done(null);
+      }, options.timeoutMs);
+      child.stdout?.on("data", collect(stdout));
+      child.stderr?.on("data", collect(stderr));
+      child.on("error", () => done(null));
+      child.on("close", (code) => finish(code));
+      child.on("exit", (code) => {
+        // A daemon from a startup file may keep the pipes open: answer with what came so far.
+        setTimeout(() => {
+          if (settled) return;
+          stop();
+          finish(code);
+        }, DRAIN_AFTER_EXIT_MS).unref();
+      });
+    });
 
 /** The running app's bundle: the `.app` on macOS, the install folder elsewhere. */
 export const bundlePathFor = (platform: NodeJS.Platform, resourcesPath: string): string => {
@@ -144,7 +196,8 @@ export const makeNodeCommandLineToolHost = (input: {
     bundlePath: bundlePathFor(platform, input.resourcesPath),
     resourcesPath: input.resourcesPath,
     fs: nodeFileSystem,
-    run,
+    run: makeRun(platform),
     uniqueSuffix: () => NodeCrypto.randomUUID(),
+    now: () => Date.now(),
   };
 };

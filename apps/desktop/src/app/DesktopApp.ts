@@ -623,9 +623,19 @@ const startup = Effect.gen(function* () {
       Effect.catchCause((cause) =>
         logStartupError("could not remove an earlier app copy", { cause: Cause.pretty(cause) }),
       ),
-      // After the earlier copies are gone: a specwithcode command that pointed into one of them
-      // (or into a copy the person moved or deleted) is pointed at this app again.
+      // Again once the earlier copies are gone, for a command that pointed into one of them.
       Effect.andThen(repairCommandLineToolAtLaunch()),
+      Effect.catchCause((cause) =>
+        logStartupError("could not repair the specwithcode command", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    ),
+  );
+  // A specwithcode command that points into a copy of the app that is gone (moved or deleted) is
+  // pointed at this app right away, not only after the slower trash step above.
+  yield* Effect.forkScoped(
+    repairCommandLineToolAtLaunch().pipe(
       Effect.catchCause((cause) =>
         logStartupError("could not repair the specwithcode command", {
           cause: Cause.pretty(cause),

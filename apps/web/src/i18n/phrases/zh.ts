@@ -4861,4 +4861,29 @@ export const zh: PhraseCatalog = {
     "此应用副本从磁盘映像或临时文件夹运行。请先把 SpecWithCode 移到“应用程序”并从那里打开。",
   "This copy of the app has no specwithcode command inside it. Reinstall the app.":
     "此应用副本中没有 specwithcode 命令。请重新安装应用。",
+  "Add to PATH": "添加到 PATH",
+  "permission denied": "没有权限",
+  "not found": "未找到",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "应用处理期间 {path} 发生了变化，因此没有替换任何内容。请检查后重试。",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "应用不知道此 shell 的启动文件。请自行添加这一行。",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path} 已存在，未作更改。请自行添加这一行。",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "无法完整读取 {path}，因此应用没有修改它。请自行添加这一行。",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "无法修改 {path}（{error}）。请自行添加这一行。",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "命令已删除，但无法移除 {path} 中的那一行（{error}）。请自行删除标有 Added by SpecWithCode 的行。",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "命令已删除，但 {folder} 仍在你的用户 PATH 中。请在“环境变量”中自行移除。",
+  "Could not read your user PATH.": "无法读取你的用户 PATH。",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "无法更新你的用户 PATH。请自行添加 {folder}。",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "应用更新期间你的用户 PATH 发生了变化。未作任何更改，请重试。",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "无法把 AppImage 的路径写入命令。请把 AppImage 移到更简单的文件夹，再从那里打开。",
+  "Could not write {path} ({error}).": "无法写入 {path}（{error}）。",
 };

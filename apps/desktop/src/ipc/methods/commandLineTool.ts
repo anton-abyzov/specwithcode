@@ -11,14 +11,18 @@ import { makeNodeCommandLineToolHost } from "../../cli/commandLineToolHost.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
-const hostFor = (environment: DesktopEnvironment.DesktopEnvironment["Service"]) =>
-  makeNodeCommandLineToolHost({
+// One host for the life of the app, so the shell PATH it read is remembered between card opens.
+let cachedHost: ReturnType<typeof makeNodeCommandLineToolHost> | undefined;
+const hostFor = (environment: DesktopEnvironment.DesktopEnvironment["Service"]) => {
+  cachedHost ??= makeNodeCommandLineToolHost({
     platform: environment.platform,
     homeDirectory: environment.homeDirectory,
     appVersion: environment.appVersion,
     isPackaged: environment.isPackaged,
     resourcesPath: environment.resourcesPath,
   });
+  return cachedHost;
+};
 
 // One action at a time: two clicks must not race on the same file.
 let queue: Promise<unknown> = Promise.resolve();

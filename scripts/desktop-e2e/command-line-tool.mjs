@@ -4,7 +4,7 @@
  *
  *   node scripts/desktop-e2e/command-line-tool.mjs --resources <app resources dir> --app-version <x.y.z> --result <file.json>
  *
- * Install, then `specwithcode --version` in a new login shell (a new PowerShell with the user
+ * Install, then `specwithcode --version` in a new terminal's shell (a new PowerShell with the user
  * PATH from the registry on Windows) prints the app's version; install refuses to replace a
  * managed wrapper; a command pointing into a deleted bundle is repaired as at launch; Remove
  * leaves nothing behind. On Windows it really edits HKCU\Environment\Path, so run it only on a
@@ -127,8 +127,8 @@ const freshTerminalVersion = () => {
       "TERM=dumb",
       `SHELL=${shell}`,
       shell,
-      "-l",
-      "-i",
+      // What a new terminal window starts: a login shell on macOS, a non-login one on Linux.
+      ...(platform === "darwin" ? ["-l", "-i"] : ["-i"]),
       "-c",
       "specwithcode --version",
     ],

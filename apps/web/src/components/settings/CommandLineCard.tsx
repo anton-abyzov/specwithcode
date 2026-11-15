@@ -1,5 +1,6 @@
 import type {
   DesktopCommandLineToolAction,
+  DesktopCommandLineToolReason,
   DesktopCommandLineToolResult,
   DesktopCommandLineToolState,
 } from "@specweave-studio/contracts";
@@ -18,7 +19,8 @@ type Run = (action: DesktopCommandLineToolAction) => void;
 export interface CommandLineToolViewProps {
   readonly state: DesktopCommandLineToolState | null;
   readonly pending: boolean;
-  readonly error: string | null;
+  /** Why the last action did not (fully) happen: a reason from the app, or a transport error. */
+  readonly error: DesktopCommandLineToolReason | string | null;
   readonly onAction: Run;
   readonly onOpenDocs: () => void;
   /** "card": Settings > Machines. "offer": the last first-run step. */
@@ -113,7 +115,21 @@ function PathAdvice({
   if (state.install !== "installed" || state.onPath === "yes") return null;
   if (state.platform === "win32") {
     return (
-      <p className="text-sm text-muted-foreground">{tx("Open a new terminal window to use it.")}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        {state.onPath === "no" ? (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={pending}
+            onClick={() => onAction("install")}
+          >
+            {tx("Add to PATH")}
+          </Button>
+        ) : null}
+        <p className="text-sm text-muted-foreground">
+          {tx("Open a new terminal window to use it.")}
+        </p>
+      </div>
     );
   }
   const line = state.pathLine ?? "";
@@ -178,6 +194,78 @@ const UNAVAILABLE: Record<NonNullable<DesktopCommandLineToolState["unavailable"]
     "This copy of the app runs from a disk image or a temporary folder. Move SpecWithCode to Applications and open it from there first.",
   "missing-shim": "This copy of the app has no specwithcode command inside it. Reinstall the app.",
 };
+
+type Tx = ReturnType<typeof useTx>;
+
+const errnoText = (tx: Tx, errno: string | null) => {
+  if (errno === "EACCES" || errno === "EPERM" || errno === "EROFS") return tx("permission denied");
+  if (errno === "ENOENT" || errno === "ENOTDIR") return tx("not found");
+  return errno ?? "?";
+};
+
+/** The sentence for a reason the app returned, in the user's language. */
+export function reasonText(tx: Tx, reason: DesktopCommandLineToolReason): string {
+  const path = reason.path ?? "";
+  const error = errnoText(tx, reason.errno);
+  switch (reason.code) {
+    case "development":
+    case "temporary-location":
+    case "missing-shim":
+      return tx(UNAVAILABLE[reason.code]);
+    case "blocked-managed":
+      return tx(
+        "{path} comes from the command-line install of SpecWithCode, which keeps it up to date. The app leaves it as it is.",
+        { path },
+      );
+    case "blocked-other":
+      return tx(
+        "Something else is already at {path}. The app will not replace it; move it away to install the app's command there.",
+        { path },
+      );
+    case "changed":
+      return tx(
+        "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.",
+        { path },
+      );
+    case "unknown-shell":
+      return tx("The app does not know this shell's startup file. Add the line yourself.");
+    case "fish-file-exists":
+      return tx("{path} already exists and was not changed. Add the line yourself.", { path });
+    case "startup-file-unreadable":
+      return tx(
+        "{path} could not be read in full, so the app did not change it. Add the line yourself.",
+        { path },
+      );
+    case "startup-file-write":
+      return tx("Could not change {path} ({error}). Add the line yourself.", { path, error });
+    case "remove-partial":
+      return tx(
+        "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.",
+        { path, error },
+      );
+    case "remove-partial-path":
+      return tx(
+        "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.",
+        { folder: path },
+      );
+    case "path-read":
+      return tx("Could not read your user PATH.");
+    case "path-write":
+      return tx("Could not update your user PATH. Add {folder} to it yourself.", {
+        folder: path,
+      });
+    case "path-changed":
+      return tx(
+        "Your user PATH changed while the app was updating it. Nothing was changed; try again.",
+      );
+    case "unsafe-path":
+      return tx(
+        "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.",
+      );
+    case "write-failed":
+      return tx("Could not write {path} ({error}).", { path, error });
+  }
+}
 
 export function CommandLineToolView(props: CommandLineToolViewProps) {
   const tx = useTx();
@@ -282,7 +370,7 @@ export function CommandLineToolView(props: CommandLineToolViewProps) {
       )}
       {error !== null ? (
         <p role="alert" className="text-sm text-destructive-foreground">
-          {error}
+          {typeof error === "string" ? error : reasonText(tx, error)}
         </p>
       ) : null}
     </div>
@@ -310,7 +398,7 @@ export function useCommandLineTool() {
   const action = bridgeAction();
   const [state, setState] = useState<DesktopCommandLineToolState | null>(null);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<DesktopCommandLineToolReason | string | null>(null);
   const run = useCallback(
     (next: DesktopCommandLineToolAction) => {
       if (action === undefined) return;

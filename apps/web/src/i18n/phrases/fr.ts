@@ -5102,4 +5102,29 @@ export const fr: PhraseCatalog = {
     "Cette copie de l'app tourne depuis une image disque ou un dossier temporaire. Déplacez d'abord SpecWithCode dans Applications et ouvrez-la depuis là.",
   "This copy of the app has no specwithcode command inside it. Reinstall the app.":
     "Cette copie de l'app ne contient pas la commande specwithcode. Réinstallez l'app.",
+  "Add to PATH": "Ajouter au PATH",
+  "permission denied": "accès refusé",
+  "not found": "introuvable",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "{path} a changé pendant que l'app travaillait, rien n'a donc été remplacé. Vérifiez puis réessayez.",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "L'app ne connaît pas le fichier de démarrage de ce shell. Ajoutez la ligne vous-même.",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path} existe déjà et n'a pas été modifié. Ajoutez la ligne vous-même.",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "{path} n'a pas pu être lu en entier, l'app ne l'a donc pas modifié. Ajoutez la ligne vous-même.",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "Impossible de modifier {path} ({error}). Ajoutez la ligne vous-même.",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "La commande a été supprimée, mais la ligne de {path} n'a pas pu être retirée ({error}). Supprimez vous-même la ligne marquée Added by SpecWithCode.",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "La commande a été supprimée, mais {folder} est encore dans votre PATH utilisateur. Retirez-le vous-même dans Variables d'environnement.",
+  "Could not read your user PATH.": "Impossible de lire votre PATH utilisateur.",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "Impossible de mettre à jour votre PATH utilisateur. Ajoutez-y {folder} vous-même.",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "Votre PATH utilisateur a changé pendant que l'app le mettait à jour. Rien n'a été modifié ; réessayez.",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "Le chemin de l'AppImage ne peut pas être écrit dans la commande. Déplacez l'AppImage dans un dossier plus simple et ouvrez-le depuis là.",
+  "Could not write {path} ({error}).": "Impossible d'écrire {path} ({error}).",
 };

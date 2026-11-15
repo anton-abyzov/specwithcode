@@ -21,7 +21,7 @@ import {
 } from "./commandLineTool.ts";
 
 type Node =
-  | { readonly kind: "file"; text: string; mode: number }
+  | { readonly kind: "file"; text: string; mode: number; readOnly?: boolean; unreadable?: boolean }
   | { readonly kind: "symlink"; target: string }
   | { readonly kind: "directory" };
 
@@ -34,6 +34,7 @@ interface FakeOptions {
   readonly shellPath?: string | null;
   readonly isPackaged?: boolean;
   readonly windowsPath?: { raw: string; kind?: string; machine?: string };
+  readonly readOnlyVolumes?: ReadonlyArray<string>;
 }
 
 const MAC_APP = "/Applications/SpecWithCode.app";
@@ -52,6 +53,17 @@ const makeHost = (options: FakeOptions = {}) => {
     env?: Record<string, string>;
   }> = [];
   let windowsPath = options.windowsPath ?? { raw: "" };
+  /** Let a test change things between the app's check and its write. */
+  const hooks: {
+    /** When the app writes its temporary entry, after it checked the command's path. */
+    afterTemporary?: () => void;
+    /** On each lstat of a path, with how many times it was looked at so far. */
+    onLstat?: (path: string, count: number) => void;
+    beforePathWrite?: (() => void) | undefined;
+    /** When the app makes the command's folder, right before it creates the command. */
+    onMakeDirectory?: () => void;
+  } = {};
+  const lstatCounts = new Map<string, number>();
   const resolveLinks = (value: string, depth = 0): Node | undefined => {
     const node = nodes.get(key(value));
     if (node?.kind === "symlink" && depth < 40) {
@@ -87,8 +99,28 @@ const makeHost = (options: FakeOptions = {}) => {
     bundlePath: options.bundlePath ?? MAC_APP,
     resourcesPath: options.resourcesPath ?? `${MAC_APP}/Contents/Resources`,
     uniqueSuffix: () => `tmp${suffix++}`,
+    now: () => 0,
     fs: {
+      realpath: async (value) => {
+        let current = value;
+        for (let depth = 0; depth < 40; depth++) {
+          const node = nodes.get(key(current));
+          if (node === undefined) return null;
+          if (node.kind !== "symlink") return current;
+          current = path.resolve(path.dirname(current), node.target);
+        }
+        return null;
+      },
+      isExecutableFile: async (value) => {
+        const node = resolveLinks(value);
+        return node?.kind === "file" && (platform === "win32" || (node.mode & 0o111) !== 0);
+      },
+      isOnReadOnlyVolume: async (value) =>
+        (options.readOnlyVolumes ?? []).some((volume) => value.startsWith(volume)),
       lstat: async (value) => {
+        const count = (lstatCounts.get(value) ?? 0) + 1;
+        lstatCounts.set(value, count);
+        hooks.onLstat?.(value, count);
         const node = nodes.get(key(value));
         return node === undefined ? null : ({ kind: node.kind } satisfies EntryInfo);
       },
@@ -99,14 +131,21 @@ const makeHost = (options: FakeOptions = {}) => {
       exists: async (value) => exists(value),
       readFile: async (value) => {
         const node = resolveLinks(value);
-        return node?.kind === "file" ? node.text : null;
+        return node?.kind === "file" && !node.unreadable ? node.text : null;
       },
       makeDirectory: async (value) => {
+        hooks.onMakeDirectory?.();
         put(path.join(value, ".keep"), { kind: "directory" });
         nodes.delete(key(path.join(value, ".keep")));
       },
-      symlink: async (target, value) => create(value, { kind: "symlink", target }),
-      writeNewFile: async (value, text, mode) => create(value, { kind: "file", text, mode }),
+      symlink: async (target, value) => {
+        create(value, { kind: "symlink", target });
+        if (value.includes(".tmp")) hooks.afterTemporary?.();
+      },
+      writeNewFile: async (value, text, mode) => {
+        create(value, { kind: "file", text, mode });
+        if (value.includes(".tmp")) hooks.afterTemporary?.();
+      },
       rename: async (from, to) => {
         const node = nodes.get(key(from));
         if (node === undefined) throw new Error(`ENOENT ${from}`);
@@ -117,13 +156,20 @@ const makeHost = (options: FakeOptions = {}) => {
         if (!nodes.delete(key(value))) throw new Error(`ENOENT ${value}`);
       },
       appendFile: async (value, text) => {
-        const node = nodes.get(key(value));
+        const node = resolveLinks(value);
+        if (node === undefined && nodes.has(key(value))) {
+          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        }
+        if (node?.kind === "file" && node.readOnly) {
+          throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+        }
         if (node?.kind === "file") node.text += text;
         else put(value, { kind: "file", text, mode: 0o644 });
       },
       rewriteFile: async (value, text) => {
-        const node = nodes.get(key(value));
+        const node = resolveLinks(value);
         if (node?.kind !== "file") throw new Error(`ENOENT ${value}`);
+        if (node.readOnly) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
         node.text = text;
       },
     },
@@ -132,6 +178,10 @@ const makeHost = (options: FakeOptions = {}) => {
       if (command === "powershell.exe") {
         const script = args.at(-1)!;
         if (script.includes("SWC_PATH_VALUE")) {
+          hooks.beforePathWrite?.();
+          if (windowsPath.raw !== runOptions.env!.SWC_PATH_EXPECTED) {
+            return { code: 0, stdout: "changed", stderr: "" };
+          }
           windowsPath = {
             ...windowsPath,
             raw: runOptions.env!.SWC_PATH_VALUE!,
@@ -166,16 +216,35 @@ const makeHost = (options: FakeOptions = {}) => {
       return null;
     },
   };
-  return { host, nodes, put, calls, windowsPath: () => windowsPath };
+  return {
+    host,
+    nodes,
+    put,
+    calls,
+    hooks,
+    windowsPath: () => windowsPath,
+    setWindowsPath: (raw: string) => {
+      windowsPath = { ...windowsPath, raw };
+    },
+  };
+};
+
+const SHIM_TEXT = "#!/bin/sh\n# specwithcode-desktop-shim 1\n";
+const WINDOWS_SHIM_TEXT = "@echo off\r\nrem specwithcode-desktop-shim 1\r\n";
+
+/** A shim with the app beside it, at `shim` (`.../resources/cli/specwithcode`). */
+const putShim = (fake: ReturnType<typeof makeHost>, shim: string) => {
+  fake.put(shim, { kind: "file", text: SHIM_TEXT, mode: 0o755 });
+  fake.put(NodePath.posix.join(shim, "..", "..", "app.asar"), {
+    kind: "file",
+    text: "",
+    mode: 0o644,
+  });
 };
 
 const withMacBundle = (options: FakeOptions = {}) => {
   const fake = makeHost(options);
-  fake.put(MAC_SHIM, {
-    kind: "file",
-    text: "#!/bin/sh\n# specwithcode-desktop-shim 1\n",
-    mode: 0o755,
-  });
+  putShim(fake, MAC_SHIM);
   return fake;
 };
 
@@ -303,6 +372,11 @@ describe("what is already there", () => {
       kind: "symlink",
       target: "../lib/node_modules/specwithcode/bin.js",
     });
+    put("/opt/homebrew/lib/node_modules/specwithcode/bin.js", {
+      kind: "file",
+      text: "",
+      mode: 0o755,
+    });
     const result = await install(host);
     expect(result.state).toMatchObject({
       install: "installed",
@@ -347,8 +421,9 @@ describe("stale command repair", () => {
 
   it("leaves a link to another existing copy alone at launch; Install points it here", async () => {
     const other = `${HOME}/Applications/SpecWithCode.app/Contents/Resources/cli/specwithcode`;
-    const { host, put, nodes } = withMacBundle();
-    put(other, { kind: "file", text: "#!/bin/sh\n", mode: 0o755 });
+    const fake = withMacBundle();
+    const { host, put, nodes } = fake;
+    putShim(fake, other);
     put(COMMAND, { kind: "symlink", target: other });
     expect(await repairAtLaunch(host)).toBe("unchanged");
     expect((await inspect(host)).install).toBe("other-copy");
@@ -381,13 +456,14 @@ describe("Linux", () => {
   const LINUX_COMMAND = "/home/ada/.local/bin/specwithcode";
 
   it("links the .deb's shim and suggests .bashrc for bash", async () => {
-    const { host, put, nodes } = makeHost({
+    const fake = makeHost({
       platform: "linux",
       bundlePath: "/opt/SpecWithCode",
       resourcesPath: "/opt/SpecWithCode/resources",
       userShell: "/bin/bash",
     });
-    put(LINUX_SHIM, { kind: "file", text: "", mode: 0o755 });
+    const { host, nodes } = fake;
+    putShim(fake, LINUX_SHIM);
     const result = await install(host);
     expect(nodes.get(LINUX_COMMAND)).toEqual({ kind: "symlink", target: LINUX_SHIM });
     expect(result.state.startupFile).toBe("/home/ada/.bashrc");
@@ -440,7 +516,7 @@ describe("Linux", () => {
     expect(renderAppImageLauncher(appImage)).toContain(
       `appimage='/home/ada/it'"'"'s here/SpecWithCode.AppImage'`,
     );
-    expect(await classify(host)).toEqual({ install: "installed", pointsAt: appImage });
+    expect(await classify(host)).toMatchObject({ install: "installed", pointsAt: appImage });
   });
 
   it("treats an edited launcher as someone else's", async () => {
@@ -472,7 +548,7 @@ describe("Windows", () => {
       env: { LOCALAPPDATA: "C:\\Users\\Ada\\AppData\\Local" },
       windowsPath: { raw, kind, ...(machine === undefined ? {} : { machine }) },
     });
-    fake.put(SHIM, { kind: "file", text: "", mode: 0o644 });
+    fake.put(SHIM, { kind: "file", text: WINDOWS_SHIM_TEXT, mode: 0o644 });
     return fake;
   };
 
@@ -482,7 +558,7 @@ describe("Windows", () => {
     expect(result.ok).toBe(true);
     expect(nodes.get(LAUNCHER.toLowerCase())).toMatchObject({ text: renderWindowsLauncher(SHIM) });
     expect(renderWindowsLauncher(SHIM)).toBe(
-      `@echo off\r\nrem specwithcode-desktop-launcher 1\r\nrem Runs the specwithcode command inside the SpecWithCode app. The app wrote this\r\nrem (Settings > Machines > Command line) and keeps it pointed at the app.\r\n"${SHIM}" %*\r\n`,
+      `@echo off\r\nrem specwithcode-desktop-launcher 1\r\nrem Runs the specwithcode command inside the SpecWithCode app. The app wrote this\r\nrem (Settings > Machines > Command line) and keeps it pointed at the app.\r\nsetlocal\r\nset "SWC_SHIM=${SHIM}"\r\ncall "%%SWC_SHIM%%" %*\r\nexit /b %ERRORLEVEL%\r\n`,
     );
     expect(windowsPath()).toMatchObject({
       raw: `%USERPROFILE%\\bin;C:\\Tools;${BIN}`,
@@ -550,9 +626,251 @@ describe("Windows", () => {
     });
   });
 
-  it("escapes % in the shim path", () => {
-    expect(renderWindowsLauncher("C:\\100%\\resources\\cli\\specwithcode.cmd")).toContain(
-      '"C:\\100%%\\resources\\cli\\specwithcode.cmd" %*',
+  it("escapes % in the shim path and reads it back", async () => {
+    const shim = "C:\\100%\\resources\\cli\\specwithcode.cmd";
+    expect(renderWindowsLauncher(shim)).toContain(
+      'set "SWC_SHIM=C:\\100%%\\resources\\cli\\specwithcode.cmd"',
+    );
+    const { host, put } = windowsHost(BIN);
+    put(LAUNCHER, { kind: "file", text: renderWindowsLauncher(shim), mode: 0o644 });
+    expect((await classify(host)).pointsAt).toBe(shim);
+  });
+});
+
+const MANAGED_WRAPPER =
+  '#!/bin/sh\nset -eu\numask 077\nexec /x/releases/1/node /x/releases/1/apps/server/dist/bin.mjs "$@"\n';
+
+describe("review round 1", () => {
+  it("never replaces what appeared at the path after the check (install and launch repair)", async () => {
+    const { host, put, nodes, hooks } = withMacBundle();
+    const stale = `${HOME}/Downloads/SpecWithCode.app/Contents/Resources/cli/specwithcode`;
+    put(COMMAND, { kind: "symlink", target: stale });
+    hooks.afterTemporary = () => {
+      nodes.set(COMMAND, { kind: "file", text: MANAGED_WRAPPER, mode: 0o700 });
+    };
+    const result = await install(host);
+    expect(result).toMatchObject({ ok: false, reason: { code: "changed", path: COMMAND } });
+    expect(nodes.get(COMMAND)).toMatchObject({ text: MANAGED_WRAPPER });
+    expect([...nodes.keys()].filter((name) => name.includes(".tmp"))).toEqual([]);
+  });
+
+  it("refuses when something appears at an empty path after the check", async () => {
+    const { host, nodes, hooks } = withMacBundle();
+    hooks.onMakeDirectory = () => {
+      nodes.set(COMMAND, { kind: "file", text: MANAGED_WRAPPER, mode: 0o700 });
+    };
+    expect(await install(host)).toMatchObject({ ok: false, reason: { code: "changed" } });
+    expect(nodes.get(COMMAND)).toMatchObject({ text: MANAGED_WRAPPER });
+  });
+
+  it("Remove never deletes a file swapped in after the check", async () => {
+    const { host, nodes, hooks, put } = withMacBundle();
+    put(COMMAND, { kind: "symlink", target: MAC_SHIM });
+    // classify looks twice; the third look is the check right before the unlink.
+    hooks.onLstat = (value, count) => {
+      if (value === COMMAND && count === 3) {
+        nodes.set(COMMAND, { kind: "file", text: "mine", mode: 0o755 });
+      }
+    };
+    expect(await remove(host)).toMatchObject({ ok: false, reason: { code: "changed" } });
+    expect(nodes.get(COMMAND)).toMatchObject({ text: "mine" });
+  });
+
+  it("probes a login shell on macOS and an interactive non-login shell on Linux", async () => {
+    const mac = withMacBundle();
+    await inspect(mac.host);
+    expect(mac.calls.find((call) => call.args.includes("-c"))?.args.slice(0, 2)).toEqual([
+      "-l",
+      "-i",
+    ]);
+    const linux = makeHost({
+      platform: "linux",
+      bundlePath: "/opt/SpecWithCode",
+      resourcesPath: "/opt/SpecWithCode/resources",
+      userShell: "/bin/bash",
+    });
+    await inspect(linux.host);
+    expect(linux.calls.find((call) => call.args.includes("-c"))?.args[0]).toBe("-i");
+  });
+
+  it("reads the shell once per minute, and again after the app changed a startup file", async () => {
+    const { host, calls } = withMacBundle();
+    await inspect(host);
+    await inspect(host);
+    const probes = () => calls.filter((call) => call.args.includes("-c")).length;
+    expect(probes()).toBe(1);
+    await addToShellPath(host);
+    expect(probes()).toBe(2);
+  });
+
+  it("does not add to a startup file it cannot read in full", async () => {
+    const { host, put, nodes } = withMacBundle();
+    put(`${HOME}/.zprofile`, { kind: "file", text: "big", mode: 0o644, unreadable: true });
+    const result = await addToShellPath(host);
+    expect(result).toMatchObject({ ok: false, reason: { code: "startup-file-unreadable" } });
+    expect(nodes.get(`${HOME}/.zprofile`)).toMatchObject({ text: "big" });
+  });
+
+  it("Remove takes the line out of every startup file, whatever the shell is now", async () => {
+    const zsh = withMacBundle();
+    await install(zsh.host);
+    await addToShellPath(zsh.host);
+    const bash = withMacBundle({ userShell: "/bin/bash" });
+    for (const [name, node] of zsh.nodes) bash.nodes.set(name, node);
+    expect((await remove(bash.host)).ok).toBe(true);
+    expect(bash.nodes.get(`${HOME}/.zprofile`)).toMatchObject({ text: "" });
+  });
+
+  it("Remove keeps what the user added to the fish file", async () => {
+    const { host, nodes } = withMacBundle({ userShell: "/opt/homebrew/bin/fish" });
+    await addToShellPath(host);
+    const file = `${HOME}/.config/fish/conf.d/specwithcode.fish`;
+    (nodes.get(file) as { text: string }).text += "set -gx EDITOR vim\n";
+    expect((await remove(host)).ok).toBe(true);
+    expect(nodes.get(file)).toMatchObject({ text: "set -gx EDITOR vim\n" });
+  });
+
+  it("says plainly when the command went but a read-only startup file kept the line", async () => {
+    const { host, put, nodes } = withMacBundle();
+    await install(host);
+    put(`${HOME}/.zprofile`, {
+      kind: "file",
+      text: 'export PATH="$HOME/.local/bin:$PATH" # Added by SpecWithCode\n',
+      mode: 0o444,
+      readOnly: true,
+    });
+    const result = await remove(host);
+    expect(result).toMatchObject({
+      ok: false,
+      reason: { code: "remove-partial", path: `${HOME}/.zprofile`, errno: "EACCES" },
+    });
+    expect(nodes.has(COMMAND)).toBe(false);
+  });
+
+  it("skips a dangling .bash_profile on macOS, as bash does", async () => {
+    const { host, put } = withMacBundle({ userShell: "/bin/bash" });
+    put(`${HOME}/.bash_profile`, { kind: "symlink", target: "/gone/bash_profile" });
+    put(`${HOME}/.profile`, { kind: "file", text: "", mode: 0o644 });
+    expect((await inspect(host)).startupFile).toBe(`${HOME}/.profile`);
+  });
+
+  it("turns a system error into a reason code, not raw text", async () => {
+    const { host, put } = withMacBundle();
+    put(`${HOME}/.zprofile`, { kind: "file", text: "", mode: 0o444, readOnly: true });
+    expect(await addToShellPath(host)).toMatchObject({
+      ok: false,
+      reason: { code: "startup-file-write", path: `${HOME}/.zprofile`, errno: "EACCES" },
+    });
+  });
+
+  it("does not write through a dangling startup-file link", async () => {
+    const { host, put } = withMacBundle();
+    put(`${HOME}/.zprofile`, { kind: "symlink", target: "/gone/zprofile" });
+    expect(await addToShellPath(host)).toMatchObject({
+      ok: false,
+      reason: { code: "startup-file-unreadable", path: `${HOME}/.zprofile` },
+    });
+  });
+
+  it("treats a lookalike link that is not a shim inside an app as someone else's", async () => {
+    const { host, put, nodes } = withMacBundle();
+    const lookalike = `${HOME}/project/resources/cli/specwithcode`;
+    put(lookalike, { kind: "file", text: "#!/bin/sh\necho mine\n", mode: 0o755 });
+    put(COMMAND, { kind: "symlink", target: lookalike });
+    expect((await install(host)).state.install).toBe("blocked-other");
+    expect(nodes.get(COMMAND)).toEqual({ kind: "symlink", target: lookalike });
+  });
+
+  it("does not call a non-executable file or a link chain to this app's shim in the way", async () => {
+    const { host, put } = withMacBundle();
+    put("/usr/local/bin/specwithcode", { kind: "file", text: "notes", mode: 0o644 });
+    put("/opt/a/specwithcode", { kind: "symlink", target: "/opt/b/specwithcode" });
+    put("/opt/b/specwithcode", { kind: "symlink", target: MAC_SHIM });
+    expect(
+      (await lookUpCommand(host, ["/usr/local/bin", "/opt/a", `${HOME}/.local/bin`])).shadowedBy,
+    ).toBeNull();
+  });
+
+  it("refuses from a disk image mounted outside /Volumes", async () => {
+    const { host } = withMacBundle({
+      bundlePath: "/tmp/mnt/SpecWithCode.app",
+      readOnlyVolumes: ["/tmp/mnt"],
+    });
+    expect((await install(host)).state.unavailable).toBe("temporary-location");
+  });
+
+  it("refuses an AppImage path it could never read back", async () => {
+    for (const appImage of ["Apps/SpecWithCode.AppImage", "/home/ada/a\nb.AppImage"]) {
+      const { host, put, nodes } = makeHost({
+        platform: "linux",
+        bundlePath: "/tmp/.mount_x",
+        resourcesPath: "/tmp/.mount_x/resources",
+        env: { APPIMAGE: appImage },
+      });
+      put("/tmp/.mount_x/resources/cli/specwithcode", { kind: "file", text: "", mode: 0o755 });
+      expect(await install(host)).toMatchObject({ ok: false, reason: { code: "unsafe-path" } });
+      expect(nodes.has("/home/ada/.local/bin/specwithcode")).toBe(false);
+    }
+  });
+});
+
+describe("review round 1, Windows", () => {
+  const ROOT = "C:\\Users\\Ada\\AppData\\Local\\Programs\\SpecWithCode";
+  const SHIM = `${ROOT}\\resources\\cli\\specwithcode.cmd`;
+  const windows = (raw: string, kind = "ExpandString", env?: Record<string, string>) => {
+    const fake = makeHost({
+      platform: "win32",
+      bundlePath: ROOT,
+      resourcesPath: `${ROOT}\\resources`,
+      env: env ?? { LOCALAPPDATA: "C:\\Users\\Ada\\AppData\\Local" },
+      windowsPath: { raw, kind },
+    });
+    fake.put(SHIM, { kind: "file", text: WINDOWS_SHIM_TEXT, mode: 0o644 });
+    return fake;
+  };
+
+  it("keeps another installer's PATH edit made while the app was editing", async () => {
+    const fake = windows("C:\\Tools");
+    fake.hooks.beforePathWrite = () => fake.setWindowsPath("C:\\Tools;C:\\Other");
+    const result = await install(fake.host);
+    expect(result).toMatchObject({ ok: false, reason: { code: "path-changed" } });
+    expect(fake.windowsPath().raw).toBe("C:\\Tools;C:\\Other");
+  });
+
+  it("leaves a user PATH of an unusual registry type alone", async () => {
+    const fake = windows("C:\\Tools", "Binary");
+    expect(await install(fake.host)).toMatchObject({ ok: false, reason: { code: "path-write" } });
+    expect(fake.windowsPath()).toMatchObject({ raw: "C:\\Tools", kind: "Binary" });
+  });
+
+  it("falls back to the profile's AppData when LOCALAPPDATA is empty", async () => {
+    const fake = windows("", "ExpandString", { LOCALAPPDATA: "" });
+    expect((await inspect(fake.host)).binDirectory).toBe(
+      "C:\\Users\\Ada\\AppData\\Local\\SpecWithCode\\bin",
+    );
+  });
+
+  it("passes the command path to cmd through a variable, so % in it survives", async () => {
+    const fake = windows("");
+    await install(fake.host);
+    const call = fake.calls.find((item) => item.args.some((arg) => arg.includes("--version")));
+    expect(call?.args.at(-1)).toBe('""%SWC_COMMAND%" --version"');
+    expect(call?.env?.SWC_COMMAND).toBe(
+      "C:\\Users\\Ada\\AppData\\Local\\SpecWithCode\\bin\\specwithcode.cmd",
+    );
+  });
+
+  it("offers the PATH step again: install on an installed command only edits PATH", async () => {
+    const fake = windows("C:\\Tools");
+    fake.hooks.beforePathWrite = () => {
+      fake.hooks.beforePathWrite = undefined;
+      fake.setWindowsPath("C:\\Tools;C:\\Other");
+    };
+    expect((await install(fake.host)).ok).toBe(false);
+    const again = await install(fake.host);
+    expect(again.ok).toBe(true);
+    expect(fake.windowsPath().raw).toBe(
+      "C:\\Tools;C:\\Other;C:\\Users\\Ada\\AppData\\Local\\SpecWithCode\\bin",
     );
   });
 });

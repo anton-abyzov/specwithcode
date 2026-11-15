@@ -33,11 +33,17 @@ macOS does not put `~/.local/bin` on a terminal's `PATH` by default. When a new 
 export PATH="$HOME/.local/bin:$PATH" # Added by SpecWithCode
 ```
 
+The card checks the kind of shell a new terminal window starts: a login shell on macOS, an interactive non-login shell on Linux (which reads `~/.bashrc`). A Linux login shell, such as an SSH session, reads `~/.profile` instead; most distributions' default `~/.profile` already adds `~/.local/bin` when that folder exists.
+
+On Windows, a new terminal window picks up the user `PATH` change. If the `PATH` step did not happen, the card shows **Add to PATH** to try it again. A `.cmd` command cannot pass every argument through untouched: an argument with `%NAME%` in it, or with an embedded double quote, may arrive changed. Use PowerShell quoting or put such values in a file.
+
 ## Updates, moves and repairs
 
 Updates keep the command current: it points at the app's location, not at a version. If the app moves (for example from Downloads into Applications) or an old copy is deleted, the app points the command at itself the next time it opens. The card shows **Repair** for a command that points at a copy of the app that is gone, and **Use this copy** when it runs a different copy that still exists.
 
-The app does not install the command while it runs from a disk image or a translocated folder. Move SpecWithCode to Applications first.
+The app does not install the command while it runs from a disk image (any read-only volume) or a translocated folder. Move SpecWithCode to Applications first.
+
+Before it replaces or deletes its own command, the app checks the file is still the one it looked at. If something else was put there in the meantime, it stops and changes nothing.
 
 ## What the app never touches
 
@@ -47,7 +53,7 @@ The app does not install the command while it runs from a disk image or a transl
 
 ## Remove it
 
-**Remove** on the same card deletes the app's command and the `PATH` change the app made (the marked line, the fish file, or the Windows user `PATH` entry). It leaves `~/.local/bin` and everything else in it.
+**Remove** on the same card deletes the app's command and the `PATH` change the app made: the marked line in every shell startup file it knows (even if you changed shells since), the app's two lines in the fish file (the file goes only if nothing else is left in it), or the Windows user `PATH` entry. It leaves `~/.local/bin` and everything else in it. If a startup file cannot be changed, for example because it is read-only, the card says which file still has the marked line so you can delete it yourself.
 
 ## Common commands
 

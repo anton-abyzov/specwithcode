@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off -- Measures that the launcher and runner return promptly.
 // @effect-diagnostics nodeBuiltinImport:off - Runs the shipped shell shim against a throwaway bundle layout.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -7,7 +8,8 @@ import * as NodePath from "node:path";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { SHIM_MARKER } from "./commandLineTool.ts";
+import { renderAppImageLauncher, SHIM_MARKER } from "./commandLineTool.ts";
+import { makeNodeCommandLineToolHost } from "./commandLineToolHost.ts";
 
 const IS_WINDOWS = HostProcessPlatform.defaultValue() === "win32";
 const SHIM_DIR = NodePath.resolve(import.meta.dirname, "../../resources/cli");
@@ -97,5 +99,78 @@ describe("shim files", () => {
 
   it.skipIf(IS_WINDOWS)("the POSIX shim is executable", () => {
     expect(NodeFS.statSync(POSIX_SHIM).mode & 0o111).not.toBe(0);
+  });
+});
+
+describe.skipIf(IS_WINDOWS)("AppImage launcher", () => {
+  /** A fake AppImage: `--appimage-mount` runs `mount` (a shell snippet) instead of FUSE. */
+  const fakeAppImage = (mount: string) => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-appimage-"));
+    scratch.push(root);
+    const mounted = NodePath.join(root, "mounted");
+    NodeFS.mkdirSync(NodePath.join(mounted, "resources", "cli"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(mounted, "resources", "cli", "specwithcode"),
+      '#!/bin/sh\nprintf "%s|" "$@"\nexit 7\n',
+      { mode: 0o755 },
+    );
+    const appImage = NodePath.join(root, "Spec With Code.AppImage");
+    NodeFS.writeFileSync(
+      appImage,
+      `#!/bin/sh\n[ "$1" = --appimage-mount ] || exit 2\nMOUNTED='${mounted}'\n${mount}\n`,
+      { mode: 0o755 },
+    );
+    const launcher = NodePath.join(root, "specwithcode");
+    NodeFS.writeFileSync(launcher, renderAppImageLauncher(appImage), { mode: 0o755 });
+    return { root, launcher };
+  };
+  const runLauncher = (launcher: string, args: string[]) =>
+    NodeChildProcess.spawnSync(launcher, args, {
+      encoding: "utf8",
+      env: { PATH: "/usr/bin:/bin", SPECWITHCODE_MOUNT_WAIT: "20" },
+      timeout: 20_000,
+    });
+
+  it("mounts, runs the shim inside with every argument and returns its exit code", () => {
+    const { launcher } = fakeAppImage('echo "$MOUNTED"\nexec sleep 30');
+    const started = Date.now();
+    const result = runLauncher(launcher, ["fleet", "a b", ""]);
+    expect(result.status).toBe(7);
+    expect(result.stdout).toBe("fleet|a b||");
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it("gives up on a mount that never answers, with the FUSE hint", () => {
+    const { launcher } = fakeAppImage("exec sleep 30");
+    const started = Date.now();
+    const result = runLauncher(launcher, ["--version"]);
+    expect(result.status).toBe(127);
+    expect(result.stderr).toContain("AppImages need FUSE");
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+});
+
+describe.skipIf(IS_WINDOWS)("running programs", () => {
+  const host = makeNodeCommandLineToolHost({
+    platform: HostProcessPlatform.defaultValue(),
+    homeDirectory: NodeOS.tmpdir(),
+    appVersion: "0.0.0",
+    isPackaged: false,
+    resourcesPath: NodeOS.tmpdir(),
+  })!;
+
+  it("answers when the program exits even if something it started holds the output open", async () => {
+    const started = Date.now();
+    const result = await host.run("/bin/sh", ["-c", "printf hi; sleep 30 &"], {
+      timeoutMs: 10_000,
+    });
+    expect(result).toMatchObject({ code: 0, stdout: "hi" });
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it("stops at the time limit", async () => {
+    const started = Date.now();
+    expect(await host.run("/bin/sh", ["-c", "sleep 30"], { timeoutMs: 300 })).toBeNull();
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 });

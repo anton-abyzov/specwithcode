@@ -5001,4 +5001,29 @@ export const ko: PhraseCatalog = {
     "이 앱 사본은 디스크 이미지나 임시 폴더에서 실행 중입니다. 먼저 SpecWithCode를 응용 프로그램으로 옮기고 거기서 여세요.",
   "This copy of the app has no specwithcode command inside it. Reinstall the app.":
     "이 앱 사본에는 specwithcode 명령이 없습니다. 앱을 다시 설치하세요.",
+  "Add to PATH": "PATH에 추가",
+  "permission denied": "권한 없음",
+  "not found": "찾을 수 없음",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "앱이 작업하는 동안 {path}가 바뀌어 아무것도 바꾸지 않았습니다. 확인한 뒤 다시 시도하세요.",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "이 셸의 시작 파일을 알 수 없습니다. 줄을 직접 추가하세요.",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path}가 이미 있어 바꾸지 않았습니다. 줄을 직접 추가하세요.",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "{path}를 끝까지 읽지 못해 바꾸지 않았습니다. 줄을 직접 추가하세요.",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "{path}를 바꾸지 못했습니다({error}). 줄을 직접 추가하세요.",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "명령은 제거했지만 {path}의 줄을 빼지 못했습니다({error}). Added by SpecWithCode 표시가 있는 줄을 직접 지우세요.",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "명령은 제거했지만 {folder}가 아직 사용자 PATH에 있습니다. 환경 변수에서 직접 제거하세요.",
+  "Could not read your user PATH.": "사용자 PATH를 읽지 못했습니다.",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "사용자 PATH를 업데이트하지 못했습니다. {folder}를 직접 추가하세요.",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "앱이 업데이트하는 동안 사용자 PATH가 바뀌었습니다. 아무것도 바꾸지 않았으니 다시 시도하세요.",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "AppImage 경로를 명령에 쓸 수 없습니다. AppImage를 더 단순한 폴더로 옮긴 뒤 거기서 여세요.",
+  "Could not write {path} ({error}).": "{path}를 쓰지 못했습니다({error}).",
 };

@@ -5064,4 +5064,29 @@ export const pt: PhraseCatalog = {
     "Esta cópia do app roda de uma imagem de disco ou pasta temporária. Primeiro mova o SpecWithCode para Aplicativos e abra de lá.",
   "This copy of the app has no specwithcode command inside it. Reinstall the app.":
     "Esta cópia do app não tem o comando specwithcode. Reinstale o app.",
+  "Add to PATH": "Adicionar ao PATH",
+  "permission denied": "permissão negada",
+  "not found": "não encontrado",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "Algo mudou em {path} enquanto o app trabalhava, então nada foi substituído. Verifique e tente de novo.",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "O app não conhece o arquivo de inicialização deste shell. Adicione a linha você mesmo.",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path} já existe e não foi alterado. Adicione a linha você mesmo.",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "Não foi possível ler {path} por inteiro, então o app não o alterou. Adicione a linha você mesmo.",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "Não foi possível alterar {path} ({error}). Adicione a linha você mesmo.",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "O comando foi removido, mas não foi possível tirar a linha de {path} ({error}). Apague você mesmo a linha marcada Added by SpecWithCode.",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "O comando foi removido, mas {folder} ainda está no seu PATH de usuário. Remova-o você mesmo em Variáveis de Ambiente.",
+  "Could not read your user PATH.": "Não foi possível ler seu PATH de usuário.",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "Não foi possível atualizar seu PATH de usuário. Adicione {folder} você mesmo.",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "Seu PATH de usuário mudou enquanto o app o atualizava. Nada foi alterado; tente de novo.",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "O caminho do AppImage não pode ser gravado no comando. Mova o AppImage para uma pasta mais simples e abra-o de lá.",
+  "Could not write {path} ({error}).": "Não foi possível gravar {path} ({error}).",
 };

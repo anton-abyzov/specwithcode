@@ -5085,4 +5085,29 @@ export const es: PhraseCatalog = {
     "Esta copia de la app se ejecuta desde una imagen de disco o una carpeta temporal. Primero mueve SpecWithCode a Aplicaciones y ábrelo desde ahí.",
   "This copy of the app has no specwithcode command inside it. Reinstall the app.":
     "Esta copia de la app no tiene el comando specwithcode. Reinstala la app.",
+  "Add to PATH": "Añadir a PATH",
+  "permission denied": "permiso denegado",
+  "not found": "no encontrado",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "Algo cambió en {path} mientras la app trabajaba, así que no se reemplazó nada. Revísalo e inténtalo de nuevo.",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "La app no conoce el archivo de inicio de este shell. Añade la línea tú mismo.",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path} ya existe y no se modificó. Añade la línea tú mismo.",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "No se pudo leer {path} completo, así que la app no lo modificó. Añade la línea tú mismo.",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "No se pudo modificar {path} ({error}). Añade la línea tú mismo.",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "El comando se eliminó, pero no se pudo quitar la línea de {path} ({error}). Borra tú mismo la línea marcada Added by SpecWithCode.",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "El comando se eliminó, pero {folder} sigue en tu PATH de usuario. Quítalo tú mismo en Variables de entorno.",
+  "Could not read your user PATH.": "No se pudo leer tu PATH de usuario.",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "No se pudo actualizar tu PATH de usuario. Añade {folder} tú mismo.",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "Tu PATH de usuario cambió mientras la app lo actualizaba. No se cambió nada; inténtalo de nuevo.",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "La ruta del AppImage no se puede escribir en el comando. Mueve el AppImage a una carpeta más simple y ábrelo desde allí.",
+  "Could not write {path} ({error}).": "No se pudo escribir {path} ({error}).",
 };

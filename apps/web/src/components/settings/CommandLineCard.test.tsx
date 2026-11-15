@@ -1,4 +1,7 @@
-import type { DesktopCommandLineToolState } from "@specweave-studio/contracts";
+import type {
+  DesktopCommandLineToolReason,
+  DesktopCommandLineToolState,
+} from "@specweave-studio/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -22,7 +25,7 @@ const base: DesktopCommandLineToolState = {
 
 const render = (
   state: Partial<DesktopCommandLineToolState> | null,
-  extra: { error?: string; variant?: "card" | "offer" } = {},
+  extra: { error?: DesktopCommandLineToolReason | string; variant?: "card" | "offer" } = {},
 ) =>
   renderToStaticMarkup(
     <CommandLineToolView
@@ -132,8 +135,42 @@ describe("CommandLineToolView", () => {
     expect(html).not.toContain("Install command-line tool");
   });
 
-  it("shows an action's error", () => {
-    expect(render({}, { error: "EACCES" })).toContain("EACCES");
+  it("shows a transport error as it came", () => {
+    expect(render({}, { error: "IPC failed" })).toContain("IPC failed");
+  });
+
+  it("renders a reason from the app as a sentence, with the system error in words", () => {
+    const html = render(
+      {},
+      {
+        error: {
+          code: "remove-partial",
+          path: "/Users/ada/.zprofile",
+          errno: "EACCES",
+        },
+      },
+    );
+    expect(html).toContain(
+      "The command was removed, but the line in /Users/ada/.zprofile could not be taken out (permission denied).",
+    );
+    expect(html).not.toContain("EACCES");
+    expect(
+      render(
+        {},
+        { error: { code: "changed", path: "/Users/ada/.local/bin/specwithcode", errno: null } },
+      ),
+    ).toContain("Something changed at /Users/ada/.local/bin/specwithcode");
+  });
+
+  it("offers Add to PATH on Windows when the PATH step did not happen", () => {
+    const state = {
+      platform: "win32" as const,
+      install: "installed" as const,
+      pathLine: null,
+      startupFile: null,
+    };
+    expect(render({ ...state, onPath: "no" })).toContain(">Add to PATH<");
+    expect(render({ ...state, onPath: "yes" })).not.toContain("Add to PATH");
   });
 
   it("renders as a Settings section in the card variant", () => {
