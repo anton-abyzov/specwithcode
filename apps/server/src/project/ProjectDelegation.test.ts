@@ -9,6 +9,8 @@ import {
 import {
   projectDelegationTarget,
   needsExplicitWorkerTarget,
+  projectLimitRule,
+  replacesProjectModelOverride,
   projectWorkerModel,
   workerModelUnderGrant,
 } from "./ProjectDelegation.ts";
@@ -125,4 +127,40 @@ it("reads the Project settings dialog's model on an install that folded its proj
     ),
   ).toEqual(override);
   expect(projectWorkerModel(folded, { id, defaultModelSelection: null })).toBeNull();
+});
+
+it("gives a limit stop the same home model as a launch, after the settings fold too", () => {
+  const id = ProjectId.make("project-limit-home");
+  const dialog = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+  const machine = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+  const folded = {
+    ...DEFAULT_SERVER_SETTINGS,
+    projectSettingsFolded: true,
+    defaultModelSelection: machine,
+  };
+  const project = { id, defaultModelSelection: dialog };
+  expect(projectLimitRule(folded, project).defaultModelSelection).toEqual(dialog);
+  expect(
+    projectLimitRule(folded, { id, defaultModelSelection: null }).defaultModelSelection,
+  ).toEqual(machine);
+});
+
+it("removes an older override only when the dialog saves a different model", () => {
+  const projectId = ProjectId.make("project-override");
+  const opus = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+  const sol = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+  const settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    projectSettingsOverrides: { [projectId]: { defaultModelSelection: sol } },
+  };
+  const base = { settings, projectId, previous: opus };
+  expect(replacesProjectModelOverride({ ...base, next: sol })).toBe(true);
+  expect(replacesProjectModelOverride({ ...base, next: null })).toBe(true);
+  // The whole form sent again with the same model, an untouched field, a seeded default.
+  expect(replacesProjectModelOverride({ ...base, next: { ...opus } })).toBe(false);
+  expect(replacesProjectModelOverride({ ...base, next: undefined })).toBe(false);
+  expect(replacesProjectModelOverride({ ...base, next: sol, onlyIfUnset: true })).toBe(false);
+  expect(
+    replacesProjectModelOverride({ ...base, settings: DEFAULT_SERVER_SETTINGS, next: sol }),
+  ).toBe(false);
 });

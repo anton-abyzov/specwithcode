@@ -114,6 +114,8 @@ export const ServerProviderModel = Schema.Struct({
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  /** The model this one replaces, from the model manifest; a track entry on that model follows here. */
+  succeeds: Schema.optional(TrimmedNonEmptyString),
   capabilities: Schema.NullOr(ModelCapabilities),
   /**
    * What the provider's own model data proves; absent means not reported.

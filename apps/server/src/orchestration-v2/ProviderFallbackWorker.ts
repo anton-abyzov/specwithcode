@@ -18,7 +18,7 @@ import {
   type ServerSettings as ServerSettingsValue,
   ThreadId,
 } from "@specweave-studio/contracts";
-import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import { projectLimitRule } from "../project/ProjectDelegation.ts";
 import { reviewConstrainedRule } from "@specweave-studio/shared/reviewPolicy";
 import {
   canTakeTurn,
@@ -911,7 +911,7 @@ export const makeSweep = Effect.gen(function* () {
             return;
           return yield* use(
             yield* withRequestDetail(current),
-            resolveProjectSettings(preferences, current.projectId).settings,
+            projectLimitRule(preferences, project.value),
             project.value,
           );
         }),
@@ -1758,7 +1758,7 @@ export const makeSweep = Effect.gen(function* () {
           yield* providerRetry(thread, openFailure, providersFor, now, rereadProviders);
         continue;
       }
-      const resolved = resolveProjectSettings(preferences, thread.projectId).settings;
+      const resolved = projectLimitRule(preferences, project);
       const resetKey = `limit-reset-attempt:${thread.id}:${thread.latestRunId}`;
       const apiAttemptKey = `limit-api-attempt:${thread.id}:${thread.latestRunId}`;
       const coordinator = yield* coordinatorOf(project.workspaceSettings?.coordinatorThreadId);

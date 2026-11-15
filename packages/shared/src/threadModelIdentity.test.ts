@@ -170,3 +170,15 @@ describe("limitPreswitchAfterMove", () => {
     expect(limitPreswitchAfterMove(undefined, sol, astra, false)).toBeUndefined();
   });
 });
+
+describe("a context suffix on the model", () => {
+  it("is the same model, so the thread does not read as moved", () => {
+    const instanceId = "claudeAgent";
+    expect(
+      threadModelIdentity({
+        thread: { instanceId, model: "claude-opus-5-5" } as ModelSelection,
+        running: { instanceId, model: "claude-opus-5-5[1m]" } as ModelSelection,
+      }).preferred,
+    ).toBeNull();
+  });
+});

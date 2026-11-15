@@ -30,11 +30,38 @@ const model = (overrides: Partial<ServerProviderModel>): ServerProviderModel => 
 });
 
 describe("classifyModels", () => {
+  it("carries the manifest's successor onto the model and drops it when switched off", () => {
+    const manifest: ModelManifest.ModelManifestData = {
+      version: 1,
+      currentModels: { codex: ["gpt-next", "gpt-test"] },
+      providers: {
+        codex: {
+          profiles: {},
+          models: [{ slug: "gpt-next", name: "Next", status: "current", succeeds: "gpt-test" }],
+        },
+      },
+    };
+    const models = [model({ slug: "gpt-next" }), model({})];
+    assert.deepStrictEqual(
+      ModelManifest.classifyModels(models, manifest, CODEX).map((entry) => entry.succeeds),
+      ["gpt-test", undefined],
+    );
+    assert.deepStrictEqual(
+      ModelManifest.classifyModels(
+        [model({ slug: "gpt-next", succeeds: "gpt-test" })],
+        { ...manifest, successors: false },
+        CODEX,
+      ).map((entry) => "succeeds" in entry),
+      [false],
+    );
+  });
   it("classifies qualified Codex families without changing their wire ids", () => {
     const manifest: ModelManifest.ModelManifestData = {
       version: 1,
       currentModels: { codex: ["gpt-test"] },
-      providers: { codex: { profiles: {}, models: [{ slug: "gpt-old", name: "Old", status: "legacy" }] } },
+      providers: {
+        codex: { profiles: {}, models: [{ slug: "gpt-old", name: "Old", status: "legacy" }] },
+      },
     };
     const models = [
       model({ slug: "openai.gpt-test", isLegacy: true }),
@@ -55,7 +82,9 @@ describe("classifyModels", () => {
     const manifest: ModelManifest.ModelManifestData = {
       version: 1,
       currentModels: { codex: ["current-a", "current-b"] },
-      providers: { codex: { profiles: {}, models: [{ slug: "old-model", name: "Old", status: "legacy" }] } },
+      providers: {
+        codex: { profiles: {}, models: [{ slug: "old-model", name: "Old", status: "legacy" }] },
+      },
     };
     const models = [
       model({ slug: "current-a" }),
