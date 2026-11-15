@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -87,7 +88,7 @@ const machineWith = (
  * Checks never run on Windows (every credential answers "unknown" there), and these
  * cases stand a tool in with a shell script and file mode bits, which Windows lacks.
  */
-const windowsHost = process.platform === "win32";
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
 const ok: ProbeRun = { exitCode: 0, printed: true, timedOut: false };
 
