@@ -4963,7 +4963,6 @@ export const ko: PhraseCatalog = {
   "Add chart": "차트 추가",
   "Showing the first {rows} rows and {columns} columns.":
     "처음 {rows}개 행과 {columns}개 열을 표시합니다.",
-  Charts: "차트",
   "Sheet tabs": "시트 탭",
   "This sheet is too large to open here.": "이 시트는 너무 커서 여기서 열 수 없습니다.",
   Sheet: "시트",
@@ -5069,4 +5068,5 @@ export const ko: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "AppImage 경로를 명령에 쓸 수 없습니다. AppImage를 더 단순한 폴더로 옮긴 뒤 거기서 여세요.",
   "Could not write {path} ({error}).": "{path}를 쓰지 못했습니다({error}).",
+  Column: "세로 막대",
 };

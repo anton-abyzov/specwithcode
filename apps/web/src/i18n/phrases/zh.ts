@@ -4823,7 +4823,6 @@ export const zh: PhraseCatalog = {
   "Chart title": "图表标题",
   "Add chart": "添加图表",
   "Showing the first {rows} rows and {columns} columns.": "显示前 {rows} 行和 {columns} 列。",
-  Charts: "图表",
   "Sheet tabs": "工作表标签",
   "This sheet is too large to open here.": "此表格太大，无法在此打开。",
   Sheet: "表格",
@@ -4929,4 +4928,5 @@ export const zh: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "无法把 AppImage 的路径写入命令。请把 AppImage 移到更简单的文件夹，再从那里打开。",
   "Could not write {path} ({error}).": "无法写入 {path}（{error}）。",
+  Column: "柱形图",
 };

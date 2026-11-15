@@ -74,7 +74,42 @@ function Axis(props: { readonly scale: Scale }): ReactNode {
   );
 }
 
-function BarChart(props: { readonly series: SheetChartSeries }): ReactNode {
+/** Horizontal bars, one per label, each with its value and its share of the total. */
+function BarChart(props: { readonly series: SheetChartSeries; readonly tone: number }): ReactNode {
+  const { points } = props.series;
+  const max = Math.max(0, ...points.map((point) => point.value));
+  return (
+    <ul className="office-bars">
+      {points.slice(0, 40).map((point, index) => (
+        <li key={`${point.label}:${index}`}>
+          <span className="office-bars-label" title={point.label}>
+            {point.label}
+          </span>
+          <span className="office-bars-track">
+            <span
+              className="office-bars-bar"
+              style={{
+                width: `${max > 0 ? Math.max(0, (point.value / max) * 100) : 0}%`,
+                background: seriesColor(props.tone),
+              }}
+            />
+            <span className="office-bars-value">
+              {compactNumber(point.value)}
+              {props.series.total > 0 && point.value >= 0
+                ? ` · ${Math.round(point.share * 100)}%`
+                : ""}
+            </span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ColumnChart(props: {
+  readonly series: SheetChartSeries;
+  readonly tone: number;
+}): ReactNode {
   const { points } = props.series;
   const scale = valueScale(props.series);
   const band = (WIDTH - PAD.left - PAD.right) / points.length;
@@ -96,7 +131,7 @@ function BarChart(props: { readonly series: SheetChartSeries }): ReactNode {
               width={bar}
               height={Math.max(1, bottom - top)}
               rx={2}
-              fill={seriesColor(0)}
+              fill={seriesColor(props.tone)}
             >
               <title>{`${point.label}: ${compactNumber(point.value)}`}</title>
             </rect>
@@ -127,7 +162,7 @@ function BarChart(props: { readonly series: SheetChartSeries }): ReactNode {
   );
 }
 
-function LineChart(props: { readonly series: SheetChartSeries }): ReactNode {
+function LineChart(props: { readonly series: SheetChartSeries; readonly tone: number }): ReactNode {
   const { points } = props.series;
   const scale = valueScale(props.series);
   const inner = WIDTH - PAD.left - PAD.right;
@@ -140,11 +175,17 @@ function LineChart(props: { readonly series: SheetChartSeries }): ReactNode {
   return (
     <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="office-chart-plot" role="img">
       <Axis scale={scale} />
-      <path d={path} fill="none" stroke={seriesColor(0)} strokeWidth={2} strokeLinejoin="round" />
+      <path
+        d={path}
+        fill="none"
+        stroke={seriesColor(props.tone)}
+        strokeWidth={2}
+        strokeLinejoin="round"
+      />
       {points.map((point, index) => (
         <g key={`${point.label}:${index}`}>
           {points.length <= 40 ? (
-            <circle cx={x(index)} cy={scale.y(point.value)} r={3} fill={seriesColor(0)}>
+            <circle cx={x(index)} cy={scale.y(point.value)} r={3} fill={seriesColor(props.tone)}>
               <title>{`${point.label}: ${compactNumber(point.value)}`}</title>
             </circle>
           ) : null}
@@ -240,10 +281,13 @@ function DonutChart(props: { readonly series: SheetChartSeries }): ReactNode {
 export function SheetChartCard(props: {
   readonly chart: SheetChartBlock;
   readonly series: SheetChartSeries;
+  /** Which series colour the chart takes, so charts on one tab differ. */
+  readonly tone?: number | undefined;
   readonly onRemove?: (() => void) | undefined;
 }): ReactNode {
   const tx = useTx();
   const { chart, series } = props;
+  const tone = props.tone ?? 0;
   return (
     <figure className="office-chart" data-chart-type={chart.type} data-chart-id={chart.id}>
       <figcaption className="office-chart-title">
@@ -266,9 +310,11 @@ export function SheetChartCard(props: {
       ) : chart.type === "donut" ? (
         <DonutChart series={series} />
       ) : chart.type === "line" ? (
-        <LineChart series={series} />
+        <LineChart series={series} tone={tone} />
+      ) : chart.type === "column" ? (
+        <ColumnChart series={series} tone={tone} />
       ) : (
-        <BarChart series={series} />
+        <BarChart series={series} tone={tone} />
       )}
     </figure>
   );

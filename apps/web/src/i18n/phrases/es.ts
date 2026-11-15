@@ -5046,7 +5046,6 @@ export const es: PhraseCatalog = {
   "Add chart": "Añadir gráfico",
   "Showing the first {rows} rows and {columns} columns.":
     "Se muestran las primeras {rows} filas y {columns} columnas.",
-  Charts: "Gráficos",
   "Sheet tabs": "Pestañas de la hoja",
   "This sheet is too large to open here.": "Esta hoja es demasiado grande para abrirla aquí.",
   Sheet: "Hoja",
@@ -5153,4 +5152,5 @@ export const es: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "La ruta del AppImage no se puede escribir en el comando. Mueve el AppImage a una carpeta más simple y ábrelo desde allí.",
   "Could not write {path} ({error}).": "No se pudo escribir {path} ({error}).",
+  Column: "Columnas",
 };

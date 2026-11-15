@@ -5062,7 +5062,6 @@ export const fr: PhraseCatalog = {
   "Add chart": "Ajouter le graphique",
   "Showing the first {rows} rows and {columns} columns.":
     "Affichage des {rows} premières lignes et {columns} premières colonnes.",
-  Charts: "Graphiques",
   "Sheet tabs": "Onglets de la feuille",
   "This sheet is too large to open here.": "Cette feuille est trop volumineuse pour s'ouvrir ici.",
   Sheet: "Feuille",
@@ -5170,4 +5169,5 @@ export const fr: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "Le chemin de l'AppImage ne peut pas être écrit dans la commande. Déplacez l'AppImage dans un dossier plus simple et ouvrez-le depuis là.",
   "Could not write {path} ({error}).": "Impossible d'écrire {path} ({error}).",
+  Column: "Colonnes",
 };

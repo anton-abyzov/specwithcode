@@ -5018,7 +5018,6 @@ export const ru: PhraseCatalog = {
   "Add chart": "Добавить диаграмму",
   "Showing the first {rows} rows and {columns} columns.":
     "Показаны первые {rows} строк и {columns} столбцов.",
-  Charts: "Диаграммы",
   "Sheet tabs": "Листы таблицы",
   "This sheet is too large to open here.": "Эта таблица слишком велика, чтобы открыть её здесь.",
   Sheet: "Таблица",
@@ -5125,4 +5124,5 @@ export const ru: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "Путь к AppImage нельзя записать в команду. Переместите AppImage в папку с простым путём и откройте его оттуда.",
   "Could not write {path} ({error}).": "Не удалось записать {path} ({error}).",
+  Column: "Колонки",
 };

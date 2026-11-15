@@ -5021,7 +5021,6 @@ export const ja: PhraseCatalog = {
   "Add chart": "グラフを追加",
   "Showing the first {rows} rows and {columns} columns.":
     "最初の {rows} 行と {columns} 列を表示しています。",
-  Charts: "グラフ",
   "Sheet tabs": "シートのタブ",
   "This sheet is too large to open here.": "このシートは大きすぎてここでは開けません。",
   Sheet: "シート",
@@ -5129,4 +5128,5 @@ export const ja: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "AppImage のパスをコマンドに書き込めません。AppImage を単純なフォルダーに移動し、そこから開いてください。",
   "Could not write {path} ({error}).": "{path} を書き込めませんでした（{error}）。",
+  Column: "縦棒",
 };
