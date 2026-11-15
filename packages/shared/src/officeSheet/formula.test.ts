@@ -338,6 +338,16 @@ describe("sheet limits and validation", () => {
     expect(safeLinkHref("data:text/html,<b>")).toBeNull();
     expect(safeLinkHref("https://a b")).toBeNull();
     expect(safeLinkHref("example.com")).toBeNull();
+    expect(safeLinkHref("HTTPS://Example.com/a")).toBe("https://example.com/a");
+    expect(safeLinkHref("JaVaScRiPt:alert(1)")).toBeNull();
+    expect(safeLinkHref("java\u0000script:alert(1)")).toBeNull();
+    expect(safeLinkHref("https://exa\u0007mple.com")).toBeNull();
+    expect(safeLinkHref("https://example.com/\u202egnp.exe")).toBeNull();
+    expect(safeLinkHref("https://bank.example@evil.example/login")).toBeNull();
+    expect(safeLinkHref("https://user:pw@example.com")).toBeNull();
+    expect(safeLinkHref("mailto:a@example.com?subject=Hi&body=Pay")).toBeNull();
+    expect(safeLinkHref("mailto:a@example.com,b@example.com")).toBeNull();
+    expect(safeLinkHref("https:example.com")).toBeNull();
   });
 
   it("makes a safe file stem from any title", () => {

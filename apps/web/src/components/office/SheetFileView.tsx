@@ -1,5 +1,9 @@
 import { AuthFilesystemWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
-import type { OfficeThemeSource } from "@specweave-studio/shared/officeSheet";
+import {
+  type OfficeThemeSource,
+  SHEET_ARTIFACT_SUFFIX,
+  SHEET_LIMITS,
+} from "@specweave-studio/shared/officeSheet";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 
 import { useTheme } from "~/hooks/useTheme";
@@ -76,7 +80,9 @@ export function SheetFileView(props: {
   const { environmentId, cwd, path } = props;
   const save = useCallback(
     async (contents: string): Promise<boolean> => {
-      if (relativePath === null) return false;
+      // Only the sheet that is open, and never more than a sheet may hold.
+      if (relativePath === null || !relativePath.endsWith(SHEET_ARTIFACT_SUFFIX)) return false;
+      if (new TextEncoder().encode(contents).byteLength > SHEET_LIMITS.bytes) return false;
       const result = await writeFile({ environmentId, input: { cwd, relativePath, contents } });
       if (result._tag !== "Success") return false;
       setProjectFileQueryData(environmentId, cwd, path, contents);

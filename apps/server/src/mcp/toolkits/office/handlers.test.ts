@@ -157,6 +157,7 @@ it.effect("writes a sheet into the project's artifacts folder and reads its comp
       tab: "Plan",
       range: "A1:B5",
       truncated: false,
+      notice: Handlers.SHEET_READ_NOTICE,
     });
     const cells = read.cells as Array<Record<string, unknown>>;
     expect(cells.find((cell) => cell.cell === "B4")).toEqual({

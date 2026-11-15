@@ -490,18 +490,25 @@ export function lookupByRange<T>(
 /** Only these schemes ever become a link; anything else stays plain text. */
 export function safeLinkHref(text: string): string | null {
   const trimmed = text.trim();
-  if (trimmed.length === 0 || trimmed.length > 2048 || /\s/.test(trimmed)) return null;
-  if (/^https?:\/\/[^/]/i.test(trimmed) || /^mailto:[^@\s]+@[^@\s]+$/i.test(trimmed)) {
-    try {
-      const url = new URL(trimmed);
-      return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "mailto:"
-        ? url.href
-        : null;
-    } catch {
-      return null;
-    }
+  if (trimmed.length === 0 || trimmed.length > 2048) return null;
+  // No spaces, control characters or invisible direction marks anywhere in the text.
+  if (/[\s\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/.test(trimmed)) {
+    return null;
   }
-  return null;
+  // An address only: a mailto query could set a subject, a body or more recipients.
+  if (/^mailto:[^@?&#%,;]+@[^@?&#%,;]+$/i.test(trimmed)) {
+    return `mailto:${trimmed.slice("mailto:".length)}`;
+  }
+  if (!/^https?:\/\/[^/]/i.test(trimmed)) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    // "https://bank.com@evil.example" reads as one site and opens another.
+    if (url.username !== "" || url.password !== "") return null;
+    return url.href;
+  } catch {
+    return null;
+  }
 }
 
 /** A file name stem from a title: lower case, dashes, at most 60 characters. */
