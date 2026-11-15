@@ -1,7 +1,14 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
-import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
+import {
+  groupSlowRpcAckRequests,
+  type SlowRpcAckRequest,
+  useSlowRpcAckRequests,
+} from "../rpc/requestLatencyState";
+import { useEnvironments } from "../state/environments";
 import { toastManager } from "./ui/toast";
+
+type ToastId = ReturnType<typeof toastManager.add>;
 
 function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): string {
   const count = requests.length;
@@ -11,6 +18,14 @@ function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): strin
   );
 
   return `${count} request${count === 1 ? "" : "s"} waiting longer than ${thresholdSeconds}s.`;
+}
+
+/**
+ * The warning names the machine that is slow, so a window that waits on
+ * another machine does not read as a problem with its own connection.
+ */
+export function slowMachineTitle(label: string | null): string {
+  return label ? `${label} is slow to answer` : "A machine is slow to answer";
 }
 
 function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRequest> }) {
@@ -31,43 +46,57 @@ function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRe
   );
 }
 
+/**
+ * One warning per machine this window is waiting on. Each window tracks only
+ * the requests it sent, so a machine shows up here only in windows that are
+ * actually waiting on it.
+ */
 export function SlowRpcRequestToastCoordinator() {
   const slowRequests = useSlowRpcAckRequests();
-  const toastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
+  const { environments } = useEnvironments();
+  const labels = useMemo(
+    () =>
+      new Map<string, string>(
+        environments.map((environment) => [environment.environmentId, environment.label]),
+      ),
+    [environments],
+  );
+  const toastIdsRef = useRef(new Map<string | null, ToastId>());
 
   useEffect(() => {
-    if (slowRequests.length === 0) {
-      if (toastIdRef.current !== null) {
-        toastManager.close(toastIdRef.current);
-        toastIdRef.current = null;
-      }
-      return;
+    const toastIds = toastIdsRef.current;
+    const groups = groupSlowRpcAckRequests(slowRequests);
+    const live = new Set(groups.map((group) => group.environmentId));
+
+    for (const [environmentId, toastId] of toastIds) {
+      if (live.has(environmentId)) continue;
+      toastManager.close(toastId);
+      toastIds.delete(environmentId);
     }
 
-    const nextToast = {
-      data: {
-        expandableContent: <SlowRequestDetails requests={slowRequests} />,
-        expandableDescriptionTrigger: true,
-        expandableLabels: { collapse: "Hide requests", expand: "Show requests" },
-      },
-      description: describeSlowRequests(slowRequests),
-      timeout: 0,
-      title: "Some requests are slow",
-      type: "warning" as const,
-    };
-
-    if (toastIdRef.current === null) {
-      toastIdRef.current = toastManager.add(nextToast);
-    } else {
-      toastManager.update(toastIdRef.current, nextToast);
+    for (const group of groups) {
+      const label = group.environmentId === null ? null : (labels.get(group.environmentId) ?? null);
+      const nextToast = {
+        data: {
+          expandableContent: <SlowRequestDetails requests={group.requests} />,
+          expandableDescriptionTrigger: true,
+          expandableLabels: { collapse: "Hide requests", expand: "Show requests" },
+        },
+        description: describeSlowRequests(group.requests),
+        timeout: 0,
+        title: slowMachineTitle(label),
+        type: "warning" as const,
+      };
+      const existing = toastIds.get(group.environmentId);
+      if (existing === undefined) toastIds.set(group.environmentId, toastManager.add(nextToast));
+      else toastManager.update(existing, nextToast);
     }
-  }, [slowRequests]);
+  }, [slowRequests, labels]);
 
   useEffect(
     () => () => {
-      if (toastIdRef.current !== null) {
-        toastManager.close(toastIdRef.current);
-      }
+      for (const toastId of toastIdsRef.current.values()) toastManager.close(toastId);
+      toastIdsRef.current.clear();
     },
     [],
   );

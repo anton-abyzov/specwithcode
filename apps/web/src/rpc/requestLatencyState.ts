@@ -16,6 +16,8 @@ let slowRpcAckThresholdMs = SLOW_RPC_ACK_THRESHOLD_MS;
 
 export interface SlowRpcAckRequest {
   readonly requestId: string;
+  /** The machine the request went to; null when the caller did not say. */
+  readonly environmentId: string | null;
   readonly startedAt: string;
   readonly startedAtMs: number;
   readonly tag: string;
@@ -67,12 +69,37 @@ export function getSlowRpcAckRequests(): ReadonlyArray<SlowRpcAckRequest> {
   return getSlowRpcAckRequestsValue();
 }
 
+/** Slow requests of one machine, so a warning can name the machine that is slow. */
+export interface SlowRpcAckGroup {
+  readonly environmentId: string | null;
+  readonly requests: ReadonlyArray<SlowRpcAckRequest>;
+}
+
+/** Slow requests grouped by the machine they went to, in order of each machine's first one. */
+export function groupSlowRpcAckRequests(
+  requests: ReadonlyArray<SlowRpcAckRequest>,
+): ReadonlyArray<SlowRpcAckGroup> {
+  const groups = new Map<string | null, SlowRpcAckRequest[]>();
+  for (const request of requests) {
+    const group = groups.get(request.environmentId);
+    if (group) group.push(request);
+    else groups.set(request.environmentId, [request]);
+  }
+  return [...groups].map(([environmentId, grouped]) => ({ environmentId, requests: grouped }));
+}
+
 /**
  * Starts the slow-request timer for one in-flight unary RPC. `method` is the
  * bare WS method (used to decide whether and how long to wait); `tag` is the
- * human-readable label shown in the toast, which defaults to the method.
+ * human-readable label shown in the toast, which defaults to the method;
+ * `environmentId` is the machine that should answer.
  */
-export function trackRpcRequestSent(requestId: string, method: string, tag = method): void {
+export function trackRpcRequestSent(
+  requestId: string,
+  method: string,
+  tag = method,
+  environmentId: string | null = null,
+): void {
   if (!shouldTrackRpcAck(method)) {
     return;
   }
@@ -84,6 +111,7 @@ export function trackRpcRequestSent(requestId: string, method: string, tag = met
   const thresholdMs = rpcAckThresholdMs(method);
   const request: SlowRpcAckRequest = {
     requestId,
+    environmentId,
     startedAt: new Date(startedAtMs).toISOString(),
     startedAtMs,
     tag,
