@@ -70,36 +70,20 @@ try {
     await page.goto(
       `http://127.0.0.1:${server.address().port}/?theme=${theme}&live=off&scenario=projects`,
     );
-    await page.getByRole("button", { name: "Automated (2)" }).waitFor();
+    await page.locator('[aria-label="Projects"] .sws-side-row-label').first().waitFor();
     const main = await names(page, '[aria-label="Projects"]');
     assert.deepEqual(main, ["EasyChamp", "olysense", "sketchmate_dont_confuse", "specweave"]);
+    // Projects checks made are listed in Settings > Archive, not in the sidebar.
+    const groups = await page
+      .locator("aside button")
+      .evaluateAll((items) =>
+        items.map((item) => item.textContent ?? "").filter((t) => /^(Automated|Archived) \(/.test(t)),
+      );
+    assert.deepEqual(groups, []);
     const sidebar = page.locator("aside");
-    await sidebar.screenshot({ path: join(output, `${width}-${theme}-folded.png`) });
-
-    await page.getByRole("button", { name: "Automated (2)" }).click();
-    const automated = await names(page, '[aria-label="Automated projects"]');
-    assert.deepEqual(automated, ["Run shell acceptance 357", "swc copy check 2026-10-20"]);
-    await sidebar.screenshot({ path: join(output, `${width}-${theme}-open.png`) });
-
-    const row = page.locator('[aria-label="Automated projects"] .sws-project-row').first();
-    await row.hover();
-    await page.getByRole("button", { name: "Actions for Run shell acceptance 357" }).click();
-    const item = page.getByRole("menuitem", { name: "Move to my projects" });
-    await item.waitFor();
-    await page.screenshot({ path: join(output, `${width}-${theme}-menu.png`) });
-    await item.click();
-    await page
-      .locator('[aria-label="Projects"] .sws-side-row-label', {
-        hasText: "Run shell acceptance 357",
-      })
-      .waitFor();
-    const updates = await page.evaluate(() => window.fixture.projectUpdates());
-    assert.deepEqual(updates.at(-1), {
-      environmentId: "host",
-      input: { projectId: "run-shell", workspaceSettings: { expectedRevision: 1, origin: "user" } },
-    });
+    await sidebar.screenshot({ path: join(output, `${width}-${theme}-list.png`) });
     assert.deepEqual(errors, []);
-    receipt.cases.push({ width, theme, main, automated, moved: updates.at(-1), errors });
+    receipt.cases.push({ width, theme, main, errors });
     await page.close();
   }
   await writeFile(join(output, "receipt.json"), JSON.stringify(receipt, null, 2));
