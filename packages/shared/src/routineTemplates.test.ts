@@ -84,19 +84,101 @@ describe("routine templates", () => {
     const provider = {
       instanceId: "codex",
       driver: "codex",
+      auth: { status: "authenticated" },
       models: [{ slug: "gpt-frontier" }, { slug: "gpt-everyday" }],
     } as never;
     const tiers = { codex: { regular: "gpt-everyday", frontier: "gpt-frontier" } } as never;
     expect(routineTemplateModel(watch, coordinator, [provider], tiers)).toEqual({
-      instanceId: "codex",
-      model: "gpt-everyday",
+      kind: "ready",
+      selection: { instanceId: "codex", model: "gpt-everyday" },
+      note: "It uses gpt-everyday, the everyday model. It runs without its options.",
     });
-    // Other templates, an unknown provider, or no coordinator keep what was given.
+    // Other templates keep the coordinator; no coordinator is "none"; no providers yet is loading.
     expect(
       routineTemplateModel(routineTemplate("research-brief")!, coordinator, [provider], tiers),
-    ).toBe(coordinator);
-    expect(routineTemplateModel(watch, coordinator, [], tiers)).toBe(coordinator);
-    expect(routineTemplateModel(watch, null, [provider], tiers)).toBeNull();
+    ).toEqual({ kind: "ready", selection: coordinator, note: null });
+    expect(routineTemplateModel(watch, null, [provider], tiers)).toEqual({ kind: "none" });
+    expect(routineTemplateModel(watch, coordinator, undefined, tiers)).toEqual({ kind: "loading" });
+    expect(routineTemplateModel(watch, coordinator, [], tiers)).toEqual({
+      kind: "ready",
+      selection: coordinator,
+      note: "The coordinator's provider is not listed here, so it uses gpt-frontier, the coordinator's model.",
+    });
+  });
+
+  it("never swaps the reset watch onto a per-token or unpriced model (1340 AC-09)", () => {
+    const watch = routineTemplate("reset-announcement-watch")!;
+    const coordinator = { instanceId: "copilot", model: "gpt-6-astra" } as never;
+    const provider = (everydayBilling: string | undefined) =>
+      ({
+        instanceId: "copilot",
+        driver: "acpRegistry",
+        auth: { status: "authenticated" },
+        models: [
+          { slug: "gpt-6-astra", billing: "subscription" },
+          { slug: "gpt-6.1-sol", ...(everydayBilling ? { billing: everydayBilling } : {}) },
+        ],
+      }) as never;
+    const tiers = { copilot: { regular: "gpt-6.1-sol" } } as never;
+    expect(routineTemplateModel(watch, coordinator, [provider("paid-router")], tiers)).toEqual({
+      kind: "ready",
+      selection: coordinator,
+      note: "The everyday model gpt-6.1-sol is billed per token, so it uses gpt-6-astra, the coordinator's model.",
+    });
+    expect(routineTemplateModel(watch, coordinator, [provider(undefined)], tiers)).toEqual({
+      kind: "ready",
+      selection: coordinator,
+      note: "The everyday model gpt-6.1-sol does not say how it is billed, so it uses gpt-6-astra, the coordinator's model.",
+    });
+    // A provider that lists no regular model keeps the coordinator and says so.
+    const bare = {
+      instanceId: "copilot",
+      driver: "acpRegistry",
+      auth: { status: "authenticated" },
+      models: [{ slug: "gpt-6-astra" }],
+    };
+    expect(routineTemplateModel(watch, coordinator, [bare as never], undefined)).toMatchObject({
+      kind: "ready",
+      selection: coordinator,
+      note: "No everyday model is listed for this provider, so it uses gpt-6-astra, the coordinator's model.",
+    });
+  });
+
+  it("carries the coordinator's options the everyday model can run (1340 AC-09)", () => {
+    const watch = routineTemplate("reset-announcement-watch")!;
+    const effort = {
+      id: "reasoningEffort",
+      label: "Reasoning",
+      type: "select",
+      options: [
+        { id: "high", label: "High" },
+        { id: "xhigh", label: "Extra high" },
+      ],
+    };
+    const coordinator = {
+      instanceId: "codex",
+      model: "gpt-frontier",
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    } as never;
+    const provider = {
+      instanceId: "codex",
+      driver: "codex",
+      auth: { status: "authenticated" },
+      models: [
+        { slug: "gpt-frontier", capabilities: { optionDescriptors: [effort] } },
+        { slug: "gpt-everyday", capabilities: { optionDescriptors: [effort] } },
+      ],
+    } as never;
+    const tiers = { codex: { regular: "gpt-everyday" } } as never;
+    expect(routineTemplateModel(watch, coordinator, [provider], tiers)).toEqual({
+      kind: "ready",
+      selection: {
+        instanceId: "codex",
+        model: "gpt-everyday",
+        options: [{ id: "reasoningEffort", value: "xhigh" }],
+      },
+      note: "It uses gpt-everyday, the everyday model.",
+    });
   });
 
   it("expands the briefing command the assistant writes, keeping the user's wishes", () => {

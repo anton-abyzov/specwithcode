@@ -5,6 +5,8 @@ import type {
   ServerProvider,
 } from "@specweave-studio/contracts";
 
+import { isPaidModel, modelBilling } from "./modelBilling.ts";
+import { carryModelOptions } from "./modelOptionCarry.ts";
 import { tierModelFor } from "./modelTiers.ts";
 
 /**
@@ -44,21 +46,73 @@ export interface RoutineTemplate {
 }
 
 /**
- * The model a routine from `template` is saved with: the coordinator's, or for an
- * everyday template that provider's regular tier model when it lists one. Options
- * belong to the coordinator's model, so they are dropped when the model changes.
+ * The model a routine from a template saves with, and the line the form shows
+ * about it. `loading` until the environment's providers and settings arrive, so
+ * a quick save never stores a model nobody chose.
+ */
+export type RoutineModelChoice =
+  | { readonly kind: "loading" }
+  | { readonly kind: "none" }
+  | { readonly kind: "ready"; readonly selection: ModelSelection; readonly note: string | null };
+
+function optionDescriptors(provider: ServerProvider, slug: string) {
+  return provider.models.find((entry) => entry.slug === slug)?.capabilities?.optionDescriptors;
+}
+
+/**
+ * The coordinator's model, or for an everyday template that provider's regular
+ * tier model. The swap never lands on a model billed per token, nor moves from
+ * a model known to bill to the plan onto one whose billing is unknown: the
+ * routine may run unattended. Options move with `carryModelOptions`, and what
+ * the everyday model cannot run is named.
  */
 export function routineTemplateModel(
   template: Pick<RoutineTemplate, "modelTier">,
   coordinator: ModelSelection | null,
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver" | "models">>,
+  providers: ReadonlyArray<ServerProvider> | undefined,
   tiers: ProviderModelTiers | undefined,
-): ModelSelection | null {
-  if (coordinator === null || template.modelTier !== "everyday") return coordinator;
+): RoutineModelChoice {
+  if (coordinator === null) return { kind: "none" };
+  if (template.modelTier !== "everyday")
+    return { kind: "ready", selection: coordinator, note: null };
+  if (providers === undefined) return { kind: "loading" };
+  const keep = (why: string): RoutineModelChoice => ({
+    kind: "ready",
+    selection: coordinator,
+    note: `${why}, so it uses ${coordinator.model}, the coordinator's model.`,
+  });
   const provider = providers.find((entry) => entry.instanceId === coordinator.instanceId);
-  const model = provider === undefined ? undefined : tierModelFor(provider, "regular", tiers);
-  if (model === undefined || model === coordinator.model) return coordinator;
-  return { instanceId: coordinator.instanceId, model } as ModelSelection;
+  if (provider === undefined) return keep("The coordinator's provider is not listed here");
+  const model = tierModelFor(provider, "regular", tiers);
+  if (model === undefined) return keep("No everyday model is listed for this provider");
+  const everyday = `It uses ${model}, the everyday model.`;
+  if (model === coordinator.model) return { kind: "ready", selection: coordinator, note: everyday };
+  if (isPaidModel(provider, model)) return keep(`The everyday model ${model} is billed per token`);
+  if (
+    modelBilling(provider, model) === "unknown" &&
+    modelBilling(provider, coordinator.model) !== "unknown"
+  ) {
+    return keep(`The everyday model ${model} does not say how it is billed`);
+  }
+  const carried = carryModelOptions({
+    previous: coordinator.options,
+    previousDescriptors: optionDescriptors(provider, coordinator.model),
+    nextDescriptors: optionDescriptors(provider, model),
+  });
+  const lost = carried.unknown === true ? ["its options"] : carried.dropped;
+  return {
+    kind: "ready",
+    selection: (carried.options.length > 0
+      ? { instanceId: coordinator.instanceId, model, options: carried.options }
+      : { instanceId: coordinator.instanceId, model }) as ModelSelection,
+    note: [
+      everyday,
+      lost.length > 0 ? `It runs without ${lost.join(", ")}.` : null,
+      carried.adjusted.length > 0 ? `Changed: ${carried.adjusted.join(", ")}.` : null,
+    ]
+      .filter((line) => line !== null)
+      .join(" "),
+  };
 }
 
 /** The title the proactive briefing routine keeps, so the assistant can find it again. */

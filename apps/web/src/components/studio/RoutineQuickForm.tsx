@@ -52,6 +52,7 @@ export function RoutineQuickForm({
   const upsert = useAtomCommand(serverEnvironment.upsertScheduledTask);
   // An everyday template runs on the coordinator's provider at its everyday model.
   const routineModel = useRoutineModel(environmentId, template, modelSelection);
+  const modelsLoading = routineModel.kind === "loading";
   const [title, setTitle] = useState(template.title);
   const [prompt, setPrompt] = useState(template.prompt);
   const [inputs, setInputs] = useState(() =>
@@ -76,7 +77,8 @@ export function RoutineQuickForm({
 
   async function save() {
     if (saving) return;
-    if (routineModel === null) {
+    if (routineModel.kind === "loading") return;
+    if (routineModel.kind === "none") {
       setError("Pick a coordinator model in this project's settings first.");
       return;
     }
@@ -105,7 +107,7 @@ export function RoutineQuickForm({
           projectId,
           threadId: null,
           workspaceStrategy: { type: "root" },
-          modelSelection: routineModel,
+          modelSelection: routineModel.selection,
           runtimeMode: teamRulesClampRoutineMode(teamRules.state, "full-access"),
           interactionMode: "default",
           ownThread: true,
@@ -234,15 +236,13 @@ export function RoutineQuickForm({
       </label>
       <p className="project-muted">
         Runs in a thread of its own, named after the routine; each run continues it.
-        {template.modelTier === "everyday" && routineModel !== null
-          ? ` It uses ${routineModel.model}, the everyday model.`
-          : ""}
+        {routineModel.kind === "ready" && routineModel.note !== null ? ` ${routineModel.note}` : ""}
         {scheduled ? " Each scheduled run uses your plan's limits." : ""}
       </p>
       {error ? <p role="alert">{error}</p> : null}
       <div className="project-actions">
-        <button type="submit" className="project-control" disabled={saving}>
-          {saving ? "Saving…" : "Save routine"}
+        <button type="submit" className="project-control" disabled={saving || modelsLoading}>
+          {saving ? "Saving…" : modelsLoading ? "Loading models…" : "Save routine"}
         </button>
         <button
           type="button"
