@@ -559,9 +559,21 @@ export function ProjectDefaultsSettings({
             }
           />
           {category === "project" ? startFromOriginRow : null}
-          <ProviderLimitSettings />
-          <ModelLanesSettings />
-          <TaskRoutingSettings />
+          <SettingsRow
+            id="project-defaults-models"
+            title="Models and limits"
+            description="Which model does the work, where it runs and what happens at a usage limit are on the Models page."
+            control={
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void navigate({ to: "/settings/models" })}
+              >
+                {tx("Open Models")}
+              </Button>
+            }
+          />
         </>
       ) : category === "source-control" ? (
         <>

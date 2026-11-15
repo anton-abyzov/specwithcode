@@ -55,7 +55,8 @@ export const REVIEW_DEPTH_LABELS: Record<ProviderModelTier, string> = {
  * row is project-scoped and writes only the field it changes; the reviewer
  * list is replaced whole, so it can be cleared.
  */
-export function AdversarialReviewSettings() {
+/** `part="depth"` renders only the review depth row; the Review track owns the rest. */
+export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } = {}) {
   const tx = useTx();
   const { scope, target } = useSettingsScope();
   const navigate = useNavigate();
@@ -130,9 +131,9 @@ export function AdversarialReviewSettings() {
       return;
     }
     void navigate({
-      to: "/settings/general",
+      to: "/settings/models",
       search: target ? { machine: target.environmentId } : {},
-      hash: "provider-limit-fallback",
+      hash: "model-advanced",
       state: { settingsTargetHighlight: true },
     });
   };
@@ -148,33 +149,37 @@ export function AdversarialReviewSettings() {
 
   return (
     <>
-      <SettingsRow
-        serverScoped
-        settingKeys={["adversarialReview"]}
-        mixed={mixed}
-        id="adversarial-review-auto"
-        title={tx("Review finished features automatically")}
-        description={tx(
-          isProjectScope
-            ? "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage."
-            : "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.",
-        )}
-        resetAction={
-          review.autoOnFeatureComplete ? (
-            <SettingResetButton
-              label={tx("automatic review")}
-              onClick={() => save({ autoOnFeatureComplete: false })}
-            />
-          ) : null
-        }
-        control={
-          <Switch
-            aria-label={tx("Review finished features automatically")}
-            checked={mixed ? false : review.autoOnFeatureComplete}
-            onCheckedChange={(checked) => save({ autoOnFeatureComplete: Boolean(checked) })}
+      {part === undefined ? (
+        <>
+          <SettingsRow
+            serverScoped
+            settingKeys={["adversarialReview"]}
+            mixed={mixed}
+            id="adversarial-review-auto"
+            title={tx("Review finished features automatically")}
+            description={tx(
+              isProjectScope
+                ? "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage."
+                : "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.",
+            )}
+            resetAction={
+              review.autoOnFeatureComplete ? (
+                <SettingResetButton
+                  label={tx("automatic review")}
+                  onClick={() => save({ autoOnFeatureComplete: false })}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label={tx("Review finished features automatically")}
+                checked={mixed ? false : review.autoOnFeatureComplete}
+                onCheckedChange={(checked) => save({ autoOnFeatureComplete: Boolean(checked) })}
+              />
+            }
           />
-        }
-      />
+        </>
+      ) : null}
       <SettingsRow
         serverScoped
         settingKeys={["adversarialReview"]}
@@ -214,143 +219,158 @@ export function AdversarialReviewSettings() {
           </Select>
         }
       />
-      <SettingsRow
-        serverScoped
-        settingKeys={["adversarialReview"]}
-        mixed={mixed}
-        id="adversarial-review-order"
-        title="Reviewer order"
-        description={
-          <span className="inline-flex items-center gap-1">
-            {renderRich(
-              tx(
-                "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}",
-              ),
-              { policyTooltip: <PolicyTooltip>{REVIEWER_ORDER_DETAILS}</PolicyTooltip> },
-            )}
-          </span>
-        }
-        resetAction={
-          reviewers.length > 0 ? (
-            <SettingResetButton label={tx("reviewer order")} onClick={() => saveReviewers([])} />
-          ) : null
-        }
-        control={
-          mixed ? (
-            <span className="text-sm text-muted-foreground">{tx("Mixed")}</span>
-          ) : view.isDefault ? (
-            <Button
-              size="sm"
-              variant="outline"
-              aria-label={tx("Customize reviewer order")}
-              disabled={customized.length === 0}
-              onClick={customize}
-            >
-              {tx("Customize")}
-            </Button>
-          ) : pickerSelection ? (
-            <ProviderModelPicker
-              activeInstanceId={pickerSelection.instanceId}
-              model={pickerSelection.model}
-              lockedProvider={null}
-              instanceEntries={entries}
-              modelOptionsByInstance={modelOptions}
-              triggerClassName={ADD_MODEL_TRIGGER_CLASSNAME}
-              triggerLabel="Add model"
-              triggerAriaLabel="Add a reviewer model"
-              disabled={reviewers.length >= MAX_FALLBACK_MODELS}
-              onInstanceModelChange={(instanceId, model) =>
-                saveReviewers(addFallbackEntry(reviewers, instanceId, model))
-              }
-            />
-          ) : (
-            <span className="text-sm text-muted-foreground">{tx("No providers available")}</span>
-          )
-        }
-      >
-        {mixed ? null : (
-          <div
-            className="mt-3 mb-2 flex flex-col gap-2"
-            data-reviewer-order={view.isDefault ? "default" : "custom"}
-          >
-            {view.isDefault ? (
-              <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+      {part === undefined ? (
+        <>
+          <SettingsRow
+            serverScoped
+            settingKeys={["adversarialReview"]}
+            mixed={mixed}
+            id="adversarial-review-order"
+            title="Reviewer order"
+            description={
+              <span className="inline-flex items-center gap-1">
                 {renderRich(
                   tx(
-                    "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.",
+                    "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}",
                   ),
-                  { badge: <Badge variant="secondary">{tx("Default")}</Badge>, tierWord: tierWord },
+                  { policyTooltip: <PolicyTooltip>{REVIEWER_ORDER_DETAILS}</PolicyTooltip> },
                 )}
-              </p>
-            ) : null}
-            {steps.length > 0 ? (
-              <ModelOrderList
-                label={tx("Reviewer order steps")}
-                steps={steps}
-                providers={providers}
-                order={view.isDefault ? undefined : reviewers}
-                onChange={view.isDefault ? undefined : saveReviewers}
-              />
-            ) : (
-              <p className="rounded-lg border border-dashed border-border/70 px-3 py-2 text-xs text-muted-foreground">
-                {renderRich(
-                  tx("No provider on this machine has a {tierWord} model to review with."),
-                  { tierWord: tierWord },
-                )}
-              </p>
-            )}
-            <p className="text-xs text-muted-foreground">
-              {renderRich(tx("{value}Availability follows the {button} rules."), {
-                value: isProjectScope ? (
-                  ownProjectOrder ? (
-                    <>
-                      {renderRich(tx("This project's own order; reset it to use the {button}."), {
-                        button: (
-                          <button
-                            type="button"
-                            className={linkClassName}
-                            onClick={openAppWideOrder}
-                          >
-                            {tx("app-wide reviewer order")}
-                          </button>
-                        ),
-                      })}
-                    </>
-                  ) : (
-                    <>
-                      {renderRich(
-                        tx("Uses the {button}; customize to give this project its own."),
-                        {
-                          button: (
-                            <button
-                              type="button"
-                              className={linkClassName}
-                              onClick={openAppWideOrder}
-                            >
-                              {tx("app-wide reviewer order")}
-                            </button>
-                          ),
-                        },
-                      )}
-                    </>
-                  )
+              </span>
+            }
+            resetAction={
+              reviewers.length > 0 ? (
+                <SettingResetButton
+                  label={tx("reviewer order")}
+                  onClick={() => saveReviewers([])}
+                />
+              ) : null
+            }
+            control={
+              mixed ? (
+                <span className="text-sm text-muted-foreground">{tx("Mixed")}</span>
+              ) : view.isDefault ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label={tx("Customize reviewer order")}
+                  disabled={customized.length === 0}
+                  onClick={customize}
+                >
+                  {tx("Customize")}
+                </Button>
+              ) : pickerSelection ? (
+                <ProviderModelPicker
+                  activeInstanceId={pickerSelection.instanceId}
+                  model={pickerSelection.model}
+                  lockedProvider={null}
+                  instanceEntries={entries}
+                  modelOptionsByInstance={modelOptions}
+                  triggerClassName={ADD_MODEL_TRIGGER_CLASSNAME}
+                  triggerLabel="Add model"
+                  triggerAriaLabel="Add a reviewer model"
+                  disabled={reviewers.length >= MAX_FALLBACK_MODELS}
+                  onInstanceModelChange={(instanceId, model) =>
+                    saveReviewers(addFallbackEntry(reviewers, instanceId, model))
+                  }
+                />
+              ) : (
+                <span className="text-sm text-muted-foreground">
+                  {tx("No providers available")}
+                </span>
+              )
+            }
+          >
+            {mixed ? null : (
+              <div
+                className="mt-3 mb-2 flex flex-col gap-2"
+                data-reviewer-order={view.isDefault ? "default" : "custom"}
+              >
+                {view.isDefault ? (
+                  <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    {renderRich(
+                      tx(
+                        "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.",
+                      ),
+                      {
+                        badge: <Badge variant="secondary">{tx("Default")}</Badge>,
+                        tierWord: tierWord,
+                      },
+                    )}
+                  </p>
+                ) : null}
+                {steps.length > 0 ? (
+                  <ModelOrderList
+                    label={tx("Reviewer order steps")}
+                    steps={steps}
+                    providers={providers}
+                    order={view.isDefault ? undefined : reviewers}
+                    onChange={view.isDefault ? undefined : saveReviewers}
+                  />
                 ) : (
-                  <>
-                    {tx(
-                      "App-wide for this machine; a project can set its own in its settings.",
-                    )}{" "}
-                  </>
-                ),
-                button: (
-                  <button type="button" className={linkClassName} onClick={openFallbackOrder}>
-                    {tx("fallback order")}
-                  </button>
-                ),
-              })}
-            </p>
-          </div>
-        )}
-      </SettingsRow>
+                  <p className="rounded-lg border border-dashed border-border/70 px-3 py-2 text-xs text-muted-foreground">
+                    {renderRich(
+                      tx("No provider on this machine has a {tierWord} model to review with."),
+                      { tierWord: tierWord },
+                    )}
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  {renderRich(tx("{value}Availability follows the {button} rules."), {
+                    value: isProjectScope ? (
+                      ownProjectOrder ? (
+                        <>
+                          {renderRich(
+                            tx("This project's own order; reset it to use the {button}."),
+                            {
+                              button: (
+                                <button
+                                  type="button"
+                                  className={linkClassName}
+                                  onClick={openAppWideOrder}
+                                >
+                                  {tx("app-wide reviewer order")}
+                                </button>
+                              ),
+                            },
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {renderRich(
+                            tx("Uses the {button}; customize to give this project its own."),
+                            {
+                              button: (
+                                <button
+                                  type="button"
+                                  className={linkClassName}
+                                  onClick={openAppWideOrder}
+                                >
+                                  {tx("app-wide reviewer order")}
+                                </button>
+                              ),
+                            },
+                          )}
+                        </>
+                      )
+                    ) : (
+                      <>
+                        {tx(
+                          "App-wide for this machine; a project can set its own in its settings.",
+                        )}{" "}
+                      </>
+                    ),
+                    button: (
+                      <button type="button" className={linkClassName} onClick={openFallbackOrder}>
+                        {tx("fallback order")}
+                      </button>
+                    ),
+                  })}
+                </p>
+              </div>
+            )}
+          </SettingsRow>
+        </>
+      ) : null}
     </>
   );
 }

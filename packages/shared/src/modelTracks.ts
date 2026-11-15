@@ -70,8 +70,8 @@ export function isFreePlanProvider(provider: Partial<Pick<ServerProvider, "auth"
   return /\bfree\b/i.test(provider.auth?.label ?? "");
 }
 
-export interface ModelProviderChoice {
-  readonly provider: TrackProvider;
+export interface ModelProviderChoice<P extends TrackProvider = TrackProvider> {
+  readonly provider: P;
   /** The model as this provider spells it. */
   readonly slug: string;
 }
@@ -83,15 +83,15 @@ export interface ModelProviderChoice {
  * `usedPercent` is the room reading; a provider it returns null for sorts
  * after every provider with a reading.
  */
-export function providersForModel(input: {
-  readonly providers: ReadonlyArray<TrackProvider>;
+export function providersForModel<P extends TrackProvider>(input: {
+  readonly providers: ReadonlyArray<P>;
   readonly model: ModelNames;
   /** "Also served by": providers the person ranked for the same model. */
   readonly order?: ReadonlyArray<ProviderInstanceId> | undefined;
-  readonly usedPercent?: ((provider: TrackProvider, slug: string) => number | null) | undefined;
+  readonly usedPercent?: ((provider: P, slug: string) => number | null) | undefined;
   /** A free-tail entry: an account on a free plan comes before the maker's paid one. */
   readonly preferFree?: boolean | undefined;
-}): ReadonlyArray<ModelProviderChoice> {
+}): ReadonlyArray<ModelProviderChoice<P>> {
   const personRank = (instanceId: ProviderInstanceId) => {
     const index = input.order?.indexOf(instanceId) ?? -1;
     return index === -1 ? Number.MAX_SAFE_INTEGER : index;

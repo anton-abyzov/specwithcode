@@ -22,6 +22,8 @@ export const MODEL_TRACK_LABELS: Record<ModelTrack, string> = {
 export interface DefaultTrackModel {
   /** The model as its maker spells it; other providers' spellings match by identity. */
   readonly model: string;
+  /** Shown while no provider here lists the model; a provider's own name wins. */
+  readonly name: string;
   /**
    * Runs on a free account. Free entries close the Daily track and are never
    * used for Complex or Review work.
@@ -36,11 +38,18 @@ export interface DefaultTrackModel {
 export const DEFAULT_MODEL_TRACKS: Readonly<Record<ModelTrack, ReadonlyArray<DefaultTrackModel>>> =
   {
     daily: [
-      { model: "claude-opus-5-5" },
-      { model: "gpt-6.1-sol" },
-      { model: "muse-wonder-1.0" },
-      { model: "gpt-6-luna", free: true },
+      { model: "claude-opus-5-5", name: "Claude Opus 5.5" },
+      { model: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+      { model: "muse-wonder-1.0", name: "Muse Wonder 1.0" },
+      { model: "gpt-6-luna", name: "GPT-6 Luna", free: true },
     ],
-    complex: [{ model: "claude-fable-5-2" }, { model: "gpt-6-astra" }],
-    review: [{ model: "gpt-6.1-sol" }, { model: "muse-wonder-1.0" }, { model: "gemini-4-carbon" }],
+    complex: [
+      { model: "claude-fable-5-2", name: "Claude Fable 5.2" },
+      { model: "gpt-6-astra", name: "GPT-6 Astra" },
+    ],
+    review: [
+      { model: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+      { model: "muse-wonder-1.0", name: "Muse Wonder 1.0" },
+      { model: "gemini-4-carbon", name: "Gemini 4 Carbon" },
+    ],
   };

@@ -91,7 +91,6 @@ export const zh: PhraseCatalog = {
   "Custom worktree folder": "自定义工作树文件夹",
   Danger: "危险操作",
   "Data & privacy": "数据与隐私",
-  "Decision model": "决策模型",
   "Default browser appearance": "默认浏览器外观",
   "Default browser profile": "默认浏览器配置",
   "Default browser viewport": "默认浏览器视口",
