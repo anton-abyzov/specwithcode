@@ -443,6 +443,8 @@ export async function installBundle(input: {
   readonly own: BundleIdentity;
   readonly trash: ReadonlyArray<string>;
   readonly tools: SelfInstallTools;
+  /** Checked again right before the installed copy is moved aside. */
+  readonly isRunning?: (bundle: string) => Promise<boolean>;
 }): Promise<{ readonly trashed: ReadonlyArray<string> }> {
   const { tools, target } = input;
   const version = input.own.version ?? "0.0.0";
@@ -452,7 +454,10 @@ export async function installBundle(input: {
   // A run cut short between the two renames left the old app aside: put it
   // back when nothing took its place.
   if (exists(old) && !exists(target)) NodeFS.renameSync(old, target);
-  if (exists(old)) await tools.remove(old);
+  // A leftover from an earlier run goes to the Trash, never straight to
+  // deletion; if that fails it stays, and the rename below refuses to
+  // overwrite it.
+  if (exists(old)) await tools.trash(old).catch(() => undefined);
   await tools.remove(staging);
   try {
     await tools.copy(input.source, staging);
@@ -466,6 +471,12 @@ export async function installBundle(input: {
     throw error;
   }
   if (exists(target)) {
+    if (input.isRunning !== undefined && (await input.isRunning(target))) {
+      await tools.remove(staging).catch(() => undefined);
+      throw new Error(
+        `${BundlePath.basename(target)} was opened while installing. Quit it and try again.`,
+      );
+    }
     NodeFS.renameSync(target, old);
     try {
       NodeFS.renameSync(staging, target);
@@ -474,8 +485,10 @@ export async function installBundle(input: {
       await tools.remove(staging).catch(() => undefined);
       throw error;
     }
-    await tools.trash(old).catch(() => tools.remove(old));
-    await tools.lsregister(["-u", old]);
+    // Kept as .install-old when the Trash refuses it; the next install moves
+    // it to the Trash again.
+    await tools.trash(old).catch(() => undefined);
+    await tools.lsregister(["-u", old]).catch(() => undefined);
   } else {
     NodeFS.renameSync(staging, target);
   }
@@ -484,7 +497,7 @@ export async function installBundle(input: {
     try {
       await tools.trash(path);
       trashed.push(path);
-      await tools.lsregister(["-u", path]);
+      await tools.lsregister(["-u", path]).catch(() => undefined);
     } catch {
       // Left in place; the installed app trashes leftover earlier-named
       // copies on each launch (macBundleName.trashLegacySiblings).
@@ -650,6 +663,10 @@ export async function runMacSelfInstall(host: SelfInstallHost): Promise<SelfInst
   const folder = folderLabel(host.locale, destination.userFolder);
   const fill = (text: string, values: Record<string, string> = {}) =>
     fillCopy(text, { folder, ...values });
+  // A copy found may sit in the other Applications folder.
+  const folderOf = (path: string) => ({
+    folder: folderLabel(host.locale, BundlePath.dirname(path) !== SYSTEM_APPLICATIONS),
+  });
   host.log("self-install offered", {
     bundle: detection.bundle,
     location: detection.location,
@@ -674,7 +691,7 @@ export async function runMacSelfInstall(host: SelfInstallHost): Promise<SelfInst
       case "blocked": {
         await host.ask({
           title: copy.blockedTitle,
-          detail: fill(copy.blockedDetail),
+          detail: fill(copy.blockedDetail, folderOf(decision.path)),
           buttons: [copy.ok],
           cancelId: 0,
         });
@@ -684,11 +701,12 @@ export async function runMacSelfInstall(host: SelfInstallHost): Promise<SelfInst
       case "open-installed":
       case "switch-to-running": {
         const running = decision.kind === "switch-to-running";
+        const where = folderOf(decision.path);
         const choice = await host.ask({
           title: running ? copy.runningTitle : copy.installedTitle,
           detail: running
-            ? fill(copy.runningDetail)
-            : fill(copy.installedDetail, { version: decision.version }),
+            ? fill(copy.runningDetail, where)
+            : fill(copy.installedDetail, { version: decision.version, ...where }),
           buttons: [running ? copy.switchToIt : copy.openIt, copy.notNow],
           cancelId: 1,
         });
@@ -700,7 +718,7 @@ export async function runMacSelfInstall(host: SelfInstallHost): Promise<SelfInst
       case "quit-older-first": {
         const choice = await host.ask({
           title: copy.quitOlderTitle,
-          detail: fill(copy.quitOlderDetail),
+          detail: fill(copy.quitOlderDetail, folderOf(decision.path)),
           buttons: [copy.install, copy.notNow],
           cancelId: 1,
         });
@@ -745,6 +763,7 @@ async function install(
 ): Promise<SelfInstallOutcome> {
   let volume: string | null = null;
   const oldPaths = [detection.bundle];
+  let result: { readonly trashed: ReadonlyArray<string> };
   try {
     if (detection.location === "translocated") {
       const source = translocationSource(
@@ -752,7 +771,7 @@ async function install(
         parseMountTable(await (host.mountTable ?? (() => run("/sbin/mount", [])))()),
       );
       if (source !== null) {
-        oldPaths.push(BundlePath.join(source, detection.bundleName));
+        oldPaths.push(BundlePath.join(source, BundlePath.basename(detection.bundle)));
         volume = volumeOf(source);
       }
     } else {
@@ -765,39 +784,16 @@ async function install(
       if (!isDiskImageMount(images, volume)) volume = null;
     }
 
-    const result = await installBundle({
+    const processes = host.runningExecutables ?? (() => runningExecutables(host.uid));
+    result = await installBundle({
       source: detection.bundle,
       target: decision.target,
       own,
       trash: decision.trash,
       tools: host.tools,
+      isRunning: async (bundle) =>
+        (await processes()).some((line) => line.startsWith(`${bundle}/`)),
     });
-    // Everything that names the disk image copy now names the installed one,
-    // before the disk image goes away.
-    for (const old of oldPaths) await host.tools.lsregister(["-u", old]);
-    await host.tools.lsregister(["-f", decision.target]);
-    const agents = (host.reregister ?? reregisterLaunchAgents)({
-      homeDir: host.homeDir,
-      uid: host.uid,
-      from: oldPaths,
-      to: decision.target,
-    });
-    (host.relaunch ?? startDetachedRelaunch)({
-      scriptPath: NodePath.join(host.workDir, "self-install-relaunch.sh"),
-      pid: host.pid,
-      target: decision.target,
-      volume,
-      env: host.env,
-    });
-    host.log("self-install installed", {
-      target: decision.target,
-      replaced: decision.replace,
-      trashed: result.trashed,
-      launchAgentsRewritten: agents.rewritten,
-      launchAgentsReloaded: agents.reloaded,
-      ejects: volume,
-    });
-    return { kind: "exit", reason: "installed" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     host.log("self-install failed", { error: message });
@@ -809,4 +805,50 @@ async function install(
     });
     return { kind: "continue", reason: "failed" };
   }
+
+  // The app is installed. What follows is best effort: none of it may keep
+  // this copy running from the disk image.
+  const warnings: string[] = [];
+  const attempt = async (step: string, action: () => unknown) => {
+    try {
+      return await action();
+    } catch (error) {
+      warnings.push(`${step}: ${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
+    }
+  };
+  // Everything that names the disk image copy now names the installed one,
+  // before the disk image goes away.
+  for (const old of oldPaths) await attempt("lsregister", () => host.tools.lsregister(["-u", old]));
+  await attempt("lsregister", () => host.tools.lsregister(["-f", decision.target]));
+  const agents = (await attempt("launch agents", () =>
+    (host.reregister ?? reregisterLaunchAgents)({
+      homeDir: host.homeDir,
+      uid: host.uid,
+      from: oldPaths,
+      to: decision.target,
+    }),
+  )) as ReregisterResult | undefined;
+  const relaunched = await attempt("relaunch", () => {
+    (host.relaunch ?? startDetachedRelaunch)({
+      scriptPath: NodePath.join(host.workDir, "self-install-relaunch.sh"),
+      pid: host.pid,
+      target: decision.target,
+      volume,
+      env: host.env,
+    });
+    return true;
+  });
+  // Without the script, open the installed copy now; the disk image stays.
+  if (relaunched !== true) await attempt("open", () => host.open(decision.target));
+  host.log("self-install installed", {
+    target: decision.target,
+    replaced: decision.replace,
+    trashed: result.trashed,
+    launchAgentsRewritten: agents?.rewritten ?? [],
+    launchAgentsReloaded: agents?.reloaded ?? [],
+    ejects: volume,
+    warnings,
+  });
+  return { kind: "exit", reason: "installed" };
 }

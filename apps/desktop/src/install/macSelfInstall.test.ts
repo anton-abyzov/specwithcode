@@ -447,6 +447,56 @@ describe("installBundle", () => {
     expect(tools.trashed).toEqual([`${target}.install-old`]);
   });
 
+  it("stops before the swap when the installed copy was opened meanwhile", async () => {
+    const root = makeScratch();
+    const source = NodePath.join(root, "dmg", "SpecWithCode.app");
+    const apps = NodePath.join(root, "Applications");
+    const target = NodePath.join(apps, "SpecWithCode.app");
+    fakeBundle(source, "1.0.307");
+    fakeBundle(target, "1.0.200");
+    await expect(
+      installBundle({
+        source,
+        target,
+        own,
+        trash: [],
+        tools: fakeTools(),
+        isRunning: async (bundle) => bundle === target,
+      }),
+    ).rejects.toThrow("was opened while installing");
+    expect(versionOf(target)).toBe("1.0.200");
+    expect(NodeFS.readdirSync(apps)).toEqual(["SpecWithCode.app"]);
+  });
+
+  it("keeps the old copy aside instead of deleting it when the Trash refuses it", async () => {
+    const root = makeScratch();
+    const source = NodePath.join(root, "dmg", "SpecWithCode.app");
+    const apps = NodePath.join(root, "Applications");
+    const target = NodePath.join(apps, "SpecWithCode.app");
+    fakeBundle(source, "1.0.307");
+    fakeBundle(target, "1.0.200");
+    const removed: string[] = [];
+    const base = fakeTools();
+    await installBundle({
+      source,
+      target,
+      own,
+      trash: [],
+      tools: fakeTools({
+        trash: async () => {
+          throw new Error("Trash is not available");
+        },
+        remove: async (path) => {
+          removed.push(path);
+          await base.remove(path);
+        },
+      }),
+    });
+    expect(versionOf(target)).toBe("1.0.307");
+    expect(versionOf(`${target}.install-old`)).toBe("1.0.200");
+    expect(removed).not.toContain(`${target}.install-old`);
+  });
+
   it("creates ~/Applications when it is missing", async () => {
     const root = makeScratch();
     const source = NodePath.join(root, "dmg", "SpecWithCode.app");
@@ -586,6 +636,33 @@ describe("runMacSelfInstall", () => {
     );
     expect(result).toEqual({ kind: "exit", reason: "installed" });
     expect(relaunches).toEqual([{ target, volume: "/Volumes/SpecWithCode 1.0.307-arm64" }]);
+  });
+
+  it("still quits for the installed copy when re-registration or the relaunch script fails", async () => {
+    const root = makeScratch();
+    const target = NodePath.join(root, "home", "Applications", "SpecWithCode.app");
+    const { host, opened } = setup({
+      answers: [0],
+      tools: {
+        lsregister: async () => {
+          throw new Error("lsregister failed");
+        },
+      },
+    });
+    const result = await runMacSelfInstall({
+      ...host,
+      homeDir: NodePath.join(root, "home"),
+      writable: (path) => path !== "/Applications",
+      reregister: () => {
+        throw new Error("plist unreadable");
+      },
+      relaunch: () => {
+        throw new Error("spawn failed");
+      },
+    });
+    expect(result).toEqual({ kind: "exit", reason: "installed" });
+    expect(versionOf(target)).toBe("1.0.307");
+    expect(opened).toEqual([target]);
   });
 
   it("reports a failed install and keeps running from the disk image", async () => {
