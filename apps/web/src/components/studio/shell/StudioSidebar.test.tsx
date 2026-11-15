@@ -1339,6 +1339,14 @@ describe("cleaning up the projects list", () => {
     expect(container.textContent).not.toContain("Routing samples");
   });
 
+  it("points to Settings > Archive when every project is set aside", async () => {
+    state.groups = [archivedSample, automatedSample] as typeof state.groups;
+    await render();
+    const link = container.querySelector("[data-set-aside-link]")!;
+    expect(link.getAttribute("href")).toBe("/settings/archived");
+    expect(container.textContent).not.toContain("No projects yet");
+  });
+
   it("lists an open archived project alone under the projects, marked current", async () => {
     state.groups.push(archivedSample);
     state.params = { projectKey: "remote:/srv/samples" };

@@ -1069,7 +1069,13 @@ export default function StudioSidebar() {
             </div>
             {codeProjects.length === 0 && !openSetAside ? (
               <p className="sws-side-empty">
-                {tx("No projects yet. Create one or open a folder.")}
+                {automatedProjects.length + archivedProjects.length > 0 ? (
+                  <Link to="/settings/archived" onClick={closeMobile} data-set-aside-link="">
+                    {tx("Your projects are archived. Open them in Settings > Archive.")}
+                  </Link>
+                ) : (
+                  tx("No projects yet. Create one or open a folder.")
+                )}
               </p>
             ) : (
               <SidebarProjectList
