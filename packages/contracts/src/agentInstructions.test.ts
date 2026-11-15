@@ -62,6 +62,7 @@ describe("shared agent instructions", () => {
     const settings = decodeServerSettings({});
     expect(settings.agentInstructions).toBe(DEFAULT_AGENT_INSTRUCTIONS);
     expect(settings.claudeWorkflowMode).toBe("on-request");
+    expect(settings.claudeUltracodeDefault).toBe("threads");
     expect(settings.responseStyle).toBe("concise");
     expect(settings.projectSettingsOverrides).toEqual({});
   });
@@ -71,6 +72,13 @@ describe("shared agent instructions", () => {
     expect(Schema.is(ClaudeWorkflowMode)("ultracode")).toBe(false);
     expect(Schema.is(AgentInstructions)("x".repeat(32_001))).toBe(false);
     expect(Schema.is(ServerSettingsPatch)({ claudeWorkflowMode: "unexpected" })).toBe(false);
+    expect(Schema.is(ServerSettingsPatch)({ claudeUltracodeDefault: "all" })).toBe(true);
+    expect(Schema.is(ServerSettingsPatch)({ claudeUltracodeDefault: "automatic" })).toBe(false);
+    expect(
+      Schema.is(ServerSettingsPatch)({
+        projectSettingsOverrides: { p: { claudeUltracodeDefault: "off" } },
+      }),
+    ).toBe(true);
     expect(
       Schema.is(ServerSettingsPatch)({
         agentInstructions: "Global",

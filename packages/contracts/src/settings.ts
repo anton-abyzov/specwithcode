@@ -1621,9 +1621,19 @@ export const ProviderLimitTargetOrder = Schema.Literals([
 ]);
 export type ProviderLimitTargetOrder = typeof ProviderLimitTargetOrder.Type;
 
+/**
+ * Which Claude Code chats start with Ultracode when their own toggle is not
+ * set: none, threads (chats a person starts in a project and the workers a
+ * coordinator starts), or every chat. Resolved when a turn starts and never
+ * written into a thread's saved model selection.
+ */
+export const ClaudeUltracodeDefault = Schema.Literals(["off", "threads", "all"]);
+export type ClaudeUltracodeDefault = typeof ClaudeUltracodeDefault.Type;
+
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "agentInstructions",
   "claudeWorkflowMode",
+  "claudeUltracodeDefault",
   "responseStyle",
   "worktreeCleanup",
   "worktreeLocationMode",
@@ -1683,6 +1693,7 @@ export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTIN
 export const ProjectSettingsOverrides = Schema.Struct({
   agentInstructions: Schema.optionalKey(AgentInstructions),
   claudeWorkflowMode: Schema.optionalKey(ClaudeWorkflowMode),
+  claudeUltracodeDefault: Schema.optionalKey(ClaudeUltracodeDefault),
   responseStyle: Schema.optionalKey(ResponseStyle),
   worktreeCleanup: Schema.optionalKey(WorktreeCleanup),
   worktreeLocationMode: Schema.optionalKey(WorktreeLocationMode),
@@ -1781,6 +1792,10 @@ export const ServerSettings = Schema.Struct({
   ),
   claudeWorkflowMode: ClaudeWorkflowMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("on-request" as const)),
+  ),
+  /** Ultracode for Claude Code chats that never chose: on for threads by default. */
+  claudeUltracodeDefault: ClaudeUltracodeDefault.pipe(
+    Schema.withDecodingDefault(Effect.succeed("threads" as const)),
   ),
   /** Concise by default: agents lead with the result and keep reports short. */
   responseStyle: ResponseStyle.pipe(Schema.withDecodingDefault(Effect.succeed("concise" as const))),
@@ -2406,6 +2421,7 @@ export const ServerSettingsPatch = Schema.Struct({
   agentInstructions: Schema.optionalKey(AgentInstructions),
   crashReportsEnabled: Schema.optionalKey(Schema.Boolean),
   claudeWorkflowMode: Schema.optionalKey(ClaudeWorkflowMode),
+  claudeUltracodeDefault: Schema.optionalKey(ClaudeUltracodeDefault),
   responseStyle: Schema.optionalKey(ResponseStyle),
   worktreeCleanup: Schema.optionalKey(
     Schema.NullOr(

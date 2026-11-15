@@ -208,6 +208,10 @@
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
     },
+    "./ultracodeDefault": {
+      "types": "./src/ultracodeDefault.ts",
+      "import": "./src/ultracodeDefault.ts"
+    },
     "./projectSettings": {
       "types": "./src/projectSettings.ts",
       "import": "./src/projectSettings.ts"
