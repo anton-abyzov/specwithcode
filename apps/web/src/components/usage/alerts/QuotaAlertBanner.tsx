@@ -37,6 +37,7 @@ import { environmentPresentations } from "../../../state/presentation";
 import { useMachineNicknames } from "../../../studio/machineNickname";
 import { getDriverOption } from "../../settings/providerDriverMeta";
 import {
+  alertingAnnouncements,
   announcementDriver,
   useResetAnnouncements,
 } from "../subscriptions/resetAnnouncementsState";
@@ -199,7 +200,7 @@ export function QuotaAlertBanner({
   /** Running boosts, the one ending first leading. */
   readonly boosts?: ReadonlyArray<Pick<QuotaBoost, "accountKey" | "label" | "until">>;
   readonly projects?: readonly QuotaBoostProject[];
-  /** Whether this alert's subscription can take new threads from here. */
+  /** Whether this alert's subscription can take new worker threads from here. */
   readonly canBoost?: (alert: QuotaAlert) => boolean;
   readonly onBoost?: (alert: QuotaAlert, projectIds: readonly string[]) => void;
   readonly onEndBoost?: (accountKey: string) => void;
@@ -265,7 +266,7 @@ export function QuotaAlertBanner({
         <div key={boost.accountKey} className="flex items-start gap-2" data-quota-boost="">
           <ZapIcon className="mt-0.5 size-3.5 shrink-0 text-warning-foreground" aria-hidden />
           <span className="min-w-0 flex-1 text-foreground">
-            New threads use {boost.label} until {untilLabel(boost.until, now)}
+            New worker threads use {boost.label} until {untilLabel(boost.until, now)}
           </span>
           {onEndBoost ? (
             <button
@@ -346,7 +347,7 @@ export function QuotaAlertBanner({
               )}. Open threads and the coordinator keep their model.`}
               onClick={() => setPicking(quotaAlertId(boostable))}
             >
-              Use it for new threads until it resets
+              Use it for new worker threads until it resets
             </button>
           ) : null}
           <button type="button" className={LINK} onClick={onOpen}>
@@ -437,7 +438,8 @@ function LiveQuotaAlerts({
   const rows = subscriptionRows(accounts, periods, renewalDays ?? {}, now);
   // Posts the main machine read from the announcement feed, re-read as often as the ledger.
   const feed = useResetAnnouncements(here, Math.floor(now / LEDGER_REFRESH_MS));
-  const announced = feed?.enabled === true ? feed.announcements : [];
+  // Only the verified feed warns and notifies; a post an agent recorded is listed, unverified.
+  const announced = alertingAnnouncements(feed);
   const expected: QuotaAlertExpectedReset[] = announced.flatMap((announcement) => {
     const driver = announcementDriver(announcement.provider);
     return announcement.kind === "expected_reset" && driver !== null

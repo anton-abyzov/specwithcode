@@ -34,6 +34,17 @@ export const announcementDriver = (provider: string): string | null =>
   DRIVER_OF_PROVIDER.get(provider.toLowerCase()) ?? null;
 
 /**
+ * The posts that may warn and notify: the verified feed's, while it is on. A post an
+ * agent recorded (the reset watch routine) is only listed, marked unverified.
+ */
+export const alertingAnnouncements = (
+  feed: Pick<ResetAnnouncementsView, "announcements" | "enabled"> | null | undefined,
+): readonly ResetAnnouncement[] =>
+  feed?.enabled === true
+    ? feed.announcements.filter((announcement) => announcement.origin !== "recorded")
+    : [];
+
+/**
  * Reset announcements as the main machine last read them. One machine reads
  * the feed, so a list never differs between the machines a person looks from.
  * Null until the first read lands, and for a server too old to have them.

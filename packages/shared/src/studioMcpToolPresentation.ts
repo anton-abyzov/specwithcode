@@ -469,6 +469,10 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
   show_visual: tool(["Make", "Making", "Made", "a visual"], "html-visual"),
   studio_report_save: tool(["Save", "Saving", "Saved", "a report"], "report-save"),
+  studio_reset_announcement_record: tool(
+    ["Record", "Recording", "Recorded", "a reset announcement"],
+    "environment-update",
+  ),
   sheet_write: tool(["Write", "Writing", "Wrote", "a sheet"], "sheet-write"),
   sheet_read: tool(["Read", "Reading", "Read", "a sheet"], "sheet-read"),
   design_list: tool(["List", "Listing", "Listed", "designs"], "design-read"),

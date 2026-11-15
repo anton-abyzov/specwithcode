@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ResetAnnouncements } from "./ResetAnnouncements";
-import { announcementDriver } from "./resetAnnouncementsState";
+import { alertingAnnouncements, announcementDriver } from "./resetAnnouncementsState";
 
 const now = Date.parse("2026-11-14T20:00:00.000Z");
 const DAY = 24 * 60 * 60_000;
@@ -56,6 +56,20 @@ describe("ResetAnnouncements", () => {
     expect(render([post(1)], { enabled: false })).toContain("turned off in Settings");
     expect(render([], { checkedAt: null })).toContain("has not answered yet");
     expect(render([])).toContain("No announcement has been read yet.");
+  });
+
+  it("marks a recorded post unverified, keeps it out of alerts and out of the stale check", () => {
+    const recorded = post(0, { origin: "recorded" });
+    const html = render([recorded, post(20)]);
+    expect(html).toContain("Read by your routine, not verified");
+    // A fresh recording does not hide that the feed itself went quiet.
+    expect(html).toContain("It may have stopped updating.");
+    expect(render([post(1)])).not.toContain("not verified");
+    expect(alertingAnnouncements({ announcements: [recorded, post(1)], enabled: true })).toEqual([
+      post(1),
+    ]);
+    expect(alertingAnnouncements({ announcements: [post(1)], enabled: false })).toEqual([]);
+    expect(alertingAnnouncements(null)).toEqual([]);
   });
 
   it("maps a feed's provider to the driver whose accounts it concerns", () => {

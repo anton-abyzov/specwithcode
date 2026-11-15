@@ -35,7 +35,9 @@ export function ResetAnnouncements({
   readonly now: number;
 }) {
   const [all, setAll] = useState(false);
-  const newest = announcements.length === 0 ? null : Date.parse(announcements[0]!.publishedAt);
+  // The feed's own newest post: one an agent recorded says nothing about whether the feed stopped.
+  const fromFeed = announcements.find((announcement) => announcement.origin !== "recorded");
+  const newest = fromFeed === undefined ? null : Date.parse(fromFeed.publishedAt);
   const note = !enabled
     ? "The announcement feed is turned off in Settings > Models, so this list is not updated."
     : checkedAt === null
@@ -82,6 +84,14 @@ export function ResetAnnouncements({
               >
                 {announcement.headline}
               </a>
+              {announcement.origin === "recorded" ? (
+                <span
+                  className="shrink-0 text-xs text-muted-foreground"
+                  data-reset-announcement-recorded=""
+                >
+                  Read by your routine, not verified
+                </span>
+              ) : null}
             </li>
           ))}
         </ul>

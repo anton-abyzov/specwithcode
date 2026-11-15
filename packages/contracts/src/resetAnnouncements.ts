@@ -33,6 +33,11 @@ export const ResetAnnouncement = Schema.Struct({
   /** The post itself; an https link. */
   sourceUrl: TrimmedNonEmptyString,
   publishedAt: IsoDateTime,
+  /**
+   * "recorded" when an agent read the post itself (the reset watch routine): listed as
+   * unverified, never alerting or notifying. Absent for the verified feed.
+   */
+  origin: Schema.optional(Schema.Literal("recorded")),
 });
 export type ResetAnnouncement = typeof ResetAnnouncement.Type;
 

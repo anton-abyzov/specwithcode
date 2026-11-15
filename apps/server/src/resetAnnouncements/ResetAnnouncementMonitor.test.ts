@@ -34,8 +34,14 @@ describe("reset announcement feeds", () => {
         item(),
         item({ id: "b", kind: "banked-reset", sourceUrl: "https://x.com/example/status/2" }),
         item({ id: "c", kind: "boost", sourceUrl: "https://x.com/example/status/3" }),
-      ), now);
-    expect(parsed.map((entry) => entry.kind)).toEqual(["full_reset", "banked_grant", "limit_change"]);
+      ),
+      now,
+    );
+    expect(parsed.map((entry) => entry.kind)).toEqual([
+      "full_reset",
+      "banked_grant",
+      "limit_change",
+    ]);
     expect(parsed[0]).toEqual({
       id: "codex-reset-2026-11-14",
       provider: "codex",
@@ -64,18 +70,22 @@ describe("reset announcement feeds", () => {
           item({ publishedAt: "2026-11-15T21:00:00.000Z" }),
           null,
           "text",
-        ), now),
+        ),
+        now,
+      ),
     ).toEqual([]);
     expect(parseConfirmedFeed("<html>", now)).toEqual([]);
     expect(parseConfirmedFeed(JSON.stringify({ items: "no" }), now)).toEqual([]);
-    expect(parseConfirmedFeed(feed(item({ headline: "x".repeat(900) })), now)[0]?.headline).toHaveLength(240);
+    expect(
+      parseConfirmedFeed(feed(item({ headline: "x".repeat(900) })), now)[0]?.headline,
+    ).toHaveLength(240);
   });
 
   it("reads a promise only from the promised feed", () => {
     const promise = item({ kind: "reset-untyped", headline: "A reset is promised by end of day" });
-    expect(parsePromisedFeed(feed(promise, item({ kind: "policy" })), now).map((entry) => entry.kind)).toEqual([
-      "expected_reset",
-    ]);
+    expect(
+      parsePromisedFeed(feed(promise, item({ kind: "policy" })), now).map((entry) => entry.kind),
+    ).toEqual(["expected_reset"]);
     expect(parseConfirmedFeed(feed(promise), now)).toEqual([]);
   });
 
@@ -83,7 +93,15 @@ describe("reset announcement feeds", () => {
     const [promise] = parsePromisedFeed(feed(item({ kind: "reset-untyped" })), now);
     const [confirmed] = parseConfirmedFeed(feed(item()), now);
     const [older] = parseConfirmedFeed(
-      feed(item({ id: "old", sourceUrl: "https://x.com/example/status/0", publishedAt: "2026-11-01T00:00:00.000Z" })), now);
+      feed(
+        item({
+          id: "old",
+          sourceUrl: "https://x.com/example/status/0",
+          publishedAt: "2026-11-01T00:00:00.000Z",
+        }),
+      ),
+      now,
+    );
     const merged = mergeAnnouncements([promise!, older!], [confirmed!, promise!], now);
     expect(merged.map((entry) => [entry.id, entry.kind])).toEqual([
       ["codex-reset-2026-11-14", "full_reset"],
@@ -92,21 +110,35 @@ describe("reset announcement feeds", () => {
     // A promise never replaces the confirmed event for the same post.
     expect(mergeAnnouncements([confirmed!], [promise!], now)[0]?.kind).toBe("full_reset");
     // A post an earlier read saved with a date ahead of now leaves too.
-    expect(mergeAnnouncements([{ ...older!, publishedAt: "2026-11-16T00:00:00.000Z" as never }], [], now)).toEqual([]);
+    expect(
+      mergeAnnouncements(
+        [{ ...older!, publishedAt: "2026-11-16T00:00:00.000Z" as never }],
+        [],
+        now,
+      ),
+    ).toEqual([]);
     // Past the retention it leaves the list.
     expect(mergeAnnouncements([older!], [], now + 200 * DAY)).toEqual([]);
   });
 
   it("lists a saved file without a post dated ahead of now, with no check run", () => {
     const [kept] = parseConfirmedFeed(feed(item()), now);
-    const ahead = { ...kept!, id: "ahead", sourceUrl: "https://x.com/example/status/9", publishedAt: "2026-11-16T00:00:00.000Z" };
+    const ahead = {
+      ...kept!,
+      id: "ahead",
+      sourceUrl: "https://x.com/example/status/9",
+      publishedAt: "2026-11-16T00:00:00.000Z",
+    };
     const saved = decodeAnnouncementFile(
       JSON.stringify({ ...EMPTY_ANNOUNCEMENT_FILE, announcements: [ahead, kept] }),
     );
     expect(saved.announcements).toHaveLength(2);
     expect(listedAnnouncements(saved, now).map((entry) => entry.id)).toEqual([kept!.id]);
     // Once its date has passed, it is listed.
-    expect(listedAnnouncements(saved, now + 2 * DAY).map((entry) => entry.id)).toEqual(["ahead", kept!.id]);
+    expect(listedAnnouncements(saved, now + 2 * DAY).map((entry) => entry.id)).toEqual([
+      "ahead",
+      kept!.id,
+    ]);
   });
 
   it("folds a read into the file and keeps what it knew when a feed fails or is unchanged", () => {
@@ -154,20 +186,29 @@ describe("reset announcement feeds", () => {
     });
     expect(seen).toEqual([null, '"a"']);
     const failing = (async () => new Response("no", { status: 500 })) as typeof globalThis.fetch;
-    expect(await fetchFeed("https://feed.example/alert.json", null, failing)).toEqual({ state: "failed" });
+    expect(await fetchFeed("https://feed.example/alert.json", null, failing)).toEqual({
+      state: "failed",
+    });
     // A redirect is refused, not followed, and an oversized body is not read whole.
     let redirectMode: RequestInit["redirect"];
     const redirecting = (async (_url: unknown, init?: RequestInit) => {
       redirectMode = init?.redirect;
       return new Response(null, { status: 302, headers: { location: "http://169.254.169.254/" } });
     }) as typeof globalThis.fetch;
-    expect(await fetchFeed("https://feed.example/alert.json", null, redirecting)).toEqual({ state: "failed" });
+    expect(await fetchFeed("https://feed.example/alert.json", null, redirecting)).toEqual({
+      state: "failed",
+    });
     expect(redirectMode).toBe("manual");
-    const huge = (async () => new Response("x".repeat(1_200_000), { status: 200 })) as typeof globalThis.fetch;
-    expect(await fetchFeed("https://feed.example/alert.json", null, huge)).toEqual({ state: "failed" });
+    const huge = (async () =>
+      new Response("x".repeat(1_200_000), { status: 200 })) as typeof globalThis.fetch;
+    expect(await fetchFeed("https://feed.example/alert.json", null, huge)).toEqual({
+      state: "failed",
+    });
     const throwing = (async () => {
       throw new Error("offline");
     }) as typeof globalThis.fetch;
-    expect(await fetchFeed("https://feed.example/alert.json", null, throwing)).toEqual({ state: "failed" });
+    expect(await fetchFeed("https://feed.example/alert.json", null, throwing)).toEqual({
+      state: "failed",
+    });
   });
 });

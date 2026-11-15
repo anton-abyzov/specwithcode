@@ -95,57 +95,83 @@ try {
     const text = await banner.innerText();
     assert.match(text, /Codex Pro on mini: 62% of its weekly quota resets in 9 h/);
     assert.match(text, /reset early: weekly back to 100%/);
-    assert.equal(await banner.getByRole("button", { name: "Dismiss until the next reset" }).count(), 1);
+    assert.equal(
+      await banner.getByRole("button", { name: "Dismiss until the next reset" }).count(),
+      1,
+    );
     await banner.screenshot({ path: join(output, "quota-alert-banner-dark.png") });
   });
-  await check("the boost starts for the picked projects, is named with its end, and ends", async () => {
-    const banner = page.locator("[data-quota-alert-banner]");
-    await banner.getByRole("button", { name: "Use it for new threads until it resets" }).click();
-    // Focus follows the picker in, and comes back to the button on Cancel.
-    assert.equal(await banner.getByLabel("Every project").evaluate((el) => el === document.activeElement), true);
-    await banner.getByRole("button", { name: "Cancel" }).click();
-    const start = banner.getByRole("button", { name: "Use it for new threads until it resets" });
-    assert.equal(await start.evaluate((el) => el === document.activeElement), true);
-    await start.click();
-    await banner.getByLabel("Every project").uncheck();
-    assert.equal(await banner.getByRole("button", { name: "Start" }).isDisabled(), true);
-    await banner.getByLabel("Atlas").check();
-    await banner.getByRole("button", { name: "Start" }).click();
-    assert.match(await banner.innerText(), /New threads use Codex Pro until /);
-    assert.equal(
-      await banner.getByRole("button", { name: "End now" }).evaluate((el) => el === document.activeElement),
-      true,
-    );
-    // Atlas lives on two machines: both of its ids are covered.
-    assert.equal(
-      await page.locator("[data-fixture-boost-projects]").getAttribute("data-fixture-boost-projects"),
-      "2",
-    );
-    assert.equal(
-      await banner.getByRole("button", { name: "Use it for new threads until it resets" }).count(),
-      0,
-    );
-    await banner.screenshot({ path: join(output, "quota-boost-running-dark.png") });
-    await banner.getByRole("button", { name: "End now" }).click();
-    assert.equal(await banner.locator("[data-quota-boost]").count(), 0);
-    // The banner calls the handler it is given and opens nothing itself.
-    await banner.getByRole("button", { name: "See subscriptions" }).click();
-    assert.equal(page.context().pages().length, 1);
-    await banner.getByRole("button", { name: "Use it for new threads until it resets" }).click();
-    await banner.screenshot({ path: join(output, "quota-boost-pick-dark.png") });
-  });
-  await check("reset announcements list the kind and link, and say the feed looks stopped", async () => {
-    const list = page.locator("[data-reset-announcements]");
-    const text = await list.innerText();
-    assert.match(text, /Codex · Reset expected/);
-    assert.match(text, /Claude · Full reset/);
-    assert.match(text, /It may have stopped updating\./);
-    assert.equal(
-      await list.getByRole("link", { name: "Usage limits reset for all paid plans" }).getAttribute("href"),
-      "https://example.com/posts/1",
-    );
-    await list.screenshot({ path: join(output, "reset-announcements-dark.png") });
-  });
+  await check(
+    "the boost starts for the picked projects, is named with its end, and ends",
+    async () => {
+      const banner = page.locator("[data-quota-alert-banner]");
+      await banner
+        .getByRole("button", { name: "Use it for new worker threads until it resets" })
+        .click();
+      // Focus follows the picker in, and comes back to the button on Cancel.
+      assert.equal(
+        await banner.getByLabel("Every project").evaluate((el) => el === document.activeElement),
+        true,
+      );
+      await banner.getByRole("button", { name: "Cancel" }).click();
+      const start = banner.getByRole("button", {
+        name: "Use it for new worker threads until it resets",
+      });
+      assert.equal(await start.evaluate((el) => el === document.activeElement), true);
+      await start.click();
+      await banner.getByLabel("Every project").uncheck();
+      assert.equal(await banner.getByRole("button", { name: "Start" }).isDisabled(), true);
+      await banner.getByLabel("Atlas").check();
+      await banner.getByRole("button", { name: "Start" }).click();
+      assert.match(await banner.innerText(), /New worker threads use Codex Pro until /);
+      assert.equal(
+        await banner
+          .getByRole("button", { name: "End now" })
+          .evaluate((el) => el === document.activeElement),
+        true,
+      );
+      // Atlas lives on two machines: both of its ids are covered.
+      assert.equal(
+        await page
+          .locator("[data-fixture-boost-projects]")
+          .getAttribute("data-fixture-boost-projects"),
+        "2",
+      );
+      assert.equal(
+        await banner
+          .getByRole("button", { name: "Use it for new worker threads until it resets" })
+          .count(),
+        0,
+      );
+      await banner.screenshot({ path: join(output, "quota-boost-running-dark.png") });
+      await banner.getByRole("button", { name: "End now" }).click();
+      assert.equal(await banner.locator("[data-quota-boost]").count(), 0);
+      // The banner calls the handler it is given and opens nothing itself.
+      await banner.getByRole("button", { name: "See subscriptions" }).click();
+      assert.equal(page.context().pages().length, 1);
+      await banner
+        .getByRole("button", { name: "Use it for new worker threads until it resets" })
+        .click();
+      await banner.screenshot({ path: join(output, "quota-boost-pick-dark.png") });
+    },
+  );
+  await check(
+    "reset announcements list the kind and link, and say the feed looks stopped",
+    async () => {
+      const list = page.locator("[data-reset-announcements]");
+      const text = await list.innerText();
+      assert.match(text, /Codex · Reset expected/);
+      assert.match(text, /Claude · Full reset/);
+      assert.match(text, /It may have stopped updating\./);
+      assert.equal(
+        await list
+          .getByRole("link", { name: "Usage limits reset for all paid plans" })
+          .getAttribute("href"),
+        "https://example.com/posts/1",
+      );
+      await list.screenshot({ path: join(output, "reset-announcements-dark.png") });
+    },
+  );
   await open("full", "light", 1280);
   await page.locator("[data-quota-alert-banner]").screenshot({
     path: join(output, "quota-alert-banner-light.png"),
@@ -160,24 +186,30 @@ try {
     assert.equal(await first.locator("[data-expiring]").count(), 1);
     assert.equal(await page.locator("[data-expiring]").count(), 1);
   });
-  await check("banked resets, set renewal day and the last loss show on the Codex row", async () => {
-    const text = await rows.nth(0).innerText();
-    assert.match(text, /2 banked resets, next expires Nov 21/);
-    assert.match(text, /Renews Dec 2/);
-    assert.match(text, /Lost at last reset: 41%/);
-  });
+  await check(
+    "banked resets, set renewal day and the last loss show on the Codex row",
+    async () => {
+      const text = await rows.nth(0).innerText();
+      assert.match(text, /2 banked resets, next expires Nov 21/);
+      assert.match(text, /Renews Dec 2/);
+      assert.match(text, /Lost at last reset: 41%/);
+    },
+  );
   await check("the provider's renewal date shows without an edit action", async () => {
     const claude = page.locator('[data-subscription-row="claude"]');
     assert.match(await claude.innerText(), /Renews Nov 17/);
     assert.equal(await claude.getByRole("button", { name: "Set day" }).count(), 0);
     assert.match(await claude.innerText(), /Lost at last reset: 4%/);
   });
-  await check("an offline machine keeps its reading, its age, and an upper-bound loss", async () => {
-    const text = await page.locator('[data-subscription-row="codex-2"]').innerText();
-    assert.match(text, /offline, read 3h 0m ago/);
-    assert.match(text, /Renewal: Not reported/);
-    assert.match(text, /up to 73%/);
-  });
+  await check(
+    "an offline machine keeps its reading, its age, and an upper-bound loss",
+    async () => {
+      const text = await page.locator('[data-subscription-row="codex-2"]').innerText();
+      assert.match(text, /offline, read 3h 0m ago/);
+      assert.match(text, /Renewal: Not reported/);
+      assert.match(text, /up to 73%/);
+    },
+  );
   await check("the renewal day editor accepts 1 to 31 only", async () => {
     const row = page.locator('[data-subscription-row="codex-2"]');
     await row.getByRole("button", { name: "Set day" }).click();
@@ -203,20 +235,23 @@ try {
     assert.match(banked, /2/);
     assert.match(banked, /next expires Nov 21/);
   });
-  await check("twelve columns, four in range, and grouping by provider, account or machine", async () => {
-    assert.equal(await dashboard.locator("[data-efficiency-column]").count(), 12);
-    assert.equal(await dashboard.locator("[data-efficiency-column][data-in-range]").count(), 4);
-    assert.equal(await dashboard.locator("[data-dashboard-group]").count(), 2);
-    await dashboard.getByRole("button", { name: "Account", exact: true }).click();
-    assert.equal(await dashboard.locator("[data-dashboard-group]").count(), 3);
-    const spare = await dashboard
-      .locator('[data-dashboard-group="codex:team@example.com"]')
-      .innerText();
-    assert.match(spare, /27%/);
-    assert.match(spare, /plan 30%/);
-    await dashboard.getByRole("button", { name: "Machine", exact: true }).click();
-    assert.equal(await dashboard.locator('[data-dashboard-group="machine:mini"]').count(), 1);
-  });
+  await check(
+    "twelve columns, four in range, and grouping by provider, account or machine",
+    async () => {
+      assert.equal(await dashboard.locator("[data-efficiency-column]").count(), 12);
+      assert.equal(await dashboard.locator("[data-efficiency-column][data-in-range]").count(), 4);
+      assert.equal(await dashboard.locator("[data-dashboard-group]").count(), 2);
+      await dashboard.getByRole("button", { name: "Account", exact: true }).click();
+      assert.equal(await dashboard.locator("[data-dashboard-group]").count(), 3);
+      const spare = await dashboard
+        .locator('[data-dashboard-group="codex:team@example.com"]')
+        .innerText();
+      assert.match(spare, /27%/);
+      assert.match(spare, /plan 30%/);
+      await dashboard.getByRole("button", { name: "Machine", exact: true }).click();
+      assert.equal(await dashboard.locator('[data-dashboard-group="machine:mini"]').count(), 1);
+    },
+  );
   await check("a plan takes 1 to 100 percent only", async () => {
     await dashboard.getByRole("button", { name: "Account", exact: true }).click();
     const group = dashboard.locator('[data-dashboard-group="codex:ada@example.com"]');
@@ -239,37 +274,52 @@ try {
     assert.match(await dashboard.locator("[data-resets-heading]").innerText(), /Resets · week of/);
     assert.equal(await dashboard.locator("[data-reset-row]").count(), 2);
     await dashboard.getByRole("button", { name: "Show the whole range" }).click();
-    assert.match(await dashboard.locator("[data-resets-heading]").innerText(), /Resets in this range/);
+    assert.match(
+      await dashboard.locator("[data-resets-heading]").innerText(),
+      /Resets in this range/,
+    );
   });
-  await check("a reset opens in place with how exact it is and use through the period", async () => {
-    const row = dashboard.locator('[data-reset-row^="codex:ada@example.com"]').first();
-    await row.click();
-    const detail = dashboard.locator("[data-reset-detail]");
-    assert.equal(await detail.count(), 1);
-    assert.match(await detail.innerText(), /so the figure is exact/);
-    assert.match(await detail.innerText(), /mini/);
-    assert.equal(await detail.locator("[data-use-path]").count(), 1);
-    assert.match(await detail.innerText(), /Busiest \w+day, \w+ \d+/);
-    assert.match(await detail.innerText(), /Renews \w+ \d+/);
-    assert.match(await detail.innerText(), /Tokens not measurable/);
-    await row.click();
-    assert.equal(await dashboard.locator("[data-reset-detail]").count(), 0);
-    const bound = dashboard.locator('[data-reset-row^="codex:team@example.com"]').first();
-    assert.match(await bound.innerText(), /up to 73%/);
-  });
+  await check(
+    "a reset opens in place with how exact it is and use through the period",
+    async () => {
+      const row = dashboard.locator('[data-reset-row^="codex:ada@example.com"]').first();
+      await row.click();
+      const detail = dashboard.locator("[data-reset-detail]");
+      assert.equal(await detail.count(), 1);
+      assert.match(await detail.innerText(), /so the figure is exact/);
+      assert.match(await detail.innerText(), /mini/);
+      assert.equal(await detail.locator("[data-use-path]").count(), 1);
+      assert.match(await detail.innerText(), /Busiest \w+day, \w+ \d+/);
+      assert.match(await detail.innerText(), /Renews \w+ \d+/);
+      assert.match(await detail.innerText(), /Tokens not measurable/);
+      await row.click();
+      assert.equal(await dashboard.locator("[data-reset-detail]").count(), 0);
+      const bound = dashboard.locator('[data-reset-row^="codex:team@example.com"]').first();
+      assert.match(await bound.innerText(), /up to 73%/);
+    },
+  );
   await check("twelve weeks page ten resets at a time, newest first", async () => {
     await dashboard.getByRole("button", { name: "12W", exact: true }).click();
     assert.equal(await dashboard.locator("[data-efficiency-column][data-in-range]").count(), 12);
-    assert.match(await dashboard.locator("[data-resets-range]").innerText(), /1 to 10 of 25 resets/);
+    assert.match(
+      await dashboard.locator("[data-resets-range]").innerText(),
+      /1 to 10 of 25 resets/,
+    );
     await dashboard.getByRole("button", { name: "Next" }).click();
-    assert.match(await dashboard.locator("[data-resets-range]").innerText(), /11 to 20 of 25 resets/);
+    assert.match(
+      await dashboard.locator("[data-resets-range]").innerText(),
+      /11 to 20 of 25 resets/,
+    );
     await dashboard.getByRole("button", { name: "4W", exact: true }).click();
   });
   await check("a month with no reset is reachable by keyboard and says so", async () => {
     await dashboard.getByRole("button", { name: "1Y", exact: true }).click();
     const emptyColumn = dashboard.locator('[data-efficiency-column][aria-disabled="true"]').first();
     await emptyColumn.focus();
-    assert.match(await dashboard.locator("[data-efficiency-readout]").innerText(), /no reset recorded/);
+    assert.match(
+      await dashboard.locator("[data-efficiency-readout]").innerText(),
+      /no reset recorded/,
+    );
     await emptyColumn.blur();
     await dashboard.getByRole("button", { name: "4W", exact: true }).click();
   });
@@ -280,7 +330,10 @@ try {
     assert.equal(await page.locator('[data-efficiency-chart="empty"]').count(), 1);
     assert.equal(await page.locator('[data-resets-table="empty"]').count(), 1);
     assert.equal(await page.locator("[data-quota-alert-banner]").count(), 0);
-    assert.match(await page.locator('[data-dashboard-tile="efficiency"]').innerText(), /Not enough history yet/);
+    assert.match(
+      await page.locator('[data-dashboard-tile="efficiency"]').innerText(),
+      /Not enough history yet/,
+    );
     assert.doesNotMatch(await page.locator("body").innerText(), /\b0%/);
   });
   await page.screenshot({ path: join(output, "subscriptions-empty.png"), fullPage: true });
