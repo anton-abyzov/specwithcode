@@ -45,6 +45,7 @@ import {
 } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
+import { projectDraftModelSelection } from "@specweave-studio/shared/modelTracks";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { readEnvironmentScope } from "~/state/session";
 import { toastManager } from "../ui/toast";
@@ -295,12 +296,16 @@ export function DraftHeroHeadline({
     );
     if (!hasExplicitComposerModelSelection(currentDraft)) {
       applyStickyState(draftId);
-      const environmentSettings = environments.find(
+      const environmentConfig = environments.find(
         (environment) => environment.environmentId === project.environmentId,
-      )?.serverConfig?.settings;
+      )?.serverConfig;
+      const environmentSettings = environmentConfig?.settings;
+      // A project on Tracks shows its first Daily model, as a new draft does.
       const defaultModelSelection = environmentSettings
-        ? resolveProjectSettings(environmentSettings, project.id, project).settings
-            .defaultModelSelection
+        ? projectDraftModelSelection(
+            resolveProjectSettings(environmentSettings, project.id, project).settings,
+            environmentConfig?.providers ?? [],
+          )
         : project.defaultModelSelection;
       if (defaultModelSelection) {
         setModelSelection(draftId, defaultModelSelection, {

@@ -24,6 +24,7 @@ import {
   isGeminiSpendProvider,
   isPerTokenProvider,
   isUnknownBillingAgent,
+  providerUsedPercent,
 } from "./providerFallback.ts";
 import { type ModelFamily, modelFamily } from "./modelVendor.ts";
 
@@ -239,6 +240,8 @@ export function launchTrackLanes(
   lanes: ModelLanes | null | undefined,
   providers: ReadonlyArray<ServerProvider>,
   order?: ReadonlyArray<ProviderInstanceId> | null,
+  /** With a time, accounts nobody ranked go by room, as the Models page lists them. */
+  nowMs?: number,
 ): ModelLanes {
   const fitted = effectiveModelLanes(lanes, providers, order).lanes;
   const expand = (entries: ReadonlyArray<ModelSelection>): ReadonlyArray<ModelSelection> => {
@@ -257,6 +260,12 @@ export function launchTrackLanes(
         model: { slug: entry.model },
         order: order ?? undefined,
         preferFree: isFreeTrackModel({ slug: entry.model }),
+        ...(nowMs === undefined
+          ? {}
+          : {
+              usedPercent: (source: TrackProvider, served: string) =>
+                providerUsedPercent(source as ServerProvider, nowMs, served),
+            }),
       })) {
         if (provider.instanceId === entry.instanceId) continue;
         if (isHeldSource(provider as ServerProvider, slug)) continue;

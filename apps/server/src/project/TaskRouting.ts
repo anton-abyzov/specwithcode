@@ -105,6 +105,7 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
   // built-in order, fitted to what is installed here, stands in for an empty
   // track, and each model is tried on every account that runs it, in Sources order.
   const tracks = resolved.threadModelMode === "tracks";
+  const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
   const rule = tracks
     ? {
         ...resolved,
@@ -112,6 +113,7 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
           resolved.modelLanes,
           input.providers,
           resolved.defaultModelProviders,
+          nowMs,
         ),
       }
     : resolved;
@@ -137,7 +139,6 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
     if (heldBaseline) return yield* refuseHeldBaseline();
     return null;
   }
-  const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
   const limited = new Set<string>(simulatedUsageLimitInstances(yield* ProviderFallbackEnv));
   // A provider that reports no usage but stopped a thread on its limit
   // (Copilot's monthly quota) reads as ready: no new worker starts there.
@@ -237,6 +238,8 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
       ? {}
       : { runnableInstanceIds: input.runnableInstanceIds }),
   });
+  // Auto kept the baseline: on Tracks that is still nobody's spending choice.
+  if (!tiered.moved && heldBaseline) return yield* refuseHeldBaseline();
   yield* logDecision(input.project, tiered);
   return tiered;
 });

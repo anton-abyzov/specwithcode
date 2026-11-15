@@ -74,10 +74,15 @@ it.effect("starts a thread nobody picked a model for on the project's Daily trac
 
 it.effect("keeps the shown model in a One model project and for an unknown project", () =>
   Effect.gen(function* () {
-    assert.deepEqual(yield* launch("model"), { modelSelection: shown, routing: null });
+    assert.deepEqual(yield* launch("model"), {
+      modelSelection: shown,
+      routing: null,
+      refused: null,
+    });
     assert.deepEqual(yield* launch("tracks", providers, false), {
       modelSelection: shown,
       routing: null,
+      refused: null,
     });
   }),
 );
@@ -98,5 +103,36 @@ it.effect("never loses a launch when nothing on the tracks can run", () =>
       auth: { status: "unauthenticated" as const },
     }));
     assert.deepEqual((yield* launch("tracks", out)).modelSelection, shown);
+  }),
+);
+
+it.effect("refuses a start on a per-token model when nothing on the tracks can run", () =>
+  Effect.gen(function* () {
+    const apiKey = source(
+      ProviderInstanceId.make("claude-api"),
+      "claudeAgent",
+      "apiKey",
+      "claude-opus-5-5",
+      { auth: { status: "authenticated", type: "apiKey", apiKeyBilling: true } },
+    );
+    const result = yield* routeUnnamedLaunch({
+      project: { projectId },
+      providers: [apiKey],
+      modelSelection: { instanceId: apiKey.instanceId, model: "claude-opus-5-5" },
+      title: "New thread",
+      text: "Fix the typo in README",
+      settings: settings("tracks"),
+    });
+    assert.include(result.refused ?? "", "billed per use");
+    // A One model project named that model itself: it starts as before.
+    const named = yield* routeUnnamedLaunch({
+      project: { projectId },
+      providers: [apiKey],
+      modelSelection: { instanceId: apiKey.instanceId, model: "claude-opus-5-5" },
+      title: "New thread",
+      text: "Fix the typo in README",
+      settings: settings("model"),
+    });
+    assert.isNull(named.refused);
   }),
 );

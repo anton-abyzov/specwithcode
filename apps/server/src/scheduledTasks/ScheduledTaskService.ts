@@ -1031,7 +1031,7 @@ export const layer = Layer.effect(
         // An unpinned routine's stored model is only a snapshot: in a project
         // on Tracks a thread of its own starts on the track instead. A grant's
         // routine stays on a sign-in its grant allows.
-        const tracked =
+        const trackedLaunch =
           pinned || active.threadId !== null || providerRegistry === undefined
             ? null
             : yield* Effect.all([
@@ -1048,17 +1048,22 @@ export const layer = Layer.effect(
                     modelSelection: active.modelSelection,
                     title: active.title,
                     text: prompt,
+                    // Scheduled work is everyday work: no model call to judge it on each fire.
+                    laneHint: "routine",
                     settings: Option.fromNullishOr(serverSettings),
                   }),
                 ),
-                Effect.map((launch) =>
-                  launch.routing !== null &&
-                  (runsUnder === null ||
-                    accountInGrant(runsUnder.accounts, launch.modelSelection.instanceId))
-                    ? launch
-                    : null,
-                ),
               );
+        // Nothing on the tracks can run and the stored model is billed per
+        // use: the run fails with that reason instead of spending unattended.
+        const tracksRefusal = trackedLaunch?.refused ?? null;
+        const tracked =
+          trackedLaunch !== null &&
+          trackedLaunch.routing !== null &&
+          (runsUnder === null ||
+            accountInGrant(runsUnder.accounts, trackedLaunch.modelSelection.instanceId))
+            ? trackedLaunch
+            : null;
         const providerDestination =
           active.threadId !== null
             ? sendModel(ThreadId.make(active.threadId)).pipe(
@@ -1230,7 +1235,10 @@ export const layer = Layer.effect(
               projectId: active.projectId,
               title: active.title,
               modelSelection: routedModel ?? tracked?.modelSelection ?? active.modelSelection,
-              ...(tracked === null || tracked.routing === null ? {} : { routing: tracked.routing }),
+              // A fire the provider check moved did not start on the track's pick.
+              ...(routedModel !== undefined || tracked === null || tracked.routing === null
+                ? {}
+                : { routing: tracked.routing }),
               runtimeMode: active.runtimeMode,
               interactionMode: active.interactionMode,
               workspaceStrategy: active.workspaceStrategy,
@@ -1280,15 +1288,17 @@ export const layer = Layer.effect(
         const result =
           teamRulesRefusal !== null
             ? Exit.fail(taskError(teamRulesRefusal.message, { taskId: active.id }))
-            : checked !== null && checked._tag === "Failure"
-              ? checked
-              : route?.type === "defer" || (checked !== null && !checked.value.passed)
-                ? Exit.void
-                : active.threadId !== null
-                  ? yield* Effect.exit(sendTo(ThreadId.make(active.threadId), prompt))
-                  : // No live thread yet: start the routine's own (see asOwnThreadRoutine),
-                    // replacing whatever thread the stored row still names.
-                    yield* Effect.exit(launchOwnThread(stored?.threadId ?? null));
+            : tracksRefusal !== null
+              ? Exit.fail(taskError(tracksRefusal, { taskId: active.id }))
+              : checked !== null && checked._tag === "Failure"
+                ? checked
+                : route?.type === "defer" || (checked !== null && !checked.value.passed)
+                  ? Exit.void
+                  : active.threadId !== null
+                    ? yield* Effect.exit(sendTo(ThreadId.make(active.threadId), prompt))
+                    : // No live thread yet: start the routine's own (see asOwnThreadRoutine),
+                      // replacing whatever thread the stored row still names.
+                      yield* Effect.exit(launchOwnThread(stored?.threadId ?? null));
 
         const completedAt = yield* localNow;
         const runSucceeded = result._tag === "Success" && route?.type !== "defer";

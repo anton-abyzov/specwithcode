@@ -1434,6 +1434,7 @@ const layerWsRpc = (
           ? Effect.succeed<UnnamedLaunchModel>({
               modelSelection: input.modelSelection,
               routing: null,
+              refused: null,
             })
           : Effect.all([
               projectStore.get(input.projectId).pipe(
@@ -1451,6 +1452,19 @@ const layerWsRpc = (
                   text: input.initialMessage?.text ?? "",
                   settings: Option.some(serverSettings),
                 }),
+              ),
+              // Nothing on the tracks can run and the shown model is billed per use.
+              Effect.flatMap(
+                (model): Effect.Effect<UnnamedLaunchModel, OrchestrationV2ThreadLaunchError> =>
+                  model.refused === null
+                    ? Effect.succeed(model)
+                    : Effect.fail(
+                        new OrchestrationV2ThreadLaunchError({
+                          commandId: input.commandId,
+                          projectId: input.projectId,
+                          message: model.refused,
+                        }),
+                      ),
               ),
             );
       const projectRuntimeAccess = yield* ProjectRuntimeAccess.ProjectRuntimeAccess;

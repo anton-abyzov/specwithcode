@@ -1195,3 +1195,31 @@ it.effect("leaves an unpinned routine on its model in a One model project", () =
     );
   }).pipe(Effect.provide(Sqlite.layerMemory)),
 );
+
+it.effect("fails an unpinned routine instead of starting it on a per-token model", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(START);
+    const apiKey = provider("claude-api", "claudeAgent", {
+      auth: { status: "authenticated", type: "apiKey", apiKeyBilling: true },
+      models: [{ ...opus, capabilities: null }],
+    });
+    // The only account is an API key: nothing on the tracks can run.
+    const { state, run, fireNext, taskRow } = yield* harness([apiKey], tracksSettings);
+    yield* run((service) =>
+      Effect.gen(function* () {
+        yield* service.upsert(
+          taskInput({
+            threadId: null,
+            ownThread: true,
+            modelSelection: { instanceId: "claude-api", model: "claude-opus-5-5" },
+          }),
+        );
+        yield* fireNext;
+        assert.deepEqual(state.launched, []);
+        const row = yield* taskRow;
+        assert.equal(row.last_run_status, "failed");
+        assert.include(String(row.last_run_error), "billed per use");
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);

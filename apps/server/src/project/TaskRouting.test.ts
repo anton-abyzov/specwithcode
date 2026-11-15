@@ -404,3 +404,30 @@ it.effect("keeps a per-token model for a One model project's worker", () =>
     assert.isNull(decision);
   }),
 );
+
+it.effect("refuses a per-token baseline on Tracks with Auto routing on too", () =>
+  Effect.gen(function* () {
+    // Only an API key lists a track model, so no track entry fits this machine.
+    const failure = yield* routeWorkerTask({
+      project: projectFixture(projectId),
+      baseline: { instanceId: claudeApi, model: "claude-opus-5-5" },
+      providers: [
+        instance(claudeApi, { status: "authenticated", type: "apiKey", apiKeyBilling: true }),
+      ],
+      task: { title: "Fix typo", text: "Fix the typo in README" },
+      laneHint: "routine",
+      settings: Option.some({
+        getSettings: Effect.succeed({
+          ...DEFAULT_SERVER_SETTINGS,
+          projectSettingsOverrides: {
+            [projectId]: {
+              threadModelMode: "tracks",
+              taskRouting: { ...DEFAULT_TASK_ROUTING_SETTINGS, mode: "auto" },
+            },
+          },
+        }),
+      } as unknown as ServerSettings.ServerSettingsService["Service"]),
+    }).pipe(Effect.flip);
+    assert.strictEqual(failure.code, "model_unavailable");
+  }),
+);
