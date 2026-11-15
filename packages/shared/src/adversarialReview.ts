@@ -145,7 +145,16 @@ export function reviewerOrderGroups(input: {
       order: input.sourceOrder,
     })) {
       if (provider.instanceId === entry.instanceId) continue;
-      const alternate = { instanceId: provider.instanceId, model: slug };
+      // The entry's effort goes with it to another account of the same driver, whose options match.
+      const sameDriver =
+        entry.options !== undefined &&
+        input.providers.find((source) => source.instanceId === entry.instanceId)?.driver ===
+          provider.driver;
+      const alternate = {
+        instanceId: provider.instanceId,
+        model: slug,
+        ...(sameDriver ? { options: entry.options } : {}),
+      };
       if (listed.has(fallbackSelectionKey(alternate))) continue;
       if (claim(alternate)) alternates.push(alternate);
     }
@@ -257,9 +266,10 @@ export function describeReviewerOrder(input: {
 
 /**
  * The first entry of the reviewer order that can run now and is not in the
- * author's family. An entry whose usage is unread ("unverified") keeps its
- * place: the order is the person's ranking, and a later model with known room
- * never jumps ahead of it (Muse reports no percent, so it lost to GPT-6.1 Sol).
+ * author's family. An entry whose usage was never read keeps its place: the
+ * order is the person's ranking, and a later model with known room never jumps
+ * ahead of it (Muse reports no percent, so it lost to GPT-6.1 Sol). A stale or
+ * denied reading ("unverified") still yields to an entry with room.
  */
 export function resolveReviewer(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -272,6 +282,12 @@ export function resolveReviewer(input: {
   readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
   readonly nowMs: number;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
+  /**
+   * The models a person chose, when `reviewers` is an order already expanded
+   * from them (review delegation). Only these are consent to unknown billing
+   * or Gemini spend; without it, `reviewers` is the person's own list.
+   */
+  readonly consented?: ReadonlyArray<ModelSelection> | undefined;
 }): ReviewerResolution {
   const authorFamily = selectionFamily(input.providers, input.author);
   const chain = reviewerChain(input);
@@ -287,13 +303,14 @@ export function resolveReviewer(input: {
     limitedInstanceIds: input.limitedInstanceIds,
   });
   const skipped: ReviewerSkip[] = [];
+  let unverified: ModelSelection | null = null;
   const providerOf = (selection: ModelSelection) =>
     input.providers.find((provider) => provider.instanceId === selection.instanceId);
   const authorNames = describeModel(providerOf(input.author), input.author.model);
   // Only models a person put in the reviewer order count as consented to;
   // the default order and Copilot-style expansions never pick an agent whose
   // billing is unknown.
-  const named = new Set(input.reviewers.map(fallbackSelectionKey));
+  const named = new Set((input.consented ?? input.reviewers).map(fallbackSelectionKey));
   for (const entry of entries) {
     const provider = providerOf(entry.selection);
     // The family check comes first: a same-family entry is never a reviewer,
@@ -319,11 +336,35 @@ export function resolveReviewer(input: {
         : unconsented && (entry.unavailable === null || entry.unavailable === "unverified")
           ? "unknown-billing"
           : entry.unavailable;
-    if (reason === null || reason === "unverified")
+    // Usage never read here keeps the entry's place; a stale reading or one a
+    // later denial overtook does not, since the account may be at its limit.
+    if (reason === null || (reason === "unverified" && usageNeverRead(provider)))
       return { reviewer: entry.selection, skipped, authorFamily };
+    if (reason === "unverified" && unverified === null) unverified = entry.selection;
     skipped.push({ selection: entry.selection, reason });
   }
+  if (unverified !== null) {
+    const index = skipped.findIndex(
+      (skip) => fallbackSelectionKey(skip.selection) === fallbackSelectionKey(unverified),
+    );
+    return { reviewer: unverified, skipped: skipped.slice(0, index), authorFamily };
+  }
   return { reviewer: null, skipped, authorFamily };
+}
+
+/**
+ * Whether this account's usage has never been read: its only reading is a
+ * failed or unsupported probe, with no windows and no limit denial seen.
+ * Muse reports this way; it says nothing about the account being full.
+ */
+function usageNeverRead(provider: ServerProvider | undefined): boolean {
+  const limits = provider?.usageLimits;
+  return (
+    limits !== undefined &&
+    limits.unavailable !== undefined &&
+    limits.windows.length === 0 &&
+    limits.nativeDenialObservedAt === undefined
+  );
 }
 
 /** Short words for a skip reason, for notices. */

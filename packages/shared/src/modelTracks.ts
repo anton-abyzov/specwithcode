@@ -177,18 +177,27 @@ export function defaultTrackSelections(
       ({ provider, slug }) =>
         !isHeldSource(provider as Partial<ServerProvider> as ServerProvider, slug),
     );
-    if (best === undefined) return [];
-    const selection = { instanceId: best.provider.instanceId, model: best.slug };
-    // The entry's effort, at the nearest level this source offers; none when it has no effort knob.
-    const descriptors = best.provider.models.find((model) => model.slug === best.slug)?.capabilities
-      ?.optionDescriptors;
-    const effort = entry.effort === undefined ? null : resolveEffort(entry.effort, descriptors);
-    return [
-      effort === null || !effort.ok
-        ? selection
-        : { ...selection, options: withEffortSelection(undefined, effort) },
-    ];
+    return best === undefined ? [] : [builtInTrackSelection(entry, best.provider, best.slug)];
   });
+}
+
+/**
+ * A built-in entry on one source: its effort at the nearest level that source
+ * offers, none when the model has no effort setting. The Models page and the
+ * resolvers build rows with this, so saving a built-in list keeps the effort.
+ */
+export function builtInTrackSelection(
+  entry: { readonly effort?: string | undefined },
+  provider: Pick<TrackProvider, "instanceId" | "models">,
+  slug: string,
+): ModelSelection {
+  const selection = { instanceId: provider.instanceId, model: slug };
+  const descriptors = provider.models.find((model) => model.slug === slug)?.capabilities
+    ?.optionDescriptors;
+  const effort = entry.effort === undefined ? null : resolveEffort(entry.effort, descriptors);
+  return effort === null || !effort.ok
+    ? selection
+    : { ...selection, options: withEffortSelection(undefined, effort) };
 }
 
 export interface EffectiveModelLanes {

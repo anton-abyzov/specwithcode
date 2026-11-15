@@ -172,6 +172,11 @@ export function reviewDelegationTarget(input: ReviewDelegationInput): ReviewDele
     providers: input.providers,
     author: input.author,
     reviewers: order,
+    // The order is already expanded; only the person's list or a policy-pinned model is consent.
+    consented:
+      policy?.model !== undefined
+        ? policyModelSelections(input.providers, policy.model)
+        : input.reviewers,
     tier: input.tier,
     tiers: input.tiers,
     excludedModels: input.excludedModels,

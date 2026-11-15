@@ -305,3 +305,33 @@ describe("moves that cannot work", () => {
     expect(singleReviewFamily(mixed)).toBeNull();
   });
 });
+
+describe("built-in rows keep their effort", () => {
+  it("shows the Review row Muse Wonder at extra high, so saving the list keeps it", () => {
+    const effortful = {
+      ...muse,
+      models: muse.models.map((model) => ({
+        ...model,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "reasoningEffort",
+              label: "Reasoning effort",
+              type: "select" as const,
+              options: [
+                { id: "high", label: "High" },
+                { id: "xhigh", label: "Extra High" },
+              ],
+            },
+          ],
+        },
+      })),
+    };
+    const rows = describeTrack({ track: "review", saved: [], providers: [effortful], nowMs: now });
+    expect(rows[0]!.selection).toEqual({
+      instanceId: effortful.instanceId,
+      model: "muse-wonder-1.0",
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    });
+  });
+});

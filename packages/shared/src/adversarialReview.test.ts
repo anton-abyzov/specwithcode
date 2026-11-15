@@ -204,6 +204,51 @@ describe("resolveReviewer", () => {
     expect(result.skipped).toEqual([]);
   });
 
+  it("lets a stale or denied reading yield to a later reviewer with room", () => {
+    const stale: ServerProvider = {
+      ...muse,
+      usageLimits: {
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 10 * 60_000)),
+        windows: [
+          {
+            id: "seven_day",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 10,
+            resetsAt: "2026-11-06T00:00:00.000Z",
+          },
+        ],
+      },
+    };
+    const result = resolveReviewer({
+      providers: [claude, codex, stale],
+      author,
+      reviewers: [sel("muse", "muse-wonder-1.0"), sel("codex", "gpt-6.1-sol")],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(result.reviewer).toEqual(sel("codex", "gpt-6.1-sol"));
+  });
+
+  it("gives a reviewer's alternate on the same driver the entry's effort", () => {
+    const second = provider("codex2", "codex", ["gpt-6.1-sol"], 5);
+    const effortful = {
+      ...sel("codex", "gpt-6.1-sol"),
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    };
+    expect(
+      reviewerChain({
+        providers: [codex, second, copilot],
+        reviewers: [effortful],
+        tier: "regular",
+      }),
+    ).toEqual([
+      effortful,
+      { ...sel("codex2", "gpt-6.1-sol"), options: effortful.options },
+      sel("copilot", "gpt-6.1-sol"),
+    ]);
+  });
+
   it("falls through to Sol on Copilot when Codex is limited", () => {
     const result = resolveReviewer({
       providers,

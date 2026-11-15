@@ -84,6 +84,19 @@ describe("reviewDelegationTarget", () => {
     expect(decision.skipped.map((skip) => skip.reason)).toEqual(["same model family as the work"]);
   });
 
+  it("never takes an unknown-billing account nobody named as the same model's alternate", () => {
+    // An ACP agent that reports no usage and serves Sol: billing unknown, so only a person may name it.
+    const unknownAgent = provider("acpAgent", "acpRegistry", ["gpt-6.1-sol"], null);
+    const decision = reviewDelegationTarget({
+      ...base,
+      providers: [claude, codexFull, unknownAgent],
+      reviewers: [sel("codex", "gpt-6.1-sol")],
+      policy: null,
+    });
+    if (decision.kind === "pick") expect(decision.selection.instanceId).not.toBe("acpAgent");
+    expect(decision.kind).toBe("none");
+  });
+
   it("refuses with reasons instead of falling back to the author's family when OpenAI has no room", () => {
     const decision = reviewDelegationTarget({
       ...base,
