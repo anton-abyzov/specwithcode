@@ -3,11 +3,14 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ProjectBoardCard } from "@specweave-studio/contracts";
 
 import {
+  boardAsk,
+  boardCardTarget,
   boardCardTitle,
   boardColumnMore,
   boardColumns,
   boardIsEmpty,
   boardProgress,
+  boardThreadOrder,
   incrementNumber,
   pullRequestLabel,
 } from "./projectBoardModel";
@@ -78,5 +81,38 @@ describe("projectBoardModel", () => {
   it("knows an empty board", () => {
     expect(boardIsEmpty({ counts: { planned: 0, active: 0, review: 0, done: 0 } })).toBe(true);
     expect(boardIsEmpty({ counts: { planned: 0, active: 0, review: 0, done: 2 } })).toBe(false);
+  });
+
+  it("orders a card's threads by who needs the person, then the newest", () => {
+    const thread = (id: string, tone: string, updatedAt: string) => ({ id, tone, updatedAt });
+    expect(
+      boardThreadOrder([
+        thread("done", "resolved", "2026-11-14T10:00:00Z"),
+        thread("old", "working", "2026-11-14T08:00:00Z"),
+        thread("ask", "waiting", "2026-11-13T08:00:00Z"),
+        thread("new", "working", "2026-11-14T09:00:00Z"),
+      ]).map((entry) => entry.id),
+    ).toEqual(["ask", "new", "old", "done"]);
+  });
+
+  it("opens the thread of a card with exactly one, the spec otherwise", () => {
+    expect(boardCardTarget({ threads: 1, specPath: "/a/spec.md" })).toBe("thread");
+    expect(boardCardTarget({ threads: 1, specPath: null })).toBe("thread");
+    expect(boardCardTarget({ threads: 0, specPath: "/a/spec.md" })).toBe("spec");
+    expect(boardCardTarget({ threads: 3, specPath: "/a/spec.md" })).toBe("spec");
+    expect(boardCardTarget({ threads: 0, specPath: null })).toBe("none");
+  });
+
+  it("words the request for an open card by how far it is", () => {
+    const at = (column: ProjectBoardCard["column"], done: number) =>
+      boardAsk({ incrementId: "0007-login", column, tasks: { total: 4, done } });
+    expect(at("planned", 0)?.label).toBe("Start");
+    expect(at("active", 0)?.label).toBe("Start");
+    expect(at("active", 2)).toEqual({
+      label: "Continue",
+      prompt: "Continue increment 0007-login: pick up its next open task.",
+    });
+    expect(at("review", 4)?.label).toBe("Review and close");
+    expect(at("done", 4)).toBeNull();
   });
 });

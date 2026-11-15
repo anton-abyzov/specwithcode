@@ -6,7 +6,7 @@ import * as NodeURL from "node:url";
 
 const { resolve, dirname } = NodePath;
 
-// The real Board tab over fictional increments: no server.
+// The real Board tab over fictional increments and threads: no server.
 const fixture = NodeURL.fileURLToPath(new URL(".", import.meta.url));
 const appSource = resolve(fixture, "../../src");
 const mocks = resolve(fixture, "mocks.tsx");
@@ -14,8 +14,14 @@ const stubs = new Set(
   [
     "browser/useOpenLink",
     "components/studio/shell/LibraryFileViewer",
+    "components/sidebar/SidebarPlanProgress",
+    "state/environments",
     "state/query",
+    "studio/machineIdentity",
+    "studio/machineNickname",
     "studio/projectWorkspace",
+    "studio/unreachableHosts",
+    "studio/useThreadIncrementProgress",
   ].map((path) => resolve(appSource, path)),
 );
 export default defineConfig({
@@ -25,7 +31,7 @@ export default defineConfig({
       name: "isolated-project-board",
       enforce: "pre",
       resolveId(source, importer) {
-        if (!importer || !importer.endsWith("BoardPane.tsx")) return;
+        if (!importer || !/Board(Pane|Threads)\.tsx$/.test(importer)) return;
         const target = source.startsWith("~/")
           ? resolve(appSource, source.slice(2))
           : source.startsWith(".")

@@ -164,6 +164,7 @@ import { bulkThreadTargets } from "../../studio/bulkThreadControl";
 import { useBulkThreadControl } from "../../studio/useBulkThreadControl";
 import { useComposerAppCommands } from "../../studio/useComposerAppCommands";
 import { BoardPane } from "./shell/BoardPane";
+import { ProjectSpecweaveSetting } from "./ProjectSpecweaveSetting";
 import { LibraryPane } from "./shell/LibraryPane";
 import { LIBRARY_SECTIONS, type LibrarySection } from "../../studio/projectArtifacts";
 import { ProjectArtifactShelf } from "./shell/ProjectArtifactShelf";
@@ -466,7 +467,9 @@ export function ProjectWorkspaceSurface({
   );
   // The Board tab lists SpecWeave increments; a project without them has no such tab,
   // and the remembered tab is shared by every project.
-  const hasBoard = snapshot?.specweave === true;
+  // A code project always has the tab: without SpecWeave it offers to turn the board on.
+  // An older server (no flag) and the personal project have none.
+  const hasBoard = snapshot?.specweave !== undefined && snapshot.settings.kind !== "personal";
   const paneTab = storedPaneTab === "board" && !hasBoard ? "threads" : storedPaneTab;
   // The panel takes the whole width, as the desktop app's expand does; never remembered.
   const [paneExpanded, setPaneExpanded] = useState(false);
@@ -1667,20 +1670,22 @@ export function ProjectWorkspaceSurface({
   // The desktop app's primary host is this Mac, so its owner is the person looking;
   // a browser may be paired with someone else's server.
   const greetsByName = isElectron && project.environmentId === primaryEnvironmentId;
+  // Puts a request in the coordinator's composer for the person to send or edit.
+  const draftForCoordinator = (text: string) => {
+    setPrompt((current) => quickStartDraft(current, text));
+    // Typing continues at the end of the filled-in request.
+    requestAnimationFrame(() => {
+      const field = document.getElementById("project-prompt");
+      if (!(field instanceof HTMLTextAreaElement)) return;
+      field.focus();
+      field.setSelectionRange(field.value.length, field.value.length);
+    });
+  };
   const quickStarts = (
     <CoordinatorQuickStarts
       // Hidden sends can't be appended to: a chip waits while a message is on its way.
       disabled={!canOperate || !connected || sending || preparing}
-      onPrompt={(text) => {
-        setPrompt((current) => quickStartDraft(current, text));
-        // Typing continues at the end of the filled-in request.
-        requestAnimationFrame(() => {
-          const field = document.getElementById("project-prompt");
-          if (!(field instanceof HTMLTextAreaElement)) return;
-          field.focus();
-          field.setSelectionRange(field.value.length, field.value.length);
-        });
-      }}
+      onPrompt={draftForCoordinator}
       onConnections={() => setTab("environment")}
     />
   );
@@ -2256,6 +2261,19 @@ export function ProjectWorkspaceSurface({
                   projectId={project.id}
                   workspaceRoot={project.workspaceRoot}
                   bar={paneBar}
+                  specweave={snapshot?.specweave === true}
+                  setup={
+                    <ProjectSpecweaveSetting
+                      project={project}
+                      specweave={snapshot?.specweave}
+                      disabled={!canOperate || !connected}
+                      onChanged={query.refresh}
+                    />
+                  }
+                  threads={workers}
+                  machineLabels={machineLabels}
+                  onOpenThread={(thread) => openThread(thread.id, thread.environmentId)}
+                  onAsk={canOperate && connected ? draftForCoordinator : undefined}
                 />
               ) : paneTab === "designs" ? (
                 <ProjectDesignsPane

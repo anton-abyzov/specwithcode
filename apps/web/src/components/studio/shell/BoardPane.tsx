@@ -2,13 +2,18 @@
  * The project's Board tab: its SpecWeave increments as cards in Planned,
  * Active, In review and Done, read from the increment files by
  * `projects.board`. Side by side when the panel is wide, stacked with the
- * work in motion first when it is narrow. Read-only: a card opens its spec,
- * a chip opens its pull request.
+ * work in motion first when it is narrow. Every part of a card is clickable:
+ * the card opens the thread working on it (its spec when several threads or
+ * none do), each thread line opens that thread, a chip opens a pull request
+ * or the spec, and an open card with no thread hands the coordinator a
+ * request to start it. A project without SpecWeave gets the switch to turn
+ * the board on instead of a hidden tab.
  */
 import type { EnvironmentId, ProjectBoardCard, ProjectId } from "@specweave-studio/contracts";
 import { PROJECT_BOARD_DONE_DEFAULT, PROJECT_BOARD_DONE_MAX } from "@specweave-studio/contracts";
-import { SearchIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
+import { FileTextIcon, SearchIcon } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useOpenLink } from "../../../browser/useOpenLink";
 import { useNowMinute } from "../../../hooks/useNowMinute";
@@ -19,6 +24,8 @@ import {
   BOARD_DONE_STEP,
   BOARD_STACK_ORDER,
   PROJECT_BOARD_COLUMNS,
+  boardAsk,
+  boardCardTarget,
   boardCardTitle,
   boardColumnMore,
   boardColumns,
@@ -30,23 +37,65 @@ import {
 import { projectWorkspace } from "../../../studio/projectWorkspace";
 import { compactAge, nowFromMinute } from "../../../studio/shellModel";
 import { PullRequestGlyph } from "../../pullRequest/pullRequestIcons";
+import { BoardThreadLines, useBoardThreads } from "./BoardThreads";
 import { LibraryFileViewer } from "./LibraryFileViewer";
 import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
 
 /** How often an open board asks again; the server re-reads only files that changed. */
 const BOARD_REFRESH_MS = 30_000;
 
-export function BoardPane({
-  environmentId,
-  projectId,
-  workspaceRoot,
-  bar,
-}: {
+export interface BoardPaneProps {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   workspaceRoot: string;
   bar: ProjectPaneBarProps;
-}) {
+  /** The project plans with SpecWeave; false shows how to turn the board on. */
+  specweave: boolean;
+  /** The control that turns SpecWeave on, shown while the project has no board. */
+  setup: ReactNode;
+  /** The project's threads on every machine; a card lists the ones working on it. */
+  threads: ReadonlyArray<EnvironmentThreadShell>;
+  machineLabels?: ReadonlyMap<string, string> | undefined;
+  onOpenThread: (thread: EnvironmentThreadShell) => void;
+  /** Puts a request in the coordinator's composer; absent when the person cannot send. */
+  onAsk?: ((prompt: string) => void) | undefined;
+}
+
+export function BoardPane(props: BoardPaneProps) {
+  if (props.specweave) return <BoardCards {...props} />;
+  return (
+    <>
+      <ProjectPaneBar {...props.bar} />
+      <div
+        className="sws-threads-body sws-board"
+        id="sws-pane-board"
+        role="tabpanel"
+        aria-labelledby="sws-pane-tab-board"
+      >
+        <section className="sws-board-setup" aria-labelledby="sws-board-setup-title">
+          <h3 id="sws-board-setup-title">Start a board for this project</h3>
+          <p>
+            The board shows the project's work as cards in Planned, Active, In review and Done,
+            each with its tasks, pull requests and the threads working on it. It is built from
+            SpecWeave increments, so turn SpecWeave on to get one.
+          </p>
+          {props.setup}
+        </section>
+      </div>
+    </>
+  );
+}
+
+function BoardCards({
+  environmentId,
+  projectId,
+  workspaceRoot,
+  bar,
+  threads,
+  machineLabels,
+  onOpenThread,
+  onAsk,
+}: BoardPaneProps) {
   const [filter, setFilter] = useState("");
   const [searched, setSearched] = useState("");
   const [doneLimit, setDoneLimit] = useState(PROJECT_BOARD_DONE_DEFAULT);
@@ -91,6 +140,7 @@ export function BoardPane({
   const openLink = useOpenLink(null);
   const now = nowFromMinute(useNowMinute());
   const columns = useMemo(() => boardColumns(data?.cards ?? []), [data]);
+  const working = useBoardThreads({ environmentId, threads, machineLabels });
 
   return (
     <>
@@ -158,6 +208,20 @@ export function BoardPane({
                       const progress = boardProgress(card.tasks);
                       const title = boardCardTitle(card);
                       const specPath = card.specPath;
+                      const number = incrementNumber(card.incrementId);
+                      const cardThreads = working.byIncrement.get(card.incrementId) ?? [];
+                      const lead = cardThreads[0];
+                      const target = boardCardTarget({ threads: cardThreads.length, specPath });
+                      const ask = cardThreads.length === 0 && onAsk ? boardAsk(card) : null;
+                      const openSpec =
+                        specPath === null
+                          ? null
+                          : () => setOpened({ path: specPath, name: `${number} spec.md` });
+                      // The card's edge takes the color of the machine its work runs on.
+                      const accent =
+                        lead && lead.tone !== "resolved" && (working.multiMachine || lead.machine.moved)
+                          ? lead.color
+                          : undefined;
                       const body = (
                         <>
                           <span className="sws-board-card-top">
@@ -184,25 +248,39 @@ export function BoardPane({
                           key={card.incrementId}
                           data-increment={card.incrementId}
                           data-blocked={card.blocked ? "" : undefined}
+                          data-machine-color={accent}
                         >
-                          {specPath === null ? (
-                            <div className="sws-board-card-open">{body}</div>
-                          ) : (
+                          {target === "thread" && lead ? (
                             <button
                               type="button"
                               className="sws-board-card-open"
-                              aria-label={`Open the spec of ${incrementNumber(card.incrementId)} ${title}`}
-                              onClick={() =>
-                                setOpened({
-                                  path: specPath,
-                                  name: `${incrementNumber(card.incrementId)} spec.md`,
-                                })
-                              }
+                              aria-label={`Open the thread working on ${number} ${title}`}
+                              onClick={() => onOpenThread(lead.thread)}
                             >
                               {body}
                             </button>
+                          ) : openSpec ? (
+                            <button
+                              type="button"
+                              className="sws-board-card-open"
+                              aria-label={`Open the spec of ${number} ${title}`}
+                              onClick={openSpec}
+                            >
+                              {body}
+                            </button>
+                          ) : (
+                            <div className="sws-board-card-open">{body}</div>
                           )}
-                          {progress || card.blocked || card.pullRequests.length > 0 ? (
+                          <BoardThreadLines
+                            threads={cardThreads}
+                            showMachine={working.multiMachine}
+                            onOpen={onOpenThread}
+                          />
+                          {progress ||
+                          card.blocked ||
+                          card.pullRequests.length > 0 ||
+                          ask ||
+                          (target === "thread" && openSpec) ? (
                             <div className="sws-board-card-chips">
                               {progress ? <span className="sws-chip">{progress.label}</span> : null}
                               {card.blocked ? (
@@ -222,6 +300,27 @@ export function BoardPane({
                                   {pullRequestLabel(url)}
                                 </button>
                               ))}
+                              {target === "thread" && openSpec ? (
+                                <button
+                                  type="button"
+                                  className="sws-chip"
+                                  aria-label={`Open the spec of ${number} ${title}`}
+                                  onClick={openSpec}
+                                >
+                                  <FileTextIcon aria-hidden />
+                                  Spec
+                                </button>
+                              ) : null}
+                              {ask && onAsk ? (
+                                <button
+                                  type="button"
+                                  className="sws-chip sws-board-chip-ask"
+                                  aria-label={`${ask.label} ${number} ${title} with the coordinator`}
+                                  onClick={() => onAsk(ask.prompt)}
+                                >
+                                  {ask.label}
+                                </button>
+                              ) : null}
                             </div>
                           ) : null}
                         </article>
@@ -254,6 +353,7 @@ export function BoardPane({
           </div>
         )}
       </div>
+      {working.loaders}
       {opened ? (
         <LibraryFileViewer
           environmentId={environmentId}

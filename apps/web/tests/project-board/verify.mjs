@@ -59,6 +59,23 @@ try {
       const file = path.join(output, `board-${layout}-${theme}.png`);
       await page.screenshot({ path: file });
 
+      // Threads on cards: state, the machine in its color, and the arrow of one that moved.
+      const marks = await page.locator(".sws-board-machine").evaluateAll((nodes) =>
+        nodes.map((node) => ({
+          color: node.dataset.machineColor,
+          moved: node.dataset.moved === "true",
+          text: node.textContent,
+          ink: getComputedStyle(node).color,
+        })),
+      );
+      for (const color of ["violet", "teal", "amber"])
+        assert(marks.some((mark) => mark.color === color), `a ${color} machine mark`);
+      assert(new Set(marks.map((mark) => mark.ink)).size >= 3, "each machine has its own color");
+      const moved = marks.filter((mark) => mark.moved);
+      assert(moved.length >= 2 && moved.every((mark) => mark.text.includes("→ ")), "moves show →");
+      assert(marks.some((mark) => !mark.moved && !mark.text.includes("→")));
+      assert.equal(await page.locator(".sws-board-card[data-machine-color]").count() >= 5, true);
+
       const headings = await page.locator(".sws-board-column h3").allTextContents();
       assert.deepEqual(headings, [
         "Planned11 increments",
@@ -97,12 +114,37 @@ try {
         await page.waitForFunction(
           () => document.querySelectorAll('[data-column="done"] [data-increment]').length === 90,
         );
+        // One thread: the card opens it. Several: each line opens its own, the card the spec.
+        const cards = column(page, "active").locator("[data-increment]");
+        await cards.nth(0).locator("button.sws-board-card-open").click();
+        assert.equal(await page.evaluate(() => document.body.dataset.openedThread), "Build the passkey sign-in");
+        await cards.nth(0).getByRole("button", { name: /^Open the spec of/ }).click();
+        await page.locator("[data-viewer-path]").click();
+        const several = cards.nth(1);
+        assert.deepEqual(await several.locator(".sws-board-thread-title").allTextContents(), [
+          "Index large folders faster",
+          "Benchmark the new index",
+          "Plan the search rewrite",
+        ]);
+        assert.match(await several.locator(".sws-board-thread").first().textContent(), /Answer needed/);
+        await several.locator(".sws-board-thread").nth(1).click();
+        assert.equal(await page.evaluate(() => document.body.dataset.openedThread), "Benchmark the new index");
+        await several.locator("button.sws-board-card-open").click();
+        await page.locator("[data-viewer-path]").click();
+        assert.equal(await cards.nth(3).locator(".sws-board-thread").count(), 3);
+        await cards.nth(3).locator(".sws-board-thread-more").click();
+        assert.equal(await cards.nth(3).locator(".sws-board-thread").count(), 5);
+        // No thread yet: the card hands the coordinator a request.
+        await column(page, "planned").locator(".sws-board-chip-ask").first().click();
+        assert.match(await page.evaluate(() => document.body.dataset.asked), /^Start work on increment \d{4}-/);
+        await page.screenshot({ path: path.join(output, `board-${layout}-threads-${theme}.png`) });
         await page.locator('[aria-label^="Open pull request"]').first().click();
         assert.match(
           await page.evaluate(() => document.body.dataset.openedLink),
           /^https:\/\/github\.com\/example\/atlas\/pull\/\d+$/,
         );
-        await column(page, "review").locator("button.sws-board-card-open").first().click();
+        // The first card in review has a thread; the second opens its spec.
+        await column(page, "review").locator("button.sws-board-card-open").nth(1).click();
         const viewer = page.locator("[data-viewer-path]");
         assert.match(await viewer.getAttribute("data-viewer-path"), /\/spec\.md$/);
         await viewer.click();
@@ -122,6 +164,18 @@ try {
       results.push({ theme, layout, headings, file });
       await page.close();
     }
+  }
+  // A project without SpecWeave: the tab offers to turn the board on.
+  for (const theme of ["light", "dark"]) {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(`${origin}/?theme=${theme}&setup=1`);
+    await page.getByRole("heading", { name: "Start a board for this project" }).waitFor();
+    await page.getByRole("button", { name: "Set up SpecWeave" }).waitFor();
+    assert.equal(await page.locator("[data-column]").count(), 0);
+    const file = path.join(output, `board-setup-${theme}.png`);
+    await page.screenshot({ path: file });
+    results.push({ theme, layout: "setup", file });
+    await page.close();
   }
 } finally {
   await browser.close();

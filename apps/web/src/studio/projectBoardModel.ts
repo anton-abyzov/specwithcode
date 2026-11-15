@@ -102,3 +102,60 @@ export function boardIsEmpty(result: Pick<ProjectBoardResult, "counts">): boolea
 }
 
 export { PROJECT_BOARD_COLUMNS };
+
+/** Thread lines a card shows before "N more". */
+export const BOARD_CARD_THREADS = 3;
+
+/** The states a card's thread line can be in, most urgent first. */
+const TONE_URGENCY = ["waiting", "failed", "working", "background", "unknown", "idle", "resolved"];
+
+/**
+ * A card's threads in the order they matter: one that needs the person first,
+ * then the ones at work, the resolved ones last; newest first within a state.
+ */
+export function boardThreadOrder<T extends { readonly tone: string; readonly updatedAt: string }>(
+  threads: ReadonlyArray<T>,
+): T[] {
+  const rank = (tone: string) => {
+    const index = TONE_URGENCY.indexOf(tone);
+    return index === -1 ? TONE_URGENCY.length : index;
+  };
+  return threads.toSorted(
+    (left, right) =>
+      rank(left.tone) - rank(right.tone) || right.updatedAt.localeCompare(left.updatedAt),
+  );
+}
+
+/**
+ * What a click on the card itself opens. One thread works on it: that thread.
+ * Several, or none: the spec, and each thread has its own line to click.
+ */
+export function boardCardTarget(input: {
+  readonly threads: number;
+  readonly specPath: string | null;
+}): "thread" | "spec" | "none" {
+  if (input.threads === 1) return "thread";
+  return input.specPath === null ? "none" : "spec";
+}
+
+/**
+ * The request an open card with no thread hands the coordinator, and the word
+ * on its button; null for finished work.
+ */
+export function boardAsk(
+  card: Pick<ProjectBoardCard, "incrementId" | "column" | "tasks">,
+): { readonly label: string; readonly prompt: string } | null {
+  if (card.column === "done") return null;
+  if (card.column === "review")
+    return {
+      label: "Review and close",
+      prompt: `Verify, review and close increment ${card.incrementId}.`,
+    };
+  const started = card.column === "active" && card.tasks.done > 0;
+  return {
+    label: started ? "Continue" : "Start",
+    prompt: started
+      ? `Continue increment ${card.incrementId}: pick up its next open task.`
+      : `Start work on increment ${card.incrementId}: read its spec and begin with the first task.`,
+  };
+}

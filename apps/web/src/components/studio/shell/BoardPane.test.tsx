@@ -5,7 +5,7 @@ import {
   type ProjectBoardCard,
   type ProjectBoardResult,
 } from "@specweave-studio/contracts";
-import { act } from "react";
+import { act, cloneElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -18,6 +18,21 @@ const runtime = vi.hoisted(() => ({
   refresh: vi.fn(),
   openLink: vi.fn(async (_url: string) => undefined),
   viewed: [] as string[],
+  working: {
+    byIncrement: new Map<string, unknown[]>(),
+    multiMachine: false,
+    loaders: null,
+  },
+}));
+vi.mock("./BoardThreads", async (original) => ({
+  ...(await original<typeof import("./BoardThreads")>()),
+  useBoardThreads: () => runtime.working,
+}));
+vi.mock("../../ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ render, children }: { render: ReactElement; children: ReactNode }) =>
+    cloneElement(render, {}, children),
+  TooltipPopup: () => null,
 }));
 vi.mock("../../../studio/projectWorkspace", () => ({
   projectWorkspace: {
@@ -95,6 +110,9 @@ describe("BoardPane", () => {
     runtime.error = null;
     runtime.refresh.mockClear();
     runtime.openLink.mockClear();
+    runtime.working = { byIncrement: new Map(), multiMachine: false, loaders: null };
+    opened.length = 0;
+    asked.length = 0;
   });
   afterEach(async () => {
     await act(async () => root.unmount());
@@ -103,7 +121,9 @@ describe("BoardPane", () => {
     vi.unstubAllGlobals();
   });
 
-  const render = () =>
+  const opened: string[] = [];
+  const asked: string[] = [];
+  const render = (extra: { specweave?: boolean; canAsk?: boolean } = {}) =>
     act(async () =>
       root.render(
         <BoardPane
@@ -111,9 +131,35 @@ describe("BoardPane", () => {
           projectId={projectId}
           workspaceRoot="/work/atlas"
           bar={{} as ProjectPaneBarProps}
+          specweave={extra.specweave ?? true}
+          setup={<button type="button">Set up SpecWeave</button>}
+          threads={[]}
+          onOpenThread={(thread) => opened.push(thread.id)}
+          onAsk={extra.canAsk === false ? undefined : (prompt) => asked.push(prompt)}
         />,
       ),
     );
+  /** One thread line as the hook hands it over. */
+  const working = (
+    id: string,
+    tone: string,
+    machine: { label?: string; moved?: boolean; color?: string; id?: string } = {},
+  ) => ({
+    thread: { id, environmentId: "host", title: `Thread ${id}` },
+    tone,
+    status: tone === "resolved" ? null : tone === "waiting" ? "Needs you" : "Working",
+    updatedAt: "2026-11-14T09:00:00.000Z",
+    machine: {
+      label: machine.label ?? "M4",
+      moved: machine.moved ?? false,
+      executionMachineId: machine.id ?? "host",
+      state: "live",
+      description: machine.moved ? "Moved from M4, runs on M1" : "Runs on M4",
+    },
+    color: machine.color ?? "violet",
+  });
+  const button = (label: string) =>
+    container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
   const column = (name: string) =>
     container.querySelector<HTMLElement>(`[data-column="${name}"]`)!;
   const cardIds = (name: string) =>
@@ -169,6 +215,102 @@ describe("BoardPane", () => {
     expect(container.querySelector('[data-testid="viewer"]')?.textContent).toBe(
       "/work/atlas/.specweave/increments/0002-build/spec.md",
     );
+  });
+
+  it("offers to turn the board on in a project without SpecWeave, and reads nothing", async () => {
+    await render({ specweave: false });
+    expect(container.querySelector("#sws-pane-board h3")?.textContent).toBe(
+      "Start a board for this project",
+    );
+    expect(container.textContent).toContain("Set up SpecWeave");
+    expect(runtime.inputs).toEqual([]);
+  });
+
+  it("opens the one thread working on a card, keeps its spec a click away", async () => {
+    runtime.reply = board([card("0002-build", "active")]);
+    runtime.working = {
+      byIncrement: new Map([["0002-build", [working("t1", "working")]]]),
+      multiMachine: false,
+      loaders: null,
+    };
+    await render();
+    await act(async () => button("Open the thread working on 0002 Title 0002-build")!.click());
+    expect(opened).toEqual(["t1"]);
+    expect(runtime.viewed).toEqual([]);
+    const line = button("Open thread Thread t1, Working")!;
+    expect(line.textContent).toContain("Working");
+    // One machine: no machine mark, no colored edge.
+    expect(container.querySelector(".sws-board-machine")).toBeNull();
+    expect(container.querySelector("[data-increment]")!.hasAttribute("data-machine-color")).toBe(
+      false,
+    );
+    await act(async () => button("Open the spec of 0002 Title 0002-build")!.click());
+    expect(container.querySelector('[data-testid="viewer"]')).not.toBeNull();
+  });
+
+  it("lists every thread of a card with several, most urgent first, each opening its own", async () => {
+    runtime.reply = board([card("0002-build", "active")]);
+    runtime.working = {
+      byIncrement: new Map([
+        [
+          "0002-build",
+          [
+            working("t1", "waiting", { color: "teal", id: "m1", label: "M4 → M1", moved: true }),
+            working("t2", "working"),
+            working("t3", "working"),
+            working("t4", "resolved"),
+          ],
+        ],
+      ]),
+      multiMachine: true,
+      loaders: null,
+    };
+    await render();
+    // Several threads: the card itself opens the spec.
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>("button.sws-board-card-open")!.click(),
+    );
+    expect(container.querySelector('[data-testid="viewer"]')).not.toBeNull();
+    expect(container.querySelectorAll(".sws-board-thread")).toHaveLength(3);
+    await act(async () => button("Open thread Thread t2, Working")!.click());
+    expect(opened).toEqual(["t2"]);
+    // The card's edge and the line take the color of the machine the lead thread runs on,
+    // and a thread that moved shows the arrow.
+    const article = container.querySelector<HTMLElement>("[data-increment]")!;
+    expect(article.dataset.machineColor).toBe("teal");
+    const marks = [...container.querySelectorAll<HTMLElement>(".sws-board-machine")];
+    expect(marks.map((mark) => mark.dataset.machineColor)).toEqual(["teal", "violet", "violet"]);
+    expect(marks[0]!.dataset.moved).toBe("true");
+    expect(marks[0]!.textContent).toContain("→ M1");
+    expect(marks[1]!.textContent).not.toContain("→");
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>(".sws-board-thread-more")!.click(),
+    );
+    expect(container.querySelectorAll(".sws-board-thread")).toHaveLength(4);
+  });
+
+  it("hands the coordinator a request for an open card with no thread", async () => {
+    runtime.reply = board([
+      card("0001-plan", "planned", { tasks: { total: 3, done: 0 } }),
+      card("0002-build", "active"),
+      card("0003-check", "review", { tasks: { total: 2, done: 2 } }),
+      card("0004-shipped", "done"),
+    ]);
+    await render();
+    await act(async () => button("Start 0001 Title 0001-plan with the coordinator")!.click());
+    await act(async () => button("Continue 0002 Title 0002-build with the coordinator")!.click());
+    await act(async () =>
+      button("Review and close 0003 Title 0003-check with the coordinator")!.click(),
+    );
+    expect(asked).toEqual([
+      "Start work on increment 0001-plan: read its spec and begin with the first task.",
+      "Continue increment 0002-build: pick up its next open task.",
+      "Verify, review and close increment 0003-check.",
+    ]);
+    expect(column("done").querySelector(".sws-board-chip-ask")).toBeNull();
+    // Someone who cannot send gets no such button.
+    await render({ canAsk: false });
+    expect(container.querySelector(".sws-board-chip-ask")).toBeNull();
   });
 
   it("pages a long column 40 at a time and asks the server for older Done cards", async () => {
