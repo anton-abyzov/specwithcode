@@ -38,14 +38,25 @@ const HELPER_URL = /^[A-Za-z][A-Za-z0-9+.-]*::/;
  * Whether fetching from a remote URL could start a program of the URL's choosing. A
  * `<helper>::<address>` form names one outright, and a host or user that starts with `-`
  * (`ssh://-oProxyCommand=...@host/repo`) would be read by ssh as an option. The same host
- * and user rules as the folder copy's `safeRemoteUrl`; a local path stays fine here.
+ * and user rules as the folder copy's `safeRemoteUrl`, also applied to the percent-decoded
+ * and unbracketed forms Git and Git LFS go on to use; a local path stays fine here.
  */
 function remoteUrlRunsSomething(raw: string): boolean {
   const value = raw.trim();
   if (HELPER_URL.test(value) || /[\u0000-\u001f\u007f]/.test(value)) return true;
-  const optionLike = (authority: string) => {
-    const at = authority.lastIndexOf("@");
-    return authority.slice(at + 1).startsWith("-") || (at >= 0 && authority.startsWith("-"));
+  const dashed = (part: string) => /^\[?-/.test(part);
+  const optionLike = (written: string) => {
+    let decoded = written;
+    try {
+      decoded = decodeURIComponent(written);
+    } catch {
+      // Not valid percent-encoding: an authority no ordinary remote has.
+      return true;
+    }
+    return [written, decoded].some((authority) => {
+      const at = authority.lastIndexOf("@");
+      return dashed(authority.slice(at + 1)) || (at >= 0 && dashed(authority));
+    });
   };
   const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(value);
   if (scheme) {
