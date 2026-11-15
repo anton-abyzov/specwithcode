@@ -59,6 +59,10 @@ import {
 } from "@specweave-studio/client-runtime/markdown-images";
 import { inlineCodeFilePathCandidate } from "@specweave-studio/client-runtime/markdown-links";
 import {
+  isWorkspaceRelativeMediaSource,
+  markdownImageResource,
+} from "@specweave-studio/client-runtime/media-source";
+import {
   mediaFileReference,
   mediaUrlReference,
 } from "@specweave-studio/client-runtime/media-reference";
@@ -2598,11 +2602,17 @@ function useChatMarkdownState({
     canUseMarkdownFileShellActions(environmentId, remoteOpen.state.mode, remoteOpen.isResolved);
   const preparedConnection = usePreparedConnection(environmentId);
   const openMarkdownMedia = useCallback(
-    (source: string, resolvedFilePath?: string, clickedImage?: HTMLImageElement | null) => {
+    (
+      source: string,
+      resolvedFilePath?: string,
+      clickedImage?: HTMLImageElement | null,
+      resolvedFileRelative?: boolean,
+    ) => {
       const requestId = ++mediaRequestId.current;
       void resolveMarkdownMediaPreview({
         source,
         resolvedFilePath,
+        resolvedFileRelative,
         cwd,
         threadRef,
         httpBaseUrl:
@@ -3014,7 +3024,7 @@ function useChatMarkdownState({
     [cwd],
   );
   const fileLinkChip = useCallback(
-    (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, _mediaSource?: string) => {
+    (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, mediaSource?: string) => {
       const parentSuffix = fileLinkParentSuffixByPath.get(
         fileLinkMeta.filePath.replaceAll("\\", "/"),
       );
@@ -3087,7 +3097,14 @@ function useChatMarkdownState({
           }
           onOpenMedia={
             threadRef && canPreviewMedia
-              ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)
+              ? () =>
+                  openMarkdownMedia(
+                    mediaPath,
+                    fileLinkMeta.filePath,
+                    null,
+                    // The settled path is absolute; what the message wrote says whose file it is.
+                    mediaSource !== undefined && isWorkspaceRelativeMediaSource(mediaSource),
+                  )
               : undefined
           }
           openInEditorMenuLabel={preferredEditorMenuLabel}
@@ -3814,12 +3831,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       return (
         <ChatMarkdownAssetImage
           environmentId={threadRef.environmentId}
-          resource={{
-            _tag: "media-file",
-            threadId: threadRef.threadId,
-            path: imageSource.path,
-            ...(imageSource.relative ? { hostOnly: true as const } : {}),
-          }}
+          resource={markdownImageResource(threadRef.threadId, imageSource)}
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}
@@ -3889,7 +3901,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       // A shorthand line lists each file it names.
       return (meta.expansions ?? [meta]).map((file) => ({
         line: meta.expansions ? file.filePath : line,
-        chip: fileLinkChip(file, meta.expansions ? file.filePath : line),
+        chip: meta.expansions ? fileLinkChip(file, file.filePath) : fileLinkChip(file, line, line),
         fullPath: file.filePath,
         missing: file.unresolved !== undefined,
       }));

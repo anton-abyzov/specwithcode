@@ -32,6 +32,7 @@ import type { RpcSession } from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { createProjectFaviconCache } from "../projectFaviconCache.ts";
 import { resolveMediaSource } from "../mediaSource.ts";
+import { resolveViewedImageAsset } from "../work-log/presentation.ts";
 import {
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
@@ -248,21 +249,31 @@ describe("createAssetEnvironmentAtoms", () => {
         Atom.runtime(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments)),
         Atom.make({ environmentId: localId, httpBaseUrl: "https://local.test" }),
       );
-      const load = (source: string) => {
-        const media = resolveMediaSource(source, { threadId, workspaceRoot: "/srv/repo" });
-        if (media?.access !== "environment") throw new Error(`${source} is not host media`);
+      const loadResource = (resource: AssetCreateUrlInput["resource"]) => {
         calls.length = 0;
         return AtomRegistry.getResult(
           registry,
-          assets.createUrl({ environmentId: remoteId, input: { resource: media.resource } }),
+          assets.createUrl({ environmentId: remoteId, input: { resource } }),
           { suspendOnWaiting: true },
         ).pipe(
           Effect.result,
           Effect.map((result) => ({ loaded: result._tag === "Success", calls: [...calls] })),
         );
       };
+      const load = (source: string) => {
+        const media = resolveMediaSource(source, { threadId, workspaceRoot: "/srv/repo" });
+        if (media?.access !== "environment") throw new Error(`${source} is not host media`);
+        return loadResource(media.resource);
+      };
 
       expect(yield* load("docs/report.png")).toEqual({ loaded: false, calls: [remoteId] });
+      // An image a tool viewed by a relative path is the thread machine's file too.
+      const viewed = resolveViewedImageAsset("screens/logo.svg", {
+        threadId,
+        workspaceRoot: "/srv/repo",
+      });
+      if (viewed === null) throw new Error("screens/logo.svg is not a viewed image");
+      expect(yield* loadResource(viewed.resource)).toEqual({ loaded: false, calls: [remoteId] });
       // The same file written as an absolute path may live on this machine, and shares no
       // cached result with the relative one.
       expect(yield* load("/srv/repo/docs/report.png")).toEqual({

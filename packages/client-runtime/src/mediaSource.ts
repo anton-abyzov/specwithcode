@@ -45,14 +45,46 @@ export interface ResolveMediaSourceInput {
   readonly threadId: ThreadId | undefined;
   readonly workspaceRoot?: string | null | undefined;
   readonly resolvedFilePath?: string | undefined;
+  /**
+   * Whether the source behind `resolvedFilePath` was written relative to the
+   * workspace. The resolved path is absolute, so it no longer says so itself.
+   */
+  readonly resolvedFileRelative?: boolean | undefined;
   /** Image syntax can target an endpoint without a recognizable extension. */
   readonly imageEmbed?: boolean | undefined;
 }
 
 function classify(source: string, input: ResolveMediaSourceInput): MarkdownImageSource {
-  return input.resolvedFilePath === undefined
-    ? classifyMarkdownImageSource(source, input.workspaceRoot)
-    : { _tag: "WorkspaceFile", path: input.resolvedFilePath };
+  if (input.resolvedFilePath === undefined) {
+    return classifyMarkdownImageSource(source, input.workspaceRoot);
+  }
+  return {
+    _tag: "WorkspaceFile",
+    path: input.resolvedFilePath,
+    ...(input.resolvedFileRelative ? { relative: true as const } : {}),
+  };
+}
+
+/** Whether a media path was written relative to the thread's workspace. */
+export function isWorkspaceRelativeMediaSource(source: string): boolean {
+  const classified = classifyMarkdownImageSource(source, ".");
+  return classified._tag === "WorkspaceFile" && classified.relative === true;
+}
+
+/**
+ * The resource for a host file a message embeds. A relative path names the
+ * thread's workspace, so only the thread's machine may serve it.
+ */
+export function markdownImageResource(
+  threadId: ThreadId,
+  source: Extract<MarkdownImageSource, { readonly _tag: "WorkspaceFile" }>,
+): MediaSourceResource {
+  return {
+    _tag: "media-file",
+    threadId,
+    path: source.path,
+    ...(source.relative ? { hostOnly: true as const } : {}),
+  };
 }
 
 export function resolveMediaSource(
@@ -99,13 +131,6 @@ export function resolveMediaSource(
   return {
     ...common,
     access: "environment",
-    resource: {
-      _tag: "media-file",
-      threadId: input.threadId,
-      path,
-      ...(classified._tag === "WorkspaceFile" && classified.relative
-        ? { hostOnly: true as const }
-        : {}),
-    },
+    resource: markdownImageResource(input.threadId, { ...classified, path }),
   };
 }

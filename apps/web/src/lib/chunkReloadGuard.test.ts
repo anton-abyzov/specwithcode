@@ -44,6 +44,29 @@ describe("reloadOnceForChunkLoadError", () => {
     expect(reload).toHaveBeenCalledTimes(2);
   });
 
+  it("gives a new build with an unchanged version number its own reload", () => {
+    const storage = createStorageStub();
+    const reload = vi.fn();
+    const runBuild = (entry: string) => {
+      vi.stubGlobal("document", {
+        querySelector: (selector: string) =>
+          selector === 'script[type="module"][src]'
+            ? { getAttribute: (name: string) => (name === "src" ? entry : null) }
+            : null,
+      });
+      try {
+        return reloadOnceForChunkLoadError(() => storage, reload);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    };
+
+    expect(runBuild("/assets/bootstrap-a1b2.js")).toBe(true);
+    expect(runBuild("/assets/bootstrap-a1b2.js")).toBe(false);
+    expect(runBuild("/assets/bootstrap-c3d4.js")).toBe(true);
+    expect(reload).toHaveBeenCalledTimes(2);
+  });
+
   it("never reloads when storage is blocked, so a persistent failure cannot loop", () => {
     const reload = vi.fn();
     const blocked = () => {

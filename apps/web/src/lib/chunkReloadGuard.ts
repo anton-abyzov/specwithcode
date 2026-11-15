@@ -1,11 +1,28 @@
 // Split chunks are fetched lazily, so a deploy (or desktop server swap)
 // between page load and a later fetch can 404 the old hashed assets. One
 // reload picks up the fresh index.html. A sessionStorage flag keeps a
-// persistent failure from becoming a reload loop. The flag holds the build it
-// reloaded for and survives later boots: a chunk fetched only after boot can
-// fail on every visit, so clearing it on a good boot would reload forever.
-// A different build gets its own single reload.
+// persistent failure from becoming a reload loop. The flag holds the build
+// whose chunk failed, the one running when the reload fired, and survives
+// later boots: a chunk fetched only after boot can fail on every visit, so
+// clearing it on a good boot would reload forever. A different build gets its
+// own single reload.
 const CHUNK_RELOAD_GUARD_KEY = "studio:chunk-load-reloaded";
+
+/**
+ * The running build. A production entry script is named by a hash of every
+ * chunk it can load, so two deploys that share a version number still differ.
+ * In development the entry name never changes and the version alone remains.
+ */
+function currentBuild(): string {
+  const version = import.meta.env.APP_VERSION || "0.0.0";
+  let entry: string | null | undefined;
+  try {
+    entry = document.querySelector('script[type="module"][src]')?.getAttribute("src");
+  } catch {
+    entry = null;
+  }
+  return entry ? `${version} ${entry}` : version;
+}
 
 /**
  * Called from the `vite:preloadError` listener. Reloads at most once per
@@ -15,7 +32,7 @@ const CHUNK_RELOAD_GUARD_KEY = "studio:chunk-load-reloaded";
 export function reloadOnceForChunkLoadError(
   getStorage: () => Storage = () => window.sessionStorage,
   reload: () => void = () => window.location.reload(),
-  build: string = import.meta.env.APP_VERSION || "0.0.0",
+  build: string = currentBuild(),
 ): boolean {
   let alreadyReloaded: boolean;
   try {

@@ -62,7 +62,7 @@ const managedAuthShellModule =
     : null;
 
 // The account button renders on every route. Fetching its Connect chunk here
-// lets a failure reach the reload guard below, before the guard is cleared.
+// lets a failure reach the reload guard during boot, before the first paint.
 const connectAccountMenuModule = managedAuthShellModule
   ? import("./components/clerk/ConnectSidebarAccountMenu").catch(() => null)
   : null;
