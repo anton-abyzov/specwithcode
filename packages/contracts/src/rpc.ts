@@ -15,6 +15,7 @@ import { AWAY_RPC_METHODS, awayRpcs } from "./awayRpc.ts";
 import { PROJECT_PLAN_LINK_RPC_METHODS, projectPlanLinkRpcs } from "./projectPlanLinkRpc.ts";
 import { LIMIT_HANDOFF_RPC_METHODS, limitHandoffRpcs } from "./limitHandoff.ts";
 import { USAGE_LIMIT_HISTORY_RPC_METHODS, usageLimitHistoryRpcs } from "./usageLimitHistory.ts";
+import { USAGE_RESET_LEDGER_RPC_METHODS, usageResetLedgerRpcs } from "./usageResetLedger.ts";
 import { provisionRpcs } from "./provision.ts";
 import { machineToolsRpcs } from "./machineTools.ts";
 import { GITHUB_SIGN_IN_RPC_METHODS, gitHubSignInRpcs } from "./gitHubSignIn.ts";
@@ -452,6 +453,7 @@ export const WS_METHODS = {
   ...PROJECT_PLAN_LINK_RPC_METHODS,
   ...LIMIT_HANDOFF_RPC_METHODS,
   ...USAGE_LIMIT_HISTORY_RPC_METHODS,
+  ...USAGE_RESET_LEDGER_RPC_METHODS,
   ...MANAGED_UPDATES_RPC_METHODS,
   ...PROJECT_CONNECTION_RPC_METHODS,
   ...BROWSER_BRIDGE_RPC_METHODS,
@@ -2409,6 +2411,11 @@ export const WsUsageLimitHistoryRpcGroup = RpcGroup.make(...usageLimitHistoryRpc
   RpcScopeAuthorization,
 );
 
+/** Closed quota periods per account; its own group for the same depth reason. */
+export const WsUsageResetLedgerRpcGroup = RpcGroup.make(...usageResetLedgerRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 /** Folder copy between machines; its own group for the same depth reason. */
 export const WsFolderCopyRpcGroup = RpcGroup.make(...folderCopyRpcs).middleware(
   RpcScopeAuthorization,
@@ -2489,6 +2496,7 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsProjectPlanLinkRpcGroup)
   .merge(WsLimitHandoffRpcGroup)
   .merge(WsUsageLimitHistoryRpcGroup)
+  .merge(WsUsageResetLedgerRpcGroup)
   .merge(WsFolderCopyRpcGroup)
   .merge(WsProjectKnowledgeRpcGroup)
   .merge(WsProjectPlanningRpcGroup)

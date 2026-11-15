@@ -107,6 +107,10 @@ export const ServerProviderUsageLimits = Schema.Struct({
   /** Opaque credential identity when the provider does not report an account. */
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
+  /** The plan as the provider names it ("Max 20x", "Business"); display only. */
+  planLabel: Schema.optional(TrimmedNonEmptyString),
+  /** When the subscription renews or its billing period ends, when the provider reports it. */
+  renewsAt: Schema.optional(IsoDateTime),
   /** Provider-owned usage settings when quota windows are not available to the client. */
   externalUsage: Schema.optional(
     Schema.Struct({

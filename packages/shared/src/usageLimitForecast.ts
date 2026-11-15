@@ -138,7 +138,7 @@ function memberSamples(
  * fall (an early reset). Without them, only a large fall counts, or any fall
  * once the old reset time has passed.
  */
-function resetBetween(
+export function resetBetween(
   previous: LimitHistorySample,
   current: LimitHistorySample,
   lengthMs: number | null,
@@ -163,7 +163,7 @@ function resetBetween(
  * A read taken after its own reset time is a kept read restamped by a later
  * update on another window, not news about this one.
  */
-function isFresh(sample: LimitHistorySample): boolean {
+export function isFreshSample(sample: LimitHistorySample): boolean {
   return sample.resetsAt === null || sample.at < sample.resetsAt + SAME_RESET_TOLERANCE_MS;
 }
 
@@ -182,7 +182,7 @@ export function burnPerHour(
   lengthMs: number | null = null,
 ): number | null {
   const start = now - lookbackMs;
-  const fresh = samples.filter(isFresh);
+  const fresh = samples.filter(isFreshSample);
   const inRange = fresh.filter((sample) => sample.at >= start && sample.at <= now);
   // A read just before the range anchors a quiet stretch that began earlier.
   const anchor = fresh.findLast((sample) => sample.at < start && sample.at >= start - lookbackMs);
