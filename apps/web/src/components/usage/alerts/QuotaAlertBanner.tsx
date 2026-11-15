@@ -186,17 +186,32 @@ export function QuotaAlertBanner({
   readonly onEndBoost?: (accountKey: string) => void;
 }) {
   const [picking, setPicking] = useState<string | null>(null);
-  // Closing the picker puts focus back on the button that opened it, or on the running
-  // boost's "End now" when it started one.
+  // Closing the picker puts focus back on the button that opened it. After Start that
+  // button gives way to the new boost's "End now", which takes the focus once it is there.
   const actions = useRef<HTMLElement>(null);
-  const closed = useRef(false);
+  const refocus = useRef<{ readonly started: string | null } | null>(null);
   useEffect(() => {
-    if (picking !== null || !closed.current) return;
-    closed.current = false;
-    actions.current?.querySelector<HTMLElement>("[data-quota-boost-focus]")?.focus();
+    const wanted = refocus.current;
+    if (picking !== null || wanted === null) return;
+    const root = actions.current;
+    const start = root?.querySelector<HTMLElement>("[data-quota-boost-start]");
+    if (wanted.started === null) {
+      refocus.current = null;
+      start?.focus();
+      return;
+    }
+    const end = [...(root?.querySelectorAll<HTMLElement>("[data-quota-boost-end]") ?? [])].find(
+      (button) => button.dataset.quotaBoostEnd === wanted.started,
+    );
+    if (end !== undefined) {
+      refocus.current = null;
+      end.focus();
+    } else if (document.activeElement === document.body) {
+      start?.focus();
+    }
   });
-  const close = () => {
-    closed.current = true;
+  const close = (started: string | null) => {
+    refocus.current = { started };
     setPicking(null);
   };
   if (alerts.length === 0 && boosts.length === 0) return null;
@@ -229,7 +244,7 @@ export function QuotaAlertBanner({
             <button
               type="button"
               className={LINK}
-              data-quota-boost-focus=""
+              data-quota-boost-end={boost.accountKey}
               onClick={() => onEndBoost(boost.accountKey)}
             >
               End now
@@ -271,10 +286,10 @@ export function QuotaAlertBanner({
         <BoostProjects
           projects={projects}
           onStart={(projectIds) => {
-            close();
+            close(boostable.accountKey);
             onBoost?.(boostable, projectIds);
           }}
-          onCancel={close}
+          onCancel={() => close(null)}
         />
       ) : (
         <div className="flex flex-wrap gap-x-3 gap-y-1 pl-5.5">
@@ -283,7 +298,6 @@ export function QuotaAlertBanner({
               type="button"
               className={LINK}
               data-quota-boost-start=""
-              data-quota-boost-focus=""
               title={`New worker threads start on ${labelOf(boostable)} until ${untilLabel(boostable.windowResetsAt ?? boostable.periodEnd, now)}. Open threads and the coordinator keep their model.`}
               onClick={() => setPicking(quotaAlertId(boostable))}
             >
@@ -430,6 +444,15 @@ function LiveQuotaAlerts({
     }
     if (mainProviders.length === 0) continue;
     const provider = mainProviders.find((candidate) => candidate.instanceId === boost.instanceId);
+    // Listed but not read yet (its sign-in check is still running, or it has no models
+    // so far): nothing is known, so nothing ends.
+    if (
+      provider !== undefined &&
+      provider.enabled &&
+      (provider.auth.status === "unknown" || provider.models.length === 0)
+    ) {
+      continue;
+    }
     const signedInAs =
       provider === undefined
         ? null
@@ -453,6 +476,17 @@ function LiveQuotaAlerts({
     (boost) => boostFixes[boost.accountKey] !== null,
   );
 
+  // Not named `open`: a missing handler would then silently be the browser's window.open.
+  const openSubscriptions = () => {
+    try {
+      localStorage.setItem(LIMITS_VIEW_KEY, "subscriptions");
+    } catch {
+      // Usage still opens; the Subscriptions tab is one click away.
+    }
+    onOpen?.();
+    void navigate({ to: "/usage" });
+  };
+
   // Every client shows the banner, but one machine speaks for an account: the first
   // connected machine it is signed in on, so two desktops on one account notify once and
   // a sleeping machine never holds the turn. An account no connected machine runs (one a
@@ -475,9 +509,9 @@ function LiveQuotaAlerts({
   // or before notifications were connected, still notifies once the window is behind.
   useEffect(() => {
     for (const entry of JSON.parse(pendingKey) as typeof pending) {
-      notifyQuotaAlert({ ...entry, onOpen: open });
+      notifyQuotaAlert({ ...entry, onOpen: openSubscriptions });
     }
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- the alert set and the tick decide; `open` is rebuilt each render.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- the alert set and the tick decide; the handler is rebuilt each render.
   }, [pendingKey, now]);
 
   return (
@@ -485,7 +519,7 @@ function LiveQuotaAlerts({
       alerts={alerts}
       labelOf={labelOf}
       now={now}
-      onOpen={open}
+      onOpen={openSubscriptions}
       boosts={boosts}
       projects={projects ?? []}
       canBoost={(alert) => boostTarget(alert) !== null}

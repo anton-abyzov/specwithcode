@@ -128,6 +128,9 @@ try {
     await banner.screenshot({ path: join(output, "quota-boost-running-dark.png") });
     await banner.getByRole("button", { name: "End now" }).click();
     assert.equal(await banner.locator("[data-quota-boost]").count(), 0);
+    // "See subscriptions" is the fixture's handler, never the browser's window.open.
+    await banner.getByRole("button", { name: "See subscriptions" }).click();
+    assert.equal(page.context().pages().length, 1);
     await banner.getByRole("button", { name: "Use it for new threads until it resets" }).click();
     await banner.screenshot({ path: join(output, "quota-boost-pick-dark.png") });
   });
