@@ -1024,17 +1024,19 @@ describe("project settings and memory", () => {
       }),
     );
   });
-  it("names Use worktrees in Environment from the scoped setting, not the old project column", async () => {
-    // The old project column is unset (as on linux-mini's specweave project) while the
-    // scoped setting that General shows and launches read is on.
-    const off = "Use worktrees is off for this project, so threads work in the project folder.";
+  // linux-mini's specweave project: the old project column is unset while the scoped
+  // setting that General shows and launches read decides Use worktrees.
+  const worktreesOff = "Use worktrees is off for this project, so threads work in the project folder.";
+  it("keeps Environment quiet about worktrees when the scoped setting is on and the old column is unset", async () => {
     expect(project.defaultThreadEnvMode).toBeUndefined();
     await render("environment", true, { kind: "code" });
     expect(container.textContent).toContain("code · example/atlas");
-    expect(container.textContent).not.toContain(off);
+    expect(container.textContent).not.toContain(worktreesOff);
+  });
+  it("says Use worktrees is off in Environment when the scoped setting is off", async () => {
     state.worktreesOn = false;
     await render("environment", true, { kind: "code" });
-    expect(container.textContent).toContain(off);
+    expect(container.textContent).toContain(worktreesOff);
   });
   it("preserves environment edits on conflict and keeps unsaved preparation disabled", async () => {
     state.update.mockResolvedValueOnce({

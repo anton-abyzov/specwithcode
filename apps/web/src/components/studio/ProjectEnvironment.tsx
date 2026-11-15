@@ -329,7 +329,7 @@ export function ProjectEnvironment({
           <ProjectRepositoryList
             read={read}
             saved={value.repositories}
-            useWorktrees={kind === "personal" ? null : useWorktrees}
+            useWorktrees={useWorktrees}
             disabled={blocked}
             cloneDisabled={blocked || admissionBlocked || dirty}
             busyKey={busy}
