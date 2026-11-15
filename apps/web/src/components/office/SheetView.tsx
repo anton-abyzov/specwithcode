@@ -14,7 +14,7 @@ import {
   evaluateSheet,
   formatSheetValue,
   isSheetError,
-  lookupByRange,
+  rangeLookup,
   officeThemeVariables,
   parseCellRange,
   parseSheetDocument,
@@ -43,8 +43,8 @@ import { Button } from "../ui/button";
 import { SheetChartCard } from "./SheetChart";
 
 /** The grid draws at most this much; a larger tab says so above it. */
-export const SHEET_VIEW_ROWS = 1_000;
-export const SHEET_VIEW_COLUMNS = 100;
+export const SHEET_VIEW_ROWS = 500;
+export const SHEET_VIEW_COLUMNS = 60;
 const MIN_ROWS = 20;
 const MIN_COLUMNS = 8;
 const CHIP_COLORS = 8;
@@ -128,6 +128,8 @@ export function SheetView(props: {
       columns,
       clipped: lastRow + 1 > rows || lastCol + 1 > columns,
       chipRanges,
+      formatOf: rangeLookup(tab.formats),
+      styleOf: rangeLookup(tab.styles),
     };
   }, [tab]);
 
@@ -351,8 +353,8 @@ export function SheetView(props: {
                       },
                     };
                     if (value === null) return <td key={col} {...common} />;
-                    const cellStyle = lookupByRange(tab.styles, address);
-                    const text = formatSheetValue(value, lookupByRange(tab.formats, address));
+                    const cellStyle = grid.styleOf(address);
+                    const text = formatSheetValue(value, grid.formatOf(address));
                     const numeric = typeof value === "number";
                     const href = typeof value === "string" ? safeLinkHref(value) : null;
                     const chip =

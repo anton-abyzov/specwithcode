@@ -36,6 +36,29 @@ function build(appCount: number): SheetDocument {
   return result.document;
 }
 
+it("reads only the first cells of a huge chart range", () => {
+  const checked = validateSheetDocument({
+    title: "T",
+    tabs: [
+      {
+        name: "A",
+        cells: { A1: "one", B1: 5 },
+        charts: [
+          { id: "c", type: "bar", title: "Huge", labels: "A1:A100000", values: "B1:ZZ100000" },
+        ],
+      },
+    ],
+  });
+  if (!checked.ok) throw new Error(checked.error);
+  const series = chartSeries(
+    checked.document,
+    evaluateSheet(checked.document),
+    0,
+    checked.document.tabs[0]!.charts![0]!,
+  );
+  expect(series.points).toEqual([{ label: "one", value: 5, share: 1 }]);
+});
+
 describe("sheet charts", () => {
   it("draws from computed values and follows the source cells", () => {
     const first = build(3);

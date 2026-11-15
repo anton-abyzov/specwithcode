@@ -5,6 +5,8 @@ import {
   type SheetCellInput,
   type SheetDocument,
   SHEET_LIMITS,
+  SHEET_NAME_PATTERN,
+  mergeSheetInput,
   parseCellAddress,
   parseSheetDocument,
   safeLinkHref,
@@ -19,6 +21,12 @@ function sheet(tabs: Record<string, Record<string, SheetCellInput>>): SheetDocum
   });
   if (!result.ok) throw new Error(result.error);
   return result.document;
+}
+
+function evaluated(cells: Record<string, SheetCellInput>) {
+  const document = sheet({ Main: cells });
+  const evaluation = evaluateSheet(document);
+  return (cell: string) => evaluation.valueAt(0, parseCellAddress(cell)!);
 }
 
 function value(document: SheetDocument, cell: string, tab = 0) {
@@ -348,6 +356,69 @@ describe("sheet limits and validation", () => {
     expect(safeLinkHref("mailto:a@example.com?subject=Hi&body=Pay")).toBeNull();
     expect(safeLinkHref("mailto:a@example.com,b@example.com")).toBeNull();
     expect(safeLinkHref("https:example.com")).toBeNull();
+  });
+
+  it("keeps titles in other scripts apart", () => {
+    expect(sheetSlug("预算")).toMatch(/^sheet-[0-9a-f]{6}$/);
+    expect(sheetSlug("预算")).toBe(sheetSlug("预算"));
+    expect(sheetSlug("预算")).not.toBe(sheetSlug("бюджет"));
+    expect(sheetSlug("Café plan")).toBe("cafe-plan");
+    expect(SHEET_NAME_PATTERN.test(sheetSlug("Отчёт 2026 " + "x".repeat(80)))).toBe(true);
+  });
+
+  it("refuses more format ranges than a grid can check", () => {
+    const formats = Object.fromEntries(
+      Array.from({ length: SHEET_LIMITS.rangeEntries + 1 }, (_, index) => [
+        `A${index + 1}`,
+        { kind: "number" },
+      ]),
+    );
+    const checked = validateSheetDocument({
+      title: "T",
+      tabs: [{ name: "A", cells: { A1: 1 }, formats }],
+    });
+    expect(checked.ok).toBe(false);
+  });
+
+  it("counts and sums empty cells when the criterion fits them", () => {
+    const sheet = evaluated({
+      A1: "x",
+      A3: "y",
+      B1: 1,
+      B2: 2,
+      B3: 4,
+      C1: '=COUNTIF(A1:A4,"<>x")',
+      C2: '=SUMIF(A1:A3,"<>x",B1:B3)',
+      C3: '=COUNTIF(A1:A4,"x")',
+      C4: '=SUMIF(A1:A3,"x",B1:B3)',
+    });
+    expect(sheet("C1")).toBe(3);
+    expect(sheet("C2")).toBe(6);
+    expect(sheet("C3")).toBe(1);
+    expect(sheet("C4")).toBe(1);
+  });
+
+  it("gives an error for a number no cell can hold and for AND over no logical values", () => {
+    const sheet = evaluated({ A1: "text", B1: "=1e999", B2: "=AND(A1:A3)", B3: "=OR(A1:A3,TRUE)" });
+    expect(sheet("B1")).toEqual({ error: "#VALUE!" });
+    expect(sheet("B2")).toEqual({ error: "#VALUE!" });
+    expect(sheet("B3")).toBe(true);
+  });
+
+  it("builds on itself when a merge names one tab twice", () => {
+    const base = validateSheetDocument({ title: "T", tabs: [{ name: "A", cells: { A1: 1 } }] });
+    if (!base.ok) throw new Error(base.error);
+    const merged = validateSheetDocument(
+      mergeSheetInput(base.document, {
+        tabs: [
+          { name: "A", cells: { B1: 2 } },
+          { name: "a", cells: { C1: 3 } },
+        ],
+      }),
+    );
+    expect(merged.ok && merged.document.tabs).toEqual([
+      { name: "A", cells: { A1: 1, B1: 2, C1: 3 } },
+    ]);
   });
 
   it("makes a safe file stem from any title", () => {

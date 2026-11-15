@@ -19,10 +19,17 @@ import { SheetView } from "./SheetView";
 
 /** The path inside the folder, or null when the file is outside it. */
 export function sheetRelativePath(cwd: string, path: string): string | null {
-  const root = cwd.replace(/[\\/]+$/, "");
-  if (!path.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(path)) return path;
-  if (root.length > 0 && path.startsWith(`${root}/`)) return path.slice(root.length + 1);
-  return null;
+  const slashed = (value: string) => value.replace(/\\/g, "/");
+  const root = slashed(cwd).replace(/\/+$/, "");
+  const target = slashed(path);
+  const drive = /^[A-Za-z]:\//.test(target);
+  if (!target.startsWith("/") && !drive) return target;
+  if (root.length === 0) return null;
+  // Windows paths compare without case; the rest of the path is returned as written.
+  const same = drive
+    ? target.toLowerCase().startsWith(`${root.toLowerCase()}/`)
+    : target.startsWith(`${root}/`);
+  return same ? target.slice(root.length + 1) : null;
 }
 
 /** The design system a sheet names, as the roles the Office theme reads. */

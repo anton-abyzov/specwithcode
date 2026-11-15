@@ -22,6 +22,8 @@ export const SHEET_LIMITS = {
   /** Evaluation steps for a whole workbook. */
   steps: 5_000_000,
   chartsPerTab: 50,
+  /** Format, style and chip ranges per tab; every drawn cell is checked against them. */
+  rangeEntries: 200,
   chartPoints: 200,
   /** Bytes of the saved file. */
   bytes: 2 * 1024 * 1024,
@@ -270,7 +272,13 @@ function readRangeMap<T>(
   const map: Record<string, T> = {};
   if (value === undefined) return { ok: true, map };
   if (!isRecord(value)) return fail(`Tab "${tabName}": ${what} must be an object keyed by range.`);
-  for (const [key, entry] of Object.entries(value)) {
+  const entries = Object.entries(value);
+  if (entries.length > SHEET_LIMITS.rangeEntries) {
+    return fail(
+      `Tab "${tabName}": ${what} has ${entries.length} ranges; the limit is ${SHEET_LIMITS.rangeEntries}. Use wider ranges.`,
+    );
+  }
+  for (const [key, entry] of entries) {
     const range = parseCellRange(key);
     if (!range) return fail(`Tab "${tabName}": "${key}" in ${what} is not a cell or range.`);
     const parsed = read(entry);
@@ -377,6 +385,11 @@ export function validateSheetDocument(value: unknown): SheetValidation {
     if (rawTab.chips !== undefined) {
       if (!Array.isArray(rawTab.chips))
         return fail(`Tab "${name}": chips must be a list of ranges.`);
+      if (rawTab.chips.length > SHEET_LIMITS.rangeEntries) {
+        return fail(
+          `Tab "${name}": chips has ${rawTab.chips.length} ranges; the limit is ${SHEET_LIMITS.rangeEntries}.`,
+        );
+      }
       for (const entry of rawTab.chips) {
         const range = typeof entry === "string" ? parseCellRange(entry) : null;
         if (!range) return fail(`Tab "${name}": "${String(entry)}" in chips is not a range.`);
@@ -473,18 +486,32 @@ export function serializeSheetDocument(document: SheetDocument): string {
   return `${JSON.stringify(document, null, 2)}\n`;
 }
 
-/** The last matching range entry wins, as in the file's key order. */
+/**
+ * A lookup over a range-keyed map, with the ranges parsed once. The last
+ * matching entry wins, as in the file's key order.
+ */
+export function rangeLookup<T>(
+  map: Readonly<Record<string, T>> | undefined,
+): (address: CellAddress) => T | undefined {
+  const entries: Array<{ readonly range: CellRange; readonly entry: T }> = [];
+  for (const [key, entry] of Object.entries(map ?? {})) {
+    const range = parseCellRange(key);
+    if (range) entries.push({ range, entry });
+  }
+  return (address) => {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      if (rangeContains(entries[index]!.range, address)) return entries[index]!.entry;
+    }
+    return undefined;
+  };
+}
+
+/** One lookup; for a grid of cells use rangeLookup, which parses the ranges once. */
 export function lookupByRange<T>(
   map: Readonly<Record<string, T>> | undefined,
   address: CellAddress,
 ): T | undefined {
-  if (!map) return undefined;
-  let found: T | undefined;
-  for (const [key, entry] of Object.entries(map)) {
-    const range = parseCellRange(key);
-    if (range && rangeContains(range, address)) found = entry;
-  }
-  return found;
+  return rangeLookup(map)(address);
 }
 
 /** Only these schemes ever become a link; anything else stays plain text. */
@@ -519,9 +546,19 @@ export function sheetSlug(title: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 60)
+    .slice(0, 52)
     .replace(/-+$/g, "");
-  return slug.length > 0 ? slug : "sheet";
+  const stem = slug.length > 0 ? slug : "sheet";
+  // Letters outside ASCII leave no trace in the stem, so two such titles would
+  // share one file. A short hash of the whole title keeps them apart.
+  const plain = title.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  if (!/[^\x00-\x7f]/.test(plain)) return stem;
+  let hash = 0x811c9dc5;
+  for (const char of title.normalize("NFC")) {
+    hash ^= char.codePointAt(0)!;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${stem}-${hash.toString(16).padStart(8, "0").slice(0, 6)}`;
 }
 
 /**
@@ -540,13 +577,21 @@ export function mergeSheetInput(base: SheetDocument, update: unknown): unknown {
       continue;
     }
     const key = next.name.trim().toLowerCase();
-    const index = base.tabs.findIndex((tab) => tab.name.toLowerCase() === key);
+    // Looked up in the working list, so an update that names a tab twice builds on itself.
+    const index = tabs.findIndex(
+      (tab) =>
+        isRecord(tab) && typeof tab.name === "string" && tab.name.trim().toLowerCase() === key,
+    );
     if (index < 0) {
       tabs.push(next);
       continue;
     }
-    const saved = base.tabs[index]!;
-    const cells: Record<string, unknown> = { ...saved.cells };
+    const saved = tabs[index] as {
+      readonly cells?: unknown;
+      readonly formats?: unknown;
+      readonly styles?: unknown;
+    };
+    const cells: Record<string, unknown> = isRecord(saved.cells) ? { ...saved.cells } : {};
     if (isRecord(next.cells)) {
       for (const [cell, input] of Object.entries(next.cells)) {
         const address = parseCellAddress(cell);
@@ -558,8 +603,12 @@ export function mergeSheetInput(base: SheetDocument, update: unknown): unknown {
     tabs[index] = {
       ...saved,
       cells,
-      ...(isRecord(next.formats) ? { formats: { ...saved.formats, ...next.formats } } : {}),
-      ...(isRecord(next.styles) ? { styles: { ...saved.styles, ...next.styles } } : {}),
+      ...(isRecord(next.formats)
+        ? { formats: { ...(isRecord(saved.formats) ? saved.formats : {}), ...next.formats } }
+        : {}),
+      ...(isRecord(next.styles)
+        ? { styles: { ...(isRecord(saved.styles) ? saved.styles : {}), ...next.styles } }
+        : {}),
       ...(next.chips !== undefined ? { chips: next.chips } : {}),
       ...(next.widths !== undefined ? { widths: next.widths } : {}),
       ...(next.charts !== undefined ? { charts: next.charts } : {}),

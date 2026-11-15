@@ -151,7 +151,10 @@ function tokenize(source: string): Token[] {
     }
     const number = NUMBER_PATTERN.exec(rest);
     if (number) {
-      tokens.push({ t: "num", v: Number(number[0]) });
+      const parsed = Number(number[0]);
+      // 1e999 is not a number a cell can hold.
+      if (!Number.isFinite(parsed)) throw new FormulaSyntaxError("#VALUE!");
+      tokens.push({ t: "num", v: parsed });
       rest = rest.slice(number[0].length);
       continue;
     }
@@ -817,10 +820,18 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (isSheetError(criterionValue)) return criterionValue;
         const matches = criterionOf(criterionValue);
         let count = 0;
+        let visited = 0;
         const problem = collect(args[0]!, current, (value) => {
+          visited += 1;
           if (matches(value)) count += 1;
         });
-        return problem ?? count;
+        if (problem) return problem;
+        // A range visits only filled cells; the empty ones count when the criterion fits them.
+        const target = args[0]!;
+        if (target.k === "range" && matches(null)) {
+          count += (target.c2 - target.c1 + 1) * (target.r2 - target.r1 + 1) - visited;
+        }
+        return count;
       }
       case "SUMIF": {
         if (args.length !== 2 && args.length !== 3) return err("#VALUE!");
@@ -839,11 +850,17 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         const s = sumNode.k === "range" ? sumNode : { c1: sumNode.col, r1: sumNode.row };
         let total = 0;
         let failure: SheetError | null = null;
-        const done = walkRange(tabs[testTab]!, t.c1, t.r1, t.c2, t.r2, (key) => {
-          if (failure || !matches(tabs[testTab]!.values.get(key) ?? null)) return;
+        // Walk the cells that can add to the total and test the cell beside each,
+        // so an empty test cell still counts when the criterion fits it.
+        const width = t.c2 - t.c1;
+        const height = t.r2 - t.r1;
+        const done = walkRange(tabs[sumTab]!, s.c1, s.r1, s.c1 + width, s.r1 + height, (key) => {
+          if (failure) return;
           const col = key % COLUMN_SPAN;
           const row = (key - col) / COLUMN_SPAN;
-          const value = valueOf(sumTab, cellKey(s.c1 + (col - t.c1), s.r1 + (row - t.r1)));
+          const tested = valueOf(testTab, cellKey(t.c1 + (col - s.c1), t.r1 + (row - s.r1)));
+          if (isSheetError(tested) || !matches(tested)) return;
+          const value = valueOf(sumTab, key);
           if (isSheetError(value)) failure = value;
           else if (typeof value === "number") total += value;
         });
@@ -862,17 +879,22 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         if (args.length === 0) return err("#VALUE!");
         let result = name === "AND";
         let failure: SheetError | null = null;
+        let logical = 0;
         for (const arg of args) {
           const problem = collect(arg, current, (value, fromRange) => {
             if (failure || (fromRange && (value === null || typeof value === "string"))) return;
             const flag = toBoolean(value);
             if (isSheetError(flag)) failure = flag;
-            else result = name === "AND" ? result && flag : result || flag;
+            else {
+              logical += 1;
+              result = name === "AND" ? result && flag : result || flag;
+            }
           });
           if (problem) return problem;
           if (failure) return failure;
         }
-        return result;
+        // Nothing to test, as in a range of text and blanks, is an error, not an answer.
+        return logical === 0 ? err("#VALUE!") : result;
       }
       case "NOT": {
         if (args.length !== 1) return err("#VALUE!");

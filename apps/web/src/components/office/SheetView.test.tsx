@@ -188,5 +188,9 @@ describe("sheetRelativePath", () => {
     );
     expect(sheetRelativePath("/work/app", "/work/other/a.sheet.json")).toBeNull();
     expect(sheetRelativePath("/work/app", "/work/app-two/a.sheet.json")).toBeNull();
+    expect(
+      sheetRelativePath("C:\\Work\\App", "c:\\work\\app\\.specweave\\artifacts\\a.sheet.json"),
+    ).toBe(".specweave/artifacts/a.sheet.json");
+    expect(sheetRelativePath("C:\\Work\\App", "D:\\Work\\App\\a.sheet.json")).toBeNull();
   });
 });

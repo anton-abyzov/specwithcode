@@ -7,7 +7,9 @@ import {
   formatSheetValue,
   isFormulaInput,
   isSheetError,
-  lookupByRange,
+  parseCellAddress,
+  rangeContains,
+  rangeLookup,
   parseCellRange,
   rangeName,
   usedRange,
@@ -149,25 +151,26 @@ export const layer = Access.toLayer(OfficeToolkit, {
       }> = [];
       let truncated = false;
       if (range !== null) {
-        scan: for (let row = range.start.row; row <= range.end.row; row += 1) {
-          for (let col = range.start.col; col <= range.end.col; col += 1) {
-            const address = { col, row };
-            const name = cellName(address);
-            const cellInput = tab.cells[name];
-            if (cellInput === undefined) continue;
-            if (cells.length >= MAX_READ_CELLS) {
-              truncated = true;
-              break scan;
-            }
-            const value = evaluation.valueAt(tabIndex, address);
-            cells.push({
-              cell: name,
-              value: isSheetError(value) ? null : value,
-              text: formatSheetValue(value, lookupByRange(tab.formats, address)),
-              ...(isFormulaInput(cellInput) ? { formula: cellInput } : {}),
-              ...(isSheetError(value) ? { error: value.error } : {}),
-            });
-          }
+        // Only the filled cells are visited: a sheet may hold two cells a million rows apart.
+        const filled: Array<{ col: number; row: number }> = [];
+        for (const key of Object.keys(tab.cells)) {
+          const address = parseCellAddress(key);
+          if (address && rangeContains(range, address)) filled.push(address);
+        }
+        filled.sort((left, right) => left.row - right.row || left.col - right.col);
+        truncated = filled.length > MAX_READ_CELLS;
+        const formatOf = rangeLookup(tab.formats);
+        for (const address of filled.slice(0, MAX_READ_CELLS)) {
+          const name = cellName(address);
+          const cellInput = tab.cells[name];
+          const value = evaluation.valueAt(tabIndex, address);
+          cells.push({
+            cell: name,
+            value: isSheetError(value) ? null : value,
+            text: formatSheetValue(value, formatOf(address)),
+            ...(isFormulaInput(cellInput) ? { formula: cellInput } : {}),
+            ...(isSheetError(value) ? { error: value.error } : {}),
+          });
         }
       }
       return {

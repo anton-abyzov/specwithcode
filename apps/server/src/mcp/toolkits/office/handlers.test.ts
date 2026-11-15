@@ -209,6 +209,31 @@ it.effect("merges an update over the saved sheet and reports formula errors", ()
   }).pipe(Effect.provide(layerFor(scope))),
 );
 
+it.effect("reads a sparse sheet without walking its empty rectangle", () =>
+  Effect.gen(function* () {
+    yield* call("sheet_write", {
+      title: "Sparse",
+      tabs: [
+        {
+          name: "Far",
+          cells: { A1: 1, ZZ100000: "=A1+1" },
+          charts: [
+            { id: "c", type: "bar", title: "All", labels: "A1:A100000", values: "A1:ZZ100000" },
+          ],
+        },
+      ],
+    });
+    const read = yield* call("sheet_read", { name: "sparse" });
+    expect(read).toMatchObject({ range: "A1:ZZ100000", truncated: false });
+    expect(
+      (read.cells as Array<Record<string, unknown>>).map((cell) => [cell.cell, cell.value]),
+    ).toEqual([
+      ["A1", 1],
+      ["ZZ100000", 2],
+    ]);
+  }).pipe(Effect.provide(layerFor(scope))),
+);
+
 it.effect("behaves the same for every provider", () =>
   Effect.gen(function* () {
     const results: Array<Record<string, unknown>> = [];

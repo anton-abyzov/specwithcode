@@ -26,19 +26,19 @@ export interface SheetChartSeries {
   readonly problem: "range" | "empty" | null;
 }
 
+/** The first cells of a range, in reading order, never more than a chart draws. */
 function cellsOf(range: CellRange): Array<{ col: number; row: number }> {
   const cells: Array<{ col: number; row: number }> = [];
+  const limit = SHEET_LIMITS.chartPoints;
   const byColumn = range.end.col === range.start.col || range.end.row !== range.start.row;
-  if (byColumn) {
-    for (let col = range.start.col; col <= range.end.col; col += 1) {
-      for (let row = range.start.row; row <= range.end.row; row += 1) cells.push({ col, row });
-    }
-  } else {
-    for (let col = range.start.col; col <= range.end.col; col += 1) {
-      cells.push({ col, row: range.start.row });
+  const lastRow = byColumn ? range.end.row : range.start.row;
+  for (let col = range.start.col; col <= range.end.col; col += 1) {
+    for (let row = range.start.row; row <= lastRow; row += 1) {
+      if (cells.length >= limit) return cells;
+      cells.push({ col, row });
     }
   }
-  return cells.slice(0, SHEET_LIMITS.chartPoints);
+  return cells;
 }
 
 /**
