@@ -13,6 +13,7 @@ import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
 import { ProjectFolderHealthNotice } from "./ProjectFolderHealthNotice";
 import { toggleProjectThreadResolution } from "../../studio/projectThreadResolution";
 import { threadRenameBlockedReason } from "../../studio/threadTitles";
+import { useThreadResolveBlockedReason } from "../../studio/useThreadResolveAccess";
 import { ProjectWorkspaceColumns } from "./ProjectWorkspaceColumns";
 import { createCoordinatorSelectionTracker } from "../../studio/coordinatorContinuation";
 import { useCoordinatorModelSave } from "../../studio/coordinatorModelSave";
@@ -1596,6 +1597,8 @@ export function ProjectWorkspaceSurface({
       ),
     [iconCheckouts, checkouts],
   );
+  // Resolve runs on each thread's own machine, so every thread asks about its own.
+  const resolveBlockedReason = useThreadResolveBlockedReason(machineLabels);
   // Every copy of the repository, linked or not, merges through pull requests
   // on the shared remote, so the PRs tab lists them all with their machine.
   const prMachineCount = machineLabels.size;
@@ -2254,6 +2257,7 @@ export function ProjectWorkspaceSurface({
                       canOperate &&
                       connected &&
                       selectedThread.environmentId === project.environmentId,
+                    resolveBlockedReason: resolveBlockedReason(selectedThread),
                     renameBlockedReason: threadRenameBlockedReason({
                       canOperate: canOperateSelectedThread,
                       connection: selectedThreadEnvironment?.connection,
@@ -2373,6 +2377,7 @@ export function ProjectWorkspaceSurface({
                   canChangeThread={(thread) =>
                     thread.environmentId === project.environmentId && canOperate && connected
                   }
+                  resolveBlockedReason={resolveBlockedReason}
                   machineLabels={machineLabels}
                   starters={workers.length === 0 ? starterList : null}
                   bulk={
