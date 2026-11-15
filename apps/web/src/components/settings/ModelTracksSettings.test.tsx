@@ -159,6 +159,8 @@ describe("ModelTracksSettings Review card", () => {
     expect(badges).toContain("Claude family");
     expect(badges).toContain("Skipped for Claude work");
     expect(badges.filter((label) => label === "Skipped for Claude work")).toHaveLength(1);
+    // The top row is Claude's own family here, so it does not also read "Reviews first".
+    expect(badges).not.toContain("Reviews first");
     expect(badges).toContain("Meta family");
     const rule = renderer!.root.find((node) => node.props["data-review-rule"] !== undefined);
     const line = textOf(rule.findAllByType("li")[0]!);
@@ -206,6 +208,23 @@ describe("ModelTracksSettings Review card", () => {
     // A stale reading still yields, and says so.
     const stale = notes.find((node) => node.props["data-usage-unknown"] === "stale")!;
     expect(textOf(stale)).toContain("A review tries a ready model below first.");
+  });
+
+  it("marks the top row Reviews first when it can review the work done here", () => {
+    state.settings = {
+      ...state.settings,
+      adversarialReview: {
+        ...state.settings.adversarialReview,
+        reviewers: [sel("muse", "muse-wonder-full-1.0"), sel("codex", "gpt-6.1-sol")],
+      },
+    } as typeof DEFAULT_SERVER_SETTINGS;
+    act(() => {
+      renderer = create(<ModelTracksSettings tracks={["review"]} />);
+    });
+    const badges = renderer!.root
+      .findAll((node) => node.props["data-badge"] !== undefined)
+      .map((node) => textOf(node));
+    expect(badges.filter((label) => label === "Reviews first")).toHaveLength(1);
   });
 
   it("shows only Review, without Sources, when asked", () => {
