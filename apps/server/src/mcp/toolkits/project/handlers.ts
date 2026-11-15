@@ -48,8 +48,8 @@ import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdap
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { workerLaunchWithRoom } from "../../../project/WorkerLaunchRoom.ts";
 import {
+  newWorkerModel,
   projectUsesTracks,
-  projectWorkerModel,
   workerModelUnderGrant,
 } from "../../../project/ProjectDelegation.ts";
 import { defaultWorkerModelSelection } from "@specweave-studio/shared/coordinatorDefault";
@@ -202,7 +202,7 @@ const providerTierSelection = Effect.fn("mcp.providerTierSelection")(function* (
   return selection;
 });
 
-/** The project's own thread and worker model (see projectWorkerModel), else null. */
+/** The model a new unnamed worker of the project starts on (see newWorkerModel), else null. */
 const projectWorkerModelOf = Effect.fn("mcp.projectWorkerModelOf")(function* (
   project: ProjectRecord,
 ) {
@@ -210,7 +210,10 @@ const projectWorkerModelOf = Effect.fn("mcp.projectWorkerModelOf")(function* (
   const settings = Option.isNone(settingsService)
     ? null
     : yield* settingsService.value.getSettings.pipe(Effect.orElseSucceed(() => null));
-  return settings === null ? project.defaultModelSelection : projectWorkerModel(settings, project);
+  if (settings === null) return project.defaultModelSelection;
+  // A running quota boost starts new workers on its model (see newWorkerModel).
+  const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+  return newWorkerModel(settings, project, providers, Date.now());
 });
 
 /** Whether the project starts unnamed workers on its tracks (see projectUsesTracks). */

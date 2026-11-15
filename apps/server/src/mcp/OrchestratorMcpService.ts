@@ -1166,6 +1166,7 @@ function timelineItem(input: {
 import {
   projectDelegationTarget,
   projectUsesTracks,
+  quotaBoostWorkerModel,
   callerWorkerModel,
   withProjectWorkerModel,
   workerModelUnderGrant,
@@ -1355,8 +1356,10 @@ const make = Effect.gen(function* () {
   ) =>
     (Option.isNone(serverSettings)
       ? Effect.succeed(project)
-      : serverSettings.value.getSettings.pipe(
-          Effect.map((settings) => withProjectWorkerModel(settings, project)),
+      : Effect.all([serverSettings.value.getSettings, providerRegistry.getProviders]).pipe(
+          Effect.map(([settings, providers]) =>
+            withProjectWorkerModel(settings, project, providers, Date.now()),
+          ),
           Effect.orElseSucceed(() => project),
         )
     ).pipe(
@@ -2191,12 +2194,22 @@ const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       const unrouted = { target: input.baseline, routing: null as TaskRoutingDecision | null };
-      const tracks = Option.isNone(serverSettings)
-        ? false
-        : yield* serverSettings.value.getSettings.pipe(
-            Effect.map((settings) => projectUsesTracks(settings, input.project)),
-            Effect.orElseSucceed(() => false),
-          );
+      const settings = Option.isNone(serverSettings)
+        ? null
+        : yield* serverSettings.value.getSettings.pipe(Effect.orElseSucceed(() => null));
+      // A worker a quota boost started stays on the boost's model: the person
+      // chose it for new threads until that quota resets.
+      const boost =
+        settings === null || targetPinsModel(input.requested)
+          ? null
+          : quotaBoostWorkerModel(settings, input.project, input.providers, Date.now());
+      if (
+        boost !== null &&
+        boost.instanceId === input.baseline.modelSelection.instanceId &&
+        boost.model === input.baseline.modelSelection.model
+      )
+        return unrouted;
+      const tracks = settings !== null && projectUsesTracks(settings, input.project);
       if (
         input.options?.autoRouting === false ||
         !autoRoutingApplies({

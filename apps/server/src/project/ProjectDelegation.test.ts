@@ -1,14 +1,17 @@
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   ProviderInstanceId,
+  type ServerProvider,
   ThreadId,
 } from "@specweave-studio/contracts";
 import {
   projectDelegationTarget,
   needsExplicitWorkerTarget,
+  newWorkerModel,
+  quotaBoostWorkerModel,
   projectLimitRule,
   projectUsesTracks,
   replacesProjectModelOverride,
@@ -179,4 +182,72 @@ it("names no single project model on Tracks, so the track for the task decides",
   // A project that existed before tracks has no mode saved and keeps its model.
   expect(projectUsesTracks(DEFAULT_SERVER_SETTINGS, project)).toBe(false);
   expect(projectWorkerModel(DEFAULT_SERVER_SETTINGS, project)).toEqual(saved);
+});
+
+describe("quota boost", () => {
+  const id = ProjectId.make("aide");
+  const now = Date.parse("2026-11-15T12:00:00.000Z");
+  const codex = ProviderInstanceId.make("codex");
+  const saved = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+  const project = { id, defaultModelSelection: saved };
+  const boost = (over: Record<string, unknown> = {}) => ({
+    accountKey: "codex:pro",
+    instanceId: codex,
+    model: "gpt-6.1-sol",
+    projectIds: [] as string[],
+    label: "Codex Pro",
+    until: now + 3_600_000,
+    startedAt: now - 60_000,
+    ...over,
+  });
+  const withBoost = (value: ReturnType<typeof boost> | null, extra: object = {}) =>
+    ({
+      ...DEFAULT_SERVER_SETTINGS,
+      quotaBoosts: { "codex:pro": value },
+      ...extra,
+    }) as typeof DEFAULT_SERVER_SETTINGS;
+  const codexProvider = (slugs: ReadonlyArray<string>, enabled = true) =>
+    ({
+      instanceId: codex,
+      enabled,
+      models: slugs.map((slug) => ({ slug, name: slug, isCustom: false, capabilities: null })),
+    }) as unknown as ServerProvider;
+  const listed = [codexProvider(["gpt-6.1-sol"])];
+  const sol = { instanceId: codex, model: "gpt-6.1-sol" };
+
+  it("starts a new worker on the boosted model, over the project model and over Tracks", () => {
+    expect(newWorkerModel(withBoost(boost()), project, listed, now)).toEqual(sol);
+    const onTracks = withBoost(boost(), {
+      projectSettingsOverrides: { [id]: { threadModelMode: "tracks" } },
+    });
+    expect(newWorkerModel(onTracks, project, listed, now)).toEqual(sol);
+  });
+
+  it("ends by itself, and covers only the projects it names", () => {
+    expect(newWorkerModel(withBoost(boost({ until: now - 1 })), project, listed, now)).toEqual(
+      saved,
+    );
+    expect(newWorkerModel(withBoost(null), project, listed, now)).toEqual(saved);
+    expect(
+      newWorkerModel(withBoost(boost({ projectIds: ["other"] })), project, listed, now),
+    ).toEqual(saved);
+  });
+
+  it("refuses a model the account no longer lists, or a provider that is off", () => {
+    const settings = withBoost(boost());
+    expect(quotaBoostWorkerModel(settings, project, [codexProvider(["gpt-6-astra"])], now)).toBe(
+      null,
+    );
+    expect(quotaBoostWorkerModel(settings, project, [], now)).toBeNull();
+    expect(
+      quotaBoostWorkerModel(settings, project, [codexProvider(["gpt-6.1-sol"], false)], now),
+    ).toBeNull();
+    expect(newWorkerModel(settings, project, [codexProvider(["gpt-6-astra"])], now)).toEqual(saved);
+  });
+
+  it("leaves open threads and the limit rule on the project's own model", () => {
+    const settings = withBoost(boost());
+    expect(projectWorkerModel(settings, project)).toEqual(saved);
+    expect(projectLimitRule(settings, project).defaultModelSelection).toEqual(saved);
+  });
 });

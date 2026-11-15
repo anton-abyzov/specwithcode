@@ -2,10 +2,12 @@ import type {
   ModelSelection,
   OrchestratorMcpTarget,
   Project,
+  ServerProvider,
   ServerSettings,
   ThreadId,
 } from "@specweave-studio/contracts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import { currentQuotaBoost } from "@specweave-studio/shared/quotaBoost";
 import { isModelSelectionProviderEnabled } from "@specweave-studio/shared/serverSettings";
 import { accountInGrant } from "../fleet/workGrantPolicy.ts";
 
@@ -29,6 +31,47 @@ export function projectWorkerModel(
   // Like an override, a saved model on a disabled provider does not count.
   const saved = project.defaultModelSelection;
   return saved !== null && isModelSelectionProviderEnabled(settings, saved) ? saved : null;
+}
+
+/**
+ * The model a quota boost ("Use it for new threads until it resets") starts
+ * this project's new worker threads on at `nowMs`, else null. A boost whose
+ * provider is switched off, or whose account no longer lists the model, does
+ * not count: the worker starts as if there were no boost. Only new worker
+ * launches read this; the coordinator and threads already open keep their model.
+ */
+export function quotaBoostWorkerModel(
+  settings: ServerSettings,
+  project: Pick<Project, "id">,
+  providers: ReadonlyArray<ServerProvider>,
+  nowMs: number,
+): ModelSelection | null {
+  const boost = currentQuotaBoost(settings.quotaBoosts, project.id, nowMs);
+  if (boost === null) return null;
+  const selection: ModelSelection = { instanceId: boost.instanceId, model: boost.model };
+  if (!isModelSelectionProviderEnabled(settings, selection)) return null;
+  const provider = providers.find((entry) => entry.instanceId === boost.instanceId);
+  if (provider === undefined || !provider.enabled) return null;
+  const listed = provider.models.some(
+    (model) => model.slug === boost.model || model.aliases?.includes(boost.model) === true,
+  );
+  return listed ? selection : null;
+}
+
+/**
+ * The model a new worker thread nobody named a model for starts on: a running
+ * quota boost, else the project's own model (`projectWorkerModel`).
+ */
+export function newWorkerModel(
+  settings: ServerSettings,
+  project: Pick<Project, "id" | "defaultModelSelection">,
+  providers: ReadonlyArray<ServerProvider>,
+  nowMs: number,
+): ModelSelection | null {
+  return (
+    quotaBoostWorkerModel(settings, project, providers, nowMs) ??
+    projectWorkerModel(settings, project)
+  );
 }
 
 /** Whether the project's unnamed workers start on a track ("Tracks") and not on one saved model. */
@@ -95,12 +138,17 @@ export function workerModelUnderGrant(
     : model;
 }
 
-/** The project as worker launches read it: its model is the one `projectWorkerModel` names. */
+/** The project as worker launches read it: its model is the one `newWorkerModel` names. */
 export function withProjectWorkerModel<P extends Pick<Project, "id" | "defaultModelSelection">>(
   settings: ServerSettings,
   project: P,
+  providers: ReadonlyArray<ServerProvider> = [],
+  nowMs = 0,
 ): P {
-  return { ...project, defaultModelSelection: projectWorkerModel(settings, project) };
+  return {
+    ...project,
+    defaultModelSelection: newWorkerModel(settings, project, providers, nowMs),
+  };
 }
 
 /**
