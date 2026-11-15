@@ -5055,4 +5055,70 @@ export const ru: PhraseCatalog = {
   "Catching up with this host…": "Синхронизация с этим хостом…",
   "Connection to this host failed": "Не удалось подключиться к этому хосту",
   "This host is not connected": "Этот хост не подключён",
+  "Installed, matches this app ({version}).": "Установлена, совпадает с приложением ({version}).",
+  "Installed, version {version}; this app is {appVersion}.":
+    "Установлена версия {version}; у приложения {appVersion}.",
+  "Installed.": "Установлена.",
+  "Installed, but it runs another copy of the app at {path}.":
+    "Установлена, но запускает другую копию приложения: {path}.",
+  "The command points at a copy of the app that is gone ({path}). Repair points it at this app.":
+    "Команда указывает на копию приложения, которой больше нет ({path}). «Исправить» направит её на это приложение.",
+  "{path} comes from the command-line install of SpecWithCode, which keeps it up to date. The app leaves it as it is.":
+    "{path} установлена консольной установкой SpecWithCode, которая сама её обновляет. Приложение её не трогает.",
+  "Something else is already at {path}. The app will not replace it; move it away to install the app's command there.":
+    "По пути {path} уже есть другой файл. Приложение его не заменит; уберите его, чтобы установить туда команду приложения.",
+  "Not installed.": "Не установлена.",
+  "Open a new terminal window to use it.": "Откройте новое окно терминала, чтобы ею пользоваться.",
+  "{folder} is not on your terminal's PATH yet, so a new terminal will not find the command.":
+    "Папки {folder} пока нет в PATH терминала, поэтому новый терминал не найдёт команду.",
+  "The app could not read your terminal's PATH. If a new terminal says command not found, add this line.":
+    "Приложению не удалось прочитать PATH терминала. Если новый терминал пишет command not found, добавьте эту строку.",
+  "Add it to {file}": "Добавить в {file}",
+  "Adds only this line, marked as added by SpecWithCode. Remove takes it out again.":
+    "Добавляет только эту строку с пометкой SpecWithCode. «Удалить» уберёт её.",
+  "Added to {file}. Open a new terminal window to use it.":
+    "Добавлено в {file}. Откройте новое окно терминала.",
+  "The specwithcode command is this app driven from a terminal: the same version as the app, talking to the app that is already running. It is not a second copy and needs no separate sign-in. Use it over SSH, on a machine with no screen, or in scripts and agents.":
+    "Команда specwithcode это то же приложение, но из терминала: та же версия, и она общается с уже запущенным приложением. Это не вторая копия, отдельный вход не нужен. Пригодится по SSH, на машине без экрана, в скриптах и агентах.",
+  "What is this?": "Что это?",
+  "Installing writes {path}, which runs the command inside the app, and adds {folder} to your user PATH. No administrator password.":
+    "Установка создаёт {path}, который запускает команду внутри приложения, и добавляет {folder} в PATH пользователя. Пароль администратора не нужен.",
+  "Installing adds {path}, a link to the command inside the app. Nothing else changes, and no administrator password is needed.":
+    "Установка добавляет {path}, ссылку на команду внутри приложения. Больше ничего не меняется, пароль администратора не нужен.",
+  "Install command-line tool": "Установить консольную команду",
+  "Use this copy": "Использовать эту копию",
+  "A different specwithcode at {path} comes first on your PATH, so a terminal runs that one instead. The app did not change it.":
+    "Другая команда specwithcode ({path}) стоит в PATH раньше, поэтому терминал запустит её. Приложение её не меняло.",
+  "Command line": "Командная строка",
+  "A development build has no command to install.":
+    "В сборке для разработки нет команды для установки.",
+  "This copy of the app runs from a disk image or a temporary folder. Move SpecWithCode to Applications and open it from there first.":
+    "Эта копия приложения запущена с образа диска или из временной папки. Сначала перенесите SpecWithCode в «Программы» и откройте оттуда.",
+  "This copy of the app has no specwithcode command inside it. Reinstall the app.":
+    "В этой копии приложения нет команды specwithcode. Переустановите приложение.",
+  "Add to PATH": "Добавить в PATH",
+  "permission denied": "нет доступа",
+  "not found": "не найден",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "Пока приложение работало, в {path} что-то изменилось, поэтому ничего не заменено. Проверьте и попробуйте снова.",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "Приложение не знает файл запуска этой оболочки. Добавьте строку сами.",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path} уже существует и не изменён. Добавьте строку сами.",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "{path} не удалось прочитать полностью, поэтому приложение его не изменило. Добавьте строку сами.",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "Не удалось изменить {path} ({error}). Добавьте строку сами.",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "Команда удалена, но строку в {path} убрать не удалось ({error}). Удалите строку с пометкой Added by SpecWithCode сами.",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "Команда удалена, но {folder} всё ещё в вашем пользовательском PATH. Уберите его сами в переменных среды.",
+  "Could not read your user PATH.": "Не удалось прочитать ваш пользовательский PATH.",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "Не удалось обновить ваш пользовательский PATH. Добавьте в него {folder} сами.",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "Ваш пользовательский PATH изменился, пока приложение его обновляло. Ничего не изменено; попробуйте снова.",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "Путь к AppImage нельзя записать в команду. Переместите AppImage в папку с простым путём и откройте его оттуда.",
+  "Could not write {path} ({error}).": "Не удалось записать {path} ({error}).",
 };

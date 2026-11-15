@@ -5058,4 +5058,71 @@ export const ja: PhraseCatalog = {
   "Catching up with this host…": "このホストと同期中…",
   "Connection to this host failed": "このホストへの接続に失敗しました",
   "This host is not connected": "このホストは接続されていません",
+  "Installed, matches this app ({version}).":
+    "インストール済み。このアプリと同じバージョンです（{version}）。",
+  "Installed, version {version}; this app is {appVersion}.":
+    "インストール済み（{version}）。このアプリは {appVersion} です。",
+  "Installed.": "インストール済み。",
+  "Installed, but it runs another copy of the app at {path}.":
+    "インストール済みですが、{path} にある別のアプリを実行します。",
+  "The command points at a copy of the app that is gone ({path}). Repair points it at this app.":
+    "コマンドは、もう存在しないアプリ（{path}）を指しています。修復するとこのアプリを指すようになります。",
+  "{path} comes from the command-line install of SpecWithCode, which keeps it up to date. The app leaves it as it is.":
+    "{path} は SpecWithCode のコマンドラインインストールによるもので、そちらが最新に保ちます。アプリは変更しません。",
+  "Something else is already at {path}. The app will not replace it; move it away to install the app's command there.":
+    "{path} には別のものがあります。アプリは置き換えません。そこにアプリのコマンドを入れるには、移動してください。",
+  "Not installed.": "未インストール。",
+  "Open a new terminal window to use it.": "使うには新しいターミナルウィンドウを開いてください。",
+  "{folder} is not on your terminal's PATH yet, so a new terminal will not find the command.":
+    "{folder} はまだターミナルの PATH に入っていないため、新しいターミナルではコマンドが見つかりません。",
+  "The app could not read your terminal's PATH. If a new terminal says command not found, add this line.":
+    "アプリはターミナルの PATH を読み取れませんでした。新しいターミナルで command not found と出たら、この行を追加してください。",
+  "Add it to {file}": "{file} に追加",
+  "Adds only this line, marked as added by SpecWithCode. Remove takes it out again.":
+    "この1行だけを SpecWithCode が追加した印付きで追加します。削除で元に戻ります。",
+  "Added to {file}. Open a new terminal window to use it.":
+    "{file} に追加しました。新しいターミナルウィンドウを開いてください。",
+  "The specwithcode command is this app driven from a terminal: the same version as the app, talking to the app that is already running. It is not a second copy and needs no separate sign-in. Use it over SSH, on a machine with no screen, or in scripts and agents.":
+    "specwithcode コマンドは、このアプリをターミナルから操作するものです。アプリと同じバージョンで、起動中のアプリと通信します。別のコピーではなく、別途サインインも不要です。SSH 経由、画面のないマシン、スクリプトやエージェントで使えます。",
+  "What is this?": "これは何？",
+  "Installing writes {path}, which runs the command inside the app, and adds {folder} to your user PATH. No administrator password.":
+    "インストールすると、アプリ内のコマンドを実行する {path} を作成し、{folder} をユーザーの PATH に追加します。管理者パスワードは不要です。",
+  "Installing adds {path}, a link to the command inside the app. Nothing else changes, and no administrator password is needed.":
+    "インストールすると、アプリ内のコマンドへのリンク {path} を追加します。ほかは何も変わらず、管理者パスワードも不要です。",
+  "Install command-line tool": "コマンドラインツールをインストール",
+  "Use this copy": "このアプリを使う",
+  "A different specwithcode at {path} comes first on your PATH, so a terminal runs that one instead. The app did not change it.":
+    "{path} にある別の specwithcode が PATH の先にあるため、ターミナルではそちらが実行されます。アプリは変更していません。",
+  "Command line": "コマンドライン",
+  "A development build has no command to install.":
+    "開発ビルドにはインストールできるコマンドがありません。",
+  "This copy of the app runs from a disk image or a temporary folder. Move SpecWithCode to Applications and open it from there first.":
+    "このアプリはディスクイメージか一時フォルダから実行されています。先に SpecWithCode をアプリケーションに移動し、そこから開いてください。",
+  "This copy of the app has no specwithcode command inside it. Reinstall the app.":
+    "このアプリには specwithcode コマンドが入っていません。アプリを再インストールしてください。",
+  "Add to PATH": "PATH に追加",
+  "permission denied": "アクセス権がありません",
+  "not found": "見つかりません",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "処理中に {path} が変更されたため、何も置き換えていません。確認してからもう一度お試しください。",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "このシェルの起動ファイルが分かりません。行を自分で追加してください。",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path} は既にあるため変更していません。行を自分で追加してください。",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "{path} を最後まで読めなかったため変更していません。行を自分で追加してください。",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "{path} を変更できませんでした（{error}）。行を自分で追加してください。",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "コマンドは削除しましたが、{path} の行を取り除けませんでした（{error}）。Added by SpecWithCode と書かれた行を自分で削除してください。",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "コマンドは削除しましたが、{folder} がユーザー PATH に残っています。環境変数から自分で削除してください。",
+  "Could not read your user PATH.": "ユーザー PATH を読み取れませんでした。",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "ユーザー PATH を更新できませんでした。{folder} を自分で追加してください。",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "更新中にユーザー PATH が変わりました。何も変更していません。もう一度お試しください。",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "AppImage のパスをコマンドに書き込めません。AppImage を単純なフォルダーに移動し、そこから開いてください。",
+  "Could not write {path} ({error}).": "{path} を書き込めませんでした（{error}）。",
 };

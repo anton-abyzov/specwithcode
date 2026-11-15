@@ -5099,4 +5099,71 @@ export const fr: PhraseCatalog = {
   "Catching up with this host…": "Synchronisation avec cet hôte…",
   "Connection to this host failed": "La connexion à cet hôte a échoué",
   "This host is not connected": "Cet hôte n'est pas connecté",
+  "Installed, matches this app ({version}).": "Installée, identique à cette app ({version}).",
+  "Installed, version {version}; this app is {appVersion}.":
+    "Installée, version {version} ; cette app est en {appVersion}.",
+  "Installed.": "Installée.",
+  "Installed, but it runs another copy of the app at {path}.":
+    "Installée, mais elle lance une autre copie de l'app dans {path}.",
+  "The command points at a copy of the app that is gone ({path}). Repair points it at this app.":
+    "La commande pointe vers une copie de l'app qui n'existe plus ({path}). Réparer la fait pointer vers cette app.",
+  "{path} comes from the command-line install of SpecWithCode, which keeps it up to date. The app leaves it as it is.":
+    "{path} vient de l'installation en ligne de commande de SpecWithCode, qui le tient à jour. L'app n'y touche pas.",
+  "Something else is already at {path}. The app will not replace it; move it away to install the app's command there.":
+    "Il y a déjà autre chose dans {path}. L'app ne le remplace pas ; déplacez-le pour y installer la commande de l'app.",
+  "Not installed.": "Non installée.",
+  "Open a new terminal window to use it.":
+    "Ouvrez une nouvelle fenêtre de terminal pour l'utiliser.",
+  "{folder} is not on your terminal's PATH yet, so a new terminal will not find the command.":
+    "{folder} n'est pas encore dans le PATH du terminal, donc un nouveau terminal ne trouvera pas la commande.",
+  "The app could not read your terminal's PATH. If a new terminal says command not found, add this line.":
+    "L'app n'a pas pu lire le PATH du terminal. Si un nouveau terminal affiche command not found, ajoutez cette ligne.",
+  "Add it to {file}": "Ajouter à {file}",
+  "Adds only this line, marked as added by SpecWithCode. Remove takes it out again.":
+    "Ajoute seulement cette ligne, marquée comme ajoutée par SpecWithCode. Retirer l'enlève.",
+  "Added to {file}. Open a new terminal window to use it.":
+    "Ajouté à {file}. Ouvrez une nouvelle fenêtre de terminal.",
+  "The specwithcode command is this app driven from a terminal: the same version as the app, talking to the app that is already running. It is not a second copy and needs no separate sign-in. Use it over SSH, on a machine with no screen, or in scripts and agents.":
+    "La commande specwithcode, c'est cette app pilotée depuis un terminal : même version, qui parle à l'app déjà ouverte. Ce n'est pas une deuxième copie et aucune connexion séparée n'est nécessaire. Utilisez-la en SSH, sur une machine sans écran ou dans des scripts et des agents.",
+  "What is this?": "Qu'est-ce que c'est ?",
+  "Installing writes {path}, which runs the command inside the app, and adds {folder} to your user PATH. No administrator password.":
+    "L'installation écrit {path}, qui lance la commande de l'app, et ajoute {folder} au PATH de votre utilisateur. Aucun mot de passe administrateur.",
+  "Installing adds {path}, a link to the command inside the app. Nothing else changes, and no administrator password is needed.":
+    "L'installation ajoute {path}, un lien vers la commande de l'app. Rien d'autre ne change et aucun mot de passe administrateur n'est requis.",
+  "Install command-line tool": "Installer l'outil en ligne de commande",
+  "Use this copy": "Utiliser cette copie",
+  "A different specwithcode at {path} comes first on your PATH, so a terminal runs that one instead. The app did not change it.":
+    "Un autre specwithcode dans {path} passe avant dans votre PATH, donc le terminal lance celui-là. L'app ne l'a pas modifié.",
+  "Command line": "Ligne de commande",
+  "A development build has no command to install.":
+    "Une version de développement n'a pas de commande à installer.",
+  "This copy of the app runs from a disk image or a temporary folder. Move SpecWithCode to Applications and open it from there first.":
+    "Cette copie de l'app tourne depuis une image disque ou un dossier temporaire. Déplacez d'abord SpecWithCode dans Applications et ouvrez-la depuis là.",
+  "This copy of the app has no specwithcode command inside it. Reinstall the app.":
+    "Cette copie de l'app ne contient pas la commande specwithcode. Réinstallez l'app.",
+  "Add to PATH": "Ajouter au PATH",
+  "permission denied": "accès refusé",
+  "not found": "introuvable",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "{path} a changé pendant que l'app travaillait, rien n'a donc été remplacé. Vérifiez puis réessayez.",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "L'app ne connaît pas le fichier de démarrage de ce shell. Ajoutez la ligne vous-même.",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path} existe déjà et n'a pas été modifié. Ajoutez la ligne vous-même.",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "{path} n'a pas pu être lu en entier, l'app ne l'a donc pas modifié. Ajoutez la ligne vous-même.",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "Impossible de modifier {path} ({error}). Ajoutez la ligne vous-même.",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "La commande a été supprimée, mais la ligne de {path} n'a pas pu être retirée ({error}). Supprimez vous-même la ligne marquée Added by SpecWithCode.",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "La commande a été supprimée, mais {folder} est encore dans votre PATH utilisateur. Retirez-le vous-même dans Variables d'environnement.",
+  "Could not read your user PATH.": "Impossible de lire votre PATH utilisateur.",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "Impossible de mettre à jour votre PATH utilisateur. Ajoutez-y {folder} vous-même.",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "Votre PATH utilisateur a changé pendant que l'app le mettait à jour. Rien n'a été modifié ; réessayez.",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "Le chemin de l'AppImage ne peut pas être écrit dans la commande. Déplacez l'AppImage dans un dossier plus simple et ouvrez-le depuis là.",
+  "Could not write {path} ({error}).": "Impossible d'écrire {path} ({error}).",
 };

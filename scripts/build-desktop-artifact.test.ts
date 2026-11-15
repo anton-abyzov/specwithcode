@@ -29,6 +29,8 @@ import {
   DESKTOP_FILE_EXCLUSIONS,
   DESKTOP_EXTRA_RESOURCES,
   MAC_VOICE_EXTRA_RESOURCES,
+  POSIX_CLI_SHIM_EXTRA_RESOURCES,
+  WINDOWS_CLI_SHIM_EXTRA_RESOURCES,
   LINUX_CAPTURE_EXTRA_RESOURCES,
   LINUX_VOICE_EXTRA_RESOURCES,
   LINUX_WHISPER_COMMIT,
@@ -692,6 +694,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // The update agent is run by /usr/bin/python3, which cannot read app.asar.
       ...MAC_SERVICE_UPDATER_EXTRA_RESOURCES,
       ...MAC_VOICE_EXTRA_RESOURCES,
+      ...POSIX_CLI_SHIM_EXTRA_RESOURCES,
     ]) {
       assert.include(
         DESKTOP_FILE_EXCLUSIONS,
@@ -719,6 +722,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!apps/desktop/prod-resources/studio-updater/**/*",
       "!apps/desktop/prod-resources/voice",
       "!apps/desktop/prod-resources/voice/**/*",
+      "!apps/desktop/prod-resources/cli",
+      "!apps/desktop/prod-resources/cli/**/*",
       "!apps/desktop/gnome-extension",
       "!apps/desktop/gnome-extension/**/*",
     ]);
@@ -785,17 +790,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(winWithoutWslRuntime.asarUnpack, win.asarUnpack);
       assert.deepStrictEqual(mac.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,
+        ...POSIX_CLI_SHIM_EXTRA_RESOURCES,
         ...MAC_SERVICE_UPDATER_EXTRA_RESOURCES,
         ...MAC_VOICE_EXTRA_RESOURCES,
       ]);
       assert.deepStrictEqual(linux.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,
+        ...POSIX_CLI_SHIM_EXTRA_RESOURCES,
         ...LINUX_CAPTURE_EXTRA_RESOURCES,
         ...LINUX_VOICE_EXTRA_RESOURCES,
         { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
       ]);
       assert.deepStrictEqual(win.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,
+        ...WINDOWS_CLI_SHIM_EXTRA_RESOURCES,
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
         ...WSL_RUNTIME_EXTRA_RESOURCES,
       ]);
@@ -803,6 +811,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // listing it here would fail the build on a missing source file.
       assert.deepStrictEqual(winWithoutWslRuntime.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,
+        ...WINDOWS_CLI_SHIM_EXTRA_RESOURCES,
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
       assert.deepStrictEqual(win.nsis, {

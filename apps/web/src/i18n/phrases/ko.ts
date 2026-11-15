@@ -5000,4 +5000,69 @@ export const ko: PhraseCatalog = {
   "Catching up with this host…": "이 호스트와 동기화하는 중…",
   "Connection to this host failed": "이 호스트 연결에 실패했습니다",
   "This host is not connected": "이 호스트가 연결되어 있지 않습니다",
+  "Installed, matches this app ({version}).": "설치됨, 이 앱과 같은 버전({version}).",
+  "Installed, version {version}; this app is {appVersion}.":
+    "설치됨, 버전 {version}. 이 앱은 {appVersion}입니다.",
+  "Installed.": "설치됨.",
+  "Installed, but it runs another copy of the app at {path}.":
+    "설치됨, 하지만 {path}에 있는 다른 앱 사본을 실행합니다.",
+  "The command points at a copy of the app that is gone ({path}). Repair points it at this app.":
+    "명령이 더 이상 없는 앱 사본({path})을 가리킵니다. 복구하면 이 앱을 가리킵니다.",
+  "{path} comes from the command-line install of SpecWithCode, which keeps it up to date. The app leaves it as it is.":
+    "{path}은(는) SpecWithCode 명령줄 설치에서 온 것이며 그쪽에서 최신으로 유지합니다. 앱은 그대로 둡니다.",
+  "Something else is already at {path}. The app will not replace it; move it away to install the app's command there.":
+    "{path}에 이미 다른 것이 있습니다. 앱은 이를 바꾸지 않습니다. 앱의 명령을 설치하려면 옮겨 주세요.",
+  "Not installed.": "설치되지 않음.",
+  "Open a new terminal window to use it.": "사용하려면 새 터미널 창을 여세요.",
+  "{folder} is not on your terminal's PATH yet, so a new terminal will not find the command.":
+    "{folder}이(가) 아직 터미널 PATH에 없어 새 터미널에서 명령을 찾지 못합니다.",
+  "The app could not read your terminal's PATH. If a new terminal says command not found, add this line.":
+    "앱이 터미널 PATH를 읽지 못했습니다. 새 터미널에서 command not found가 나오면 이 줄을 추가하세요.",
+  "Add it to {file}": "{file}에 추가",
+  "Adds only this line, marked as added by SpecWithCode. Remove takes it out again.":
+    "이 한 줄만 SpecWithCode 표시와 함께 추가합니다. 제거하면 다시 뺍니다.",
+  "Added to {file}. Open a new terminal window to use it.":
+    "{file}에 추가했습니다. 새 터미널 창을 여세요.",
+  "The specwithcode command is this app driven from a terminal: the same version as the app, talking to the app that is already running. It is not a second copy and needs no separate sign-in. Use it over SSH, on a machine with no screen, or in scripts and agents.":
+    "specwithcode 명령은 터미널에서 이 앱을 다루는 것입니다. 앱과 같은 버전이며 이미 실행 중인 앱과 통신합니다. 두 번째 사본이 아니고 따로 로그인할 필요도 없습니다. SSH, 화면 없는 머신, 스크립트와 에이전트에서 쓰세요.",
+  "What is this?": "이게 뭔가요?",
+  "Installing writes {path}, which runs the command inside the app, and adds {folder} to your user PATH. No administrator password.":
+    "설치하면 앱 안의 명령을 실행하는 {path}을(를) 만들고 {folder}을(를) 사용자 PATH에 추가합니다. 관리자 암호는 필요 없습니다.",
+  "Installing adds {path}, a link to the command inside the app. Nothing else changes, and no administrator password is needed.":
+    "설치하면 앱 안의 명령으로 가는 링크 {path}을(를) 추가합니다. 다른 것은 바뀌지 않으며 관리자 암호도 필요 없습니다.",
+  "Install command-line tool": "명령줄 도구 설치",
+  "Use this copy": "이 사본 사용",
+  "A different specwithcode at {path} comes first on your PATH, so a terminal runs that one instead. The app did not change it.":
+    "{path}에 있는 다른 specwithcode가 PATH에서 먼저 나와 터미널은 그것을 실행합니다. 앱은 바꾸지 않았습니다.",
+  "Command line": "명령줄",
+  "A development build has no command to install.": "개발 빌드에는 설치할 명령이 없습니다.",
+  "This copy of the app runs from a disk image or a temporary folder. Move SpecWithCode to Applications and open it from there first.":
+    "이 앱 사본은 디스크 이미지나 임시 폴더에서 실행 중입니다. 먼저 SpecWithCode를 응용 프로그램으로 옮기고 거기서 여세요.",
+  "This copy of the app has no specwithcode command inside it. Reinstall the app.":
+    "이 앱 사본에는 specwithcode 명령이 없습니다. 앱을 다시 설치하세요.",
+  "Add to PATH": "PATH에 추가",
+  "permission denied": "권한 없음",
+  "not found": "찾을 수 없음",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "앱이 작업하는 동안 {path}가 바뀌어 아무것도 바꾸지 않았습니다. 확인한 뒤 다시 시도하세요.",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "이 셸의 시작 파일을 알 수 없습니다. 줄을 직접 추가하세요.",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path}가 이미 있어 바꾸지 않았습니다. 줄을 직접 추가하세요.",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "{path}를 끝까지 읽지 못해 바꾸지 않았습니다. 줄을 직접 추가하세요.",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "{path}를 바꾸지 못했습니다({error}). 줄을 직접 추가하세요.",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "명령은 제거했지만 {path}의 줄을 빼지 못했습니다({error}). Added by SpecWithCode 표시가 있는 줄을 직접 지우세요.",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "명령은 제거했지만 {folder}가 아직 사용자 PATH에 있습니다. 환경 변수에서 직접 제거하세요.",
+  "Could not read your user PATH.": "사용자 PATH를 읽지 못했습니다.",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "사용자 PATH를 업데이트하지 못했습니다. {folder}를 직접 추가하세요.",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "앱이 업데이트하는 동안 사용자 PATH가 바뀌었습니다. 아무것도 바꾸지 않았으니 다시 시도하세요.",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "AppImage 경로를 명령에 쓸 수 없습니다. AppImage를 더 단순한 폴더로 옮긴 뒤 거기서 여세요.",
+  "Could not write {path} ({error}).": "{path}를 쓰지 못했습니다({error}).",
 };

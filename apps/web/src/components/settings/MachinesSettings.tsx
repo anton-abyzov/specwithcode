@@ -1,5 +1,6 @@
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
+import { CommandLineCard } from "./CommandLineCard";
 import { ConnectionsSettings } from "./ConnectionsSettings";
 import type { FleetMachineCardExtras } from "./StudioFleetConnections";
 import { MachineRemoteControl } from "./MachineRemoteControl";
@@ -366,6 +367,7 @@ export function MachinesSettingsPanel() {
               <HandoffModeSettings environmentId={fleet.primaryEnvironmentId} />
             ) : null}
             {parts.routing}
+            <CommandLineCard />
             <ThisMachineAdvanced>
               {parts.thisMachine}
               {parts.savedConnections}

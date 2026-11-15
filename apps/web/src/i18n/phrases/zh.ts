@@ -4860,4 +4860,69 @@ export const zh: PhraseCatalog = {
   "Catching up with this host…": "正在与此主机同步…",
   "Connection to this host failed": "连接此主机失败",
   "This host is not connected": "此主机未连接",
+  "Installed, matches this app ({version}).": "已安装，与此应用一致（{version}）。",
+  "Installed, version {version}; this app is {appVersion}.":
+    "已安装，版本 {version}；此应用为 {appVersion}。",
+  "Installed.": "已安装。",
+  "Installed, but it runs another copy of the app at {path}.":
+    "已安装，但它运行的是 {path} 处的另一个应用副本。",
+  "The command points at a copy of the app that is gone ({path}). Repair points it at this app.":
+    "该命令指向一个已不存在的应用副本（{path}）。修复会让它指向此应用。",
+  "{path} comes from the command-line install of SpecWithCode, which keeps it up to date. The app leaves it as it is.":
+    "{path} 来自 SpecWithCode 的命令行安装，由它保持最新。应用不会改动它。",
+  "Something else is already at {path}. The app will not replace it; move it away to install the app's command there.":
+    "{path} 已有其他文件。应用不会替换它；把它移走后才能在那里安装应用的命令。",
+  "Not installed.": "未安装。",
+  "Open a new terminal window to use it.": "打开一个新的终端窗口即可使用。",
+  "{folder} is not on your terminal's PATH yet, so a new terminal will not find the command.":
+    "{folder} 还不在终端的 PATH 中，新终端找不到该命令。",
+  "The app could not read your terminal's PATH. If a new terminal says command not found, add this line.":
+    "应用无法读取终端的 PATH。如果新终端提示 command not found，请添加这一行。",
+  "Add it to {file}": "添加到 {file}",
+  "Adds only this line, marked as added by SpecWithCode. Remove takes it out again.":
+    "只添加这一行，并标记为 SpecWithCode 添加。移除会再删掉它。",
+  "Added to {file}. Open a new terminal window to use it.":
+    "已添加到 {file}。打开新的终端窗口即可使用。",
+  "The specwithcode command is this app driven from a terminal: the same version as the app, talking to the app that is already running. It is not a second copy and needs no separate sign-in. Use it over SSH, on a machine with no screen, or in scripts and agents.":
+    "specwithcode 命令就是在终端里操作此应用：版本相同，并与已在运行的应用通信。它不是第二个副本，也不需要单独登录。可用于 SSH、没有屏幕的机器、脚本和代理。",
+  "What is this?": "这是什么？",
+  "Installing writes {path}, which runs the command inside the app, and adds {folder} to your user PATH. No administrator password.":
+    "安装会写入 {path}（它运行应用内的命令），并把 {folder} 加入你的用户 PATH。无需管理员密码。",
+  "Installing adds {path}, a link to the command inside the app. Nothing else changes, and no administrator password is needed.":
+    "安装会添加 {path}，即指向应用内命令的链接。其他都不变，也不需要管理员密码。",
+  "Install command-line tool": "安装命令行工具",
+  "Use this copy": "使用此副本",
+  "A different specwithcode at {path} comes first on your PATH, so a terminal runs that one instead. The app did not change it.":
+    "{path} 处另一个 specwithcode 在 PATH 中排在前面，终端会运行它。应用没有改动它。",
+  "Command line": "命令行",
+  "A development build has no command to install.": "开发版本没有可安装的命令。",
+  "This copy of the app runs from a disk image or a temporary folder. Move SpecWithCode to Applications and open it from there first.":
+    "此应用副本从磁盘映像或临时文件夹运行。请先把 SpecWithCode 移到“应用程序”并从那里打开。",
+  "This copy of the app has no specwithcode command inside it. Reinstall the app.":
+    "此应用副本中没有 specwithcode 命令。请重新安装应用。",
+  "Add to PATH": "添加到 PATH",
+  "permission denied": "没有权限",
+  "not found": "未找到",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "应用处理期间 {path} 发生了变化，因此没有替换任何内容。请检查后重试。",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "应用不知道此 shell 的启动文件。请自行添加这一行。",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path} 已存在，未作更改。请自行添加这一行。",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "无法完整读取 {path}，因此应用没有修改它。请自行添加这一行。",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "无法修改 {path}（{error}）。请自行添加这一行。",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "命令已删除，但无法移除 {path} 中的那一行（{error}）。请自行删除标有 Added by SpecWithCode 的行。",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "命令已删除，但 {folder} 仍在你的用户 PATH 中。请在“环境变量”中自行移除。",
+  "Could not read your user PATH.": "无法读取你的用户 PATH。",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "无法更新你的用户 PATH。请自行添加 {folder}。",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "应用更新期间你的用户 PATH 发生了变化。未作任何更改，请重试。",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "无法把 AppImage 的路径写入命令。请把 AppImage 移到更简单的文件夹，再从那里打开。",
+  "Could not write {path} ({error}).": "无法写入 {path}（{error}）。",
 };
