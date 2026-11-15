@@ -5,11 +5,15 @@
  * opens that thread, with its state and the machine it runs on in that
  * machine's color. A thread that moved shows the arrow the thread list shows.
  */
-import type { EnvironmentId } from "@specweave-studio/contracts";
+import {
+  THREAD_INCREMENT_PROGRESS_MAX_THREADS,
+  type EnvironmentId,
+  type ProjectId,
+  type ThreadId,
+} from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
-import { scopeThreadRef, scopedThreadKey } from "@specweave-studio/client-runtime/environment";
 import { LaptopIcon, WifiOffIcon } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useEnvironments } from "../../../state/environments";
 import { useMachineIdentities } from "../../../studio/machineIdentity";
@@ -23,8 +27,10 @@ import {
 } from "../../../studio/shellModel";
 import { threadLocation, type ThreadLocation } from "../../../studio/threadLocation";
 import { useUnreachableHosts } from "../../../studio/unreachableHosts";
-import { useProjectThreadIncrementProgress } from "../../../studio/useThreadIncrementProgress";
-import { useSidebarThreadPlans } from "../../sidebar/SidebarPlanProgress";
+import {
+  useThreadIncrementState,
+  type ThreadIncrementState,
+} from "../../../studio/useThreadIncrementProgress";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 
 export interface BoardThread {
@@ -39,9 +45,73 @@ export interface BoardThread {
 }
 
 /**
- * Each increment's threads, by increment id. Threads on this machine are read
- * in one query; threads on other machines through one query per machine, the
- * way the thread list reads them. `loaders` must be rendered.
+ * One read answers for 100 threads, and a long-lived project has more, so the
+ * board reads in pages: per machine, the threads still at work first, then the
+ * newest. Past this many pages a machine's oldest threads are left unread and
+ * the board stops claiming a card is free.
+ */
+export const BOARD_THREAD_PAGES = 5;
+
+interface BoardThreadPage {
+  readonly key: string;
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly threadIds: ReadonlyArray<ThreadId>;
+  readonly activityKey: string;
+}
+
+/** The pages to read, and whether some thread fits in none of them. */
+export function boardThreadPages(threads: ReadonlyArray<EnvironmentThreadShell>): {
+  readonly pages: ReadonlyArray<BoardThreadPage>;
+  readonly cut: boolean;
+} {
+  const byMachine = new Map<string, EnvironmentThreadShell[]>();
+  for (const thread of threads) {
+    if (thread.archivedAt !== null) continue;
+    const key = `${thread.environmentId}\u0000${thread.projectId}`;
+    byMachine.set(key, [...(byMachine.get(key) ?? []), thread]);
+  }
+  const pages: BoardThreadPage[] = [];
+  let cut = false;
+  for (const [key, held] of byMachine) {
+    const ordered = held.toSorted(
+      (left, right) =>
+        Number(threadTone(left) === "resolved") - Number(threadTone(right) === "resolved") ||
+        right.updatedAt.localeCompare(left.updatedAt),
+    );
+    const limit = BOARD_THREAD_PAGES * THREAD_INCREMENT_PROGRESS_MAX_THREADS;
+    if (ordered.length > limit) cut = true;
+    for (let start = 0; start < Math.min(ordered.length, limit); ) {
+      const page = ordered.slice(start, start + THREAD_INCREMENT_PROGRESS_MAX_THREADS);
+      pages.push({
+        key: `${key}\u0000${start}`,
+        environmentId: page[0]!.environmentId,
+        projectId: page[0]!.projectId,
+        threadIds: page.map((thread) => thread.id),
+        activityKey: page.reduce(
+          (latest, thread) => (thread.updatedAt > latest ? thread.updatedAt : latest),
+          "",
+        ),
+      });
+      start += THREAD_INCREMENT_PROGRESS_MAX_THREADS;
+    }
+  }
+  return { pages, cut };
+}
+
+const BoardThreadPageLoader = memo(function BoardThreadPageLoader(props: {
+  page: BoardThreadPage;
+  onChange: (key: string, state: ThreadIncrementState) => void;
+}) {
+  const { page, onChange } = props;
+  const state = useThreadIncrementState(page);
+  useEffect(() => onChange(page.key, state), [onChange, page.key, state]);
+  return null;
+});
+
+/**
+ * Each increment's threads, by increment id, on this machine and on the
+ * others that serve the project. `loaders` must be rendered: they do the reads.
  */
 export function useBoardThreads(input: {
   readonly environmentId: EnvironmentId;
@@ -50,21 +120,39 @@ export function useBoardThreads(input: {
 }): {
   readonly byIncrement: ReadonlyMap<string, ReadonlyArray<BoardThread>>;
   /**
-   * False until this machine's threads have said which increment each works
-   * on: an empty card then means "not known yet", not "nobody is on it".
+   * False until every thread has said which increment it works on: an empty
+   * card then means "not known yet", not "nobody is on it".
    */
   readonly answered: boolean;
   /** Threads run on more than one machine, so each line names its own. */
   readonly multiMachine: boolean;
   readonly loaders: ReactNode;
 } {
-  const { environmentId, threads, machineLabels } = input;
-  const { progress, answered } = useProjectThreadIncrementProgress(environmentId, threads);
-  const elsewhere = useMemo(
-    () => threads.filter((thread) => thread.environmentId !== environmentId),
-    [environmentId, threads],
+  const { threads, machineLabels } = input;
+  const { pages, cut } = useMemo(() => boardThreadPages(threads), [threads]);
+  const [states, setStates] = useState(() => new Map<string, ThreadIncrementState>());
+  const onChange = useCallback(
+    (key: string, state: ThreadIncrementState) =>
+      setStates((current) =>
+        current.get(key) === state ? current : new Map(current).set(key, state),
+      ),
+    [],
   );
-  const { plans, loaders } = useSidebarThreadPlans(elsewhere);
+  const loaders = useMemo(
+    () =>
+      pages.map((page) => (
+        <BoardThreadPageLoader key={page.key} page={page} onChange={onChange} />
+      )),
+    [onChange, pages],
+  );
+  const answered = !cut && pages.every((page) => states.get(page.key)?.answered === true);
+  const links = useMemo(() => {
+    const result = new Map<string, string>();
+    for (const page of pages)
+      for (const [threadId, entry] of states.get(page.key)?.progress ?? [])
+        result.set(`${page.environmentId}\u0000${threadId}`, entry.incrementId);
+    return result;
+  }, [pages, states]);
   const unreachable = useUnreachableHosts();
   const { environments } = useEnvironments();
   const nickname = useMachineNicknames();
@@ -94,10 +182,7 @@ export function useBoardThreads(input: {
         unreachable,
       });
       machines.add(machine.executionMachineId);
-      const incrementId =
-        thread.environmentId === environmentId
-          ? progress.get(thread.id)?.incrementId
-          : plans.get(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))?.label;
+      const incrementId = links.get(`${thread.environmentId}\u0000${thread.id}`);
       if (!incrementId) continue;
       const offline = machine.state === "unknown";
       const held = grouped.get(incrementId) ?? [];
@@ -117,13 +202,11 @@ export function useBoardThreads(input: {
       multiMachine: machines.size > 1 || (machineLabels?.size ?? 0) > 1,
     };
   }, [
-    environmentId,
     environments,
     identity,
+    links,
     machineLabels,
     nickname,
-    plans,
-    progress,
     threads,
     unreachable,
   ]);

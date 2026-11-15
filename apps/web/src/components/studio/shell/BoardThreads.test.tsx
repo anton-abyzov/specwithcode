@@ -1,28 +1,31 @@
 // @vitest-environment jsdom
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
-import { scopeThreadRef, scopedThreadKey } from "@specweave-studio/client-runtime/environment";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const runtime = vi.hoisted(() => ({
-  progress: new Map<string, { incrementId: string }>(),
+  /** `${environmentId}:${threadId}` to increment id. */
+  links: new Map<string, string>(),
   answered: true,
-  plans: new Map<string, { label: string }>(),
-  elsewhere: [] as string[],
+  reads: [] as string[][],
 }));
+const cache = new Map<string, unknown>();
 vi.mock("../../../studio/useThreadIncrementProgress", () => ({
-  useProjectThreadIncrementProgress: () => ({
-    progress: runtime.progress,
-    unplanned: new Set(),
-    answered: runtime.answered,
-  }),
-}));
-vi.mock("../../sidebar/SidebarPlanProgress", () => ({
-  useSidebarThreadPlans: (threads: ReadonlyArray<{ id: string }>) => {
-    runtime.elsewhere = threads.map((thread) => thread.id);
-    return { plans: runtime.plans, loaders: null };
+  useThreadIncrementState: (input: { environmentId: string; threadIds: string[] }) => {
+    const key = `${input.environmentId}|${input.threadIds.join(",")}|${runtime.answered}`;
+    let state = cache.get(key);
+    if (!state) {
+      runtime.reads.push(input.threadIds);
+      const progress = new Map<string, { incrementId: string }>();
+      for (const id of input.threadIds) {
+        const incrementId = runtime.links.get(`${input.environmentId}:${id}`);
+        if (incrementId) progress.set(id, { incrementId });
+      }
+      cache.set(key, (state = { progress, unplanned: new Set(), answered: runtime.answered }));
+    }
+    return state;
   },
 }));
 const ENVIRONMENTS = {
@@ -39,7 +42,7 @@ vi.mock("../../../studio/machineNickname", () => ({ useMachineNicknames: () => n
 const identity = (id: string) => ({ color: id === "host" ? "violet" : "teal" });
 vi.mock("../../../studio/machineIdentity", () => ({ useMachineIdentities: () => identity }));
 
-const { useBoardThreads } = await import("./BoardThreads");
+const { BOARD_THREAD_PAGES, useBoardThreads } = await import("./BoardThreads");
 
 const thread = (id: string, environmentId: string, extra: object = {}) =>
   ({
@@ -67,32 +70,30 @@ describe("useBoardThreads", () => {
   let seen: ReturnType<typeof useBoardThreads>;
   function Probe({ threads }: { threads: EnvironmentThreadShell[] }) {
     seen = useBoardThreads({ environmentId: "host" as EnvironmentId, threads });
-    return null;
+    return <>{seen.loaders}</>;
   }
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
-    runtime.progress = new Map();
-    runtime.plans = new Map();
+    runtime.links = new Map();
     runtime.answered = true;
+    runtime.reads = [];
+    cache.clear();
   });
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
     vi.unstubAllGlobals();
   });
-  const key = (environmentId: string, id: string) =>
-    scopedThreadKey(scopeThreadRef(environmentId as EnvironmentId, id as never));
-
   it("joins threads on this machine and on others to their increment, by folder name", async () => {
-    runtime.progress = new Map([
-      ["a", { incrementId: "0002-build" }],
-      ["moved", { incrementId: "0002-build" }],
-      ["gone", { incrementId: "0002-build" }],
+    runtime.links = new Map([
+      ["host:a", "0002-build"],
+      ["host:moved", "0002-build"],
+      ["host:gone", "0002-build"],
+      ["other:b", "0002-build"],
     ]);
-    runtime.plans = new Map([[key("other", "b"), { label: "0002-build" }]]);
     const threads = [
       thread("a", "host", { runtime: { status: "running" } }),
       thread("moved", "host", {
@@ -104,8 +105,8 @@ describe("useBoardThreads", () => {
       thread("gone", "host", { archivedAt: "2026-11-14T09:30:00Z" }),
     ];
     await act(async () => root.render(<Probe threads={threads} />));
-    // Only another machine's threads are read through the per-machine plans.
-    expect(runtime.elsewhere).toEqual(["b"]);
+    // One read per machine; the archived thread is not asked about.
+    expect(runtime.reads.map((ids) => ids.toSorted())).toEqual([["a", "free", "moved"], ["b"]]);
     expect([...seen.byIncrement.keys()]).toEqual(["0002-build"]);
     const lines = seen.byIncrement.get("0002-build")!;
     // The one that needs the person leads; the archived and the unlinked are left out.
@@ -124,6 +125,33 @@ describe("useBoardThreads", () => {
     await act(async () => root.render(<Probe threads={[thread("a", "host")]} />));
     expect(seen.byIncrement.size).toBe(0);
     expect(seen.multiMachine).toBe(false);
+    expect(seen.answered).toBe(false);
+  });
+
+  it("reads a long project in pages, the threads at work first", async () => {
+    const threads = [
+      ...Array.from({ length: 150 }, (_, index) =>
+        thread(`old${index}`, "host", { settledOverride: "settled" }),
+      ),
+      thread("busy", "host", { runtime: { status: "running" }, updatedAt: "2026-11-01T00:00:00Z" }),
+    ];
+    runtime.links = new Map([
+      ["host:busy", "0002-build"],
+      ["host:old149", "0001-plan"],
+    ]);
+    await act(async () => root.render(<Probe threads={threads} />));
+    expect(runtime.reads.map((ids) => ids.length)).toEqual([100, 51]);
+    expect(runtime.reads[0]![0]).toBe("busy");
+    expect([...seen.byIncrement.keys()].toSorted()).toEqual(["0001-plan", "0002-build"]);
+    expect(seen.answered).toBe(true);
+  });
+
+  it("stops calling cards free when a machine has more threads than it reads", async () => {
+    const threads = Array.from({ length: BOARD_THREAD_PAGES * 100 + 1 }, (_, index) =>
+      thread(`t${index}`, "host"),
+    );
+    await act(async () => root.render(<Probe threads={threads} />));
+    expect(runtime.reads).toHaveLength(BOARD_THREAD_PAGES);
     expect(seen.answered).toBe(false);
   });
 });
