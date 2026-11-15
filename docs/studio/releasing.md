@@ -560,6 +560,14 @@ matches its hash, then adds the files and `SHA256SUMS-windows-linux` to both rel
 published. It never uploads or replaces a name `release.sh` uses and checks afterwards that
 `latest-mac.yml` and `SHA256SUMS` are unchanged.
 
+Each installer is also attached under a name without the version, a byte copy made by the helper's
+`collect` step: `SpecWithCode-x64.exe`, `SpecWithCode-arm64.exe`, `SpecWithCode-x86_64.AppImage`,
+`SpecWithCode-arm64.AppImage`, `SpecWithCode-amd64.deb` and `SpecWithCode-arm64.deb`, so
+`releases/latest/download/<name>` links reach the newest one as `SpecWithCode-arm64.dmg` does on the
+Mac. `SHA256SUMS-windows-linux` lists them; no feed names them, so updaters never read them. The
+run also attaches `scripts/install.ps1` from the release's commit as `install.ps1`. A new attach
+without these is refused; a release attached before them still counts as complete.
+
 How it runs:
 
 - **Once per release, dispatched.** After a release is published, the release tooling dispatches a
@@ -577,6 +585,18 @@ How it runs:
   published release starts the real run itself, about 2.5 minutes sooner than the release-macos
   post-job can, and `release.sh` then skips its own dispatch. The post-job still dispatches when
   that run failed or was cancelled.
+- **Retry after a failed on-publish run.** The post-job usually runs while the on-publish run is
+  still building, counts it as started and dispatches nothing. So when that run fails, or a job
+  of it runs into its timeout, its last job (`retry`) dispatches one real run for the version
+  itself. It does nothing when a person cancelled the run, when the release is a draft, a
+  prerelease or gone, when a dispatched run for the version is going or has succeeded, or when
+  the release already holds the apps. A release that holds only part of them fails the job with
+  the `replace` dispatch that repairs it. A dispatched run that fails is not retried, so there is
+  one retry per published release (re-running the failed run by hand may dispatch once more);
+  after that the daily catch-up is the only automatic attempt, and only for the newest release.
+  Near 07:23 UTC the retry and the catch-up can both build the newest release. The second to
+  upload finds the files there: a catch-up run then ends green, a dispatched run red, and the
+  release is complete either way.
 
 Until it has run, Windows and Linux desktop installs find no `latest.yml` or `latest-linux.yml` on
 the new Latest release, report a failed update check and stay on their version. The slowest leg
@@ -688,8 +708,13 @@ signing step, and the release attach waits until it is replaced.
 GPG release key in the `LINUX_UPDATE_SIGNING_KEY` secret (armored, no passphrase; ed25519
 `B10CBBD0F4893ACD3FF6F256563A3A098EE4C0D7`, expires November 5, 2029). It uploads the detached
 `.asc` signatures and the public key as `specwithcode-release-key.asc`, checks every signature with
-`gpgv` first, and refuses a real run without the secret. Replacing the key means a new public key
-on every later release and a new fingerprint in [install](../user/install.md#verify-a-download).
+`gpgv` first, and refuses a real run without the secret. After the upload it also signs each
+release's own `SHA256SUMS` (written by `release.sh`) with the same key and uploads only
+`SHA256SUMS.asc`; `SHA256SUMS` is never changed. That is its own job (Sign the macOS checksums),
+which also runs on a daily catch-up that finds the attach complete, so a missing `SHA256SUMS.asc` or
+one that no longer verifies is redone by the next run. The version-free AppImage and `.deb` copies
+get their own `.asc` too. Replacing the key means a new public key on every later release and a new
+fingerprint in [install](../user/install.md#verify-a-download).
 
 While the repository is public, `actions/attest-build-provenance` attests every Windows and Linux
 file a real run uploads, and `attest-macos.yml` (called by `release.yml` and `release-macos.yml`,

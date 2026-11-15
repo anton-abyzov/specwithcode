@@ -21,3 +21,5 @@ export const VoiceConsentDialog = () => null;
 export function VoiceSettings({ controlledOpen }: { controlledOpen?: boolean }) {
   return controlledOpen ? <div role="dialog">Voice settings</div> : null;
 }
+export const modelLabel = (model: string) => model;
+export const shortMachineName = (label: string) => label;

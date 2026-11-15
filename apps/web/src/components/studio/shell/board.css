@@ -1,0 +1,230 @@
+/* The project panel's Board tab (BoardPane.tsx, BoardThreads.tsx). */
+.sws-board {
+  container: sws-board / inline-size;
+}
+.sws-board-columns {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sws-board-column {
+  min-width: 0;
+}
+.sws-board-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sws-board-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+}
+.sws-board-card:has(button.sws-board-card-open:hover) {
+  background: var(--accent);
+}
+.sws-board-card[data-blocked] {
+  border-color: color-mix(in srgb, var(--shell-waiting) 45%, var(--border));
+}
+.sws-board-card-open {
+  width: 100%;
+  padding: 8px 10px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  border-radius: var(--radius-lg);
+}
+button.sws-board-card-open {
+  cursor: pointer;
+}
+.sws-board-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
+.sws-board-card-id {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.sws-board-card-title {
+  font-size: var(--text-compact);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--foreground);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.sws-board-meter {
+  height: 3px;
+  margin-top: 4px;
+  border-radius: 9999px;
+  background: var(--border);
+  overflow: hidden;
+}
+.sws-board-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 9999px;
+  background: var(--shell-done);
+}
+.sws-board-card-chips {
+  padding: 0 10px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.sws-board-chip-blocked {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--shell-waiting) 14%, transparent);
+  color: var(--shell-waiting);
+}
+.sws-board-more {
+  width: 100%;
+  height: 30px;
+  margin-top: 4px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.sws-board-more:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.sws-board-more:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+/* The machine the card's work runs on colors its leading edge. */
+.sws-board-card[data-machine-color] {
+  box-shadow: inset 3px 0 0 var(--machine);
+}
+.sws-board-threads {
+  margin: 0;
+  padding: 0 6px 6px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.sws-board-threads li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.sws-board-thread {
+  flex: 1;
+  min-width: 0;
+  min-height: 24px;
+  padding: 2px 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.sws-board-thread:hover,
+.sws-board-thread-more:hover {
+  background: var(--accent);
+}
+.sws-board-thread-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sws-board-thread-status {
+  flex: none;
+  color: var(--muted-foreground);
+}
+.sws-board-thread[data-tone="waiting"] .sws-board-thread-status {
+  color: var(--shell-waiting);
+}
+.sws-board-thread[data-tone="failed"] .sws-board-thread-status {
+  color: var(--destructive-foreground);
+}
+.sws-board-thread-more {
+  padding: 2px 4px 2px 17px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.sws-board-machine {
+  flex: none;
+  max-width: 45%;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--text-compact);
+  font-weight: 500;
+}
+.sws-board-machine svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+.sws-board-machine[data-execution="unknown"] svg {
+  color: var(--warning-foreground, currentColor);
+}
+/* It moved here from the machine that owns it: the arrow keeps a quieter tone. */
+.sws-board-machine-arrow {
+  color: var(--muted-foreground);
+}
+.sws-board-chip-ask {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+  color: var(--primary);
+}
+.sws-board-chip-ask:hover {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+.sws-board-setup {
+  max-width: 560px;
+  margin: 12px auto;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sws-board-setup > h3 {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+.sws-board-setup > p {
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+}
+/* Wide enough for four columns: the expanded panel, or a wide window. */
+@container sws-board (min-width: 720px) {
+  .sws-board-columns {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: start;
+    gap: 10px;
+  }
+  .sws-board-column {
+    order: 0 !important;
+    padding: 2px 8px 8px;
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--muted) 55%, transparent);
+  }
+  .sws-board-card {
+    background: var(--background);
+  }
+}

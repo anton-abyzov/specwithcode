@@ -86,6 +86,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../../ui/menu";
+import { toastManager } from "../../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { ThreadModelBadge, useProviderEntriesByEnvironment } from "./ModelBadge";
 import { PlanProgressChip } from "../PlanProgressChip";
@@ -154,6 +155,12 @@ export function ThreadsPane({
   findRef: RefObject<HTMLInputElement | null>;
   onOpen: (id: ThreadId, environmentId?: EnvironmentId) => void;
   canChangeThread?: (thread: EnvironmentThreadShell) => boolean;
+  /**
+   * Why a row's Resolve or Reopen cannot run from here, or null when it can. A thread resolves
+   * on the machine that runs it, so this is not `canChangeThread`, which is about this machine.
+   * Without it the row follows `canChangeThread`, then `canChange`.
+   */
+  resolveBlockedReason?: (thread: EnvironmentThreadShell) => string | null;
   machineLabels?: ReadonlyMap<string, string>;
   onToggleResolved: (thread: EnvironmentThreadShell) => void;
   /**
@@ -973,6 +980,9 @@ export function ThreadsPane({
                     const settled = thread.settledOverride === "settled";
                     const archived = thread.archivedAt !== null;
                     const action = archived || settled ? "Reopen" : "Resolve";
+                    const resolveBlockedText = props.resolveBlockedReason?.(thread) ?? null;
+                    const resolveBlocked =
+                      resolveBlockedText === null ? null : say(resolveBlockedText);
                     // The group heading already says "Working" or "Needs you"; a row
                     // names only a more specific state, such as "Answer needed".
                     const statusWord =
@@ -1165,17 +1175,31 @@ export function ThreadsPane({
                               props.onOpen(threadId, environmentId)
                             }
                           />
-                          <Tip label={`${action} ${thread.title}`}>
+                          <Tip label={resolveBlocked ?? `${action} ${thread.title}`}>
                             <button
                               type="button"
                               className="sws-thread-action"
                               disabled={
-                                props.canChangeThread
-                                  ? !props.canChangeThread(thread)
-                                  : !props.canChange
+                                props.resolveBlockedReason
+                                  ? false
+                                  : props.canChangeThread
+                                    ? !props.canChangeThread(thread)
+                                    : !props.canChange
                               }
+                              // Blocked says why on hover and on click: a disabled button does neither.
+                              aria-disabled={resolveBlocked !== null || undefined}
                               aria-label={action}
                               onClick={() => {
+                                if (resolveBlocked !== null) {
+                                  toastManager.add({
+                                    // One notice per thread, however often it is clicked.
+                                    id: `thread-resolve-blocked:${thread.environmentId}:${thread.id}`,
+                                    type: "warning",
+                                    title: say(`Can't ${action.toLowerCase()} this thread`),
+                                    description: resolveBlocked,
+                                  });
+                                  return;
+                                }
                                 // Show where it went, so the same row can undo it.
                                 if (action === "Resolve") setGroupFolded("Resolved", false);
                                 props.onToggleResolved(thread);

@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, ProjectId } from "@specweave-studio/contracts";
+import { CommandId, ProjectId, ProviderInstanceId } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -107,5 +107,58 @@ it.effect("gives new projects Use worktrees from Settings, never changing existi
     // Turned off again, projects keep their own switches.
     yield* settings.updateSettings({ newProjectThreadEnvMode: "local" });
     assert.equal(yield* switchOf("after"), "worktree");
+  }).pipe(Effect.provide(Layer.merge(layerTest, ServerSettings.layerTest()))),
+);
+
+it.effect("starts new projects on the model tracks, never one that names its model", () =>
+  Effect.gen(function* () {
+    const service = yield* ProjectService.ProjectService;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const modeOf = (name: string) =>
+      settings.getSettings.pipe(
+        Effect.map(
+          (current) =>
+            current.projectSettingsOverrides[ProjectId.make(`project:${name}`)]?.threadModelMode,
+        ),
+      );
+
+    yield* createCode(service, "fresh");
+    assert.equal(yield* modeOf("fresh"), "tracks");
+
+    // A creator that names the worker model chose one model.
+    yield* service.create({
+      commandId: CommandId.make("code:named"),
+      projectId: ProjectId.make("project:named"),
+      title: "named",
+      workspaceRoot: "/fixtures/example-studio/named",
+      initialWorkerModelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-6.1-sol",
+      },
+    });
+    assert.isUndefined(yield* modeOf("named"));
+
+    // A copy arriving from another machine and the personal assistant keep one model.
+    yield* service.create({
+      commandId: CommandId.make("code:moved"),
+      projectId: ProjectId.make("project:moved"),
+      title: "moved",
+      workspaceRoot: "/fixtures/example-studio/moved",
+      initialLogicalProject: {
+        id: "logical:moved",
+        title: "moved",
+        coordinatorId: "coordinator:logical:moved",
+        members: [],
+      },
+    });
+    assert.isUndefined(yield* modeOf("moved"));
+    yield* service.create({
+      commandId: CommandId.make("assistant:percy"),
+      projectId: ProjectId.make("project:percy"),
+      title: "Percy",
+      kind: "personal",
+      workspaceRoot: "/fixtures/example-household/percy",
+    });
+    assert.isUndefined(yield* modeOf("percy"));
   }).pipe(Effect.provide(Layer.merge(layerTest, ServerSettings.layerTest()))),
 );

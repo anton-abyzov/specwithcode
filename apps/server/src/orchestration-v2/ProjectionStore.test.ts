@@ -4309,6 +4309,19 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       assert.deepEqual(followingPage.items, targetAfterRollback.visibleTurnItems.slice(2));
       assert.isFalse(followingPage.hasMore);
+      // Backward: the newest items before a position, and whether older ones remain.
+      const lastPosition = targetAfterRollback.visibleTurnItems.length - 1;
+      const backwardPage = yield* projectionStore.getTimelinePage(targetThreadId, {
+        view: "activity",
+        limit: 1,
+        beforePosition: lastPosition,
+      });
+      assert.deepEqual(
+        backwardPage.items,
+        targetAfterRollback.visibleTurnItems.slice(lastPosition - 1, lastPosition),
+      );
+      assert.isTrue(backwardPage.hasMore);
+      assert.equal(backwardPage.hasEarlier, lastPosition > 1);
 
       assert.deepEqual(
         targetAfterRollback.visibleTurnItems.map((row) => [

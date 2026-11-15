@@ -105,7 +105,7 @@ async function isDirectory(path: string): Promise<boolean> {
 }
 
 /** A file inside `root` after resolving links, no bigger than `maximum`; null otherwise. */
-async function readBounded(root: string, file: string, maximum: number): Promise<string | null> {
+export async function readBounded(root: string, file: string, maximum: number): Promise<string | null> {
   try {
     const real = await NodeFSP.realpath(file);
     if (!inside(await NodeFSP.realpath(root), real)) return null;
@@ -802,7 +802,7 @@ async function incrementMeta(root: string, file: string): Promise<IncrementMeta>
 }
 
 /** The increment folder names in the thread's checkout, newest first; no file is opened. */
-async function incrementIds(root: string): Promise<string[]> {
+export async function incrementIds(root: string): Promise<string[]> {
   const names = await NodeFSP.readdir(NodePath.join(root, INCREMENTS_DIR), {
     withFileTypes: true,
   }).catch(() => []);

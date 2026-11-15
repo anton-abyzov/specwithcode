@@ -47,11 +47,16 @@ function isSumsFile(name: string): boolean {
   return name === WINDOWS_LINUX_SUMS || name === WINDOWS_LINUX_SUMS_SIGNATURE;
 }
 
-/** The Linux packages in a directory that get a detached `.asc` signature beside them. */
+/**
+ * The Linux packages in a directory that get a detached `.asc` signature beside them: the
+ * versioned ones and their version-free copies, so `gpg --verify SpecWithCode-amd64.deb.asc`
+ * works for a file downloaded from a latest link.
+ */
 export function linuxPackagesToSign(names: ReadonlyArray<string>, version: string): string[] {
   const v = escapeRegExp(version);
-  const pattern = new RegExp(`^SpecWithCode-${v}-(?:x86_64|arm64|amd64)\\.(?:AppImage|deb)$`);
-  return names.filter((name) => pattern.test(name)).sort();
+  const versioned = new RegExp(`^SpecWithCode-${v}-(?:x86_64|arm64|amd64)\\.(?:AppImage|deb)$`);
+  const versionFree = /^SpecWithCode-(?:x86_64\.AppImage|arm64\.AppImage|amd64\.deb|arm64\.deb)$/;
+  return names.filter((name) => versioned.test(name) || versionFree.test(name)).sort();
 }
 
 export function isStableVersion(version: string): boolean {
@@ -133,6 +138,47 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * The installer under a name without its version (`SpecWithCode-x64.exe`), so a link to
+ * `releases/latest/download/<name>` always fetches the newest one, as `SpecWithCode-arm64.dmg`
+ * does for the Mac (scripts/build-desktop-artifact.ts resolveStableDmgAssetName). Only the
+ * version is dropped; the arch words stay electron-builder's. Updaters never read these: the
+ * feeds list the versioned files. Undefined for any other file.
+ */
+export function versionFreeAssetName(name: string, version: string): string | undefined {
+  const v = escapeRegExp(version);
+  const match = new RegExp(
+    `^SpecWithCode-${v}-((?:x64|arm64)\\.exe|(?:x86_64|arm64)\\.AppImage|(?:amd64|arm64)\\.deb)$`,
+  ).exec(name);
+  return match ? `SpecWithCode-${match[1]}` : undefined;
+}
+
+/** The version-free installers of one build, as versionFreeAssetName names them. */
+export function versionFreeAssetNames(platform: Platform, arch: Arch = "x64"): string[] {
+  if (platform === "win") return [`SpecWithCode-${arch}.exe`];
+  return arch === "arm64"
+    ? ["SpecWithCode-arm64.AppImage", "SpecWithCode-arm64.deb"]
+    : ["SpecWithCode-x86_64.AppImage", "SpecWithCode-amd64.deb"];
+}
+
+/** Every version-free installer a release carries, both platforms and both arches. */
+export const VERSION_FREE_ASSETS: ReadonlyArray<string> = (["win", "linux"] as const).flatMap(
+  (platform) => (["x64", "arm64"] as const).flatMap((arch) => versionFreeAssetNames(platform, arch)),
+);
+
+/**
+ * The Windows CLI installer, attached so `irm .../releases/latest/download/install.ps1 | iex`
+ * works. release.sh attaches install.sh the same way.
+ */
+export const INSTALL_PS1 = "install.ps1";
+
+/**
+ * The detached signature of release.sh's SHA256SUMS. This workflow makes it with the key that
+ * signs SHA256SUMS-windows-linux and uploads it on its own, after the checks; SHA256SUMS itself
+ * is never touched. No checksum file lists it.
+ */
+export const MAC_SUMS_SIGNATURE = "SHA256SUMS.asc";
+
 /** Every name this workflow may put on a release. Anything else is left to release.sh. */
 export function isWindowsLinuxAssetName(name: string, version: string): boolean {
   const v = escapeRegExp(version);
@@ -141,6 +187,10 @@ export function isWindowsLinuxAssetName(name: string, version: string): boolean 
     new RegExp(`^SpecWithCode-${v}-(?:x86_64|arm64)\\.AppImage(?:\\.blockmap|\\.asc)?$`),
     new RegExp(`^SpecWithCode-${v}-(?:amd64|arm64)\\.deb(?:\\.asc)?$`),
     new RegExp(`^studio-${v}-win32-(?:x64|arm64)\\.zip$`),
+    /^SpecWithCode-(?:x64|arm64)\.exe$/,
+    /^SpecWithCode-(?:x86_64|arm64)\.AppImage(?:\.asc)?$/,
+    /^SpecWithCode-(?:amd64|arm64)\.deb(?:\.asc)?$/,
+    /^install\.ps1$/,
     /^latest\.yml$/,
     /^latest-linux(?:-arm64)?\.yml$/,
     new RegExp(`^${escapeRegExp(WINDOWS_LINUX_SUMS)}(?:\\.asc)?$`),
@@ -402,6 +452,11 @@ export function planUpload(input: {
         problems.push(`${name} is missing`);
     }
   }
+  // New attaches always carry the version-free installers and install.ps1, so the latest links
+  // on the download page and in the docs never point at a release without them.
+  for (const name of [...VERSION_FREE_ASSETS, INSTALL_PS1]) {
+    if (!input.localNames.includes(name)) problems.push(`${name} is missing`);
+  }
   if (!input.localNames.includes(WINDOWS_LINUX_SUMS))
     problems.push(`${WINDOWS_LINUX_SUMS} is missing`);
   return { upload: [...input.localNames].sort(), problems };
@@ -490,6 +545,14 @@ export function attachState(input: {
     for (const name of sums.keys()) {
       if (!byName.has(name))
         problems.push(`${WINDOWS_LINUX_SUMS} lists ${name}, which the release lacks`);
+    }
+    // Releases attached before the version-free names existed lack them and stay complete; where
+    // one is there it must be the same bytes as the versioned installer it copies.
+    for (const [name, sha256] of sums) {
+      const free = versionFreeAssetName(name, input.version);
+      if (free === undefined || !sums.has(free)) continue;
+      if (sums.get(free) !== sha256)
+        problems.push(`${free} is not the same file as ${name} in ${WINDOWS_LINUX_SUMS}`);
     }
   }
   for (const name of [
@@ -648,6 +711,16 @@ function collect(args: ReturnType<typeof parseArgs>): void {
     if (locate(name) === undefined) problems.push(`the build did not produce ${name}`);
     names.add(name);
   }
+  // Each installer again under its version-free name, a byte copy made here so the build output
+  // and the feed stay exactly as electron-builder wrote them.
+  const copies = new Map<string, string>();
+  for (const name of names) {
+    const free = versionFreeAssetName(name, version);
+    if (free !== undefined) copies.set(free, name);
+  }
+  for (const free of versionFreeAssetNames(platform, arch)) {
+    if (!copies.has(free)) problems.push(`the build has no installer to copy to ${free}`);
+  }
   for (const name of names) {
     if (!isWindowsLinuxAssetName(name, version) || isReleaseShAssetName(name)) {
       problems.push(`${name} is not a ${platform} asset this workflow may publish`);
@@ -663,6 +736,10 @@ function collect(args: ReturnType<typeof parseArgs>): void {
     console.log(
       `${outName(name)}  ${NodeFS.statSync(NodePath.join(out, outName(name))).size} bytes`,
     );
+  }
+  for (const [free, name] of [...copies].sort()) {
+    NodeFS.copyFileSync(locate(name)!, NodePath.join(out, free));
+    console.log(`${free}  copy of ${name}`);
   }
 }
 

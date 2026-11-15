@@ -549,6 +549,7 @@ describe("actual callback integration", () => {
         retryTransientSend,
         whenHostReady: async () => true,
         commandIdForSend: "command",
+        sendModelUnnamed: false,
         turnAttachmentsPromise: Promise.resolve([]),
         creditIntentStillCurrent: () => {
           checks++;

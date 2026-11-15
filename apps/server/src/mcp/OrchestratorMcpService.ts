@@ -12,6 +12,14 @@ import { readIncrementReviewPolicy } from "../review/incrementReview.ts";
 import { MODEL_FAMILY_LABELS } from "@specweave-studio/shared/fallbackOptions";
 import { type IncrementReviewPolicy, sameReviewModel } from "@specweave-studio/shared/reviewPolicy";
 import { orchestratorFeatures } from "./orchestratorFeatures.ts";
+import {
+  compactCatalog,
+  instanceCatalog,
+  largestThatFits,
+  MCP_RESULT_MAX_BYTES,
+  newestItemsThatFit,
+  serializedBytes,
+} from "./mcpResultBudget.ts";
 import { assertPersonalChatBoundary } from "./personalChatBoundary.ts";
 import { isPaidModel } from "@specweave-studio/shared/modelBilling";
 import {
@@ -34,6 +42,7 @@ import {
   type OrchestrationV2TurnItem,
   type Project,
   OrchestratorMcpFailure,
+  type OrchestratorMcpCapabilitiesInput,
   type OrchestratorMcpCapabilitiesResult,
   type OrchestratorMcpCreateThreadsInput,
   type OrchestratorMcpCreateThreadsResult,
@@ -123,6 +132,7 @@ import {
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import type { ProjectionRecordField } from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
@@ -199,6 +209,10 @@ export type { AccessRequestCardInput, AccessRequestCardResult };
 const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
 const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
+/** Room the capabilities tool keeps for the fields its handler adds (platform, grant flags). */
+const CAPABILITIES_HANDLER_RESERVE_BYTES = 1_024;
+/** The handler may add `,"allowedByGrant":false` to every provider. */
+const CAPABILITIES_GRANT_FLAG_BYTES = 24;
 
 /**
  * `autoRouting: false` keeps Auto model routing off for this call: a caller
@@ -256,6 +270,7 @@ type TerminalTaskStatus = Extract<
 export interface OrchestratorMcpServiceShape {
   readonly capabilities: (
     scope: McpInvocationScope,
+    input?: OrchestratorMcpCapabilitiesInput,
   ) => Effect.Effect<OrchestratorMcpCapabilitiesResult, OrchestratorMcpFailure>;
   readonly delegateTask: (
     scope: McpInvocationScope,
@@ -1153,6 +1168,8 @@ function timelineItem(input: {
 
 import {
   projectDelegationTarget,
+  projectUsesTracks,
+  quotaBoostWorkerModel,
   callerWorkerModel,
   withProjectWorkerModel,
   workerModelUnderGrant,
@@ -1342,8 +1359,14 @@ const make = Effect.gen(function* () {
   ) =>
     (Option.isNone(serverSettings)
       ? Effect.succeed(project)
-      : serverSettings.value.getSettings.pipe(
-          Effect.map((settings) => withProjectWorkerModel(settings, project)),
+      : Effect.all([
+          serverSettings.value.getSettings,
+          providerRegistry.getProviders,
+          DateTime.now,
+        ]).pipe(
+          Effect.map(([settings, providers, now]) =>
+            withProjectWorkerModel(settings, project, providers, DateTime.toEpochMillis(now)),
+          ),
           Effect.orElseSucceed(() => project),
         )
     ).pipe(
@@ -1416,6 +1439,27 @@ const make = Effect.gen(function* () {
         ),
       );
 
+  /**
+   * Only the named record kinds of a thread. The caller's own thread is read
+   * on every MCP call, and on a long coordinator thread its messages, turn
+   * items and provider turns run to thousands of rows; each tool reads the
+   * kinds it uses.
+   */
+  const loadThreadKinds = <K extends ProjectionRecordField>(
+    threadId: ThreadId,
+    kinds: ReadonlyArray<K>,
+  ) =>
+    threadManagement
+      .getThreadRecords(threadId, kinds, { turnItemTypes: [], messageRoles: ["user"] })
+      .pipe(
+        Effect.mapError((error) =>
+          failure(
+            "orchestration_error",
+            `Unable to read thread ${threadId}: ${errorMessage(error)}`,
+          ),
+        ),
+      );
+
   const loadProjectThread = (
     projectId: OrchestrationV2ThreadProjection["thread"]["projectId"],
     threadId: ThreadId,
@@ -1442,7 +1486,10 @@ const make = Effect.gen(function* () {
    * thread caller is capped by its own modes; an OAuth client by the ceiling
    * chosen when it was approved.
    */
-  const loadCaller = (scope: McpInvocationScope) =>
+  const loadCaller = <K extends ProjectionRecordField = never>(
+    scope: McpInvocationScope,
+    kinds: ReadonlyArray<K> = [],
+  ) =>
     Effect.gen(function* () {
       yield* requireCapability(scope);
       if (scope.thread === undefined) {
@@ -1454,7 +1501,8 @@ const make = Effect.gen(function* () {
           } satisfies { runtimeMode: RuntimeMode; interactionMode: ProviderInteractionMode },
         } as const;
       }
-      const parent = yield* loadProjection(scope.thread.threadId);
+      // Runs decide liveness and the caller's turn; other kinds only where a tool asks.
+      const parent = yield* loadThreadKinds(scope.thread.threadId, ["runs", ...kinds]);
       return {
         parent,
         limits: {
@@ -1465,11 +1513,15 @@ const make = Effect.gen(function* () {
     });
 
   /** The caller's own thread, for operations that act as the caller. */
-  const loadThreadCaller = (scope: McpInvocationScope, operation: string) =>
+  const loadThreadCaller = <K extends ProjectionRecordField = never>(
+    scope: McpInvocationScope,
+    operation: string,
+    kinds: ReadonlyArray<K> = [],
+  ) =>
     Effect.gen(function* () {
       yield* requireCapability(scope);
       const threadScope = yield* requireThreadScope(scope, operation);
-      const parent = yield* loadProjection(threadScope.thread.threadId);
+      const parent = yield* loadThreadKinds(threadScope.thread.threadId, ["runs", ...kinds]);
       return { scope: threadScope, parent } as const;
     });
 
@@ -2149,10 +2201,32 @@ const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       const unrouted = { target: input.baseline, routing: null as TaskRoutingDecision | null };
+      const settings = Option.isNone(serverSettings)
+        ? null
+        : yield* serverSettings.value.getSettings.pipe(Effect.orElseSucceed(() => null));
+      // A worker a quota boost started stays on the boost's model: the person
+      // chose it for new threads until that quota resets.
+      const boost =
+        settings === null || targetPinsModel(input.requested)
+          ? null
+          : quotaBoostWorkerModel(
+              settings,
+              input.project,
+              input.providers,
+              DateTime.toEpochMillis(yield* DateTime.now),
+            );
+      if (
+        boost !== null &&
+        boost.instanceId === input.baseline.modelSelection.instanceId &&
+        boost.model === input.baseline.modelSelection.model
+      )
+        return unrouted;
+      const tracks = settings !== null && projectUsesTracks(settings, input.project);
       if (
         input.options?.autoRouting === false ||
         !autoRoutingApplies({
           pinned: targetPinsModel(input.requested),
+          tracks,
           isCoordinator:
             input.project.workspaceSettings?.coordinatorThreadId === input.parent.thread.id,
           taskClass: input.taskClass,
@@ -2921,7 +2995,8 @@ const make = Effect.gen(function* () {
         // Ids are global; scope the key to this thread so a retry finds its card.
         const suffix = `${stablePart(threadId)}:${stablePart(key)}`;
         const requestId = RuntimeRequestId.make(`ask-user:${suffix}`);
-        const existing = parent.runtimeRequests.find((request) => request.id === requestId);
+        const { runtimeRequests } = yield* loadThreadKinds(threadId, ["runtimeRequests"]);
+        const existing = runtimeRequests.find((request) => request.id === requestId);
         if (existing !== undefined) {
           return {
             requestId,
@@ -2964,13 +3039,13 @@ const make = Effect.gen(function* () {
         return { requestId, status: "asked" as const };
       }).pipe(Effect.withSpan("OrchestratorMcpService.askUser")),
 
-    capabilities: (scope) =>
+    capabilities: (scope, input) =>
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const providers = yield* loadProviders;
         const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
         const nowMs = yield* Clock.currentTimeMillis;
-        return {
+        const full = {
           parentThreadId: parent?.thread.id ?? null,
           inheritedProviderInstanceId: parent?.thread.modelSelection.instanceId ?? null,
           inheritedModel: parent?.thread.modelSelection.model ?? null,
@@ -3004,11 +3079,33 @@ const make = Effect.gen(function* () {
             };
           }),
           features: orchestratorFeatures(DEFAULT_DELEGATION_LIMITS),
-        };
+        } satisfies OrchestratorMcpCapabilitiesResult;
+        // A large catalog's model options alone run to hundreds of kilobytes.
+        const maxBytes =
+          MCP_RESULT_MAX_BYTES -
+          CAPABILITIES_HANDLER_RESERVE_BYTES -
+          full.providers.length * CAPABILITIES_GRANT_FLAG_BYTES;
+        if (input?.providerInstanceId === undefined) return compactCatalog(full, maxBytes);
+        const instance = instanceCatalog(
+          full,
+          input.providerInstanceId,
+          input.modelOffset ?? 0,
+          maxBytes,
+        );
+        if (instance === undefined)
+          return yield* failure(
+            "invalid_request",
+            `No provider instance ${input.providerInstanceId}. Call orchestrator_capabilities without arguments to list them.`,
+          );
+        return instance;
       }),
     delegateTask: (callerScope, input, options) =>
       Effect.gen(function* () {
-        const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
+        // Tasks for the fan-out limits; user messages pair a limit fallback (resolveTarget).
+        const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task", [
+          "subagents",
+          "messages",
+        ]);
         const parentRun = yield* callerRun(scope, parent, "delegate");
         const parentNodeId = parentRun.rootNodeId;
         const project = yield* requireProject(parent.thread.projectId);
@@ -3309,7 +3406,7 @@ const make = Effect.gen(function* () {
         const scope = yield* requireThreadScope(callerScope, "task_cancel");
         const current = yield* readTask(scope, input.taskId);
         const key = yield* requestKey(input.clientRequestId);
-        const parentProjection = yield* loadProjection(scope.thread.threadId);
+        const parentProjection = yield* loadThreadKinds(scope.thread.threadId, ["subagents"]);
         // Cancelling stops the child and every task under it, each a write to a
         // thread its user may have raised above the parent's modes since it was
         // delegated. All of them are checked before anything is stopped.
@@ -3456,7 +3553,10 @@ const make = Effect.gen(function* () {
       }),
     createThreads: (callerScope, input, options) =>
       Effect.gen(function* () {
-        const { scope, parent } = yield* loadThreadCaller(callerScope, "create_threads");
+        // User messages pair a limit fallback (resolveTarget).
+        const { scope, parent } = yield* loadThreadCaller(callerScope, "create_threads", [
+          "messages",
+        ]);
         const parentRun = yield* callerRun(scope, parent, "record");
         const parentNodeId = parentRun.rootNodeId;
         const project = yield* requireProject(parent.thread.projectId);
@@ -3699,20 +3799,29 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { parent, target } = yield* loadReadableThread(scope, input.threadId);
         const view = input.view ?? "messages";
-        const afterPosition = input.afterPosition ?? -1;
         const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
         const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
+        if (input.afterPosition !== undefined && input.beforePosition !== undefined)
+          return yield* failure(
+            "invalid_request",
+            "Pass afterPosition or beforePosition, not both.",
+          );
+        // afterPosition (and itemId) reads forward and keeps the oldest items
+        // that fit; beforePosition, or no cursor, reads back from there (or
+        // the thread's end) and keeps the newest. Neither leaves a gap.
+        const forward = input.afterPosition !== undefined || input.itemId !== undefined;
         const timeline = yield* threadManagement
           .getTimelinePage(input.threadId, {
-            afterPosition,
             limit,
             view,
             ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
+            ...(forward
+              ? { afterPosition: input.afterPosition ?? -1 }
+              : { beforePosition: input.beforePosition ?? Number.MAX_SAFE_INTEGER }),
           })
           .pipe(Effect.mapError(threadManagementFailure));
-        const page = timeline.items;
         const messageIdsByThread = new Map<ThreadId, Array<MessageId>>();
-        for (const row of page) {
+        for (const row of timeline.items) {
           if (row.item.type !== "user_message" && row.item.type !== "assistant_message") continue;
           const ids = messageIdsByThread.get(row.sourceThreadId) ?? [];
           ids.push(row.item.messageId);
@@ -3728,19 +3837,94 @@ const make = Effect.gen(function* () {
           { concurrency: 1 },
         );
         const messagesByThreadId = new Map(sourceMessages);
-        const task = parent === undefined ? undefined : directAppOwnedChildTask(parent, target);
-        if (
+        const thread = threadDetail(target, timeline.totalItems, servingEnvironmentId);
+        const runs = target.runs
+          .toSorted((left, right) => right.ordinal - left.ordinal)
+          .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
+          .map(threadRun);
+        const render = (
+          row: OrchestrationV2ThreadProjection["visibleTurnItems"][number],
+          chars: number,
+        ) =>
+          timelineItem({
+            row,
+            maxChars: chars,
+            messagesByThreadId,
+            ...(input.itemId === undefined ? {} : { textOffset: input.textOffset ?? 0 }),
+          });
+        const rendered = timeline.items.map((row) => render(row, maxChars));
+        // The result must fit an MCP client's output limit. Forward, the items
+        // left out follow the page (hasMore); backward, they precede it
+        // (omittedItems, earlierPosition).
+        const shape = (
+          recentRuns: ReadonlyArray<OrchestratorMcpThreadRun>,
+          items: ReadonlyArray<OrchestratorMcpThreadTimelineItem>,
+          omitted: number,
+        ) =>
+          ({
+            thread,
+            recentRuns,
+            items,
+            nextPosition: items.at(-1)?.position ?? null,
+            hasMore: timeline.hasMore || (forward && omitted > 0),
+            ...(omitted === 0 || forward ? {} : { omittedItems: omitted }),
+            ...(!forward && (omitted > 0 || timeline.hasEarlier === true)
+              ? { earlierPosition: items[0]?.position ?? null }
+              : {}),
+          }) satisfies OrchestratorMcpThreadReadResult;
+        // Positions and counts are at most this wide when the fields are filled in.
+        const fixedBytes = (recentRuns: ReadonlyArray<OrchestratorMcpThreadRun>) =>
+          serializedBytes(shape(recentRuns, [], 0)) +
+          `,"omittedItems":${rendered.length},"earlierPosition":${Number.MAX_SAFE_INTEGER}`.length +
+          // nextPosition is null in the empty shape and a position in the real one.
+          String(Number.MAX_SAFE_INTEGER).length;
+        const recentRuns = runs.slice(
+          0,
+          newestItemsThatFit(runs.toReversed(), fixedBytes([]), MCP_RESULT_MAX_BYTES),
+        );
+        const kept = newestItemsThatFit(
+          forward ? rendered.toReversed() : rendered,
+          fixedBytes(recentRuns),
+          MCP_RESULT_MAX_BYTES,
+        );
+        const keptRange = (length: number) =>
+          forward ? ([0, kept] as const) : ([length - kept, length] as const);
+        let effectiveMaxChars = maxChars;
+        let items = rendered.slice(...keptRange(rendered.length));
+        let page = timeline.items.slice(...keptRange(timeline.items.length));
+        if (kept === 0 && timeline.items.length > 0) {
+          // One item larger than the whole budget: shorten its text, which
+          // nextTextOffset (with itemId) still reaches.
+          const row = forward ? timeline.items[0]! : timeline.items.at(-1)!;
+          const room = MCP_RESULT_MAX_BYTES - fixedBytes(recentRuns);
+          effectiveMaxChars = largestThatFits(
+            maxChars,
+            (chars) => serializedBytes(render(row, chars)) <= room,
+          );
+          items = [render(row, effectiveMaxChars)];
+          page = [row];
+        }
+        // The caller's tasks and transfers matter only when it reads its own child.
+        const callerTasks =
           parent !== undefined &&
+          target.thread.lineage.parentThreadId === parent.thread.id &&
+          target.thread.lineage.relationshipToParent === "subagent"
+            ? yield* loadThreadKinds(parent.thread.id, ["subagents", "contextTransfers"])
+            : undefined;
+        const task =
+          callerTasks === undefined ? undefined : directAppOwnedChildTask(callerTasks, target);
+        if (
+          callerTasks !== undefined &&
           scope.thread !== undefined &&
           task !== undefined &&
           input.acknowledgeResult !== false &&
           (input.textOffset ?? 0) === 0
         ) {
-          const transfer = parent.contextTransfers.findLast(
+          const transfer = callerTasks.contextTransfers.findLast(
             (transfer) =>
               transfer.type === "subagent_result" &&
               transfer.sourceThreadId === target.thread.id &&
-              transfer.targetThreadId === parent.thread.id,
+              transfer.targetThreadId === callerTasks.thread.id,
           );
           const resultRunId = transfer?.sourcePoint.runId ?? delegatedTaskRun(target, task)?.id;
           const resultRunIds = resultRunId === undefined ? [] : [resultRunId];
@@ -3754,11 +3938,12 @@ const make = Effect.gen(function* () {
             .pipe(Effect.mapError(threadManagementFailure));
           if (
             pageIncludesTerminalTaskResult({
-              parent,
+              parent: callerTasks,
+              // Only what the caller is shown counts as read.
               page,
               task,
               target: { ...target, ...resultRecords },
-              maxChars,
+              maxChars: effectiveMaxChars,
             })
           ) {
             yield* readTask(
@@ -3771,23 +3956,7 @@ const make = Effect.gen(function* () {
             );
           }
         }
-        return {
-          thread: threadDetail(target, timeline.totalItems, servingEnvironmentId),
-          recentRuns: target.runs
-            .toSorted((left, right) => right.ordinal - left.ordinal)
-            .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
-            .map(threadRun),
-          items: page.map((row) =>
-            timelineItem({
-              row,
-              maxChars,
-              messagesByThreadId,
-              ...(input.itemId === undefined ? {} : { textOffset: input.textOffset ?? 0 }),
-            }),
-          ),
-          nextPosition: page.at(-1)?.position ?? null,
-          hasMore: timeline.hasMore,
-        } satisfies OrchestratorMcpThreadReadResult;
+        return shape(recentRuns, items, timeline.items.length - page.length);
       }),
     sendToThread: (scope, input) =>
       Effect.gen(function* () {

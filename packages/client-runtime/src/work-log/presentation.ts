@@ -402,14 +402,41 @@ function workEntryIndicatesToolFailureFromOutput(
   return output.length > 0 && toolOutputIndicatesFailure(output);
 }
 
+/**
+ * Per-entry results of the row checks below. The timeline re-derives every row
+ * on each update, while an entry object is kept as long as its item has not
+ * changed; entries are readonly, so each check runs once per entry object.
+ * Keyed by object identity, so a replaced entry is derived again.
+ */
+interface WorkEntryDerived {
+  failure?: boolean;
+  displayFailure?: boolean;
+  failureKind?: WorkEntryFailureKind | null;
+  action?: ToolGroupAction;
+}
+
+const workEntryDerived = new WeakMap<WorkLogPresentationEntry, WorkEntryDerived>();
+
+function derivedFor(entry: WorkLogPresentationEntry): WorkEntryDerived {
+  let derived = workEntryDerived.get(entry);
+  if (derived === undefined) {
+    derived = {};
+    workEntryDerived.set(entry, derived);
+  }
+  return derived;
+}
+
 /** Includes legacy activities that stored error output in the command field. */
 export function workEntryIndicatesToolFailure(entry: WorkLogPresentationEntry): boolean {
-  return workEntryIndicatesToolFailureFromOutput(entry, true);
+  return (derivedFor(entry).failure ??= workEntryIndicatesToolFailureFromOutput(entry, true));
 }
 
 /** Checks rendered output without treating the user's command as an error. */
 export function workEntryDisplayIndicatesToolFailure(entry: WorkLogPresentationEntry): boolean {
-  return workEntryIndicatesToolFailureFromOutput(entry, false);
+  return (derivedFor(entry).displayFailure ??= workEntryIndicatesToolFailureFromOutput(
+    entry,
+    false,
+  ));
 }
 
 export type WorkEntryFailureKind = "failed" | "possible" | "declined" | "stopped";
@@ -422,6 +449,12 @@ export type WorkEntryFailureKind = "failed" | "possible" | "declined" | "stopped
  * cancelled, which no count includes.
  */
 export function workEntryFailureKind(entry: WorkLogPresentationEntry): WorkEntryFailureKind | null {
+  const derived = derivedFor(entry);
+  if (derived.failureKind === undefined) derived.failureKind = computeWorkEntryFailureKind(entry);
+  return derived.failureKind;
+}
+
+function computeWorkEntryFailureKind(entry: WorkLogPresentationEntry): WorkEntryFailureKind | null {
   const item = entry.structuredPayload;
   const declined =
     (item?.type === "command_execution" || item?.type === "file_change") && item.declined === true;
@@ -515,6 +548,10 @@ function workLogEntryIsLocalCodeSearch(entry: WorkLogPresentationEntry): boolean
 }
 
 export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupAction {
+  return (derivedFor(entry).action ??= computeToolGroupAction(entry));
+}
+
+function computeToolGroupAction(entry: WorkLogPresentationEntry): ToolGroupAction {
   if (entry.itemType === "thread_created") return "thread-create";
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation?.action !== undefined) return presentation.action;

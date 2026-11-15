@@ -1,6 +1,6 @@
 /**
  * The project panel's top bar, as in the Claude desktop app: Threads, Designs,
- * Library, PRs and Routines tabs, a + button that asks the coordinator for a thread,
+ * Board (SpecWeave projects only), Library, PRs and Routines tabs, a + button that asks the coordinator for a thread,
  * then the tab's own tools, expand and close. Plan and Usage open existing views, so
  * they live in the project header's More menu, not here.
  * The panel runs the full window height, so this bar shares the title row with
@@ -9,6 +9,7 @@
 import {
   CalendarClockIcon,
   FolderOpenIcon,
+  KanbanIcon,
   Maximize2Icon,
   MessagesSquareIcon,
   Minimize2Icon,
@@ -33,6 +34,7 @@ import { Tip } from "./Tip";
 
 const TAB_ICONS: Record<ProjectPaneTab, LucideIcon> = {
   threads: MessagesSquareIcon,
+  board: KanbanIcon,
   designs: PaletteIcon,
   library: FolderOpenIcon,
   prs: PullRequestGlyph.pullRequest,
@@ -52,11 +54,14 @@ export interface ProjectPaneBarProps {
   onClose: () => void;
   /** The personal assistant says topics where a project says threads. */
   personal?: boolean;
+  /** Tabs this project has no use for, such as Board without SpecWeave. */
+  hiddenTabs?: readonly ProjectPaneTab[];
 }
 
 export function ProjectPaneBar({ tools, ...props }: ProjectPaneBarProps & { tools?: ReactNode }) {
   const tabRefs = useRef(new Map<ProjectPaneTab, HTMLButtonElement>());
   const say = paneWords(props.personal);
+  const tabs = PROJECT_PANE_TABS.filter((tab) => !props.hiddenTabs?.includes(tab));
   // Arrow keys move between tabs, as a tablist does; Tab leaves the list.
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).getAttribute("role") !== "tab") return;
@@ -70,15 +75,13 @@ export function ProjectPaneBar({ tools, ...props }: ProjectPaneBarProps & { tool
             : null;
     if (step === null && event.key !== "End") return;
     event.preventDefault();
-    const index = PROJECT_PANE_TABS.indexOf(props.tab);
+    const index = Math.max(0, tabs.indexOf(props.tab));
     const next =
       event.key === "Home"
-        ? PROJECT_PANE_TABS[0]
+        ? tabs[0]!
         : event.key === "End"
-          ? PROJECT_PANE_TABS[PROJECT_PANE_TABS.length - 1]!
-          : PROJECT_PANE_TABS[
-              (index + (step ?? 0) + PROJECT_PANE_TABS.length) % PROJECT_PANE_TABS.length
-            ]!;
+          ? tabs[tabs.length - 1]!
+          : tabs[(index + (step ?? 0) + tabs.length) % tabs.length]!;
     props.onTabChange(next);
     tabRefs.current.get(next)?.focus();
   };
@@ -90,7 +93,7 @@ export function ProjectPaneBar({ tools, ...props }: ProjectPaneBarProps & { tool
         aria-label={props.personal ? "Percy panel" : "Project panel"}
         onKeyDown={onKeyDown}
       >
-        {PROJECT_PANE_TABS.map((tab) => {
+        {tabs.map((tab) => {
           const Icon = TAB_ICONS[tab];
           const selected = props.tab === tab;
           const count = props.counts[tab];
