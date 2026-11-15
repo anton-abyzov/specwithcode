@@ -28,7 +28,10 @@ import {
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import { resolveCoordinatorModelSelection } from "@specweave-studio/shared/coordinatorDefault";
-import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import {
+  projectThreadModel,
+  resolveProjectSettings,
+} from "@specweave-studio/shared/projectSettings";
 import { useEnvironment } from "../../state/environments";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -245,8 +248,7 @@ export function ProjectWorkspaceSettings({
   // The model new threads really start on: a saved project override wins over the
   // project's own field, so the picker shows it and an unchanged save keeps it.
   const effectiveWorker = hostConfig?.settings
-    ? resolveProjectSettings(hostConfig.settings, project.id, project).settings
-        .defaultModelSelection
+    ? projectThreadModel(hostConfig.settings, project.id, project)
     : project.defaultModelSelection;
   const [workerEdit, setWorker] = useState<ModelSelection | null | undefined>(undefined);
   const worker = workerEdit === undefined ? (effectiveWorker ?? null) : workerEdit;
