@@ -129,6 +129,7 @@ function withRenewalRetryAfter(error: ConnectionAttemptError, remainingMs: numbe
     detail: error.detail,
     ...(error.traceId === undefined ? {} : { traceId: error.traceId }),
     ...(error.machineOffline === undefined ? {} : { machineOffline: error.machineOffline }),
+    ...(error.relayUnreachable === undefined ? {} : { relayUnreachable: error.relayUnreachable }),
     retryAfterMs: remainingMs,
   });
 }
@@ -141,13 +142,12 @@ function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemp
 
 const fetchDescriptor = Effect.fn("clientRuntime.connection.remote.fetchDescriptor")(function* (
   httpBaseUrl: string,
-  connectionMethod: ClientConnectionMethod,
   timeoutMs?: number,
 ) {
   return yield* fetchRemoteEnvironmentDescriptor({
     httpBaseUrl,
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
-  }).pipe(Effect.mapError((error) => mapRemoteEnvironmentError(error, connectionMethod)));
+  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
 });
 
 export const make = Effect.gen(function* () {
@@ -216,7 +216,6 @@ export const make = Effect.gen(function* () {
     function* (input: {
       readonly expectedEnvironmentId: EnvironmentId;
       readonly httpBaseUrl: string;
-      readonly connectionMethod: ClientConnectionMethod;
       readonly requestTimeoutMs?: number;
     }) {
       const now = yield* Clock.currentTimeMillis;
@@ -226,11 +225,9 @@ export const make = Effect.gen(function* () {
         cachedDescriptor.validatedAtEpochMs + BEARER_DESCRIPTOR_CACHE_TTL_MS > now;
       const descriptor = canReuseDescriptor
         ? cachedDescriptor.descriptor
-        : yield* fetchDescriptor(
-            input.httpBaseUrl,
-            input.connectionMethod,
-            input.requestTimeoutMs,
-          ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+        : yield* fetchDescriptor(input.httpBaseUrl, input.requestTimeoutMs).pipe(
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+          );
       if (descriptor.environmentId !== input.expectedEnvironmentId) {
         return yield* environmentMismatchError({
           expected: input.expectedEnvironmentId,
@@ -444,7 +441,7 @@ export const make = Effect.gen(function* () {
     ) {
       const bootstrap = yield* obtainBootstrap(environmentId, identity);
       attempt.minted = true;
-      const descriptor = yield* fetchDescriptor(bootstrap.endpoint.httpBaseUrl, "relay").pipe(
+      const descriptor = yield* fetchDescriptor(bootstrap.endpoint.httpBaseUrl).pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.withSpan("environment.authorization.descriptor"),
       );
@@ -679,7 +676,6 @@ export const make = Effect.gen(function* () {
       yield* verifyDirectEndpoint({
         expectedEnvironmentId: input.expectedEnvironmentId,
         httpBaseUrl: endpoint.httpBaseUrl,
-        connectionMethod: "direct",
       });
     }
     const acceptSocketToken = (token: TokenStore.RemoteDpopAccessToken) =>

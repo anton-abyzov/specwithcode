@@ -320,7 +320,11 @@ describe("EnvironmentSupervisor health checks for the server on this machine", (
       yield* supervisor.retryNow;
       yield* settle();
       yield* harness.frame;
-      yield* TestClock.adjust("3 seconds");
+      // Other traffic is no answer for a remote session, which still gets the
+      // full tolerance before it is replaced.
+      yield* TestClock.adjust("14999 millis");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      yield* TestClock.adjust("1 milli");
       yield* awaitState(
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2,
