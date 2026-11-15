@@ -130,8 +130,7 @@ def mark_bounds(mark=SILHOUETTE):
 
 def favicon(size):
     """A small rounded tile. At 32px and below the simplified mark keeps chevron and line apart."""
-    small = size <= SMALL_MARK_MAX_PX
-    return rasterize(tile_svg(mark=mark_for(size), radius=0.2, scale=1.0 if small else 1.2), size)
+    return rasterize(tile_svg(mark=mark_for(size), radius=0.2), size)
 
 
 def squircle_mask(size, exponent=5.0):
@@ -196,14 +195,14 @@ def substitute(relative, pattern, replacement, flags=0):
 # Icon Composer ------------------------------------------------------------------------------
 
 
-def p3(hex_value):
+def srgb(hex_value):
     r, g, b = (c / 255 for c in hex_rgb(hex_value))
     return f"srgb:{r:.5f},{g:.5f},{b:.5f},1.00000"
 
 
 def gradient_fill(top, bottom):
     return {
-        "linear-gradient": [p3(top), p3(bottom)],
+        "linear-gradient": [srgb(top), srgb(bottom)],
         "orientation": {"start": {"x": 0.5, "y": 0}, "stop": {"x": 0.5, "y": 1}},
     }
 
@@ -361,8 +360,11 @@ export function StudioWordmark(props: {{
 
 
 def notification_vector():
-    x, y, w, h = mark_bounds()
-    return f"""<!-- The SpecWithCode mark (assets/brand/specwithcode-mark-silhouette.svg) as a white silhouette cropped to the mark, so it renders as large as other apps' status bar icons. {GENERATED} -->
+    x, y, side, _ = mark_bounds()
+    # The mark 20dp wide with 2dp of padding in the 24dp icon, like the Expo notification icon.
+    pad = round(side * 2 / 20)
+    x, y, w, h = x - pad, y - pad, side + 2 * pad, side + 2 * pad
+    return f"""<!-- The SpecWithCode mark (assets/brand/specwithcode-mark-silhouette.svg) as a white silhouette cropped to the mark with 2dp of padding, so it renders as large as other apps' status bar icons. {GENERATED} -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="{w}" android:viewportHeight="{h}">
@@ -378,7 +380,7 @@ def native_android_background():
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <!-- The launcher tile: the brand gradient, top to bottom. {GENERATED} -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <gradient android:angle="270" android:startColor="{TILE_TOP}" android:endColor="{TILE_BOTTOM}" />
+    <gradient android:angle="270" android:startColor="@color/brand_tile_top" android:endColor="@color/brand_tile_bottom" />
 </shape>
 """
 
@@ -408,8 +410,8 @@ def write_code_consumers():
         substitute(relative, r'android:drawable="@(?:color|drawable)/ic_launcher_background"', 'android:drawable="@drawable/ic_launcher_background"')
     substitute(
         "apps/android/app/src/main/res/values/colors.xml",
-        r'(<color name="ic_launcher_background">)#[0-9A-Fa-f]{6}(</color>)',
-        rf"\g<1>{mid_colour()}\g<2>",
+        r'    <color name="(?:ic_launcher_background|brand_tile_top)">[^<]*</color>\n(?:    <color name="brand_tile_bottom">[^<]*</color>\n)?',
+        f'    <color name="brand_tile_top">{TILE_TOP}</color>\n    <color name="brand_tile_bottom">{TILE_BOTTOM}</color>\n',
     )
     save_png(android_layer(FULL), "apps/android/app/src/main/res/drawable-xxxhdpi/ic_launcher_foreground.png")
     save_png(android_layer(SILHOUETTE), "apps/android/app/src/main/res/drawable-xxxhdpi/ic_launcher_monochrome.png")
@@ -484,6 +486,8 @@ def main():
     tiled = tile_svg() + "\n"
     for path in ("assets/prod/logo.svg", "apps/web/public/studio-mark.svg"):
         write_text(path, tiled)
+    # The tile at 32px and below, for sites that render their own favicons (the docs site).
+    write_text("assets/prod/logo-small.svg", tile_svg(mark=SMALL, radius=0.2) + "\n")
     # The widget ships this as a template image, which keeps only the alpha channel: the mark alone.
     write_text("apps/mobile/assets/widget/StudioMark.svg", mark_only_svg(SILHOUETTE, size=64, box=mark_bounds()))
 

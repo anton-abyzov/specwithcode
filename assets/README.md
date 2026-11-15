@@ -21,12 +21,12 @@ It runs `python3 scripts/export-studio-icons.py` (Pillow and `rsvg-convert`), th
 
 - `assets/{prod,dev,nightly}`: macOS and Linux icons on the classic macOS grid (an 824px continuous-corner body inset 100px with a soft shadow), full-bleed iOS icons, apple-touch icons, favicons, web and Windows ICOs (the small mark at 16-32px). All three variants share the tile artwork.
 - Icon Composer projects `assets/{prod,dev,nightly}/app-icon.icon` and `apps/ios/App/AppIcon.icon`: the mark as the `mark.svg` layer in its own group (no glass, translucency or shadow, so it stays solid white). Production and iOS fill with the gradient, with a dark gradient for the Dark appearance; Tinted is derived by the system. Dev and nightly keep their own fill and background layers.
-- `assets/prod/logo.svg`, `apps/web/public/studio-mark.svg`, the widget's `apps/mobile/assets/widget/StudioMark.svg` (the mark alone: the widget uses it as a template image), the web and marketing public icons, `apps/marketing/src/assets/icon*.webp`, and the `?v=` stamps on the pages that link them.
+- `assets/prod/logo.svg` and `assets/prod/logo-small.svg` (the small mark on its tile; the docs site in the specweave repository copies both), `apps/web/public/studio-mark.svg`, the widget's `apps/mobile/assets/widget/StudioMark.svg` (the mark alone: the widget uses it as a template image), the web and marketing public icons, `apps/marketing/src/assets/icon*.webp`, and the `?v=` stamps on the pages that link them.
 - `apps/chrome-extension/icons/icon-{16,32,48,128}.png` and the gradients in the store promo sources (`store/screenshots/src/promo-*.html`). Render the promo PNGs with `store/screenshots/src/render.mjs` when a listing is updated.
 - `apps/ios/SWCKit/.../specwithcode-logo.imageset`.
 - `apps/web/src/components/StudioWordmark.tsx` and `apps/mobile/src/components/StudioWordmark.tsx`, the Android notification vector `agent_activity_mark.xml`, the DMG backgrounds, the mobile showcase fixture's project favicon.
-- Native Android (`apps/android`): launcher foreground and monochrome PNGs and the gradient `drawable/ic_launcher_background.xml`.
-- Tile colours where a gradient cannot go: `ic_launcher_background` in `apps/android/.../values/colors.xml` and Expo's prod `androidAdaptiveBackgroundColor` (the gradient's midpoint), and `--accent` in `apps/chrome-extension/src/popup.css` (the gradient's bottom).
+- Native Android (`apps/android`): launcher foreground and monochrome PNGs, the gradient `drawable/ic_launcher_background.xml`, and the `brand_tile_top` and `brand_tile_bottom` colours in `values/colors.xml` that it and the welcome screen read.
+- Tile colours where a gradient cannot go: Expo's prod `androidAdaptiveBackgroundColor` (the gradient's midpoint) and `--accent` in `apps/chrome-extension/src/popup.css` (the gradient's bottom).
 - Android artwork for Expo in `apps/mobile/assets` (see below).
 - An avatar pack in `dist/brand/avatars/{square,round}/` (not tracked): GitHub 500, YouTube 800, LinkedIn 400, X 400, Chrome Web Store 128 and App Store 1024 pixels. Uploading one to a store or social profile needs Anton's approval per listing.
 
