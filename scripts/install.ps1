@@ -1,7 +1,7 @@
 # Installs the SpecWithCode CLI from a GitHub Release archive on Windows. Needs
 # only PowerShell 5.1+; no Node, npm, or compiler.
 #
-#   irm https://studio.invalid/install.ps1 | iex
+#   irm https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.ps1 | iex
 #
 # Environment:
 #   STUDIO_CHANNEL           release train to follow: stable, nightly, or preview
@@ -28,9 +28,31 @@ $defaultStudioHome = if ($legacyItem -and $legacyItem.PSIsContainer -and -not $l
 $studioHome = if ($env:STUDIO_HOME) { $env:STUDIO_HOME } else { $defaultStudioHome }
 $binDir = if ($env:STUDIO_INSTALL_BIN_DIR) { $env:STUDIO_INSTALL_BIN_DIR } else { Join-Path $HOME ".local\bin" }
 
+# One line with a GitHub new-issue link prefilled with the error, version and platform. Only
+# printed: nothing is sent unless the person opens the link and submits the issue themselves.
+$script:reported = $false
+function Report-Failure([string] $message) {
+  if ($script:reported) { return }
+  $script:reported = $true
+  $channelName = if ($env:STUDIO_CHANNEL) { $env:STUDIO_CHANNEL } else { "stable" }
+  $versionName = if ($script:version) { $script:version } else { "unknown" }
+  $archName = if ($script:arch) { $script:arch } else { $env:PROCESSOR_ARCHITECTURE }
+  $body = "install.ps1 failed: $message`n`nVersion: $versionName`nPlatform: windows-$archName`nChannel: $channelName`nPowerShell: $($PSVersionTable.PSVersion)"
+  $link = "https://github.com/anton-abyzov/specwithcode/issues/new?title=" +
+    [Uri]::EscapeDataString("install.ps1: $message") + "&body=" + [Uri]::EscapeDataString($body)
+  [Console]::Error.WriteLine("Report this failure: $link")
+}
+
 function Fail([string] $message) {
+  Report-Failure $message
   Write-Error "specweave-studio install: $message"
   exit 1
+}
+
+# Anything else that stops the script (a download or an archive error) gets the same line.
+trap {
+  Report-Failure $_.Exception.Message
+  break
 }
 
 $terminal = -not [Console]::IsErrorRedirected -and $env:TERM -ne "dumb"

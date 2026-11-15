@@ -8,9 +8,11 @@ import { RELEASES_URL } from "../lib/releases";
 const DOCS_URL = "https://github.com/anton-abyzov/specwithcode/blob/main/docs/user";
 const LINUX_WORKER_URL = `${DOCS_URL}/linux-worker.md`;
 const BUILD_FROM_SOURCE_URL = `${DOCS_URL}/install.md#build-from-source`;
-// The Mac disk image is also attached under a version-free name, so this link works without
-// JavaScript. Every other build carries its version and is resolved from the latest release below.
+// Every desktop installer is also attached under a version-free name (SpecWithCode-x64.exe), so
+// these links work without JavaScript. The script below keeps them when the latest release has
+// the file and sends a card to the releases page when it does not yet.
 const MAC_DMG_URL = `${RELEASES_URL}/latest/download/SpecWithCode-arm64.dmg`;
+const latestDownload = (asset: string) => `${RELEASES_URL}/latest/download/SpecWithCode-${asset}`;
 const INSTALL_COMMAND = `curl -fsSL ${RELEASES_URL}/latest/download/install.sh | bash`;
 
 const imageProps = {
@@ -63,7 +65,7 @@ const linuxBuilds = [
               <Image src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
             </span>
             <span class="card-text">
-              <span class="card-arch">Apple Silicon (arm64)</span>
+              <span class="card-arch">Apple silicon only (arm64)</span>
               <span class="card-format">.dmg, macOS 13 or later</span>
             </span>
           </a>
@@ -83,7 +85,7 @@ const linuxBuilds = [
         </div>
         <div class="download-cards">
           {windowsBuilds.map((build) => (
-            <a class="download-card" data-download-track data-asset={build.asset} href={RELEASES_URL}>
+            <a class="download-card" data-download-track data-asset={build.asset} href={latestDownload(build.asset)}>
               <span class="card-icon">
                 <Image src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
               </span>
@@ -95,9 +97,8 @@ const linuxBuilds = [
           ))}
         </div>
         <p class="intel-note">
-          Installs for your user only, with no administrator prompt. The installer is not code-signed yet, so
-          SmartScreen shows "Windows protected your PC" the first time: choose More info, then Run anyway.
-          Check it against <code>SHA256SUMS-windows-linux</code> from the release.
+          Installs for your user only, with no administrator prompt. The installer is signed by EasyChamp, Inc.
+          with Azure Trusted Signing. Check it against <code>SHA256SUMS-windows-linux</code> from the release.
         </p>
       </section>
 
@@ -109,7 +110,7 @@ const linuxBuilds = [
         </div>
         <div class="download-cards">
           {linuxBuilds.map((build) => (
-            <a class="download-card" data-download-track data-asset={build.asset} href={RELEASES_URL}>
+            <a class="download-card" data-download-track data-asset={build.asset} href={latestDownload(build.asset)}>
               <span class="card-icon">
                 <Image src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
               </span>
@@ -200,11 +201,14 @@ const linuxBuilds = [
       cards.forEach((card) => {
         // Server archives carry a commit in the name, so they match by pattern; the rest by suffix.
         const pattern = card.dataset.assetPattern ? new RegExp(card.dataset.assetPattern) : undefined;
+        const versionFree = `SpecWithCode-${card.dataset.asset}`;
         const match = (release.assets ?? []).find((a) =>
-          pattern ? pattern.test(a.name) : a.name.endsWith(`-${card.dataset.asset}`),
+          pattern ? pattern.test(a.name) : a.name === versionFree || a.name.endsWith(`-${card.dataset.asset}`),
         );
-        // A build missing from this release keeps its fallback, the releases page.
-        if (match) card.href = match.browser_download_url;
+        // The version-free latest link stays when the release has that file; a build the latest
+        // release does not carry yet goes to the releases page instead of a 404.
+        if (!match) card.href = RELEASES_URL;
+        else if (pattern || match.name !== versionFree) card.href = match.browser_download_url;
       });
     } catch {
       versionLabel.textContent = "Releases";

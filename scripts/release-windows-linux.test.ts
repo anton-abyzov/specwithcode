@@ -15,6 +15,7 @@ import {
   feedProblems,
   feedWithDebSignature,
   formatSums,
+  INSTALL_PS1,
   isReleaseShAssetName,
   isStableVersion,
   isWindowsLinuxAssetName,
@@ -27,6 +28,9 @@ import {
   publicLeaks,
   requiredAssetNames,
   STAGED_WIN_ARM64_FEED,
+  VERSION_FREE_ASSETS,
+  versionFreeAssetName,
+  versionFreeAssetNames,
   WINDOWS_LINUX_SUMS,
   WINDOWS_LINUX_SUMS_SIGNATURE,
   windowsCliArchiveName,
@@ -64,8 +68,9 @@ const ARM64_ASSETS = [
   ...requiredAssetNames("linux", VERSION, "arm64"),
 ];
 
-// Every new upload carries both arches (planUpload); a release from before arm64 holds OWN_ASSETS.
-const UPLOAD_ASSETS = [...OWN_ASSETS, ...ARM64_ASSETS];
+// Every new upload carries both arches, the version-free installers and install.ps1 (planUpload);
+// a release from before arm64 holds OWN_ASSETS.
+const UPLOAD_ASSETS = [...OWN_ASSETS, ...ARM64_ASSETS, ...VERSION_FREE_ASSETS, INSTALL_PS1];
 
 const WIN_FEED = `version: ${VERSION}
 files:
@@ -165,6 +170,64 @@ describe("asset names", () => {
     expect(isStableVersion("1.0.63-nightly.20261020.1")).toBe(false);
     expect(isStableVersion("v1.0.63")).toBe(false);
     expect(isStableVersion("01.0.0")).toBe(false);
+  });
+});
+
+describe("version-free names", () => {
+  it("drops only the version from each installer, as SpecWithCode-arm64.dmg does", () => {
+    expect(versionFreeAssetName(`SpecWithCode-${VERSION}-x64.exe`, VERSION)).toBe(
+      "SpecWithCode-x64.exe",
+    );
+    expect(versionFreeAssetName(`SpecWithCode-${VERSION}-arm64.exe`, VERSION)).toBe(
+      "SpecWithCode-arm64.exe",
+    );
+    expect(versionFreeAssetName(`SpecWithCode-${VERSION}-x86_64.AppImage`, VERSION)).toBe(
+      "SpecWithCode-x86_64.AppImage",
+    );
+    expect(versionFreeAssetName(`SpecWithCode-${VERSION}-amd64.deb`, VERSION)).toBe(
+      "SpecWithCode-amd64.deb",
+    );
+    expect(versionFreeAssetName(`SpecWithCode-${VERSION}-arm64.deb`, VERSION)).toBe(
+      "SpecWithCode-arm64.deb",
+    );
+    expect(VERSION_FREE_ASSETS).toEqual([
+      "SpecWithCode-x64.exe",
+      "SpecWithCode-arm64.exe",
+      "SpecWithCode-x86_64.AppImage",
+      "SpecWithCode-amd64.deb",
+      "SpecWithCode-arm64.AppImage",
+      "SpecWithCode-arm64.deb",
+    ]);
+  });
+
+  it("gives blockmaps, signatures, feeds, archives and other versions none", () => {
+    for (const name of [
+      `SpecWithCode-${VERSION}-x64.exe.blockmap`,
+      `SpecWithCode-${VERSION}-amd64.deb.asc`,
+      `SpecWithCode-1.0.64-x64.exe`,
+      `SpecWithCode-${VERSION}-arm64.dmg`,
+      "latest.yml",
+      `studio-${VERSION}-win32-x64.zip`,
+    ]) {
+      expect(versionFreeAssetName(name, VERSION)).toBeUndefined();
+    }
+  });
+
+  it("are this workflow's to publish and never release.sh's", () => {
+    for (const name of [...VERSION_FREE_ASSETS, INSTALL_PS1]) {
+      expect(isWindowsLinuxAssetName(name, VERSION)).toBe(true);
+      expect(isReleaseShAssetName(name)).toBe(false);
+    }
+    expect(isWindowsLinuxAssetName("SHA256SUMS.asc", VERSION)).toBe(false);
+    expect(isReleaseShAssetName("SHA256SUMS.asc")).toBe(false);
+  });
+
+  it("names one per Windows build and two per Linux build", () => {
+    expect(versionFreeAssetNames("win", "arm64")).toEqual(["SpecWithCode-arm64.exe"]);
+    expect(versionFreeAssetNames("linux")).toEqual([
+      "SpecWithCode-x86_64.AppImage",
+      "SpecWithCode-amd64.deb",
+    ]);
   });
 });
 
@@ -391,6 +454,18 @@ describe("planUpload", () => {
     expect(plan.problems).toEqual(["latest-mac.yml belongs to release.sh"]);
   });
 
+  it("requires the version-free installers and install.ps1 in every upload", () => {
+    const plan = planUpload({
+      version: VERSION,
+      localNames: [...OWN_ASSETS, ...ARM64_ASSETS],
+      existingNames: [],
+      replace: false,
+    });
+    expect(plan.problems.sort()).toEqual(
+      [...VERSION_FREE_ASSETS, INSTALL_PS1].map((name) => `${name} is missing`).sort(),
+    );
+  });
+
   it("requires both platforms and the checksum file", () => {
     const plan = planUpload({
       version: VERSION,
@@ -412,12 +487,14 @@ describe("planUpload", () => {
       replace: false,
     });
     expect(plan.problems.sort()).toEqual(
-      [...ARM64_ASSETS].sort().map((name) => `${name} is missing`),
+      [...ARM64_ASSETS, ...VERSION_FREE_ASSETS, INSTALL_PS1]
+        .map((name) => `${name} is missing`)
+        .sort(),
     );
     expect(
       planUpload({
         version: VERSION,
-        localNames: [...OWN_ASSETS, ...ARM64_ASSETS],
+        localNames: UPLOAD_ASSETS,
         existingNames: [],
         replace: false,
       }).problems,
@@ -498,6 +575,30 @@ describe("attachState", () => {
       );
     },
   );
+
+  it("checks version-free copies against the installers they copy, when a release has them", () => {
+    const files = attach("first");
+    const exe = `SpecWithCode-${VERSION}-x64.exe`;
+    files.set("SpecWithCode-x64.exe", files.get(exe)!);
+    const resum = (map: Map<string, string>) =>
+      map.set(
+        WINDOWS_LINUX_SUMS,
+        formatSums(
+          [...map]
+            .filter(([name]) => name !== WINDOWS_LINUX_SUMS)
+            .map(([name, content]) => ({ name, sha256: sha("sha256", content, "hex") })),
+        ),
+      );
+    resum(files);
+    expect(
+      attachState({ version: VERSION, assets: [...macOnly, ...listed(files)], texts: texts(files) }),
+    ).toEqual({ state: "complete", problems: [] });
+    files.set("SpecWithCode-x64.exe", "an older build");
+    resum(files);
+    expect(
+      attachState({ version: VERSION, assets: listed(files), texts: texts(files) }).problems,
+    ).toEqual([`SpecWithCode-x64.exe is not the same file as ${exe} in ${WINDOWS_LINUX_SUMS}`]);
+  });
 
   it("requires checksum coverage for every payload and feed", () => {
     const files = attach("first");
@@ -740,7 +841,50 @@ describe("command line", () => {
       "--out",
       out,
     ]);
-    expect(NodeFS.readdirSync(out).sort()).toEqual([...requiredAssetNames("win", VERSION)].sort());
+    expect(NodeFS.readdirSync(out).sort()).toEqual(
+      [...requiredAssetNames("win", VERSION), "SpecWithCode-x64.exe"].sort(),
+    );
+    expect(NodeFS.readFileSync(NodePath.join(out, "SpecWithCode-x64.exe"), "utf8")).toBe("exe!");
+    const feed = parseFeedManifest(NodeFS.readFileSync(NodePath.join(out, "latest.yml"), "utf8"));
+    expect(feed.files.map((file) => file.url)).toEqual([`SpecWithCode-${VERSION}-x64.exe`]);
+  });
+
+  it("collects a Linux build with its version-free AppImage and .deb", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "release-windows-linux-"));
+    const desktop = NodePath.join(root, "release");
+    NodeFS.mkdirSync(desktop);
+    const appImage = `SpecWithCode-${VERSION}-arm64.AppImage`;
+    const deb = `SpecWithCode-${VERSION}-arm64.deb`;
+    NodeFS.writeFileSync(NodePath.join(desktop, appImage), "app!");
+    NodeFS.writeFileSync(NodePath.join(desktop, deb), "deb!");
+    NodeFS.writeFileSync(
+      NodePath.join(desktop, "latest-linux-arm64.yml"),
+      `version: ${VERSION}\nfiles:\n  - url: ${appImage}\n    sha512: ${sha512("app!")}\n    size: 4\n  - url: ${deb}\n    sha512: ${sha512("deb!")}\n    size: 4\npath: ${appImage}\n`,
+    );
+    const out = NodePath.join(root, "out");
+    run([
+      "collect",
+      "--platform",
+      "linux",
+      "--arch",
+      "arm64",
+      "--version",
+      VERSION,
+      "--from",
+      desktop,
+      "--out",
+      out,
+    ]);
+    expect(NodeFS.readdirSync(out).sort()).toEqual(
+      [
+        appImage,
+        deb,
+        "latest-linux-arm64.yml",
+        "SpecWithCode-arm64.AppImage",
+        "SpecWithCode-arm64.deb",
+      ].sort(),
+    );
+    expect(NodeFS.readFileSync(NodePath.join(out, "SpecWithCode-arm64.deb"), "utf8")).toBe("deb!");
   });
 
   it("refuses a build whose installer no longer matches latest.yml", () => {
@@ -790,7 +934,13 @@ describe("command line", () => {
       out,
     ]);
     expect(NodeFS.readdirSync(out).sort()).toEqual(
-      [exe, `${exe}.blockmap`, STAGED_WIN_ARM64_FEED, `studio-${VERSION}-win32-arm64.zip`].sort(),
+      [
+        exe,
+        `${exe}.blockmap`,
+        STAGED_WIN_ARM64_FEED,
+        `studio-${VERSION}-win32-arm64.zip`,
+        "SpecWithCode-arm64.exe",
+      ].sort(),
     );
 
     // The x64 job's assets land beside it; merge-feeds leaves one latest.yml for both.
@@ -879,6 +1029,21 @@ describe("install.ps1", () => {
       /if \(-not \$tag -and \$arch -eq "arm64"\) \{\n\s+\$tag = & \$findTag "x64"/,
     );
     expect(script).toContain('$arch = "x64"');
+  });
+
+  it("names the release asset it is published as, not a placeholder host", () => {
+    expect(script).not.toContain("studio.invalid");
+    expect(script).toContain(
+      "irm https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.ps1 | iex",
+    );
+  });
+
+  it("prints one prefilled issue link on failure and sends nothing", () => {
+    expect(script).toMatch(/function Fail\(\[string\] \$message\) \{\n  Report-Failure \$message\n/);
+    expect(script).toContain("https://github.com/anton-abyzov/specwithcode/issues/new?title=");
+    expect(script).toContain("[Uri]::EscapeDataString($body)");
+    expect(script).toMatch(/trap \{\n  Report-Failure \$_\.Exception\.Message\n  break\n\}/);
+    expect(script).not.toMatch(/Invoke-(?:WebRequest|RestMethod)[^\n]*issues/);
   });
 });
 
@@ -1267,6 +1432,32 @@ describe("release-windows-linux.yml", () => {
       /^- name: Verify both releases\n        if: needs\.plan\.outputs\.dry_run != 'true'\n/,
     );
     expect(verify).toContain('node "$TOOL" release-state --version "$VERSION" --repo "$repo"');
+  });
+
+  it("attaches install.ps1 from the release's own commit", () => {
+    const publish = workflow.slice(workflow.indexOf("\n  publish:\n"));
+    const step = publish.slice(publish.indexOf("- name: Add install.ps1"));
+    expect(step).toContain("COMMIT: ${{ needs.plan.outputs.commit }}");
+    expect(step).toContain('contents/scripts/install.ps1?ref=$COMMIT" > "$ASSETS/install.ps1"');
+    expect(publish.indexOf("- name: Add install.ps1")).toBeLessThan(
+      publish.indexOf("- name: Write checksums"),
+    );
+  });
+
+  it("signs each release's own SHA256SUMS without changing it", () => {
+    const publish = workflow.slice(workflow.indexOf("\n  publish:\n"));
+    const step = publish.slice(
+      publish.indexOf("- name: Sign the macOS checksums"),
+      publish.indexOf("- name: Add checksums to the release notes"),
+    );
+    expect(publish.indexOf("- name: Verify both releases")).toBeLessThan(
+      publish.indexOf("- name: Sign the macOS checksums"),
+    );
+    expect(step).toContain("if: needs.plan.outputs.dry_run != 'true'");
+    expect(step).toContain('gh release download "v$VERSION" -R "$repo" -D "$dir" --clobber -p SHA256SUMS\n');
+    expect(step).toContain('gpgv --keyring "$keyring" "$dir/SHA256SUMS.asc" "$dir/SHA256SUMS"');
+    expect(step).toContain('gh release upload "v$VERSION" -R "$repo" --clobber "$dir/SHA256SUMS.asc"');
+    expect(step).not.toMatch(/upload[^\n]*\/SHA256SUMS"/);
   });
 
   it("never names the macOS feed except to check it is unchanged", () => {
