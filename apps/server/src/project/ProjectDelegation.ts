@@ -30,6 +30,27 @@ export function projectWorkerModel(
 }
 
 /**
+ * Whether saving `next` as the project's thread model must remove an older
+ * Project settings override, which would otherwise outrank it. Only a model
+ * that changed counts: the project dialog sends its whole form on every save,
+ * and a seeded default (`onlyIfUnset`) is not a person's choice.
+ */
+export function replacesProjectModelOverride(input: {
+  readonly settings: ServerSettings;
+  readonly projectId: Project["id"];
+  readonly previous: ModelSelection | null;
+  readonly next: ModelSelection | null | undefined;
+  readonly onlyIfUnset?: boolean | undefined;
+}): boolean {
+  if (input.next === undefined || input.onlyIfUnset === true) return false;
+  if (JSON.stringify(input.next) === JSON.stringify(input.previous)) return false;
+  return Object.hasOwn(
+    input.settings.projectSettingsOverrides[input.projectId] ?? {},
+    "defaultModelSelection",
+  );
+}
+
+/**
  * The settings a limited thread of `project` falls back by: the project's
  * settings with the same thread model launches use (`projectWorkerModel`) as
  * home, so a limit stop and a launch never disagree on it.

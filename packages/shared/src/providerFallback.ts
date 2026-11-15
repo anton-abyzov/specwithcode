@@ -890,9 +890,11 @@ function resolveProviderFallbackPass(input: {
     if (elsewhere !== null) return elsewhere;
   }
   if (explicitOrder) {
-    // "Only these models" means the person's own list: no built-in track entry.
+    // The person's own entries only. A built-in entry of a track they left
+    // empty waits its turn below, after the same model elsewhere, the project
+    // model and the coordinator's proven model.
     const ordered = firstAvailable(
-      (selection) => !listOnly || !orderChain.builtIn.has(fallbackSelectionKey(selection)),
+      (selection) => !orderChain.builtIn.has(fallbackSelectionKey(selection)),
     );
     if (ordered !== undefined) return ordered;
     // The user said this list is the whole chain: past it the thread waits.
@@ -998,9 +1000,10 @@ function resolveProviderFallbackPass(input: {
   // Nothing the person named can take the thread: the built-in tracks rank
   // what is left, ahead of the guess below.
   // Like that guess, they never keep the thread on the account that stopped it.
-  if (!explicitOrder && chain.fromTiers && chain.order.length > 0) {
+  if (chain.fromTiers && orderChain.builtIn.size > 0) {
     const ranked = firstAvailable(
       (selection) =>
+        orderChain.builtIn.has(fallbackSelectionKey(selection)) &&
         selection.instanceId !== input.currentInstanceId &&
         (perTokenHome === null || !isReportsNoUsage(selection)),
     );

@@ -184,6 +184,12 @@ describe("excluded models in the usage-limit fallback", () => {
     expect(resolveProviderFallback({ ...limitStop, providers, rule: base })?.instanceId).toBe(
       codex.instanceId,
     );
+    // Where the tracks name nothing here, the guess still goes to the most room.
+    const older = provider("codex", "codex", 40, [["gpt-5-old", "GPT-5 Old"]]);
+    expect(
+      resolveProviderFallback({ ...limitStop, providers: [claude, grok, older], rule: base })
+        ?.instanceId,
+    ).toBe(grok.instanceId);
     const rule = { ...base, providerLimitExcludedModels: [{ model: "grok-4-7" }] };
     expect(resolveProviderFallback({ ...limitStop, providers, rule })).toEqual({
       instanceId: codex.instanceId,

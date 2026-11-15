@@ -22,6 +22,7 @@ import {
   describeFallbackOrder,
   type ExcludedFallbackModel,
   type FallbackOrderUnavailable,
+  isGeminiSpendProvider,
   isUnknownBillingAgent,
 } from "./providerFallback.ts";
 
@@ -284,13 +285,19 @@ export function resolveReviewer(input: {
     const unconsented =
       !named.has(fallbackSelectionKey(entry.selection)) &&
       isUnknownBillingAgent(provider, entry.selection.model);
+    // Naming a Gemini or Vertex model is consent to its spend; the default
+    // order, the built-in Review track included, never is.
+    const unnamedSpend =
+      !named.has(fallbackSelectionKey(entry.selection)) && isGeminiSpendProvider(provider);
     // A harder reason from the fallback walker stays; unknown billing only
     // replaces "has room" and "usage unknown".
     const reason: ReviewerSkipReason | null = sameFamily
       ? "same-family"
-      : unconsented && (entry.unavailable === null || entry.unavailable === "unverified")
-        ? "unknown-billing"
-        : entry.unavailable;
+      : unnamedSpend
+        ? "per-token"
+        : unconsented && (entry.unavailable === null || entry.unavailable === "unverified")
+          ? "unknown-billing"
+          : entry.unavailable;
     if (reason === null) return { reviewer: entry.selection, skipped, authorFamily };
     if (reason === "unverified" && unverified === null) unverified = entry.selection;
     skipped.push({ selection: entry.selection, reason });

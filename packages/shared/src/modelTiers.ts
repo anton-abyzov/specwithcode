@@ -10,6 +10,7 @@
  */
 import {
   DEFAULT_PROVIDER_MODEL_TIERS,
+  isPaidModelBilling,
   type ModelLane,
   type ModelLanes,
   type ModelSelection,
@@ -243,9 +244,12 @@ export function tierModelFor(
     // A built-in default follows its family to the newest release the provider
     // lists (newer or older than the literal), so a new model takes the tier
     // without a code change; a person's choice stays exact.
+    // Never onto a release billed per use or with unknown billing.
     if (chosen === undefined && builtIn !== undefined) {
       const newer = newestOfFamily(provider, builtIn);
-      if (newer !== undefined) return newer;
+      const billing = providerModelBilling(provider, newer);
+      if (newer !== undefined && billing !== "unknown" && !isPaidModelBilling(billing))
+        return newer;
     }
     const own = chosen ?? builtIn;
     if (own !== undefined) {
@@ -338,25 +342,29 @@ export function newerOfFamily(
   provider: Pick<ServerProvider, "models">,
   slug: string,
 ): string | undefined {
+  const billing = providerModelBilling(provider, slug);
+  // Billing nobody proved is never "the same".
   const sameBilling = (other: string) =>
-    providerModelBilling(provider, other) === providerModelBilling(provider, slug);
+    billing !== "unknown" && providerModelBilling(provider, other) === billing;
   // A successor the model manifest names leads: a new line with a new name
-  // has no family in common with the one it replaces.
-  let successor: string | undefined;
+  // has no family in common with the one it replaces. One walk, each model
+  // once, so a manifest that names two models as each other's successor ends.
+  let at = slug;
   const visited = new Set([slug]);
-  for (let at = slug; ;) {
+  for (;;) {
     const next = provider.models.find(
       (model) => !model.isCustom && model.succeeds === at && !visited.has(model.slug),
     );
     if (next === undefined || !sameBilling(next.slug)) break;
     visited.add(next.slug);
-    successor = at = next.slug;
+    at = next.slug;
   }
-  if (successor !== undefined) return newerOfFamily(provider, successor) ?? successor;
-  const newest = newestOfFamily(provider, slug);
-  const [a, b] = [newest && modelFamily(newest), modelFamily(slug)];
-  if (!newest || !a || !b || compareModelVersions(a.version, b.version) <= 0) return undefined;
-  return sameBilling(newest) ? newest : undefined;
+  // Then the newest release of the family the walk ended in.
+  const newest = newestOfFamily(provider, at);
+  const [a, b] = [newest && modelFamily(newest), modelFamily(at)];
+  if (newest && a && b && compareModelVersions(a.version, b.version) > 0 && sameBilling(newest))
+    return newest;
+  return at === slug ? undefined : at;
 }
 
 /**

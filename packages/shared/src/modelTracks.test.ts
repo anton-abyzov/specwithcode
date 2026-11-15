@@ -7,7 +7,13 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { chainNamedByPerson, effectiveFallbackOrder } from "./modelTiers.ts";
+import {
+  chainNamedByPerson,
+  effectiveFallbackOrder,
+  followNewestReleases,
+  tierModelFor,
+} from "./modelTiers.ts";
+import { resolveReviewer } from "./adversarialReview.ts";
 import {
   defaultTrackSelections,
   effectiveModelLanes,
@@ -346,5 +352,85 @@ describe("sources the person ranked", () => {
         },
       }),
     ).toEqual(sel("codex", "gpt-6.1-sol"));
+  });
+});
+
+describe("review round fixes", () => {
+  it("keeps a built-in entry of an unsaved track behind the project model", () => {
+    // Only Daily is saved. A limited Sol thread must go home to Opus, not to built-in Fable.
+    const limitedCodex = provider("codex", "codex", ["gpt-6.1-sol", "gpt-6-astra"], 100);
+    expect(
+      resolveProviderFallback({
+        providers: [claude, limitedCodex],
+        currentInstanceId: limitedCodex.instanceId,
+        currentModel: "gpt-6.1-sol",
+        nowMs: now,
+        belowPercent: 95,
+        anyReady: true,
+        limitedInstanceIds: new Set<string>([limitedCodex.instanceId]),
+        rule: {
+          ...noRule,
+          defaultModelSelection: sel("claudeAgent", "claude-opus-5-5"),
+          modelLanes: { routine: [sel("muse", "muse-wonder-1.0")], complex: [] },
+        },
+      }),
+    ).toEqual(sel("claudeAgent", "claude-opus-5-5"));
+  });
+
+  it("never reviews on a Gemini spend account nobody named", () => {
+    const gemini = provider("acpRegistry_gemini", "acpRegistry", ["gemini-4-carbon"], null, {
+      auth: { status: "authenticated", type: "vertex-ai" },
+    });
+    const author = sel("codex", "gpt-6.1-sol");
+    const byDefault = resolveReviewer({
+      providers: [codexPaid, gemini],
+      author,
+      reviewers: [],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(byDefault.reviewer).toBeNull();
+    const named = resolveReviewer({
+      providers: [codexPaid, gemini],
+      author,
+      reviewers: [sel("acpRegistry_gemini", "gemini-4-carbon")],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(named.reviewer).toEqual(sel("acpRegistry_gemini", "gemini-4-carbon"));
+  });
+
+  it("ends when two models are named as each other's successor", () => {
+    const base = provider("codex", "codex", ["gpt-a", "gpt-b"], null);
+    const looped = {
+      ...base,
+      models: base.models.map((model) => ({
+        ...model,
+        succeeds: model.slug === "gpt-a" ? "gpt-b" : "gpt-a",
+      })),
+    };
+    expect(followNewestReleases([sel("codex", "gpt-a")], [looped])).toEqual([
+      sel("codex", "gpt-b"),
+      sel("codex", "gpt-a"),
+    ]);
+  });
+
+  it("never follows a release billed per use or with unknown billing", () => {
+    const base = provider("codex", "codex", ["gpt-6.1-sol", "gpt-6.2-sol"], null);
+    const billed = (billing: "api" | "unknown") => ({
+      ...base,
+      models: base.models.map((model) =>
+        model.slug === "gpt-6.2-sol" ? { ...model, billing } : model,
+      ),
+    });
+    expect(tierModelFor(billed("api"), "regular")).toBe("gpt-6.1-sol");
+    expect(tierModelFor(billed("unknown"), "regular")).toBe("gpt-6.1-sol");
+    const unknownBoth = {
+      ...base,
+      models: base.models.map((model) => ({ ...model, billing: "unknown" as const })),
+    };
+    expect(followNewestReleases([sel("codex", "gpt-6.1-sol")], [unknownBoth])).toEqual([
+      sel("codex", "gpt-6.1-sol"),
+    ]);
   });
 });

@@ -13,6 +13,7 @@ import {
 import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { replacesProjectModelOverride } from "./ProjectDelegation.ts";
 import { normalizeProjectEnvironment } from "./ProjectEnvironmentPaths.ts";
 import {
   CommandId,
@@ -915,8 +916,12 @@ export const make = Effect.gen(function* () {
       if (workspaceRoot !== previousRoot) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }
-      if (input.defaultModelSelection !== undefined && input.onlyIfDefaultModelUnset !== true)
-        yield* dropProjectModelOverride(input.projectId);
+      yield* dropProjectModelOverride(
+        input.projectId,
+        existing.value.defaultModelSelection,
+        input.defaultModelSelection,
+        input.onlyIfDefaultModelUnset,
+      );
       return yield* readCommitted(input.projectId);
     },
   );
@@ -929,23 +934,37 @@ export const make = Effect.gen(function* () {
    */
   const dropProjectModelOverride = Effect.fn("ProjectService.dropProjectModelOverride")(function* (
     projectId: ProjectId,
+    previous: ModelSelection | null,
+    next: ModelSelection | null | undefined,
+    onlyIfUnset: boolean | undefined,
   ) {
+    if (next === undefined) return;
     const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
     if (Option.isNone(serverSettings)) return;
     const settings = yield* serverSettings.value.getSettings.pipe(Effect.option);
     if (
       Option.isNone(settings) ||
-      !Object.hasOwn(
-        settings.value.projectSettingsOverrides[projectId] ?? {},
-        "defaultModelSelection",
-      )
+      !replacesProjectModelOverride({
+        settings: settings.value,
+        projectId,
+        previous,
+        next,
+        onlyIfUnset,
+      })
     )
       return;
     yield* serverSettings.value
       .updateSettings({
         projectSettingsOverrideChanges: { [projectId]: { clear: ["defaultModelSelection"] } },
       })
-      .pipe(Effect.ignore);
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not remove the project's older thread model override", {
+            projectId,
+            cause,
+          }),
+        ),
+      );
   });
 
   const bootstrap: ProjectService["Service"]["bootstrap"] = Effect.fn("ProjectService.bootstrap")(
