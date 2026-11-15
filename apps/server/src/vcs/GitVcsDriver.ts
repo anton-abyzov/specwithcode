@@ -564,6 +564,21 @@ const gitCommand = (
       : {}),
   });
 
+/**
+ * Whether `git clean` output lists a path inside the workspace. Git for Windows removes an
+ * emptied nested workspace directory itself and lists it as "./". The restore recreates
+ * that directory, so it is neither a pass that made progress nor a file left behind.
+ */
+export const gitCleanListsWorkspacePath = (
+  stdout: string,
+  verb: "Removing" | "Would remove",
+): boolean =>
+  stdout.split("\n").some((line) => {
+    if (!line.startsWith(`${verb} `)) return false;
+    const listed = line.slice(verb.length + 1).replace(/\r$/, "");
+    return listed !== "./" && listed !== ".";
+  });
+
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -1355,7 +1370,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         env: { LC_ALL: "C" },
         allowNonZeroExit: true,
       });
-      const removedSomething = (stdout: string) => /^Removing /m.test(stdout);
+      const removedSomething = (stdout: string) => gitCleanListsWorkspacePath(stdout, "Removing");
       let cleaned = yield* clean;
       // Removing a .gitignore the turn created exposes the files it hid; clean again until
       // a pass removes nothing. The bound only stops a runaway loop. A .gitignore that was
@@ -1378,7 +1393,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           env: { LC_ALL: "C" },
           allowNonZeroExit: true,
         });
-        if (remaining.exitCode !== 0 || /^Would remove /m.test(remaining.stdout)) {
+        if (
+          remaining.exitCode !== 0 ||
+          gitCleanListsWorkspacePath(remaining.stdout, "Would remove")
+        ) {
           yield* resetIndex;
           return yield* new VcsProcessExitError({
             operation,

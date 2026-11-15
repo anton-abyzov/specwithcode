@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { ChildProcessSpawner } from "effect/process";
 import { assert, it } from "@effect/vitest";
 
 import { CheckpointRef } from "@specweave-studio/contracts";
@@ -35,6 +36,38 @@ const makeRepository = Effect.fn("makeRepository")(function* (prefix: string) {
   yield* runGit(root, ["config", "user.name", "Test"]);
   return root;
 });
+
+// The driver runs `git -C <workspace>`, so cleaning an emptied nested workspace ends with
+// Git removing "./" itself. That fails elsewhere, but Git for Windows removes the directory
+// and lists it as "./". This wraps real Git to answer the same way on every platform.
+const makeGitForWindowsCleanLayer = (cleanRuns: Array<ReadonlyArray<string>>) =>
+  Layer.effect(
+    VcsProcess.VcsProcess,
+    Effect.gen(function* () {
+      const real = yield* VcsProcess.VcsProcess;
+      const fileSystem = yield* FileSystem.FileSystem;
+      return VcsProcess.VcsProcess.of({
+        run: (input) =>
+          real.run(input).pipe(
+            Effect.flatMap((output) => {
+              if (!input.args.includes("clean")) return Effect.succeed(output);
+              cleanRuns.push(input.args);
+              if (!output.stderr.includes("failed to remove ./")) return Effect.succeed(output);
+              // Git lists a directory it removes whole on one line, without its children.
+              return fileSystem.remove(input.cwd, { recursive: true }).pipe(
+                Effect.orDie,
+                Effect.as({
+                  ...output,
+                  exitCode: ChildProcessSpawner.ExitCode(0),
+                  stdout: "Removing ./\n",
+                  stderr: "",
+                }),
+              );
+            }),
+          ),
+      });
+    }),
+  ).pipe(Layer.provide(VcsProcess.layer), Layer.provideMerge(NodeServices.layer));
 
 const stagedPaths = (cwd: string) =>
   runGit(cwd, ["diff", "--cached", "--name-only"]).pipe(
@@ -234,3 +267,64 @@ it.effect("restoring a checkpoint leaves a directory whose .gitignore ignores it
     assert.strictEqual(yield* stagedPaths(root), "");
   }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
 );
+
+it.effect("restoring a nested workspace that git clean removes whole cleans it once", () => {
+  const cleanRuns: Array<ReadonlyArray<string>> = [];
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const git = (cwd: string, args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "GitVcsDriver.restore.test.git", cwd, args });
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-restore-whole-" });
+    yield* git(root, ["init"]);
+    yield* git(root, ["config", "user.email", "test@example.com"]);
+    yield* git(root, ["config", "user.name", "Test"]);
+    yield* git(root, ["commit", "--allow-empty", "-m", "initial"]);
+    const cwd = path.join(root, "nested");
+    yield* fileSystem.makeDirectory(cwd);
+    const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/whole");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    const restore = driver.checkpoints.restoreCheckpoint({
+      cwd,
+      checkpointRef,
+      fallbackToHead: false,
+    });
+    const cleanPasses = () => cleanRuns.filter((args) => args.includes("-fd")).length;
+
+    // Already empty: the only thing Git removes is the workspace directory itself.
+    assert.isTrue(yield* restore);
+    assert.isTrue(yield* fileSystem.exists(cwd));
+    assert.strictEqual(cleanPasses(), 1);
+
+    cleanRuns.length = 0;
+    yield* fileSystem.writeFileString(path.join(cwd, "added.txt"), "new\n");
+    assert.isTrue(yield* restore);
+    assert.deepStrictEqual(yield* fileSystem.readDirectory(cwd), []);
+    assert.strictEqual(cleanPasses(), 1);
+
+    // A .gitignore the turn created: one pass removes it, the next removes all the rest.
+    cleanRuns.length = 0;
+    yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "hidden.txt\n");
+    yield* fileSystem.writeFileString(path.join(cwd, "hidden.txt"), "remove\n");
+    assert.isTrue(yield* restore);
+    assert.deepStrictEqual(yield* fileSystem.readDirectory(cwd), []);
+    assert.strictEqual(cleanPasses(), 2);
+    assert.isFalse(cleanRuns.some((args) => args.includes("-dn")));
+    assert.strictEqual((yield* git(root, ["status", "--porcelain"])).stdout, "");
+  }).pipe(Effect.scoped, Effect.provide(makeGitForWindowsCleanLayer(cleanRuns)));
+});
+
+it("does not count the workspace directory itself in git clean output", () => {
+  const lists = GitVcsDriver.gitCleanListsWorkspacePath;
+  // Git for Windows, cleaning an emptied nested workspace.
+  assert.isFalse(lists("Removing ./\n", "Removing"));
+  assert.isFalse(lists("Removing ./\r\n", "Removing"));
+  assert.isFalse(lists("Would remove ./\n", "Would remove"));
+  assert.isFalse(lists("", "Removing"));
+  assert.isFalse(lists("Would remove ./added.txt\n", "Removing"));
+  assert.isTrue(lists("Removing ./added.txt\n", "Removing"));
+  assert.isTrue(lists("Removing .gitignore\nRemoving ./\n", "Removing"));
+  assert.isTrue(lists("Removing ./.config/\n", "Removing"));
+  assert.isTrue(lists("Would remove ./\nWould remove generated/\n", "Would remove"));
+});
