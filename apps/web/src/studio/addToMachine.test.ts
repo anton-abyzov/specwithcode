@@ -178,7 +178,12 @@ describe("addToMachineRoute", () => {
 
 describe("runOnMachineGroups", () => {
   const repo = identity("git@github.com:acme/app.git", "github.com/acme/app");
-  const active = project("here", "p1", { repositoryIdentity: repo });
+  // A checkout at the root of its repository: its place in it is known ("").
+  const at = (id: string, key = "github.com/acme/app", url = "git@github.com:acme/app.git") => ({
+    ...identity(url, key),
+    rootPath: `/Users/me/${id}`,
+  });
+  const active = project("here", "p1", { repositoryIdentity: at("p1") });
   const logicalKey = (entry: EnvironmentProject) =>
     entry.id === "p1" || entry.id === "p2" ? "logical:app" : `own:${entry.id}`;
 
@@ -190,15 +195,40 @@ describe("runOnMachineGroups", () => {
         active,
         project("member", "p2"),
         project("copy", "p3", {
-          repositoryIdentity: identity("https://GitHub.com/Acme/App", "GitHub.com/Acme/App"),
+          repositoryIdentity: at("p3", "GitHub.com/Acme/App", "https://GitHub.com/Acme/App"),
         }),
       ],
       logicalKey,
     });
     expect(groups.withProject.map((entry) => entry.environmentId)).toEqual(["here", "member"]);
     expect(groups.addable).toEqual([
-      { environmentId: "copy", copy: expect.objectContaining({ id: "p3" }) },
-      { environmentId: "empty", copy: null },
+      { environmentId: "copy", copy: expect.objectContaining({ id: "p3" }), candidates: [] },
+      { environmentId: "empty", copy: null, candidates: [] },
+    ]);
+  });
+
+  it("lets the person pick when several checkouts match, and never matches another place in the repository", () => {
+    const groups = runOnMachineGroups({
+      active,
+      environmentIds: [env("here"), env("two"), env("sub")],
+      projects: [
+        active,
+        project("two", "p5", { repositoryIdentity: at("p5") }),
+        project("two", "p6", { repositoryIdentity: at("p6") }),
+        // The same repository, but this project is a folder inside it.
+        project("sub", "p7", {
+          repositoryIdentity: { ...at("p7"), rootPath: "/Users/me" },
+        }),
+      ],
+      logicalKey,
+    });
+    expect(groups.addable).toEqual([
+      {
+        environmentId: "two",
+        copy: null,
+        candidates: [expect.objectContaining({ id: "p5" }), expect.objectContaining({ id: "p6" })],
+      },
+      { environmentId: "sub", copy: null, candidates: [] },
     ]);
   });
 
@@ -229,8 +259,8 @@ describe("runOnMachineGroups", () => {
     });
     expect(groups.withProject.map((entry) => entry.environmentId)).toEqual(["here"]);
     expect(groups.addable).toEqual([
-      { environmentId: "a", copy: null },
-      { environmentId: "b", copy: null },
+      { environmentId: "a", copy: null, candidates: [] },
+      { environmentId: "b", copy: null, candidates: [] },
     ]);
   });
 });

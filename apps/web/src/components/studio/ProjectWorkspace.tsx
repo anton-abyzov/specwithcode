@@ -46,6 +46,7 @@ import { isElectron } from "../../env";
 import { ProjectWorkspaceSurface } from "./ProjectWorkspaceSurface";
 import { KeptProjectPages } from "./KeptProjectPages";
 import { MoveDialogHold } from "../../studio/moveDialogHold";
+import { useRetiredMachineRecords } from "../settings/useReplacedMachineRecords";
 
 export function findProjectGroup<
   G extends {
@@ -172,6 +173,8 @@ export function ProjectWorkspace({
     ? (machineName(unknownRef.environmentId) ?? "That machine")
     : null;
   const linkMachines = useLinkMachines();
+  // The same retired records Settings uses, so a re-joined machine's old copy never leads.
+  const retired = useRetiredMachineRecords();
   // The thread open when the checkout changed belongs to the old machine. The
   // panel closes, and until the URL catches up the new checkout does not see it,
   // or it would send the person to that machine's full page.
@@ -345,7 +348,7 @@ export function ProjectWorkspace({
               }
             : null
         }
-        checkouts={orchestratorCopies(members, checkoutName, linkMachines.startReady)}
+        checkouts={orchestratorCopies(members, checkoutName, linkMachines.startReady, retired)}
         unknownMachines={unloadedMachineRefs(members).map((ref) => ({
           key: `${ref.environmentId}:${ref.projectId}`,
           machine: machineName(ref.environmentId) ?? "Linked machine",
