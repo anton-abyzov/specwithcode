@@ -51,14 +51,21 @@ over, and keeps the record for a year. Nothing is recorded when the app was not 
 whole window, because the spend in that time is unknown. Records start from the version that
 added this view; earlier resets are not shown.
 
+## Reset announcements
+
+Under the live rows, **Reset announcements** lists posts in which a provider reset limits for everyone, granted a banked reset, changed a limit or promised a reset: the date, the provider, the kind and a link to the post. Your main machine reads them every half hour from a public feed (airesets.dev) and keeps each post once. The request carries nothing about you. A confirmed post about a provider you have a subscription with raises one notification while it is under two days old.
+
+The list says when the feed's newest event is more than 14 days old, since the feed may have stopped. Turn the feed off under Settings > Models, "Read reset announcements"; the list then keeps what was already read.
+
 ## Warnings before quota resets unused
 
-A banner above the project list says when a subscription is about to lose quota, the soonest loss first:
+A banner above the project list says when a subscription is about to lose quota, the soonest loss first. It covers every subscription on the machines you are connected to, not only the one you are looking from, because you can start threads on any of them; each line names its machines. It warns of:
 
 - a weekly or monthly window in its last two days that your pace so far will leave at least 40% unused, while there is still at least an hour to use it. Nothing used with two days to go warns; steady use that will finish the quota does not. A 5-hour window never warns: it refills within hours. Neither does a window that caps one model only;
 - a banked reset in its last day;
 - when the plan also renews within a day and that window ends with it, the same line says "renews in" instead; it is one warning, so dismissing either form holds;
-- a limit the provider reset early, for six hours after it happened.
+- a limit the provider reset early, for six hours after it happened;
+- a reset a provider promised for today, for a subscription of that provider with at least 40% left: "Codex Pro reset expected today: 62% left on m1 will be replaced", with a link to the post. It says "expected", because a promise is not a reset. The line goes when the window starts over or a day after the post.
 
 The banner shows the two soonest and counts the rest; a subscription takes one line. "See subscriptions" opens this page. The X dismisses the lines shown until the next reset of the windows they named. When the app is not in front and notifications are connected, each warning also raises one notification per period, on one machine: the first of the machines the account is signed in on.
 

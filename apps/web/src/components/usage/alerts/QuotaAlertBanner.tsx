@@ -8,6 +8,7 @@ import {
 import {
   type QuotaAlert,
   type QuotaAlertEarlyReset,
+  type QuotaAlertExpectedReset,
   describeQuotaAlert,
   driftedQuotaAlertPeriods,
   quotaAlertId,
@@ -35,6 +36,10 @@ import { usePrimaryEnvironmentId } from "../../../state/environments";
 import { environmentPresentations } from "../../../state/presentation";
 import { useMachineNicknames } from "../../../studio/machineNickname";
 import { getDriverOption } from "../../settings/providerDriverMeta";
+import {
+  announcementDriver,
+  useResetAnnouncements,
+} from "../subscriptions/resetAnnouncementsState";
 import { subscriptionRows } from "../subscriptions/subscriptionRows";
 import { useUsageResetLedger } from "../subscriptions/usageResetLedgerState";
 import { notifyQuotaAlert } from "./quotaAlertNotifications";
@@ -42,6 +47,8 @@ import { notifyQuotaAlert } from "./quotaAlertNotifications";
 const MINUTE = 60_000;
 /** The ledger only changes when a window resets, so it is re-read this often. */
 const LEDGER_REFRESH_MS = 5 * MINUTE;
+/** A confirmed announcement is news for this long. */
+const ANNOUNCEMENT_NEWS_MS = 48 * 60 * MINUTE;
 /** The banner names this many alerts and counts the rest. */
 const SHOWN = 2;
 const LIMITS_VIEW_KEY = "specwithcode:usage-limits-view";
@@ -283,6 +290,19 @@ export function QuotaAlertBanner({
                 data-quota-alert={alert.kind}
               >
                 {describeQuotaAlert(alert, labelOf(alert), now)}
+                {alert.sourceUrl !== undefined ? (
+                  <>
+                    {" "}
+                    <a
+                      className="underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      href={alert.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                    >
+                      Source
+                    </a>
+                  </>
+                ) : null}
               </li>
             ))}
             {more > 0 ? (
@@ -318,7 +338,12 @@ export function QuotaAlertBanner({
               type="button"
               className={LINK}
               data-quota-boost-start=""
-              title={`New worker threads start on ${labelOf(boostable)} until ${untilLabel(boostable.windowResetsAt ?? boostable.periodEnd, now)}. Open threads and the coordinator keep their model.`}
+              title={`New worker threads start on ${labelOf(boostable)} until ${untilLabel(
+                boostable.kind === "expectedReset"
+                  ? boostable.periodEnd
+                  : (boostable.windowResetsAt ?? boostable.periodEnd),
+                now,
+              )}. Open threads and the coordinator keep their model.`}
               onClick={() => setPicking(quotaAlertId(boostable))}
             >
               Use it for new threads until it resets
@@ -410,7 +435,23 @@ function LiveQuotaAlerts({
       : [],
   );
   const rows = subscriptionRows(accounts, periods, renewalDays ?? {}, now);
-  const allAlerts = quotaAlerts(rows, early, now);
+  // Posts the main machine read from the announcement feed, re-read as often as the ledger.
+  const feed = useResetAnnouncements(here, Math.floor(now / LEDGER_REFRESH_MS));
+  const announced = feed?.enabled === true ? feed.announcements : [];
+  const expected: QuotaAlertExpectedReset[] = announced.flatMap((announcement) => {
+    const driver = announcementDriver(announcement.provider);
+    return announcement.kind === "expected_reset" && driver !== null
+      ? [
+          {
+            id: announcement.id,
+            driver,
+            publishedAt: Date.parse(announcement.publishedAt),
+            sourceUrl: announcement.sourceUrl,
+          },
+        ]
+      : [];
+  });
+  const allAlerts = quotaAlerts(rows, early, now, expected);
   const alerts = warn ? visibleQuotaAlerts(allAlerts, dismissed ?? {}) : [];
   // A dismissed period whose end a re-read moved a little: the dismissal follows it.
   const driftedKey = JSON.stringify(driftedQuotaAlertPeriods(allAlerts, dismissed ?? {}));
@@ -439,7 +480,9 @@ function LiveQuotaAlerts({
       : model;
   };
   const boostTarget = (alert: QuotaAlert) => {
-    if (alert.kind !== "window" && alert.kind !== "renewal") return null;
+    if (alert.kind !== "window" && alert.kind !== "renewal" && alert.kind !== "expectedReset") {
+      return null;
+    }
     for (const provider of mainProviders) {
       if (!usable(provider)) continue;
       const key = limitAccountKey(provider.driver, provider.auth.email, provider.usageLimits);
@@ -521,9 +564,39 @@ function LiveQuotaAlerts({
   const pending = alerts.filter(speaksFor).map((alert) => ({
     key: alert.key,
     periodEnd: alert.periodEnd,
-    title: alert.kind === "earlyReset" ? "A limit reset early" : "Quota is about to reset unused",
+    title:
+      alert.kind === "earlyReset"
+        ? "A limit reset early"
+        : alert.kind === "expectedReset"
+          ? "A limits reset is expected today"
+          : "Quota is about to reset unused",
     body: describeQuotaAlert(alert, labelOf(alert), now),
   }));
+  // A confirmed post (limits reset, a banked reset granted, a limit changed) notifies once,
+  // on the main machine, for a provider the person has an account on, and only while it
+  // is news: a post already two days old on its first read says nothing.
+  const drivers = new Set(accounts.map((account) => String(account.driver)));
+  if (warn && here !== null && connected[0] !== undefined) {
+    for (const announcement of announced) {
+      const published = Date.parse(announcement.publishedAt);
+      const driver = announcementDriver(announcement.provider);
+      if (
+        announcement.kind === "expected_reset" ||
+        driver === null ||
+        !drivers.has(driver) ||
+        now - published > ANNOUNCEMENT_NEWS_MS ||
+        String(connected[0]) !== String(here)
+      ) {
+        continue;
+      }
+      pending.push({
+        key: `announcement|${announcement.sourceUrl}`,
+        periodEnd: published,
+        title: "Limits reset announced",
+        body: announcement.headline,
+      });
+    }
+  }
   const pendingKey = JSON.stringify(pending);
   // Tried again on every minute tick: an alert first seen while the window was in front,
   // or before notifications were connected, still notifies once the window is behind.
@@ -554,8 +627,15 @@ function LiveQuotaAlerts({
               projectIds: [...projectIds],
               label: labelOf(alert),
               ...(alert.windowId !== undefined ? { windowId: alert.windowId } : {}),
-              // The window's own reset: a renewal's time may sit hours from it.
-              until: alert.windowResetsAt ?? alert.periodEnd,
+              // The window's own reset: a renewal's time may sit hours from it. An expected
+              // reset ends a day after its post, or sooner when the window starts over.
+              until:
+                alert.kind === "expectedReset"
+                  ? alert.periodEnd
+                  : (alert.windowResetsAt ?? alert.periodEnd),
+              ...(alert.kind === "expectedReset" && alert.windowResetsAt !== undefined
+                ? { resetsAtStart: alert.windowResetsAt }
+                : {}),
               startedAt: now,
             },
           },

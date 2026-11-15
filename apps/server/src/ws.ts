@@ -292,6 +292,7 @@ import {
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitHistory from "./usage/UsageLimitHistory.ts";
+import * as ResetAnnouncementMonitor from "./resetAnnouncements/ResetAnnouncementMonitor.ts";
 import * as UsageResetLedger from "./usage/UsageResetLedger.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 
@@ -3553,6 +3554,7 @@ const inferredWebSocketLayer = Layer.unwrap(
                   designLayers.layerRpcHandlers(session),
                   UsageLimitHistory.layerRpcHandlers,
                   UsageResetLedger.layerRpcHandlers,
+                  ResetAnnouncementMonitor.layerRpcHandlers,
                   skillsActionsHandlers,
                 ),
               ),

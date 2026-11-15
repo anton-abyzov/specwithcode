@@ -57,7 +57,7 @@ export function currentQuotaBoost(
  * was started for is gone and a fresh period began.
  */
 export function quotaBoostEnd(
-  boost: Pick<QuotaBoost, "until" | "windowId">,
+  boost: Pick<QuotaBoost, "until" | "windowId" | "resetsAtStart">,
   windows:
     | ReadonlyArray<{
         readonly id: string;
@@ -73,7 +73,9 @@ export function quotaBoostEnd(
       ? undefined
       : windows?.find((candidate) => candidate.id === boost.windowId);
   if (window === undefined) return null;
-  if (window.resetsAt !== null && window.resetsAt - boost.until > QUOTA_ALERT_PERIOD_DRIFT_MS) {
+  // The reset the window was heading for when the boost started.
+  const expected = boost.resetsAtStart ?? boost.until;
+  if (window.resetsAt !== null && window.resetsAt - expected > QUOTA_ALERT_PERIOD_DRIFT_MS) {
     return "earlyReset";
   }
   return window.leftPercent < QUOTA_BOOST_MIN_LEFT_PERCENT ? "spent" : null;

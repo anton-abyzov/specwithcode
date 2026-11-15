@@ -433,6 +433,14 @@ export const QuotaBoost = Schema.Struct({
   windowId: Schema.optionalKey(TrimmedNonEmptyString),
   /** Epoch ms: the reset that ends it, and when it began. */
   until: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 8.64e15 })),
+  /**
+   * The window's reset as read at the start, when `until` is not that reset: a
+   * boost started from an expected reset ends a day after the post, and the
+   * window moving past this is the reset arriving.
+   */
+  resetsAtStart: Schema.optionalKey(
+    Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 8.64e15 })),
+  ),
   startedAt: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 8.64e15 })),
 });
 export type QuotaBoost = typeof QuotaBoost.Type;
@@ -2191,6 +2199,8 @@ export const ServerSettings = Schema.Struct({
   /** Warn when subscription quota is about to reset unused; see `quotaAlerts` in shared. */
   quotaAlertsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   quotaAlertDismissals: QuotaAlertDismissals.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Read the public feed of reset announcements; off stops every request to it. */
+  resetAnnouncementsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Running "use it until it resets" overrides; see `QuotaBoost`. */
   quotaBoosts: QuotaBoosts.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
@@ -2618,6 +2628,7 @@ export const ServerSettingsPatch = Schema.Struct({
   quotaAlertsEnabled: Schema.optionalKey(Schema.Boolean),
   /** Merged by alert key. */
   quotaAlertDismissals: Schema.optionalKey(QuotaAlertDismissals),
+  resetAnnouncementsEnabled: Schema.optionalKey(Schema.Boolean),
   /** Merged by account key; null ends one. */
   quotaBoosts: Schema.optionalKey(QuotaBoosts),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
