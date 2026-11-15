@@ -105,7 +105,14 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
   // built-in order, fitted to what is installed here, stands in for an empty track.
   const rule =
     resolved.threadModelMode === "tracks"
-      ? { ...resolved, modelLanes: effectiveModelLanes(resolved.modelLanes, input.providers).lanes }
+      ? {
+          ...resolved,
+          modelLanes: effectiveModelLanes(
+            resolved.modelLanes,
+            input.providers,
+            resolved.defaultModelProviders,
+          ).lanes,
+        }
       : resolved;
   const lanesSet =
     rule.modelLanes.complex.length > 0 ||
