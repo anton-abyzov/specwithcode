@@ -254,7 +254,10 @@ export function MachinesSettingsPanel() {
       onConnect={(machine) => void connect(machine)}
       remoteControl={
         row.seen.state === "this-machine" ? null : (
-          <MachineRemoteControl environmentId={row.environmentId} name={row.label} />
+          <MachineRemoteControl
+            environmentId={row.environmentId}
+            name={machineName(row.environmentId, row.label)}
+          />
         )
       }
       addForAgents={
@@ -1120,7 +1123,7 @@ function AddForAgents({
     if (adding || added) return;
     // Fail closed: no mounted confirm host means no grant.
     const confirmed = await requestConfirmDialog(
-      `Let this machine manage ${row.label}?\nThis machine's server gets a key to ${row.label} for a year, which can manage its access, updates and skills. Agents still cannot start work there until you allow workers.`,
+      `Let this machine manage ${nickname}?\nThis machine's server gets a key to ${nickname} for a year, which can manage its access, updates and skills. Agents still cannot start work there until you allow workers.`,
     );
     if (confirmed !== true) return;
     setAdding(true);

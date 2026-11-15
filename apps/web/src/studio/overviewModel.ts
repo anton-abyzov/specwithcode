@@ -7,7 +7,10 @@ import type {
 } from "@specweave-studio/client-runtime/state/shell";
 import { threadRuntimeIsActive } from "@specweave-studio/client-runtime/state/shell";
 import { threadRunHealth } from "@specweave-studio/client-runtime/state/models";
-import type { RunHealth } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
+import {
+  activeWorkPhrase,
+  type RunHealth,
+} from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 import type { ModelSelection, ServerProvider } from "@specweave-studio/contracts";
 import type {
   StudioCapacityAccount,
@@ -29,7 +32,13 @@ export type AttentionKind =
 export type SessionView = {
   readonly thread: EnvironmentThreadShell;
   readonly project: EnvironmentProject | null;
+  /** The state in plain words: never a command line, a prompt or a path. */
   readonly state: string;
+  /**
+   * The running step's own label (a command's first line, a subagent's task),
+   * for the state's tooltip; null when the state says all there is.
+   */
+  readonly stateDetail: string | null;
   readonly attention: AttentionKind | null;
   /** The needs-you chip for attention, named once here so the chip and state agree. */
   readonly attentionLabel: string | null;
@@ -169,32 +178,41 @@ export function deriveSessions(
       const observedAttention: AttentionKind | null =
         classifyProjectActions(observeProjectThread(thread))[0]?.reason ?? null;
       const settled = thread.settledOverride === "settled";
-      const observedState =
+      const waitingOnStep =
+        health?.state === "waiting" &&
+        health.awaitingPerson === undefined &&
+        health.waitingMs >= 60_000
+          ? health
+          : null;
+      const stepPhrase =
+        waitingOnStep === null ? null : activeWorkPhrase(waitingOnStep.label, waitingOnStep.kind);
+      const [observedState, observedDetail]: [string, string | null] =
         stall !== null && observedAttention === null
-          ? `No activity for ${formatMinutes(stall.idleMs)}${
-              stall.label === null ? "" : ` on ${stall.label}`
-            }`
+          ? [`No activity for ${formatMinutes(stall.idleMs)}`, stall.label]
           : observedAttention === "held"
-            ? `${heldQueueCountLabel(thread.heldQueuedCount ?? 0)} · Resume or discard`
+            ? [`${heldQueueCountLabel(thread.heldQueuedCount ?? 0)} · Resume or discard`, null]
             : observedAttention
-              ? sessionAttentionLabel(observedAttention, thread)
+              ? [sessionAttentionLabel(observedAttention, thread), null]
               : status === "waiting"
-                ? "Waiting for background work"
-                : health?.state === "waiting" &&
-                    health.awaitingPerson === undefined &&
-                    health.waitingMs >= 60_000
-                  ? `Waiting on ${health.label} · ${formatMinutes(health.waitingMs)}`
+                ? ["Waiting for background work", null]
+                : waitingOnStep !== null && stepPhrase !== null
+                  ? [
+                      `${stepPhrase} · ${formatMinutes(waitingOnStep.waitingMs)}`,
+                      // "Waiting on another thread" already says all its label does.
+                      stepPhrase.endsWith(waitingOnStep.label) ? null : waitingOnStep.label,
+                    ]
                   : observedWorking
-                    ? "Working"
+                    ? ["Working", null]
                     : settled
-                      ? THREAD_LIFECYCLE_LABELS.resolved
-                      : "Ready";
+                      ? [THREAD_LIFECYCLE_LABELS.resolved, null]
+                      : ["Ready", null];
       // Disconnected shells retain navigation and history, but cannot prove current activity.
       const connected = connectedEnvironmentIds.has(thread.environmentId);
       return {
         thread,
         project: projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null,
         state: connected ? observedState : `Disconnected · Last observed: ${observedState}`,
+        stateDetail: connected ? observedDetail : null,
         attention: connected ? observedAttention : null,
         attentionLabel:
           connected && observedAttention !== null

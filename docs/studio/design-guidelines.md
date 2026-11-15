@@ -89,3 +89,9 @@ Use Tailwind's spacing scale (multiples of 4px: `gap-1.5`, `px-2`, `py-1`). Shar
 Add it to the `@theme static` block in `base.css` with a comment saying what it is for, add a row to this page, and register a new text size with tailwind-merge in `apps/web/src/lib/utils.ts`. If a value is needed once, it is not a token: use the nearest step.
 
 The marketing site and the mobile apps have their own type and are not covered here.
+
+## UI change checklist
+
+Check chat, Settings, command palette, keybindings and reverse actions. Preserve native plans, approvals, queues, steering and checkpoints. Keep unknown quota/offline/errors explicit. Avoid continuously repainting animations and gratuitous state payloads. Use existing semantic UI variants; layout belongs to the parent. Typefaces, sizes, corners and colors come from the design tokens in docs/studio/design-guidelines.md: interface text is sans (serif is for report documents only), sizes and corners are scale tokens, status colors are semantic tokens. `apps/web/src/designTokens.guard.test.ts` enforces it.
+
+Document changes to user tasks and durable architectural constraints, not copies of types. No publication, remote push or release service is implied by local implementation. Require manual acceptance only when the user or increment acceptance criteria explicitly request it. Record unverified installed/native behavior as a proof limit, not an automatic closure blocker for every UI/auth change.

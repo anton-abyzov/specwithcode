@@ -52,6 +52,8 @@ import * as DesktopState from "./DesktopState.ts";
 import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as MacBundleName from "../updates/macBundleName.ts";
+import { runElectronSelfInstall } from "../install/electronSelfInstall.ts";
+import type { SelfInstallOutcome } from "../install/macSelfInstall.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
@@ -577,6 +579,31 @@ const startup = Effect.gen(function* () {
     Effect.catchCause((cause) => fatalStartupCause("whenReady", cause)),
   );
   yield* logStartupInfo("app ready");
+  // Opened from the disk image (or a translocated copy): offer to install into
+  // Applications before anything records this path, starts the backend or
+  // checks for updates. Installing relaunches from Applications.
+  const selfInstallContext = yield* Effect.context<never>();
+  const selfInstall = yield* Effect.promise(() =>
+    runElectronSelfInstall({
+      platform: environment.platform,
+      isPackaged: environment.isPackaged,
+      workDir: userDataPath,
+      log: (message, data) => {
+        void Effect.runPromiseWith(selfInstallContext)(logStartupInfo(message, data ?? {}));
+      },
+    }),
+  ).pipe(
+    Effect.catchCause((cause) =>
+      logStartupError("app install step unavailable", { cause: Cause.pretty(cause) }).pipe(
+        Effect.as<SelfInstallOutcome>({ kind: "continue", reason: "error" }),
+      ),
+    ),
+  );
+  if (selfInstall.kind === "exit") {
+    yield* logStartupInfo("quitting for the installed app", { reason: selfInstall.reason });
+    yield* electronApp.exit(0);
+    return yield* Effect.never;
+  }
   // An install updated from a release with an earlier bundle name (such as
   // "SpecWeave Studio (Alpha).app") renames itself before anything starts:
   // a script moves the bundle once this process has exited and reopens it.

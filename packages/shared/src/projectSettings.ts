@@ -292,3 +292,23 @@ export function resolveWorktreeCleanup(
     settings.storageCleanup;
   return { worktreeAfterDays, worktreeOnMerge, worktreeOnDelete, worktreeUnchanged };
 }
+
+/**
+ * The model a project's new threads start on, as the project chose it: a
+ * Project settings override, else the project's own saved field. Null when
+ * only the machine default would apply. The saved field still counts after
+ * the install folded its legacy fields, because the project dialog keeps
+ * writing it; the resolver alone would drop it and show no model.
+ */
+export function projectThreadModel(
+  settings: ServerSettings,
+  projectId: ProjectId,
+  project: LegacyProjectSettingsFields | null | undefined,
+): ModelSelection | null {
+  const resolved = resolveProjectSettings(settings, projectId, project);
+  if (resolved.sources.defaultModelSelection === "project")
+    return resolved.settings.defaultModelSelection;
+  // Like an override, a saved model on a disabled provider does not count.
+  const saved = project?.defaultModelSelection ?? null;
+  return saved !== null && isModelSelectionProviderEnabled(settings, saved) ? saved : null;
+}
