@@ -103,6 +103,22 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("drops a character the read limit splits instead of corrupting it", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "menu.md", "café au lait\n");
+
+        const start = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "menu.md",
+          maxBytes: 4,
+        });
+        expect(start.contents).toBe("caf");
+        expect(start.truncated).toBe(true);
+      }),
+    );
+
     it.effect("reads host files outside the workspace root by absolute path", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -223,14 +239,20 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("rejects binary files without leaking their contents into the error", () =>
+    it.effect.each([
+      { name: "a NUL byte", bytes: [0x61, 0, 0x62] },
+      // "café" saved as Latin-1.
+      { name: "invalid UTF-8", bytes: [0x63, 0x61, 0x66, 0xe9] },
+      // "hi" saved as UTF-16 LE with its byte order mark.
+      { name: "UTF-16 text", bytes: [0xff, 0xfe, 0x68, 0x00, 0x69, 0x00] },
+    ])("rejects files with $name without leaking their contents into the error", ({ bytes }) =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         const absolutePath = path.join(cwd, "asset.bin");
-        yield* fileSystem.writeFile(absolutePath, Uint8Array.from([0x61, 0, 0x62]));
+        yield* fileSystem.writeFile(absolutePath, Uint8Array.from(bytes));
 
         const error = yield* workspaceFileSystem
           .readFile({ cwd, relativePath: "asset.bin" })
@@ -323,6 +345,59 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
         expect(result).toEqual({ relativePath: "plans/effect-rpc.md" });
         expect(saved).toBe("# Plan\n");
+      }),
+    );
+
+    it.effect("keeps a UTF-8 byte order mark when an edited file is saved", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const bomContents = "\uFEFFexport const answer = 42;\n";
+        yield* writeTextFile(cwd, "bom.ts", bomContents);
+
+        const read = yield* workspaceFileSystem.readFile({ cwd, relativePath: "bom.ts" });
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "bom.ts",
+          contents: read.contents.replace("42", "43"),
+        });
+        const saved = yield* fileSystem.readFile(path.join(cwd, "bom.ts")).pipe(Effect.orDie);
+
+        expect([...saved]).toEqual([...new TextEncoder().encode(bomContents.replace("42", "43"))]);
+        expect([...saved.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+
+        // A save that already starts with the mark does not gain a second one.
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "bom.ts",
+          contents: bomContents,
+        });
+        const resaved = yield* fileSystem.readFile(path.join(cwd, "bom.ts")).pipe(Effect.orDie);
+        expect([...resaved]).toEqual([...new TextEncoder().encode(bomContents)]);
+      }),
+    );
+
+    it.effect("refuses to overwrite a file that is not UTF-8 text", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const absolutePath = path.join(cwd, "legacy.txt");
+        // "café" saved as Latin-1; a lossy decode would show "caf\uFFFD".
+        const latin1 = Uint8Array.from([0x63, 0x61, 0x66, 0xe9, 0x0a]);
+        yield* fileSystem.writeFile(absolutePath, latin1);
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: "legacy.txt", contents: "caf\uFFFD edited\n" })
+          .pipe(Effect.flip);
+        const saved = yield* fileSystem.readFile(absolutePath).pipe(Effect.orDie);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceBinaryFileError);
+        expect(error).toMatchObject({ workspaceRoot: cwd, relativePath: "legacy.txt" });
+        expect([...saved]).toEqual([...latin1]);
       }),
     );
 

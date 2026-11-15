@@ -29,9 +29,20 @@ export const protectedFileSaveToastId = (
   relativePath: string,
 ): string => `protected-file-save:${JSON.stringify([environmentId, cwd, relativePath])}`;
 
+export const NOT_UTF8_FILE_SAVE_MESSAGE =
+  "This file is not UTF-8 text. Saving it here would corrupt it, so use another editor to change it.";
+
+/** A save the server refused because the file on disk is binary or not UTF-8 text. */
+const isNotUtf8FileError = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "failure" in error &&
+  (error as { readonly failure?: unknown }).failure === "binary_file";
+
 /** What to tell the person when a save failed, or null for the generic handling. */
 export function fileSaveErrorMessage(error: unknown): string | null {
-  return isProtectedFileError(error) ? PROTECTED_FILE_SAVE_MESSAGE : null;
+  if (isProtectedFileError(error)) return PROTECTED_FILE_SAVE_MESSAGE;
+  return isNotUtf8FileError(error) ? NOT_UTF8_FILE_SAVE_MESSAGE : null;
 }
 
 /** Describe existing failure codes without exposing the underlying platform cause. */
@@ -41,7 +52,7 @@ export function filePreviewReadErrorMessage(error: ProjectReadFileError): string
     case "path_not_file":
       return "The path is a directory or special file, not a regular file.";
     case "binary_file":
-      return "The file is binary and cannot be displayed as text.";
+      return "The file is binary or not UTF-8 text, so it cannot be displayed or edited here.";
     case "workspace_path_outside_root":
       return "The requested path is outside the workspace.";
     case "resolved_path_outside_root":
