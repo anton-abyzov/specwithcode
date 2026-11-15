@@ -1816,17 +1816,21 @@ const make = Effect.gen(function* () {
           }
 
           nextSecretKeys.add(secretName);
-          // The last inline value for the name is the one the provider used; an empty or
-          // already redacted duplicate row does not hide it.
-          const inlineValue = variable.valueRedacted
+          // The last row for the name that carries a value is the one the provider used:
+          // an inline value moves into the store, a stored one stays as it is. An empty
+          // duplicate row hides neither.
+          const lastValued = variable.valueRedacted
             ? current.providerInstances[ProviderInstanceId.make(instanceId)]?.environment?.findLast(
                 (entry) =>
                   entry.name === variable.name &&
                   entry.sensitive &&
-                  !entry.valueRedacted &&
-                  entry.value.length > 0,
-              )?.value
+                  (entry.valueRedacted === true || entry.value.length > 0),
+              )
             : undefined;
+          const inlineValue =
+            lastValued !== undefined && lastValued.valueRedacted !== true
+              ? lastValued.value
+              : undefined;
           const value = inlineValue ?? variable.value;
           if (!variable.valueRedacted || inlineValue !== undefined) {
             if (value.length > 0) {

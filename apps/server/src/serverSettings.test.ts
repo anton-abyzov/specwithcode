@@ -1931,6 +1931,61 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  // A settings file can hold an inline value and a stored one for the same name. The
+  // last row that carries a value is the one in effect, so only that one is kept.
+  it.effect.each([
+    ["the stored row is last", "store-current", true],
+    ["the inline row is last", "inline-stale", false],
+  ] as const)(
+    "a kept row keeps the secret in effect when the file holds both forms (%s)",
+    ([, expected, storedRowLast]) =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const instanceId = ProviderInstanceId.make("codex_personal");
+        const secretName = `provider-env-${Buffer.from("codex_personal").toString("base64url")}-${Buffer.from("API_TOKEN").toString("base64url")}`;
+        yield* secrets.set(secretName, new TextEncoder().encode("store-current"));
+        const inlineRow = { name: "API_TOKEN", value: "inline-stale", sensitive: true };
+        const storedRow = { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true };
+        yield* fileSystem.writeFileString(
+          config.settingsPath,
+          JSON.stringify({
+            providerInstances: {
+              codex_personal: {
+                driver: "codex",
+                environment: storedRowLast ? [inlineRow, storedRow] : [storedRow, inlineRow],
+                config: {},
+              },
+            },
+          }),
+        );
+        yield* service.getSettings;
+
+        yield* service.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [
+                storedRow,
+                { name: "API_TOKEN", value: "plain-value", sensitive: false },
+              ],
+              config: {},
+            },
+          },
+        });
+
+        const settings = yield* service.getSettings;
+        assert.equal(settings.providerInstances[instanceId]?.environment?.[0]?.value, expected);
+        const stored = yield* secrets.get(secretName);
+        assert.equal(
+          Option.isSome(stored) ? new TextDecoder().decode(stored.value) : undefined,
+          expected,
+        );
+      }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
