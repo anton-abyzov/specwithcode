@@ -15,6 +15,7 @@ import {
   STUDIO_WRITING_INSTRUCTIONS,
   withHeadlessBrowserEnvironment,
 } from "./RuntimeInstructions.ts";
+import { ThreadToolkit } from "../mcp/toolkits/thread/tools.ts";
 
 describe("headless browser environment", () => {
   it("applies the headless variables over an inherited or provider value", () => {
@@ -295,13 +296,14 @@ describe("buildRuntimeInstructions", () => {
     // and the short-cell comparison rule about 10 more (October 27, 2026).
     // The heavy-check gate rule added about 60 (November 11, 2026).
     // The reports rule added about 100 (November 13, 2026): 5,509 then.
+    // The closure protocol moved to studio_thread_record_delivery (November 14, 2026): 4,695.
     for (const responseStyle of ["concise", "detailed"] as const) {
       const instructions = buildRuntimeInstructions({
         harness: "Claude Code",
         model: "claude-opus-5-5",
         responseStyle,
       });
-      expect(instructions.length).toBeLessThanOrEqual(5_550);
+      expect(instructions.length).toBeLessThanOrEqual(4_750);
     }
   });
 
@@ -348,20 +350,40 @@ describe("agent instructions", () => {
   });
 });
 
-it("separates finite assignments from durable user goals in both response styles", () => {
+it("keeps the closeout rule a worker acts on in both response styles", () => {
   for (const style of ["concise", "detailed"] as const) {
     const text = responseStyleInstructions(style);
-    expect(text).toContain("never ask the user to carry internal messages or handoff receipts");
-    expect(text).toContain("An answered destination decision stays answered");
-    expect(text).toContain("does not release a live owner's work");
-    expect(text).toContain("Keep the overall user goal open");
-    expect(text).toContain(
-      "Record independently verified delivery and goal obligations with studio_thread_record_delivery",
-    );
-    expect(text).toContain(
-      "At closeout, give your scope and evidence to the existing independent completion owner",
-    );
-    expect(text).toContain("acknowledgment-only turns");
+    expect(text).toContain("Your work is finished when its owner accepts it or takes what remains");
+    expect(text).toContain("never vouch for your own delivery");
     expect(text).toContain("Required CI and readiness gates remain required");
   }
+});
+
+// The closure protocol left the per-turn block on November 14, 2026: every
+// worker and subagent paid about 200 tokens a turn for rules only the thread
+// that owns a goal acts on. That thread reads them where it records delivery.
+it("carries the goal owner's closure protocol in studio_thread_record_delivery", () => {
+  const text = ThreadToolkit.tools.studio_thread_record_delivery.description ?? "";
+  for (const rule of [
+    "never ask the user to carry internal messages or handoff receipts",
+    "An answered destination decision stays answered",
+    "does not release a live owner's work",
+    "keep it open through verified activation, cleanup and acceptance",
+    "never discharges a parent obligation",
+    "Give an external-session limit an owner and nextEvent",
+    "Preserve permissions and Stop",
+    "acknowledgment-only turns",
+    "reuse one event-driven observer for a real dependency",
+  ])
+    expect(text).toContain(rule);
+  for (const style of ["concise", "detailed"] as const)
+    expect(responseStyleInstructions(style)).not.toContain("acknowledgment-only turns");
+});
+
+it("keeps the response style block near 320 tokens", () => {
+  const block = (style: "concise" | "detailed") =>
+    responseStyleInstructions(style).split("</response_style>")[0]!;
+  // 2,093 characters before the closure protocol moved out; 1,262 now.
+  expect(block("concise").length).toBeLessThanOrEqual(1_300);
+  expect(block("detailed").length).toBeLessThanOrEqual(1_350);
 });

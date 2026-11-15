@@ -199,3 +199,13 @@ passed as `--wsl-runtime`; see the
 Add `--signed` after configuring the platform credentials in the
 [release runbook](./release.md). macOS passkeys need a signed, provisioned app; follow the
 [Connect setup](./connect-setup.md#desktop-passkeys) for local signing and renderer HMR.
+
+## Runtime identity and defaults
+
+CLI: specweave-studio. Default loopback port: 8319. Private home: ~/.specwithcode for new installs; true legacy standalone ~/.specweave-studio/userdata or dev keeps precedence, otherwise an existing branded root survives managed identity installation; legacy-only roots and explicit STUDIO_HOME remain supported. Runtime options use `STUDIO_*` only; other products' environment variables are ignored and must never select their installs or stores.
+
+Hosted relay/cloud and telemetry are disabled by default. Self-update is on by default but reads only the app's own release feed; Settings > About and `SPECWITHCODE_DISABLE_AUTO_UPDATE=true` (legacy `STUDIO_DISABLE_AUTO_UPDATE`) turn it off. Direct private pairing remains. Never introduce other products' endpoints or infer subscription entitlement.
+
+Check active owners, branch, increment and ledger before claiming work. Preserve native sessions, services, schedules and dirty worktrees. Idle-looking metadata does not authorize takeover.
+
+Stop only the exact PID you spawned or an exact newly owned launchd service after verifying its identity. Never pattern-stop providers, apps or dev servers.
