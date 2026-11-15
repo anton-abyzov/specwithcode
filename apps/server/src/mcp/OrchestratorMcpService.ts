@@ -208,6 +208,8 @@ const DEFAULT_THREAD_RUN_LIMIT = 10;
 const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
 /** Room the capabilities tool keeps for the fields its handler adds (platform, grant flags). */
 const CAPABILITIES_HANDLER_RESERVE_BYTES = 1_024;
+/** The handler may add `,"allowedByGrant":false` to every provider. */
+const CAPABILITIES_GRANT_FLAG_BYTES = 24;
 
 /**
  * `autoRouting: false` keeps Auto model routing off for this call: a caller
@@ -3046,7 +3048,10 @@ const make = Effect.gen(function* () {
           features: orchestratorFeatures(DEFAULT_DELEGATION_LIMITS),
         } satisfies OrchestratorMcpCapabilitiesResult;
         // A large catalog's model options alone run to hundreds of kilobytes.
-        const maxBytes = MCP_RESULT_MAX_BYTES - CAPABILITIES_HANDLER_RESERVE_BYTES;
+        const maxBytes =
+          MCP_RESULT_MAX_BYTES -
+          CAPABILITIES_HANDLER_RESERVE_BYTES -
+          full.providers.length * CAPABILITIES_GRANT_FLAG_BYTES;
         if (input?.providerInstanceId === undefined) return compactCatalog(full, maxBytes);
         const instance = instanceCatalog(
           full,
@@ -3830,7 +3835,9 @@ const make = Effect.gen(function* () {
         // Positions and counts are at most this wide when the fields are filled in.
         const fixedBytes = (recentRuns: ReadonlyArray<OrchestratorMcpThreadRun>) =>
           serializedBytes(shape(recentRuns, [], 0)) +
-          `,"omittedItems":${rendered.length},"earlierPosition":${Number.MAX_SAFE_INTEGER}`.length;
+          `,"omittedItems":${rendered.length},"earlierPosition":${Number.MAX_SAFE_INTEGER}`.length +
+          // nextPosition is null in the empty shape and a position in the real one.
+          String(Number.MAX_SAFE_INTEGER).length;
         const recentRuns = runs.slice(
           0,
           newestItemsThatFit(runs.toReversed(), fixedBytes([]), MCP_RESULT_MAX_BYTES),
