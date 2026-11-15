@@ -1,4 +1,3 @@
-import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
@@ -14,6 +13,10 @@ import {
   STUDIO_PI_RESPONSE_STYLE_ENV,
   STUDIO_PI_RUNTIME_MODE_ENV,
 } from "./piStudioMcpExtensionSource.ts";
+
+// The extension imports Node's crypto module inside Pi. This loader strips that
+// import, so the same built-in module is handed to the sandbox here.
+const NodeCrypto = process.getBuiltinModule("node:crypto");
 
 type RequestHook = (
   event: { payload: unknown },
