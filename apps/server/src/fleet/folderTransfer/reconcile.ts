@@ -387,7 +387,7 @@ export function planReconcile(input: PlanInput): Plan {
                 ? "Not on this machine yet; copied with its history, because this machine cannot read its origin."
                 : localWork && source.identity !== null && source.kind === "main"
                   ? "Not on this machine yet; copied with its history, because it has commits or stashes that are not on origin."
-                  : "Not on this machine yet; copied with its history, branches and stashes."
+                  : "Not on this machine yet; copied with its history, branches and stashes.",
           choices: [],
           decision: null,
           needsDecision: false,
