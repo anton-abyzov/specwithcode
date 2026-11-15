@@ -409,6 +409,11 @@ export function projectAdmissionReason(
         ? `Reconnecting to ${context.machineLabel}. Send once it is back; nothing is sent to another machine.`
         : "Reconnecting to this host. If this does not clear, reload the page.";
     }
+    if (context.reach === "connecting") return "Connecting to this host.";
+    // A retry against a machine already down is still a machine that is down.
+    if (context.reach !== undefined && isMachineReachDown(context.reach)) {
+      return remoteUnreachableAdmission(context.machineLabel);
+    }
     if (connection?.phase === "connecting") return "Connecting to this host.";
     if (connection?.phase === "reconnecting") {
       // A named machine that dropped is unreachable now; say the message stays here.

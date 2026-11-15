@@ -555,6 +555,18 @@ describe("Project admission and retry", () => {
         },
       ),
     ).toBe("This device has no network.");
+    expect(
+      projectAdmissionReason(
+        settings,
+        false,
+        true,
+        { phase: "connecting" },
+        {
+          ...grace,
+          reach: "not-answering",
+        },
+      ),
+    ).toMatch(/Build Mac is unreachable/);
     expect(hostDisconnectedLabel({ phase: "error", blockedReason: "authentication" })).toBe(
       "Signed out",
     );
