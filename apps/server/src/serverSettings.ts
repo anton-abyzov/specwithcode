@@ -1789,11 +1789,20 @@ const make = Effect.gen(function* () {
       const changes: SecretChange[] = [];
 
       const nextSecretKeys = new Set<string>();
+      // A redacted sensitive row keeps its stored secret, so a duplicate row with the
+      // same name (plain or empty) must not remove it.
+      const keptSecretKeys = new Set<string>();
+      // Secrets a row in this save gives a new value, and inline values a kept row would
+      // move into the store. A new value wins over the inline one whatever the row order,
+      // as it does when the secret is already in the store.
+      const typedSecretKeys = new Set<string>();
+      const inlineMigrations: SecretChange[] = [];
       for (const [instanceId, instance] of Object.entries(next.providerInstances)) {
         if (!instance.environment) continue;
         const environment: ProviderInstanceEnvironmentVariable[] = [];
         for (const variable of instance.environment) {
           const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
+          if (variable.sensitive && variable.valueRedacted) keptSecretKeys.add(secretName);
           if (!variable.sensitive) {
             changes.push({
               kind: "remove",
@@ -1807,26 +1816,33 @@ const make = Effect.gen(function* () {
           }
 
           nextSecretKeys.add(secretName);
-          // Match the provider environment's last-value-wins behavior for duplicate names.
-          const previous = variable.valueRedacted
+          // The last inline value for the name is the one the provider used; an empty or
+          // already redacted duplicate row does not hide it.
+          const inlineValue = variable.valueRedacted
             ? current.providerInstances[ProviderInstanceId.make(instanceId)]?.environment?.findLast(
-                (entry) => entry.name === variable.name,
-              )
+                (entry) =>
+                  entry.name === variable.name &&
+                  entry.sensitive &&
+                  !entry.valueRedacted &&
+                  entry.value.length > 0,
+              )?.value
             : undefined;
-          const inlineValue =
-            previous?.sensitive && !previous.valueRedacted && previous.value.length > 0
-              ? previous.value
-              : undefined;
           const value = inlineValue ?? variable.value;
           if (!variable.valueRedacted || inlineValue !== undefined) {
             if (value.length > 0) {
-              changes.push({
+              const write: SecretChange = {
                 kind: "write",
                 secretName,
                 value: textEncoder.encode(value),
                 providerInstanceId: instanceId,
                 environmentVariable: variable.name,
-              });
+              };
+              if (inlineValue === undefined) {
+                typedSecretKeys.add(secretName);
+                changes.push(write);
+              } else {
+                inlineMigrations.push(write);
+              }
               environment.push({ ...variable, value: "", valueRedacted: true });
             } else {
               changes.push({
@@ -1848,6 +1864,10 @@ const make = Effect.gen(function* () {
           ...instance,
           environment,
         } satisfies ProviderInstanceConfig;
+      }
+
+      for (const migration of inlineMigrations) {
+        if (!typedSecretKeys.has(migration.secretName)) changes.push(migration);
       }
 
       for (const [instanceId, instance] of Object.entries(current.providerInstances)) {
@@ -2011,7 +2031,9 @@ const make = Effect.gen(function* () {
           voice,
           decisionModel,
         },
-        changes,
+        changes: changes.filter(
+          (change) => change.kind === "write" || !keptSecretKeys.has(change.secretName),
+        ),
       };
     });
 

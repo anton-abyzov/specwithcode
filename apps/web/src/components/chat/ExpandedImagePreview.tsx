@@ -46,6 +46,8 @@ export function wrapExpandedImageIndex(index: number, imageCount: number): numbe
 export async function resolveMarkdownMediaPreview(input: {
   source: string;
   resolvedFilePath?: string | undefined;
+  /** The link was written relative to the workspace, so only the thread's machine has it. */
+  resolvedFileRelative?: boolean | undefined;
   cwd?: string | undefined;
   threadRef?: ScopedThreadRef | undefined;
   httpBaseUrl?: string | undefined;
@@ -59,6 +61,7 @@ export async function resolveMarkdownMediaPreview(input: {
     threadId: input.threadRef?.threadId,
     workspaceRoot: input.cwd,
     resolvedFilePath: input.resolvedFilePath,
+    resolvedFileRelative: input.resolvedFileRelative,
   });
   if (media === null) return null;
   const { kind, name, reference } = media;

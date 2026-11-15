@@ -147,7 +147,7 @@ const decodeElicitationComplete = Schema.decodeUnknownEffect(
 );
 const parserFactory = RpcSerialization.ndJsonRpc();
 // ndJsonRpc skips lines that are not JSON. A malformed agent line has to end the
-// session, so frames are split here and each one goes through the strict codec.
+// session, so frames are split here and each nonblank one goes through the strict codec.
 const makeStrictNdJsonRpcParser = () => {
   const codec = RpcSerialization.jsonRpc().makeUnsafe();
   const decoder = new TextDecoder();
@@ -157,7 +157,19 @@ const makeStrictNdJsonRpcParser = () => {
       buffer += typeof bytes === "string" ? bytes : decoder.decode(bytes, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
-      return lines.flatMap((line) => codec.decode(line));
+      return lines.flatMap((line) => (line.trim() === "" ? [] : codec.decode(line)));
+    },
+    // Delivers a final message that arrived without a trailing newline. A
+    // truncated final line is left to the exit status, which explains a crash better.
+    end: (): ReadonlyArray<unknown> => {
+      const line = buffer + decoder.decode();
+      buffer = "";
+      if (line.trim() === "") return [];
+      try {
+        return codec.decode(line);
+      } catch {
+        return [];
+      }
     },
     encode: (response: Parameters<typeof codec.encode>[0]) => {
       const encoded = codec.encode(response);
@@ -712,6 +724,19 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
           Effect.forEach(messages, routeDecodedMessage, {
             discard: true,
           }),
+        ),
+      ),
+    ),
+    Effect.andThen(
+      Effect.suspend(() =>
+        Effect.forEach(
+          (
+            parser.end() as ReadonlyArray<
+              RpcMessage.FromClientEncoded | RpcMessage.FromServerEncoded
+            >
+          ).map(normalizeAcpJsonRpcError),
+          routeDecodedMessage,
+          { discard: true },
         ),
       ),
     ),

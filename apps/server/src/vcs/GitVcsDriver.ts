@@ -1336,14 +1336,62 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               }),
           ),
         );
+      // Restoring the checkpoint stages its tree; unstage it, with or without a first commit.
+      const resetIndex = Effect.gen(function* () {
+        // Git for Windows removes an emptied nested workspace directory itself.
+        yield* recreateWorkspace("git clean");
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["reset", "--quiet", "--", "."],
+        });
+      });
       // Restoring away the last tracked file can remove a nested workspace directory.
       yield* recreateWorkspace("git restore");
-      const cleaned = yield* execute({
+      const clean = execute({
         operation,
         cwd: input.cwd,
         args: ["clean", "-fd", "--", "."],
+        env: { LC_ALL: "C" },
         allowNonZeroExit: true,
       });
+      const removedSomething = (stdout: string) => /^Removing /m.test(stdout);
+      let cleaned = yield* clean;
+      // Removing a .gitignore the turn created exposes the files it hid; clean again until
+      // a pass removes nothing. The bound only stops a runaway loop. A .gitignore that was
+      // itself ignored at capture is not restored, so if the turn un-ignores it, a later
+      // pass can remove it and then the files it used to hide.
+      for (
+        let pass = 1;
+        pass < 64 && cleaned.exitCode === 0 && removedSomething(cleaned.stdout);
+        pass++
+      ) {
+        yield* recreateWorkspace("git clean");
+        cleaned = yield* clean;
+      }
+      if (cleaned.exitCode === 0 && removedSomething(cleaned.stdout)) {
+        yield* recreateWorkspace("git clean");
+        const remaining = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["clean", "-dn", "--", "."],
+          env: { LC_ALL: "C" },
+          allowNonZeroExit: true,
+        });
+        if (remaining.exitCode !== 0 || /^Would remove /m.test(remaining.stdout)) {
+          yield* resetIndex;
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git clean",
+            cwd: input.cwd,
+            exitCode: remaining.exitCode,
+            detail:
+              remaining.exitCode !== 0
+                ? remaining.stderr.trim() || "Could not check the checkpoint workspace."
+                : "Could not clean the checkpoint workspace: untracked files remain.",
+          });
+        }
+      }
       if (cleaned.exitCode !== 0) {
         // Git can remove every child, then fail trying to remove './' itself.
         const emptiedWorkspace =
@@ -1353,7 +1401,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             Effect.map((entries) => entries.length === 0),
             Effect.orElseSucceed(() => false),
           ));
-        if (!emptiedWorkspace)
+        if (!emptiedWorkspace) {
+          yield* resetIndex;
           return yield* new VcsProcessExitError({
             operation,
             command: "git clean",
@@ -1361,18 +1410,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             exitCode: cleaned.exitCode,
             detail: cleaned.stderr.trim() || "Could not clean the checkpoint workspace.",
           });
+        }
       }
-      // Git for Windows removes an emptied nested workspace directory itself.
-      yield* recreateWorkspace("git clean");
-
-      const headExists = yield* hasHeadCommit(input.cwd);
-      if (headExists) {
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: ["reset", "--quiet", "--", "."],
-        });
-      }
+      yield* resetIndex;
 
       return true;
     }),

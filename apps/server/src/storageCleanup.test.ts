@@ -28,11 +28,13 @@ import * as GitManager from "./git/GitManager.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import { casesFoldOn } from "./scratchPrune.ts";
 import * as Settings from "./serverSettings.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import { storageCleanupActivityAt, storageCleanupThreadIdle } from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import { hiddenTrackedChangeReason } from "./worktreeHiddenWork.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -221,7 +223,10 @@ const cleanupFixture = Effect.gen(function* () {
   const hooks = {
     onPullRequest: Effect.void as Effect.Effect<unknown, SqlError>,
     pullRequestState: (_branch: string): "open" | "closed" | "merged" => "merged",
+    /** Runs before each status read; `call` counts the reads of that folder. */
+    onStatus: (_cwd: string, _call: number): Effect.Effect<unknown, unknown> => Effect.void,
   };
+  const statusCalls = new Map<string, number>();
   const provideCleanup = <A, E>(
     effect: Effect.Effect<
       A,
@@ -286,6 +291,12 @@ const cleanupFixture = Effect.gen(function* () {
       ),
       Effect.provideService(GitVcsDriver.GitVcsDriver, {
         ...git,
+        statusDetailsLocal: (cwd, options) =>
+          Effect.suspend(() => {
+            const call = (statusCalls.get(cwd) ?? 0) + 1;
+            statusCalls.set(cwd, call);
+            return hooks.onStatus(cwd, call);
+          }).pipe(Effect.orDie, Effect.andThen(git.statusDetailsLocal(cwd, options))),
         removeWorktree: (input) =>
           Effect.sync(() => removed.push(input.path)).pipe(
             Effect.andThen(git.removeWorktree(input)),
@@ -419,6 +430,248 @@ describe("storage cleanup keeps folders of open threads", () => {
       expect(yield* f.fs.exists(settled)).toBe(true);
       expect(f.removed).toEqual([]);
     }).pipe(Effect.provide(cleanupLayer)),
+  );
+});
+
+describe("storage cleanup keeps work that Git status does not show", () => {
+  EffectVitest.it.effect(
+    "keeps a settled thread's folder with edits to files marked assume-unchanged or skip-worktree",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const assumed = yield* f.addWorktree("hidden-assumed");
+        const skipped = yield* f.addWorktree("hidden-skipped");
+        const flaggedClean = yield* f.addWorktree("hidden-flagged-clean");
+        for (const [worktree, flag] of [
+          [assumed, "--assume-unchanged"],
+          [skipped, "--skip-worktree"],
+          [flaggedClean, "--assume-unchanged"],
+        ] as const)
+          yield* f.run(worktree, ["update-index", flag, "file.txt"]);
+        yield* f.fs.writeFileString(f.path.join(assumed, "file.txt"), "edited, hidden\n");
+        yield* f.fs.writeFileString(f.path.join(skipped, "file.txt"), "edited, skipped\n");
+        // Git status shows none of these edits, and a plain worktree remove deletes them.
+        for (const worktree of [assumed, skipped])
+          expect((yield* f.run(worktree, ["status", "--porcelain"])).stdout).toBe("");
+        yield* f.addThread("assumed", "hidden-assumed", assumed, "settled");
+        yield* f.addThread("skipped", "hidden-skipped", skipped, "settled");
+        yield* f.addThread("flagged-clean", "hidden-flagged-clean", flaggedClean, "settled");
+        yield* f.sweep;
+        expect(f.removed).toEqual([flaggedClean]);
+        expect(yield* f.fs.readFileString(f.path.join(assumed, "file.txt"))).toBe(
+          "edited, hidden\n",
+        );
+        expect(yield* f.fs.readFileString(f.path.join(skipped, "file.txt"))).toBe(
+          "edited, skipped\n",
+        );
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "keeps a settled thread's folder that holds a repository inside an ignored dependency folder",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        yield* f.fs.writeFileString(
+          f.path.join(f.repo, ".git", "info", "exclude"),
+          "node_modules/\n",
+        );
+        const withClone = yield* f.addWorktree("nested-clone");
+        const withBare = yield* f.addWorktree("nested-bare");
+        const plain = yield* f.addWorktree("nested-none");
+        const clone = f.path.join(withClone, "node_modules", "tool");
+        yield* f.fs.makeDirectory(clone, { recursive: true });
+        yield* f.run(clone, ["init", "-b", "main"]);
+        yield* f.fs.writeFileString(f.path.join(clone, "work.txt"), "only here\n");
+        const bare = f.path.join(withBare, "node_modules", "cache.git");
+        yield* f.fs.makeDirectory(bare, { recursive: true });
+        yield* f.run(bare, ["init", "--bare", "-b", "main"]);
+        yield* f.fs.makeDirectory(f.path.join(plain, "node_modules", "dep"), { recursive: true });
+        yield* f.fs.writeFileString(f.path.join(plain, "node_modules", "dep", "index.js"), "x\n");
+        yield* f.addThread("with-clone", "nested-clone", withClone, "settled");
+        yield* f.addThread("with-bare", "nested-bare", withBare, "settled");
+        yield* f.addThread("plain", "nested-none", plain, "settled");
+        yield* f.sweep;
+        expect(f.removed).toEqual([plain]);
+        expect(yield* f.fs.exists(f.path.join(clone, "work.txt"))).toBe(true);
+        expect(yield* f.fs.exists(f.path.join(bare, "HEAD"))).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "treats two spellings of one checkout through a symlinked parent as one shared folder",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const shared = yield* f.addWorktree("two-spellings", { linked: true });
+        // Neither thread is open, so only grouping by real path finds them sharing it.
+        yield* f.addThread("spelling-linked", "two-spellings", shared, "settled");
+        yield* f.addThread("spelling-real", "two-spellings", f.realSpelling(shared), "archived");
+        yield* f.sweep;
+        expect(f.removed).toEqual([]);
+        expect(yield* f.fs.exists(shared)).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "keeps a settled thread's folder with work inside a submodule folder that was never initialized",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const source = f.path.join(f.path.dirname(f.repo), "submodule-source");
+        yield* f.fs.makeDirectory(source);
+        yield* f.run(source, ["init", "-b", "main"]);
+        yield* f.run(source, [
+          "-c",
+          "user.name=Cleanup test",
+          "-c",
+          "user.email=test@example.invalid",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "source",
+        ]);
+        yield* f.run(f.repo, [
+          "-c",
+          "protocol.file.allow=always",
+          "submodule",
+          "add",
+          source,
+          "sub",
+        ]);
+        yield* f.run(f.repo, ["commit", "-m", "submodule"]);
+        yield* f.run(f.repo, ["push", "origin", "main"]);
+        // New worktrees get an empty folder for the submodule until it is initialized.
+        const withWork = yield* f.addWorktree("submodule-work");
+        const empty = yield* f.addWorktree("submodule-empty");
+        const inner = f.path.join(withWork, "sub", "inner");
+        yield* f.fs.makeDirectory(inner, { recursive: true });
+        yield* f.run(inner, ["init", "-b", "main"]);
+        const onlyHere = f.path.join(withWork, "sub", "only-here.txt");
+        yield* f.fs.writeFileString(onlyHere, "only here\n");
+        // Git sees nothing inside the folder, and a plain worktree remove deletes it.
+        expect((yield* f.run(withWork, ["status", "--porcelain"])).stdout).toBe("");
+        expect((yield* f.run(withWork, ["ls-files", "--others", "--directory"])).stdout).toBe("");
+        yield* f.addThread("submodule-work", "submodule-work", withWork, "settled");
+        yield* f.addThread("submodule-empty", "submodule-empty", empty, "settled");
+        yield* f.sweep;
+        expect(f.removed).toEqual([empty]);
+        expect(yield* f.fs.readFileString(onlyHere)).toBe("only here\n");
+        expect(yield* f.fs.exists(f.path.join(inner, ".git"))).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  // Windows has no executable bit, and Git there keeps core.fileMode off.
+  EffectVitest.it.effect.skipIf(process.platform === "win32")(
+    "keeps a settled thread's folder whose hidden tracked file only became executable",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const worktree = yield* f.addWorktree("hidden-mode");
+        yield* f.run(worktree, ["update-index", "--assume-unchanged", "file.txt"]);
+        const file = f.path.join(worktree, "file.txt");
+        yield* f.fs.chmod(file, 0o755);
+        expect((yield* f.run(worktree, ["status", "--porcelain"])).stdout).toBe("");
+        yield* f.addThread("hidden-mode", "hidden-mode", worktree, "settled");
+        yield* f.sweep;
+        expect(f.removed).toEqual([]);
+        expect((yield* f.fs.stat(file)).mode & 0o100).toBe(0o100);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "counts only hidden tracked files present on disk toward the inspection limit",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        // Sparse checkouts flag the files outside the cone and leave them off disk.
+        const sparse = yield* f.addWorktree("sparse-many");
+        const names: ReadonlyArray<string> = ["a.txt", "b.txt", "c.txt"];
+        for (const name of names)
+          yield* f.fs.writeFileString(f.path.join(sparse, name), `${name}\n`);
+        yield* f.run(sparse, ["add", ...names]);
+        yield* f.run(sparse, ["commit", "-m", "more files"]);
+        yield* f.run(sparse, ["update-index", "--skip-worktree", ...names]);
+        for (const name of names) yield* f.fs.remove(f.path.join(sparse, name));
+        yield* f.run(sparse, ["update-index", "--assume-unchanged", "file.txt"]);
+        expect(yield* hiddenTrackedChangeReason(git, sparse, { flaggedFiles: 1 })).toBeNull();
+        expect(yield* hiddenTrackedChangeReason(git, sparse, { flaggedFiles: 0 })).toBe(
+          "hidden tracked files exceed the inspection limit",
+        );
+        // A clean folder whose flagged files are all absent is still removed.
+        const absent = yield* f.addWorktree("sparse-absent");
+        yield* f.run(absent, ["update-index", "--skip-worktree", "file.txt"]);
+        yield* f.fs.remove(f.path.join(absent, "file.txt"));
+        yield* f.addThread("sparse-absent", "sparse-absent", absent, "settled");
+        yield* f.sweep;
+        expect(f.removed).toEqual([absent]);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "keeps a settled thread's folder when a repository appears in its dependencies just before removal",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        yield* f.fs.writeFileString(
+          f.path.join(f.repo, ".git", "info", "exclude"),
+          "node_modules/\n",
+        );
+        const worktree = yield* f.addWorktree("late-clone");
+        const clone = f.path.join(worktree, "node_modules", "tool");
+        // The second status read is the last check before removal.
+        f.hooks.onStatus = (cwd, call) =>
+          cwd === worktree && call === 2
+            ? f.fs
+                .makeDirectory(clone, { recursive: true })
+                .pipe(Effect.andThen(f.run(clone, ["init", "-b", "main"])))
+            : Effect.void;
+        yield* f.addThread("late-clone", "late-clone", worktree, "settled");
+        yield* f.sweep;
+        expect(f.removed).toEqual([]);
+        expect(yield* f.fs.exists(f.path.join(clone, ".git"))).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect.skipIf(!casesFoldOn(process.platform))(
+    "treats two letter-case spellings of one checkout as one shared folder",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const shared = yield* f.addWorktree("case-variant");
+        const variant = f.path.join(f.path.dirname(shared), "CASE-VARIANT");
+        // Only a case-insensitive volume finds the folder under both spellings.
+        if (!(yield* f.fs.exists(variant))) return;
+        yield* f.addThread("case-lower", "case-variant", shared, "settled");
+        yield* f.addThread("case-upper", "case-variant", variant, "archived");
+        yield* f.sweep;
+        expect(f.removed).toEqual([]);
+        expect(yield* f.fs.exists(shared)).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  // Node on Windows makes a link to a missing target a file link, so the two
+  // links below would not form a folder cycle there.
+  EffectVitest.it.effect.skipIf(process.platform === "win32")(
+    "sweeps the other folders when one recorded path cannot be resolved",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        // Two links pointing at each other: resolving a path under them fails.
+        const loopA = f.path.join(f.path.dirname(f.repo), "loop-a");
+        const loopB = f.path.join(f.path.dirname(f.repo), "loop-b");
+        yield* f.fs.symlink(loopB, loopA);
+        yield* f.fs.symlink(loopA, loopB);
+        const finished = yield* f.addWorktree("resolvable");
+        yield* f.addThread("unresolvable", "looped", f.path.join(loopA, "worktree"), "settled");
+        // The ownership read refuses such a record by design; this one reaches
+        // only the thread list, as a record written between the two reads would.
+        yield* f.sql`DELETE FROM orchestration_v2_projection_threads WHERE thread_id = 'unresolvable'`;
+        yield* f.addThread("resolvable", "resolvable", finished, "settled");
+        yield* f.sweep;
+        expect(f.removed).toEqual([finished]);
+      }).pipe(Effect.provide(cleanupLayer)),
   );
 });
 
@@ -677,6 +930,58 @@ describe("storage cleanup removes finished worktrees no thread records", () => {
       expect(f.removed).toEqual([]);
       expect(yield* f.fs.exists(f.path.join(worktree, "node_modules", "kept.txt"))).toBe(true);
     }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "keeps a finished worktree with hidden tracked edits or a repository in its dependencies",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        yield* f.fs.writeFileString(
+          f.path.join(f.repo, ".git", "info", "exclude"),
+          "node_modules/\n",
+        );
+        const hidden = yield* f.addWorktree("agent-hidden-edit");
+        yield* f.run(hidden, ["update-index", "--skip-worktree", "file.txt"]);
+        yield* f.fs.writeFileString(f.path.join(hidden, "file.txt"), "edited, skipped\n");
+        const nested = yield* f.addWorktree("agent-nested-repo");
+        const clone = f.path.join(nested, "node_modules", "tool");
+        yield* f.fs.makeDirectory(clone, { recursive: true });
+        yield* f.run(clone, ["init", "-b", "main"]);
+        const finished = yield* f.addWorktree("agent-plain");
+        yield* age(f, [hidden, nested, finished]);
+        yield* f.sweep;
+        expect(f.removed).toEqual([finished]);
+        expect(yield* f.fs.readFileString(f.path.join(hidden, "file.txt"))).toBe(
+          "edited, skipped\n",
+        );
+        expect(yield* f.fs.exists(f.path.join(clone, ".git"))).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "keeps a finished worktree when a repository appears in its dependencies just before removal",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        yield* f.fs.writeFileString(
+          f.path.join(f.repo, ".git", "info", "exclude"),
+          "node_modules/\n",
+        );
+        const worktree = yield* f.addWorktree("agent-late-clone");
+        const clone = f.path.join(worktree, "node_modules", "tool");
+        yield* age(f, [worktree]);
+        // The second status read is the last check before removal.
+        f.hooks.onStatus = (cwd, call) =>
+          cwd === worktree && call === 2
+            ? f.fs
+                .makeDirectory(clone, { recursive: true })
+                .pipe(Effect.andThen(f.run(clone, ["init", "-b", "main"])))
+            : Effect.void;
+        yield* f.sweep;
+        expect(f.removed).toEqual([]);
+        expect(yield* f.fs.exists(f.path.join(clone, ".git"))).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
   );
 });
 

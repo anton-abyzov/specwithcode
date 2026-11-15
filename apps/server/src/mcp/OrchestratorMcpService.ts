@@ -180,6 +180,9 @@ import { refuseOthersRoutine as refuseOthersRoutineFor } from "./routineOwnershi
 import { launchOriginOf } from "./threadOrigin.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
+// Nothing is written while a delegate_task wait blocks, and an MCP client over
+// Node fetch drops a silent call at 300 s, before it learns the task id.
+const DEFAULT_TASK_WAIT_TIMEOUT_MS = 4 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 // Events that can make a delegated task terminal: the parent's task record,
 // and the child's runs, nested tasks, and pending provider background work.
@@ -3242,17 +3245,14 @@ const make = Effect.gen(function* () {
         }
         const timeoutMs = Math.min(
           MAX_WAIT_TIMEOUT_MS,
-          Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
+          Math.max(1, input.timeoutMs ?? DEFAULT_TASK_WAIT_TIMEOUT_MS),
         );
-        const waited = yield* waitForTask(scope, taskId, timeoutMs);
-        if (Option.isSome(waited)) {
-          return { ...waited.value, ...incrementFields };
-        }
-        // The blocking wait timed out, so it no longer owns delivery: upgrade
-        // the task so a later terminal wakes the parent even mid-turn. Best
-        // effort; on failure the settled_only policy still wakes a settled
-        // parent.
-        yield* threadManagement
+        // A wait that ends without the terminal result (timeout, failure, or a
+        // tools/call cancelled by a steer or interrupt) no longer owns
+        // delivery: upgrade the task so a later terminal wakes the parent even
+        // mid-turn. Best effort; on failure the settled_only policy still
+        // wakes a settled parent.
+        const upgradeWake = threadManagement
           .dispatch({
             type: "delegated_task.wake-policy",
             commandId: stableCommandId({
@@ -3287,6 +3287,16 @@ const make = Effect.gen(function* () {
               }),
             ),
           );
+        // The finalizer runs uninterruptibly, so a cancel that lands right
+        // after the wait gave up still upgrades.
+        const waited = yield* waitForTask(scope, taskId, timeoutMs).pipe(
+          Effect.onExit((exit) =>
+            Exit.isSuccess(exit) && Option.isSome(exit.value) ? Effect.void : upgradeWake,
+          ),
+        );
+        if (Option.isSome(waited)) {
+          return { ...waited.value, ...incrementFields };
+        }
         return { ...(yield* readTask(scope, taskId, true, true)), ...incrementFields };
       }),
     taskStatus: (callerScope, taskId) =>

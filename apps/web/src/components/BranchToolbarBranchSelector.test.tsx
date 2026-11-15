@@ -42,6 +42,9 @@ const state = vi.hoisted(() => ({
   commands: [] as { environmentId: string; input: UpdateThreadMetadataInput }[],
   draftWrites: [] as Record<string, unknown>[],
   stops: [] as unknown[],
+  toasts: [] as unknown[],
+  switches: [] as unknown[],
+  refs: null as null | Record<string, unknown>[],
   overrides: [] as unknown[],
   commandOptions: [] as unknown[],
   rejectMetadata: false,
@@ -90,7 +93,10 @@ vi.mock("~/state/vcs", () => ({
   vcsEnvironment: {
     status: () => null,
     listRefs: () => null,
-    switchRef: () => {},
+    switchRef: async (input: unknown) => {
+      state.switches.push(input);
+      return { _tag: "Success", value: { refName: "main" } };
+    },
     createRef: () => {},
   },
 }));
@@ -99,11 +105,12 @@ vi.mock("~/state/query", () => ({
 }));
 vi.mock("~/state/queries", () => ({
   usePaginatedBranches: () => ({
-    refs: [
+    refs: state.refs ?? [
       { name: "main", isDefault: true, current: true, kind: "local", worktreePath: "/project" },
     ],
     data: { nextCursor: null },
     isPending: false,
+    refresh: () => {},
   }),
 }));
 vi.mock("~/composerDraftStore", () => ({
@@ -150,7 +157,11 @@ vi.mock("~/components/ui/combobox", () => ({ ComboboxItem: "item", ComboboxTrigg
 vi.mock("~/components/ui/middle-truncate", () => ({ MiddleTruncate: "middle" }));
 vi.mock("~/components/ui/toast", () => ({
   stackedThreadToast: (input: unknown) => input,
-  toastManager: { add: () => {} },
+  toastManager: {
+    add: (toast: unknown) => {
+      state.toasts.push(toast);
+    },
+  },
 }));
 
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
@@ -183,12 +194,15 @@ beforeEach(() => {
     runtime: null,
   };
   state.draft = null;
+  state.refs = null;
   state.rejectMetadata = false;
   for (const values of [
     state.effects,
     state.commands,
     state.draftWrites,
     state.stops,
+    state.toasts,
+    state.switches,
     state.overrides,
     state.commandOptions,
   ])
@@ -269,14 +283,53 @@ describe("passive worktree branch defaults", () => {
     expect(state.overrides).toEqual([]);
     expect(state.stops).toEqual([]);
   });
-  it("keeps intentional manual workspace changes capable of stopping their current session", () => {
+  it("refuses a pick that would move a running turn to another workspace, with a notice", () => {
     if (state.shell) {
       state.shell.worktreePath = "/project/prepared";
       state.shell.runtime = { status: "running" };
     }
     const picker = surface();
     picker.props.onSelectItem("main");
-    expect(state.stops).toHaveLength(1);
+    expect(state.stops).toEqual([]);
+    expect(state.switches).toEqual([]);
+    expect(state.commands).toEqual([]);
+    expect(state.overrides).toEqual([]);
+    expect(state.toasts).toEqual([
+      { type: "warning", title: "Stop the current turn to switch worktrees." },
+    ]);
+  });
+  it("refuses a checkout that would leave a running turn's worktree before touching Git", () => {
+    if (state.shell) {
+      state.shell.worktreePath = "/project/prepared";
+      state.shell.runtime = { status: "running" };
+    }
+    state.refs = [{ name: "main", isDefault: true, current: false, kind: "local" }];
+    const picker = surface();
+    picker.props.onSelectItem("main");
+    expect(state.switches).toEqual([]);
+    expect(state.stops).toEqual([]);
+    expect(state.commands).toEqual([]);
+    expect(state.toasts).toHaveLength(1);
+  });
+  it("still switches branches inside the running turn's own worktree", () => {
+    if (state.shell) {
+      state.shell.worktreePath = "/project/prepared";
+      state.shell.runtime = { status: "running" };
+    }
+    state.refs = [{ name: "feature", isDefault: false, current: false, kind: "local" }];
+    const picker = surface();
+    picker.props.onSelectItem("feature");
+    expect(state.switches).toEqual([
+      { environmentId: "environment", input: { cwd: "/project/prepared", refName: "feature" } },
+    ]);
+    expect(state.toasts).toEqual([]);
+  });
+  it("moves an idle thread to another workspace when its branch is picked", () => {
+    if (state.shell) state.shell.worktreePath = "/project/prepared";
+    const picker = surface();
+    picker.props.onSelectItem("main");
+    expect(state.stops).toEqual([]);
+    expect(state.toasts).toEqual([]);
     expect(state.commands[0]?.input).toEqual({
       threadId: "thread",
       branch: "main",

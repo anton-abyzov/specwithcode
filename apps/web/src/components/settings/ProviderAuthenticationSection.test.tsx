@@ -208,6 +208,34 @@ describe("provider device consent", () => {
     expect(state.copy).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])(
+    "refuses a sign-in link that is not a web address (consent required: %s)",
+    async (requiresConsent) => {
+      const pendingTab = { opener: {}, location: { href: "" }, close: vi.fn() };
+      const open = vi.fn().mockReturnValue(pendingTab);
+      vi.stubGlobal("window", { open });
+      try {
+        state.auth = {
+          ...state.auth!,
+          interaction: {
+            type: "browser",
+            id: "browser-m1",
+            url: "javascript:alert(document.domain)",
+            requiresConsent,
+          },
+        };
+        click(render(), "Open browser");
+        await flush();
+        expect(pendingTab.location.href).toBe("");
+        expect(state.open).not.toHaveBeenCalled();
+        expect(state.command).not.toHaveBeenCalled();
+        expect(JSON.stringify(render())).toContain("not a web address");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
   it("names the GitHub login the instance is signed in as", () => {
     state.auth = { ...state.auth!, phase: "succeeded", interaction: null };
     const tree = render({

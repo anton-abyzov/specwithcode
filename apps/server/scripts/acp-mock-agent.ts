@@ -108,6 +108,7 @@ const failSetConfigOption = process.env.STUDIO_ACP_FAIL_SET_CONFIG_OPTION === "1
 const exitOnSetConfigOption = process.env.STUDIO_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const omitModelConfigOption = process.env.STUDIO_ACP_OMIT_MODEL_CONFIG_OPTION === "1";
 const promptResponseText = process.env.STUDIO_ACP_PROMPT_RESPONSE_TEXT;
+const promptStopReason = process.env.STUDIO_ACP_PROMPT_STOP_REASON;
 const initialGrokReasoningEffort =
   process.env.STUDIO_ACP_INITIAL_GROK_REASONING_EFFORT?.trim() || undefined;
 const promptDelayMs = Number(process.env.STUDIO_ACP_PROMPT_DELAY_MS ?? "0");
@@ -2662,7 +2663,7 @@ const program = Effect.gen(function* () {
         },
       });
 
-      return yield* finishPrompt(requestedSessionId, "end_turn");
+      return yield* finishPrompt(requestedSessionId, promptStopReason ?? "end_turn");
     }),
   );
 

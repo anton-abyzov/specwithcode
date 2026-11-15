@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProjectScript,
   ProviderDriverKind,
+  type ProviderInstanceEnvironment,
   ProviderInstanceId,
   providerSettingsPasswordKeys,
   REDACTED_SECRET_MARKER,
@@ -1764,6 +1765,170 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           sensitiveLast ? "secret-last" : "",
         );
       }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect.each(
+    [
+      { label: "kept then plain", duplicate: { value: "plain-value", sensitive: false } },
+      {
+        label: "plain then kept",
+        duplicate: { value: "plain-value", sensitive: false },
+        keptLast: true,
+      },
+      { label: "kept then empty sensitive", duplicate: { value: "", sensitive: true } },
+      {
+        label: "empty sensitive then kept",
+        duplicate: { value: "", sensitive: true },
+        keptLast: true,
+      },
+    ].map((testCase) => [testCase.label, testCase] as const),
+  )(
+    "keeps a stored secret that a redacted row still claims when a duplicate name is saved (%s)",
+    ([, { duplicate, keptLast }]) =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const instanceId = ProviderInstanceId.make("codex_personal");
+        const save = (environment: ProviderInstanceEnvironment) =>
+          service.updateSettings({
+            providerInstances: {
+              [instanceId]: { driver: ProviderDriverKind.make("codex"), environment, config: {} },
+            },
+          });
+        yield* save([{ name: "API_TOKEN", value: "stored-value", sensitive: true }]);
+        const kept = { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true };
+        const copy = { name: "API_TOKEN", ...duplicate };
+        yield* save(keptLast ? [copy, kept] : [kept, copy]);
+
+        const secretName = `provider-env-${Buffer.from("codex_personal").toString("base64url")}-${Buffer.from("API_TOKEN").toString("base64url")}`;
+        const stored = yield* secrets.get(secretName);
+        assert.isTrue(Option.isSome(stored));
+        assert.equal(
+          Option.isSome(stored) ? new TextDecoder().decode(stored.value) : undefined,
+          "stored-value",
+        );
+        const settings = yield* service.getSettings;
+        assert.equal(
+          settings.providerInstances[instanceId]?.environment?.[keptLast ? 1 : 0]?.value,
+          "stored-value",
+        );
+      }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("removes a kept secret once every row with its name is deleted", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const save = (environment: ProviderInstanceEnvironment) =>
+        service.updateSettings({
+          providerInstances: {
+            [instanceId]: { driver: ProviderDriverKind.make("codex"), environment, config: {} },
+          },
+        });
+      yield* save([{ name: "API_TOKEN", value: "stored-value", sensitive: true }]);
+      yield* save([
+        { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true },
+        { name: "API_TOKEN", value: "plain-value", sensitive: false },
+      ]);
+      const secretName = `provider-env-${Buffer.from("codex_personal").toString("base64url")}-${Buffer.from("API_TOKEN").toString("base64url")}`;
+      assert.isTrue(Option.isSome(yield* secrets.get(secretName)));
+      yield* save([]);
+      assert.isTrue(Option.isNone(yield* secrets.get(secretName)));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  interface DuplicateSecretCase {
+    readonly label: string;
+    /** How the current secret is held before the save. */
+    readonly storage: "inline" | "store";
+    /** Rows of a hand-edited settings file, used when the secret is held inline. */
+    readonly inlineSeed: ProviderInstanceEnvironment;
+    readonly saved: ProviderInstanceEnvironment;
+    readonly keptRow: number;
+    readonly expected: string;
+  }
+  const keptSecretRow = {
+    name: "API_TOKEN",
+    value: "",
+    sensitive: true,
+    valueRedacted: true,
+  } as const;
+  const duplicateSecretCases: ReadonlyArray<DuplicateSecretCase> = (["inline", "store"] as const)
+    .map((storage) => [
+      {
+        label: `${storage}, empty sensitive duplicate on disk, kept then plain`,
+        storage,
+        inlineSeed: [
+          { name: "API_TOKEN", value: "old-value", sensitive: true },
+          { name: "API_TOKEN", value: "", sensitive: true },
+        ],
+        saved: [keptSecretRow, { name: "API_TOKEN", value: "plain-value", sensitive: false }],
+        keptRow: 0,
+        expected: "old-value",
+      },
+      {
+        label: `${storage}, new value then kept`,
+        storage,
+        inlineSeed: [{ name: "API_TOKEN", value: "old-value", sensitive: true }],
+        saved: [{ name: "API_TOKEN", value: "new-value", sensitive: true }, keptSecretRow],
+        keptRow: 1,
+        expected: "new-value",
+      },
+      {
+        label: `${storage}, kept then new value`,
+        storage,
+        inlineSeed: [{ name: "API_TOKEN", value: "old-value", sensitive: true }],
+        saved: [keptSecretRow, { name: "API_TOKEN", value: "new-value", sensitive: true }],
+        keptRow: 0,
+        expected: "new-value",
+      },
+    ])
+    .flat();
+
+  it.effect.each(duplicateSecretCases.map((testCase) => [testCase.label, testCase] as const))(
+    "a kept row reads the same secret whether it was held inline or in the store (%s)",
+    ([, testCase]) =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const instanceId = ProviderInstanceId.make("codex_personal");
+        const save = (environment: ProviderInstanceEnvironment) =>
+          service.updateSettings({
+            providerInstances: {
+              [instanceId]: { driver: ProviderDriverKind.make("codex"), environment, config: {} },
+            },
+          });
+        if (testCase.storage === "inline") {
+          yield* fileSystem.writeFileString(
+            config.settingsPath,
+            JSON.stringify({
+              providerInstances: {
+                codex_personal: { driver: "codex", environment: testCase.inlineSeed, config: {} },
+              },
+            }),
+          );
+          yield* service.getSettings;
+        } else {
+          yield* save([{ name: "API_TOKEN", value: "old-value", sensitive: true }]);
+        }
+
+        yield* save(testCase.saved);
+
+        const settings = yield* service.getSettings;
+        assert.equal(
+          settings.providerInstances[instanceId]?.environment?.[testCase.keptRow]?.value,
+          testCase.expected,
+        );
+        const secretName = `provider-env-${Buffer.from("codex_personal").toString("base64url")}-${Buffer.from("API_TOKEN").toString("base64url")}`;
+        const stored = yield* secrets.get(secretName);
+        assert.equal(
+          Option.isSome(stored) ? new TextDecoder().decode(stored.value) : undefined,
+          testCase.expected,
+        );
+      }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>

@@ -279,6 +279,9 @@ it.effect.each([
           return;
         }
 
+        // A delegated result queued before the person picks the row must still
+        // run ahead of it, so the stop re-dates the row to the moment it was picked.
+        if (outcome === "row picked for another model") yield* TestClock.adjust("1 minute");
         yield* orchestrator.dispatch({
           type: "queued-message.promote-to-steer",
           commandId: CommandId.make("promote"),
@@ -306,6 +309,13 @@ it.effect.each([
           assert.equal(moved.thread.id, threadId);
           const kept = moved.runs.find((run) => run.id === queuedRun.id);
           assert.equal(kept?.modelSelection.model, "cheaper-model");
+          assert.isTrue(
+            kept !== undefined &&
+              DateTime.toEpochMillis(kept.requestedAt) -
+                DateTime.toEpochMillis(queuedRun.requestedAt) >=
+                60_000,
+            "the stop counts the row as requested when it was picked",
+          );
           assert.notEqual(kept?.status, "cancelled");
           assert.deepEqual(
             started.map((turn) => turn.message.messageId),
