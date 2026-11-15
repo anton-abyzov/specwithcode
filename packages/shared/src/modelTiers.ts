@@ -344,7 +344,7 @@ export function newerOfFamily(
   // has no family in common with the one it replaces.
   let successor: string | undefined;
   const visited = new Set([slug]);
-  for (let at = slug; ; ) {
+  for (let at = slug; ;) {
     const next = provider.models.find(
       (model) => !model.isCustom && model.succeeds === at && !visited.has(model.slug),
     );

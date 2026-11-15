@@ -9,6 +9,7 @@ import {
 import {
   projectDelegationTarget,
   needsExplicitWorkerTarget,
+  projectLimitRule,
   projectWorkerModel,
   workerModelUnderGrant,
 } from "./ProjectDelegation.ts";
@@ -125,4 +126,20 @@ it("reads the Project settings dialog's model on an install that folded its proj
     ),
   ).toEqual(override);
   expect(projectWorkerModel(folded, { id, defaultModelSelection: null })).toBeNull();
+});
+
+it("gives a limit stop the same home model as a launch, after the settings fold too", () => {
+  const id = ProjectId.make("project-limit-home");
+  const dialog = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+  const machine = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+  const folded = {
+    ...DEFAULT_SERVER_SETTINGS,
+    projectSettingsFolded: true,
+    defaultModelSelection: machine,
+  };
+  const project = { id, defaultModelSelection: dialog };
+  expect(projectLimitRule(folded, project).defaultModelSelection).toEqual(dialog);
+  expect(
+    projectLimitRule(folded, { id, defaultModelSelection: null }).defaultModelSelection,
+  ).toEqual(machine);
 });

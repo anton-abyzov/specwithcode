@@ -230,9 +230,7 @@ describe("the chain a limited thread follows with nothing saved", () => {
       rule: noRule,
       nowMs: now,
     });
-    const copilotOpus = entries.find(
-      (entry) => entry.selection.instanceId === copilot.instanceId,
-    );
+    const copilotOpus = entries.find((entry) => entry.selection.instanceId === copilot.instanceId);
     expect(copilotOpus?.unavailable).toBeNull();
     expect(copilotOpus?.guess).toBe(true);
   });
@@ -285,7 +283,7 @@ describe("the chain a limited thread follows with nothing saved", () => {
     ).toEqual(sel("muse", "muse-wonder-1.0"));
   });
 
-  it("does not let \"Only these models\" trap a thread on tracks nobody saved", () => {
+  it('does not let "Only these models" trap a thread on tracks nobody saved', () => {
     const rule = { ...noRule, providerLimitFallbackListOnly: true };
     expect(
       resolveProviderFallback({
@@ -311,5 +309,42 @@ describe("the free tail", () => {
     const daily = defaultTrackSelections("daily", [paid, free]);
     expect(daily.at(-1)).toEqual(sel("codex-free", "gpt-6-luna"));
     expect(daily[0]).toEqual(sel("codex", "gpt-6.1-sol"));
+  });
+});
+
+describe("sources the person ranked", () => {
+  const work = provider("claude-work", "claudeAgent", ["claude-opus-5-5"], 10);
+  const stop = {
+    providers: [{ ...claude }, work, codexPaid],
+    currentInstanceId: claude.instanceId,
+    currentModel: "claude-opus-5-5",
+    nowMs: now,
+    belowPercent: 95,
+    anyReady: true,
+    limitedInstanceIds: new Set<string>([claude.instanceId]),
+  };
+  const order = { ...noRule, providerLimitFallbackModels: [sel("codex", "gpt-6.1-sol")] };
+
+  it("keep the same model before a different model from the fallback order", () => {
+    expect(
+      resolveProviderFallback({
+        ...stop,
+        rule: { ...order, defaultModelProviders: [work.instanceId] },
+      }),
+    ).toEqual(sel("claude-work", "claude-opus-5-5"));
+  });
+
+  it("do not apply when none is ranked or the list is the whole chain", () => {
+    expect(resolveProviderFallback({ ...stop, rule: order })).toEqual(sel("codex", "gpt-6.1-sol"));
+    expect(
+      resolveProviderFallback({
+        ...stop,
+        rule: {
+          ...order,
+          defaultModelProviders: [work.instanceId],
+          providerLimitFallbackListOnly: true,
+        },
+      }),
+    ).toEqual(sel("codex", "gpt-6.1-sol"));
   });
 });

@@ -27,6 +27,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
+import { defaultTrackSelections } from "@specweave-studio/shared/modelTracks";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Button } from "../ui/button";
@@ -74,9 +75,15 @@ function LaneList(props: {
   const tx = useTx();
   const { lane, models, providers, onChange } = props;
   if (models.length === 0) {
+    // Nothing saved: a limited thread still continues down the built-in order.
+    const builtIn = defaultTrackSelections(lane === "complex" ? "complex" : "daily", providers);
     return (
-      <div className="text-xs text-muted-foreground italic">
-        {tx("No models configured for this lane. Workers keep their baseline model.")}
+      <div className="text-xs text-muted-foreground">
+        {builtIn.length === 0
+          ? tx("No models configured for this lane. Workers keep their baseline model.")
+          : `${tx("Built-in order for a limited thread")}: ${builtIn
+              .map((entry) => laneEntryLabel(providers, entry))
+              .join(", ")}. ${tx("Workers keep their baseline model until you add one.")}`}
       </div>
     );
   }

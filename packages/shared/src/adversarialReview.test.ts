@@ -139,11 +139,11 @@ describe("tierModelFor", () => {
 });
 
 describe("reviewerChain", () => {
-  it("puts other families first and the author's family last", () => {
+  it("starts with the built-in Review track, then the other providers by family", () => {
     expect(defaultReviewerChain({ providers, tier: "regular" })).toEqual([
       sel("codex", "gpt-6.1-sol"),
-      sel("copilot", "gpt-6.1-sol"),
       sel("muse", "muse-wonder-1.0"),
+      sel("copilot", "gpt-6.1-sol"),
       sel("claudeAgent", "claude-opus-5-5"),
     ]);
   });

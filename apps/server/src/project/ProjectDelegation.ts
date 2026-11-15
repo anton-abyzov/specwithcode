@@ -30,6 +30,20 @@ export function projectWorkerModel(
 }
 
 /**
+ * The settings a limited thread of `project` falls back by: the project's
+ * settings with the same thread model launches use (`projectWorkerModel`) as
+ * home, so a limit stop and a launch never disagree on it.
+ */
+export function projectLimitRule(
+  settings: ServerSettings,
+  project: Pick<Project, "id" | "defaultModelSelection">,
+): ServerSettings {
+  const resolved = resolveProjectSettings(settings, project.id, project).settings;
+  const model = projectWorkerModel(settings, project);
+  return model === null ? resolved : { ...resolved, defaultModelSelection: model };
+}
+
+/**
  * The project model a caller's unnamed worker takes under its work grant. A
  * caller other than the coordinator whose grant excludes that model's sign-in
  * keeps its own model instead (null here), as it did before the project model

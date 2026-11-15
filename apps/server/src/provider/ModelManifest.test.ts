@@ -41,7 +41,7 @@ describe("classifyModels", () => {
         },
       },
     };
-    const models = [model({ slug: "gpt-next" }), model()];
+    const models = [model({ slug: "gpt-next" }), model({})];
     assert.deepStrictEqual(
       ModelManifest.classifyModels(models, manifest, CODEX).map((entry) => entry.succeeds),
       ["gpt-test", undefined],
@@ -59,7 +59,9 @@ describe("classifyModels", () => {
     const manifest: ModelManifest.ModelManifestData = {
       version: 1,
       currentModels: { codex: ["gpt-test"] },
-      providers: { codex: { profiles: {}, models: [{ slug: "gpt-old", name: "Old", status: "legacy" }] } },
+      providers: {
+        codex: { profiles: {}, models: [{ slug: "gpt-old", name: "Old", status: "legacy" }] },
+      },
     };
     const models = [
       model({ slug: "openai.gpt-test", isLegacy: true }),
@@ -80,7 +82,9 @@ describe("classifyModels", () => {
     const manifest: ModelManifest.ModelManifestData = {
       version: 1,
       currentModels: { codex: ["current-a", "current-b"] },
-      providers: { codex: { profiles: {}, models: [{ slug: "old-model", name: "Old", status: "legacy" }] } },
+      providers: {
+        codex: { profiles: {}, models: [{ slug: "old-model", name: "Old", status: "legacy" }] },
+      },
     };
     const models = [
       model({ slug: "current-a" }),

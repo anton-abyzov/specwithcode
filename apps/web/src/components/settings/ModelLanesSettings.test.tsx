@@ -172,7 +172,7 @@ describe("ModelLanesSettings", () => {
       expect(text).toContain("Hardest work");
       expect(text).toContain("Everyday work");
       expect(text.indexOf("Everyday work")).toBeLessThan(text.indexOf("Hardest work"));
-      expect(text).toContain("No models configured for this lane");
+      expect(text).toContain("Built-in order for a limited thread");
       expect(text).toContain("No learned model preferences yet");
     });
 

@@ -14,6 +14,7 @@ import type {
   ProviderModelTiers,
   ServerProvider,
 } from "@specweave-studio/contracts";
+import { defaultTrackSelections } from "./modelTracks.ts";
 import { type ModelFamily, modelFamily } from "./fallbackOptions.ts";
 import { describeModel, isSameModel, sameModelOn } from "./modelIdentity.ts";
 import { fallbackSelectionKey, tierModelFor } from "./modelTiers.ts";
@@ -61,8 +62,9 @@ export function selectionFamily(
 }
 
 /**
- * The default reviewer order: each enabled provider's tier model, grouped by
- * family in `REVIEWER_FAMILY_ORDER`, keeping provider order within a family.
+ * The default reviewer order: the built-in Review track fitted to this
+ * machine, then each enabled provider's tier model, grouped by family in
+ * `REVIEWER_FAMILY_ORDER`, keeping provider order within a family.
  */
 export function defaultReviewerChain(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -77,10 +79,17 @@ export function defaultReviewerChain(input: {
     });
   const rank = (selection: ModelSelection) =>
     REVIEWER_FAMILY_ORDER.indexOf(selectionFamily(input.providers, selection));
-  return picks
+  const byFamily = picks
     .map((selection, index) => ({ selection, index }))
     .sort((a, b) => rank(a.selection) - rank(b.selection) || a.index - b.index)
     .map((entry) => entry.selection);
+  const seen = new Set<string>();
+  // The track names everyday reviewers; a frontier review keeps each provider's frontier model.
+  const track = input.tier === "regular" ? defaultTrackSelections("review", input.providers) : [];
+  return [...track, ...byFamily].filter((entry) => {
+    const key = fallbackSelectionKey(entry);
+    return seen.has(key) ? false : (seen.add(key), true);
+  });
 }
 
 /** One step of the reviewer order: a model, then the same model on other providers. */

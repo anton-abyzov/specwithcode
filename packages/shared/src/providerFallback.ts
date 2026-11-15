@@ -860,13 +860,35 @@ function resolveProviderFallbackPass(input: {
   // The full chain marks the same-model copies of built-in entries too.
   const orderChain = effectiveFallbackOrder(input.rule, input.currentModel, input.providers);
   // Only a list the person wrote can be "the whole chain"; the built-in tracks never are.
-  const listOnly =
-    input.rule.providerLimitFallbackListOnly === true && chainNamedByPerson(chain);
+  const listOnly = input.rule.providerLimitFallbackListOnly === true && chainNamedByPerson(chain);
   const explicitOrder =
     (input.rule.providerLimitFallbackModels?.length ?? 0) > 0 ||
     listOnly ||
     (chain.fromTiers && chainNamedByPerson(chain));
   const legacyOnly = !explicitOrder && fallbackModelOrder(input.rule).length > 0;
+  // Sources the person ranked say where the same model runs next. That
+  // keeps the model and the transcript, so it comes before a different model
+  // from the order, as the setting says. "Only these models" still holds.
+  const rankedSources = input.rule.defaultModelProviders ?? [];
+  if (explicitOrder && !listOnly && rankedSources.length > 0 && input.currentModel !== undefined) {
+    const elsewhere = resolveSameModelElsewhere({
+      providers: input.providers.filter((entry) => rankedSources.includes(entry.instanceId)),
+      current: {
+        instanceId: input.currentInstanceId,
+        model: input.currentModel,
+        ...(input.currentOptions === undefined ? {} : { options: input.currentOptions }),
+      },
+      order: rankedSources,
+      nowMs: input.nowMs,
+      belowPercent: input.belowPercent,
+      limitedInstanceIds: input.limitedInstanceIds,
+      excludedSelections: input.excludedSelections,
+      excludedModels: input.rule.providerLimitExcludedModels,
+      contextFit: input.contextFit,
+      verifiedOnly,
+    });
+    if (elsewhere !== null) return elsewhere;
+  }
   if (explicitOrder) {
     // "Only these models" means the person's own list: no built-in track entry.
     const ordered = firstAvailable(

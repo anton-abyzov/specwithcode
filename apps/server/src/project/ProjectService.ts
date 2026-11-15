@@ -915,9 +915,38 @@ export const make = Effect.gen(function* () {
       if (workspaceRoot !== previousRoot) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }
+      if (input.defaultModelSelection !== undefined && input.onlyIfDefaultModelUnset !== true)
+        yield* dropProjectModelOverride(input.projectId);
       return yield* readCommitted(input.projectId);
     },
   );
+
+  /**
+   * The project's thread model has one answer. A Project settings override
+   * outranks the project's own field, so a model saved from the project
+   * dialog would change nothing while an older override exists: the newer
+   * save removes it. Best effort, like seeding.
+   */
+  const dropProjectModelOverride = Effect.fn("ProjectService.dropProjectModelOverride")(function* (
+    projectId: ProjectId,
+  ) {
+    const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+    if (Option.isNone(serverSettings)) return;
+    const settings = yield* serverSettings.value.getSettings.pipe(Effect.option);
+    if (
+      Option.isNone(settings) ||
+      !Object.hasOwn(
+        settings.value.projectSettingsOverrides[projectId] ?? {},
+        "defaultModelSelection",
+      )
+    )
+      return;
+    yield* serverSettings.value
+      .updateSettings({
+        projectSettingsOverrideChanges: { [projectId]: { clear: ["defaultModelSelection"] } },
+      })
+      .pipe(Effect.ignore);
+  });
 
   const bootstrap: ProjectService["Service"]["bootstrap"] = Effect.fn("ProjectService.bootstrap")(
     function* (input) {
