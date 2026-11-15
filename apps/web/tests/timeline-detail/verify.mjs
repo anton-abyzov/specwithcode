@@ -55,7 +55,7 @@ async function shown(page, text) {
 
 const LEVEL_NAMES = { concise: "Results only", normal: "Folded steps", verbose: "Everything" };
 
-async function expectLevel(page, label, level) {
+async function expectLevel(page, label, level, { own = false } = {}) {
   const main = page.locator("main");
   await page.waitForFunction(
     (value) => document.querySelector("main")?.dataset.detail === value,
@@ -63,7 +63,12 @@ async function expectLevel(page, label, level) {
   );
   const name = LEVEL_NAMES[level];
   const trigger = page.locator("[data-timeline-detail]");
-  NodeAssert.ok((await trigger.getAttribute("aria-label"))?.endsWith(`Show: ${name}`), label);
+  NodeAssert.equal(
+    await trigger.getAttribute("aria-label"),
+    `Show: ${name}${own ? " (this thread)" : ""}`,
+    label,
+  );
+  NodeAssert.equal(await trigger.getAttribute("data-timeline-detail-own"), own ? "true" : null);
   NodeAssert.equal(await trigger.getAttribute("data-timeline-detail"), level, label);
   NodeAssert.equal(await main.getAttribute("data-detail"), level, label);
   // Without a project the trigger names what the timeline shows.
@@ -97,13 +102,62 @@ async function noOverflow(page, label) {
   );
 }
 
-async function chooseFromMenu(page, level) {
+async function openMenu(page) {
   await page.locator("[data-timeline-detail]").click();
-  // The default group, the menu's last radio of that name.
-  await page
-    .getByRole("menuitemradio", { name: new RegExp(`^${LEVEL_NAMES[level]}`) })
-    .last()
-    .click();
+  await page.getByRole("menu").waitFor();
+}
+
+async function chooseFromMenu(page, level) {
+  await openMenu(page);
+  // Each level is listed once.
+  const radios = page.getByRole("menuitemradio", { name: new RegExp(`^${LEVEL_NAMES[level]}`) });
+  NodeAssert.equal(await radios.count(), 1, `${level}: listed once`);
+  await radios.click();
+}
+
+// The menu stays inside the window, with nothing cut off sideways.
+async function menuFits(page, label) {
+  const popup = await page.locator("[data-slot='menu-popup']").boundingBox();
+  const width = page.viewportSize().width;
+  NodeAssert.ok(popup.x >= 0 && popup.x + popup.width <= width, `${label}: menu off screen`);
+  NodeAssert.equal(
+    await page
+      .locator("[data-slot='menu-popup'] > div")
+      .evaluate((element) => element.scrollWidth > element.clientWidth),
+    false,
+    `${label}: menu scrolls sideways`,
+  );
+}
+
+async function defaultLevel(page) {
+  return page.locator("main").getAttribute("data-default-detail");
+}
+
+// The thread's own level: pinned from the menu, moved by the shortcut, dropped again.
+async function ownLevel(page, label, shot) {
+  await openMenu(page);
+  await menuFits(page, label);
+  const scope = (name) => page.getByRole("menuitemradio", { name, exact: true });
+  NodeAssert.equal(await scope("Every thread").getAttribute("aria-checked"), "true", label);
+  await scope("This thread").click();
+  // A scope change keeps the menu open and pins the level on screen.
+  NodeAssert.equal(await scope("This thread").getAttribute("aria-checked"), "true", label);
+  await page.getByText("Other threads show Folded steps.").waitFor();
+  await page.screenshot({ path: shot("menu-own") });
+  await page.getByRole("menuitemradio", { name: /^Everything/ }).click();
+  await expectLevel(page, `${label}-own`, "verbose", { own: true });
+  NodeAssert.equal(await defaultLevel(page), "normal", `${label}: default moved with the thread`);
+  // The shortcut moves this thread's own level and says so; the default stays.
+  await page.locator("main").click({ position: { x: 5, y: 60 } });
+  await page.keyboard.press("ControlOrMeta+Alt+KeyO");
+  await expectLevel(page, `${label}-own-shortcut`, "concise", { own: true });
+  await page.getByText("Show in this thread: Results only", { exact: true }).waitFor();
+  NodeAssert.equal(await defaultLevel(page), "normal", `${label}: shortcut moved the default`);
+  // Back to every thread: the thread follows the default again.
+  await openMenu(page);
+  await scope("Every thread").click();
+  await page.keyboard.press("Escape");
+  await expectLevel(page, `${label}-follows`, "normal");
 }
 
 try {
@@ -141,6 +195,9 @@ try {
       await noOverflow(page, label);
       await page.screenshot({ path: shot("normal") });
       row.levels.normal = shot("normal");
+
+      await ownLevel(page, `${width}-${theme}`, shot);
+      row.ownLevel = true;
 
       // Verbose from the menu: every turn, tool call, output and thought is open.
       await chooseFromMenu(page, "verbose");
