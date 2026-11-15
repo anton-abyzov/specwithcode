@@ -16,6 +16,7 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2ThreadProjection,
   type PlanId,
   type ProjectId,
   type ProjectIconOverride,
@@ -39,6 +40,7 @@ import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -50,6 +52,7 @@ import {
   isRpcClientError,
   request,
 } from "../rpc/client.ts";
+import type * as RpcSession from "../rpc/session.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -338,51 +341,144 @@ const MAX_LOST_TRANSPORT_RESENDS = 2;
 // the composer would wait forever.
 const MESSAGE_DISPATCH_TIMEOUT = "60 seconds";
 
-const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(function* (
-  command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
+// Bounds the whole send, attempts and reconnect waits together, so a host that
+// never comes back ends in an error instead of a send held forever. The
+// supervisor retries after 1-2, 2-4 and 4-8 seconds and gives each try 15
+// seconds to connect, so three failed tries and a fourth that works take about
+// a minute. Two minutes leaves that ladder room after a lost first attempt; past
+// it the retry waits pass 16 seconds and the host is most likely away.
+const MESSAGE_SEND_DEADLINE = "2 minutes";
+
+type MessageDispatchCommand = Extract<OrchestrationV2Command, { type: "message.dispatch" }>;
+
+const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(function* <
+  E = never,
+  R = never,
+>(
+  initial: MessageDispatchCommand,
+  // Rebuilds the command before a resend, for choices that can go stale while
+  // the socket is down. The command id stays the same.
+  refresh?: (command: MessageDispatchCommand) => Effect.Effect<MessageDispatchCommand, E, R>,
 ) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-  const attempt = dispatch(command).pipe(
-    Effect.timeoutOrElse({
-      duration: MESSAGE_DISPATCH_TIMEOUT,
-      orElse: () =>
-        Effect.fail(
-          new EnvironmentRpcUnavailableError({
-            environmentId: supervisor.target.environmentId,
-            message: `${supervisor.target.label} did not confirm the message within 60 seconds.`,
-          }),
+  const unavailable = (message: string) =>
+    new EnvironmentRpcUnavailableError({
+      environmentId: supervisor.target.environmentId,
+      message: `${supervisor.target.label} ${message}`,
+    });
+  const attempt = (command: MessageDispatchCommand) =>
+    dispatch(command).pipe(
+      Effect.timeoutOrElse({
+        duration: MESSAGE_DISPATCH_TIMEOUT,
+        orElse: () => Effect.fail(unavailable("did not confirm the message within 60 seconds.")),
+      }),
+    );
+  // A send that is lost for good fails with an error the composer shows; an
+  // interrupt would make the composer drop the message without a word.
+  const lostForGood = () =>
+    Effect.fail(unavailable("lost the connection before it confirmed the message."));
+  const sessionGone = Effect.fnUntraced(function* (
+    attemptSession: Option.Option<RpcSession.RpcSession>,
+  ) {
+    const current = yield* SubscriptionRef.get(supervisor.session);
+    if (Option.isNone(attemptSession) || Option.isNone(current)) return true;
+    if (current.value !== attemptSession.value) return true;
+    // The protocol fails `closed` before it fails the requests on that socket,
+    // so a socket that closed already shows it here. A live socket never
+    // completes it, and the check does not wait.
+    return yield* Effect.raceFirst(
+      attemptSession.value.closed.pipe(Effect.exit, Effect.as(true)),
+      Effect.succeed(false),
+    );
+  });
+  const send = Effect.gen(function* () {
+    let command = initial;
+    for (let resends = 0; ; resends += 1) {
+      const attemptSession = yield* SubscriptionRef.get(supervisor.session);
+      // A child fiber: interrupting this send stops the wait here and is never
+      // mistaken for a dropped socket.
+      const exit = yield* Fiber.await(yield* Effect.forkChild(attempt(command)));
+      if (Exit.isSuccess(exit)) return exit.value;
+      // Only the session closing interrupts the request on its own, and that
+      // can beat the protocol error.
+      const interrupted = Cause.hasInterruptsOnly(exit.cause);
+      const transportFailure = exit.cause.reasons.some(
+        (reason) => reason._tag === "Fail" && isRpcClientError(reason.error),
+      );
+      if (!interrupted && !transportFailure) return yield* exit;
+      // A protocol error on a session that is still up (a reply that fails to
+      // decode) brings no next session, so it fails now.
+      if (!interrupted && !(yield* sessionGone(attemptSession))) return yield* exit;
+      if (resends >= MAX_LOST_TRANSPORT_RESENDS) return yield* lostForGood();
+      // Wait for a session other than the one that dropped, unless the supervisor
+      // stops trying: the app disconnected, or the connection is blocked.
+      const replacement = yield* Effect.raceFirst(
+        SubscriptionRef.changes(supervisor.session).pipe(
+          Stream.filter(
+            (session) =>
+              Option.isSome(session) &&
+              !(Option.isSome(attemptSession) && session.value === attemptSession.value),
+          ),
+          Stream.runHead,
         ),
+        SubscriptionRef.changes(supervisor.state).pipe(
+          Stream.filter((state) => state.phase === "available" || state.phase === "blocked"),
+          Stream.runHead,
+          Effect.as(Option.none()),
+        ),
+      );
+      if (Option.isNone(replacement)) return yield* lostForGood();
+      if (refresh !== undefined) command = yield* refresh(command);
+    }
+  });
+  return yield* send.pipe(
+    Effect.timeoutOrElse({
+      duration: MESSAGE_SEND_DEADLINE,
+      orElse: () => Effect.fail(unavailable("did not confirm the message within 2 minutes.")),
     }),
   );
-  for (let resends = 0; ; resends += 1) {
-    const attemptSession = yield* SubscriptionRef.get(supervisor.session);
-    const exit = yield* Effect.exit(attempt);
-    if (Exit.isSuccess(exit)) return exit.value;
-    // Closing the session interrupts the request, which can beat the protocol error.
-    const lostTransport =
-      Cause.hasInterruptsOnly(exit.cause) ||
-      exit.cause.reasons.some((reason) => reason._tag === "Fail" && isRpcClientError(reason.error));
-    if (!lostTransport || resends >= MAX_LOST_TRANSPORT_RESENDS) return yield* exit;
-    // Wait for a session other than the one that dropped, unless the supervisor
-    // stops trying: the app disconnected, or the connection is blocked.
-    const replacement = yield* Effect.raceFirst(
-      SubscriptionRef.changes(supervisor.session).pipe(
-        Stream.filter(
-          (session) =>
-            Option.isSome(session) &&
-            !(Option.isSome(attemptSession) && session.value === attemptSession.value),
-        ),
-        Stream.runHead,
-      ),
-      SubscriptionRef.changes(supervisor.state).pipe(
-        Stream.filter((state) => state.phase === "available" || state.phase === "blocked"),
-        Stream.runHead,
-        Effect.as(Option.none()),
-      ),
-    );
-    if (Option.isNone(replacement)) return yield* exit;
-  }
 });
+
+// A host without server-resolved command context takes the mode the client
+// picked against the run it names. A resend works it out again from a fresh
+// projection, because that run may have finished while the socket was down.
+const clientResolvedDispatchMode = (
+  projection: OrchestrationV2ThreadProjection,
+  requestedMode: "auto" | "queue" | "steer" | "restart",
+): NonNullable<MessageDispatchCommand["dispatchMode"]> => {
+  const activeRun = projection.runs.findLast(
+    (run) =>
+      run.status === "preparing" ||
+      run.status === "starting" ||
+      run.status === "running" ||
+      run.status === "waiting",
+  );
+  if (activeRun === undefined) return { type: "start_immediately" };
+  const activeProviderThread = projection.providerThreads.find(
+    (thread) => thread.id === activeRun.providerThreadId,
+  );
+  const activeProviderSession =
+    activeProviderThread?.providerSessionId === null ||
+    activeProviderThread?.providerSessionId === undefined
+      ? undefined
+      : projection.providerSessions.find(
+          (session) => session.id === activeProviderThread.providerSessionId,
+        );
+  const turnCapabilities = activeProviderSession?.capabilities.turns;
+  return requestedMode === "steer"
+    ? { type: "steer_active", targetRunId: activeRun.id }
+    : requestedMode === "restart"
+      ? { type: "restart_active", targetRunId: activeRun.id }
+      : requestedMode === "queue"
+        ? { type: "queue_after_active" }
+        : turnCapabilities?.supportsActiveSteering === true
+          ? { type: "steer_active", targetRunId: activeRun.id }
+          : turnCapabilities?.supportsQueuedMessages === true
+            ? { type: "queue_after_active" }
+            : turnCapabilities?.supportsSteeringByInterruptRestart === true
+              ? { type: "restart_active", targetRunId: activeRun.id }
+              : { type: "queue_after_active" };
+};
 
 const getProjection = (threadId: ThreadId) =>
   request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
@@ -899,68 +995,49 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
 
   const serverResolvesCommandContext = yield* supportsServerResolvedCommandContext();
   const projection = serverResolvesCommandContext ? null : yield* getProjection(input.threadId);
-  const activeRun = projection?.runs.findLast(
-    (run) =>
-      run.status === "preparing" ||
-      run.status === "starting" ||
-      run.status === "running" ||
-      run.status === "waiting",
-  );
-  const activeProviderThread =
-    activeRun === undefined
-      ? undefined
-      : projection?.providerThreads.find((thread) => thread.id === activeRun.providerThreadId);
-  const activeProviderSession =
-    activeProviderThread?.providerSessionId === null ||
-    activeProviderThread?.providerSessionId === undefined
-      ? undefined
-      : projection?.providerSessions.find(
-          (session) => session.id === activeProviderThread.providerSessionId,
-        );
-  const turnCapabilities = activeProviderSession?.capabilities.turns;
-  const dispatchMode = serverResolvesCommandContext
-    ? requestedMode === "queue"
-      ? ({ type: "queue_after_active" } as const)
-      : ({ type: "start_immediately" } as const)
-    : activeRun === undefined
-      ? ({ type: "start_immediately" } as const)
-      : requestedMode === "steer"
-        ? ({ type: "steer_active", targetRunId: activeRun.id } as const)
-        : requestedMode === "restart"
-          ? ({ type: "restart_active", targetRunId: activeRun.id } as const)
-          : requestedMode === "queue"
-            ? ({ type: "queue_after_active" } as const)
-            : turnCapabilities?.supportsActiveSteering === true
-              ? ({ type: "steer_active", targetRunId: activeRun.id } as const)
-              : turnCapabilities?.supportsQueuedMessages === true
-                ? ({ type: "queue_after_active" } as const)
-                : turnCapabilities?.supportsSteeringByInterruptRestart === true
-                  ? ({ type: "restart_active", targetRunId: activeRun.id } as const)
-                  : ({ type: "queue_after_active" } as const);
+  const dispatchMode =
+    projection === null
+      ? requestedMode === "queue"
+        ? ({ type: "queue_after_active" } as const)
+        : ({ type: "start_immediately" } as const)
+      : clientResolvedDispatchMode(projection, requestedMode);
   const shouldSendTitleSeed =
     input.titleSeed !== undefined &&
     (serverResolvesCommandContext || projection?.messages.length === 0);
-  return yield* dispatchMessage({
-    type: "message.dispatch",
-    ...(input.manualCodexCreditIntent
-      ? { manualCodexCreditIntent: input.manualCodexCreditIntent }
-      : {}),
-    commandId,
-    createdBy: "user",
-    creationSource: input.creationSource ?? "web",
-    threadId: input.threadId,
-    messageId: input.message.messageId,
-    text: input.message.text,
-    ...(context ? { context } : {}),
-    attachments,
-    ...(shouldSendTitleSeed ? { titleSeed: input.titleSeed } : {}),
-    ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
-    ...(input.sourceProposedPlan === undefined ? {} : { sourcePlanRef: input.sourceProposedPlan }),
-    ...(serverResolvesCommandContext && requestedMode !== "queue"
-      ? { deliveryIntent: requestedMode }
-      : {}),
-    dispatchMode,
-  });
+  return yield* dispatchMessage(
+    {
+      type: "message.dispatch",
+      ...(input.manualCodexCreditIntent
+        ? { manualCodexCreditIntent: input.manualCodexCreditIntent }
+        : {}),
+      commandId,
+      createdBy: "user",
+      creationSource: input.creationSource ?? "web",
+      threadId: input.threadId,
+      messageId: input.message.messageId,
+      text: input.message.text,
+      ...(context ? { context } : {}),
+      attachments,
+      ...(shouldSendTitleSeed ? { titleSeed: input.titleSeed } : {}),
+      ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...(input.sourceProposedPlan === undefined
+        ? {}
+        : { sourcePlanRef: input.sourceProposedPlan }),
+      ...(serverResolvesCommandContext && requestedMode !== "queue"
+        ? { deliveryIntent: requestedMode }
+        : {}),
+      dispatchMode,
+    },
+    serverResolvesCommandContext
+      ? undefined
+      : (command) =>
+          getProjection(input.threadId).pipe(
+            Effect.map((current) => ({
+              ...command,
+              dispatchMode: clientResolvedDispatchMode(current, requestedMode),
+            })),
+          ),
+  );
 });
 
 /**
