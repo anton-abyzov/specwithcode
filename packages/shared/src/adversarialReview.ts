@@ -213,10 +213,14 @@ export function describeReviewerOrder(input: {
     const unavailable: FallbackOrderUnavailable | null =
       entry === undefined ? (provider === undefined ? "missing" : "not-ready") : entry.unavailable;
     const unconsented = !named.has(key) && isUnknownBillingAgent(provider, selection.model);
+    // As `resolveReviewer` reads it: a Gemini or Vertex account nobody named never reviews.
+    const unnamedSpend = !named.has(key) && isGeminiSpendProvider(provider);
     const status: ReviewerStepStatus =
-      unconsented && (unavailable === null || unavailable === "unverified")
-        ? "unknown-billing"
-        : unavailable === null || unavailable === "current"
+      unnamedSpend && (unavailable === null || unavailable === "unverified")
+        ? "per-token"
+        : unconsented && (unavailable === null || unavailable === "unverified")
+          ? "unknown-billing"
+          : unavailable === null || unavailable === "current"
           ? "ready"
           : unavailable;
     return {

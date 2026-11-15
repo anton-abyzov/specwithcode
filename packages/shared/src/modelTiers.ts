@@ -244,12 +244,9 @@ export function tierModelFor(
     // A built-in default follows its family to the newest release the provider
     // lists (newer or older than the literal), so a new model takes the tier
     // without a code change; a person's choice stays exact.
-    // Never onto a release billed per use or with unknown billing.
     if (chosen === undefined && builtIn !== undefined) {
-      const newer = newestOfFamily(provider, builtIn);
-      const billing = providerModelBilling(provider, newer);
-      if (newer !== undefined && billing !== "unknown" && !isPaidModelBilling(billing))
-        return newer;
+      const newer = newestPlanBilled(provider, builtIn);
+      if (newer !== undefined) return newer;
     }
     const own = chosen ?? builtIn;
     if (own !== undefined) {
@@ -263,12 +260,28 @@ export function tierModelFor(
       const slug =
         named === undefined
           ? undefined
-          : ((person === undefined ? newestOfFamily(provider, named) : undefined) ??
+          : ((person === undefined ? newestPlanBilled(provider, named) : undefined) ??
             sameModelOn(provider, { slug: named }));
       if (slug !== undefined) return slug;
     }
   }
   return undefined;
+}
+
+/**
+ * The newest listed release of `slug`'s family, unless it is billed per use
+ * or its billing is unknown: a built-in default never starts a worker on
+ * something that may cost money.
+ */
+function newestPlanBilled(
+  provider: Pick<ServerProvider, "models">,
+  slug: string,
+): string | undefined {
+  const newest = newestOfFamily(provider, slug);
+  const billing = providerModelBilling(provider, newest);
+  return newest !== undefined && billing !== "unknown" && !isPaidModelBilling(billing)
+    ? newest
+    : undefined;
 }
 
 const VERSIONED_SLUG = /^(.*[a-z])-(\d{1,3}(?:[.-]\d{1,3})*)$/;

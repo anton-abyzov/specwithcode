@@ -637,9 +637,10 @@ describe("project settings and memory", () => {
         projectId: "project",
         title: "Atlas revised",
         workspaceSettings: { expectedRevision: 7 },
-        defaultModelSelection: { instanceId: "codex", model: "codex-worker" },
       },
     });
+    // The model was not edited, so the save leaves it and any saved override alone.
+    expect(state.update.mock.calls[0]![0].input).not.toHaveProperty("defaultModelSelection");
     expect(container.textContent).toContain("Revision changed");
     expect(container.querySelector<HTMLInputElement>("#project-settings-name")!.value).toBe(
       "Atlas revised",

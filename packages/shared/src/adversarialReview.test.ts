@@ -85,6 +85,20 @@ describe("tierModelFor", () => {
     expect(tierModelFor(muse, "frontier")).toBe("muse-wonder-full-1.0");
   });
 
+  it("keeps a borrowed tier off a newer release billed per use or unknown", () => {
+    const reseller = (billing: "api" | "unknown") => {
+      const base = provider("copilot", "acpRegistry", ["claude-fable-5-2", "claude-fable-6"], null);
+      return {
+        ...base,
+        models: base.models.map((model) =>
+          model.slug === "claude-fable-6" ? { ...model, billing } : model,
+        ),
+      };
+    };
+    expect(tierModelFor(reseller("api"), "frontier")).toBe("claude-fable-5-2");
+    expect(tierModelFor(reseller("unknown"), "frontier")).toBe("claude-fable-5-2");
+  });
+
   it("follows a built-in default to the newest listed release of its family", () => {
     const newer = provider(
       "claudeAgent",
@@ -341,6 +355,16 @@ describe("describeReviewerOrder", () => {
       ["claudeAgent", "ready"],
       ["codex", "ready"],
     ]);
+  });
+
+  it("shows an unnamed Gemini account as billed per token, as the resolver skips it", () => {
+    const gemini = provider("gemini", "acpRegistry", ["gemini-4-carbon"], null);
+    const step = (reviewers: ReadonlyArray<ModelSelection>) =>
+      describeReviewerOrder({ providers: [claude, gemini], reviewers, tier: "regular", nowMs: now })
+        .groups.flatMap((group) => [group.primary, ...group.alternates])
+        .find((entry) => entry.selection.instanceId === "gemini");
+    expect(step([])?.status ?? "per-token").toBe("per-token");
+    expect(step([sel("gemini", "gemini-4-carbon")])?.status).toBe("ready");
   });
 
   it("says when a listed provider is gone from this machine", () => {
