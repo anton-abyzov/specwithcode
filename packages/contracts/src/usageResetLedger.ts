@@ -52,9 +52,22 @@ export const UsageResetLedgerInput = Schema.Struct({
 });
 export type UsageResetLedgerInput = typeof UsageResetLedgerInput.Type;
 
+/** An account with a window being followed: it was read here, whether or not a period closed. */
+export const UsageResetLedgerAccount = Schema.Struct({
+  accountKey: TrimmedNonEmptyString,
+  driver: ProviderDriverKind,
+});
+export type UsageResetLedgerAccount = typeof UsageResetLedgerAccount.Type;
+
 export const UsageResetLedgerResult = Schema.Struct({
   createdAt: IsoDateTime,
   periods: Schema.Array(UsageResetPeriod),
+  /**
+   * Accounts read in the last sixty days. One that spent tokens without
+   * closing a period still shared its provider's token counts. Absent from
+   * servers older than this field.
+   */
+  openAccounts: Schema.optional(Schema.Array(UsageResetLedgerAccount)),
 });
 export type UsageResetLedgerResult = typeof UsageResetLedgerResult.Type;
 

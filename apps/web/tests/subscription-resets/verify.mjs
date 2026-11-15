@@ -128,22 +128,83 @@ try {
     assert.equal(await row.getByRole("button", { name: "Save" }).isDisabled(), false);
     await row.getByRole("button", { name: "Cancel" }).click();
   });
-  await check("the report totals, table and token estimate are stated", async () => {
-    const report = page.locator("[data-reset-report]");
-    const text = await report.innerText();
-    assert.match(text, /Lost this week: 45%/);
-    assert.match(text, /Claude.*Max 20x · studio-mac/);
-    assert.match(text, /9% over 4 resets/);
-    assert.match(text, /~127M/);
-    assert.match(text, /Not measurable/);
-    assert.equal(await report.locator("[data-report-account]").count(), 3);
+  const dashboard = page.locator("[data-subscriptions-dashboard]");
+  await check("the score, what was left unused and what resets soon lead the page", async () => {
+    assert.match(await dashboard.locator("[data-efficiency-score]").innerText(), /^\d+%$/);
+    const unused = await dashboard.locator('[data-dashboard-tile="unused"]').innerText();
+    assert.match(unused, /up to \d+%/);
+    assert.match(unused, /tokens \(estimate\)/);
+    const expiring = await dashboard.locator('[data-dashboard-tile="expiring"]').innerText();
+    assert.match(expiring, /62% left/);
+    assert.match(expiring, /resets in 9h 0m/);
+    const banked = await dashboard.locator('[data-dashboard-tile="banked"]').innerText();
+    assert.match(banked, /2/);
+    assert.match(banked, /next expires Nov 21/);
+  });
+  await check("twelve columns, four in range, and grouping by provider, account or machine", async () => {
+    assert.equal(await dashboard.locator("[data-efficiency-column]").count(), 12);
+    assert.equal(await dashboard.locator("[data-efficiency-column][data-in-range]").count(), 4);
+    assert.equal(await dashboard.locator("[data-dashboard-group]").count(), 2);
+    await dashboard.getByRole("button", { name: "Account", exact: true }).click();
+    assert.equal(await dashboard.locator("[data-dashboard-group]").count(), 3);
+    const spare = await dashboard
+      .locator('[data-dashboard-group="codex:team@example.com"]')
+      .innerText();
+    assert.match(spare, /27%/);
+    assert.match(spare, /plan 30%/);
+    await dashboard.getByRole("button", { name: "Machine", exact: true }).click();
+    assert.equal(await dashboard.locator('[data-dashboard-group="machine:mini"]').count(), 1);
+  });
+  await check("a plan takes 1 to 100 percent only", async () => {
+    await dashboard.getByRole("button", { name: "Account", exact: true }).click();
+    const group = dashboard.locator('[data-dashboard-group="codex:ada@example.com"]');
+    await group.getByRole("button", { name: /plan 100%/ }).click();
+    const input = group.getByLabel("Percent of this subscription you plan to use");
+    await input.fill("150");
+    assert.equal(await group.getByRole("button", { name: "Save" }).isDisabled(), true);
+    await input.fill("60");
+    assert.equal(await group.getByRole("button", { name: "Save" }).isDisabled(), false);
+    await group.getByRole("button", { name: "Cancel" }).click();
+  });
+  await check("a column reads out its groups and scopes the resets table", async () => {
+    const newest = dashboard.locator('[data-efficiency-column="11"]');
+    await newest.hover();
+    assert.match(await dashboard.locator("[data-efficiency-readout]").innerText(), /Week of .*: \d+%/);
+    await newest.click();
+    assert.match(await dashboard.locator("[data-resets-heading]").innerText(), /Resets · week of/);
+    assert.equal(await dashboard.locator("[data-reset-row]").count(), 2);
+    await dashboard.getByRole("button", { name: "Show the whole range" }).click();
+    assert.match(await dashboard.locator("[data-resets-heading]").innerText(), /Resets in this range/);
+  });
+  await check("a reset opens in place with how exact it is and use through the period", async () => {
+    const row = dashboard.locator('[data-reset-row^="codex:ada@example.com"]').first();
+    await row.click();
+    const detail = dashboard.locator("[data-reset-detail]");
+    assert.equal(await detail.count(), 1);
+    assert.match(await detail.innerText(), /so the figure is exact/);
+    assert.match(await detail.innerText(), /mini/);
+    assert.equal(await detail.locator("[data-use-path]").count(), 1);
+    await row.click();
+    assert.equal(await dashboard.locator("[data-reset-detail]").count(), 0);
+    const bound = dashboard.locator('[data-reset-row^="codex:team@example.com"]').first();
+    assert.match(await bound.innerText(), /up to 73%/);
+  });
+  await check("twelve weeks page ten resets at a time, newest first", async () => {
+    await dashboard.getByRole("button", { name: "12W", exact: true }).click();
+    assert.equal(await dashboard.locator("[data-efficiency-column][data-in-range]").count(), 12);
+    assert.match(await dashboard.locator("[data-resets-range]").innerText(), /1 to 10 of 25 resets/);
+    await dashboard.getByRole("button", { name: "Next" }).click();
+    assert.match(await dashboard.locator("[data-resets-range]").innerText(), /11 to 20 of 25 resets/);
+    await dashboard.getByRole("button", { name: "4W", exact: true }).click();
   });
 
   await open("empty", "light", 1280);
   await check("with no readings it says so, and never shows a zero", async () => {
     assert.equal(await page.locator("[data-fixture-empty]").count(), 1);
-    assert.equal(await page.locator('[data-reset-report="empty"]').count(), 1);
-    assert.doesNotMatch(await page.locator("body").innerText(), /0%/);
+    assert.equal(await page.locator('[data-efficiency-chart="empty"]').count(), 1);
+    assert.equal(await page.locator('[data-resets-table="empty"]').count(), 1);
+    assert.match(await page.locator('[data-dashboard-tile="efficiency"]').innerText(), /Not enough history yet/);
+    assert.doesNotMatch(await page.locator("body").innerText(), /\b0%/);
   });
   await page.screenshot({ path: join(output, "subscriptions-empty.png"), fullPage: true });
 

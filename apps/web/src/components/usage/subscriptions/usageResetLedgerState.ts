@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationReadScope,
   type EnvironmentId,
+  type UsageResetLedgerAccount,
   type UsageResetPeriod,
 } from "@specweave-studio/contracts";
 import { mergeResetPeriods } from "@specweave-studio/shared/usageResetLedger";
@@ -10,7 +11,8 @@ import { serverEnvironment } from "../../../state/server";
 import { useEnvironmentsWithScope } from "../../../state/session";
 import { useAtomCommand } from "../../../state/use-atom-command";
 
-const LEDGER_DAYS = 120;
+/** The whole ledger: the dashboard's year range and its comparison span need it. */
+const LEDGER_DAYS = 366;
 
 /**
  * One list from each machine's ledger. Two machines signed in to one account
@@ -48,6 +50,18 @@ export function mergeLedgers(
   });
 }
 
+export interface UsageResetLedgerView {
+  readonly periods: readonly UsageResetPeriod[];
+  /** Accounts each machine is following, closed period or not; may repeat across machines. */
+  readonly openAccounts: readonly UsageResetLedgerAccount[];
+}
+
+interface Ledger {
+  readonly periods: readonly UsageResetPeriod[];
+  readonly accounts: readonly UsageResetLedgerAccount[];
+}
+const NO_LEDGER: Ledger = { periods: [], accounts: [] };
+
 /**
  * Closed quota periods from every connected environment, merged by account.
  * Null until the first read lands, so a loading view does not claim nothing
@@ -56,12 +70,12 @@ export function mergeLedgers(
 export function useUsageResetLedger(
   environmentIds: readonly EnvironmentId[],
   refreshKey: number,
-): readonly UsageResetPeriod[] | null {
+): UsageResetLedgerView | null {
   const read = useAtomCommand(serverEnvironment.usageResetLedger, {
     reportFailure: false,
     reportDefect: false,
   });
-  const [periods, setPeriods] = useState<readonly UsageResetPeriod[] | null>(null);
+  const [view, setView] = useState<UsageResetLedgerView | null>(null);
   const requestedKey = [...environmentIds].sort().join("\n");
   const requested = useMemo(
     () =>
@@ -81,18 +95,26 @@ export function useUsageResetLedger(
     let cancelled = false;
     const ids = environmentsKey === "" ? [] : (environmentsKey.split("\n") as EnvironmentId[]);
     void Promise.all(
-      ids.map((environmentId): Promise<readonly UsageResetPeriod[]> =>
+      ids.map((environmentId): Promise<Ledger> =>
         Promise.resolve(read({ environmentId, input: { sinceDays: LEDGER_DAYS } }))
-          .then((result) => (result?._tag === "Success" ? result.value.periods : []))
-          .catch(() => []),
+          .then((result) =>
+            result?._tag === "Success"
+              ? { periods: result.value.periods, accounts: result.value.openAccounts ?? [] }
+              : NO_LEDGER,
+          )
+          .catch(() => NO_LEDGER),
       ),
     ).then((ledgers) => {
-      if (!cancelled) setPeriods(mergeLedgers(ledgers));
+      if (cancelled) return;
+      setView({
+        periods: mergeLedgers(ledgers.map((ledger) => ledger.periods)),
+        openAccounts: ledgers.flatMap((ledger) => ledger.accounts),
+      });
     });
     return () => {
       cancelled = true;
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- refreshKey re-reads on refresh.
   }, [environmentsKey, read, refreshKey]);
-  return periods;
+  return view;
 }

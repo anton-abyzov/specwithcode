@@ -13,7 +13,8 @@ import { useMachineNicknames } from "../../../studio/machineNickname";
 import { getDriverOption } from "../../settings/providerDriverMeta";
 import { Button } from "../../ui/button";
 import { barColor } from "../UsageLimits";
-import { ResetReport } from "./ResetReport";
+import { useUsageLimitHistory } from "../usageLimitHistoryState";
+import { SubscriptionsDashboard } from "./SubscriptionsDashboard";
 import { SubscriptionRow, formatDay } from "./SubscriptionRow";
 import { resetReport, resetReportMarkdown } from "./resetReportModel";
 import { subscriptionRows } from "./subscriptionRows";
@@ -59,12 +60,15 @@ export function SubscriptionsView({
     )
     .map(([environmentId]) => environmentId as EnvironmentId);
   const ledger = useUsageResetLedger(connected, now);
+  const history = useUsageLimitHistory(connected, now);
   const renewalDays = usePrimarySettings((settings) => settings.subscriptionRenewalDays);
+  const targets = usePrimarySettings((settings) => settings.subscriptionTargets);
+  const prices = usePrimarySettings((settings) => settings.subscriptionPrices);
   const updateSettings = useUpdatePrimarySettings();
   const [usageWindow] = useState(() => makeWindow(USAGE_DAYS, undefined, "day"));
   const usage = useUsage(usageWindow, null);
 
-  const periods: readonly UsageResetPeriod[] = ledger ?? [];
+  const periods: readonly UsageResetPeriod[] = ledger?.periods ?? [];
   const rows = subscriptionRows(accounts, periods, renewalDays ?? {}, now);
   const byKey = useMemo(() => {
     const map = new Map<string, LimitAccount>();
@@ -87,9 +91,9 @@ export function SubscriptionsView({
     seen(account.driver, limitAccountKey(account.driver, account.email, account.limits) ?? account.key);
   }
   for (const period of periods) seen(period.driver, period.accountKey);
-  const report = resetReport(periods, now, {
-    weeks: REPORT_WEEKS,
-    tokensSpent: ({ driver }, from, to) => {
+  // An account read in the period without closing one still shared the provider's token counts.
+  for (const open of ledger?.openAccounts ?? []) seen(open.driver, open.accountKey);
+  const tokensSpent = ({ driver }: { readonly driver: UsageResetPeriod["driver"] }, from: number, to: number) => {
       const kind = USAGE_KIND[driver];
       // Usage is counted per provider, so it is one account's only when it is the only one.
       if (kind === undefined || accountsOfDriver.get(driver)?.size !== 1) return null;
@@ -103,8 +107,14 @@ export function SubscriptionsView({
         tokens += day.byProvider.get(kind)?.totalTokens ?? 0;
       }
       return days === 0 ? null : tokens;
-    },
-  });
+  };
+  const report = resetReport(periods, now, { weeks: REPORT_WEEKS, tokensSpent });
+  const tokensLost = (weeks: number) => {
+    const estimates = resetReport(periods, now, { weeks, tokensSpent }).accounts.flatMap(
+      (account) => (account.tokensLostEstimate === null ? [] : [account.tokensLostEstimate]),
+    );
+    return estimates.length === 0 ? null : estimates.reduce((sum, value) => sum + value, 0);
+  };
   const labelOf = (accountKey: string) => {
     const account = byKey.get(accountKey);
     return account ? subscriptionLabel(account) : accountKey.replace(/^[^:]+:/, "");
@@ -118,29 +128,42 @@ export function SubscriptionsView({
     updateSettings({ subscriptionRenewalDays: { [accountKey]: day } });
   };
 
+  const machinesOf = (accountKey: string) =>
+    byKey.get(accountKey)?.environments.map((environment) => environment.label) ?? [];
+  const providerOf = (driver: UsageResetPeriod["driver"]) =>
+    getDriverOption(driver)?.label ?? String(driver);
+  // Settings patches merge by key, so a price cannot be removed, only replaced.
+  const setPlan = (
+    accountKey: string,
+    plan: { readonly target: number; readonly price: number | null },
+  ) => {
+    updateSettings({
+      subscriptionTargets: { [accountKey]: plan.target },
+      ...(plan.price === null ? {} : { subscriptionPrices: { [accountKey]: plan.price } }),
+    });
+  };
+
   return (
     <div className="flex flex-col gap-6" data-subscriptions-view="">
-      {rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No subscription reports its limits yet. Sign in to a provider on a connected machine.
-        </p>
-      ) : (
-        <div className="rounded-lg border border-border/60">
-          {rows.map((row) => (
-            <SubscriptionRow
-              key={row.key}
-              row={row}
-              color={colorOf(row.accountKey ?? "") ?? barColor(row.driver)}
-              now={now}
-              onSetDay={setDay}
-            />
-          ))}
-        </div>
-      )}
-      <section className="flex flex-col gap-3" aria-labelledby="reset-report-heading">
+      <SubscriptionsDashboard
+        ledger={ledger === null ? null : periods}
+        rows={rows}
+        history={history}
+        now={now}
+        targets={targets ?? {}}
+        prices={prices ?? {}}
+        labelOf={labelOf}
+        colorOf={colorOf}
+        providerOf={providerOf}
+        providerColorOf={barColor}
+        machinesOf={machinesOf}
+        tokensLost={tokensLost}
+        onSetPlan={setPlan}
+      />
+      <section className="flex flex-col gap-3" aria-labelledby="current-windows-heading">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 id="reset-report-heading" className="text-sm font-medium">
-            Used against lost at each reset
+          <h3 id="current-windows-heading" className="text-sm font-medium">
+            Right now
           </h3>
           {report.accounts.length > 0 ? (
             <Button
@@ -153,14 +176,26 @@ export function SubscriptionsView({
                   .catch(() => setCopied(false));
               }}
             >
-              {copied ? "Copied as Markdown" : "Copy report"}
+              {copied ? "Copied as Markdown" : "Copy 4-week report"}
             </Button>
           ) : null}
         </div>
-        {ledger === null ? (
-          <p className="text-sm text-muted-foreground">Reading the reset history…</p>
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No subscription reports its limits yet. Sign in to a provider on a connected machine.
+          </p>
         ) : (
-          <ResetReport report={report} labelOf={labelOf} colorOf={colorOf} />
+          <div className="rounded-lg border border-border/60">
+            {rows.map((row) => (
+              <SubscriptionRow
+                key={row.key}
+                row={row}
+                color={colorOf(row.accountKey ?? "") ?? barColor(row.driver)}
+                now={now}
+                onSetDay={setDay}
+              />
+            ))}
+          </div>
         )}
       </section>
     </div>

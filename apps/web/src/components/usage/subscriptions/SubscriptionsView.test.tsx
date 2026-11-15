@@ -8,9 +8,8 @@ vi.mock("../../studio/shell/Tip", () => ({
   Tip: ({ children }: { readonly children: unknown }) => children,
 }));
 
-import { ResetReport } from "./ResetReport";
+import { SubscriptionsDashboard } from "./SubscriptionsDashboard";
 import { SubscriptionRow } from "./SubscriptionRow";
-import { resetReport } from "./resetReportModel";
 import { subscriptionRows } from "./subscriptionRows";
 
 const HOUR = 3_600_000;
@@ -110,24 +109,51 @@ describe("SubscriptionRow", () => {
   });
 });
 
-describe("ResetReport", () => {
-  it("draws the weeks and lists used, lost and an unmeasurable token figure in words", () => {
-    const report = resetReport([lost(now - 4 * DAY, 41), lost(now - 11 * DAY, 45)], now);
-    const html = renderToStaticMarkup(
-      <ResetReport report={report} labelOf={() => "Codex Pro · m1"} colorOf={() => "teal"} />,
-    );
-    expect(html).toContain("Lost this week: <span");
+const dashboard = (ledger: UsageResetPeriod[] | null) =>
+  renderToStaticMarkup(
+    <SubscriptionsDashboard
+      ledger={ledger}
+      rows={[]}
+      history={null}
+      now={now}
+      targets={{}}
+      prices={{}}
+      labelOf={() => "Codex Pro · m1"}
+      colorOf={() => "teal"}
+      providerOf={() => "Codex"}
+      providerColorOf={() => "teal"}
+      machinesOf={() => ["m1"]}
+      tokensLost={() => null}
+      onSetPlan={() => undefined}
+    />,
+  );
+
+describe("SubscriptionsDashboard", () => {
+  it("leads with the score and lists the resets behind it, newest first", () => {
+    const html = dashboard([lost(now - 4 * DAY, 41), lost(now - 11 * DAY, 45)]);
+    // 59% and 55% used: the mean is 57.
+    expect(html).toContain('data-efficiency-score="">57%');
+    expect(html).toContain("average over 2 resets");
     expect(html).toContain("Codex Pro · m1");
-    expect(html).toContain("43% over 2 resets");
-    expect(html).toContain("Not measurable");
-    expect(html).toContain("Nov 9");
+    expect(html).toContain("1 to 2 of 2 resets");
+    const table = html.slice(html.indexOf("data-resets-table"));
+    expect(table.indexOf("59%")).toBeLessThan(table.indexOf("55%"));
+    expect(html).toContain("At its scheduled time");
   });
 
-  it("says so when no reset was recorded yet", () => {
-    const html = renderToStaticMarkup(
-      <ResetReport report={resetReport([], now)} labelOf={String} colorOf={String} />,
-    );
-    expect(html).toContain('data-reset-report="empty"');
-    expect(html).toContain("No reset recorded yet");
+  it("gives no score from one reset, and says the loss is an upper bound", () => {
+    const html = dashboard([lost(now - 4 * DAY, 90, 9 * HOUR)]);
+    expect(html).toContain("Not enough history yet");
+    expect(html).not.toContain("data-efficiency-score");
+    expect(html).toContain("up to 90%");
+    expect(html).toContain("at least</span>10%");
+  });
+
+  it("says so before the first read and when nothing was recorded", () => {
+    expect(dashboard(null)).toContain("Reading the reset history");
+    const empty = dashboard([]);
+    expect(empty).toContain('data-efficiency-chart="empty"');
+    expect(empty).toContain('data-resets-table="empty"');
+    expect(empty).not.toMatch(/\b0%/);
   });
 });

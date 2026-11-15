@@ -9,6 +9,7 @@ import {
   decodeLedgerFile,
   emptyLedger,
   encodeLedgerFile,
+  ledgerAccounts,
   pruneLedger,
   readLedger,
 } from "./usageResetLedgerStore.ts";
@@ -193,5 +194,26 @@ describe("ledger file", () => {
     expect(pruneLedger(state, reset1 + LEDGER_RETENTION_MS + DAY)).toBe(true);
     expect(state.periods).toEqual([]);
     expect(state.cursors.size).toBe(0);
+  });
+});
+
+describe("ledger accounts and older files", () => {
+  it("lists an account that was read without closing a period", () => {
+    const state = emptyLedger();
+    advanceLedger(state, reading(t0, [weekly(100, null)]));
+    expect(ledgerAccounts(state)).toEqual([{ accountKey: "codex:pro@example.com", driver: codex }]);
+    expect(state.periods).toEqual([]);
+  });
+
+  it("dates a spent credit from a file written before the time was kept", () => {
+    const state = emptyLedger();
+    advanceLedger(state, reading(t0, [weekly(100, reset1)], 2));
+    const file = JSON.parse(encodeLedgerFile(state));
+    delete file.cursors[0].creditSpentAt;
+    file.cursors[0].creditSpent = true;
+    const restored = decodeLedgerFile(JSON.stringify(file));
+    expect(
+      advanceLedger(restored, reading(t0 + HOUR, [weekly(0, t0 + HOUR + WEEK)], 1)),
+    ).toMatchObject([{ cause: "redeemed" }]);
   });
 });

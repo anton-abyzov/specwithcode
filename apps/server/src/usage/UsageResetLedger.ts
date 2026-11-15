@@ -44,6 +44,7 @@ import {
   advanceLedger,
   decodeLedgerFile,
   encodeLedgerFile,
+  ledgerAccounts,
   pruneLedger,
   readLedger,
 } from "./usageResetLedgerStore.ts";
@@ -164,6 +165,10 @@ export const make = Effect.gen(function* () {
       return {
         createdAt: isoAt(now),
         periods: readLedger(state, since),
+        openAccounts: ledgerAccounts(state).map(({ accountKey, driver }) => ({
+          accountKey: accountKey as UsageResetLedgerResult["periods"][number]["accountKey"],
+          driver,
+        })),
       } satisfies UsageResetLedgerResult;
     });
 
