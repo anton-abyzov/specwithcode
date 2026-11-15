@@ -4580,7 +4580,8 @@ export const ru: PhraseCatalog = {
   "View this project on": "Смотреть проект на",
   "Move coordinator to {machine}…": "Перенести координатора на {machine}…",
   "Open coordinator on {machine}": "Открыть координатора на {machine}",
-  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.": "На {machine} сохранился прежний координатор. Открытие снова запустит его рядом с этим; ничего не переносится.",
+  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.":
+    "На {machine} сохранился прежний координатор. Открытие снова запустит его рядом с этим; ничего не переносится.",
   "Machine access settings": "Настройки доступа между машинами",
   "{machine} offline": "{machine} не в сети",
   "workers only": "только исполнители",
@@ -4928,8 +4929,7 @@ export const ru: PhraseCatalog = {
   "Last time it was signed in.": "В прошлый раз вход был выполнен.",
   "Not signed in": "Вход не выполнен",
   "Sign in with {account}": "Войти через {account}",
-  "Switch account":
-    "Сменить аккаунт",
+  "Switch account": "Сменить аккаунт",
   "This is the Codex command line's sign-in on this machine. The Codex app signs in separately, so changing accounts there does not change it here.":
     "Это вход командной строки Codex на этом компьютере. Приложение Codex входит отдельно, поэтому смена аккаунта там здесь ничего не меняет.",
   "Using another ChatGPT account in the Codex app? It signs in separately. Switch account to use it here.":
@@ -4995,4 +4995,26 @@ export const ru: PhraseCatalog = {
     "Копия SpecWithCode имеет версию {version}, старее той, что использует этот релиз.",
   "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
     "Инструменты остаются на каждой машине и не копируются. {machineName} ещё нужны некоторые из них, чтобы агенты могли работать там над этим проектом.",
+  Other: "Другое",
+  Total: "Итого",
+  "Remove chart": "Удалить диаграмму",
+  "This chart's range is not valid.": "Диапазон этой диаграммы задан неверно.",
+  "This chart has no numbers to draw.": "В этой диаграмме нет чисел для построения.",
+  "This sheet could not be read.": "Не удалось прочитать эту таблицу.",
+  "The chart could not be saved.": "Не удалось сохранить диаграмму.",
+  "Formula bar": "Строка формул",
+  "Select the cells to chart first.": "Сначала выделите ячейки для диаграммы.",
+  "Insert chart": "Вставить диаграмму",
+  "Chart type": "Тип диаграммы",
+  Bar: "Столбцы",
+  Line: "Линия",
+  Donut: "Кольцо",
+  "Chart title": "Название диаграммы",
+  "Add chart": "Добавить диаграмму",
+  "Showing the first {rows} rows and {columns} columns.":
+    "Показаны первые {rows} строк и {columns} столбцов.",
+  Charts: "Диаграммы",
+  "Sheet tabs": "Листы таблицы",
+  "This sheet is too large to open here.": "Эта таблица слишком велика, чтобы открыть её здесь.",
+  Sheet: "Таблица",
 };

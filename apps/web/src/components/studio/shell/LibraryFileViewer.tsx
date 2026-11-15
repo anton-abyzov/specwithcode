@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@specweave-studio/contracts";
+import { SHEET_ARTIFACT_SUFFIX } from "@specweave-studio/shared/officeSheet";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -12,6 +13,7 @@ import { ReadOnlySourcePreview } from "../../files/AttachmentFilePreview";
 import { FilePreviewCard, HostDeckPreview } from "../../files/DeckPreview";
 import { hostFilePreview, noPreviewReason } from "../../files/hostFilePreview";
 import { useProjectFileQuery } from "../../files/projectFilesQueryState";
+import { SheetFileView } from "../../office/SheetFileView";
 import { Button } from "../../ui/button";
 import { libraryFileType } from "../../../studio/projectPaneModel";
 
@@ -130,9 +132,13 @@ function LibraryFileBody(props: {
   readonly path: string;
   readonly name: string;
 }): ReactNode {
+  const sheet = props.path.endsWith(SHEET_ARTIFACT_SUFFIX);
   const host = hostFilePreview(props.path);
   const readable =
-    host === "text" && libraryFileType(props.path) !== "images" && !/\.pdf$/i.test(props.path);
+    !sheet &&
+    host === "text" &&
+    libraryFileType(props.path) !== "images" &&
+    !/\.pdf$/i.test(props.path);
   const file = useProjectFileQuery(props.environmentId, props.workspaceRoot, props.path, readable);
   const absolute = hostPath(props.workspaceRoot, props.path);
   const notice = (text: string, role?: "alert" | "status") => (
@@ -140,6 +146,15 @@ function LibraryFileBody(props: {
       {text}
     </p>
   );
+  if (sheet) {
+    return (
+      <SheetFileView
+        environmentId={props.environmentId}
+        cwd={props.workspaceRoot}
+        path={props.path}
+      />
+    );
+  }
   if (host === "deck") {
     return (
       <HostDeckPreview environmentId={props.environmentId} path={absolute} name={props.name} />

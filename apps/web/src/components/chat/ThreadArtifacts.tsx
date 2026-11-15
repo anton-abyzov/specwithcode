@@ -30,6 +30,7 @@ import {
   LinkIcon,
   PanelRightOpenIcon,
   ShapesIcon,
+  TableIcon,
 } from "lucide-react";
 import { type ReactNode, type Ref, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -100,6 +101,7 @@ import {
   useArtifactShelfState,
 } from "./useArtifactShelfState";
 import { useArtifactFileChecks } from "./useMissingArtifactFiles";
+import { SheetFileView } from "../office/SheetFileView";
 import { ViewerFileActions } from "./ViewerFileActions";
 import { ViewerImageStage } from "./ViewerImageStage";
 import type { ZoomableImageHandle } from "./ZoomableImage";
@@ -118,6 +120,7 @@ const KIND_ICON: Record<ThreadArtifactKind, typeof FileIcon> = {
   file: FileIcon,
   link: LinkIcon,
   native: GlobeIcon,
+  sheet: TableIcon,
 };
 
 /** What an artifact is, in the overlay header's words. */
@@ -1055,6 +1058,9 @@ function ArtifactBody(props: {
       />
     );
   }
+  if (artifact.kind === "sheet" && path !== null) {
+    return <SheetFileView environmentId={props.environmentId} cwd={props.cwd ?? ""} path={path} />;
+  }
   switch (artifact.kind) {
     case "markdown":
     case "code":
@@ -1213,6 +1219,7 @@ const CARD_KINDS = new Set<ThreadArtifactKind>([
   "html",
   "pdf",
   "markdown",
+  "sheet",
 ]);
 
 /**

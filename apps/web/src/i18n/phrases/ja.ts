@@ -4585,7 +4585,8 @@ export const ja: PhraseCatalog = {
   "View this project on": "このプロジェクトを表示するマシン",
   "Move coordinator to {machine}…": "コーディネーターを {machine} に移動…",
   "Open coordinator on {machine}": "{machine} のコーディネーターを開く",
-  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.": "{machine} には以前のコーディネーターが残っています。開くとこのコーディネーターと並んで再び動きます。何も移動しません。",
+  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.":
+    "{machine} には以前のコーディネーターが残っています。開くとこのコーディネーターと並んで再び動きます。何も移動しません。",
   "Machine access settings": "マシンのアクセス設定",
   "{machine} offline": "{machine} はオフライン",
   "workers only": "ワーカーのみ",
@@ -4930,8 +4931,7 @@ export const ja: PhraseCatalog = {
   "Last time it was signed in.": "前回はサインインしていました。",
   "Not signed in": "未サインイン",
   "Sign in with {account}": "{account} でサインイン",
-  "Switch account":
-    "アカウントを切り替える",
+  "Switch account": "アカウントを切り替える",
   "This is the Codex command line's sign-in on this machine. The Codex app signs in separately, so changing accounts there does not change it here.":
     "これはこのマシンの Codex コマンドラインのサインインです。Codex アプリは別にサインインするため、そちらでアカウントを変えてもここは変わりません。",
   "Using another ChatGPT account in the Codex app? It signs in separately. Switch account to use it here.":
@@ -4998,4 +4998,26 @@ export const ja: PhraseCatalog = {
     "SpecWithCode のコピーはバージョン {version} で、このリリースが使うものより古いです。",
   "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
     "ツールは各マシンに残り、コピーされません。{machineName} でエージェントがこのプロジェクトを扱うには、まだいくつか必要です。",
+  Other: "その他",
+  Total: "合計",
+  "Remove chart": "グラフを削除",
+  "This chart's range is not valid.": "このグラフの範囲が正しくありません。",
+  "This chart has no numbers to draw.": "このグラフには描画する数値がありません。",
+  "This sheet could not be read.": "このシートを読み込めませんでした。",
+  "The chart could not be saved.": "グラフを保存できませんでした。",
+  "Formula bar": "数式バー",
+  "Select the cells to chart first.": "先にグラフにするセルを選択してください。",
+  "Insert chart": "グラフを挿入",
+  "Chart type": "グラフの種類",
+  Bar: "棒",
+  Line: "折れ線",
+  Donut: "ドーナツ",
+  "Chart title": "グラフのタイトル",
+  "Add chart": "グラフを追加",
+  "Showing the first {rows} rows and {columns} columns.":
+    "最初の {rows} 行と {columns} 列を表示しています。",
+  Charts: "グラフ",
+  "Sheet tabs": "シートのタブ",
+  "This sheet is too large to open here.": "このシートは大きすぎてここでは開けません。",
+  Sheet: "シート",
 };

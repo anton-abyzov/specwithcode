@@ -4406,7 +4406,8 @@ export const zh: PhraseCatalog = {
   "View this project on": "查看此项目的电脑",
   "Move coordinator to {machine}…": "将协调器移到 {machine}…",
   "Open coordinator on {machine}": "打开 {machine} 上的协调者",
-  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.": "{machine} 保留了之前的协调者。打开会让它在这个协调者旁边再次运行；不会移动任何内容。",
+  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.":
+    "{machine} 保留了之前的协调者。打开会让它在这个协调者旁边再次运行；不会移动任何内容。",
   "Machine access settings": "电脑访问设置",
   "{machine} offline": "{machine} 离线",
   "workers only": "仅工作节点",
@@ -4736,8 +4737,7 @@ export const zh: PhraseCatalog = {
   "Last time it was signed in.": "上次已登录。",
   "Not signed in": "未登录",
   "Sign in with {account}": "使用 {account} 登录",
-  "Switch account":
-    "切换账号",
+  "Switch account": "切换账号",
   "This is the Codex command line's sign-in on this machine. The Codex app signs in separately, so changing accounts there does not change it here.":
     "这是本机 Codex 命令行的登录。Codex 应用单独登录，在那里切换账号不会改变这里。",
   "Using another ChatGPT account in the Codex app? It signs in separately. Switch account to use it here.":
@@ -4801,4 +4801,25 @@ export const zh: PhraseCatalog = {
     "SpecWithCode 的副本是 {version} 版，比此版本使用的旧。",
   "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
     "工具留在各自的电脑上，不会被复制。{machineName} 还需要一些工具，智能体才能在那里处理这个项目。",
+  Other: "其他",
+  Total: "总计",
+  "Remove chart": "移除图表",
+  "This chart's range is not valid.": "此图表的范围无效。",
+  "This chart has no numbers to draw.": "此图表没有可绘制的数字。",
+  "This sheet could not be read.": "无法读取此表格。",
+  "The chart could not be saved.": "无法保存图表。",
+  "Formula bar": "公式栏",
+  "Select the cells to chart first.": "请先选择要制作图表的单元格。",
+  "Insert chart": "插入图表",
+  "Chart type": "图表类型",
+  Bar: "柱状图",
+  Line: "折线图",
+  Donut: "环形图",
+  "Chart title": "图表标题",
+  "Add chart": "添加图表",
+  "Showing the first {rows} rows and {columns} columns.": "显示前 {rows} 行和 {columns} 列。",
+  Charts: "图表",
+  "Sheet tabs": "工作表标签",
+  "This sheet is too large to open here.": "此表格太大，无法在此打开。",
+  Sheet: "表格",
 };

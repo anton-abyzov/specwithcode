@@ -4532,7 +4532,8 @@ export const ko: PhraseCatalog = {
   "View this project on": "이 프로젝트를 볼 컴퓨터",
   "Move coordinator to {machine}…": "코디네이터를 {machine}(으)로 이동…",
   "Open coordinator on {machine}": "{machine}에서 코디네이터 열기",
-  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.": "{machine}에 이전 코디네이터가 남아 있습니다. 열면 이 코디네이터와 함께 다시 실행되며, 아무것도 이동하지 않습니다.",
+  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.":
+    "{machine}에 이전 코디네이터가 남아 있습니다. 열면 이 코디네이터와 함께 다시 실행되며, 아무것도 이동하지 않습니다.",
   "Machine access settings": "컴퓨터 접근 설정",
   "{machine} offline": "{machine} 오프라인",
   "workers only": "워커 전용",
@@ -4874,8 +4875,7 @@ export const ko: PhraseCatalog = {
   "Last time it was signed in.": "지난번에는 로그인되어 있었습니다.",
   "Not signed in": "로그인 안 됨",
   "Sign in with {account}": "{account} 계정으로 로그인",
-  "Switch account":
-    "계정 전환",
+  "Switch account": "계정 전환",
   "This is the Codex command line's sign-in on this machine. The Codex app signs in separately, so changing accounts there does not change it here.":
     "이 컴퓨터의 Codex 명령줄 로그인입니다. Codex 앱은 따로 로그인하므로 거기서 계정을 바꿔도 여기는 바뀌지 않습니다.",
   "Using another ChatGPT account in the Codex app? It signs in separately. Switch account to use it here.":
@@ -4940,4 +4940,26 @@ export const ko: PhraseCatalog = {
     "SpecWithCode의 사본은 버전 {version}으로, 이 릴리스가 사용하는 버전보다 오래되었습니다.",
   "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
     "도구는 각 컴퓨터에 남고 복사되지 않습니다. {machineName}에서 에이전트가 이 프로젝트를 작업하려면 아직 몇 가지가 필요합니다.",
+  Other: "기타",
+  Total: "합계",
+  "Remove chart": "차트 제거",
+  "This chart's range is not valid.": "이 차트의 범위가 올바르지 않습니다.",
+  "This chart has no numbers to draw.": "이 차트에는 그릴 숫자가 없습니다.",
+  "This sheet could not be read.": "이 시트를 읽을 수 없습니다.",
+  "The chart could not be saved.": "차트를 저장할 수 없습니다.",
+  "Formula bar": "수식 입력줄",
+  "Select the cells to chart first.": "먼저 차트로 만들 셀을 선택하세요.",
+  "Insert chart": "차트 삽입",
+  "Chart type": "차트 유형",
+  Bar: "막대",
+  Line: "선",
+  Donut: "도넛",
+  "Chart title": "차트 제목",
+  "Add chart": "차트 추가",
+  "Showing the first {rows} rows and {columns} columns.":
+    "처음 {rows}개 행과 {columns}개 열을 표시합니다.",
+  Charts: "차트",
+  "Sheet tabs": "시트 탭",
+  "This sheet is too large to open here.": "이 시트는 너무 커서 여기서 열 수 없습니다.",
+  Sheet: "시트",
 };
