@@ -17,6 +17,8 @@ import com.specwithcode.wire.EmptyInput
 import com.specwithcode.wire.EnvironmentPlatform
 import com.specwithcode.wire.ModelSelection
 import com.specwithcode.wire.Nullable
+import com.specwithcode.wire.ProjectSettingsOverrideChange
+import com.specwithcode.wire.ProjectSettingsOverrides
 import com.specwithcode.wire.ProjectShell
 import com.specwithcode.wire.RpcMethod
 import com.specwithcode.wire.RuntimeMode
@@ -92,6 +94,9 @@ class LiveEngine(
         /** Answered once (shell arrived) or failed once, for [AppState.isLoading]. */
         var answered = false
         var lastSeenAt: Instant? = null
+
+        /** The token of the socket in use may change settings and operate the machine; read when its config loads. */
+        var settingsWritable = false
         val jobs = mutableListOf<Job>()
 
         val environmentId: String get() = record.environmentId
@@ -281,6 +286,56 @@ class LiveEngine(
         }
     }
 
+    override suspend fun setReplyStyle(style: ReplyStyle, project: ProjectRef) {
+        val entry = withContext(engineDispatcher) { machines[project.environmentId] } ?: throw SyncError.UnknownMachine
+        val styles = withContext(engineDispatcher) { replyStyles(entry) }
+            ?: throw SyncError.MachineOffline(entry.label)
+        if (!styles.canChange) throw SyncError.SendBlocked(styles.readOnlyReason ?: "Change how agents reply on ${entry.label}.")
+        val patch = ServerSettingsPatch(
+            projectSettingsOverrideChanges = mapOf(
+                project.projectId to ProjectSettingsOverrideChange(set = ProjectSettingsOverrides(responseStyle = style.rawValue)),
+            ),
+        )
+        val updated = sessions.withRetry(project.environmentId) { socket ->
+            socket.call(RpcMethod.ServerUpdateSettings, UpdateServerSettingsInput(patch), UpdateServerSettingsInput.serializer(), ServerSettings.serializer())
+        }
+        withContext(engineDispatcher) {
+            entry.config = entry.config?.copy(settings = updated)
+            publish()
+        }
+    }
+
+    /**
+     * Whether the token a route uses may change settings: `settings:write` and
+     * `orchestration:operate`, as on iOS. A token that lists no permissions predates them and
+     * may; a Connect route is the account's own machine.
+     */
+    private fun settingsWritable(entry: MachineEntry, route: com.specwithcode.transport.MachineRoute?): Boolean {
+        route ?: return false
+        if (route.issuer == ConnectAuthorizer.ISSUER) return true
+        val permissions = runCatching { credentials.credential(route, entry.environmentId) }.getOrNull()?.permissions ?: return true
+        return permissions.isEmpty() || (SETTINGS_WRITE in permissions && OPERATE in permissions)
+    }
+
+    /** One machine's reply styles, or null before its settings arrive or on a server without them. */
+    internal fun replyStyles(entry: MachineEntry): MachineReplyStyles? {
+        val settings = entry.settings ?: return null
+        val default = ReplyStyle.fromRaw(settings.responseStyle) ?: return null
+        val capable = entry.config?.environment?.capabilities?.projectSettingsOverrideChanges == true
+        val reason = when {
+            !capable -> "Update SpecWithCode on ${entry.label} to change this from the phone."
+            !entry.online -> "${entry.label} is offline."
+            !entry.settingsWritable -> "This phone's pairing with ${entry.label} can't change settings."
+            else -> null
+        }
+        return MachineReplyStyles(
+            machineDefault = default,
+            projectOverrides = settings.projectSettingsOverrides.mapNotNull { (id, value) -> ReplyStyle.fromRaw(value.responseStyle)?.let { id to it } }.toMap(),
+            canChange = reason == null,
+            readOnlyReason = reason,
+        )
+    }
+
     // Machines
 
     /**
@@ -373,6 +428,7 @@ class LiveEngine(
             return false
         }
         entry.config = config
+        entry.settingsWritable = settingsWritable(entry, entry.connection.routeOf(socket))
         // Learn the machine's other addresses, bound to the issuer of the token in use.
         val route = entry.connection.routeOf(socket)
         if (route != null && route.issuer != ConnectAuthorizer.ISSUER && config.directEndpoints.isNotEmpty()) {
@@ -484,6 +540,7 @@ class LiveEngine(
                 isLoading = loading,
                 allShellsLoaded = enabled.all { entry -> entry.snapshot != null },
                 modelChoices = choices,
+                replyStyles = entries.mapNotNull { entry -> replyStyles(entry)?.let { entry.environmentId to it } }.toMap(),
             )
         }
     }
@@ -499,6 +556,8 @@ class LiveEngine(
 
     companion object {
         private const val CONNECT_REFRESH_MILLIS = 5 * 60_000L
+        private const val SETTINGS_WRITE = "settings:write"
+        private const val OPERATE = "orchestration:operate"
         private val FAILED_STATES = setOf(MachineConnection.State.NEEDS_REPAIR, MachineConnection.State.UNSUPPORTED)
 
         /** A failure that means the token or session is no longer accepted. */

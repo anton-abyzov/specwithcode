@@ -79,6 +79,8 @@ class RowActions(
     val onDecision: (requestId: String, decision: ApprovalDecision) -> Unit = { _, _ -> },
     val onAccess: (AccessRequestRow, AccessAnswer) -> Unit = { _, _ -> },
     val onOpenThread: (ThreadRef) -> Unit = {},
+    /** Opens or closes a fold row, by its id. */
+    val onToggleFold: (String) -> Unit = {},
 )
 
 /** One transcript row drawn with the matching Weave component. */
@@ -112,7 +114,7 @@ fun TranscriptRowView(row: TranscriptRow, busyRequests: Set<String>, actions: Ro
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(vertical = WeaveSpacing.s1),
             )
-            is Kind.Fold -> FoldRow(kind, inset)
+            is Kind.Fold -> FoldRow(kind, { actions.onToggleFold(row.id) }, inset)
         }
     }
 }
@@ -506,17 +508,39 @@ private fun SubagentRow(kind: Kind.Subagent, onOpen: (ThreadRef) -> Unit, modifi
     }
 }
 
+/** The words of a fold row: "Worked · Ran 3 commands", plus its failures for a screen reader. */
+internal fun Kind.Fold.text(): String = listOfNotNull(label, summary).joinToString(" · ")
+
+/** A turn's folded steps. Tapping it opens the steps under it; tapping again closes them. */
 @Composable
-private fun FoldRow(kind: Kind.Fold, modifier: Modifier) {
+private fun FoldRow(kind: Kind.Fold, onToggle: () -> Unit, modifier: Modifier) {
     val colors = Weave.colors
-    Row(modifier.fillMaxWidth().heightIn(min = WeaveSize.minTap), verticalAlignment = Alignment.CenterVertically) {
+    val failed = if (kind.failures == 1) "1 failed" else "${kind.failures} failed"
+    Row(
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = WeaveSize.minTap)
+            .clip(RoundedCornerShape(WeaveRadius.md))
+            .clickable(role = Role.Button, onClickLabel = if (kind.expanded) "Hide steps" else "Show steps", onClick = onToggle)
+            .semantics(mergeDescendants = true) {
+                contentDescription = kind.text() + if (kind.failures > 0) ", $failed" else ""
+                stateDescription = if (kind.expanded) "Expanded" else "Collapsed"
+            },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         if (kind.running) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = colors.iris)
         Text(
-            listOfNotNull(kind.label, kind.summary).joinToString(" · "),
+            kind.text(),
             style = MaterialTheme.typography.bodyMedium,
             color = colors.muted,
             modifier = Modifier.padding(start = if (kind.running) WeaveSpacing.s2 else 0.dp).weight(1f),
         )
-        if (kind.failures > 0) StatusChip(if (kind.failures == 1) "1 failed" else "${kind.failures} failed", Tone.Fail)
+        if (kind.failures > 0) StatusChip(failed, Tone.Fail)
+        Icon(
+            if (kind.expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+            contentDescription = null,
+            tint = colors.muted,
+            modifier = Modifier.padding(start = WeaveSpacing.s1).size(18.dp),
+        )
     }
 }

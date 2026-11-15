@@ -20,6 +20,10 @@ data class ServerSettings(
     val aideEnabled: Boolean = false,
     /** Suggested prompts: "all", "native" (the provider's own only) or "off". */
     val promptSuggestions: String = "all",
+    /** How agents write replies: "concise" or "detailed". Null on servers that predate it. Kept raw so new values pass through. */
+    val responseStyle: String? = null,
+    /** Each project's own overrides of project-scoped settings, by project id. Only the keys the app reads are kept. */
+    val projectSettingsOverrides: Map<String, ProjectSettingsOverrides> = emptyMap(),
 )
 
 object ServerSettingsSerializer : ObjectSerializer<ServerSettings>("ServerSettings") {
@@ -34,6 +38,8 @@ object ServerSettingsSerializer : ObjectSerializer<ServerSettings>("ServerSettin
         machineNicknames = lenientMap("machineNicknames"),
         aideEnabled = lenient<Boolean>("aideEnabled") ?: false,
         promptSuggestions = lenient<String>("promptSuggestions") ?: "all",
+        responseStyle = lenient<String>("responseStyle"),
+        projectSettingsOverrides = lenientMap("projectSettingsOverrides"),
     )
 
     /** Drops a malformed entry rather than failing the whole settings snapshot. */
@@ -59,8 +65,29 @@ object ServerSettingsSerializer : ObjectSerializer<ServerSettings>("ServerSettin
         put("machineNicknames", value.machineNicknames)
         put("aideEnabled", value.aideEnabled)
         put("promptSuggestions", value.promptSuggestions)
+        put("responseStyle", value.responseStyle)
+        if (value.projectSettingsOverrides.isNotEmpty()) put("projectSettingsOverrides", value.projectSettingsOverrides)
     }
 }
+
+/** One project's entry of `ServerSettings.projectSettingsOverrides`: the keys the app reads. A missing key inherits. */
+@Serializable
+data class ProjectSettingsOverrides(
+    /** "concise" or "detailed"; null inherits the machine's `responseStyle`. */
+    val responseStyle: String? = null,
+)
+
+/**
+ * One project's entry of `ServerSettingsPatch.projectSettingsOverrideChanges`: [clear] removes
+ * those overrides so the keys inherit again, then [set] writes each listed value. Keys it does
+ * not name keep their saved value. Send only to servers reporting the
+ * `projectSettingsOverrideChanges` capability.
+ */
+@Serializable
+data class ProjectSettingsOverrideChange(
+    val set: ProjectSettingsOverrides? = null,
+    val clear: List<String>? = null,
+)
 
 /**
  * One entry of `ServerSettings.machineNicknames`. An empty name means the machine's default
@@ -98,17 +125,27 @@ data class ServerSettingsPatch(
     val defaultModelSelection: Nullable<ModelSelection>? = null,
     /** Replaces the whole order; send both lists. */
     val sidebarProjectOrder: SidebarProjectOrder? = null,
+    /** Per-key project override edits, by project id. Only for servers with the `projectSettingsOverrideChanges` capability. */
+    val projectSettingsOverrideChanges: Map<String, ProjectSettingsOverrideChange>? = null,
 ) {
-    val isEmpty: Boolean get() = defaultRuntimeMode == null && defaultModelSelection == null && sidebarProjectOrder == null
+    val isEmpty: Boolean
+        get() = defaultRuntimeMode == null && defaultModelSelection == null && sidebarProjectOrder == null &&
+            projectSettingsOverrideChanges.isNullOrEmpty()
 }
 
 object ServerSettingsPatchSerializer : ObjectSerializer<ServerSettingsPatch>("ServerSettingsPatch") {
-    override fun JsonReader.read() = ServerSettingsPatch(opt("defaultRuntimeMode"), nullable("defaultModelSelection"), opt("sidebarProjectOrder"))
+    override fun JsonReader.read() = ServerSettingsPatch(
+        opt("defaultRuntimeMode"),
+        nullable("defaultModelSelection"),
+        opt("sidebarProjectOrder"),
+        opt("projectSettingsOverrideChanges"),
+    )
 
     override fun JsonWriter.write(value: ServerSettingsPatch) {
         put("defaultRuntimeMode", value.defaultRuntimeMode)
         putNullable("defaultModelSelection", value.defaultModelSelection)
         put("sidebarProjectOrder", value.sidebarProjectOrder)
+        put("projectSettingsOverrideChanges", value.projectSettingsOverrideChanges)
     }
 }
 
