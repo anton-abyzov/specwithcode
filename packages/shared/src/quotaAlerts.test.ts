@@ -106,6 +106,19 @@ describe("quotaAlerts", () => {
     expect(short.map((entry) => entry.kind)).toEqual(["window"]);
   });
 
+  it("carries the window's own reset, which a renewal's time may sit hours from", () => {
+    const weekly = [
+      { id: "weekly", title: "Weekly", leftPercent: 55, resetsAt: now + 26 * HOUR, expiring: false, long: true },
+    ];
+    const [alert] = quotaAlerts([account({ windows: weekly, renewal: { at: now + 20 * HOUR } })], [], now);
+    expect(alert).toMatchObject({
+      kind: "renewal",
+      periodEnd: now + 20 * HOUR,
+      windowId: "weekly",
+      windowResetsAt: now + 26 * HOUR,
+    });
+  });
+
   it("names the window the renewal ends, and stays quiet when none resets with it", () => {
     const windows = [
       { id: "monthly", title: "Monthly", leftPercent: 90, resetsAt: now + 29 * DAY, expiring: false, long: true },

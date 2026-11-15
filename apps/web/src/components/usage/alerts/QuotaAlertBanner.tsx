@@ -2,7 +2,7 @@ import type { EnvironmentId, QuotaBoost, ServerProvider } from "@specweave-studi
 import { tierModelFor } from "@specweave-studio/shared/modelTiers";
 import {
   isGeminiSpendProvider,
-  isPerTokenProvider,
+  isPaidModelOn,
   isUnknownBillingAgent,
 } from "@specweave-studio/shared/providerFallback";
 import {
@@ -14,11 +14,7 @@ import {
   quotaAlerts,
   visibleQuotaAlerts,
 } from "@specweave-studio/shared/quotaAlerts";
-import {
-  liveQuotaBoosts,
-  quotaBoostEnd,
-  withQuotaBoost,
-} from "@specweave-studio/shared/quotaBoost";
+import { liveQuotaBoosts, quotaBoostEnd } from "@specweave-studio/shared/quotaBoost";
 import {
   type LimitAccount,
   collectLimitAccounts,
@@ -28,7 +24,7 @@ import { windowTitle } from "@specweave-studio/shared/usageWindows";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { TimerIcon, XIcon, ZapIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   usePrimarySettings,
@@ -108,7 +104,14 @@ function BoostProjects({
     <fieldset className="ml-5.5 flex flex-col gap-1.5" data-quota-boost-projects="">
       <legend className="mb-1 text-muted-foreground">New worker threads in</legend>
       <label className="flex items-center gap-1.5">
-        <input type="checkbox" checked={all} onChange={(event) => setAll(event.target.checked)} />
+        <input
+          type="checkbox"
+          // Opened from the banner's button, which this replaces: focus follows it here.
+          // oxlint-disable-next-line jsx-a11y/no-autofocus
+          autoFocus
+          checked={all}
+          onChange={(event) => setAll(event.target.checked)}
+        />
         Every project
       </label>
       {all ? null : (
@@ -183,6 +186,19 @@ export function QuotaAlertBanner({
   readonly onEndBoost?: (accountKey: string) => void;
 }) {
   const [picking, setPicking] = useState<string | null>(null);
+  // Closing the picker puts focus back on the button that opened it, or on the running
+  // boost's "End now" when it started one.
+  const actions = useRef<HTMLElement>(null);
+  const closed = useRef(false);
+  useEffect(() => {
+    if (picking !== null || !closed.current) return;
+    closed.current = false;
+    actions.current?.querySelector<HTMLElement>("[data-quota-boost-focus]")?.focus();
+  });
+  const close = () => {
+    closed.current = true;
+    setPicking(null);
+  };
   if (alerts.length === 0 && boosts.length === 0) return null;
   const shown = alerts.slice(0, SHOWN);
   const more = alerts.length - shown.length;
@@ -197,6 +213,7 @@ export function QuotaAlertBanner({
         );
   return (
     <section
+      ref={actions}
       className="mx-2 mb-2 flex flex-col gap-1.5 rounded-lg border border-warning/40 bg-warning/8 p-2.5 text-xs"
       role="status"
       aria-label="Quota about to reset"
@@ -209,7 +226,12 @@ export function QuotaAlertBanner({
             New threads use {boost.label} until {untilLabel(boost.until, now)}
           </span>
           {onEndBoost ? (
-            <button type="button" className={LINK} onClick={() => onEndBoost(boost.accountKey)}>
+            <button
+              type="button"
+              className={LINK}
+              data-quota-boost-focus=""
+              onClick={() => onEndBoost(boost.accountKey)}
+            >
               End now
             </button>
           ) : null}
@@ -249,10 +271,10 @@ export function QuotaAlertBanner({
         <BoostProjects
           projects={projects}
           onStart={(projectIds) => {
-            setPicking(null);
+            close();
             onBoost?.(boostable, projectIds);
           }}
-          onCancel={() => setPicking(null)}
+          onCancel={close}
         />
       ) : (
         <div className="flex flex-wrap gap-x-3 gap-y-1 pl-5.5">
@@ -261,7 +283,8 @@ export function QuotaAlertBanner({
               type="button"
               className={LINK}
               data-quota-boost-start=""
-              title={`New worker threads start on ${labelOf(boostable)} until ${untilLabel(boostable.periodEnd, now)}. Open threads and the coordinator keep their model.`}
+              data-quota-boost-focus=""
+              title={`New worker threads start on ${labelOf(boostable)} until ${untilLabel(boostable.windowResetsAt ?? boostable.periodEnd, now)}. Open threads and the coordinator keep their model.`}
               onClick={() => setPicking(quotaAlertId(boostable))}
             >
               Use it for new threads until it resets
@@ -288,15 +311,21 @@ export function QuotaAlerts({
   // Dismissals and the switch live in primary settings. The hosted app has none, so a
   // banner there could be neither dismissed nor turned off.
   const available = usePrimarySettingsAvailable();
-  return enabled === false || !available ? null : <LiveQuotaAlerts onOpen={onOpen} projects={projects} />;
+  // With the warnings off a running boost still shows and still ends: it is a choice the
+  // person made, not a warning.
+  return available ? (
+    <LiveQuotaAlerts onOpen={onOpen} projects={projects} warn={enabled !== false} />
+  ) : null;
 }
 
 function LiveQuotaAlerts({
   onOpen,
   projects,
+  warn,
 }: {
   readonly onOpen?: (() => void) | undefined;
   readonly projects?: readonly QuotaBoostProject[] | undefined;
+  readonly warn: boolean;
 }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -348,7 +377,7 @@ function LiveQuotaAlerts({
   );
   const rows = subscriptionRows(accounts, periods, renewalDays ?? {}, now);
   const allAlerts = quotaAlerts(rows, early, now);
-  const alerts = visibleQuotaAlerts(allAlerts, dismissed ?? {});
+  const alerts = warn ? visibleQuotaAlerts(allAlerts, dismissed ?? {}) : [];
   // A dismissed period whose end a re-read moved a little: the dismissal follows it.
   const driftedKey = JSON.stringify(driftedQuotaAlertPeriods(allAlerts, dismissed ?? {}));
   useEffect(() => {
@@ -359,60 +388,70 @@ function LiveQuotaAlerts({
   const labelOf = (alert: QuotaAlert) => planLabel(byKey.get(alert.accountKey), alert);
 
   // A boost runs on the main machine, where the setting lives and its threads launch, so
-  // the subscription has to be signed in there, on a plan (never a per-token key), with a
-  // worker model the app knows how it bills.
+  // the subscription has to be signed in there, on a plan, with a regular model that the
+  // plan covers: never a per-token key, a paid router or a model billed by the token.
   const mainProviders: ReadonlyArray<ServerProvider> =
     (here === null ? undefined : presentations.get(here)?.serverConfig?.providers) ?? [];
+  const usable = (provider: ServerProvider) =>
+    provider.enabled &&
+    provider.auth.status !== "unauthenticated" &&
+    !isGeminiSpendProvider(provider);
+  const modelOn = (provider: ServerProvider) => {
+    const model = tierModelFor(provider, "regular", modelTiers);
+    return model === undefined ||
+      isPaidModelOn(provider, model) ||
+      isUnknownBillingAgent(provider, model)
+      ? null
+      : model;
+  };
   const boostTarget = (alert: QuotaAlert) => {
     if (alert.kind !== "window" && alert.kind !== "renewal") return null;
     for (const provider of mainProviders) {
-      if (!provider.enabled || isPerTokenProvider(provider) || isGeminiSpendProvider(provider)) {
-        continue;
-      }
+      if (!usable(provider)) continue;
       const key = limitAccountKey(provider.driver, provider.auth.email, provider.usageLimits);
       if (key !== alert.accountKey) continue;
-      const model = tierModelFor(provider, "regular", modelTiers);
-      if (model !== undefined && !isUnknownBillingAgent(provider, model)) {
-        return { instanceId: provider.instanceId, model };
-      }
+      const model = modelOn(provider);
+      if (model !== null) return { instanceId: provider.instanceId, model };
     }
     return null;
   };
-  // Ended boosts leave the setting: at the reset, an early reset, under 5% left, or once
-  // its provider is gone or off. A machine still loading its providers ends nothing.
-  const ended = (savedBoosts ?? []).filter((boost) => {
-    const row = rows.find((candidate) => candidate.accountKey === boost.accountKey);
-    const gone =
-      mainProviders.length > 0 &&
-      !mainProviders.some(
-        (provider) => provider.instanceId === boost.instanceId && provider.enabled,
-      );
-    return (
-      gone ||
-      quotaBoostEnd(boost, row === undefined || row.offline ? undefined : row.windows, now) !== null
-    );
-  });
-  const endedKey = ended.map((boost) => boost.accountKey).join("\n");
-  useEffect(() => {
-    if (endedKey === "") return;
-    const over = new Set(endedKey.split("\n"));
-    updateSettings({
-      quotaBoosts: (savedBoosts ?? []).filter((boost) => !over.has(boost.accountKey)),
-    });
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- the ended set decides; the saved list is read as it is then.
-  }, [endedKey, updateSettings]);
-  const boosts = liveQuotaBoosts(savedBoosts, now).filter(
-    (boost) => !ended.some((over) => over.accountKey === boost.accountKey),
-  );
-  const open = () => {
-    try {
-      localStorage.setItem(LIMITS_VIEW_KEY, "subscriptions");
-    } catch {
-      // Usage still opens; the Subscriptions tab is one click away.
+  // What each saved boost should become: null once it is over (the reset, an early reset,
+  // under 5% left, or its sign-in gone, off, signed out or on another account), or the
+  // same boost on the regular model as it is now. Written per account, so two clients
+  // never erase each other. A machine still loading its providers changes nothing.
+  const boostFixes: Record<string, QuotaBoost | null> = {};
+  for (const [accountKey, boost] of Object.entries(savedBoosts ?? {})) {
+    if (boost === null) continue;
+    const row = rows.find((candidate) => candidate.accountKey === accountKey);
+    const windows = row === undefined || row.offline ? undefined : row.windows;
+    if (quotaBoostEnd(boost, windows, now) !== null) {
+      boostFixes[accountKey] = null;
+      continue;
     }
-    onOpen?.();
-    void navigate({ to: "/usage" });
-  };
+    if (mainProviders.length === 0) continue;
+    const provider = mainProviders.find((candidate) => candidate.instanceId === boost.instanceId);
+    const signedInAs =
+      provider === undefined
+        ? null
+        : limitAccountKey(provider.driver, provider.auth.email, provider.usageLimits);
+    const model = provider !== undefined && usable(provider) ? modelOn(provider) : null;
+    if (model === null || (signedInAs !== null && signedInAs !== accountKey)) {
+      boostFixes[accountKey] = null;
+    } else if (model !== boost.model) {
+      boostFixes[accountKey] = { ...boost, model };
+    }
+  }
+  const boostFixesKey = JSON.stringify(boostFixes);
+  useEffect(() => {
+    if (boostFixesKey !== "{}") {
+      updateSettings({
+        quotaBoosts: JSON.parse(boostFixesKey) as Record<string, QuotaBoost | null>,
+      });
+    }
+  }, [boostFixesKey, updateSettings]);
+  const boosts = liveQuotaBoosts(savedBoosts, now).filter(
+    (boost) => boostFixes[boost.accountKey] !== null,
+  );
 
   // Every client shows the banner, but one machine speaks for an account: the first
   // connected machine it is signed in on, so two desktops on one account notify once and
@@ -454,26 +493,21 @@ function LiveQuotaAlerts({
         const target = boostTarget(alert);
         if (target === null) return;
         updateSettings({
-          quotaBoosts: withQuotaBoost(
-            savedBoosts,
-            {
+          quotaBoosts: {
+            [alert.accountKey]: {
               accountKey: alert.accountKey,
               ...target,
               projectIds: [...projectIds],
               label: labelOf(alert),
               ...(alert.windowId !== undefined ? { windowId: alert.windowId } : {}),
-              until: alert.periodEnd,
+              // The window's own reset: a renewal's time may sit hours from it.
+              until: alert.windowResetsAt ?? alert.periodEnd,
               startedAt: now,
             },
-            now,
-          ),
+          },
         });
       }}
-      onEndBoost={(accountKey) =>
-        updateSettings({
-          quotaBoosts: (savedBoosts ?? []).filter((boost) => boost.accountKey !== accountKey),
-        })
-      }
+      onEndBoost={(accountKey) => updateSettings({ quotaBoosts: { [accountKey]: null } })}
       onDismiss={(all) =>
         updateSettings({
           quotaAlertDismissals: Object.fromEntries(

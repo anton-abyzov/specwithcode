@@ -68,6 +68,8 @@ export interface QuotaAlert {
   readonly machines: readonly string[];
   /** The window whose quota is about to go; absent for a banked reset. */
   readonly windowId?: string;
+  /** When that window resets: the period end for a window alert, near the renewal for a renewal. */
+  readonly windowResetsAt?: number;
   /** The window's title; absent for a banked reset. */
   readonly windowTitle?: string;
   /** What is left to use, 0..100; absent for a banked reset and an early reset. */
@@ -114,6 +116,7 @@ export function quotaAlerts(
         periodEnd: window.resetsAt,
         kind: "window",
         windowId: window.id,
+        windowResetsAt: window.resetsAt,
         windowTitle: window.title,
         leftPercent: window.leftPercent,
       });
@@ -152,6 +155,7 @@ export function quotaAlerts(
           periodEnd: renewsAt,
           kind: "renewal",
           windowId: ending.id,
+          ...(ending.resetsAt !== null ? { windowResetsAt: ending.resetsAt } : {}),
           windowTitle: ending.title,
           leftPercent: ending.leftPercent,
         });

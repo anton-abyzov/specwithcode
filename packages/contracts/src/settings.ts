@@ -436,8 +436,13 @@ export const QuotaBoost = Schema.Struct({
   startedAt: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 8.64e15 })),
 });
 export type QuotaBoost = typeof QuotaBoost.Type;
-/** At most one per account; a handful of subscriptions is the most a person runs. */
-export const QuotaBoosts = Schema.Array(QuotaBoost).check(Schema.isMaxLength(16));
+/**
+ * Boosts by account key, so two clients writing at once merge instead of one
+ * erasing the other. Null marks one that ended: a patch can only add or
+ * replace a key, so ending is written as null. One value per account keeps
+ * the map bounded.
+ */
+export const QuotaBoosts = Schema.Record(TrimmedNonEmptyString, Schema.NullOr(QuotaBoost));
 export type QuotaBoosts = typeof QuotaBoosts.Type;
 
 /** What a subscription costs a month, by account key; only weighs the efficiency score. */
@@ -2187,7 +2192,7 @@ export const ServerSettings = Schema.Struct({
   quotaAlertsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   quotaAlertDismissals: QuotaAlertDismissals.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /** Running "use it until it resets" overrides; see `QuotaBoost`. */
-  quotaBoosts: QuotaBoosts.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  quotaBoosts: QuotaBoosts.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
    * Retired environment tier for the new-thread workspace, which is now each
    * project's own choice (its override, then its specweave-studio.json, then
@@ -2613,7 +2618,7 @@ export const ServerSettingsPatch = Schema.Struct({
   quotaAlertsEnabled: Schema.optionalKey(Schema.Boolean),
   /** Merged by alert key. */
   quotaAlertDismissals: Schema.optionalKey(QuotaAlertDismissals),
-  /** Replaces the whole list. */
+  /** Merged by account key; null ends one. */
   quotaBoosts: Schema.optionalKey(QuotaBoosts),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newProjectThreadEnvMode: Schema.optionalKey(ThreadEnvMode),

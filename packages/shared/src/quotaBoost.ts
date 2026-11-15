@@ -11,6 +11,9 @@
  */
 import type { QuotaBoost } from "@specweave-studio/contracts";
 
+/** The `quotaBoosts` setting: boosts by account key, null for one that ended. */
+export type SavedQuotaBoosts = Readonly<Record<string, QuotaBoost | null>>;
+
 import { QUOTA_ALERT_PERIOD_DRIFT_MS } from "./quotaAlerts.ts";
 
 /** Under this much left, the subscription is spent and the boost has done its job. */
@@ -22,13 +25,12 @@ const covers = (boost: Pick<QuotaBoost, "projectIds">, projectId: string): boole
   boost.projectIds.length === 0 || boost.projectIds.includes(projectId);
 
 /** The boosts still running at `nowMs`, the one ending first leading. */
-export function liveQuotaBoosts<B extends Pick<QuotaBoost, "until">>(
-  boosts: readonly B[] | undefined,
-  nowMs: number,
-): B[] {
-  return (boosts ?? [])
-    .filter((boost) => boost.until > nowMs)
-    .toSorted((left, right) => left.until - right.until);
+export function liveQuotaBoosts(boosts: SavedQuotaBoosts | undefined, nowMs: number): QuotaBoost[] {
+  return Object.values(boosts ?? {})
+    .filter((boost): boost is QuotaBoost => boost !== null && boost.until > nowMs)
+    .toSorted(
+      (left, right) => left.until - right.until || left.accountKey.localeCompare(right.accountKey),
+    );
 }
 
 /**
@@ -37,7 +39,7 @@ export function liveQuotaBoosts<B extends Pick<QuotaBoost, "until">>(
  * The caller still checks the provider is enabled, as for any saved model.
  */
 export function currentQuotaBoost(
-  boosts: readonly QuotaBoost[] | undefined,
+  boosts: SavedQuotaBoosts | undefined,
   projectId: string,
   nowMs: number,
 ): { readonly instanceId: QuotaBoost["instanceId"]; readonly model: string } | null {
@@ -45,25 +47,14 @@ export function currentQuotaBoost(
   return boost === undefined ? null : { instanceId: boost.instanceId, model: boost.model };
 }
 
-/** `boosts` with `next` started: one per account, and none that already ended. */
-export function withQuotaBoost(
-  boosts: readonly QuotaBoost[] | undefined,
-  next: QuotaBoost,
-  nowMs: number,
-): QuotaBoost[] {
-  return [
-    ...liveQuotaBoosts(boosts, nowMs).filter((boost) => boost.accountKey !== next.accountKey),
-    next,
-  ];
-}
-
 /**
  * Why a boost is over at `nowMs`, or null while it runs. `windows` are the
  * account's windows as read now; undefined when the account is not readable,
  * which ends nothing: an unread account is not a spent one.
  *
- * An early reset shows as the window's reset moving well past the boost's
- * end: the quota it was started for is gone and a fresh period began.
+ * `until` is the window's own reset as read when the boost started, so an
+ * early reset shows as that reset moving well past it: the quota the boost
+ * was started for is gone and a fresh period began.
  */
 export function quotaBoostEnd(
   boost: Pick<QuotaBoost, "until" | "windowId">,

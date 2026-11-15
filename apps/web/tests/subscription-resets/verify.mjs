@@ -101,11 +101,21 @@ try {
   await check("the boost starts for the picked projects, is named with its end, and ends", async () => {
     const banner = page.locator("[data-quota-alert-banner]");
     await banner.getByRole("button", { name: "Use it for new threads until it resets" }).click();
+    // Focus follows the picker in, and comes back to the button on Cancel.
+    assert.equal(await banner.getByLabel("Every project").evaluate((el) => el === document.activeElement), true);
+    await banner.getByRole("button", { name: "Cancel" }).click();
+    const start = banner.getByRole("button", { name: "Use it for new threads until it resets" });
+    assert.equal(await start.evaluate((el) => el === document.activeElement), true);
+    await start.click();
     await banner.getByLabel("Every project").uncheck();
     assert.equal(await banner.getByRole("button", { name: "Start" }).isDisabled(), true);
     await banner.getByLabel("Atlas").check();
     await banner.getByRole("button", { name: "Start" }).click();
     assert.match(await banner.innerText(), /New threads use Codex Pro until /);
+    assert.equal(
+      await banner.getByRole("button", { name: "End now" }).evaluate((el) => el === document.activeElement),
+      true,
+    );
     // Atlas lives on two machines: both of its ids are covered.
     assert.equal(
       await page.locator("[data-fixture-boost-projects]").getAttribute("data-fixture-boost-projects"),
