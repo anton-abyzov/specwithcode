@@ -19,8 +19,17 @@ import {
   type ProjectCredentialsManifestResult,
 } from "@specweave-studio/contracts";
 
-/** Undefined on Windows, where the lstat checks below still apply. */
+/**
+ * Windows has no O_NOFOLLOW, so an open there follows a link. Every read and
+ * write below therefore checks the name with lstat first, on every system, and
+ * the flag is the second guard where it exists.
+ */
 const NO_FOLLOW = NodeFS.constants.O_NOFOLLOW ?? 0;
+
+/** True when the open file is the one lstat saw: not swapped for a link in between. */
+const sameFile = (seen: NodeFS.Stats, opened: NodeFS.Stats) =>
+  // A file system that reports no file id (0) cannot be compared; the lstat check stands alone.
+  seen.ino === 0 || opened.ino === 0 || (seen.ino === opened.ino && seen.dev === opened.dev);
 
 export class ManifestRefusal extends Error {}
 
@@ -67,6 +76,9 @@ export async function readManifest(root: string): Promise<ProjectCredentialsMani
   }
   if (folder === null) return null;
   const path = NodePath.join(folder, SEGMENTS.at(-1)!);
+  const seen = await NodeFSP.lstat(path).catch(() => null);
+  if (seen === null) return null;
+  if (!seen.isFile()) return { ok: false, problem: "The saved list is a link or not a file." };
   let handle: NodeFSP.FileHandle;
   try {
     handle = await NodeFSP.open(path, NodeFS.constants.O_RDONLY | NO_FOLLOW);
@@ -78,7 +90,8 @@ export async function readManifest(root: string): Promise<ProjectCredentialsMani
   }
   try {
     const stat = await handle.stat();
-    if (!stat.isFile()) return { ok: false, problem: "The saved list is not a regular file." };
+    if (!stat.isFile() || !sameFile(seen, stat))
+      return { ok: false, problem: "The saved list is a link or not a file." };
     if (stat.size > MAX_MANIFEST_BYTES)
       return { ok: false, problem: "The saved list is too large." };
     let parsed: unknown;

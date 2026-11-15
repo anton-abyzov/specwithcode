@@ -69,7 +69,11 @@ describe("readManifest", () => {
     await NodeFSP.writeFile(outside, JSON.stringify({ version: 1, credentials: [] }));
     await NodeFSP.rm(manifestPath());
     await NodeFSP.symlink(outside, manifestPath());
-    expect(await readManifest(root)).toMatchObject({ ok: false });
+    expect(await readManifest(root)).toMatchObject({ ok: false, problem: /a link/u });
+    // A link to nothing is still a link, not a missing list.
+    await NodeFSP.rm(manifestPath());
+    await NodeFSP.symlink(NodePath.join(base, "absent.json"), manifestPath());
+    expect(await readManifest(root)).toMatchObject({ ok: false, problem: /a link/u });
   });
 
   it("refuses a linked .specweave folder", async () => {
