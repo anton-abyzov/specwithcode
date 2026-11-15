@@ -20,7 +20,7 @@ import {
   isSecretLikeProjectPath,
   isUntrackedSecretConfigPath,
 } from "../workspace/WorkspaceSensitivePaths.ts";
-import { CREDENTIAL_CATALOG } from "./catalog.ts";
+import { CREDENTIAL_CATALOG, CREDENTIAL_HOME_FILES } from "./catalog.ts";
 
 const MAX_ENTRIES = 60_000;
 const MAX_DEPTH = 12;
@@ -234,6 +234,7 @@ export function credentialRows(
       listed: listed !== undefined,
       skip: listed?.skip === true,
       note: listed?.note ?? null,
+      keptIn: [...CREDENTIAL_HOME_FILES[entry.id]],
     });
   }
   return rows;

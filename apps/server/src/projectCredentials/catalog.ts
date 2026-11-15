@@ -184,3 +184,24 @@ export const credentialEntry = (id: string): CredentialEntry | undefined =>
 
 export const signInCommand = (entry: CredentialEntry, platform: NodeJS.Platform) =>
   platform === "win32" ? entry.signIn.windows : entry.signIn.posix;
+
+/**
+ * Where each credential is kept in a home folder, relative to it. Named so the
+ * dialog can say what stayed behind and a test can hold the copy to refusing
+ * every one; nothing here is opened, listed or sent.
+ */
+export const CREDENTIAL_HOME_FILES: Readonly<Record<ProjectCredentialId, ReadonlyArray<string>>> = {
+  github: [".config/gh/hosts.yml", ".git-credentials"],
+  azure: [".azure/msal_token_cache.json", ".azure/azureProfile.json"],
+  "google-cloud": [
+    ".config/gcloud/credentials.db",
+    ".config/gcloud/application_default_credentials.json",
+  ],
+  aws: [".aws/credentials", ".aws/config"],
+  kubernetes: [".kube/config"],
+  "hetzner-cloud": [".config/hcloud/cli.toml"],
+  cloudflare: [".wrangler/config/default.toml", ".config/.wrangler/config/default.toml"],
+  npm: [".npmrc"],
+  docker: [".docker/config.json"],
+  ssh: [".ssh/id_ed25519", ".ssh/id_rsa", ".ssh/config"],
+};

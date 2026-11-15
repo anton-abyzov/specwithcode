@@ -152,6 +152,7 @@ describe("credentialRows with a saved manifest", () => {
       listed: true,
       skip: false,
       note: "release bucket",
+      keptIn: [".aws/credentials", ".aws/config"],
     });
     expect(rows.find((row) => row.id === "github")).toMatchObject({ listed: false, skip: false });
   });

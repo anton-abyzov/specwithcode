@@ -182,6 +182,8 @@ export const ProjectCredentialRow = Schema.Struct({
   listed: Schema.Boolean,
   skip: Schema.Boolean,
   note: Schema.NullOr(bounded(MAX_MANIFEST_NOTE)),
+  /** Home-folder places it is usually kept (`.kube/config`). Names from the app's list; a copy never reads or sends them. */
+  keptIn: Schema.Array(bounded(200)),
 });
 export type ProjectCredentialRow = typeof ProjectCredentialRow.Type;
 
