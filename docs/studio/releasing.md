@@ -698,8 +698,10 @@ GPG release key in the `LINUX_UPDATE_SIGNING_KEY` secret (armored, no passphrase
 `.asc` signatures and the public key as `specwithcode-release-key.asc`, checks every signature with
 `gpgv` first, and refuses a real run without the secret. After the upload it also signs each
 release's own `SHA256SUMS` (written by `release.sh`) with the same key and uploads only
-`SHA256SUMS.asc`; `SHA256SUMS` is never changed. A `SHA256SUMS.asc` that no longer verifies is
-replaced on the next run. Replacing the key means a new public key on every later release and a new
+`SHA256SUMS.asc`; `SHA256SUMS` is never changed. That is its own job (Sign the macOS checksums),
+which also runs on a daily catch-up that finds the attach complete, so a missing `SHA256SUMS.asc` or
+one that no longer verifies is redone by the next run. The version-free AppImage and `.deb` copies
+get their own `.asc` too. Replacing the key means a new public key on every later release and a new
 fingerprint in [install](../user/install.md#verify-a-download).
 
 While the repository is public, `actions/attest-build-provenance` attests every Windows and Linux
