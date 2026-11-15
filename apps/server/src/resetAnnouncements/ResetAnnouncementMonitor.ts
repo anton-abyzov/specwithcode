@@ -8,6 +8,7 @@
  * @module resetAnnouncements/ResetAnnouncementMonitor
  */
 import {
+  type ResetAnnouncement,
   type ResetAnnouncementsResult,
   WS_METHODS,
   WsResetAnnouncementRpcGroup,
@@ -41,6 +42,7 @@ import {
   encodeAnnouncementFile,
   fetchFeed,
 } from "./feeds.ts";
+import { recordIntoFile } from "./recordTool.ts";
 
 const FIRST_CHECK_DELAY = Duration.seconds(45);
 /** AC-08: at most every 30 minutes. */
@@ -52,6 +54,13 @@ export class ResetAnnouncementMonitor extends Context.Service<
   {
     /** What has been read so far, without fetching anything. */
     readonly list: Effect.Effect<ResetAnnouncementsResult>;
+    /**
+     * Keeps a post an agent read itself (AC-09), next to the feed's. False when the
+     * post was already known by its link, or falls outside the retention.
+     */
+    readonly record: (
+      announcement: ResetAnnouncement,
+    ) => Effect.Effect<{ readonly recorded: boolean }>;
     /** Reads the feeds now, unless they are turned off. */
     readonly check: Effect.Effect<void>;
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
@@ -90,6 +99,27 @@ export const makeWith = (fetcher: typeof globalThis.fetch) =>
     /** For fetching: when the switch cannot be read, nothing is requested. */
     const mayFetch = setting.pipe(Effect.orElseSucceed(() => false));
 
+    const save = (next: AnnouncementFile) =>
+      Ref.set(file, next).pipe(
+        Effect.andThen(
+          writeFileStringAtomically({ filePath, contents: encodeAnnouncementFile(next) }),
+        ),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not save reset announcements", { cause }),
+        ),
+      );
+
+    const record: ResetAnnouncementMonitor["Service"]["record"] = (announcement) =>
+      Effect.gen(function* () {
+        const before = yield* current;
+        const now = yield* Clock.currentTimeMillis;
+        const next = recordIntoFile(before, announcement, now);
+        if (next.recorded) yield* save(next.file);
+        return { recorded: next.recorded };
+      }).pipe(lock.withPermits(1));
+
     const check = Effect.gen(function* () {
       if (!(yield* mayFetch)) return;
       const before = yield* current;
@@ -101,18 +131,7 @@ export const makeWith = (fetcher: typeof globalThis.fetch) =>
         { concurrency: "unbounded" },
       );
       const now = yield* Clock.currentTimeMillis;
-      const next = applyFeedReadings(before, { confirmed, promised }, now);
-      yield* Ref.set(file, next);
-      yield* writeFileStringAtomically({
-        filePath,
-        contents: encodeAnnouncementFile(next),
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Could not save reset announcements", { cause }),
-        ),
-      );
+      yield* save(applyFeedReadings(before, { confirmed, promised }, now));
     }).pipe(
       Effect.catchCause((cause) => Effect.logWarning("Reset announcement check failed", { cause })),
       lock.withPermits(1),
@@ -127,9 +146,7 @@ export const makeWith = (fetcher: typeof globalThis.fetch) =>
         // the retention, and no check may have run since (announcements off, or offline).
         announcements: listedAnnouncements(loaded, now),
         enabled: on,
-        ...(on && loaded.checkedAt !== null
-          ? { checkedAt: isoAt(loaded.checkedAt) }
-          : {}),
+        ...(on && loaded.checkedAt !== null ? { checkedAt: isoAt(loaded.checkedAt) } : {}),
       } as ResetAnnouncementsResult;
     });
 
@@ -141,7 +158,7 @@ export const makeWith = (fetcher: typeof globalThis.fetch) =>
         ),
       );
 
-    return ResetAnnouncementMonitor.of({ list, check, start });
+    return ResetAnnouncementMonitor.of({ list, record, check, start });
   });
 
 export const layer = Layer.effect(ResetAnnouncementMonitor, makeWith(globalThis.fetch));

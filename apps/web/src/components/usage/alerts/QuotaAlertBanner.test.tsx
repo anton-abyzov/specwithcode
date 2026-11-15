@@ -55,16 +55,18 @@ describe("QuotaAlertBanner", () => {
           {...props}
         />,
       );
-    expect(banner({ canBoost: () => true })).toContain("Use it for new threads until it resets");
-    expect(banner({ canBoost: () => false })).not.toContain("Use it for new threads");
+    expect(banner({ canBoost: () => true })).toContain(
+      "Use it for new worker threads until it resets",
+    );
+    expect(banner({ canBoost: () => false })).not.toContain("Use it for new worker threads");
     const running = banner({
       canBoost: () => true,
       boosts: [{ accountKey: "codex:a@x.dev", label: "Codex Pro", until: now + 9 * HOUR }],
     });
-    expect(running).toContain("New threads use Codex Pro until");
+    expect(running).toContain("New worker threads use Codex Pro until");
     expect(running).toContain("End now");
     // Already running for this account: no second start.
-    expect(running).not.toContain("Use it for new threads until it resets");
+    expect(running).not.toContain("Use it for new worker threads until it resets");
   });
 
   it("keeps a running boost on show after its warning is dismissed", () => {
@@ -79,12 +81,17 @@ describe("QuotaAlertBanner", () => {
         onEndBoost={() => undefined}
       />,
     );
-    expect(html).toContain("New threads use Codex Pro until");
+    expect(html).toContain("New worker threads use Codex Pro until");
     expect(html).not.toContain("Dismiss until the next reset");
   });
 
   it("says a promised reset is expected and links its source", () => {
-    const promise = { id: "p", driver: "codex", publishedAt: now - HOUR, sourceUrl: "https://x.com/example/status/9" };
+    const promise = {
+      id: "p",
+      driver: "codex",
+      publishedAt: now - HOUR,
+      sourceUrl: "https://x.com/example/status/9",
+    };
     const html = render(quotaAlerts([account("codex:a@x.dev", 96 * HOUR, 62)], [], now, [promise]));
     expect(html).toContain("Codex Pro reset expected today: 62% left on m4 will be replaced");
     expect(html).toContain('href="https://x.com/example/status/9"');
