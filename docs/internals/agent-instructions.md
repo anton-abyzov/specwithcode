@@ -6,7 +6,7 @@ why each rule is prose, code or gone. Sizes are characters / 4. Before is the Oc
 text before `Goal:`, as `ProjectWorkspaceService.test.ts` does. `RuntimeInstructions.test.ts`
 caps the writing, presentation, reports and response style blocks and the whole per-turn text
 (4,750 characters), and `ProjectWorkspaceService.test.ts` caps the roles, so a block that grows
-past its cap fails a test. The orchestration, browser, live database and launch brief rows have no cap.
+past its cap fails a test. `StudioOrchestrationInstructions.test.ts` caps the orchestration block (3,050 characters). The browser, live database and launch brief rows have no cap.
 
 ## Blocks and recipients
 
