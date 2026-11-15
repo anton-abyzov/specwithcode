@@ -3,12 +3,19 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { boardColumn, boardStatus, ledgerPullRequests, readProjectBoard } from "./ProjectBoard.ts";
 
 const roots: string[] = [];
 const NOW = Date.parse("2026-11-14T12:00:00Z");
+/**
+ * Reading many small files is slower on Windows: the cold read took 1.2 to 1.3 seconds on a
+ * Windows runner. Three times the budget there still fails a read that stops using its cache
+ * or stops scaling, which is what the timing guards.
+ */
+const FILE_TIME_BUDGET = HostProcessPlatform.defaultValue() === "win32" ? 3 : 1;
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true })));
@@ -95,7 +102,9 @@ describe("boardColumn", () => {
 describe("ledgerPullRequests", () => {
   it("lists each pull request once, the last mentioned first, at most five", () => {
     const pull = (number: number) => `https://github.com/example/app/pull/${number}`;
-    const ledger = [1, 2, 1, 3, 4, 5, 6].map((number) => event("T-01", "done", { link: pull(number) }));
+    const ledger = [1, 2, 1, 3, 4, 5, 6].map((number) =>
+      event("T-01", "done", { link: pull(number) }),
+    );
     expect(ledgerPullRequests(ledger.join("\n"))).toEqual([6, 5, 4, 3, 1].map(pull));
     expect(ledgerPullRequests("https://github.com/example/app/issues/4")).toEqual([]);
   });
@@ -251,7 +260,7 @@ describe("readProjectBoard", () => {
     expect(cold.counts).toEqual({ planned: 0, active: 150, review: 0, done: 1_350 });
     expect(cold.cards).toHaveLength(180);
     expect(warm).toEqual(cold);
-    expect(coldMs).toBeLessThan(1_000);
-    expect(warmMs).toBeLessThan(150);
+    expect(coldMs).toBeLessThan(1_000 * FILE_TIME_BUDGET);
+    expect(warmMs).toBeLessThan(150 * FILE_TIME_BUDGET);
   }, 30_000);
 });
