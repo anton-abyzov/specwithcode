@@ -108,11 +108,21 @@ function Fact({ value, note }: { readonly value: string; readonly note: string }
   );
 }
 
-function TokensFact({ lost }: { readonly lost: number | null }) {
+function TokensFact({
+  lost,
+  usedPercent,
+}: {
+  readonly lost: number | null;
+  readonly usedPercent: number;
+}) {
   return lost === null ? (
     <Fact
       value="Tokens not measurable"
-      note="the spend behind this percent cannot be told apart here"
+      note={
+        usedPercent < 5
+          ? "too little was used to estimate from"
+          : "the spend behind this percent cannot be told apart here"
+      }
     />
   ) : lost === 0 ? (
     <Fact value="No tokens left unused" note="the quota was used up" />
@@ -283,7 +293,7 @@ export function ResetsTable({
                             value={machines.length === 0 ? "Not signed in now" : machines.join(", ")}
                             note="where it is signed in"
                           />
-                          <TokensFact lost={tokensLostOf(period)} />
+                          <TokensFact lost={tokensLostOf(period)} usedPercent={period.usedPercent} />
                           <BusiestFact samples={samplesOf(period, history)} />
                           <RenewalFact renewal={renewalOf(period.accountKey)} />
                         </div>

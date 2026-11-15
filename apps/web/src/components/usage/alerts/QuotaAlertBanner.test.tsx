@@ -40,6 +40,49 @@ describe("QuotaAlertBanner", () => {
     expect(html).toContain('role="status"');
   });
 
+  it("offers to use the quota only where a boost can run, and names a running one", () => {
+    const alerts = quotaAlerts([account("codex:a@x.dev", 9 * HOUR, 62)], [], now);
+    const banner = (props: object) =>
+      renderToStaticMarkup(
+        <QuotaAlertBanner
+          alerts={alerts}
+          labelOf={() => "Codex Pro"}
+          now={now}
+          onOpen={() => undefined}
+          onDismiss={() => undefined}
+          onBoost={() => undefined}
+          onEndBoost={() => undefined}
+          {...props}
+        />,
+      );
+    expect(banner({ canBoost: () => true })).toContain("Use it for new threads until it resets");
+    expect(banner({ canBoost: () => false })).not.toContain("Use it for new threads");
+    const running = banner({
+      canBoost: () => true,
+      boosts: [{ accountKey: "codex:a@x.dev", label: "Codex Pro", until: now + 9 * HOUR }],
+    });
+    expect(running).toContain("New threads use Codex Pro until");
+    expect(running).toContain("End now");
+    // Already running for this account: no second start.
+    expect(running).not.toContain("Use it for new threads until it resets");
+  });
+
+  it("keeps a running boost on show after its warning is dismissed", () => {
+    const html = renderToStaticMarkup(
+      <QuotaAlertBanner
+        alerts={[]}
+        labelOf={() => "Codex Pro"}
+        now={now}
+        onOpen={() => undefined}
+        onDismiss={() => undefined}
+        boosts={[{ accountKey: "codex:a@x.dev", label: "Codex Pro", until: now + 9 * HOUR }]}
+        onEndBoost={() => undefined}
+      />,
+    );
+    expect(html).toContain("New threads use Codex Pro until");
+    expect(html).not.toContain("Dismiss until the next reset");
+  });
+
   it("shows the two soonest and counts the rest", () => {
     const alerts = quotaAlerts(
       [

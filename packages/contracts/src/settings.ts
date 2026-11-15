@@ -415,6 +415,31 @@ export const QuotaAlertDismissals = Schema.Record(
 );
 export type QuotaAlertDismissals = typeof QuotaAlertDismissals.Type;
 
+/**
+ * "Use it until it resets": for a while, new worker threads of the named
+ * projects start on one subscription's model, because its quota is about to
+ * reset unused. A time-boxed override: no saved default is rewritten, so
+ * nothing has to be restored when it ends. See `quotaBoost` in shared.
+ */
+export const QuotaBoost = Schema.Struct({
+  accountKey: TrimmedNonEmptyString,
+  instanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+  /** The projects it covers; empty means every project. */
+  projectIds: Schema.Array(TrimmedNonEmptyString),
+  /** How the banner names it, for example "Codex Pro". */
+  label: TrimmedNonEmptyString,
+  /** The window whose reset ends it. */
+  windowId: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Epoch ms: the reset that ends it, and when it began. */
+  until: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 8.64e15 })),
+  startedAt: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 8.64e15 })),
+});
+export type QuotaBoost = typeof QuotaBoost.Type;
+/** At most one per account; a handful of subscriptions is the most a person runs. */
+export const QuotaBoosts = Schema.Array(QuotaBoost).check(Schema.isMaxLength(16));
+export type QuotaBoosts = typeof QuotaBoosts.Type;
+
 /** What a subscription costs a month, by account key; only weighs the efficiency score. */
 export const SubscriptionPrices = Schema.Record(
   TrimmedNonEmptyString,
@@ -2161,6 +2186,8 @@ export const ServerSettings = Schema.Struct({
   /** Warn when subscription quota is about to reset unused; see `quotaAlerts` in shared. */
   quotaAlertsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   quotaAlertDismissals: QuotaAlertDismissals.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Running "use it until it resets" overrides; see `QuotaBoost`. */
+  quotaBoosts: QuotaBoosts.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /**
    * Retired environment tier for the new-thread workspace, which is now each
    * project's own choice (its override, then its specweave-studio.json, then
@@ -2586,6 +2613,8 @@ export const ServerSettingsPatch = Schema.Struct({
   quotaAlertsEnabled: Schema.optionalKey(Schema.Boolean),
   /** Merged by alert key. */
   quotaAlertDismissals: Schema.optionalKey(QuotaAlertDismissals),
+  /** Replaces the whole list. */
+  quotaBoosts: Schema.optionalKey(QuotaBoosts),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newProjectThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),

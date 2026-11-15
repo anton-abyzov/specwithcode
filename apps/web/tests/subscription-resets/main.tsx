@@ -1,3 +1,4 @@
+import { useState } from "react";
 // The real Subscriptions dashboard and rows over fictional accounts.
 // `?case=empty` shows the states before any reading; `?theme=dark` the theme.
 // The clock is the one the verifier freezes. Nothing here talks to a server.
@@ -167,34 +168,66 @@ const history = new Map(
       ],
 );
 
+const bannerAlerts = quotaAlerts(
+  rows,
+  empty
+    ? []
+    : [
+        {
+          accountKey: "claudeAgent:ada@example.com",
+          driver: "claudeAgent",
+          windowId: "secondary",
+          windowTitle: "Weekly",
+          endedAt: now - 2 * HOUR,
+        },
+      ],
+  now,
+);
+
+/** The banner with the boost held in memory, as settings hold it in the app. */
+function FixtureBanner() {
+  const [boosts, setBoosts] = useState<
+    ReadonlyArray<{ accountKey: string; label: string; until: number; projects: number }>
+  >([]);
+  const labelOf = (alert: (typeof bannerAlerts)[number]) =>
+    `${alert.driver === "codex" ? "Codex" : "Claude"} ${byKey.get(alert.accountKey)?.plan ?? ""}`.trim();
+  return (
+    <div data-fixture-boost-projects={boosts[0]?.projects ?? ""}>
+      <QuotaAlertBanner
+        alerts={bannerAlerts}
+        labelOf={labelOf}
+        now={now}
+        onOpen={() => undefined}
+        onDismiss={() => undefined}
+        boosts={boosts}
+        projects={[
+          { name: "Atlas", ids: ["p-atlas", "p-atlas-2"] },
+          { name: "Borealis", ids: ["p-borealis"] },
+        ]}
+        canBoost={(alert) => alert.driver === "codex"}
+        onBoost={(alert, projectIds) =>
+          setBoosts([
+            {
+              accountKey: alert.accountKey,
+              label: labelOf(alert),
+              until: alert.periodEnd,
+              projects: projectIds.length,
+            },
+          ])
+        }
+        onEndBoost={() => setBoosts([])}
+      />
+    </div>
+  );
+}
+
+
 createRoot(document.getElementById("root")!).render(
   <div className="min-h-screen bg-background text-foreground">
   <main className="mx-auto flex max-w-5xl flex-col gap-6 p-4" data-fixture-ready="">
     {/* The banner at the sidebar's width, over the same accounts. */}
     <div className="w-64" data-fixture-banner="">
-      <QuotaAlertBanner
-        alerts={quotaAlerts(
-          rows,
-          empty
-            ? []
-            : [
-                {
-                  accountKey: "claudeAgent:ada@example.com",
-                  driver: "claudeAgent",
-                  windowId: "secondary",
-                  windowTitle: "Weekly",
-                  endedAt: now - 2 * HOUR,
-                },
-              ],
-          now,
-        )}
-        labelOf={(alert) =>
-          `${alert.driver === "codex" ? "Codex" : "Claude"} ${byKey.get(alert.accountKey)?.plan ?? ""}`.trim()
-        }
-        now={now}
-        onOpen={() => undefined}
-        onDismiss={() => undefined}
-      />
+      <FixtureBanner />
     </div>
     <SubscriptionsDashboard
       ledger={periods}

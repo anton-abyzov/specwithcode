@@ -526,6 +526,8 @@ export function applyServerSettingsPatch(
     ...(patch.taskRouting !== undefined ? { taskRouting: patch.taskRouting } : {}),
     ...(patch.modelLanes !== undefined ? { modelLanes: patch.modelLanes } : {}),
     ...(patch.modelTiers !== undefined ? { modelTiers: patch.modelTiers } : {}),
+    // A list: deepMerge would keep a boost the patch ended.
+    ...(patch.quotaBoosts !== undefined ? { quotaBoosts: patch.quotaBoosts } : {}),
     ...(patch.learnedModelPreferences !== undefined
       ? { learnedModelPreferences: patch.learnedModelPreferences }
       : {}),

@@ -62,4 +62,10 @@ A banner above the project list says when a subscription is about to lose quota,
 
 The banner shows the two soonest and counts the rest; a subscription takes one line. "See subscriptions" opens this page. The X dismisses the lines shown until the next reset of the windows they named. When the app is not in front and notifications are connected, each warning also raises one notification per period, on one machine: the first of the machines the account is signed in on.
 
+### Use it until it resets
+
+When the subscription in the first lines is signed in on your main machine on a plan, the banner offers **Use it for new threads until it resets**. Choose every project or tick the ones you want, then **Start**. Until that window resets, the setting names that subscription's regular model as the one new worker threads in those projects start on. Open threads and the project coordinator keep their model, and no saved default is changed, so there is nothing to restore.
+
+It ends by itself at the reset, when the provider resets the window early, when under 5% is left, or when that provider is turned off. While it runs the banner reads "New threads use Codex Pro until 6:40 AM"; **End now** stops it. It is not offered for a per-token key, for a banked reset, or for an account signed in only on another machine.
+
 An offline machine's reading is stale, so it raises no warning, and neither does an account you signed out of. The hosted app has no main machine to save a dismissal on, so it shows no banner. Turn the warnings off under Settings > Models, "Warn before quota resets unused"; the choice is saved on your main machine.
