@@ -1,3 +1,4 @@
+import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { AuthFilesystemWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
 import {
   type OfficeThemeSource,
@@ -6,6 +7,7 @@ import {
 } from "@specweave-studio/shared/officeSheet";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 
+import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useTheme } from "~/hooks/useTheme";
 import { projectEnvironment } from "~/state/projects";
 import { useEnvironmentQuery } from "~/state/query";
@@ -14,6 +16,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { design } from "~/studio/design";
 
 import { useTx } from "../../i18n";
+import { fileSaveErrorMessage } from "../files/filePreviewMode";
 import { setProjectFileQueryData, useProjectFileQuery } from "../files/projectFilesQueryState";
 import { SheetView } from "./SheetView";
 
@@ -91,7 +94,20 @@ export function SheetFileView(props: {
       if (relativePath === null || !relativePath.endsWith(SHEET_ARTIFACT_SUFFIX)) return false;
       if (new TextEncoder().encode(contents).byteLength > SHEET_LIMITS.bytes) return false;
       const result = await writeFile({ environmentId, input: { cwd, relativePath, contents } });
-      if (result._tag !== "Success") return false;
+      if (result._tag !== "Success") {
+        // A file the server refuses every time (protected, not UTF-8 text) says why.
+        const message = fileSaveErrorMessage(squashAtomCommandFailure(result));
+        if (message !== null) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not save file",
+              description: message,
+            }),
+          );
+        }
+        return false;
+      }
       setProjectFileQueryData(environmentId, cwd, path, contents);
       return true;
     },

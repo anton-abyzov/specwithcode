@@ -1,8 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off - FileSystem cannot create a FIFO.
+// @effect-diagnostics nodeBuiltinImport:off - FileSystem cannot create a FIFO or change a file mode.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFSP from "node:fs/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it, describe, expect } from "@effect/vitest";
+import { it, describe, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -55,6 +56,51 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
     .pipe(Effect.orDie);
   yield* fileSystem.writeFileString(absolutePath, contents).pipe(Effect.orDie);
 });
+
+/** The prototype every open file handle shares, so a test can stand in for one of its calls. */
+const fileHandlePrototype = Effect.promise(async () => {
+  const handle = await NodeFSP.open(process.execPath, "r");
+  try {
+    return Object.getPrototypeOf(handle) as NodeFSP.FileHandle;
+  } finally {
+    await handle.close();
+  }
+});
+
+/** Reads that return at most `firstBytes` on the first call for a `length`-byte request. */
+const shortenFirstRead = Effect.fn("shortenFirstRead")(function* (
+  length: number,
+  firstBytes: number,
+  afterwards: "continue" | "end",
+) {
+  const prototype = yield* fileHandlePrototype;
+  const original: (
+    this: NodeFSP.FileHandle,
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ) => Promise<{ readonly bytesRead: number; readonly buffer: Buffer }> = prototype.read;
+  let calls = 0;
+  return vi.spyOn(prototype, "read").mockImplementation(function (
+    this: NodeFSP.FileHandle,
+    buffer: Buffer,
+    offset: number,
+    requested: number,
+    position: number,
+  ) {
+    if (requested === length && calls === 0) {
+      calls += 1;
+      return original.call(this, buffer, offset, firstBytes, position);
+    }
+    if (calls > 0 && afterwards === "end") {
+      return Promise.resolve({ bytesRead: 0, buffer });
+    }
+    return original.call(this, buffer, offset, requested, position);
+  } as unknown as typeof prototype.read);
+});
+
+const isWindows = HostProcessPlatform.defaultValue() === "win32";
 
 it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
   describe("readFile", () => {
@@ -116,6 +162,37 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         });
         expect(start.contents).toBe("caf");
         expect(start.truncated).toBe(true);
+      }),
+    );
+
+    it.effect("keeps reading after a short read instead of calling the file binary", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        // 14 bytes; the first read stops inside the two-byte "é".
+        yield* writeTextFile(cwd, "menu.md", "café au lait\n");
+        const spy = yield* shortenFirstRead(14, 4, "continue");
+
+        const read = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "menu.md" })
+          .pipe(Effect.ensuring(Effect.sync(() => spy.mockRestore())));
+
+        expect(read).toMatchObject({ contents: "café au lait\n", truncated: false });
+      }),
+    );
+
+    it.effect("reports a file that shrank during the read as partial, not binary", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "menu.md", "café au lait\n");
+        const spy = yield* shortenFirstRead(14, 4, "end");
+
+        const read = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "menu.md" })
+          .pipe(Effect.ensuring(Effect.sync(() => spy.mockRestore())));
+
+        expect(read).toMatchObject({ contents: "caf", truncated: true });
       }),
     );
 
@@ -398,6 +475,136 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceBinaryFileError);
         expect(error).toMatchObject({ workspaceRoot: cwd, relativePath: "legacy.txt" });
         expect([...saved]).toEqual([...latin1]);
+      }),
+    );
+
+    it.effect("saves a file that starts with two byte order marks unchanged", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const absolutePath = path.join(cwd, "marks.txt");
+        const original = Uint8Array.from([0xef, 0xbb, 0xbf, 0xef, 0xbb, 0xbf, 0x78]);
+        yield* fileSystem.writeFile(absolutePath, original);
+
+        // The read drops one mark and shows the other as text.
+        const read = yield* workspaceFileSystem.readFile({ cwd, relativePath: "marks.txt" });
+        expect(read.contents).toBe("\uFEFFx");
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "marks.txt",
+          contents: read.contents,
+        });
+        const saved = yield* fileSystem.readFile(absolutePath).pipe(Effect.orDie);
+
+        expect([...saved]).toEqual([...original]);
+      }),
+    );
+
+    it.effect.each([
+      { name: "an invalid UTF-8 byte", byte: 0xe9 },
+      { name: "a NUL byte", byte: 0x00 },
+    ])("refuses to overwrite a file with $name past the read limit", ({ byte }) =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const absolutePath = path.join(cwd, "large.log");
+        const large = new Uint8Array(2 * 1024 * 1024).fill(0x61);
+        large[1024 * 1024 + 5] = byte;
+        yield* fileSystem.writeFile(absolutePath, large);
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: "large.log", contents: "replaced\n" })
+          .pipe(Effect.flip);
+        const saved = yield* fileSystem.readFile(absolutePath).pipe(Effect.orDie);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceBinaryFileError);
+        expect(saved.byteLength).toBe(large.byteLength);
+        expect(saved[1024 * 1024 + 5]).toBe(byte);
+      }),
+    );
+
+    // Windows has no write-only file mode, and root reads any file.
+    it.effect.skipIf(isWindows || process.getuid?.() === 0)(
+      "refuses to overwrite a file it cannot read to check",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const absolutePath = path.join(cwd, "legacy.txt");
+          const latin1 = Uint8Array.from([0x63, 0x61, 0x66, 0xe9, 0x0a]);
+          yield* fileSystem.writeFile(absolutePath, latin1);
+          yield* Effect.promise(() => NodeFSP.chmod(absolutePath, 0o200));
+
+          const error = yield* workspaceFileSystem
+            .writeFile({ cwd, relativePath: "legacy.txt", contents: "edited\n" })
+            .pipe(Effect.flip);
+          yield* Effect.promise(() => NodeFSP.chmod(absolutePath, 0o600));
+          const saved = yield* fileSystem.readFile(absolutePath).pipe(Effect.orDie);
+
+          expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+          expect(error).toMatchObject({ relativePath: "legacy.txt", operation: "open" });
+          expect([...saved]).toEqual([...latin1]);
+        }),
+    );
+
+    // Windows may refuse to open a folder at all; elsewhere it opens and is not a file.
+    it.effect.skipIf(isWindows)("refuses to write over a path that is not a regular file", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* fileSystem.makeDirectory(path.join(cwd, "notes"));
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: "notes", contents: "text\n" })
+          .pipe(Effect.flip);
+        const info = yield* fileSystem.stat(path.join(cwd, "notes")).pipe(Effect.orDie);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspacePathNotFileError);
+        expect(info.type).toBe("Directory");
+      }),
+    );
+
+    it.effect("refuses to save when the file changed between the check and the probe", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const absolutePath = path.join(cwd, "notes.md");
+        yield* writeTextFile(cwd, "notes.md", "before\n");
+        // The opened file reports another inode, as if the path was swapped after the check.
+        const prototype = yield* fileHandlePrototype;
+        const original: (
+          this: NodeFSP.FileHandle,
+          options?: { readonly bigint?: boolean },
+        ) => Promise<{ readonly ino: number | bigint }> = prototype.stat;
+        const spy = vi.spyOn(prototype, "stat").mockImplementation(async function (
+          this: NodeFSP.FileHandle,
+          options?: { readonly bigint?: boolean },
+        ) {
+          const stat = await original.call(this, options);
+          Object.defineProperty(stat, "ino", {
+            value: typeof stat.ino === "bigint" ? stat.ino + 1n : stat.ino + 1,
+          });
+          return stat;
+        } as unknown as typeof prototype.stat);
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: "notes.md", contents: "after\n" })
+          .pipe(Effect.flip, Effect.ensuring(Effect.sync(() => spy.mockRestore())));
+        const saved = yield* fileSystem.readFileString(absolutePath).pipe(Effect.orDie);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+        expect(error).toMatchObject({ relativePath: "notes.md", operation: "open" });
+        expect(saved).toBe("before\n");
       }),
     );
 
