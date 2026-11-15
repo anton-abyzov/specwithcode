@@ -15,11 +15,20 @@
 import type { ResetAnnouncement, ResetAnnouncementKind } from "@specweave-studio/contracts";
 
 import { isoAt } from "../usage/usageLimitHistoryStore.ts";
+import { X_HOSTS, canonicalLink, xPost } from "./feeds.ts";
 
 export const RECORD_HEADLINE_MAX = 240;
 const LINK_MAX = 2048;
 const FUTURE_ALLOWANCE_MS = 5 * 60_000;
 const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/u;
+
+/** The written calendar day exists: no February 31 rolled into March. */
+function realDay(date: string): boolean {
+  const [year, month, day] = date.slice(0, 10).split("-").map(Number) as [number, number, number];
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return days !== undefined && day >= 1 && day <= days;
+}
 
 interface ProviderSources {
   /** X accounts whose own posts count, lower case without the @. */
@@ -69,9 +78,6 @@ export interface RecordAnnouncementInput {
   readonly publishedAt: string;
 }
 
-const X_HOSTS = ["x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"];
-const X_POST = /^\/([A-Za-z0-9_]{1,15})\/status\/(\d{1,25})(?:\/.*)?$/u;
-
 /**
  * The post's one canonical link, or why it is refused: an X post becomes
  * `https://x.com/{handle}/status/{id}`, a page loses its query and fragment, so
@@ -99,16 +105,17 @@ export function canonicalPostLink(
   }
   if (url.port !== "") return { refused: "sourceUrl must not name a port." };
   const hostname = url.hostname.toLowerCase();
-  if (X_HOSTS.includes(hostname)) {
-    const post = X_POST.exec(url.pathname);
-    if (post === null) return { refused: "An X link must be a post: x.com/<account>/status/<id>." };
-    const handle = post[1]!.toLowerCase();
-    if (!sources.handles.includes(handle)) {
+  const post = xPost(url);
+  if (post !== null) {
+    if (!sources.handles.includes(post.handle)) {
       return {
         refused: `Only posts by ${sources.handles.map((name) => `@${name}`).join(", ")} count for ${provider}.`,
       };
     }
-    return { link: `https://x.com/${handle}/status/${post[2]}` };
+    return { link: canonicalLink(url) };
+  }
+  if (X_HOSTS.has(hostname)) {
+    return { refused: "An X link must be a post: x.com/<account>/status/<id>." };
   }
   const bare = hostname.startsWith("www.") ? hostname.slice(4) : hostname;
   if (!sources.hosts.includes(bare)) {
@@ -116,10 +123,12 @@ export function canonicalPostLink(
       refused: `sourceUrl must be a post on X or a page on ${provider}'s own site (${sources.hosts.join(", ")}).`,
     };
   }
-  const path = url.pathname.replace(/\/+$/u, "");
-  if (path === "")
+  // The same spelling the feed gives the page, so the feed replaces this recording.
+  const link = canonicalLink(url);
+  if (new URL(link).pathname === "/") {
     return { refused: "sourceUrl must be the page of the post, not the site's home." };
-  return { link: `https://${bare}${path}` };
+  }
+  return { link };
 }
 
 /** The announcement to keep, or why it is refused. The id follows the canonical link. */
@@ -142,7 +151,7 @@ export function announcementToRecord(
   const link = canonicalPostLink(input.sourceUrl, provider);
   if ("refused" in link) return link;
   const date = input.publishedAt.trim();
-  const published = ISO_DATE_TIME.test(date) ? Date.parse(date) : Number.NaN;
+  const published = ISO_DATE_TIME.test(date) && realDay(date) ? Date.parse(date) : Number.NaN;
   if (!Number.isFinite(published)) {
     return { refused: "publishedAt must be an ISO date and time, such as 2026-11-15T06:30:00Z." };
   }
