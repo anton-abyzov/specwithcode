@@ -4627,7 +4627,9 @@ export const fr: PhraseCatalog = {
   "{machine} offline": "{machine} hors ligne",
   "workers only": "workers uniquement",
   "move pending": "déplacement en attente",
-  "separate project": "projet séparé",
+  "coordinator": "coordinateur",
+  "not linked": "non lié",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.": "Non lié : {machine} a son propre coordinateur, ses fils et sa mémoire pour ce dépôt.",
   "{value}Messages go to Percy. {value2}": "{value}Les messages vont à Percy. {value2}",
   "Show only topics that need you in {project}":
     "Afficher seulement les sujets qui ont besoin de vous dans {project}",

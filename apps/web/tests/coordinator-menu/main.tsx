@@ -21,7 +21,7 @@ const dark = params.get("theme") === "dark";
 document.documentElement.classList.toggle("dark", dark);
 applyThemePalette("studio-chat", dark ? "dark" : "light");
 
-const copies: OrchestratorCopy[] = [
+const linkedCopies: OrchestratorCopy[] = [
   { key: "m1:p", machine: "m1", folder: "/w/specweave", role: "workers", canStart: true },
   {
     key: "mini:p",
@@ -32,6 +32,15 @@ const copies: OrchestratorCopy[] = [
   },
   { key: "m4:p", machine: "m4", folder: "/w/specweave", role: "coordinator", canStart: false },
 ];
+// `?case=unlinked`: the same repository registered on three machines, never linked.
+const unlinkedCopies: OrchestratorCopy[] = ["m1", "m3", "m4"].map((machine) => ({
+  key: `${machine}:p`,
+  machine,
+  folder: "/w/easychamp",
+  role: "independent",
+  canStart: false,
+}));
+const copies = params.get("case") === "unlinked" ? unlinkedCopies : linkedCopies;
 
 function Page() {
   const [current, setCurrent] = useState("m4:p");

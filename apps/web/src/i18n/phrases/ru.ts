@@ -4585,7 +4585,9 @@ export const ru: PhraseCatalog = {
   "{machine} offline": "{machine} не в сети",
   "workers only": "только исполнители",
   "move pending": "перенос не подтверждён",
-  "separate project": "отдельный проект",
+  "coordinator": "координатор",
+  "not linked": "не связан",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.": "Не связан: у {machine} свой координатор, свои треды и своя память для этого репозитория.",
   "{value}Messages go to Percy. {value2}": "{value}Сообщения идут в Percy. {value2}",
   "Show only topics that need you in {project}":
     "Показать только темы, которые ждут вас в {project}",

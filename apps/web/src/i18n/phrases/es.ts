@@ -4611,7 +4611,9 @@ export const es: PhraseCatalog = {
   "{machine} offline": "{machine} sin conexión",
   "workers only": "solo workers",
   "move pending": "traslado pendiente",
-  "separate project": "proyecto aparte",
+  "coordinator": "coordinador",
+  "not linked": "sin vincular",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.": "Sin vincular: {machine} tiene su propio coordinador, sus hilos y su memoria para este repositorio.",
   "{value}Messages go to Percy. {value2}": "{value}Los mensajes van a Percy. {value2}",
   "Show only topics that need you in {project}":
     "Mostrar solo los temas que te necesitan en {project}",

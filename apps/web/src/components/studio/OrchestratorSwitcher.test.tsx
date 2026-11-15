@@ -377,7 +377,7 @@ it("names machines once and labels every group of actions", async () => {
   await renderSwitcher({ ...calls, onCopy: vi.fn(), onLeave: vi.fn() });
   expect(
     [...document.querySelectorAll('[role="menuitemradio"]')].map((row) => row.textContent),
-  ).toEqual(["M4", "Minisworkers only"]);
+  ).toEqual(["M4coordinator", "Minisworkers only"]);
   expect(
     [...document.querySelectorAll('[data-slot="menu-label"]')].map((row) => row.textContent),
   ).toEqual(["View this project on", "This project", "On M4"]);
@@ -393,6 +393,20 @@ it("names machines once and labels every group of actions", async () => {
   expect(document.querySelector('[role="menu"]')?.textContent).not.toMatch(/orchestrator/i);
   await act(async () => item("menuitem", "Machine access settings")!.click());
   expect(calls.onAllowWorkers).toHaveBeenCalledTimes(1);
+});
+
+it("says not linked, with what that means, for checkouts registered on their own", async () => {
+  const calls = handlers();
+  await renderSwitcher({
+    ...calls,
+    copies: [copy("m4:p", "M4", "independent"), copy("m1:p", "M1", "independent")],
+  });
+  const rows = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+  expect(rows.map((row) => row.textContent)).toEqual(["M4not linked", "M1not linked"]);
+  expect(rows[1]?.title).toBe(
+    "Not linked: M1 runs its own coordinator, threads and memory for this repository.",
+  );
+  expect(document.querySelector('[role="menu"]')?.textContent).not.toContain("separate project");
 });
 
 it("stays a plain label with one copy and no machine actions", async () => {

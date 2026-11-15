@@ -72,6 +72,19 @@ try {
     }
     await page.close();
   }
+  if (!before) {
+    // Checkouts of one repository that were never linked: each says so.
+    const page = await browser.newPage({ viewport: { width: 520, height: 560 } });
+    await page.goto(`${origin}/?theme=dark&case=unlinked`);
+    await page.locator("[data-coordinator-machine]").click();
+    await page.locator('[role="menu"]').waitFor();
+    await page.waitForTimeout(250);
+    const rows = await page.locator('[role="menuitemradio"]').allTextContents();
+    assert.deepEqual(rows, ["m1not linked", "m3not linked", "m4not linked"]);
+    await page.screenshot({ path: path.join(output, "coordinator-menu-unlinked-after-dark.png") });
+    results.push({ theme: "dark", case: "unlinked", rows });
+    await page.close();
+  }
 } finally {
   await browser.close();
   server.close();

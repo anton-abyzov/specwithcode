@@ -43,11 +43,13 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 
+// What each machine's copy is, beside its name. "not linked": a checkout of the same
+// repository registered on its own, with its own coordinator, threads and memory.
 const ROLE_NOTE: Record<OrchestratorCopy["role"], string> = {
-  coordinator: "",
+  coordinator: "coordinator",
   workers: "workers only",
   pending: "move pending",
-  independent: "separate project",
+  independent: "not linked",
 };
 
 /** Runs the pending action once the popup holding this has left the DOM. */
@@ -248,7 +250,13 @@ export function OrchestratorSwitcher({
                   key: copy.key,
                   name: nameOf(copy),
                   note: ROLE_NOTE[copy.role],
-                  hint: nameOf(copy),
+                  hint:
+                    copy.role === "independent"
+                      ? tx(
+                          "Not linked: {machine} runs its own coordinator, threads and memory for this repository.",
+                          { machine: nameOf(copy) },
+                        )
+                      : nameOf(copy),
                 })),
                 // Linked, but this app has no connection to it, so it has no copy to show.
                 ...unknown.map((ref) => ({
