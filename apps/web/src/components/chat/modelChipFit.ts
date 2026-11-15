@@ -144,9 +144,23 @@ export function measureFitParts<Part extends string>(
     const parent = layoutParent(part);
     const gap = parent ? Number.parseFloat(getComputedStyle(parent).columnGap) || 0 : 0;
     const margins = inlineMargins(style);
+    // A part inside another part (the chip's usage number inside its usage button) is
+    // already in the outer part's box: the outer part costs only what is its own.
+    const outer = part.parentElement?.closest(`[${attribute}]`);
+    const nested = outer !== null && outer !== undefined && root.contains(outer);
+    let inner = 0;
+    for (const child of part.querySelectorAll<HTMLElement | SVGElement>(`[${attribute}]`)) {
+      const childStyle = getComputedStyle(child);
+      if (childStyle.position === "absolute" || childStyle.display === "none") continue;
+      const childParent = layoutParent(child);
+      const childGap = childParent
+        ? Number.parseFloat(getComputedStyle(childParent).columnGap) || 0
+        : 0;
+      inner += child.getBoundingClientRect().width + inlineMargins(childStyle) + childGap;
+    }
     // A safety truncation never hides the real width from the next decision.
-    const natural = Math.max(box, part.scrollWidth || 0);
-    if (inFlow) always -= box + margins + gap;
+    const natural = Math.max(box, part.scrollWidth || 0) - inner;
+    if (inFlow && !nested) always -= box + margins + gap;
     costs.set(name, (costs.get(name) ?? 0) + natural + margins + gap);
     const first = (Number.parseFloat(style.fontSize) || 12) * MODEL_NAME_MIN_EM;
     least.set(

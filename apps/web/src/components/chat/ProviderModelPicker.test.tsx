@@ -394,6 +394,87 @@ describe("model chip", () => {
   });
 });
 
+describe("model chip with usage", () => {
+  const instanceId = ProviderInstanceId.make("claudeAgent");
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const withUsage = (usedPercent: number) => {
+    const base = providerEntry("claudeAgent", "claudeAgent");
+    const now = Date.now();
+    return {
+      ...base,
+      snapshot: {
+        ...base.snapshot,
+        usageLimits: {
+          checkedAt: iso(now - 60_000),
+          windows: [
+            {
+              id: "five_hour",
+              kind: "session",
+              label: "Session",
+              usedPercent,
+              resetsAt: iso(now + 2 * 3_600_000),
+              windowDurationMins: 300,
+            },
+          ],
+        },
+      } as ServerProvider,
+    };
+  };
+  const chip = (
+    usedPercent: number,
+    extra: Partial<ComponentProps<typeof ProviderModelPicker>> = {},
+  ) =>
+    renderToStaticMarkup(
+      <ProviderModelPicker
+        activeInstanceId={instanceId}
+        model="claude-opus-5-5"
+        lockedProvider={null}
+        instanceEntries={[withUsage(usedPercent)]}
+        modelOptionsByInstance={
+          new Map([[instanceId, [{ slug: "claude-opus-5-5", name: "Opus 5.5" }]]])
+        }
+        onInstanceModelChange={() => {}}
+        triggerParts={{ provider: "Claude", model: "Opus 5.5" }}
+        usage={{ connected: true, environmentId: "env", machineLabel: null, running: null }}
+        fit="full"
+        {...extra}
+      />,
+    );
+  const buttons = (markup: string) => markup.match(/<button[^>]*>/g) ?? [];
+
+  it("makes the usage ring a button of its own beside the model", () => {
+    const markup = chip(40);
+    const [model, ring] = buttons(markup);
+    expect(buttons(markup)).toHaveLength(2);
+    expect(markup).toMatch(/<span[^>]*role="group"[^>]*data-chat-provider-model-picker="true"/);
+    expect(markup).toMatch(/<span[^>]*role="group"[^>]*data-model-chip=""/);
+    expect(model).toContain("data-model-chip-main");
+    expect(model).toMatch(/aria-label="Model: Claude · Opus 5.5[^"]*Change model"/);
+    expect(ring).toContain('data-model-chip-part="usage-ring"');
+    expect(ring).toMatch(/aria-label="Usage: [^"]+\. Show usage"/);
+    // The ring inside the button is not a chip part twice.
+    const ringBody = markup.slice(markup.indexOf("data-model-usage-button"));
+    expect(ringBody).not.toMatch(/<svg[^>]*data-model-chip-part="usage-ring"/);
+  });
+
+  it("keeps the number inside the usage button once it matters", () => {
+    const markup = chip(90);
+    const ringBody = markup.slice(markup.indexOf("data-model-usage-button"));
+    expect(ringBody).toMatch(/data-model-chip-part="usage-value"[^>]*>10%/);
+  });
+
+  it("disables both halves with the chip", () => {
+    const markup = chip(40, { disabled: true });
+    for (const control of buttons(markup)) expect(control).toContain("disabled");
+  });
+
+  it("stays one button with no usage to show", () => {
+    const markup = chip(40, { usage: undefined });
+    expect(buttons(markup)).toHaveLength(1);
+    expect(markup).not.toContain("data-model-usage-button");
+  });
+});
+
 describe("Weave picker button", () => {
   const instanceId = ProviderInstanceId.make("codex");
   const picker = (extra: Partial<ComponentProps<typeof ProviderModelPicker>> = {}) => (

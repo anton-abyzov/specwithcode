@@ -29,8 +29,10 @@ import type { ModelPickerEffort } from "./ModelPickerEffortStrip";
 import { useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
+  ModelPickerUsageBand,
   ModelUsageMarkRing,
   ModelUsageMeter,
+  meterParts,
   useModelPickerUsage,
   type ModelPickerUsageConfig,
 } from "./ModelUsage";
@@ -171,10 +173,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     : activeEntry;
   const showInstanceBadge =
     triggerEntry !== null && shouldShowInstanceBadge(triggerEntry, props.instanceEntries);
+  const [isUsageOpen, setIsUsageOpen] = useState(false);
   const usage = useModelPickerUsage(
     props.usage,
     props.instanceEntries,
-    isMenuOpen,
+    isMenuOpen || isUsageOpen,
     props.selectedModels === undefined ? (props.triggerInstanceId ?? activeInstanceId) : null,
   );
   const showsSingleModel =
@@ -378,6 +381,160 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     triggerTooltipContent
   );
 
+  // The usage ring is its own control on a model chip: it opens the account's usage.
+  const splitUsage =
+    parts !== undefined &&
+    selectedUsage !== null &&
+    selectedUsageCopy !== null &&
+    meterParts(selectedUsage, selectedUsageCopy, {
+      nowMs: usage?.nowMs ?? Date.now(),
+      nextOnLimit: nextOnLimit ?? null,
+    }) !== null;
+  const triggerAriaLabel =
+    hostAriaLabel ??
+    chipAriaLabel ??
+    allModelNames ??
+    (selectedUsageLabel ? `${triggerName}, ${selectedUsageLabel}` : undefined);
+  const chipWidthClass = cn(
+    props.compact
+      ? "max-w-42 shrink-0"
+      : !props.isComposerOwned && !parts && "max-w-48 sm:max-w-56",
+    props.triggerClassName,
+    // The fit keeps the chip within its host; the cap only guards a
+    // frame before the first measurement. At `name` a long model name
+    // gives way to the host's other controls and ends in an ellipsis.
+    parts && (fit === "name" ? "w-auto max-w-full shrink" : "w-max max-w-full shrink-0"),
+  );
+  const chipRowContent = (
+    <>
+      <span
+        ref={setChipRow}
+        className={cn("flex min-w-0 flex-1 items-center", size === "xs" ? "gap-1" : "gap-1.5")}
+      >
+        {selectedEntries && props.triggerLabel === undefined ? (
+          <span className="flex shrink-0 items-center -space-x-1" aria-hidden="true">
+            {selectedEntries
+              .slice(0, 3)
+              .map((selection) =>
+                selection.entry ? (
+                  <ProviderInstanceIcon
+                    key={`${selection.instanceId}:${selection.model}`}
+                    driverKind={selection.entry.driverKind}
+                    displayName={selection.entry.displayName}
+                    accentColor={selection.entry.accentColor}
+                    acpRegistryAgentId={selection.entry.acpRegistryAgentId}
+                    acpRegistryIconUrl={selection.entry.acpRegistryIconUrl}
+                    className="size-4 rounded-full bg-(--chat-composer-glass-surface,var(--background)) ring-2 ring-(--chat-composer-glass-surface,var(--background))"
+                    iconClassName="size-4"
+                  />
+                ) : null,
+              )}
+            {selectedEntries.length > 3 ? (
+              <span className="relative z-30 flex size-4 items-center justify-center rounded-full bg-(--chat-composer-glass-surface,var(--background)) text-3xs ring-2 ring-(--chat-composer-glass-surface,var(--background))">
+                +{selectedEntries.length - 3}
+              </span>
+            ) : null}
+          </span>
+        ) : triggerEntry && props.triggerLabel === undefined ? (
+          // The mark gives way before the model name is cut short (modelChipFit.ts).
+          <span
+            className="relative flex shrink-0 items-center"
+            data-chat-provider-model-picker-icon=""
+            {...(parts ? { "data-model-chip-part": "mark" } : {})}
+          >
+            <ProviderInstanceIcon
+              driverKind={triggerEntry.driverKind}
+              displayName={triggerEntry.displayName}
+              accentColor={triggerEntry.accentColor}
+              acpRegistryAgentId={triggerEntry.acpRegistryAgentId}
+              acpRegistryIconUrl={triggerEntry.acpRegistryIconUrl}
+              showBadge={showInstanceBadge && !accountTag}
+              className="size-4"
+              iconClassName={cn("size-4", props.activeProviderIconClassName)}
+              indicatorBackground={props.instanceIndicatorBackground ?? "var(--contrast-input)"}
+              badgeClassName={cn(
+                "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs",
+                size === "xs" && "shadow-none",
+              )}
+            />
+            {parts && selectedUsage && selectedUsageCopy ? (
+              <ModelUsageMarkRing state={selectedUsage} text={selectedUsageCopy} />
+            ) : null}
+          </span>
+        ) : null}
+        {parts ? (
+          <>
+            {/* The mark says which provider; its name is in the tooltip and the
+                        accessible name, so the chip reads logo, model, usage ring. */}
+            <span
+              className="min-w-0 shrink! truncate font-medium text-foreground"
+              data-model-chip-part="model"
+              data-picker-model
+              aria-hidden
+            >
+              {parts.model}
+            </span>
+            {accountTag ? (
+              <span
+                className="shrink-0 rounded-full bg-foreground/8 px-1.5 text-2xs leading-4 font-medium text-muted-foreground"
+                data-model-chip-part="account"
+                aria-hidden
+              >
+                {accountTag}
+              </span>
+            ) : null}
+          </>
+        ) : (
+          <span
+            className="flex min-w-0 flex-[0_1_auto] items-center gap-1 overflow-hidden"
+            data-chat-provider-model-picker-label="true"
+          >
+            <span className="truncate">
+              {props.triggerLabel ?? multipleLabel ?? props.triggerText ?? triggerTitle}
+            </span>
+          </span>
+        )}
+        {state ? (
+          <ModelStateTag
+            state={state}
+            className="text-xs"
+            {...(parts
+              ? { chip: true }
+              : {
+                  tierClassName:
+                    "@max-[639px]/composer-surface:[&_.sws-model-state-full]:hidden @max-[639px]/composer-surface:[&_.sws-model-state-short]:inline! @max-[479px]/composer-surface:[&_.sws-model-state-short]:hidden!",
+                })}
+          />
+        ) : null}
+        {splitUsage ? null : selectedUsage && selectedUsageCopy ? (
+          <ModelUsageMeter
+            state={selectedUsage}
+            text={selectedUsageCopy}
+            nowMs={usage?.nowMs ?? Date.now()}
+            nextOnLimit={nextOnLimit}
+            {...(parts ? { chip: true } : {})}
+            {...(!parts && props.usageValueHiddenClassName
+              ? { hideValueClassName: props.usageValueHiddenClassName }
+              : {})}
+          />
+        ) : null}
+        {selectedModel?.isUnavailable &&
+        !props.triggerText &&
+        !selectedEntries &&
+        props.triggerLabel === undefined ? (
+          <Badge variant="outline" size="sm">
+            {tx("Unavailable")}
+          </Badge>
+        ) : null}
+      </span>
+      {usageDescription ? (
+        <span id={usageDescriptionId} hidden>
+          {usageDescription}
+        </span>
+      ) : null}
+    </>
+  );
+
   return (
     <Popover
       open={isMenuOpen}
@@ -389,175 +546,141 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         setIsMenuOpen(open);
       }}
     >
-      {/* The tooltip belongs to the whole control, so keyboard focus shows it too. */}
-      <Tooltip disabled={isMenuOpen}>
-        <TooltipTrigger
-          render={
-            <PopoverTrigger
+      {splitUsage ? (
+        // The chip holds two controls: the model opens the picker, the usage ring opens
+        // the account's usage. The chip itself is the group both sit in.
+        <ComposerControl
+          render={<span role="group" />}
+          aria-label={tx("Model and usage")}
+          size={size}
+          data-chat-provider-model-picker="true"
+          data-model-state={state?.kind}
+          data-model-chip-split=""
+          {...(props.disabled ? { "data-disabled": "" } : {})}
+          {...(fit ? { "data-model-chip": "", "data-model-fit": fit } : {})}
+          className={cn("min-w-0 shrink justify-between whitespace-nowrap", chipWidthClass)}
+        >
+          <Tooltip disabled={isMenuOpen}>
+            <TooltipTrigger
               render={
-                <ComposerControl
-                  aria-label={
-                    hostAriaLabel ??
-                    chipAriaLabel ??
-                    allModelNames ??
-                    (selectedUsageLabel ? `${triggerName}, ${selectedUsageLabel}` : undefined)
-                  }
+                <PopoverTrigger
+                  aria-label={triggerAriaLabel}
                   {...(usageDescription ? { "aria-describedby": usageDescriptionId } : {})}
-                  size={size}
-                  data-chat-provider-model-picker="true"
-                  data-model-state={state?.kind}
-                  {...(fit ? { "data-model-chip": "", "data-model-fit": fit } : {})}
+                  data-model-chip-main=""
                   className={cn(
-                    "min-w-0 shrink justify-between whitespace-nowrap",
-                    props.compact
-                      ? "max-w-42 shrink-0"
-                      : !props.isComposerOwned && !parts && "max-w-48 sm:max-w-56",
-                    props.triggerClassName,
-                    // The fit keeps the chip within its host; the cap only guards a
-                    // frame before the first measurement. At `name` a long model name
-                    // gives way to the host's other controls and ends in an ellipsis.
-                    parts &&
-                      (fit === "name" ? "w-auto max-w-full shrink" : "w-max max-w-full shrink-0"),
+                    "flex min-w-0 flex-1 cursor-pointer items-center self-stretch rounded-(--control-radius) outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    size === "xs" ? "-ms-1.75 ps-1.75" : "-ms-2.5 ps-2.5",
                   )}
                   disabled={props.disabled}
                 />
               }
             >
-              <span
-                ref={setChipRow}
-                className={cn(
-                  "flex min-w-0 flex-1 items-center",
-                  size === "xs" ? "gap-1" : "gap-1.5",
-                )}
-              >
-                {selectedEntries && props.triggerLabel === undefined ? (
-                  <span className="flex shrink-0 items-center -space-x-1" aria-hidden="true">
-                    {selectedEntries
-                      .slice(0, 3)
-                      .map((selection) =>
-                        selection.entry ? (
-                          <ProviderInstanceIcon
-                            key={`${selection.instanceId}:${selection.model}`}
-                            driverKind={selection.entry.driverKind}
-                            displayName={selection.entry.displayName}
-                            accentColor={selection.entry.accentColor}
-                            acpRegistryAgentId={selection.entry.acpRegistryAgentId}
-                            acpRegistryIconUrl={selection.entry.acpRegistryIconUrl}
-                            className="size-4 rounded-full bg-(--chat-composer-glass-surface,var(--background)) ring-2 ring-(--chat-composer-glass-surface,var(--background))"
-                            iconClassName="size-4"
-                          />
-                        ) : null,
-                      )}
-                    {selectedEntries.length > 3 ? (
-                      <span className="relative z-30 flex size-4 items-center justify-center rounded-full bg-(--chat-composer-glass-surface,var(--background)) text-3xs ring-2 ring-(--chat-composer-glass-surface,var(--background))">
-                        +{selectedEntries.length - 3}
-                      </span>
-                    ) : null}
-                  </span>
-                ) : triggerEntry && props.triggerLabel === undefined ? (
-                  // The mark gives way before the model name is cut short (modelChipFit.ts).
-                  <span
-                    className="relative flex shrink-0 items-center"
-                    data-chat-provider-model-picker-icon=""
-                    {...(parts ? { "data-model-chip-part": "mark" } : {})}
-                  >
-                    <ProviderInstanceIcon
-                      driverKind={triggerEntry.driverKind}
-                      displayName={triggerEntry.displayName}
-                      accentColor={triggerEntry.accentColor}
-                      acpRegistryAgentId={triggerEntry.acpRegistryAgentId}
-                      acpRegistryIconUrl={triggerEntry.acpRegistryIconUrl}
-                      showBadge={showInstanceBadge && !accountTag}
-                      className="size-4"
-                      iconClassName={cn("size-4", props.activeProviderIconClassName)}
-                      indicatorBackground={
-                        props.instanceIndicatorBackground ?? "var(--contrast-input)"
-                      }
-                      badgeClassName={cn(
-                        "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs",
-                        size === "xs" && "shadow-none",
-                      )}
-                    />
-                    {parts && selectedUsage && selectedUsageCopy ? (
-                      <ModelUsageMarkRing state={selectedUsage} text={selectedUsageCopy} />
-                    ) : null}
-                  </span>
-                ) : null}
-                {parts ? (
-                  <>
-                    {/* The mark says which provider; its name is in the tooltip and the
-                        accessible name, so the chip reads logo, model, usage ring. */}
-                    <span
-                      className="min-w-0 shrink! truncate font-medium text-foreground"
-                      data-model-chip-part="model"
-                      data-picker-model
-                      aria-hidden
-                    >
-                      {parts.model}
-                    </span>
-                    {accountTag ? (
-                      <span
-                        className="shrink-0 rounded-full bg-foreground/8 px-1.5 text-2xs leading-4 font-medium text-muted-foreground"
-                        data-model-chip-part="account"
-                        aria-hidden
-                      >
-                        {accountTag}
-                      </span>
-                    ) : null}
-                  </>
-                ) : (
-                  <span
-                    className="flex min-w-0 flex-[0_1_auto] items-center gap-1 overflow-hidden"
-                    data-chat-provider-model-picker-label="true"
-                  >
-                    <span className="truncate">
-                      {props.triggerLabel ?? multipleLabel ?? props.triggerText ?? triggerTitle}
-                    </span>
-                  </span>
-                )}
-                {state ? (
-                  <ModelStateTag
-                    state={state}
-                    className="text-xs"
-                    {...(parts
-                      ? { chip: true }
-                      : {
-                          tierClassName:
-                            "@max-[639px]/composer-surface:[&_.sws-model-state-full]:hidden @max-[639px]/composer-surface:[&_.sws-model-state-short]:inline! @max-[479px]/composer-surface:[&_.sws-model-state-short]:hidden!",
-                        })}
+              {chipRowContent}
+            </TooltipTrigger>
+            <TooltipPopup side="top">{tooltip}</TooltipPopup>
+          </Tooltip>
+          <Popover open={isUsageOpen} onOpenChange={setIsUsageOpen}>
+            <Tooltip disabled={isUsageOpen}>
+              <TooltipTrigger
+                render={
+                  <PopoverTrigger
+                    aria-label={tx("Usage: {usage}. Show usage", {
+                      usage: selectedUsageLabel ?? "",
+                    })}
+                    data-model-chip-part="usage-ring"
+                    data-model-usage-button=""
+                    className={cn(
+                      "flex shrink-0 cursor-pointer items-center self-stretch rounded-(--control-radius) tabular-nums outline-none hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-w-11 pointer-coarse:justify-center",
+                      size === "xs"
+                        ? "-me-1.75 gap-1 ps-0.5 pe-1.75"
+                        : "-me-2.5 gap-1.5 ps-1 pe-2.5",
+                    )}
+                    disabled={props.disabled}
                   />
-                ) : null}
+                }
+              >
                 {selectedUsage && selectedUsageCopy ? (
                   <ModelUsageMeter
                     state={selectedUsage}
                     text={selectedUsageCopy}
                     nowMs={usage?.nowMs ?? Date.now()}
                     nextOnLimit={nextOnLimit}
-                    {...(parts ? { chip: true } : {})}
-                    {...(!parts && props.usageValueHiddenClassName
-                      ? { hideValueClassName: props.usageValueHiddenClassName }
-                      : {})}
+                    chip
+                    ringPart={false}
                   />
                 ) : null}
-                {selectedModel?.isUnavailable &&
-                !props.triggerText &&
-                !selectedEntries &&
-                props.triggerLabel === undefined ? (
-                  <Badge variant="outline" size="sm">
-                    {tx("Unavailable")}
-                  </Badge>
-                ) : null}
-              </span>
-              {usageDescription ? (
-                <span id={usageDescriptionId} hidden>
-                  {usageDescription}
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                <span className="flex max-w-72 flex-col gap-0.5">
+                  <span>{selectedUsageText ?? selectedUsageLabel}</span>
+                  <span className="text-muted-foreground">{tx("Click for usage and resets")}</span>
                 </span>
+              </TooltipPopup>
+            </Tooltip>
+            <PopoverPopup
+              {...(props.isComposerOwned ? composerFloatingLayerProps : {})}
+              side="top"
+              align="end"
+              collisionAvoidance={PICKER_COLLISION_AVOIDANCE}
+              className="max-h-(--available-height) before:hidden"
+              padding="none"
+              data-model-usage-popup=""
+            >
+              {isUsageOpen ? (
+                props.secondaryView ? (
+                  <div
+                    className="w-screen max-w-[min(26rem,calc(100vw-1.5rem))] p-3"
+                    data-sws-picker=""
+                  >
+                    {props.secondaryView.render({
+                      back: () => {
+                        setIsUsageOpen(false);
+                        setIsMenuOpen(true);
+                      },
+                      close: () => setIsUsageOpen(false),
+                    })}
+                  </div>
+                ) : usage && triggerEntry ? (
+                  <div
+                    className="w-screen max-w-[min(22rem,calc(100vw-1.5rem))]"
+                    data-sws-picker=""
+                  >
+                    <ModelPickerUsageBand entry={triggerEntry} usage={usage} />
+                  </div>
+                ) : null
               ) : null}
-            </PopoverTrigger>
-          }
-        />
-        <TooltipPopup side="top">{tooltip}</TooltipPopup>
-      </Tooltip>
+            </PopoverPopup>
+          </Popover>
+        </ComposerControl>
+      ) : (
+        // The tooltip belongs to the whole control, so keyboard focus shows it too.
+        <Tooltip disabled={isMenuOpen}>
+          <TooltipTrigger
+            render={
+              <PopoverTrigger
+                render={
+                  <ComposerControl
+                    aria-label={triggerAriaLabel}
+                    {...(usageDescription ? { "aria-describedby": usageDescriptionId } : {})}
+                    size={size}
+                    data-chat-provider-model-picker="true"
+                    data-model-state={state?.kind}
+                    {...(fit ? { "data-model-chip": "", "data-model-fit": fit } : {})}
+                    className={cn(
+                      "min-w-0 shrink justify-between whitespace-nowrap",
+                      chipWidthClass,
+                    )}
+                    disabled={props.disabled}
+                  />
+                }
+              >
+                {chipRowContent}
+              </PopoverTrigger>
+            }
+          />
+          <TooltipPopup side="top">{tooltip}</TooltipPopup>
+        </Tooltip>
+      )}
       <PopoverPopup
         {...(props.isComposerOwned ? composerFloatingLayerProps : {})}
         align="start"

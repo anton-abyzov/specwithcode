@@ -385,6 +385,10 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 [data-model-chip] [data-model-chip-part="mark"] {
   display: flex;
 }
+/* A split chip's usage ring is a button of its own; it keeps its flex row. */
+[data-model-chip] [data-model-usage-button] {
+  display: flex;
+}
 /* The ring and the number sit in the chip's row as parts of their own. */
 [data-model-chip] [data-model-usage-meter] {
   display: contents;
