@@ -172,11 +172,9 @@ export function reviewDelegationTarget(input: ReviewDelegationInput): ReviewDele
     providers: input.providers,
     author: input.author,
     reviewers: order,
-    // The order is already expanded; only the person's list or a policy-pinned model is consent.
-    consented:
-      policy?.model !== undefined
-        ? policyModelSelections(input.providers, policy.model)
-        : input.reviewers,
+    // The order is already expanded; only accounts the person listed are consent to unknown
+    // billing or Gemini spend. A policy names a model, never an account to pay through.
+    consented: input.reviewers,
     tier: input.tier,
     tiers: input.tiers,
     excludedModels: input.excludedModels,

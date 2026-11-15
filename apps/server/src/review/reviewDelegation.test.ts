@@ -97,6 +97,19 @@ describe("reviewDelegationTarget", () => {
     expect(decision.kind).toBe("none");
   });
 
+  it("a policy-pinned model never consents an unknown-billing account that serves it", () => {
+    const unknownAgent = provider("acpAgent", "acpRegistry", ["gpt-6.1-sol"], null);
+    const decision = reviewDelegationTarget({
+      ...base,
+      providers: [claude, unknownAgent, codexRoom],
+      reviewers: [],
+      policy: { family: "openai", model: "gpt-6.1-sol", depth: "deep", required: true },
+    });
+    expect(decision.kind).toBe("pick");
+    if (decision.kind === "none") return;
+    expect(decision.selection).toEqual(sel("codex", "gpt-6.1-sol"));
+  });
+
   it("refuses with reasons instead of falling back to the author's family when OpenAI has no room", () => {
     const decision = reviewDelegationTarget({
       ...base,
