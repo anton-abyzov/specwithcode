@@ -270,15 +270,31 @@ export function tierModelFor(
 const VERSIONED_SLUG = /^(.*[a-z])-(\d{1,3}(?:[.-]\d{1,3})*)$/;
 
 /**
+ * Names that follow the version in a slug and name the model line, not a
+ * variant: `gpt-6.1-sol` is the Sol line at 6.1. Each is its own family, so
+ * Sol never follows into Astra. A word not listed here (`mini`, `preview`)
+ * leaves the slug without a family.
+ */
+export const MODEL_CODENAMES: ReadonlyArray<string> = ["sol", "astra", "luna", "carbon"];
+
+const CODENAME_SLUG = new RegExp(
+  `^(.*[a-z])-(\\d{1,3}(?:[.-]\\d{1,3})*)-(${MODEL_CODENAMES.join("|")})$`,
+);
+
+/**
  * A slug's family (name stem) and release version: `claude-fable-5-2` is
- * `claude-fable` 5.2. Slugs without a trailing version (`gpt-6-astra`) and
- * dated snapshots (`claude-haiku-4-5-20251001`) have none.
+ * `claude-fable` 5.2 and `gpt-6.1-sol` is `gpt-sol` 6.1. Other slugs without
+ * a trailing version and dated snapshots (`claude-haiku-4-5-20251001`) have
+ * none.
  */
 export function modelFamily(
   slug: string,
 ): { readonly stem: string; readonly version: ReadonlyArray<number> } | null {
+  const versions = (text: string) => text.split(/[.-]/).map(Number);
   const match = VERSIONED_SLUG.exec(slug);
-  return match ? { stem: match[1]!, version: match[2]!.split(/[.-]/).map(Number) } : null;
+  if (match) return { stem: match[1]!, version: versions(match[2]!) };
+  const named = CODENAME_SLUG.exec(slug);
+  return named ? { stem: `${named[1]!}-${named[3]!}`, version: versions(named[2]!) } : null;
 }
 
 /** Positive when release `a` is newer than `b`. */
@@ -313,20 +329,34 @@ export function newestOfFamily(
 }
 
 /**
- * The newest listed release of `slug`'s family when it is newer than `slug`
- * and billed the same way, else undefined: choosing a model never consents to
+ * The release that replaces `slug` on `provider`: the successor the model
+ * manifest names, else the newest listed release of its family when that is
+ * newer. Only one billed the same way, else undefined: choosing a model never consents to
  * a release that costs money or reports unknown billing.
  */
 export function newerOfFamily(
   provider: Pick<ServerProvider, "models">,
   slug: string,
 ): string | undefined {
+  const sameBilling = (other: string) =>
+    providerModelBilling(provider, other) === providerModelBilling(provider, slug);
+  // A successor the model manifest names leads: a new line with a new name
+  // has no family in common with the one it replaces.
+  let successor: string | undefined;
+  const visited = new Set([slug]);
+  for (let at = slug; ; ) {
+    const next = provider.models.find(
+      (model) => !model.isCustom && model.succeeds === at && !visited.has(model.slug),
+    );
+    if (next === undefined || !sameBilling(next.slug)) break;
+    visited.add(next.slug);
+    successor = at = next.slug;
+  }
+  if (successor !== undefined) return newerOfFamily(provider, successor) ?? successor;
   const newest = newestOfFamily(provider, slug);
   const [a, b] = [newest && modelFamily(newest), modelFamily(slug)];
-  if (!a || !b || compareModelVersions(a.version, b.version) <= 0) return undefined;
-  return providerModelBilling(provider, newest) === providerModelBilling(provider, slug)
-    ? newest
-    : undefined;
+  if (!newest || !a || !b || compareModelVersions(a.version, b.version) <= 0) return undefined;
+  return sameBilling(newest) ? newest : undefined;
 }
 
 /**

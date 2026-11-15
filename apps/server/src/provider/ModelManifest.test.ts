@@ -30,6 +30,31 @@ const model = (overrides: Partial<ServerProviderModel>): ServerProviderModel => 
 });
 
 describe("classifyModels", () => {
+  it("carries the manifest's successor onto the model and drops it when switched off", () => {
+    const manifest: ModelManifest.ModelManifestData = {
+      version: 1,
+      currentModels: { codex: ["gpt-next", "gpt-test"] },
+      providers: {
+        codex: {
+          profiles: {},
+          models: [{ slug: "gpt-next", name: "Next", status: "current", succeeds: "gpt-test" }],
+        },
+      },
+    };
+    const models = [model({ slug: "gpt-next" }), model()];
+    assert.deepStrictEqual(
+      ModelManifest.classifyModels(models, manifest, CODEX).map((entry) => entry.succeeds),
+      ["gpt-test", undefined],
+    );
+    assert.deepStrictEqual(
+      ModelManifest.classifyModels(
+        [model({ slug: "gpt-next", succeeds: "gpt-test" })],
+        { ...manifest, successors: false },
+        CODEX,
+      ).map((entry) => "succeeds" in entry),
+      [false],
+    );
+  });
   it("classifies qualified Codex families without changing their wire ids", () => {
     const manifest: ModelManifest.ModelManifestData = {
       version: 1,

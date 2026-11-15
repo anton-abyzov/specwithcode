@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   effectiveFallbackOrder,
   followNewestReleases,
+  modelFamily,
   tierFallbackOrder,
   tierOfModel,
 } from "./modelTiers.ts";
@@ -335,5 +336,47 @@ describe("followNewestReleases", () => {
         "claude-opus-5-5",
       ),
     ).toBe("routine");
+  });
+});
+
+describe("model lines named after the version", () => {
+  it("reads a codename slug as its own family", () => {
+    expect(modelFamily("gpt-6.1-sol")).toEqual({ stem: "gpt-sol", version: [6, 1] });
+    expect(modelFamily("gpt-6-astra")).toEqual({ stem: "gpt-astra", version: [6] });
+    expect(modelFamily("gpt-6-luna")).toEqual({ stem: "gpt-luna", version: [6] });
+    expect(modelFamily("gemini-4-carbon")).toEqual({ stem: "gemini-carbon", version: [4] });
+    expect(modelFamily("muse-wonder-1.0")).toEqual({ stem: "muse-wonder", version: [1, 0] });
+    expect(modelFamily("gpt-6-mini")).toBeNull();
+  });
+
+  it("follows Sol to a newer Sol and never into Astra", () => {
+    const codex = provider("codex", "codex", ["gpt-6.1-sol", "gpt-6.2-sol", "gpt-7-astra"], null);
+    expect(followNewestReleases([sel("codex", "gpt-6.1-sol")], [codex])).toEqual([
+      sel("codex", "gpt-6.2-sol"),
+      sel("codex", "gpt-6.1-sol"),
+    ]);
+  });
+
+  it("follows a successor the manifest names, keeping the saved model behind it", () => {
+    const base = provider("codex", "codex", ["gpt-6-astra", "gpt-7-nova"], null);
+    const codex = {
+      ...base,
+      models: base.models.map((model) =>
+        model.slug === "gpt-7-nova" ? { ...model, succeeds: "gpt-6-astra" } : model,
+      ),
+    };
+    expect(followNewestReleases([sel("codex", "gpt-6-astra")], [codex])).toEqual([
+      sel("codex", "gpt-7-nova"),
+      sel("codex", "gpt-6-astra"),
+    ]);
+    const paid = {
+      ...codex,
+      models: codex.models.map((model) =>
+        model.slug === "gpt-7-nova" ? { ...model, billing: "api" as const } : model,
+      ),
+    };
+    expect(followNewestReleases([sel("codex", "gpt-6-astra")], [paid])).toEqual([
+      sel("codex", "gpt-6-astra"),
+    ]);
   });
 });
