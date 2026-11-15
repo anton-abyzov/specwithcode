@@ -157,6 +157,11 @@ export interface GitStep {
 export interface Plan {
   /** Inventory reviewed on the destination, including resolved conflict contents. */
   readonly destinationFingerprint?: string;
+  /**
+   * The origin answers the preview showed, by repository row, for repositories
+   * chosen to clone. Approve plans with them again instead of asking the network.
+   */
+  readonly cloneOrigins?: Readonly<Record<string, string | null>>;
   readonly rows: ReadonlyArray<PlanRow>;
   readonly actions: ReadonlyArray<FileAction>;
   readonly git: ReadonlyArray<GitStep>;

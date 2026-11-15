@@ -423,6 +423,15 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
       }
       if (step.kind === "clone") {
         if (!previous.some((entry) => entry.t === "cloned" && entry.path === step.repo)) {
+          // Files that were here before the copy go to the backup first, as a replaced
+          // folder does: the clone never mixes with them, and Undo puts them back.
+          const location = absoluteIn(root, step.repo);
+          const present = step.repo === "." ? null : await lstatOrNull(location);
+          if (
+            present &&
+            (!present.isDirectory() || (await NodeFSP.readdir(location)).length > 0)
+          )
+            await clear(step.repo, location, present);
           await ensureFolders(root, `${step.repo}/x`, folders);
           await journal.append({ t: "cloned", path: step.repo }, true);
           await cloneRepository(root, step, warnings);
@@ -629,8 +638,9 @@ async function cloneRepository(root: string, step: GitStep, warnings: Array<stri
   if (!step.origin)
     throw new ApplyRefusedError("git-failed", step.repo, "No origin to clone from.");
   const parent = NodePath.dirname(location);
-  // A Retry can find the folder already holding repositories nested in it; Git clones
-  // only into an empty folder, so it clones beside them and moves `.git` in.
+  // A Retry can find the folder already holding repositories nested in it (and the root
+  // can hold other entries); Git clones only into an empty folder, so it clones beside
+  // them and moves `.git` in.
   const entries = await NodeFSP.readdir(location).catch(() => [] as Array<string>);
   const into = entries.length > 0 ? NodePath.join(location, ".swc-clone") : location;
   if (into !== location) await NodeFSP.rm(into, { recursive: true, force: true });

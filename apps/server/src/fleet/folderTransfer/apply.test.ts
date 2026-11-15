@@ -727,3 +727,53 @@ describe("Apply journal durability", () => {
     expect(tree(target)).toEqual({ "zz/": "", "zz/old0.txt": "original 0\n" });
   }, 60_000);
 });
+
+describe("Clone over files already in the folder", () => {
+  it("backs the files up before cloning, so the clone holds only the repository and Undo puts them back", async () => {
+    const target = NodePath.join(base, "scratch", "clone-occupied");
+    write(NodePath.join(target, "repositories/svc-a/notes.txt"), "mine before the copy\n");
+    const copy = await prepareCopy(target);
+    const id = repoRowId("repositories/svc-a");
+    // A hosted origin the clone reads from a local bare repository.
+    const repositories = copy.manifest.header.repositories.map((repo) =>
+      repo.path === "repositories/svc-a" ? { ...repo, identity: "example.com/acme/svc-a" } : repo,
+    );
+    const destination = await scanDestination(target, copy.manifest.entries);
+    const plan = planReconcile({
+      sourceMachine: "M4MAX",
+      repositories,
+      entries: copy.manifest.entries,
+      targetRoot: target,
+      destination,
+      relations: await repositoryRelations(
+        target,
+        repositories,
+        destination.repositories,
+        (repo, commits) => copy.client.ancestry(repo, commits),
+      ),
+      caseInsensitive: destination.caseInsensitive,
+      decisions: { [id]: "take-theirs" },
+      clone: [id],
+      cloneOrigins: { [id]: NodePath.join(fixture.origins, "svc-a.git") },
+    });
+    expect(plan.git.find((step) => step.repo === "repositories/svc-a")?.kind).toBe("clone");
+    expect(planReady(plan)).toBe(true);
+    const result = await transferAndApply(copy, target, plan);
+    expect(result.checks.filter((check) => !check.ok)).toEqual([]);
+    const clone = NodePath.join(target, "repositories/svc-a");
+    expect(git(clone, "rev-parse", "HEAD")).toBe(
+      git(NodePath.join(fixture.root, "repositories/svc-a"), "rev-parse", "HEAD"),
+    );
+    expect(NodeFS.existsSync(NodePath.join(clone, "notes.txt"))).toBe(false);
+    const undo = await undoApply({
+      targetRoot: target,
+      backupRoot: NodePath.join(copy.state, "backups"),
+      journalFile: NodePath.join(copy.state, "journal.ndjson"),
+    });
+    expect(undo.problems).toEqual([]);
+    expect(NodeFS.readdirSync(clone)).toEqual(["notes.txt"]);
+    expect(NodeFS.readFileSync(NodePath.join(clone, "notes.txt"), "utf8")).toBe(
+      "mine before the copy\n",
+    );
+  }, 120_000);
+});
