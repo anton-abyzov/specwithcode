@@ -776,40 +776,49 @@ export function ProjectWorkspaceSettings({
                 )}
               </div>
               <div hidden={tab !== "environment"}>
+                {/* Use worktrees comes from the project's scoped setting, the one General
+                    shows and launches read, never the old project column. */}
+                <SettingsScopeProvider search={limitScope} onChange={keepProjectScope}>
+                  <WithProjectWorktreesSwitch>
+                    {(worktrees) => (
                 <ProjectEnvironment
-                  onOpenGeneral={() => setTab("general")}
-                  project={project}
-                  projectKey={projectKey}
-                  kind={snapshot.settings.kind ?? "code"}
-                  value={environment}
-                  revision={baseRevision}
-                  dirty={dirty}
-                  navigationBlocked={
-                    disabled || dirty || memoryDirty || environmentDraftDirty || connectionDirty
-                  }
-                  disabled={disabled}
-                  admissionBlocked={snapshot.settings.paused || snapshot.settings.archived}
-                  onChange={(v) => {
-                    change(setEnvironment, v);
-                    setEnvironmentEdited(true);
-                    // The rejected entry is being edited; the next save checks it again.
-                    if (environmentEntryError) {
-                      setEnvironmentEntryError(null);
-                      setError(null);
-                    }
-                  }}
-                  onPrepared={(revision, value) => {
-                    setBaseRevision(revision);
-                    setEnvironment(value);
-                    setEnvironmentEdited(false);
-                    onSaved();
-                  }}
-                  onDraftChange={setEnvironmentDraftDirty}
-                  onBusyChange={setEnvironmentBusy}
-                  entryError={environmentEntryError}
-                  onFieldErrorsChange={reportFieldErrors}
-                  resetKey={discards}
-                />
+                        useWorktrees={worktrees.on}
+                        onOpenGeneral={() => setTab("general")}
+                        project={project}
+                        projectKey={projectKey}
+                        kind={snapshot.settings.kind ?? "code"}
+                        value={environment}
+                        revision={baseRevision}
+                        dirty={dirty}
+                        navigationBlocked={
+                          disabled || dirty || memoryDirty || environmentDraftDirty || connectionDirty
+                        }
+                        disabled={disabled}
+                        admissionBlocked={snapshot.settings.paused || snapshot.settings.archived}
+                        onChange={(v) => {
+                          change(setEnvironment, v);
+                          setEnvironmentEdited(true);
+                          // The rejected entry is being edited; the next save checks it again.
+                          if (environmentEntryError) {
+                            setEnvironmentEntryError(null);
+                            setError(null);
+                          }
+                        }}
+                        onPrepared={(revision, value) => {
+                          setBaseRevision(revision);
+                          setEnvironment(value);
+                          setEnvironmentEdited(false);
+                          onSaved();
+                        }}
+                        onDraftChange={setEnvironmentDraftDirty}
+                        onBusyChange={setEnvironmentBusy}
+                        entryError={environmentEntryError}
+                        onFieldErrorsChange={reportFieldErrors}
+                        resetKey={discards}
+                      />
+                    )}
+                  </WithProjectWorktreesSwitch>
+                </SettingsScopeProvider>
                 <ProjectConnections
                   environmentId={project.environmentId}
                   projectId={project.id}

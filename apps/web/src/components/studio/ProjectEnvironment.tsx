@@ -53,6 +53,7 @@ export function ProjectEnvironment({
   onFieldErrorsChange,
   resetKey = 0,
   onOpenGeneral,
+  useWorktrees,
 }: {
   project: EnvironmentProject;
   projectKey: string;
@@ -75,6 +76,11 @@ export function ProjectEnvironment({
   resetKey?: number;
   /** Opens the General tab, where the Use worktrees switch is. */
   onOpenGeneral?: () => void;
+  /**
+   * The project's Use worktrees switch as General shows it and launches use it
+   * (`useProjectWorktreesSwitch`); null for Percy or while checkouts disagree.
+   */
+  useWorktrees: boolean | null;
 }) {
   const countId = useId();
   // "Check again" walks the folder anew; until then the server's shared list is used.
@@ -323,7 +329,7 @@ export function ProjectEnvironment({
           <ProjectRepositoryList
             read={read}
             saved={value.repositories}
-            useWorktrees={kind === "personal" ? null : project.defaultThreadEnvMode === "worktree"}
+            useWorktrees={kind === "personal" ? null : useWorktrees}
             disabled={blocked}
             cloneDisabled={blocked || admissionBlocked || dirty}
             busyKey={busy}
