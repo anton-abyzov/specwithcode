@@ -516,3 +516,79 @@ export function sheetSlug(title: string): string {
     .replace(/-+$/g, "");
   return slug.length > 0 ? slug : "sheet";
 }
+
+/**
+ * Lay an update over a saved sheet: tabs match by name, an update's cells,
+ * formats and styles go over the saved ones, and an empty string clears a
+ * cell. Charts, chips and widths are replaced when the update names them. The
+ * result still has to pass validateSheetDocument.
+ */
+export function mergeSheetInput(base: SheetDocument, update: unknown): unknown {
+  if (!isRecord(update)) return update;
+  const tabs: unknown[] = base.tabs.map((tab) => ({ ...tab }));
+  const updates = Array.isArray(update.tabs) ? update.tabs : [];
+  for (const next of updates) {
+    if (!isRecord(next) || typeof next.name !== "string") {
+      tabs.push(next);
+      continue;
+    }
+    const key = next.name.trim().toLowerCase();
+    const index = base.tabs.findIndex((tab) => tab.name.toLowerCase() === key);
+    if (index < 0) {
+      tabs.push(next);
+      continue;
+    }
+    const saved = base.tabs[index]!;
+    const cells: Record<string, unknown> = { ...saved.cells };
+    if (isRecord(next.cells)) {
+      for (const [cell, input] of Object.entries(next.cells)) {
+        const address = parseCellAddress(cell);
+        const name = address ? cellName(address) : cell;
+        if (input === "" || input === null) delete cells[name];
+        else cells[name] = input;
+      }
+    }
+    tabs[index] = {
+      ...saved,
+      cells,
+      ...(isRecord(next.formats) ? { formats: { ...saved.formats, ...next.formats } } : {}),
+      ...(isRecord(next.styles) ? { styles: { ...saved.styles, ...next.styles } } : {}),
+      ...(next.chips !== undefined ? { chips: next.chips } : {}),
+      ...(next.widths !== undefined ? { widths: next.widths } : {}),
+      ...(next.charts !== undefined ? { charts: next.charts } : {}),
+    };
+  }
+  return {
+    title:
+      typeof update.title === "string" && update.title.trim().length > 0
+        ? update.title
+        : base.title,
+    designSystem: update.designSystem ?? base.designSystem,
+    tabs,
+  };
+}
+
+/** The filled rectangle of a tab, or null when it is empty. */
+export function usedRange(tab: SheetTab): CellRange | null {
+  let range: CellRange | null = null;
+  for (const name of Object.keys(tab.cells)) {
+    const address = parseCellAddress(name);
+    if (!address) continue;
+    range =
+      range === null
+        ? { start: address, end: address }
+        : {
+            start: {
+              col: Math.min(range.start.col, address.col),
+              row: Math.min(range.start.row, address.row),
+            },
+            end: {
+              col: Math.max(range.end.col, address.col),
+              row: Math.max(range.end.row, address.row),
+            },
+          };
+  }
+  return range;
+}
+
+export const SHEET_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,59}$/;

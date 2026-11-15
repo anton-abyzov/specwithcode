@@ -437,7 +437,7 @@ function leadsOutside(relativePath: string): ProjectLibraryProblem {
  * the opened file must be the one found at that path with no link on the
  * way, before (when it exists) and after the open.
  */
-async function openInside(
+export async function openInside(
   realRoot: string,
   relativePath: string,
   flags: number,

@@ -1,0 +1,337 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The fixture project folder is laid out with node:fs.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import { afterAll, expect, it } from "@effect/vitest";
+import {
+  EnvironmentId,
+  ProjectLibraryError,
+  ProviderInstanceId,
+  ThreadId,
+} from "@specweave-studio/contracts";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
+
+import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as OfficeArtifactService from "../../../project/OfficeArtifactService.ts";
+import { readSheetArtifact, writeSheetArtifact } from "../../../project/OfficeArtifacts.ts";
+import { ProjectLibraryProblem } from "../../../project/ProjectLibrary.ts";
+import * as Context from "../../McpInvocationContext.ts";
+import * as Access from "../../McpToolAccess.ts";
+import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
+import * as Handlers from "./handlers.ts";
+import { OfficeToolkit } from "./tools.ts";
+
+const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "office-mcp-"));
+const outside = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "office-mcp-outside-"));
+afterAll(() => {
+  NodeFS.rmSync(root, { recursive: true, force: true });
+  NodeFS.rmSync(outside, { recursive: true, force: true });
+});
+NodeFS.mkdirSync(NodePath.join(root, ".specweave"), { recursive: true });
+
+const caller = liveThreadShell(ThreadId.make("office-worker"));
+const scopeFor = (provider: string): Context.McpInvocationScope => ({
+  environmentId: EnvironmentId.make("fixture"),
+  requestNamespace: "fixture",
+  thread: {
+    threadId: caller.id,
+    providerSessionId: "fixture",
+    providerInstanceId: ProviderInstanceId.make(provider),
+  },
+  client: undefined,
+  issuedAt: 0,
+  capabilities: new Set(["orchestration" as const]),
+});
+const scope = scopeFor("codex");
+
+const problem = (projectId: ProjectLibraryError["projectId"]) => (error: unknown) =>
+  new ProjectLibraryError({
+    projectId,
+    code: error instanceof ProjectLibraryProblem ? error.code : "operation_failed",
+    detail: error instanceof Error ? error.message : "failed",
+  });
+
+/** The real file reader and writer behind the service, over a fixture project. */
+const sheetsIn = (folder: string) =>
+  Layer.mock(OfficeArtifactService.OfficeArtifactService)({
+    writeSheet: (input) =>
+      Effect.tryPromise({
+        try: () =>
+          writeSheetArtifact(folder, input.sheet, { name: input.name, merge: input.merge }),
+        catch: problem(input.projectId),
+      }),
+    readSheet: (input) =>
+      Effect.tryPromise({
+        try: () => readSheetArtifact(folder, input.name),
+        catch: problem(input.projectId),
+      }),
+  });
+
+const layerFor = (
+  invocation: Context.McpInvocationScope,
+  shell: ReturnType<typeof liveThreadShell> = caller,
+  folder: string = root,
+) =>
+  Access.HandlersLayer.layer(Handlers.layer).pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        sheetsIn(folder),
+        Layer.mock(Threads.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(shell),
+        }),
+        Layer.succeed(Context.McpInvocationContext, invocation),
+      ),
+    ),
+  );
+
+const call = (tool: "sheet_write" | "sheet_read", input: Record<string, unknown>) =>
+  Effect.gen(function* () {
+    const toolkit = yield* OfficeToolkit;
+    return yield* toolkit.handle(tool, input as never).pipe(
+      Stream.unwrap,
+      Stream.runCollect,
+      Effect.map((parts) => parts.at(-1)?.result as Record<string, unknown>),
+    );
+  });
+
+const BUDGET = {
+  title: "Q3 Budget",
+  tabs: [
+    {
+      name: "Plan",
+      cells: {
+        A1: "Line",
+        B1: "Amount",
+        A2: "Rent",
+        B2: 2150,
+        A3: "Food",
+        B3: 1024.51,
+        A4: "Total",
+        B4: "=SUM(B2:B3)",
+        A5: "Rent share",
+        B5: "=B2/B4",
+      },
+      formats: {
+        "B2:B4": { kind: "currency", currency: "USD" },
+        B5: { kind: "percent", decimals: 1 },
+      },
+      charts: [
+        {
+          type: "donut",
+          title: "Rent is two thirds of spending",
+          labels: "A2:A3",
+          values: "B2:B3",
+        },
+      ],
+    },
+  ],
+};
+
+it.effect("writes a sheet into the project's artifacts folder and reads its computed values", () =>
+  Effect.gen(function* () {
+    const saved = yield* call("sheet_write", BUDGET);
+    const path = NodePath.join(root, ".specweave/artifacts/q3-budget.sheet.json");
+    expect(saved).toMatchObject({
+      name: "q3-budget",
+      path,
+      relativePath: ".specweave/artifacts/q3-budget.sheet.json",
+      title: "Q3 Budget",
+      link: `[Q3 Budget](${path})`,
+      created: true,
+      tabs: ["Plan"],
+      cells: 10,
+      formulas: 2,
+      charts: 1,
+      errors: [],
+    });
+    const stored = JSON.parse(NodeFS.readFileSync(path, "utf8"));
+    expect(stored).toMatchObject({ v: 1, kind: "sheet", title: "Q3 Budget" });
+    expect(NodeFS.readdirSync(NodePath.dirname(path))).toEqual(["q3-budget.sheet.json"]);
+
+    const read = yield* call("sheet_read", { name: "q3-budget" });
+    expect(read).toMatchObject({
+      title: "Q3 Budget",
+      tab: "Plan",
+      range: "A1:B5",
+      truncated: false,
+    });
+    const cells = read.cells as Array<Record<string, unknown>>;
+    expect(cells.find((cell) => cell.cell === "B4")).toEqual({
+      cell: "B4",
+      value: 3174.51,
+      text: "$3,174.51",
+      formula: "=SUM(B2:B3)",
+    });
+    expect(cells.find((cell) => cell.cell === "B5")).toMatchObject({ text: "67.7%" });
+    expect(read.charts).toEqual([
+      {
+        id: "chart-1",
+        type: "donut",
+        title: "Rent is two thirds of spending",
+        points: [
+          { label: "Rent", value: 2150 },
+          { label: "Food", value: 1024.51 },
+        ],
+      },
+    ]);
+  }).pipe(Effect.provide(layerFor(scope))),
+);
+
+it.effect("merges an update over the saved sheet and reports formula errors", () =>
+  Effect.gen(function* () {
+    yield* call("sheet_write", { ...BUDGET, name: "merge-me" });
+    const merged = yield* call("sheet_write", {
+      name: "merge-me",
+      merge: true,
+      tabs: [
+        { name: "Plan", cells: { B2: 3000, A5: "", B5: "", C1: "=B4/0" } },
+        { name: "Notes", cells: { A1: "=Plan!B4" } },
+      ],
+    });
+    expect(merged).toMatchObject({
+      created: false,
+      title: "Q3 Budget",
+      tabs: ["Plan", "Notes"],
+      cells: 10,
+      charts: 1,
+      errors: [{ cell: "Plan!C1", error: "#DIV/0!" }],
+    });
+    const notes = yield* call("sheet_read", { name: "merge-me", tab: "notes" });
+    expect((notes.cells as Array<Record<string, unknown>>)[0]).toMatchObject({ value: 4024.51 });
+    expect(yield* call("sheet_write", { name: "absent", merge: true, tabs: [] })).toMatchObject({
+      code: "invalid_request",
+      message: "No sheet named absent to update.",
+    });
+  }).pipe(Effect.provide(layerFor(scope))),
+);
+
+it.effect("behaves the same for every provider", () =>
+  Effect.gen(function* () {
+    const results: Array<Record<string, unknown>> = [];
+    for (const provider of ["codex", "claudeAgent", "muse", "acpRegistry_gemini"]) {
+      const instanceId = ProviderInstanceId.make(provider);
+      const shell = {
+        ...caller,
+        providerInstanceId: instanceId,
+        modelSelection: { instanceId, model: "any-model" },
+      };
+      results.push(
+        yield* call("sheet_write", { ...BUDGET, name: "same" }).pipe(
+          Effect.provide(layerFor(scopeFor(provider), shell)),
+        ),
+      );
+    }
+    const [first, ...rest] = results.map((result) => ({ ...result, created: true }));
+    for (const other of rest) expect(other).toEqual(first);
+  }),
+);
+
+it.effect("refuses names that leave the folder, bad input and limits, naming each", () =>
+  Effect.gen(function* () {
+    for (const name of ["../escape", "a/b", "..", "/etc/passwd", "UPPER case", ".hidden"]) {
+      expect(yield* call("sheet_write", { ...BUDGET, name }), name).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("A sheet name is lower-case letters"),
+      });
+      expect(yield* call("sheet_read", { name }), name).toMatchObject({ code: "invalid_request" });
+    }
+    expect(yield* call("sheet_write", { tabs: BUDGET.tabs })).toMatchObject({
+      code: "invalid_request",
+      message: "A new sheet needs a title. To change a saved sheet, pass its name and merge.",
+    });
+    expect(
+      yield* call("sheet_write", {
+        title: "Long",
+        tabs: [{ name: "A", cells: { A1: `=${"1+".repeat(1100)}1` } }],
+      }),
+    ).toMatchObject({
+      code: "invalid_request",
+      message: 'Tab "A": the formula in A1 is over the 2000 character limit.',
+    });
+    expect(
+      yield* call("sheet_write", { title: "Bad", tabs: [{ name: "A", cells: { "A1:B2": 1 } }] }),
+    ).toMatchObject({
+      code: "invalid_request",
+      message: 'Tab "A": "A1:B2" is not a cell address.',
+    });
+    expect(yield* call("sheet_read", { name: "nope" })).toMatchObject({
+      code: "invalid_request",
+      message: "No sheet named nope in this project.",
+    });
+    expect(yield* call("sheet_read", { name: "q3-budget", tab: "Missing" })).toMatchObject({
+      code: "invalid_request",
+      message: "No tab named Missing in this sheet. Tabs: Plan.",
+    });
+    expect(NodeFS.existsSync(NodePath.join(root, ".specweave/escape.sheet.json"))).toBe(false);
+  }).pipe(Effect.provide(layerFor(scope))),
+);
+
+it.effect("never writes or reads through a link", () =>
+  Effect.gen(function* () {
+    // The artifacts folder itself is a link to a folder outside the project.
+    const linked = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "office-mcp-linked-"));
+    NodeFS.mkdirSync(NodePath.join(linked, ".specweave"));
+    NodeFS.symlinkSync(outside, NodePath.join(linked, ".specweave/artifacts"));
+    expect(
+      yield* call("sheet_write", BUDGET).pipe(Effect.provide(layerFor(scope, caller, linked))),
+    ).toMatchObject({
+      code: "invalid_request",
+      message: ".specweave/artifacts leads outside the project.",
+    });
+    expect(NodeFS.readdirSync(outside)).toEqual([]);
+    NodeFS.rmSync(linked, { recursive: true, force: true });
+
+    // A sheet file that is a link to a file outside the project.
+    const secret = NodePath.join(outside, "secret.json");
+    NodeFS.writeFileSync(
+      secret,
+      JSON.stringify({ title: "Secret", tabs: [{ name: "S", cells: { A1: "token" } }] }),
+    );
+    NodeFS.symlinkSync(secret, NodePath.join(root, ".specweave/artifacts/leak.sheet.json"));
+    expect(yield* call("sheet_read", { name: "leak" })).toMatchObject({ code: "invalid_request" });
+    expect(yield* call("sheet_write", { ...BUDGET, name: "leak" })).toMatchObject({
+      code: "invalid_request",
+    });
+    expect(JSON.parse(NodeFS.readFileSync(secret, "utf8")).title).toBe("Secret");
+    NodeFS.unlinkSync(NodePath.join(root, ".specweave/artifacts/leak.sheet.json"));
+  }).pipe(Effect.provide(layerFor(scope))),
+);
+
+it.effect("refuses a thread that plans or asks before it edits files, but lets it read", () =>
+  Effect.gen(function* () {
+    const approval = liveThreadShell(caller.id, { runtimeMode: "approval-required" });
+    expect(
+      yield* call("sheet_write", BUDGET).pipe(Effect.provide(layerFor(scope, approval))),
+    ).toMatchObject({
+      code: "capability_denied",
+      message: expect.stringContaining("This thread asks before it changes files."),
+    });
+    const plan = liveThreadShell(caller.id, {
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+    });
+    expect(
+      yield* call("sheet_write", BUDGET).pipe(Effect.provide(layerFor(scope, plan))),
+    ).toMatchObject({
+      code: "capability_denied",
+      message: expect.stringContaining("Plan mode cannot write files."),
+    });
+    expect(
+      yield* call("sheet_read", { name: "q3-budget" }).pipe(Effect.provide(layerFor(scope, plan))),
+    ).toMatchObject({ title: "Q3 Budget" });
+  }),
+);
+
+it.effect("refuses an MCP client outside a thread", () =>
+  Effect.gen(function* () {
+    expect(yield* call("sheet_write", BUDGET)).toMatchObject({
+      code: "thread_credential_required",
+    });
+    expect(yield* call("sheet_read", { name: "q3-budget" })).toMatchObject({
+      code: "thread_credential_required",
+    });
+  }).pipe(Effect.provide(layerFor({ ...scope, thread: undefined }))),
+);
