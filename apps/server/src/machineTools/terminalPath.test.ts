@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Real temp homes: atomic writes, bytes, FIFOs.
+// @effect-diagnostics globalDate:off - backdating a temp file.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -230,6 +231,58 @@ describe("syncTerminalPath", () => {
     expect(JSON.parse(read(terminalPathStateFile(home)))).toEqual({
       files: [NodePath.join(home, ".bash_profile")],
     });
+  });
+
+  it("remembers a deleted block across a shell switch and back", async () => {
+    touch(NodePath.join(home, ".local/bin/claude"));
+    await sync();
+    NodeFS.writeFileSync(zprofile(), "# mine\n");
+    expect(await sync()).toBe("opted-out");
+    expect(await sync({ shell: "/bin/bash" })).toBe("added");
+    expect(await sync()).toBe("opted-out");
+    expect(read()).toBe("# mine\n");
+  });
+
+  it("keeps folders a second, duplicate block listed", async () => {
+    const other = pinned(NodePath.join(home, ".specweave-studio")).specweave;
+    touch(NodePath.join(other, "specweave"));
+    touch(NodePath.join(home, ".local/bin/claude"));
+    const first = terminalPathBlock([NodePath.join(home, ".local/bin")], home)!;
+    NodeFS.writeFileSync(zprofile(), `${first}# mine\n${terminalPathBlock([other], home)!}`);
+    expect(await sync()).toBe("updated");
+    expect(terminalPathBlockDirs(read(), home)).toEqual([NodePath.join(home, ".local/bin"), other]);
+    expect(findTerminalPathBlocks(read())).toHaveLength(1);
+  });
+
+  it("keeps the person's blank line when a block in the middle goes", () => {
+    const block = terminalPathBlock(["/a"], "/h")!;
+    expect(applyTerminalPathBlock(`para\n\n${block}after\n`, null, true).text).toBe(
+      "para\n\nafter\n",
+    );
+    expect(applyTerminalPathBlock(`para\n\n${block}`, null, true).text).toBe("para\n");
+  });
+
+  it("never edits a file the record names that is not a startup file", async () => {
+    const notes = NodePath.join(home, "notes.txt");
+    const text = `${terminalPathBlock(["/a"], home)!}keep\n`;
+    touch(notes, text);
+    touch(terminalPathStateFile(home), JSON.stringify({ files: [notes] }));
+    touch(NodePath.join(home, ".local/bin/claude"));
+    expect(await sync()).toBe("added");
+    expect(read(notes)).toBe(text);
+  });
+
+  it("sweeps temp files a crash left, not ones another writer is using", async () => {
+    touch(NodePath.join(home, ".local/bin/claude"));
+    const old = NodePath.join(home, "..zprofile.swc-old.tmp");
+    const fresh = NodePath.join(home, "..zprofile.swc-fresh.tmp");
+    touch(old);
+    touch(fresh);
+    const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    NodeFS.utimesSync(old, hourAgo, hourAgo);
+    expect(await sync()).toBe("added");
+    expect(NodeFS.existsSync(old)).toBe(false);
+    expect(NodeFS.existsSync(fresh)).toBe(true);
   });
 
   it("skips unknown shells and writes nothing when nothing is installed", async () => {

@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - plain async file I/O; Effect wraps it at startup.
+// @effect-diagnostics globalDate:off - temp file age against the wall clock.
 /**
  * Terminal commands for the tools the app installs.
  *
@@ -269,8 +270,8 @@ export function applyTerminalPathBlock(
     let from = 0;
     blocks.forEach((range, index) => {
       const before = existing.slice(from, range.from);
-      // Removing the block also takes the blank line added in front of it.
-      const gapped = block === null && before.endsWith("\n\n");
+      // Removing a block at the end also takes the blank line the add put in front of it.
+      const gapped = block === null && range.to === existing.length && before.endsWith("\n\n");
       next += gapped ? before.slice(0, -1) : before;
       if (index === 0 && block !== null) next += block;
       from = range.to;
@@ -286,6 +287,13 @@ export function applyTerminalPathBlock(
   return { text: `${existing}${gap}${block}`, action: "added" };
 }
 
+/** Every startup file terminalStartupFile can name: the only files the record may point at. */
+function knownStartupFiles(home: string): ReadonlyArray<string> {
+  return [".zprofile", ".zshrc", ".bash_profile", ".bashrc"].map((name) =>
+    NodePath.posix.join(home, name),
+  );
+}
+
 /** Startup files the app wrote a block into; "unknown" when the record cannot be read. */
 async function readState(
   home: string,
@@ -298,9 +306,11 @@ async function readState(
   try {
     const parsed: unknown = JSON.parse((await fs.readBytes(file)).toString("utf8"));
     const files = (parsed as { files?: unknown } | null)?.files;
-    return Array.isArray(files) && files.every((entry) => typeof entry === "string")
-      ? files
-      : "unknown";
+    if (!Array.isArray(files) || !files.every((entry) => typeof entry === "string"))
+      return "unknown";
+    // Anything but a known startup file is never edited, whatever the record says.
+    const known = knownStartupFiles(home);
+    return files.filter((entry) => known.includes(entry));
   } catch {
     return "unknown";
   }
@@ -324,15 +334,16 @@ const toBytes = (text: string) => Buffer.from(text, "latin1");
 const asByteString = (text: string) => Buffer.from(text, "utf8").toString("latin1");
 const fromByteString = (text: string) => Buffer.from(text, "latin1").toString("utf8");
 
-/** Take the block out of a startup file the shell no longer reads. True when none is left. */
+/**
+ * Take the block out of a startup file the shell no longer reads. True only when a block was
+ * removed: a file without one may be a deleted block, so its record stays as the opt-out.
+ */
 async function removeStaleBlock(file: string, fs: TerminalPathFs): Promise<boolean> {
   const info = await fs.inspect(file);
-  if (info.kind === "missing") return true;
-  if (!editable(info)) return false;
+  if (info.kind !== "file" || !editable(info)) return false;
   const text = (await fs.readBytes(file)).toString("latin1");
-  const { text: next, action } = applyTerminalPathBlock(text, null, true);
-  if (action === "malformed") return false;
-  if (next === null) return true;
+  const { text: next } = applyTerminalPathBlock(text, null, true);
+  if (next === null) return false;
   return fs.replace(file, toBytes(next), info.mode, info.stamp);
 }
 
@@ -355,10 +366,10 @@ export async function syncTerminalPath(input: TerminalPathInput): Promise<Termin
   const blocks = findTerminalPathBlocks(text);
   if (blocks === null) return "malformed";
 
-  const first = blocks[0];
-  const listed = first
-    ? terminalPathBlockDirs(fromByteString(text.slice(first.from, first.to)), home)
-    : [];
+  // Every block's folders: duplicates collapse into one, so none may lose another home's.
+  const listed = blocks.flatMap((range) =>
+    terminalPathBlockDirs(fromByteString(text.slice(range.from, range.to)), home),
+  );
   const own = await terminalCommandDirs(input);
   const ownRoots = ownManagedRoots(input.baseDir);
   const others: Array<string> = [];
@@ -412,6 +423,20 @@ async function inspectFile(file: string): Promise<StartupFileInfo> {
   }
 }
 
+const TEMPORARY_STALE_MS = 10 * 60 * 1000;
+
+/** Temp files a crash left behind; a fresh one may belong to another writer still at work. */
+async function sweepTemporaries(dir: string, base: string): Promise<void> {
+  const prefix = `.${base}.swc-`;
+  for (const name of await NodeFSP.readdir(dir).catch(() => [] as string[])) {
+    if (!name.startsWith(prefix) || !name.endsWith(".tmp")) continue;
+    const temporary = NodePath.join(dir, name);
+    const info = await NodeFSP.lstat(temporary).catch(() => null);
+    if (info?.isFile() && Date.now() - info.mtimeMs > TEMPORARY_STALE_MS)
+      await NodeFSP.rm(temporary, { force: true });
+  }
+}
+
 /** The real file system. */
 export const nodeTerminalPathFs: TerminalPathFs = {
   inspect: inspectFile,
@@ -423,15 +448,17 @@ export const nodeTerminalPathFs: TerminalPathFs = {
       dir,
       `.${NodePath.basename(file)}.swc-${NodeCrypto.randomUUID()}.tmp`,
     );
-    await NodeFSP.writeFile(temporary, bytes, { mode, flag: "wx" });
     try {
+      await NodeFSP.writeFile(temporary, bytes, { mode, flag: "wx" });
       await NodeFSP.chmod(temporary, mode);
-      // Someone saved the file since it was read: keep theirs and try again next pass.
+      // Someone saved the file since it was read: keep theirs and try again next pass. This
+      // narrows the window to the check and the rename; it does not lock out an editor.
       if ((await inspectFile(file)).stamp !== expected) {
         await NodeFSP.rm(temporary, { force: true });
         return false;
       }
       await NodeFSP.rename(temporary, file);
+      await sweepTemporaries(dir, NodePath.basename(file));
       return true;
     } catch (error) {
       await NodeFSP.rm(temporary, { force: true });
