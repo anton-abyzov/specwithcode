@@ -57,9 +57,7 @@ async function manifestFolder(root: string, create: boolean): Promise<string | n
 }
 
 /** The saved manifest, `null` when the project has none, or why it cannot be used. */
-export async function readManifest(
-  root: string,
-): Promise<ProjectCredentialsManifestResult | null> {
+export async function readManifest(root: string): Promise<ProjectCredentialsManifestResult | null> {
   let folder: string | null;
   try {
     folder = await manifestFolder(root, false);
@@ -81,7 +79,8 @@ export async function readManifest(
   try {
     const stat = await handle.stat();
     if (!stat.isFile()) return { ok: false, problem: "The saved list is not a regular file." };
-    if (stat.size > MAX_MANIFEST_BYTES) return { ok: false, problem: "The saved list is too large." };
+    if (stat.size > MAX_MANIFEST_BYTES)
+      return { ok: false, problem: "The saved list is too large." };
     let parsed: unknown;
     try {
       parsed = JSON.parse((await handle.readFile()).toString("utf8"));
@@ -112,7 +111,9 @@ export async function writeManifest(
   const final = NodePath.join(folder, SEGMENTS.at(-1)!);
   const existing = await NodeFSP.lstat(final).catch(() => null);
   if (existing !== null && !existing.isFile())
-    throw new ManifestRefusal("credentials.json in the project is a link or a folder; nothing was saved.");
+    throw new ManifestRefusal(
+      "credentials.json in the project is a link or a folder; nothing was saved.",
+    );
   const partial = NodePath.join(folder, `.credentials.${NodeCrypto.randomUUID()}.tmp`);
   const handle = await NodeFSP.open(
     partial,

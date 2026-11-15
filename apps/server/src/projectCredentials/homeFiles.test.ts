@@ -41,7 +41,8 @@ const read = (path: string) =>
 
 describe("home credential files", () => {
   it("names at least one for every credential in the list", () => {
-    for (const id of PROJECT_CREDENTIAL_IDS) expect(CREDENTIAL_HOME_FILES[id].length).toBeGreaterThan(0);
+    for (const id of PROJECT_CREDENTIAL_IDS)
+      expect(CREDENTIAL_HOME_FILES[id].length).toBeGreaterThan(0);
   });
 
   it("are never read for a copy, even when they exist", async () => {

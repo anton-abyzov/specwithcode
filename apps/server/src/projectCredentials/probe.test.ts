@@ -188,31 +188,39 @@ describe("probeFolders and probeEnvironment", () => {
     expect(folders).toContain("/app/gh/bin");
     expect(folders.every((folder) => NodePath.isAbsolute(folder))).toBe(true);
     expect(probeFolders({ platform: "win32", home: "C:\\Users\\me", managed: [] })).toEqual([]);
-    expect(Object.keys(probeEnvironment({ home: "/home/me", folders, inherited: {} })).sort()).toEqual(
-      [
-        "AWS_PAGER",
-        "AZURE_CORE_COLLECT_TELEMETRY",
-        "CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK",
-        "CLOUDSDK_CORE_DISABLE_PROMPTS",
-        "GH_NO_UPDATE_NOTIFIER",
-        "GH_PROMPT_DISABLED",
-        "GIT_TERMINAL_PROMPT",
-        "HOME",
-        "NO_COLOR",
-        "PATH",
-      ],
-    );
+    expect(
+      Object.keys(probeEnvironment({ home: "/home/me", folders, inherited: {} })).sort(),
+    ).toEqual([
+      "AWS_PAGER",
+      "AZURE_CORE_COLLECT_TELEMETRY",
+      "CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK",
+      "CLOUDSDK_CORE_DISABLE_PROMPTS",
+      "GH_NO_UPDATE_NOTIFIER",
+      "GH_PROMPT_DISABLED",
+      "GIT_TERMINAL_PROMPT",
+      "HOME",
+      "NO_COLOR",
+      "PATH",
+    ]);
   });
 });
 
 describe("spawnProbe", () => {
   it("keeps nothing a tool prints and stops one that hangs", async () => {
     const chatty = await tool(tools, "chatty", "#!/bin/sh\necho account-name-and-token\nexit 0\n");
-    const run = await spawnProbe(chatty, [], { cwd: base, env: { PATH: "/usr/bin:/bin" }, timeoutMs: 5000 });
+    const run = await spawnProbe(chatty, [], {
+      cwd: base,
+      env: { PATH: "/usr/bin:/bin" },
+      timeoutMs: 5000,
+    });
     expect(run).toEqual({ exitCode: 0, printed: true, timedOut: false });
     expect(JSON.stringify(run)).not.toContain("account-name");
     const hang = await tool(tools, "hang", "#!/bin/sh\nsleep 30\n");
-    const stopped = await spawnProbe(hang, [], { cwd: base, env: { PATH: "/usr/bin:/bin" }, timeoutMs: 200 });
+    const stopped = await spawnProbe(hang, [], {
+      cwd: base,
+      env: { PATH: "/usr/bin:/bin" },
+      timeoutMs: 200,
+    });
     expect(stopped.timedOut).toBe(true);
     const missing = await spawnProbe(NodePath.join(tools, "absent"), [], {
       cwd: base,

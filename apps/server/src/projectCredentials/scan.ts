@@ -113,7 +113,8 @@ export function remoteHost(url: string): string | null {
   return null;
 }
 
-const TERRAFORM_SOURCE = /\bsource\s*=\s*"((?:registry\.terraform\.io\/)?[a-z0-9-]+\/[a-z0-9-]+)"/giu;
+const TERRAFORM_SOURCE =
+  /\bsource\s*=\s*"((?:registry\.terraform\.io\/)?[a-z0-9-]+\/[a-z0-9-]+)"/giu;
 const TERRAFORM_PROVIDER = /^\s*provider\s+"([a-z0-9_-]+)"/gimu;
 const GIT_URL = /^\s*url\s*=\s*(\S+)/gimu;
 
@@ -197,7 +198,9 @@ export async function scanProjectCredentials(root: string): Promise<CredentialSc
       if (text === null) continue;
       if (kind === "terraform") {
         for (const match of text.matchAll(TERRAFORM_SOURCE)) {
-          const id = fullProviders.get(match[1]!.toLowerCase().replace(/^registry\.terraform\.io\//u, ""));
+          const id = fullProviders.get(
+            match[1]!.toLowerCase().replace(/^registry\.terraform\.io\//u, ""),
+          );
           if (id) note(id, relative);
         }
         for (const match of text.matchAll(TERRAFORM_PROVIDER)) {

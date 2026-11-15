@@ -48,7 +48,11 @@ export const layerRpcHandlers = WsProjectCredentialsRpcGroup.middleware(RpcInstr
     const rootOf = (projectId: ProjectId) =>
       projects.getById(projectId).pipe(
         Effect.mapError(
-          () => new ProjectCredentialsError({ code: "failed", reason: "The project could not be read." }),
+          () =>
+            new ProjectCredentialsError({
+              code: "failed",
+              reason: "The project could not be read.",
+            }),
         ),
         Effect.flatMap((found) =>
           Option.isNone(found)
@@ -77,7 +81,7 @@ export const layerRpcHandlers = WsProjectCredentialsRpcGroup.middleware(RpcInstr
         home,
         folders: probeFolders({ platform, home, managed }),
         projectRoots,
-        // oxlint-disable-next-line studio/no-global-process-runtime -- read once per batch, filtered to a short list in probe.ts.
+        // Read once per batch and filtered to a short list in probe.ts.
         inherited: process.env,
         spawn: spawnProbe,
       };
@@ -137,7 +141,9 @@ export const layerRpcHandlers = WsProjectCredentialsRpcGroup.middleware(RpcInstr
             });
           const shells = yield* projects
             .listShells()
-            .pipe(Effect.catch(() => Effect.succeed([] as ReadonlyArray<{ workspaceRoot: string }>)));
+            .pipe(
+              Effect.catch(() => Effect.succeed([] as ReadonlyArray<{ workspaceRoot: string }>)),
+            );
           const results = yield* Effect.tryPromise({
             try: async () =>
               gate.run(

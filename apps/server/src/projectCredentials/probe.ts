@@ -26,14 +26,27 @@ import type {
   ProjectCredentialStatus,
 } from "@specweave-studio/contracts";
 
-import { CREDENTIAL_CATALOG, type CredentialProbe, credentialEntry, signInCommand } from "./catalog.ts";
+import {
+  CREDENTIAL_CATALOG,
+  type CredentialProbe,
+  credentialEntry,
+  signInCommand,
+} from "./catalog.ts";
 
 export const PROBE_TIMEOUT_MS = 10_000;
 export const PROBE_CACHE_MS = 60_000;
 export const PROBE_BATCHES_PER_MINUTE = 6;
 
 /** Environment variables a tool may inherit: who and where, never which config or code. */
-const INHERITED = ["USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"];
+const INHERITED = [
+  "USER",
+  "LOGNAME",
+  "LANG",
+  "LC_ALL",
+  "TMPDIR",
+  "XDG_RUNTIME_DIR",
+  "DBUS_SESSION_BUS_ADDRESS",
+];
 
 /** Set for every probe: no prompts, no telemetry, no update checks. */
 const FIXED_ENV: Readonly<Record<string, string>> = {
@@ -126,7 +139,11 @@ export interface ProbeRun {
 export type ProbeSpawn = (
   path: string,
   args: ReadonlyArray<string>,
-  options: { readonly cwd: string; readonly env: Record<string, string>; readonly timeoutMs: number },
+  options: {
+    readonly cwd: string;
+    readonly env: Record<string, string>;
+    readonly timeoutMs: number;
+  },
 ) => Promise<ProbeRun>;
 
 /** Runs the tool with no shell and no terminal; what it prints is counted, not kept. */
@@ -197,7 +214,10 @@ export class ProbeBusy extends Error {}
  * cap on how many batches run in a minute. What is cached is the status word.
  */
 export class ProbeGate {
-  private readonly cache = new Map<ProjectCredentialId, { status: ProjectCredentialStatus; at: number }>();
+  private readonly cache = new Map<
+    ProjectCredentialId,
+    { status: ProjectCredentialStatus; at: number }
+  >();
   private readonly batches: Array<number> = [];
   private tail: Promise<unknown> = Promise.resolve();
   private readonly now: () => number;
@@ -234,7 +254,9 @@ export class ProbeGate {
     if (toRun.length > 0) {
       while (this.batches.length > 0 && now - this.batches[0]! >= 60_000) this.batches.shift();
       if (this.batches.length >= PROBE_BATCHES_PER_MINUTE)
-        throw new ProbeBusy("This machine was checked several times in the last minute. Try again in a minute.");
+        throw new ProbeBusy(
+          "This machine was checked several times in the last minute. Try again in a minute.",
+        );
       this.batches.push(now);
       const statuses = await Promise.all(toRun.map((id) => probeCredential(machine, id)));
       for (const [index, id] of toRun.entries())

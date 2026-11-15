@@ -46,7 +46,8 @@ const probe = (
 let renderer: ReactTestRenderer;
 const text = () => JSON.stringify(renderer.toJSON());
 const slot = (name: string) => renderer.root.findAll((node) => node.props["data-slot"] === name);
-const host = (nodes: Array<ReactTestInstance>) => nodes.filter((node) => typeof node.type === "string");
+const host = (nodes: Array<ReactTestInstance>) =>
+  nodes.filter((node) => typeof node.type === "string");
 const click = (node: ReactTestInstance) => act(async () => node.props.onClick());
 const flush = () => act(async () => {});
 
@@ -209,7 +210,9 @@ describe("CopyCredentialsChecklist", () => {
     calls.scan.mockResolvedValue(
       ok({ rows: [row("github")], manifestProblem: null, truncated: false }),
     );
-    calls.probe.mockResolvedValue(ok({ results: [probe("github", "not_signed_in", "gh auth login")] }));
+    calls.probe.mockResolvedValue(
+      ok({ results: [probe("github", "not_signed_in", "gh auth login")] }),
+    );
     await mount();
     await flush();
     await click(host(slot("copy-credentials-check-all"))[0]!);

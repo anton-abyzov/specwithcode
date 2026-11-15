@@ -31,7 +31,10 @@ describe("project credentials manifest", () => {
   });
 
   it("round-trips through the saved form", () => {
-    const result = parse([{ id: "kubernetes", note: "ash cluster" }, { id: "npm", skip: true }]);
+    const result = parse([
+      { id: "kubernetes", note: "ash cluster" },
+      { id: "npm", skip: true },
+    ]);
     if (!result.ok) throw new Error(result.problem);
     const again = parseProjectCredentialsManifest(
       JSON.parse(formatProjectCredentialsManifest(result.manifest)),

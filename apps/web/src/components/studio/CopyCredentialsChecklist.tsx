@@ -138,7 +138,7 @@ function Row({
           >
             {status.text}
           </p>
-          <p className="truncate text-xs text-muted-foreground" title={why}>
+          <p className="text-xs break-words text-muted-foreground">
             {why}
             {row.note ? ` · ${row.note}` : ""}
           </p>
@@ -361,7 +361,9 @@ export function CopyCredentialsList({
       )}
       {truncated && (
         <p className="text-xs text-muted-foreground">
-          {tx("This project is large, so only part of it was read. It may use more than is listed.")}
+          {tx(
+            "This project is large, so only part of it was read. It may use more than is listed.",
+          )}
         </p>
       )}
       <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -419,20 +421,28 @@ export function CopyCredentialsChecklist({
   const [state, setState] = useState<CredentialProbeState>("checking");
   const [save, setSave] = useState<CredentialSaveState>("idle");
   const request = useRef(0);
+  // The commands by reference: a caller that hands over new functions on each render
+  // must not start the list or the check again.
+  const commands = useRef({ scan, probe });
+  useEffect(() => {
+    commands.current = { scan, probe };
+  }, [scan, probe]);
 
   useEffect(() => {
     let live = true;
-    void scan({ environmentId: sourceEnvironmentId, input: { projectId } }).then((result) => {
-      // A source from before this list answers nothing: the section stays out of the way.
-      if (!live || result._tag !== "Success") return;
-      setRows(result.value.rows);
-      setProblem(result.value.manifestProblem);
-      setTruncated(result.value.truncated);
-    });
+    void commands.current
+      .scan({ environmentId: sourceEnvironmentId, input: { projectId } })
+      .then((result) => {
+        // A source from before this list answers nothing: the section stays out of the way.
+        if (!live || result._tag !== "Success") return;
+        setRows(result.value.rows);
+        setProblem(result.value.manifestProblem);
+        setTruncated(result.value.truncated);
+      });
     return () => {
       live = false;
     };
-  }, [projectId, scan, sourceEnvironmentId]);
+  }, [projectId, sourceEnvironmentId]);
 
   const ids = useMemo(() => rows.map((row) => row.id), [rows]);
   const check = useCallback(
@@ -440,7 +450,7 @@ export function CopyCredentialsChecklist({
       if (only.length === 0) return;
       const mine = ++request.current;
       setState("checking");
-      const result = await probe({
+      const result = await commands.current.probe({
         environmentId: destinationEnvironmentId,
         input: { ids: [...only], fresh },
       });
@@ -457,11 +467,10 @@ export function CopyCredentialsChecklist({
       const error = squashAtomCommandFailure(result) as { readonly code?: unknown } | null;
       setState(error?.code === "busy" ? "busy" : "unavailable");
     },
-    [destinationEnvironmentId, probe],
+    [destinationEnvironmentId],
   );
 
   useEffect(() => {
-    setProbes(new Map());
     void check(ids, false);
   }, [check, ids]);
 

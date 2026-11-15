@@ -45,7 +45,10 @@ provider "azurerm" { features {} }
 `,
   );
   await put("platform/wrangler.jsonc", `{ "name": "site" }`);
-  await put(".git/config", `[remote "origin"]\n\turl = https://someone:${TOKEN}@github.com/acme/app.git\n`);
+  await put(
+    ".git/config",
+    `[remote "origin"]\n\turl = https://someone:${TOKEN}@github.com/acme/app.git\n`,
+  );
   const npmrc = await put(".npmrc", `//registry.npmjs.org/:_authToken=${TOKEN}\n`);
   // Unreadable on purpose: the scan must list npm from the name alone.
   await NodeFSP.chmod(npmrc, 0o000);
