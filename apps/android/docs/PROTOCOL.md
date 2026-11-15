@@ -272,7 +272,7 @@ Deferred: Connect sign-in, FCM push (it needs Connect sign-in, `POST /v1/mobile/
 - permissions: `INTERNET`, `CAMERA`, and `POST_NOTIFICATIONS` (later)
 - deep link: `VIEW` for scheme `studio`, `singleTask`
 - `network_security_config` that permits cleartext, since manual LAN `http://`/`ws://` pairings are an existing product path
-- brand: indigo `#5B6CFF` adaptive icon background, DM Sans font
+- brand: indigo gradient (`#6E7DFF` to `#4A58E8`) adaptive icon background, DM Sans font
 
 **Reconnect policy** (`connection/supervisor.ts:45-63,172-200,1121-1137`):
 - Delay is a random value in `[c/2, c]`, where `c = min(300 s, 1 s·2^(failures+1))`.
