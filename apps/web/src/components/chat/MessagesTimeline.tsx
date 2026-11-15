@@ -177,9 +177,7 @@ import {
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
 import { ThreadRoutineRun } from "./ThreadRoutineRun";
-import ReactMarkdown from "react-markdown";
-import { CHAT_REMARK_GFM } from "../../markdown-gfm";
-import type { Root, RootContent } from "mdast";
+import { ReasoningPreviewMarkdown } from "./reasoningPreview";
 import { StudioWordmark } from "../StudioWordmark";
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
@@ -4906,17 +4904,10 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
               </span>
             </span>
           ) : row.entry.itemType === "reasoning" ? (
-            <ReactMarkdown
-              remarkPlugins={[
-                CHAT_REMARK_GFM,
-                [
-                  remarkThoughtPreview,
-                  row.active ? "Thinking" : thoughtLabel(row.entry.structuredPayload),
-                ],
-              ]}
-            >
-              {row.entry.detail ?? label}
-            </ReactMarkdown>
+            <ReasoningPreviewMarkdown
+              text={row.entry.detail ?? label}
+              fallback={row.active ? "Thinking" : thoughtLabel(row.entry.structuredPayload)}
+            />
           ) : (
             label
           )
@@ -6519,28 +6510,6 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
-function remarkThoughtPreview(fallback: string) {
-  return (tree: Root) => {
-    const plainText = (node: Root | RootContent): string => {
-      if (node.type === "html" || node.type === "definition") return "";
-      if ("alt" in node) return node.alt ?? "";
-      if ("value" in node) return node.value;
-      if ("children" in node) {
-        const separator = ["root", "blockquote", "list", "listItem", "table", "tableRow"].includes(
-          node.type,
-        )
-          ? " "
-          : "";
-        return node.children.map(plainText).join(separator);
-      }
-      return node.type === "break" ? " " : "";
-    };
-    tree.children = [
-      { type: "text", value: plainText(tree).replace(/\s+/g, " ").trim() || fallback },
-    ];
-  };
-}
-
 function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWorkEntry> }) {
   const ctx = use(TimelineRowCtx);
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
@@ -7148,19 +7117,14 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   ) : null}
                 </>
               ) : isReasoning && !expanded ? (
-                <ReactMarkdown
-                  remarkPlugins={[
-                    CHAT_REMARK_GFM,
-                    [
-                      remarkThoughtPreview,
-                      workEntry.toolLifecycleStatus === "inProgress"
-                        ? "Thinking"
-                        : thoughtLabel(workEntry.structuredPayload),
-                    ],
-                  ]}
-                >
-                  {workEntry.detail ?? previewText}
-                </ReactMarkdown>
+                <ReasoningPreviewMarkdown
+                  text={workEntry.detail ?? previewText}
+                  fallback={
+                    workEntry.toolLifecycleStatus === "inProgress"
+                      ? "Thinking"
+                      : thoughtLabel(workEntry.structuredPayload)
+                  }
+                />
               ) : (
                 previewText
               )}
