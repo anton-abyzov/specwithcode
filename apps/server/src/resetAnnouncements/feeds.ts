@@ -173,7 +173,13 @@ export function mergeAnnouncements(
     }
   }
   return [...byLink.values()]
-    .filter((announcement) => now - Date.parse(announcement.publishedAt) <= ANNOUNCEMENT_RETENTION_MS)
+    .filter((announcement) => {
+      const published = Date.parse(announcement.publishedAt);
+      // Also for what an earlier read saved: a post dated ahead of now is never listed.
+      return (
+        published <= now + FUTURE_ALLOWANCE_MS && now - published <= ANNOUNCEMENT_RETENTION_MS
+      );
+    })
     .toSorted(
       (left, right) =>
         Date.parse(right.publishedAt) - Date.parse(left.publishedAt) ||

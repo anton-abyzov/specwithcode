@@ -228,6 +228,15 @@ describe("quotaAlerts", () => {
     ]);
     expect(reposted).toHaveLength(1);
     expect(visibleQuotaAlerts(reposted, { [alert!.key]: alert!.periodEnd })).toEqual([]);
+    // It leads a window that resets sooner than this window does but later than the promise.
+    const other = account({
+      accountKey: "codex:team@example.com",
+      windows: [{ id: "secondary", title: "Weekly", leftPercent: 90, resetsAt: now + 30 * HOUR, long: true, durationMs: 7 * DAY }],
+    });
+    const mine = account({ driver: "claudeAgent", windows: weekly() });
+    expect(
+      quotaAlerts([other, mine], [], now, [{ ...promise, driver: "claudeAgent" }]).map((entry) => entry.kind),
+    ).toEqual(["expectedReset", "window"]);
     // Another provider's promise, an old one, and little left: nothing.
     expect(quotaAlerts([account({ windows: weekly() })], [], now, [{ ...promise, driver: "claudeAgent" }])).toEqual([]);
     expect(quotaAlerts([account({ windows: weekly() })], [], now, [{ ...promise, publishedAt: now - 25 * HOUR }])).toEqual([]);

@@ -90,6 +90,8 @@ describe("reset announcement feeds", () => {
     ]);
     // A promise never replaces the confirmed event for the same post.
     expect(mergeAnnouncements([confirmed!], [promise!], now)[0]?.kind).toBe("full_reset");
+    // A post an earlier read saved with a date ahead of now leaves too.
+    expect(mergeAnnouncements([{ ...older!, publishedAt: "2026-11-16T00:00:00.000Z" as never }], [], now)).toEqual([]);
     // Past the retention it leaves the list.
     expect(mergeAnnouncements([older!], [], now + 200 * DAY)).toEqual([]);
   });

@@ -214,7 +214,9 @@ export function quotaAlerts(
         ...base,
         key: `${accountKey}|expected`,
         // The period is the window's own: a second post about the same reset is the same
-        // warning, so a dismissal or a notification holds across reposts.
+        // warning, so a dismissal or a notification holds across reposts. A chosen limit:
+        // it also holds for a different promise posted later in the same window period,
+        // since a dismissal records a period end and not which post it was about.
         periodEnd: replaced.resetsAt,
         kind: "expectedReset",
         expectedUntil: promise.publishedAt + EXPECTED_RESET_WINDOW_MS,
@@ -277,7 +279,11 @@ export function quotaAlerts(
     });
   }
   // What is about to be lost first; an early reset is news, not a loss, so it follows.
-  const rank = (alert: QuotaAlert) => (alert.kind === "earlyReset" ? Number.MAX_SAFE_INTEGER : alert.periodEnd);
+  // An expected reset replaces its quota within a day of the post, not at the window's end.
+  const rank = (alert: QuotaAlert) =>
+    alert.kind === "earlyReset"
+      ? Number.MAX_SAFE_INTEGER
+      : (alert.expectedUntil ?? alert.periodEnd);
   return alerts.toSorted((left, right) => rank(left) - rank(right) || left.key.localeCompare(right.key));
 }
 

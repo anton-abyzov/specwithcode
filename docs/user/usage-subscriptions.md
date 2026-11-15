@@ -65,7 +65,7 @@ A banner above the project list says when a subscription is about to lose quota,
 - a banked reset in its last day;
 - when the plan also renews within a day and that window ends with it, the same line says "renews in" instead; it is one warning, so dismissing either form holds;
 - a limit the provider reset early, for six hours after it happened;
-- a reset a provider promised for today, for a subscription of that provider with at least 40% left: "Codex Pro reset expected today: 62% left on m1 will be replaced", with a link to the post. It says "expected", because a promise is not a reset. The line goes when the window starts over or a day after the post.
+- a reset a provider promised for today, for a subscription of that provider with at least 40% left: "Codex Pro reset expected today: 62% left on m1 will be replaced", with a link to the post. It says "expected", because a promise is not a reset. The line goes when the window starts over or a day after the post. Dismissing it holds until that window resets, also for another promise posted in the meantime.
 
 The banner shows the two soonest and counts the rest; a subscription takes one line. "See subscriptions" opens this page. The X dismisses the lines shown until the next reset of the windows they named. When the app is not in front and notifications are connected, each warning also raises one notification per period, on one machine: the first of the machines the account is signed in on.
 
