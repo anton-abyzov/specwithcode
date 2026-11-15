@@ -3134,6 +3134,10 @@ export const ko: PhraseCatalog = {
   "Auto balance matching projects": "일치하는 프로젝트 자동 분산",
   "Add to another machine…": "다른 컴퓨터에 추가…",
   "Copy to another machine…": "다른 컴퓨터로 복사…",
+  Link: "연결",
+  "Link with the project on {machine}…": "{machine}의 프로젝트와 연결…",
+  "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
+    "이 프로젝트와 {machine}의 프로젝트를 코디네이터가 하나인 한 프로젝트로 만듭니다. 스레드와 파일은 그대로 있습니다.",
   "Leave this machine…": "이 컴퓨터 떠나기…",
   "Another project or no project": "다른 프로젝트 또는 프로젝트 없음",
   "Rename a machine": "컴퓨터 이름 변경",
@@ -3972,7 +3976,6 @@ export const ko: PhraseCatalog = {
   "Nothing is ready on {machines}, so chats there will not start.":
     "{machines}에는 준비된 것이 없어 그곳에서는 채팅이 시작되지 않습니다.",
   "{agent} on {machine}": "{machine}의 {agent}",
-  "Can’t connect": "연결할 수 없음",
   "Catching up": "동기화 중",
   "Chats that need you": "응답이 필요한 채팅",
   "Chats that need you or are working are listed above.":
@@ -4531,14 +4534,16 @@ export const ko: PhraseCatalog = {
   "View this project on": "이 프로젝트를 볼 컴퓨터",
   "Move coordinator to {machine}…": "코디네이터를 {machine}(으)로 이동…",
   "coordinator paused": "코디네이터 일시 중지됨",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine}은(는) 이전 코디네이터를 유지하고 있으며 지금은 워커만 실행합니다. 열어서 그 대화를 읽거나 다시 실행하세요.",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
+    "{machine}은(는) 이전 코디네이터를 유지하고 있으며 지금은 워커만 실행합니다. 열어서 그 대화를 읽거나 다시 실행하세요.",
   "Machine access settings": "컴퓨터 접근 설정",
   "{machine} offline": "{machine} 오프라인",
   "workers only": "워커 전용",
   "move pending": "이동 대기 중",
-  "coordinator": "코디네이터",
+  coordinator: "코디네이터",
   "not linked": "따로 등록됨",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.": "따로 등록됨: {machine}은(는) 이 저장소에 대해 자체 코디네이터, 스레드, 메모리를 사용합니다.",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
+    "따로 등록됨: {machine}은(는) 이 저장소에 대해 자체 코디네이터, 스레드, 메모리를 사용합니다.",
   "{value}Messages go to Percy. {value2}": "{value}메시지는 Percy에게 전달됩니다. {value2}",
   "Show only topics that need you in {project}": "{project}에서 응답이 필요한 주제만 보기",
   "New topic in {title}": "{title}에서 새 주제",
@@ -4962,4 +4967,106 @@ export const ko: PhraseCatalog = {
   "Sheet tabs": "시트 탭",
   "This sheet is too large to open here.": "이 시트는 너무 커서 여기서 열 수 없습니다.",
   Sheet: "시트",
+  "Can’t reach it · retrying": "연결할 수 없음 · 재시도 중",
+  "Chats and projects not counted": "채팅과 프로젝트 미집계",
+  "Nothing running": "실행 중인 작업 없음",
+  "update available": "업데이트 가능",
+  current: "최신",
+  "{version} is available": "{version} 사용 가능",
+  "still reading {machines}": "{machines} 읽는 중",
+  "catching up": "따라잡는 중",
+  connecting: "연결 중",
+  "not reachable": "연결 불가",
+  "unable to connect": "연결할 수 없는 상태",
+  extra: "추가",
+  "Reconnecting to {machine}…": "{machine}에 다시 연결하는 중…",
+  "Catching up with {machine}…": "{machine}와 동기화하는 중…",
+  "{machine} isn't answering": "{machine}가 응답하지 않습니다",
+  "Can't reach {machine}": "{machine}에 연결할 수 없습니다",
+  "This device has no network": "이 기기는 네트워크에 연결되어 있지 않습니다",
+  "Connection to {machine} failed": "{machine} 연결에 실패했습니다",
+  "{machine} is not connected": "{machine}가 연결되어 있지 않습니다",
+  "{machine} needs an app update": "{machine}는 앱 업데이트가 필요합니다",
+  "{machine} is connected": "{machine}가 연결되었습니다",
+  "Not answering": "응답 없음",
+  "No network": "네트워크 없음",
+  "Retrying by itself": "자동으로 다시 시도하는 중",
+  "Reconnects when the network is back": "네트워크가 돌아오면 다시 연결합니다",
+  "Last answered just now": "마지막 응답: 방금",
+  "Last answered {age} ago": "마지막 응답: {age} 전",
+  "Reconnecting to this host…": "이 호스트에 다시 연결하는 중…",
+  "This host isn't answering": "이 호스트가 응답하지 않습니다",
+  "Can't reach this host": "이 호스트에 연결할 수 없습니다",
+  "Some machines can't be reached": "일부 기기에 연결할 수 없습니다",
+  "not answering": "응답 없음",
+  reconnecting: "다시 연결 중",
+  "This host is connected": "이 호스트가 연결되었습니다",
+  "Catching up with this host…": "이 호스트와 동기화하는 중…",
+  "Connection to this host failed": "이 호스트 연결에 실패했습니다",
+  "This host is not connected": "이 호스트가 연결되어 있지 않습니다",
+  "Installed, matches this app ({version}).": "설치됨, 이 앱과 같은 버전({version}).",
+  "Installed, version {version}; this app is {appVersion}.":
+    "설치됨, 버전 {version}. 이 앱은 {appVersion}입니다.",
+  "Installed.": "설치됨.",
+  "Installed, but it runs another copy of the app at {path}.":
+    "설치됨, 하지만 {path}에 있는 다른 앱 사본을 실행합니다.",
+  "The command points at a copy of the app that is gone ({path}). Repair points it at this app.":
+    "명령이 더 이상 없는 앱 사본({path})을 가리킵니다. 복구하면 이 앱을 가리킵니다.",
+  "{path} comes from the command-line install of SpecWithCode, which keeps it up to date. The app leaves it as it is.":
+    "{path}은(는) SpecWithCode 명령줄 설치에서 온 것이며 그쪽에서 최신으로 유지합니다. 앱은 그대로 둡니다.",
+  "Something else is already at {path}. The app will not replace it; move it away to install the app's command there.":
+    "{path}에 이미 다른 것이 있습니다. 앱은 이를 바꾸지 않습니다. 앱의 명령을 설치하려면 옮겨 주세요.",
+  "Not installed.": "설치되지 않음.",
+  "Open a new terminal window to use it.": "사용하려면 새 터미널 창을 여세요.",
+  "{folder} is not on your terminal's PATH yet, so a new terminal will not find the command.":
+    "{folder}이(가) 아직 터미널 PATH에 없어 새 터미널에서 명령을 찾지 못합니다.",
+  "The app could not read your terminal's PATH. If a new terminal says command not found, add this line.":
+    "앱이 터미널 PATH를 읽지 못했습니다. 새 터미널에서 command not found가 나오면 이 줄을 추가하세요.",
+  "Add it to {file}": "{file}에 추가",
+  "Adds only this line, marked as added by SpecWithCode. Remove takes it out again.":
+    "이 한 줄만 SpecWithCode 표시와 함께 추가합니다. 제거하면 다시 뺍니다.",
+  "Added to {file}. Open a new terminal window to use it.":
+    "{file}에 추가했습니다. 새 터미널 창을 여세요.",
+  "The specwithcode command is this app driven from a terminal: the same version as the app, talking to the app that is already running. It is not a second copy and needs no separate sign-in. Use it over SSH, on a machine with no screen, or in scripts and agents.":
+    "specwithcode 명령은 터미널에서 이 앱을 다루는 것입니다. 앱과 같은 버전이며 이미 실행 중인 앱과 통신합니다. 두 번째 사본이 아니고 따로 로그인할 필요도 없습니다. SSH, 화면 없는 머신, 스크립트와 에이전트에서 쓰세요.",
+  "What is this?": "이게 뭔가요?",
+  "Installing writes {path}, which runs the command inside the app, and adds {folder} to your user PATH. No administrator password.":
+    "설치하면 앱 안의 명령을 실행하는 {path}을(를) 만들고 {folder}을(를) 사용자 PATH에 추가합니다. 관리자 암호는 필요 없습니다.",
+  "Installing adds {path}, a link to the command inside the app. Nothing else changes, and no administrator password is needed.":
+    "설치하면 앱 안의 명령으로 가는 링크 {path}을(를) 추가합니다. 다른 것은 바뀌지 않으며 관리자 암호도 필요 없습니다.",
+  "Install command-line tool": "명령줄 도구 설치",
+  "Use this copy": "이 사본 사용",
+  "A different specwithcode at {path} comes first on your PATH, so a terminal runs that one instead. The app did not change it.":
+    "{path}에 있는 다른 specwithcode가 PATH에서 먼저 나와 터미널은 그것을 실행합니다. 앱은 바꾸지 않았습니다.",
+  "Command line": "명령줄",
+  "A development build has no command to install.": "개발 빌드에는 설치할 명령이 없습니다.",
+  "This copy of the app runs from a disk image or a temporary folder. Move SpecWithCode to Applications and open it from there first.":
+    "이 앱 사본은 디스크 이미지나 임시 폴더에서 실행 중입니다. 먼저 SpecWithCode를 응용 프로그램으로 옮기고 거기서 여세요.",
+  "This copy of the app has no specwithcode command inside it. Reinstall the app.":
+    "이 앱 사본에는 specwithcode 명령이 없습니다. 앱을 다시 설치하세요.",
+  "Add to PATH": "PATH에 추가",
+  "permission denied": "권한 없음",
+  "not found": "찾을 수 없음",
+  "Something changed at {path} while the app was working, so nothing was replaced. Check it and try again.":
+    "앱이 작업하는 동안 {path}가 바뀌어 아무것도 바꾸지 않았습니다. 확인한 뒤 다시 시도하세요.",
+  "The app does not know this shell's startup file. Add the line yourself.":
+    "이 셸의 시작 파일을 알 수 없습니다. 줄을 직접 추가하세요.",
+  "{path} already exists and was not changed. Add the line yourself.":
+    "{path}가 이미 있어 바꾸지 않았습니다. 줄을 직접 추가하세요.",
+  "{path} could not be read in full, so the app did not change it. Add the line yourself.":
+    "{path}를 끝까지 읽지 못해 바꾸지 않았습니다. 줄을 직접 추가하세요.",
+  "Could not change {path} ({error}). Add the line yourself.":
+    "{path}를 바꾸지 못했습니다({error}). 줄을 직접 추가하세요.",
+  "The command was removed, but the line in {path} could not be taken out ({error}). Delete the line marked Added by SpecWithCode yourself.":
+    "명령은 제거했지만 {path}의 줄을 빼지 못했습니다({error}). Added by SpecWithCode 표시가 있는 줄을 직접 지우세요.",
+  "The command was removed, but {folder} is still on your user PATH. Remove it in Environment Variables yourself.":
+    "명령은 제거했지만 {folder}가 아직 사용자 PATH에 있습니다. 환경 변수에서 직접 제거하세요.",
+  "Could not read your user PATH.": "사용자 PATH를 읽지 못했습니다.",
+  "Could not update your user PATH. Add {folder} to it yourself.":
+    "사용자 PATH를 업데이트하지 못했습니다. {folder}를 직접 추가하세요.",
+  "Your user PATH changed while the app was updating it. Nothing was changed; try again.":
+    "앱이 업데이트하는 동안 사용자 PATH가 바뀌었습니다. 아무것도 바꾸지 않았으니 다시 시도하세요.",
+  "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
+    "AppImage 경로를 명령에 쓸 수 없습니다. AppImage를 더 단순한 폴더로 옮긴 뒤 거기서 여세요.",
+  "Could not write {path} ({error}).": "{path}를 쓰지 못했습니다({error}).",
 };

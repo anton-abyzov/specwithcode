@@ -28,7 +28,10 @@ import {
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import { resolveCoordinatorModelSelection } from "@specweave-studio/shared/coordinatorDefault";
-import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import {
+  projectThreadModel,
+  resolveProjectSettings,
+} from "@specweave-studio/shared/projectSettings";
 import { useEnvironment } from "../../state/environments";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -62,9 +65,13 @@ import { ProjectConnections } from "./ProjectConnections";
 import { useProjectIconEditor } from "./ProjectIconEditor";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { CharacterCount } from "../ui/character-count";
+import { FoldedSettingsSection } from "../settings/FoldedSettingsSection";
+import { ModelTracksSettings } from "../settings/ModelTracksSettings";
 import { ProviderLimitSettings } from "../settings/ProviderLimitSettings";
+import { SettingsGroup } from "../settings/SettingsGroup";
 import { AdversarialReviewSettings } from "../settings/AdversarialReviewSettings";
 import { RecommendedModelProviders } from "../settings/RecommendedModelProviders";
+import { ThreadModelModeSetting } from "../settings/ThreadModelModeSetting";
 import { SettingsScopeProvider } from "../settings/SettingsScopeContext";
 import { SettingsSection } from "../settings/settingsLayout";
 import { ProjectOverrides } from "../settings/ProjectOverrides";
@@ -245,9 +252,12 @@ export function ProjectWorkspaceSettings({
   // The model new threads really start on: a saved project override wins over the
   // project's own field, so the picker shows it and an unchanged save keeps it.
   const effectiveWorker = hostConfig?.settings
-    ? resolveProjectSettings(hostConfig.settings, project.id, project).settings
-        .defaultModelSelection
+    ? projectThreadModel(hostConfig.settings, project.id, project)
     : project.defaultModelSelection;
+  const usesTracks =
+    hostConfig?.settings !== undefined &&
+    resolveProjectSettings(hostConfig.settings, project.id, project).settings.threadModelMode ===
+      "tracks";
   const [workerEdit, setWorker] = useState<ModelSelection | null | undefined>(undefined);
   const worker = workerEdit === undefined ? (effectiveWorker ?? null) : workerEdit;
   // What the coordinator runs on while no override is saved, in the same order as the
@@ -397,6 +407,44 @@ export function ProjectWorkspaceSettings({
   const tabs = projectSettingsTabs(personal);
   // A remembered or linked tab this project does not have.
   if (!tabs.includes(tab)) setTab("general");
+  // Percy has no Use worktrees switch, so its Environment names none.
+  const environmentPanel = (useWorktrees: boolean | null) => (
+    <ProjectEnvironment
+      useWorktrees={useWorktrees}
+      onOpenGeneral={() => setTab("general")}
+      project={project}
+      projectKey={projectKey}
+      kind={snapshot.settings.kind ?? "code"}
+      value={environment}
+      revision={baseRevision}
+      dirty={dirty}
+      navigationBlocked={
+        disabled || dirty || memoryDirty || environmentDraftDirty || connectionDirty
+      }
+      disabled={disabled}
+      admissionBlocked={snapshot.settings.paused || snapshot.settings.archived}
+      onChange={(v) => {
+        change(setEnvironment, v);
+        setEnvironmentEdited(true);
+        // The rejected entry is being edited; the next save checks it again.
+        if (environmentEntryError) {
+          setEnvironmentEntryError(null);
+          setError(null);
+        }
+      }}
+      onPrepared={(revision, value) => {
+        setBaseRevision(revision);
+        setEnvironment(value);
+        setEnvironmentEdited(false);
+        onSaved();
+      }}
+      onDraftChange={setEnvironmentDraftDirty}
+      onBusyChange={setEnvironmentBusy}
+      entryError={environmentEntryError}
+      onFieldErrorsChange={reportFieldErrors}
+      resetKey={discards}
+    />
+  );
   return (
     <Dialog
       open
@@ -572,37 +620,72 @@ export function ProjectWorkspaceSettings({
                         ? "No override saved: Percy keeps the model it runs on now, and a new Percy starts on the recommended model for topics, then the Settings > Defaults model or, without either, this host's default (Opus 5.5 on a Claude subscription when it is signed in). Pick a model to pin it."
                         : "No override saved: an existing coordinator keeps its thread model, and a new one starts on the recommended model for threads, then the Settings > Defaults model or, without either, this host's default (Opus 5.5 on a Claude subscription when it is signed in). Pick a model to pin it."}
                   </p>
-                  <ProjectModels
-                    environmentId={project.environmentId}
-                    label={say("Recommended model for threads")}
-                    title={say("Model for new threads")}
-                    value={worker}
-                    onChange={(v) => change(setWorker, v)}
-                    disabled={disabled}
-                  />
-                  <p className="project-muted">
-                    {say(
-                      "Threads the coordinator starts, including the ones a routine needs, run on this model, on whichever provider serving it has room.",
-                    )}
-                  </p>
-                  {/* One chain under the models it guards: the same model elsewhere, then the
-                      rules for another model, then recovery for a thread that stops anyway. */}
+                  {/* One scope for the project's model rules: what new threads start on, then
+                      the chain under it. */}
                   <SettingsScopeProvider search={limitScope} onChange={keepProjectScope}>
-                    <SettingsSection
-                      id="project-provider-limits"
-                      title="When a model runs out"
-                      className="pt-3"
-                    >
-                      <RecommendedModelProviders model={worker} />
-                      <ProviderLimitSettings />
-                    </SettingsSection>
-                    <SettingsSection
-                      id="project-adversarial-review"
-                      title="Adversarial review"
-                      className="pt-3"
-                    >
-                      <AdversarialReviewSettings />
-                    </SettingsSection>
+                    <ThreadModelModeSetting />
+                    {usesTracks ? (
+                      <>
+                        <p className="project-muted">
+                          {say(
+                            "Threads the coordinator starts, including the ones a routine needs, start on the top model of their track and move down the list when it runs out. Daily is regular work, Complex the hardest work, Review the adversarial reviewer.",
+                          )}
+                        </p>
+                        {/* One place for this project's models: the top of a track is where a
+                            thread starts and the rest are its fallbacks. */}
+                        <ModelTracksSettings sources={false} />
+                        <SettingsSection
+                          id="project-provider-limits"
+                          title="When a limit hits"
+                          className="pt-3"
+                        >
+                          <ProviderLimitSettings part="policy" />
+                        </SettingsSection>
+                        <FoldedSettingsSection
+                          id="project-model-advanced"
+                          title="Advanced"
+                          summary="Custom fallback order, exclusions, spending, review depth"
+                        >
+                          <SettingsGroup>
+                            <ProviderLimitSettings part="advanced" tracks />
+                            <AdversarialReviewSettings part="depth" />
+                          </SettingsGroup>
+                        </FoldedSettingsSection>
+                      </>
+                    ) : (
+                      <>
+                        <ProjectModels
+                          environmentId={project.environmentId}
+                          label={say("Recommended model for threads")}
+                          title={say("Model for new threads")}
+                          value={worker}
+                          onChange={(v) => change(setWorker, v)}
+                          disabled={disabled}
+                        />
+                        <p className="project-muted">
+                          {say(
+                            "Threads the coordinator starts, including the ones a routine needs, run on this model, on whichever provider serving it has room.",
+                          )}
+                        </p>
+                        {/* One chain under the models it guards: the same model elsewhere, then the
+                        rules for another model, then recovery for a thread that stops anyway. */}
+                        <SettingsSection
+                          id="project-provider-limits"
+                          title="When a model runs out"
+                          className="pt-3"
+                        >
+                          <RecommendedModelProviders model={worker} />
+                          <ProviderLimitSettings />
+                        </SettingsSection>
+                        <SettingsSection
+                          id="project-adversarial-review"
+                          title="Adversarial review"
+                          className="pt-3"
+                        >
+                          <AdversarialReviewSettings />
+                        </SettingsSection>
+                      </>
+                    )}
                   </SettingsScopeProvider>
                   <label className="project-checkbox">
                     <input
@@ -756,40 +839,17 @@ export function ProjectWorkspaceSettings({
                 )}
               </div>
               <div hidden={tab !== "environment"}>
-                <ProjectEnvironment
-                  onOpenGeneral={() => setTab("general")}
-                  project={project}
-                  projectKey={projectKey}
-                  kind={snapshot.settings.kind ?? "code"}
-                  value={environment}
-                  revision={baseRevision}
-                  dirty={dirty}
-                  navigationBlocked={
-                    disabled || dirty || memoryDirty || environmentDraftDirty || connectionDirty
-                  }
-                  disabled={disabled}
-                  admissionBlocked={snapshot.settings.paused || snapshot.settings.archived}
-                  onChange={(v) => {
-                    change(setEnvironment, v);
-                    setEnvironmentEdited(true);
-                    // The rejected entry is being edited; the next save checks it again.
-                    if (environmentEntryError) {
-                      setEnvironmentEntryError(null);
-                      setError(null);
-                    }
-                  }}
-                  onPrepared={(revision, value) => {
-                    setBaseRevision(revision);
-                    setEnvironment(value);
-                    setEnvironmentEdited(false);
-                    onSaved();
-                  }}
-                  onDraftChange={setEnvironmentDraftDirty}
-                  onBusyChange={setEnvironmentBusy}
-                  entryError={environmentEntryError}
-                  onFieldErrorsChange={reportFieldErrors}
-                  resetKey={discards}
-                />
+                {/* Use worktrees comes from the project's scoped setting, the one General
+                    shows and launches read, never the old project column. */}
+                {personal ? (
+                  environmentPanel(null)
+                ) : (
+                  <SettingsScopeProvider search={limitScope} onChange={keepProjectScope}>
+                    <WithProjectWorktreesSwitch>
+                      {(worktrees) => environmentPanel(worktrees.on)}
+                    </WithProjectWorktreesSwitch>
+                  </SettingsScopeProvider>
+                )}
                 <ProjectConnections
                   environmentId={project.environmentId}
                   projectId={project.id}

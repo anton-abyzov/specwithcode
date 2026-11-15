@@ -1,16 +1,25 @@
 /**
  * The project's right pane, laid out as the Claude desktop app's project
- * panel: Threads, Designs, Library, PRs and Routines tabs. Pure rules only; the
+ * panel: Threads, Designs, Board, Library, PRs and Routines tabs. Pure rules only; the
  * components live in components/studio/shell.
  */
 import type { PullRequestState } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 
-export const PROJECT_PANE_TABS = ["threads", "designs", "library", "prs", "scheduled"] as const;
+export const PROJECT_PANE_TABS = [
+  "threads",
+  "designs",
+  "board",
+  "library",
+  "prs",
+  "scheduled",
+] as const;
 export type ProjectPaneTab = (typeof PROJECT_PANE_TABS)[number];
 export const PROJECT_PANE_TAB_LABELS: Record<ProjectPaneTab, string> = {
   threads: "Threads",
   designs: "Designs",
+  // SpecWeave increments by state; only projects that use SpecWeave show it.
+  board: "Board",
   library: "Library",
   prs: "PRs",
   // The tab keeps its id; routines also run only when asked, so it is not "Scheduled".

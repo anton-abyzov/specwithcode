@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The SpecWithCode mark: the spec page with a prompt on its indigo tile.
+/// The SpecWithCode mark: a prompt chevron with two text lines on its indigo gradient tile.
 /// Used where the wordmark would be cut off, such as a narrow sidebar.
 public struct WeaveLogo: View {
   let size: CGFloat

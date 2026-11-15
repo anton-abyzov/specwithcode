@@ -428,6 +428,73 @@ export const DesktopServerExposureStateSchema = Schema.Struct({
   localServiceAttached: Schema.optionalKey(Schema.Boolean),
 });
 
+/** The `specwithcode` command the desktop app puts on PATH (Settings > Machines > Command line). */
+export const DesktopCommandLineToolStateSchema = Schema.Struct({
+  platform: Schema.Literals(["darwin", "linux", "win32"]),
+  unavailable: Schema.NullOr(
+    Schema.Literals(["development", "temporary-location", "missing-shim"]),
+  ),
+  commandPath: Schema.String,
+  binDirectory: Schema.String,
+  install: Schema.Literals([
+    "none",
+    "installed",
+    "other-copy",
+    "broken",
+    "blocked-managed",
+    "blocked-other",
+  ]),
+  pointsAt: Schema.NullOr(Schema.String),
+  version: Schema.NullOr(Schema.String),
+  appVersion: Schema.String,
+  onPath: Schema.Literals(["yes", "no", "unknown"]),
+  shadowedBy: Schema.NullOr(Schema.String),
+  startupFile: Schema.NullOr(Schema.String),
+  pathLine: Schema.NullOr(Schema.String),
+  startupLineAdded: Schema.Boolean,
+});
+export type DesktopCommandLineToolState = typeof DesktopCommandLineToolStateSchema.Type;
+
+export const DesktopCommandLineToolActionSchema = Schema.Literals([
+  "inspect",
+  "install",
+  "remove",
+  "add-to-path",
+]);
+export type DesktopCommandLineToolAction = typeof DesktopCommandLineToolActionSchema.Type;
+
+export const DesktopCommandLineToolReasonSchema = Schema.Struct({
+  code: Schema.Literals([
+    "development",
+    "temporary-location",
+    "missing-shim",
+    "blocked-managed",
+    "blocked-other",
+    "changed",
+    "unknown-shell",
+    "fish-file-exists",
+    "startup-file-unreadable",
+    "startup-file-write",
+    "remove-partial",
+    "remove-partial-path",
+    "path-read",
+    "path-write",
+    "path-changed",
+    "unsafe-path",
+    "write-failed",
+  ]),
+  path: Schema.NullOr(Schema.String),
+  errno: Schema.NullOr(Schema.String),
+});
+export type DesktopCommandLineToolReason = typeof DesktopCommandLineToolReasonSchema.Type;
+
+export const DesktopCommandLineToolResultSchema = Schema.Struct({
+  ok: Schema.Boolean,
+  reason: Schema.NullOr(DesktopCommandLineToolReasonSchema),
+  state: DesktopCommandLineToolStateSchema,
+});
+export type DesktopCommandLineToolResult = typeof DesktopCommandLineToolResultSchema.Type;
+
 export interface PickFolderOptions {
   initialPath?: string | null;
   // When set, the desktop dialog opens against the named backend's
@@ -1256,6 +1323,8 @@ export interface DesktopBridge extends DesktopUpdateBridge {
   ) => Promise<AuthWebSocketTicketResult>;
   onSshPasswordPrompt: (listener: (request: DesktopSshPasswordPromptRequest) => void) => () => void;
   resolveSshPasswordPrompt: (requestId: string, password: string | null) => Promise<void>;
+  /** Optional: older desktop builds have no command-line tool action. */
+  commandLineTool?: (action: DesktopCommandLineToolAction) => Promise<DesktopCommandLineToolResult>;
   getServerExposureState: () => Promise<DesktopServerExposureState>;
   setServerExposureMode: (mode: DesktopServerExposureMode) => Promise<DesktopServerExposureState>;
   setTailscaleServeEnabled: (input: {

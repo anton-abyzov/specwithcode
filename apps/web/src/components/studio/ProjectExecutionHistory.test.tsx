@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { ProjectExecutionHistory, ProjectThreadAvailability } from "./ProjectExecutionHistory";
 import type { ProjectExecutionScope } from "../../studio/projectDomain";
+import { MachineReachContext } from "../../studio/unreachableHosts";
 
 const state = vi.hoisted(() => ({
   load: vi.fn(),
@@ -15,6 +16,7 @@ const state = vi.hoisted(() => ({
   olderLoaded: false,
   checking: new Set<string>(),
   m4Offline: false,
+  m4LastConnectedAt: null as number | null,
   retry: vi.fn(),
 }));
 vi.mock("../../connection/retryRequests", () => ({ requestConnectionRetry: state.retry }));
@@ -29,7 +31,10 @@ vi.mock("../../state/environments", () => ({
       {
         environmentId: "m4",
         label: "M4",
-        connection: { phase: state.m4Offline ? "disconnected" : "connected" },
+        connection: {
+          phase: state.m4Offline ? "reconnecting" : "connected",
+          ...(state.m4LastConnectedAt === null ? {} : { lastConnectedAt: state.m4LastConnectedAt }),
+        },
       },
     ],
   }),
@@ -297,7 +302,13 @@ it("tries an offline machine again now, on Try again and every 30 s while it sho
   state.m4Offline = true;
   state.retry.mockClear();
   try {
-    await act(async () => root.render(<ProjectThreadAvailability scopes={[scopes[0]!]} />));
+    await act(async () =>
+      root.render(
+        <MachineReachContext.Provider value={new Map([["m4", "offline"]])}>
+          <ProjectThreadAvailability scopes={[scopes[0]!]} />
+        </MachineReachContext.Provider>,
+      ),
+    );
     expect(container.textContent).toContain("M4 is offline");
     // A machine back from an update is tried at once, not after its long retry delay.
     expect(state.retry).toHaveBeenCalledTimes(1);
@@ -321,4 +332,78 @@ it("offers no Try again for a machine this app was never connected to", async ()
   await act(async () => root.render(<ProjectThreadAvailability scopes={[scopes[2]!]} />));
   expect(container.textContent).toContain("This app is not connected to m3");
   expect(container.querySelector('[data-slot="offline-retry"]')).toBeNull();
+});
+
+it.each([
+  ["reconnecting", "Reconnecting to M4…"],
+  ["connecting", "Connecting to M4…"],
+  ["catching-up", "Catching up with M4…"],
+] as const)("keeps a %s machine calm: no offline word and no Try again", async (reach, words) => {
+  state.m4Offline = reach !== "catching-up";
+  state.retry.mockClear();
+  try {
+    await act(async () =>
+      root.render(
+        <MachineReachContext.Provider value={new Map([["m4", reach]])}>
+          <ProjectThreadAvailability scopes={[scopes[0]!]} />
+        </MachineReachContext.Provider>,
+      ),
+    );
+    expect(container.textContent).toBe(words);
+    expect(container.textContent).not.toMatch(/offline|incomplete/i);
+    expect(container.querySelector('[data-slot="offline-retry"]')).toBeNull();
+    expect(state.retry).not.toHaveBeenCalled();
+  } finally {
+    state.m4Offline = false;
+  }
+});
+
+it.each([
+  ["not-answering", "M4 isn't answering", "Retrying by itself"],
+  ["offline", "M4 is offline", "Retrying by itself"],
+  ["no-network", "This device has no network", "Reconnects when the network is back"],
+] as const)(
+  "says why a %s machine is down and when it last answered",
+  async (reach, words, next) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10 * 60_000);
+    state.m4Offline = true;
+    state.m4LastConnectedAt = 7 * 60_000;
+    try {
+      await act(async () =>
+        root.render(
+          <MachineReachContext.Provider value={new Map([["m4", reach]])}>
+            <ProjectThreadAvailability scopes={[scopes[0]!]} />
+          </MachineReachContext.Provider>,
+        ),
+      );
+      expect(container.textContent).toContain(words);
+      expect(container.textContent).toContain(`Last answered 3m ago · ${next}.`);
+      expect(container.textContent).not.toContain("DNS or firewall");
+      expect(container.querySelector('[data-slot="offline-retry"]')).not.toBeNull();
+    } finally {
+      state.m4Offline = false;
+      state.m4LastConnectedAt = null;
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("adds the network hint only when the relay itself could not be reached", async () => {
+  state.m4Offline = true;
+  try {
+    await act(async () =>
+      root.render(
+        <MachineReachContext.Provider value={new Map([["m4", "cant-reach"]])}>
+          <ProjectThreadAvailability scopes={[scopes[0]!]} />
+        </MachineReachContext.Provider>,
+      ),
+    );
+    expect(container.textContent).toContain("Can't reach M4");
+    expect(container.textContent).toContain(
+      "Your DNS or firewall may be blocking SpecWithCode Connect.",
+    );
+  } finally {
+    state.m4Offline = false;
+  }
 });

@@ -297,12 +297,19 @@ export const layer: Layer.Layer<
       // allocation of every completed message and tool output in the thread.
       // `false` means the run moved on or is gone. A failed read is an error,
       // so the caller fails the start or the run instead of skipping it.
+      // The attempt checks need one run row. The recovery projection reads every
+      // live table of the thread, so only background routing and turn
+      // ownership pay for it.
+      const readRun = projectionStore
+        .getThreadRecords(input.threadId, ["runs"], { runIds: [input.runId] })
+        .pipe(
+          Effect.map((records) => records.runs.find((candidate) => candidate.id === input.runId)),
+        );
       const isCurrentAttemptInStatus = (expectedStatus: OrchestrationV2Run["status"]) =>
-        projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
-          Effect.map((current) => {
-            const run = current.runs.find((candidate) => candidate.id === input.runId);
-            return run?.activeAttemptId === input.attemptId && run.status === expectedStatus;
-          }),
+        readRun.pipe(
+          Effect.map(
+            (run) => run?.activeAttemptId === input.attemptId && run.status === expectedStatus,
+          ),
         );
       return {
         isCurrentAttemptInStatus,
@@ -340,14 +347,12 @@ export const layer: Layer.Layer<
                 Effect.catchCause(() => Effect.succeed("unknown" as const)),
               ),
         shouldFinalizeRun: () =>
-          projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
-            Effect.map((current) => {
-              const run = current.runs.find((candidate) => candidate.id === input.runId);
-              return (
+          readRun.pipe(
+            Effect.map(
+              (run) =>
                 run?.activeAttemptId === input.attemptId &&
-                (run.status === "starting" || run.status === "running")
-              );
-            }),
+                (run.status === "starting" || run.status === "running"),
+            ),
           ),
         hasUnpairedRunInterruptRequest: () =>
           projectionStore

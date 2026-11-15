@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Renders the Android launcher, splash and notification artwork from the Studio mark and
+// Renders the Android launcher, splash and notification artwork from the SpecWithCode mark and
 // the Icon Composer background layers.
 //
 // Icon Composer exports already contain a rounded-square silhouette, and Android masks
@@ -34,37 +34,41 @@ const ADAPTIVE_CANVAS = 432;
 const SPLASH_CANVAS = 1152;
 // 24dp at xxxhdpi, the largest density bucket of a status bar icon.
 const NOTIFICATION_CANVAS = 96;
-// The page-and-prompt mark's own coordinates: a square box around the page, as tall as the page.
-const MARK = { x: 10, y: 10, width: 80, height: 80 };
+// The master's box. The mark inside it is already sized for the tile (about 55% of its width).
+const MARK_BOX = { x: 0, y: 0, width: 1024, height: 1024 };
 const MARK_SOURCE = "assets/brand/specwithcode-mark.svg";
-// The same page as one shape with the prompt cut out, for the alpha-only layers.
+// The mark as one colour, for the alpha-only layers.
 const SILHOUETTE_SOURCE = "assets/brand/specwithcode-mark-silhouette.svg";
-// Mark width as a fraction of the 108dp canvas. The visible area is 72dp (66dp
-// guaranteed), so 0.4 leaves the mark at 60% of the mask, with its whole box inside
-// the 66dp circle and room for the launcher's own zoom effects.
-const MARK_FRACTION = 0.4;
-// The themed layer's silhouette is 47.5dp tall. Its box reaches past the 66dp circle
-// only at the corners, where the narrower page stays inside it.
-const MONOCHROME_MARK_FRACTION = 0.44;
-// A 16dp mark with 4dp of padding on each side of the 24dp status bar icon.
-const NOTIFICATION_MARK_FRACTION = 2 / 3;
+// The master's box covers the 72dp visible part of the 108dp canvas, so the mark sits on the
+// adaptive tile exactly as it sits on the app icon tile, well inside the 66dp safe circle.
+const MARK_FRACTION = 72 / 108;
+const MONOCHROME_MARK_FRACTION = 72 / 108;
+// The mark cropped to its own square bounds, 20dp wide with 2dp of padding in the 24dp icon.
+const NOTIFICATION_MARK_FRACTION = 20 / 24;
 const SILHOUETTE_COLOR = "#fff";
 // Icon Composer positions layers on a 1024pt canvas, with translation relative to center.
 const COMPOSER_CANVAS_PT = 1024;
 const SVG_DENSITY = 300;
 const OUTPUT_DIRECTORY = "apps/mobile/assets";
-// Production has no background artwork, so its splash composes onto the adaptive color.
-const PRODUCTION_BACKGROUND_COLOR = "#5B6CFF";
+// Production's background is the brand tile gradient from assets/brand/brand.json.
+const BRAND_SETTINGS = "assets/brand/brand.json";
 
 export class AndroidIconRenderError extends Schema.TaggedError<AndroidIconRenderError>()(
   "AndroidIconRenderError",
   { layer: Schema.String, cause: Schema.Defect() },
 ) {}
 
-const markTransform = (size: number, fraction: number) => {
-  const scale = (size * fraction) / MARK.width;
-  const tx = (size - MARK.width * scale) / 2 - MARK.x * scale;
-  const ty = (size - MARK.height * scale) / 2 - MARK.y * scale;
+type MarkBox = {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+};
+
+const markTransform = (size: number, fraction: number, box: MarkBox = MARK_BOX) => {
+  const scale = (size * fraction) / box.width;
+  const tx = (size - box.width * scale) / 2 - box.x * scale;
+  const ty = (size - box.height * scale) / 2 - box.y * scale;
   return `translate(${tx.toFixed(3)} ${ty.toFixed(3)}) scale(${scale.toFixed(4)})`;
 };
 
@@ -97,14 +101,60 @@ const composite = (
     catch: (cause) => new AndroidIconRenderError({ layer, cause }),
   });
 
-const solidCanvas = (layer: string, size: number, background: string) =>
-  Effect.tryPromise({
+const BrandSettings = Schema.Struct({
+  tile: Schema.Struct({ top: Schema.String, bottom: Schema.String }),
+});
+const decodeBrandSettings = Schema.decodeUnknownEffect(Schema.fromJsonString(BrandSettings));
+
+const readBrandSettings = Effect.fn("androidIcons.readBrandSettings")(function* (
+  repositoryRoot: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const settings = yield* decodeBrandSettings(
+    yield* fs.readFileString(path.join(repositoryRoot, BRAND_SETTINGS)),
+  ).pipe(Effect.mapError((cause) => new AndroidIconRenderError({ layer: BRAND_SETTINGS, cause })));
+  return settings.tile;
+});
+
+const renderProductionBackground = Effect.fn("androidIcons.renderProductionBackground")(function* (
+  repositoryRoot: string,
+  size: number,
+) {
+  const tile = yield* readBrandSettings(repositoryRoot);
+  return yield* rasterize(
+    "prod-background",
+    canvasSvg(
+      size,
+      `<defs><linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop stop-color="${tile.top}"/><stop offset="1" stop-color="${tile.bottom}"/></linearGradient></defs><rect width="${size}" height="${size}" fill="url(#tile)"/>`,
+    ),
+    size,
+  );
+});
+
+// The square around the drawn mark, in master units, so the status bar icon is as large as
+// other apps' icons.
+const markBounds = Effect.fn("androidIcons.markBounds")(function* (
+  layer: string,
+  paths: ReadonlyArray<string>,
+) {
+  const { info } = yield* Effect.tryPromise({
     try: () =>
-      sharp({ create: { width: size, height: size, channels: 4, background } })
-        .png()
-        .toBuffer(),
+      sharp(Buffer.from(canvasSvg(MARK_BOX.width, paths.join(""))), { density: 72 })
+        .trim({ threshold: 0 })
+        .toBuffer({ resolveWithObject: true }),
     catch: (cause) => new AndroidIconRenderError({ layer, cause }),
   });
+  const left = -(info.trimOffsetLeft ?? 0);
+  const top = -(info.trimOffsetTop ?? 0);
+  const side = Math.max(info.width, info.height);
+  return {
+    x: left + info.width / 2 - side / 2,
+    y: top + info.height / 2 - side / 2,
+    width: side,
+    height: side,
+  } satisfies MarkBox;
+});
 
 const readLayerSource = Effect.fn("androidIcons.readLayerSource")(function* (
   repositoryRoot: string,
@@ -135,10 +185,11 @@ const renderMark = Effect.fn("androidIcons.renderMark")(function* (
   paths: ReadonlyArray<string>,
   size: number,
   fraction: number,
+  box: MarkBox = MARK_BOX,
 ) {
   return yield* rasterize(
     layer,
-    canvasSvg(size, `<g transform="${markTransform(size, fraction)}">${paths.join("")}</g>`),
+    canvasSvg(size, `<g transform="${markTransform(size, fraction, box)}">${paths.join("")}</g>`),
     size,
   );
 });
@@ -156,16 +207,13 @@ const renderSilhouette = Effect.fn("androidIcons.renderSilhouette")(function* (
   repositoryRoot: string,
   size: number,
   fraction: number,
+  crop = false,
 ) {
-  const paths = yield* readMarkPaths(repositoryRoot, SILHOUETTE_SOURCE);
-  return yield* renderMark(
-    layer,
-    paths.map((markPath) =>
-      markPath.replace(/="(?:#[0-9a-fA-F]{3,8}|url\(#[^)]+\))"/g, `="${SILHOUETTE_COLOR}"`),
-    ),
-    size,
-    fraction,
+  const paths = (yield* readMarkPaths(repositoryRoot, SILHOUETTE_SOURCE)).map((markPath) =>
+    markPath.replace(/="(?:#[0-9a-fA-F]{3,8}|url\(#[^)]+\))"/g, `="${SILHOUETTE_COLOR}"`),
   );
+  const box = crop ? yield* markBounds(layer, paths) : MARK_BOX;
+  return yield* renderMark(layer, paths, size, fraction, box);
 });
 
 const renderDevelopmentBackground = Effect.fn("androidIcons.renderDevelopmentBackground")(
@@ -234,7 +282,7 @@ const renderBackground = Effect.fn("androidIcons.renderBackground")(function* (
     case "nightly":
       return yield* renderNightlyBackground(repositoryRoot, size);
     case "prod":
-      return yield* solidCanvas("prod-background", size, PRODUCTION_BACKGROUND_COLOR);
+      return yield* renderProductionBackground(repositoryRoot, size);
   }
 });
 
@@ -269,11 +317,16 @@ const exportAndroidIcons = Effect.gen(function* () {
         repositoryRoot,
         NOTIFICATION_CANVAS,
         NOTIFICATION_MARK_FRACTION,
+        true,
       ),
     ],
     [
       "android-icon-background-dev.png",
       yield* renderDevelopmentBackground(repositoryRoot, ADAPTIVE_CANVAS),
+    ],
+    [
+      "android-icon-background-prod.png",
+      yield* renderProductionBackground(repositoryRoot, ADAPTIVE_CANVAS),
     ],
     [
       "android-icon-background-nightly.png",

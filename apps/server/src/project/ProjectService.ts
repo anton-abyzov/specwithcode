@@ -637,10 +637,12 @@ export const make = Effect.gen(function* () {
   // also takes Settings' Use worktrees for new projects as its own switch.
   // A copy of an existing project arriving from another machine (it names its
   // logical project) keeps that project's own switch rather than this machine's default.
+  // It also starts on the model tracks (see `ThreadModelMode`).
   const seedNewProjectSettings = (
     projectId: ProjectId,
     kind: string | undefined,
     arriving: boolean,
+    namedModel: boolean,
   ) =>
     Effect.gen(function* () {
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
@@ -656,6 +658,12 @@ export const make = Effect.gen(function* () {
         !arriving &&
         entry.defaultThreadEnvMode === undefined
           ? { defaultThreadEnvMode: "worktree" as const }
+          : {}),
+        // A new project starts its threads on the tracks. One created with a
+        // model named for it, or arriving from another machine, keeps one model,
+        // as every project that existed before tracks does.
+        ...(kind !== "personal" && !arriving && !namedModel && entry.threadModelMode === undefined
+          ? { threadModelMode: "tracks" as const }
           : {}),
       };
       if (Object.keys(set).length === 0) return;
@@ -726,6 +734,8 @@ export const make = Effect.gen(function* () {
         input.projectId,
         input.kind,
         input.initialLogicalProject !== undefined,
+        // Only a model someone named: an explicit null just turns the default off.
+        input.initialWorkerModelSelection != null,
       );
       const created = yield* readCommitted(input.projectId);
       if (input.initialWorkerModelSelection !== undefined || created.defaultModelSelection !== null)

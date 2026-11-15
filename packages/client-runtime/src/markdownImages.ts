@@ -14,7 +14,12 @@ const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
 export type MarkdownImageSource =
   | { readonly _tag: "Direct"; readonly uri: string }
-  | { readonly _tag: "WorkspaceFile"; readonly path: string }
+  | {
+      readonly _tag: "WorkspaceFile";
+      readonly path: string;
+      /** Written relative to the workspace, so it names a file on the thread's machine only. */
+      readonly relative?: true;
+    }
   | { readonly _tag: "Blocked" };
 
 export function markdownImageSourceFragment(source: string): string {
@@ -69,7 +74,7 @@ export function classifyMarkdownImageSource(
   }
   if (!workspaceRoot) return { _tag: "Blocked" };
 
-  return { _tag: "WorkspaceFile", path: joinWorkspacePath(workspaceRoot, path) };
+  return { _tag: "WorkspaceFile", path: joinWorkspacePath(workspaceRoot, path), relative: true };
 }
 
 export interface UnembeddedMedia {

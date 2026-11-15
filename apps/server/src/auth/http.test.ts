@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
@@ -33,6 +34,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+import { makeTestDpopKey } from "./dpopProof.testkit.ts";
 import * as AuthHttp from "./http.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
@@ -969,4 +971,83 @@ it.effect("mints client tokens only for this machine's own sessions, never a wor
       ({ dispose }) => Effect.promise(dispose),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("records a token request's DPoP proof only once its subject token is accepted", () =>
+  Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const written: Array<string> = [];
+    const recordingSecretStore = ServerSecretStore.ServerSecretStore.of({
+      get: () => Effect.succeedNone,
+      set: () => Effect.void,
+      create: (name) =>
+        written.includes(name)
+          ? Effect.fail(
+              new ServerSecretStore.SecretStorePersistError({
+                resource: name,
+                cause: PlatformError.systemError({
+                  _tag: "AlreadyExists",
+                  module: "FileSystem",
+                  method: "open",
+                  pathOrDescriptor: name,
+                }),
+              }),
+            )
+          : Effect.sync(() => void written.push(name)),
+      getOrCreateRandom: () => Effect.die("Not used by these routes."),
+      remove: () => Effect.void,
+    });
+    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+      Context.add(ServerSecretStore.ServerSecretStore, recordingSecretStore),
+    );
+    const url = "http://127.0.0.1/oauth/token";
+    const key = makeTestDpopKey();
+    const tokenRequest = (proof: string, subjectToken?: string) =>
+      new Request(url, {
+        method: "POST",
+        headers: { host: "127.0.0.1", dpop: proof },
+        body: new URLSearchParams({
+          grant_type: AuthTokenExchangeGrantType,
+          ...(subjectToken === undefined ? {} : { subject_token: subjectToken }),
+          subject_token_type: AuthEnvironmentBootstrapTokenType,
+          requested_token_type: AuthAccessTokenType,
+        }),
+      });
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
+      (environment) =>
+        Effect.tryPromise(async () => {
+          const proof = key.proof({ method: "POST", url });
+          const unknownToken = await environment.handler(
+            tokenRequest(proof, "not-a-pairing-token"),
+            requestContext,
+          );
+          expect(unknownToken.status).toBe(401);
+          const missingToken = await environment.handler(tokenRequest(proof), requestContext);
+          expect(missingToken.status).toBeGreaterThanOrEqual(400);
+          // Refused subject tokens leave no replay state behind.
+          expect(written).toEqual([]);
+
+          // The same proof still works once with a valid subject token...
+          const accepted = await environment.handler(
+            tokenRequest(proof, DEV_TOKEN),
+            requestContext,
+          );
+          expect(accepted.status).toBe(200);
+          expect(await accepted.json()).toMatchObject({ token_type: "DPoP" });
+          expect(written).toHaveLength(1);
+
+          // ...and is refused as a replay after that.
+          const replayed = await environment.handler(
+            tokenRequest(proof, DEV_TOKEN),
+            requestContext,
+          );
+          expect(replayed.status).toBe(401);
+          expect(await replayed.json()).toMatchObject({ dpopFailureReason: "replay" });
+          expect(replayed.headers.get("www-authenticate")).toBe("DPoP");
+          expect(written).toHaveLength(1);
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

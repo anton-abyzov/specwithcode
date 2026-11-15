@@ -9231,6 +9231,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             events,
           );
         }
+        // The stop restarts on this row, so it counts as requested now: delegated
+        // results already queued still run ahead of it.
+        const restartRequestedAt = yield* DateTime.now;
+        const reorderedRun = (yield* Ref.get(events)).findLast(
+          (event) => event.type === "run.updated" && event.runId === queuedRun.id,
+        );
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "run.updated",
+          threadId: command.threadId,
+          runId: queuedRun.id,
+          nodeId: queuedRootNode.id,
+          providerInstanceId: queuedRun.providerInstanceId,
+          occurredAt: restartRequestedAt,
+          payload: {
+            ...(reorderedRun?.type === "run.updated" ? reorderedRun.payload : queuedRun),
+            requestedAt: restartRequestedAt,
+          },
+        });
         return yield* dispatchRunInterrupt(
           {
             type: "run.interrupt",

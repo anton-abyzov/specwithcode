@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   projects: [] as unknown[],
   runnerState: "ready" as "ready" | "offline",
   navigate: vi.fn(),
+  routineProviders: undefined as unknown[] | undefined,
 }));
 vi.mock("../../state/entities", () => ({ useProjects: () => state.projects }));
 vi.mock("./useLinkMachines", () => ({
@@ -33,6 +34,20 @@ vi.mock("../../state/server", () => ({
     upsertScheduledTask: "upsert",
   },
 }));
+vi.mock("./useRoutineModel", async () => {
+  const { routineTemplateModel } = await import("@specweave-studio/shared/routineTemplates");
+  return {
+    useRoutineModel: (_environmentId: unknown, template: never, coordinator: never) =>
+      routineTemplateModel(
+        template,
+        coordinator,
+        state.routineProviders as never,
+        {
+          claudeAgent: { regular: "fixture-everyday" },
+        } as never,
+      ),
+  };
+});
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({
     data: { tasks: state.tasks },
@@ -55,6 +70,7 @@ beforeEach(() => {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   sessionStorage.clear();
   state.projects = [];
+  state.routineProviders = undefined;
   state.runnerState = "ready";
   state.navigate.mockReset();
   state.run.mockReset().mockResolvedValue({ _tag: "Success" });
@@ -261,6 +277,57 @@ describe("Personal routines", () => {
       prepareOnly: true,
     });
     expect(state.refresh).toHaveBeenCalled();
+  });
+  it("waits for the models before saving the reset watch, then names the model it uses (1340 AC-09)", async () => {
+    state.tasks = [];
+    await render(true, false, true);
+    const openWatch = () =>
+      act(async () =>
+        [...container.querySelectorAll<HTMLButtonElement>("button.sws-routine-template")]
+          .find((b) => b.textContent?.includes("Reset announcement watch"))!
+          .click(),
+      );
+    await openWatch();
+    const submit = () =>
+      container.querySelector<HTMLButtonElement>('.sws-routine-form button[type="submit"]')!;
+    expect(submit().textContent).toBe("Loading models…");
+    expect(submit().disabled).toBe(true);
+    // The everyday model is billed per token: the routine keeps the coordinator's and says so.
+    state.routineProviders = [
+      {
+        instanceId: "claudeAgent",
+        driver: "claudeAgent",
+        auth: { status: "authenticated" },
+        models: [
+          { slug: "fixture", billing: "subscription" },
+          { slug: "fixture-everyday", billing: "paid-router" },
+        ],
+      },
+    ];
+    // A fresh mount: the React Compiler skips a same-prop re-render.
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await render(true, false, true);
+    await openWatch();
+    expect(container.textContent).toContain(
+      "The everyday model fixture-everyday is billed per token, so it uses fixture, the coordinator's model.",
+    );
+    // Scheduled on the plan-billed coordinator: the form names the plan's limits.
+    await act(async () =>
+      container
+        .querySelectorAll<HTMLInputElement>('.sws-routine-form input[type="radio"]')[1]!
+        .click(),
+    );
+    expect(container.textContent).toContain("Each scheduled run uses your plan's limits.");
+    await click("Save routine");
+    expect(state.upsert.mock.calls[0]![0].input.schedule).toEqual({
+      type: "interval",
+      everyMs: 2 * 60 * 60_000,
+    });
+    expect(state.upsert.mock.calls[0]![0].input.modelSelection).toEqual({
+      instanceId: "claudeAgent",
+      model: "fixture",
+    });
   });
   it("names each routine's thread and opens the one it has", async () => {
     state.tasks = [

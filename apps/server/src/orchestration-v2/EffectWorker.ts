@@ -11,6 +11,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
@@ -764,7 +765,16 @@ export interface OrchestrationEffectWorkerOptions {
   readonly workerId?: string;
   readonly leaseDurationMs?: number;
   readonly maxAttempts?: number;
+  /**
+   * Running title generations allowed at once. Defaults to 3, one fewer than the daemon's
+   * default worker count; it does not follow a daemon started with another `concurrency`.
+   */
+  readonly maxRunningTitleGenerations?: number;
 }
+
+const DEFAULT_EFFECT_WORKER_CONCURRENCY = 4;
+// Title generation can run for minutes; leave at least one worker free for turn work.
+const DEFAULT_MAX_RUNNING_TITLE_GENERATIONS = DEFAULT_EFFECT_WORKER_CONCURRENCY - 1;
 
 export const layerWithOptions = (
   options: OrchestrationEffectWorkerOptions = {},
@@ -781,6 +791,11 @@ export const layerWithOptions = (
       const workerId = options.workerId ?? `orchestration-v2:${process.pid}`;
       const leaseDurationMs = Math.max(1, options.leaseDurationMs ?? 30_000);
       const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
+      const requestedMaxRunningTitleGenerations =
+        options.maxRunningTitleGenerations ?? DEFAULT_MAX_RUNNING_TITLE_GENERATIONS;
+      const maxRunningTitleGenerations = Number.isFinite(requestedMaxRunningTitleGenerations)
+        ? Math.max(1, Math.floor(requestedMaxRunningTitleGenerations))
+        : DEFAULT_MAX_RUNNING_TITLE_GENERATIONS;
       const wasCancelled = (effectId: string) =>
         outbox.get(effectId).pipe(
           Effect.map(
@@ -874,7 +889,12 @@ export const layerWithOptions = (
       const runOnce = (excludeRestartContinuations = false) =>
         Effect.gen(function* () {
           const claimExit = yield* Effect.exit(
-            outbox.claimNext({ workerId, leaseDurationMs, excludeRestartContinuations }),
+            outbox.claimNext({
+              workerId,
+              leaseDurationMs,
+              excludeRestartContinuations,
+              maxRunningTitleGenerations,
+            }),
           );
           yield* increment(orchestrationEffectClaimsTotal, {
             result: Exit.isFailure(claimExit)
@@ -993,7 +1013,7 @@ export const layerWithOptions = (
         awaitWork: outbox.awaitAvailable,
         runOnce: runOnce(),
         runRecoveryOnce: runOnce(true),
-        nextClaimableAt: outbox.nextClaimableAt.pipe(
+        nextClaimableAt: outbox.nextClaimableAtWithin({ maxRunningTitleGenerations }).pipe(
           Effect.mapError(
             (cause) =>
               new OrchestrationEffectWorkerError({
@@ -1021,13 +1041,17 @@ export interface OrchestrationEffectDaemonOptions {
   readonly livenessPollIntervalMs?: number;
 }
 
-const DEFAULT_EFFECT_WORKER_CONCURRENCY = 4;
 const DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS = 30_000;
+// A provider call can go unanswered indefinitely. After this wait the slot
+// claims other work; the execution keeps its running row, which still blocks
+// its own thread, and settles that row when it finishes.
+const EFFECT_WORKER_SLOT_WAIT = Duration.seconds(30);
 
 export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions = {}) =>
   Effect.scoped(
     Effect.gen(function* () {
       const worker = yield* OrchestrationEffectWorkerV2;
+      const scope = yield* Effect.scope;
       const requestedConcurrency = options.concurrency ?? DEFAULT_EFFECT_WORKER_CONCURRENCY;
       const concurrency = Number.isFinite(requestedConcurrency)
         ? Math.max(1, Math.floor(requestedConcurrency))
@@ -1042,13 +1066,18 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
       // missed in-process notification or work inserted by another process.
       const runWorker = Effect.gen(function* () {
         while (true) {
-          const outcome = yield* worker.runOnce.pipe(
+          const attempt = yield* worker.runOnce.pipe(
             Effect.map((worked) => (worked ? ("worked" as const) : ("idle" as const))),
             Effect.catchCause((cause) =>
               Effect.logWarning("Orchestration effect worker failed", cause).pipe(
                 Effect.as("failed" as const),
               ),
             ),
+            Effect.forkIn(scope),
+          );
+          const outcome = yield* Fiber.join(attempt).pipe(
+            Effect.timeoutOption(EFFECT_WORKER_SLOT_WAIT),
+            Effect.map(Option.getOrElse(() => "worked" as const)),
           );
           if (outcome === "worked") {
             yield* Effect.yieldNow;

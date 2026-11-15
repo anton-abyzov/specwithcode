@@ -5,6 +5,7 @@
  */
 import type { RunId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import {
@@ -20,14 +21,43 @@ const message = (id: string, text: string, attachments = 0): QueuedMessage => ({
   attachments,
 });
 
+const at = (time: string) => DateTime.makeUnsafe(`2026-01-01T${time}Z`);
+
 describe("queuedMessagesFrom", () => {
   it("lists queued runs in delivery order and leaves a child's completion here", () => {
     const records = {
       runs: [
-        { id: "r2", status: "queued", userMessageId: "m2", ordinal: 2, queuePosition: 2 },
-        { id: "r1", status: "queued", userMessageId: "m1", ordinal: 1, queuePosition: 1 },
-        { id: "r0", status: "completed", userMessageId: "m0", ordinal: 0 },
-        { id: "r3", status: "queued", userMessageId: "m3", ordinal: 3, queuePosition: 3 },
+        {
+          id: "r2",
+          status: "queued",
+          userMessageId: "m2",
+          ordinal: 2,
+          queuePosition: 2,
+          requestedAt: at("10:02:00"),
+        },
+        {
+          id: "r1",
+          status: "queued",
+          userMessageId: "m1",
+          ordinal: 1,
+          queuePosition: 1,
+          requestedAt: at("10:01:00"),
+        },
+        {
+          id: "r0",
+          status: "completed",
+          userMessageId: "m0",
+          ordinal: 0,
+          requestedAt: at("10:00:00"),
+        },
+        {
+          id: "r3",
+          status: "queued",
+          userMessageId: "m3",
+          ordinal: 3,
+          queuePosition: 3,
+          requestedAt: at("10:03:00"),
+        },
       ],
       messages: [
         { id: "m0", text: "done", attachments: [] },
@@ -36,7 +66,7 @@ describe("queuedMessagesFrom", () => {
         { id: "m3", text: "child done", attachments: [], delegatedCompletion: {} },
       ],
     } as never;
-    // The child's completion is delivered first here, and never carried.
+    // The child's completion is delivered here, and never carried.
     expect(queuedMessagesFrom(records)).toEqual([
       { runId: "r1", text: "first", attachments: 0 },
       { runId: "r2", text: "second", attachments: 1 },

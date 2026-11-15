@@ -17,6 +17,8 @@ import {
   threadBlocker,
   threadHeldQueue,
 } from "./projectWorkspaceModel";
+import type { MachineReachState } from "@specweave-studio/client-runtime/connection";
+import { hostDownWord } from "../lib/machineStatus";
 import { approvalWaitLabel } from "./accessWait";
 
 /** The slice of a provider instance that names it; `ProviderInstanceEntry` satisfies it. */
@@ -462,7 +464,10 @@ export function buildThreadPaneGroups(
     if (root?.actions.length) return "Needs you";
     if (thread.settledOverride === "settled")
       return projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false);
-    if (root && root.freshness !== "live") return "Offline";
+    // Only a machine the app cannot reach lists its threads as offline. One that
+    // is reconnecting or still reading its list keeps them where they were.
+    if (root && (root.freshness === "offline" || root.freshness === "unauthorized"))
+      return "Offline";
     if (root?.working || root?.waits?.length) return "Working";
     const group = projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false);
     return group === "Idle" &&
@@ -552,7 +557,7 @@ export function threadsSummary(
   const parts = [
     waiting === 0
       ? unreachable?.size
-        ? "Some machines are offline"
+        ? "Some machines can't be reached"
         : "Nothing needs you"
       : waiting === 1
         ? "1 thread needs you"
@@ -632,10 +637,12 @@ export function threadTone(thread: EnvironmentThreadShell, hostOffline = false):
 export function threadStatusWord(
   thread: EnvironmentThreadShell,
   hostOffline = false,
+  /** Why the host is down, so a busy machine's row does not say "offline". */
+  hostReach?: MachineReachState,
 ): string | null {
   if (threadTone(thread, hostOffline) === "resolved") return null;
   // Its last known state is stale; "Blocked" or "Working" would be a guess.
-  if (hostOffline) return "Host offline";
+  if (hostOffline) return hostDownWord(hostReach);
   const status = resolveSidebarThreadStatus(thread);
   if (status === "approval" && thread.source?.pendingRuntimeRequest !== null)
     return approvalWaitLabel(thread);

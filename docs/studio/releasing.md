@@ -560,6 +560,14 @@ matches its hash, then adds the files and `SHA256SUMS-windows-linux` to both rel
 published. It never uploads or replaces a name `release.sh` uses and checks afterwards that
 `latest-mac.yml` and `SHA256SUMS` are unchanged.
 
+Each installer is also attached under a name without the version, a byte copy made by the helper's
+`collect` step: `SpecWithCode-x64.exe`, `SpecWithCode-arm64.exe`, `SpecWithCode-x86_64.AppImage`,
+`SpecWithCode-arm64.AppImage`, `SpecWithCode-amd64.deb` and `SpecWithCode-arm64.deb`, so
+`releases/latest/download/<name>` links reach the newest one as `SpecWithCode-arm64.dmg` does on the
+Mac. `SHA256SUMS-windows-linux` lists them; no feed names them, so updaters never read them. The
+run also attaches `scripts/install.ps1` from the release's commit as `install.ps1`. A new attach
+without these is refused; a release attached before them still counts as complete.
+
 How it runs:
 
 - **Once per release, dispatched.** After a release is published, the release tooling dispatches a
@@ -700,8 +708,13 @@ signing step, and the release attach waits until it is replaced.
 GPG release key in the `LINUX_UPDATE_SIGNING_KEY` secret (armored, no passphrase; ed25519
 `B10CBBD0F4893ACD3FF6F256563A3A098EE4C0D7`, expires November 5, 2029). It uploads the detached
 `.asc` signatures and the public key as `specwithcode-release-key.asc`, checks every signature with
-`gpgv` first, and refuses a real run without the secret. Replacing the key means a new public key
-on every later release and a new fingerprint in [install](../user/install.md#verify-a-download).
+`gpgv` first, and refuses a real run without the secret. After the upload it also signs each
+release's own `SHA256SUMS` (written by `release.sh`) with the same key and uploads only
+`SHA256SUMS.asc`; `SHA256SUMS` is never changed. That is its own job (Sign the macOS checksums),
+which also runs on a daily catch-up that finds the attach complete, so a missing `SHA256SUMS.asc` or
+one that no longer verifies is redone by the next run. The version-free AppImage and `.deb` copies
+get their own `.asc` too. Replacing the key means a new public key on every later release and a new
+fingerprint in [install](../user/install.md#verify-a-download).
 
 While the repository is public, `actions/attest-build-provenance` attests every Windows and Linux
 file a real run uploads, and `attest-macos.yml` (called by `release.yml` and `release-macos.yml`,

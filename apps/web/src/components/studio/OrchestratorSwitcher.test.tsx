@@ -363,6 +363,33 @@ it("says not linked, with what that means, for checkouts registered on their own
   expect(document.querySelector('[role="menu"]')?.textContent).not.toContain("separate project");
 });
 
+it("offers to link each same-repository project on another machine, from its own item", async () => {
+  const calls = handlers();
+  const onLink = vi.fn<(key: string) => void>();
+  await renderSwitcher({
+    ...calls,
+    onLink,
+    // Not listed among this project's machines: the two were never linked.
+    links: [{ key: "m5:old", machine: "M5" }],
+  });
+  const links = [...document.querySelectorAll<HTMLElement>("[data-orchestrator-link]")];
+  expect(links.map((link) => link.textContent)).toEqual(["Link with the project on M5…"]);
+  expect(links[0]?.title).toContain("one project with one coordinator");
+  await act(async () => links[0]!.click());
+  await vi.waitFor(() => expect(onLink).toHaveBeenCalledWith("m5:old"));
+  expect(calls.onView).not.toHaveBeenCalled();
+  expect(calls.onMove).not.toHaveBeenCalled();
+});
+
+it("offers no link where linking is not allowed or nothing matches", async () => {
+  const calls = handlers();
+  await renderSwitcher({ ...calls, links: [{ key: "m5:old", machine: "M5" }] });
+  expect(document.querySelector("[data-orchestrator-link]")).toBeNull();
+  await act(async () => root.render(<></>));
+  await renderSwitcher({ ...calls, onLink: vi.fn<(key: string) => void>() });
+  expect(document.querySelector("[data-orchestrator-link]")).toBeNull();
+});
+
 it("stays a plain label with one copy and no machine actions", async () => {
   await act(async () =>
     root.render(

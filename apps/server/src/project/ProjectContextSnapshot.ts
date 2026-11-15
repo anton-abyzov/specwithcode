@@ -85,7 +85,12 @@ export function projectContextDelta(
   return boundProjectContext(
     [
       heading,
-      ...sent.map((s) => `[${s.name}]\n${s.value || "(empty; previous content removed)"}`),
+      // An empty section says content was removed only when it had some before;
+      // a never-set goal in a first snapshot is just empty.
+      ...sent.map(
+        (s) =>
+          `[${s.name}]\n${s.value || (before.get(s.name)?.value ? "(empty; previous content removed)" : "(empty)")}`,
+      ),
       ...removedLines,
       ...(collapse
         ? [

@@ -13,17 +13,15 @@ import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAss
 import { useAideEnabled } from "../../hooks/useSettings";
 import { threadsVisibleWithAide, visibleWithAide } from "../../studio/personalAssistant";
 import { useNowMinute } from "../../hooks/useNowMinute";
-import {
-  DEFAULT_PERSONAL_ASSISTANT_NAME,
-  PERSONAL_ASSISTANT_LABEL,
-} from "@specweave-studio/contracts";
+import { PERSONAL_ASSISTANT_LABEL } from "@specweave-studio/contracts";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
-import {
-  assistantGroupHint,
-  assistantGroupsOf,
-  assistantMembersOf,
-  sortAssistantGroups,
-} from "./assistantEntries";
+import { assistantGroupsOf, assistantMembersOf, sortAssistantGroups } from "./assistantEntries";
+import { isExtraAssistant } from "../../studio/personalAssistant";
+import { useMachineIdentities } from "../../studio/machineIdentity";
+import { machineActivity, overviewMachineState } from "../../studio/overviewMachines";
+import { hostReachOr, useHostReachStates } from "../../studio/unreachableHosts";
+import { machineVersionState } from "../settings/machineNextStep.logic";
+import { newestPlainRelease, resolveServerConfigVersionMismatch } from "../../versionSkew";
 import {
   archivedMemberKeys,
   automatedMemberKeys,
@@ -54,6 +52,7 @@ import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { chatNavigationTarget } from "../../studio/projectPaneThreads";
 import {
   useAllEnvironmentShellsBootstrapped,
+  useEnvironmentShellLive,
   useProjects,
   useServerConfigs,
   useThreadShells,
@@ -87,6 +86,7 @@ import {
   providerLabel,
   useOverviewKeys,
   type MachineRowView,
+  type OverviewMachine,
   type ProjectRowView,
   CopyReviewRow,
 } from "./OverviewRows";
@@ -208,8 +208,23 @@ export function StudioOverview() {
       ? allShells
       : allShells.filter((thread) => !hidden.has(`${thread.environmentId}:${thread.projectId}`));
   }, [allShells, projectGroups, scratchRootFor]);
-  const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const { environments, isReady, networkStatus } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  // Every machine has reported or had its tries. Until then the lists show what
+  // has arrived once this machine's own chats are in, and say who is still missing.
+  const allReported = useAllEnvironmentShellsBootstrapped();
+  const bootstrapped = useEnvironmentShellLive(primaryEnvironmentId) || allReported;
+  // Machines as the sidebar names them: nickname, color and icon, never the host label alone.
+  const identityOf = useMachineIdentities();
+  const machineOf = useCallback(
+    (environmentId: string): OverviewMachine => {
+      const fullName =
+        environments.find((environment) => environment.environmentId === environmentId)?.label ??
+        "";
+      return { identity: identityOf(environmentId, fullName || null), fullName };
+    },
+    [environments, identityOf],
+  );
   const canOperate = useEnvironmentsWithScope(environments, AuthOrchestrationOperateScope);
   const openDestination = useNewChatDestination();
   const handleNewThread = useNewThreadHandler();
@@ -262,7 +277,14 @@ export function StudioOverview() {
   const observationsComplete =
     attentionComplete ||
     (attentionMembers.length === 0 && allShells.length === 0 && connected === environments.length);
-  const hostNames = new Map(environments.map((e) => [e.environmentId, e.label]));
+  const hostNames = new Map(
+    environments.map((e) => [e.environmentId, machineOf(e.environmentId).identity.name]),
+  );
+  // The capacity cards name each machine the same way.
+  const namedEnvironments = environments.map((environment) => {
+    const label = hostNames.get(environment.environmentId) ?? environment.label;
+    return label === environment.label ? environment : { ...environment, label };
+  });
   const draftProjects = projectPickerMembers(
     projects,
     (environmentId) => configs.get(environmentId)?.scratchWorkspaceRoot ?? null,
@@ -357,7 +379,6 @@ export function StudioOverview() {
     }
   };
 
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const groupByMemberKey = useMemo(() => {
     const map = new Map<string, string>();
     for (const group of listedGroups)
@@ -403,6 +424,7 @@ export function StudioOverview() {
       ),
   );
   const registry = useContext(RegistryContext);
+  const reachStates = useHostReachStates();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, {
     reportFailure: false,
   });
@@ -415,30 +437,53 @@ export function StudioOverview() {
       else void retryEnvironment(environment.environmentId);
     }
   };
-  const machineStatus = (phase: string) =>
-    phase === "connected"
-      ? tx("Connected")
-      : phase === "connecting" || phase === "reconnecting"
-        ? tx("Reconnecting")
-        : phase === "error" || phase === "unsupported"
-          ? tx("Can’t connect")
-          : tx("Offline");
+  // A machine is behind when another one, or this app, already runs something newer.
+  const newestRelease = newestPlainRelease(
+    environments.map((environment) => environment.serverConfig?.environment.serverVersion),
+  );
   const machines: MachineRowView[] = environments.map((environment) => {
-    const phase = environment.connection.phase;
-    const stale = staleMachines.includes(environment);
+    const environmentId = environment.environmentId;
+    const config = environment.serverConfig ?? null;
+    const mismatch = resolveServerConfigVersionMismatch(config, newestRelease);
+    const reach = overviewMachineState({
+      reach: hostReachOr(reachStates.get(environmentId), environment.connection),
+      // Something of it is listed: it answers now, or it did and its projects are still here.
+      reported:
+        environment.connection.phase === "connected" ||
+        config !== null ||
+        projects.some((project) => project.environmentId === environmentId),
+      stale: staleMachines.includes(environment),
+    });
     return {
-      environmentId: environment.environmentId,
-      label: environment.label,
-      status: phase === "connected" && stale ? tx("Catching up") : machineStatus(phase),
-      tone:
-        phase === "connected" ? (stale ? "amber" : "moss") : phase === "error" ? "red" : "amber",
-      version: environment.serverConfig?.environment.serverVersion ?? null,
-      attention: attention.filter((s) => s.thread.environmentId === environment.environmentId)
-        .length,
-      projects: ownProjectGroups.filter((group) =>
-        group.memberProjectRefs.some((ref) => ref.environmentId === environment.environmentId),
-      ).length,
-      thisMachine: environment.environmentId === primaryEnvironmentId,
+      ...machineOf(environmentId),
+      environmentId,
+      state: reach.state,
+      stateWord: reach.word,
+      tone: reach.tone,
+      error: environment.connection.error ?? null,
+      version: machineVersionState({
+        serverVersion: config?.environment.serverVersion ?? null,
+        // "Update to" names the newest release known, which may be ahead of this app.
+        mismatch:
+          mismatch === null
+            ? null
+            : {
+                serverVersion: mismatch.serverVersion,
+                clientVersion: mismatch.targetVersion,
+              },
+      }),
+      counted: reach.counted,
+      activity: machineActivity({
+        counted: reach.counted,
+        working: sessions.filter(
+          (s) => s.working && s.attention === null && s.thread.environmentId === environmentId,
+        ).length,
+        projects: ownProjectGroups.filter((group) =>
+          group.memberProjectRefs.some((ref) => ref.environmentId === environmentId),
+        ).length,
+      }),
+      attention: attention.filter((s) => s.thread.environmentId === environmentId).length,
+      thisMachine: environmentId === primaryEnvironmentId,
     };
   });
   const inMachineScope = (card: (typeof projectCards)[number]) =>
@@ -502,9 +547,15 @@ export function StudioOverview() {
       {label}
     </button>
   );
-  const summary = !bootstrapped
-    ? tx("Each connected machine reports its chats.")
-    : renderRich(tx("{working} · {chats} in {projects} on {machines}"), {
+  // This machine's chats are in; these have not answered yet.
+  const stillReading = allReported
+    ? []
+    : machines.filter((machine) => machine.tone !== "moss").map((m) => m.identity.name);
+  const summary = !bootstrapped ? (
+    tx("Each connected machine reports its chats.")
+  ) : (
+    <>
+      {renderRich(tx("{working} · {chats} in {projects} on {machines}"), {
         working:
           working > 0
             ? linkButton(tx("{count} working", { count: working }), "studio-working-title")
@@ -524,40 +575,45 @@ export function StudioOverview() {
           }),
           "studio-machines-title",
         ),
-      });
+      })}
+      {stillReading.length > 0
+        ? ` · ${tx("still reading {machines}", { machines: stillReading.join(", ") })}`
+        : null}
+    </>
+  );
+  // "m1 is offline", "m5 is not reachable".
+  const machineStatusWord = (environmentId: string) =>
+    tx(machines.find((m) => m.environmentId === environmentId)?.stateWord ?? "");
   const staleNotice =
-    bootstrapped && isReady && (staleMachines.length > 0 || !observationsComplete)
+    allReported && isReady && (staleMachines.length > 0 || !observationsComplete)
       ? staleMachines.length === 1
         ? tx("{machine} is {status}, so its chats may be missing from these counts.", {
-            machine: staleMachines[0]!.label,
-            status: (
-              machines.find((m) => m.environmentId === staleMachines[0]!.environmentId)?.status ??
-              ""
-            ).toLowerCase(),
+            machine: hostNames.get(staleMachines[0]!.environmentId) ?? staleMachines[0]!.label,
+            status: machineStatusWord(staleMachines[0]!.environmentId),
           })
         : staleMachines.length > 1
           ? tx("{machines} are not current, so their chats may be missing from these counts.", {
               machines: staleMachines
                 .map(
                   (environment) =>
-                    `${environment.label} (${(
-                      machines.find((m) => m.environmentId === environment.environmentId)?.status ??
-                      ""
-                    ).toLowerCase()})`,
+                    `${hostNames.get(environment.environmentId) ?? environment.label} (${machineStatusWord(
+                      environment.environmentId,
+                    )})`,
                 )
                 .join(", "),
             })
           : tx("Some machines are still reporting, so these counts may be incomplete.")
       : null;
-  const chatRow = (s: SessionView) => (
+  const chatRow = (s: SessionView, quiet = false) => (
     <ChatRow
       key={`${s.thread.environmentId}:${s.thread.id}`}
       session={s}
       target={chatTarget(s.thread)}
-      host={hostNames.get(s.thread.environmentId) ?? "Host"}
+      machine={machineOf(s.thread.environmentId)}
       provider={providerLabel(providersFor(s.thread.environmentId), s.thread.providerInstanceId)}
       entries={providerEntries.get(s.thread.environmentId) ?? new Map()}
       now={now}
+      quiet={quiet}
     />
   );
   // Needs you shows its first rows across groups, then the rest on request.
@@ -826,7 +882,7 @@ export function StudioOverview() {
                           <h3 className="studio-group-label">
                             {tx(attentionLabel(group.kind))} · {group.sessions.length}
                           </h3>
-                          {rows.map(chatRow)}
+                          {rows.map((s) => chatRow(s))}
                         </div>
                       );
                     })}
@@ -859,7 +915,7 @@ export function StudioOverview() {
                     detail={tx("Chats you start or continue show here while they work.")}
                   />
                 ) : (
-                  <div className="studio-list">{workingSessions.map(chatRow)}</div>
+                  <div className="studio-list">{workingSessions.map((s) => chatRow(s, true))}</div>
                 )}
               </section>
 
@@ -939,7 +995,7 @@ export function StudioOverview() {
                     {recentByDay.map((block) => (
                       <div key={block.day} role="group" aria-label={tx(DAY_LABELS[block.day])}>
                         <h3 className="studio-group-label">{tx(DAY_LABELS[block.day])}</h3>
-                        {block.sessions.map(chatRow)}
+                        {block.sessions.map((s) => chatRow(s))}
                       </div>
                     ))}
                     {recent.length > recentShown.length && (
@@ -970,61 +1026,6 @@ export function StudioOverview() {
             </div>
 
             <aside className="studio-rail" aria-label={tx("Projects and machines")}>
-              {railAssistants.length > 0 && (
-                <section aria-labelledby="studio-assistant-title">
-                  <SectionHeading
-                    title={DEFAULT_PERSONAL_ASSISTANT_NAME}
-                    id="studio-assistant-title"
-                  />
-                  <div
-                    className="studio-list"
-                    role="group"
-                    aria-label={tx(PERSONAL_ASSISTANT_LABEL)}
-                  >
-                    {railAssistants.map((card) => {
-                      const member = card.memberProjects.find(isPersonalAssistantProject);
-                      // A new topic is a draft aimed at Percy, never the chooser of projects.
-                      const target =
-                        member !== undefined &&
-                        member.workspaceSettings?.archived !== true &&
-                        canOperate.has(member.environmentId) &&
-                        connectedIds.has(member.environmentId)
-                          ? member
-                          : undefined;
-                      return (
-                        <ProjectRow
-                          key={card.group.projectKey}
-                          card={card}
-                          personal
-                          hosts={
-                            assistantGroupHint(
-                              card.group,
-                              assistantMembers,
-                              (environmentId) => hostNames.get(environmentId as never),
-                              environments.length,
-                            ) ?? ""
-                          }
-                          filtered={projectScope === card.group.projectKey}
-                          canStart={target !== undefined}
-                          onFilter={() => {
-                            setMachineScope(null);
-                            setProjectScope(
-                              projectScope === card.group.projectKey ? null : card.group.projectKey,
-                            );
-                            jump("studio-attention-title");
-                          }}
-                          onNewChat={() => {
-                            if (!target) return;
-                            void handleNewThread(scopeProjectRef(target.environmentId, target.id), {
-                              environmentSelection: "manual",
-                            });
-                          }}
-                        />
-                      );
-                    })}
-                  </div>
-                </section>
-              )}
               <section aria-labelledby="studio-projects-title">
                 <SectionHeading
                   title={tx("Projects")}
@@ -1059,13 +1060,11 @@ export function StudioOverview() {
                           <ProjectRow
                             key={card.group.projectKey}
                             card={card}
-                            hosts={[
+                            machines={[
                               ...new Set(
-                                card.group.memberProjectRefs.map(
-                                  (ref) => hostNames.get(ref.environmentId) ?? "Host",
-                                ),
+                                card.group.memberProjectRefs.map((ref) => ref.environmentId),
                               ),
-                            ].join(" · ")}
+                            ].map(machineOf)}
                             filtered={projectScope === card.group.projectKey}
                             canStart={target !== undefined}
                             onFilter={() => {
@@ -1105,6 +1104,68 @@ export function StudioOverview() {
                   </div>
                 )}
               </section>
+              {railAssistants.length > 0 && (
+                // Its own section under Projects: the assistant is neither a project nor a machine.
+                <section className="studio-assistants" aria-labelledby="studio-assistant-title">
+                  <SectionHeading
+                    title={tx(PERSONAL_ASSISTANT_LABEL)}
+                    id="studio-assistant-title"
+                  />
+                  <div
+                    className="studio-list studio-assistant-list"
+                    role="group"
+                    aria-label={tx(PERSONAL_ASSISTANT_LABEL)}
+                  >
+                    {railAssistants.map((card) => {
+                      const member = card.memberProjects.find(isPersonalAssistantProject);
+                      // A new topic is a draft aimed at Percy, never the chooser of projects.
+                      const target =
+                        member !== undefined &&
+                        member.workspaceSettings?.archived !== true &&
+                        canOperate.has(member.environmentId) &&
+                        connectedIds.has(member.environmentId)
+                          ? member
+                          : undefined;
+                      return (
+                        <ProjectRow
+                          key={card.group.projectKey}
+                          card={card}
+                          personal
+                          // With one machine there is nothing to tell apart.
+                          machines={
+                            member !== undefined && environments.length > 1
+                              ? [machineOf(member.environmentId)]
+                              : []
+                          }
+                          note={
+                            member !== undefined && isExtraAssistant(member, assistantMembers)
+                              ? tx("extra")
+                              : member?.environmentId === primaryEnvironmentId &&
+                                  environments.length > 1
+                                ? tx("this machine")
+                                : undefined
+                          }
+                          filtered={projectScope === card.group.projectKey}
+                          canStart={target !== undefined}
+                          onFilter={() => {
+                            setMachineScope(null);
+                            setProjectScope(
+                              projectScope === card.group.projectKey ? null : card.group.projectKey,
+                            );
+                            jump("studio-attention-title");
+                          }}
+                          onNewChat={() => {
+                            if (!target) return;
+                            void handleNewThread(scopeProjectRef(target.environmentId, target.id), {
+                              environmentSelection: "manual",
+                            });
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
               <section aria-labelledby="studio-machines-title">
                 <SectionHeading
                   title={tx("Machines")}
@@ -1143,7 +1204,7 @@ export function StudioOverview() {
           </div>
 
           <CapacityFleet
-            environments={environments}
+            environments={namedEnvironments}
             configs={configs}
             onNewDraft={(environmentId, model, validate) =>
               openDraftChooser({

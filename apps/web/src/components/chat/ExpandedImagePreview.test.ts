@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId } from "@specweave-studio/contracts";
+import {
+  type AssetCreateUrlResult,
+  type AssetResource,
+  EnvironmentId,
+  ThreadId,
+} from "@specweave-studio/contracts";
+import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
+import { AsyncResult } from "effect/reactivity";
 
 import type { ComposerFileAttachment } from "../../composerDraftStore";
 import {
@@ -42,6 +49,35 @@ describe("resolveMarkdownMediaPreview", () => {
       });
     },
   );
+
+  it("asks only the thread's machine for a media link written relative to its workspace", async () => {
+    const environmentId = EnvironmentId.make("remote");
+    const resources: AssetResource[] = [];
+    await resolveMarkdownMediaPreview({
+      source: "/srv/repo/screens/logo.png",
+      resolvedFilePath: "/srv/repo/screens/logo.png",
+      resolvedFileRelative: true,
+      cwd: "/srv/repo",
+      threadRef: scopeThreadRef(environmentId, ThreadId.make("remote-thread")),
+      httpBaseUrl: "https://remote.test",
+      createAssetUrl: async ({ input }) => {
+        resources.push(input.resource);
+        return AsyncResult.success<AssetCreateUrlResult, unknown>({
+          relativeUrl: "/api/assets/logo",
+          expiresAt: 1,
+        });
+      },
+    });
+
+    expect(resources).toEqual([
+      {
+        _tag: "media-file",
+        threadId: "remote-thread",
+        path: "/srv/repo/screens/logo.png",
+        hostOnly: true,
+      },
+    ]);
+  });
 });
 
 describe("buildExpandedImagePreview", () => {

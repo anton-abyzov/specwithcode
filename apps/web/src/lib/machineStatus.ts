@@ -1,14 +1,157 @@
 import {
   connectionStatusText,
   connectionStatusTitle,
+  isMachineReachDown,
+  machineReach,
   type EnvironmentConnectionPresentation,
+  type MachineReachState,
 } from "@specweave-studio/client-runtime/connection";
+import { NETWORK_BLOCKING_HINT } from "@specweave-studio/client-runtime/errors";
 
 import { compactAge } from "~/components/sidebar/SidebarProjectTree.logic";
+import { englishPhrase, type TranslatePhrase } from "~/i18n";
+
+/**
+ * The words for one reach state (`machineReach`), so every surface says the
+ * same thing about the same machine. Phrases are English with a `{machine}`
+ * slot; a surface fills and translates them with its own `tx`.
+ */
+export interface MachineReachWords {
+  /** Names the machine, for a banner: "Reconnecting to {machine}…". */
+  readonly headline: string;
+  /** For a row that already names the machine: "Reconnecting…". */
+  readonly short: string;
+  /** What the app does about it by itself, or null when it does nothing. */
+  readonly next: string | null;
+  /** Shown only when the relay itself could not be reached. */
+  readonly hint: string | null;
+}
+
+const RETRIES_BY_ITSELF = "Retrying by itself";
+const QUIET = { next: null, hint: null } as const;
+
+const REACH_WORDS: Record<MachineReachState, MachineReachWords> = {
+  connected: { headline: "{machine} is connected", short: "Connected", ...QUIET },
+  "catching-up": { headline: "Catching up with {machine}…", short: "Catching up…", ...QUIET },
+  connecting: { headline: "Connecting to {machine}…", short: "Connecting…", ...QUIET },
+  reconnecting: { headline: "Reconnecting to {machine}…", short: "Reconnecting…", ...QUIET },
+  "not-answering": {
+    headline: "{machine} isn't answering",
+    short: "Not answering",
+    next: RETRIES_BY_ITSELF,
+    hint: null,
+  },
+  offline: {
+    headline: "{machine} is offline",
+    short: "Offline",
+    next: RETRIES_BY_ITSELF,
+    hint: null,
+  },
+  "cant-reach": {
+    headline: "Can't reach {machine}",
+    short: "Can't reach",
+    next: RETRIES_BY_ITSELF,
+    hint: NETWORK_BLOCKING_HINT,
+  },
+  "no-network": {
+    headline: "This device has no network",
+    short: "No network",
+    next: "Reconnects when the network is back",
+    hint: null,
+  },
+  stopped: { headline: "Connection to {machine} failed", short: "Connection failed", ...QUIET },
+  "not-connected": { headline: "{machine} is not connected", short: "Not connected", ...QUIET },
+};
+
+const NEEDS_UPDATE: MachineReachWords = {
+  headline: "{machine} needs an app update",
+  short: "Needs an app update",
+  ...QUIET,
+};
+
+/** The words for a reach state. A stopped connection this build cannot use asks for an update. */
+export function machineReachWords(
+  state: MachineReachState,
+  phase?: EnvironmentConnectionPresentation["phase"],
+): MachineReachWords {
+  return state === "stopped" && phase === "unsupported" ? NEEDS_UPDATE : REACH_WORDS[state];
+}
+
+/**
+ * A machine's reach state judged by its phase alone, for a caller that has no
+ * judgement from the app (no provider: tests, embedding). Without a time, a
+ * machine that is retrying reads as reconnecting.
+ */
+export function reachFromPhase(
+  phase: EnvironmentConnectionPresentation["phase"] | undefined,
+): MachineReachState {
+  switch (phase) {
+    case "connected":
+    case "connecting":
+    case "reconnecting":
+      return phase;
+    case "offline":
+      return "no-network";
+    case "error":
+    case "unsupported":
+      return "stopped";
+    case "available":
+    case undefined:
+      return "not-connected";
+    default:
+      return "offline";
+  }
+}
+
+/** What a thread's row says in place of its own state while its machine is down. */
+export function hostDownWord(state: MachineReachState | undefined): string {
+  switch (state) {
+    case "not-answering":
+      return "Not answering";
+    case "cant-reach":
+      return "Can't reach host";
+    case "no-network":
+      return "No network";
+    case "stopped":
+    case "not-connected":
+      return "Not connected";
+    default:
+      return "Host offline";
+  }
+}
+
+/** "Last answered 2h ago", or null when the app never had an answer from it. */
+export function lastAnsweredLabel(
+  lastAnsweredAt: number | null,
+  now: number,
+  tx: TranslatePhrase = englishPhrase,
+): string | null {
+  if (lastAnsweredAt === null) return null;
+  const age = compactAge(lastAnsweredAt, now);
+  return age === "now" || age === ""
+    ? tx("Last answered just now")
+    : tx("Last answered {age} ago", { age });
+}
+
+/**
+ * The line under a machine that is down: when it last answered, then what the
+ * app does about it. Null while it is connected or still inside its grace.
+ */
+export function machineReachDetail(
+  words: MachineReachWords,
+  lastAnsweredAt: number | null,
+  now: number,
+  tx: TranslatePhrase = englishPhrase,
+): string | null {
+  if (words.next === null) return null;
+  return [lastAnsweredLabel(lastAnsweredAt, now, tx), tx(words.next)].filter(Boolean).join(" · ");
+}
 
 export interface MachineStatus {
   /** Short state under the machine's name. */
   readonly text: string;
+  /** One or two words for a chip beside the name: "Reconnecting", "Not answering". */
+  readonly short: string;
   /** The last failure the app saw, so an unreachable machine says why. */
   readonly reason: string | null;
   /** The app has given up or is waiting between attempts, so a manual retry helps. */
@@ -22,34 +165,44 @@ export interface MachineStatus {
  * picker says so, with the reason, instead of looking like it is about to connect.
  */
 export function machineStatus(
-  connection: Pick<EnvironmentConnectionPresentation, "phase" | "error">,
+  connection: ReachConnection,
   canOperate = true,
   isThisMachine = false,
+  /** When the machine is judged; a new presentation arrives when its grace ends. */
+  now = Date.now(),
 ): MachineStatus {
   const reason = connection.error ? readableConnectionReason(connection.error) : null;
+  const quiet = { reason: null, retryable: false } as const;
   if (isThisMachine && isThisMachineCatchingUp(connection.phase))
-    return { text: THIS_MACHINE_CATCHING_UP, reason: null, retryable: false };
-  switch (connection.phase) {
-    case "connected":
-      return canOperate
-        ? { text: "Connected", reason: null, retryable: false }
-        : { text: "Permission to operate threads required", reason: null, retryable: false };
+    return { text: THIS_MACHINE_CATCHING_UP, short: "Catching up", ...quiet };
+  if (connection.phase === "connected")
+    return canOperate
+      ? { text: "Connected", short: "Connected", ...quiet }
+      : { text: "Permission to operate threads required", short: "No permission", ...quiet };
+  const state = machineReach(connection, now).state;
+  const words = machineReachWords(state, connection.phase);
+  const short = words.short.replace(/…$/, "");
+  switch (state) {
     case "connecting":
-      return { text: "Connecting…", reason: null, retryable: false };
+      return { text: words.short, short, ...quiet };
     case "reconnecting":
-      return reason
-        ? { text: "Can't reach. Retrying automatically", reason, retryable: true }
-        : { text: "Reconnecting…", reason: null, retryable: true };
-    case "error":
-      return { text: "Connection failed", reason, retryable: true };
+      return { text: words.short, short, reason: null, retryable: true };
+    case "not-answering":
     case "offline":
-      return { text: "Offline. This device has no network", reason: null, retryable: true };
-    case "unsupported":
-      return { text: "Needs an app update", reason, retryable: false };
-    case "available":
-      return { text: "Not connected", reason: null, retryable: false };
+    case "cant-reach":
+      return { text: `${words.short}. ${RETRIES_BY_ITSELF}`, short, reason, retryable: true };
+    case "no-network":
+      return { text: words.headline, short, reason: null, retryable: true };
+    case "stopped":
+      return { text: words.short, short, reason, retryable: connection.phase === "error" };
+    default:
+      return { text: words.short, short, ...quiet };
   }
 }
+
+/** A connection with the facts its reach is judged from, when the caller has them. */
+type ReachConnection = Pick<EnvironmentConnectionPresentation, "phase" | "error"> &
+  Partial<Pick<EnvironmentConnectionPresentation, "lostAt" | "lastConnectedAt" | "cause">>;
 
 /** What the app says about its own machine while its server is slow to answer. */
 export const THIS_MACHINE_CATCHING_UP = "Catching up…";
@@ -123,9 +276,10 @@ export function machineUnavailableTitle(
  * "Catching up" while its server is busy.
  */
 export function savedMachineStatus(
-  connection: Pick<EnvironmentConnectionPresentation, "phase" | "error">,
+  connection: ReachConnection,
   enabled: boolean,
   isThisMachine = false,
+  now = Date.now(),
 ): {
   readonly text: string;
   readonly tone: "muted" | "error";
@@ -142,21 +296,26 @@ export function savedMachineStatus(
     case "connected":
       return { text: "Connected", tone: "muted", ...quiet };
     case "connecting":
-      return { text: "Connecting", tone: "muted", ...quiet };
     case "reconnecting":
+    case "offline": {
+      if (isThisMachine && connection.phase === "reconnecting")
+        return { text: "Reconnecting", tone: "error", reason, retryable: true };
+      // Inside its grace a machine is only reconnecting, a retry included; after
+      // it, the row says why. No network is this device's state, not a failure.
+      const state = machineReach(connection, now).state;
+      const down = isMachineReachDown(state) && state !== "no-network";
       return {
-        text: reason ? "Can't reach" : "Reconnecting",
-        tone: "error",
-        reason,
-        retryable: true,
+        text: machineReachWords(state, connection.phase).short.replace(/…$/, ""),
+        tone: down ? "error" : "muted",
+        reason: down ? reason : null,
+        retryable: connection.phase !== "offline" && state !== "connecting",
       };
+    }
     // Not a failure: the machine is fine, this build just cannot talk to it.
     case "unsupported":
       return { text: "Client not supported", tone: "muted", reason, retryable: false };
     case "error":
       return { text: "Connection failed", tone: "error", reason, retryable: true };
-    case "offline":
-      return { text: "Offline", tone: "muted", ...quiet };
     case "available":
       return { text: "Not connected", tone: "muted", ...quiet };
   }
@@ -178,20 +337,33 @@ export function reasonNeedsPairing(reason: string | null): boolean {
 export function environmentConnectionStatusText(
   connection: EnvironmentConnectionPresentation,
   isThisMachine: boolean,
+  now = Date.now(),
 ): string {
-  return isThisMachine && isThisMachineCatchingUp(connection.phase)
-    ? THIS_MACHINE_CATCHING_UP
-    : connectionStatusText(connection);
+  if (isThisMachine && isThisMachineCatchingUp(connection.phase)) return THIS_MACHINE_CATCHING_UP;
+  return connectionStatusText(insideReconnectGrace(connection, now));
 }
 
 /** The short form of environmentConnectionStatusText, without the reason. */
 export function environmentConnectionStatusTitle(
   connection: EnvironmentConnectionPresentation,
   isThisMachine: boolean,
+  now = Date.now(),
 ): string {
-  return isThisMachine && isThisMachineCatchingUp(connection.phase)
-    ? THIS_MACHINE_CATCHING_UP
-    : connectionStatusTitle(connection);
+  if (isThisMachine && isThisMachineCatchingUp(connection.phase)) return THIS_MACHINE_CATCHING_UP;
+  return connectionStatusTitle(insideReconnectGrace(connection, now));
+}
+
+// Inside the grace a dropped connection is only reconnecting: its error is not news yet.
+function insideReconnectGrace(
+  connection: EnvironmentConnectionPresentation,
+  now: number,
+): EnvironmentConnectionPresentation {
+  if (connection.phase !== "reconnecting" && connection.phase !== "connecting") return connection;
+  if (connection.error === null || connection.error === undefined) return connection;
+  const state = machineReach(connection, now).state;
+  return state === "reconnecting" || state === "connecting"
+    ? { ...connection, error: null }
+    : connection;
 }
 
 /**
@@ -260,4 +432,30 @@ export function readableConnectionReason(
     return `No answer from ${where} within ${seconds}s.`;
   }
   return `No answer from ${where}.`;
+}
+
+const KNOWN_PHASES = new Set<string>([
+  "available",
+  "offline",
+  "connecting",
+  "reconnecting",
+  "connected",
+  "error",
+  "unsupported",
+]);
+
+/**
+ * A machine's reach state, or, when the app has not judged it (no provider:
+ * tests, embedding), what its connection says now.
+ */
+export function hostReachOr(
+  state: MachineReachState | undefined,
+  connection: Pick<EnvironmentConnectionPresentation, "phase"> &
+    Partial<Pick<EnvironmentConnectionPresentation, "lostAt" | "lastConnectedAt" | "cause">>,
+  now = Date.now(),
+): MachineReachState {
+  if (state !== undefined) return state;
+  return KNOWN_PHASES.has(connection.phase)
+    ? machineReach(connection, now).state
+    : reachFromPhase(connection.phase as EnvironmentConnectionPresentation["phase"]);
 }

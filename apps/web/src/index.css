@@ -4,6 +4,7 @@
 @import "./components/studio/projectWorkspace.css";
 @import "./components/studio/shell/shell.css";
 @import "./components/studio/shell/panes.css";
+@import "./components/studio/shell/board.css";
 @import "./components/studio/shell/voice.css";
 @import "./components/studio/shell/threadCards.css";
 @import "./components/studio/shell/handoff.css";
@@ -2588,9 +2589,9 @@ video.artifact-viewer-media {
 .machine-mark[data-machine-color] {
   color: var(--machine-text);
 }
-/* The sidebar's column has no icon: a small square of the color leads the name. */
+/* The sidebar's mark has no icon: a small square of the color leads the name. */
 .sws-row-machine.machine-mark[data-machine-color] {
-  width: calc(min(var(--sws-chat-machine-col, 6ch), 9.5ch) + 10px);
+  max-width: calc(9.5ch + 10px);
 }
 .sws-row-machine.machine-mark[data-machine-color]::before {
   content: "";

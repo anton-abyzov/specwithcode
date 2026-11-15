@@ -65,6 +65,8 @@ export function useProjectLinkSuggestions(
       },
     };
   };
+  // The dialog holds its own copy of the pair: once linked, the row stops being a
+  // suggestion, and the "Projects linked" step stays until the person closes it.
   const target = open ? linkDialogTarget(open) : null;
   const dialog = target ? (
     <ProjectLinkDialog
@@ -72,7 +74,6 @@ export function useProjectLinkSuggestions(
       onOpenChange={(next) => !next && setOpen(null)}
       project={target.project}
       initialCandidate={target.candidate}
-      onLinked={() => setOpen(null)}
     />
   ) : null;
   return { suggestionFor, dialog };

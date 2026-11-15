@@ -369,7 +369,10 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
             return calls.settle(
               local(target)
                 ? deps.memory.memoryExport(request)
-                : peers.memoryExport(target.environmentId, request),
+                : peers.memoryExport(target.environmentId, {
+                    ...request,
+                    forProjectId: selfMember.projectId,
+                  }),
             );
           },
           mergeMemory: (target, from, page) => {

@@ -152,6 +152,22 @@ export function newerRelease(
   return compareSemverVersions(release, clientCore) > 0 ? release : null;
 }
 
+/**
+ * The highest plain release among `versions`, or null when none is one. The
+ * machines a window reaches tell it of a release its own updater has not heard
+ * of yet: with an M1 on 1.0.306, an M4 on 1.0.304 is behind whatever this app runs.
+ */
+export function newestPlainRelease(versions: Iterable<string | null | undefined>): string | null {
+  let newest: string | null = null;
+  for (const version of versions) {
+    const release = normalizeVersion(version);
+    const parsed = release ? parseSemver(release) : null;
+    if (!release || !parsed || parsed.prerelease.length > 0) continue;
+    if (newest === null || compareSemverVersions(release, newest) > 0) newest = release;
+  }
+  return newest;
+}
+
 /** The update path the connected server offers, or null when it only
     supports a manual relaunch (older servers, dev checkouts, Windows). */
 export function resolveServerSelfUpdateCapability(

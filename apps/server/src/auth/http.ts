@@ -50,7 +50,11 @@ import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import * as ConnectPhoneRevocation from "../cloud/ConnectPhoneRevocation.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
-import { verifyRequestDpopProof } from "./dpop.ts";
+import { checkRequestDpopProof } from "./dpop.ts";
+import type {
+  ServerAuthInternalError,
+  ServerAuthInvalidCredentialError,
+} from "./EnvironmentAuthErrors.ts";
 import { browserCookieAttributes } from "./browserCookiePolicy.ts";
 import {
   arrivedOverConnect,
@@ -563,27 +567,37 @@ export const layer = HttpApiBuilder.group(
             if (requestedScopes === null || requestedScopes?.length === 0) {
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }
-            const proofKeyThumbprint = args.headers.dpop
-              ? yield* verifyRequestDpopProof({ request }).pipe(
-                  Effect.tapError(recordInvalidCredential(request)),
-                  Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-                    appendDpopChallengeHeader.pipe(
-                      Effect.andThen(
-                        failEnvironmentAuthInvalid(
-                          "invalid_credential",
-                          EnvironmentAuth.serverAuthDpopFailureReason(error),
-                          EnvironmentAuth.serverAuthTeamRulesMessage(error),
-                        ),
+            const refuseDpopProof = <A, R>(
+              effect: Effect.Effect<
+                A,
+                ServerAuthInvalidCredentialError | ServerAuthInternalError,
+                R
+              >,
+            ) =>
+              effect.pipe(
+                Effect.tapError(recordInvalidCredential(request)),
+                Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+                  appendDpopChallengeHeader.pipe(
+                    Effect.andThen(
+                      failEnvironmentAuthInvalid(
+                        "invalid_credential",
+                        EnvironmentAuth.serverAuthDpopFailureReason(error),
+                        EnvironmentAuth.serverAuthTeamRulesMessage(error),
                       ),
                     ),
                   ),
-                  Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-                    failEnvironmentInternal("access_token_issuance_failed", error),
-                  ),
-                )
+                ),
+                Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+                  failEnvironmentInternal("access_token_issuance_failed", error),
+                ),
+              );
+            // The proof is recorded against replay only after the subject token is
+            // accepted, so a request with a bad subject token writes nothing to disk.
+            const proof = args.headers.dpop
+              ? yield* refuseDpopProof(checkRequestDpopProof({ request }))
               : undefined;
             yield* appendCredentialResponseHeaders;
-            return yield* serverAuth
+            const issued = yield* serverAuth
               .exchangeBootstrapCredentialForAccessToken(
                 args.payload.subject_token,
                 requestedScopes,
@@ -598,11 +612,13 @@ export const layer = HttpApiBuilder.group(
                   },
                 }),
                 {
-                  ...(proofKeyThumbprint ? { proofKeyThumbprint } : {}),
+                  ...(proof ? { proofKeyThumbprint: proof.thumbprint } : {}),
                   overConnect: arrivedOverConnect(request),
                 },
               )
               .pipe(Effect.tapError(recordInvalidCredential(request)));
+            if (proof) yield* refuseDpopProof(proof.consume);
+            return issued;
           },
           traceRelayRequest,
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>

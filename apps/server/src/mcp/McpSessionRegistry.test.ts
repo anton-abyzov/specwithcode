@@ -147,6 +147,40 @@ it.effect("expires credentials once their session stops showing signs of life", 
   }),
 );
 
+it.effect("expires an idle credential even when the wall clock steps back", () =>
+  Effect.gen(function* () {
+    // `now` drives wall time only; TestClock.adjust moves the monotonic clock.
+    let wall = 10_000;
+    const registry = yield* makeRegistry(() => wall);
+    const issueToken = (threadId: string) =>
+      registry
+        .issue({
+          threadId: ThreadId.make(threadId),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          capabilities: new Set(["preview"]),
+        })
+        .pipe(Effect.map((issued) => issued.config.authorizationHeader.replace(/^Bearer\s+/, "")));
+
+    const idle = yield* issueToken("thread-idle");
+    const active = yield* issueToken("thread-active");
+    wall = 1_000;
+    yield* TestClock.adjust("60 millis");
+    // Still inside the window by elapsed time, so a request keeps it alive.
+    expect((yield* registry.resolve(active))?.thread.threadId).toBe("thread-active");
+    yield* TestClock.adjust("50 millis");
+    expect(yield* registry.resolve(idle)).toBeUndefined();
+    expect((yield* registry.resolve(active))?.thread.threadId).toBe("thread-active");
+
+    // Once expired it stays expired, wherever the wall clock moves next.
+    wall = 0;
+    expect(yield* registry.resolve(idle)).toBeUndefined();
+    wall = 10_050;
+    expect(yield* registry.resolve(idle)).toBeUndefined();
+    yield* registry.touch(ThreadId.make("thread-idle"));
+    expect(yield* registry.resolve(idle)).toBeUndefined();
+  }),
+);
+
 it.effect("keeps a credential alive across turns that never touch an MCP tool", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;
@@ -277,6 +311,22 @@ it.effect("forgets persisted credentials whose session stopped showing signs of 
     const after = yield* makeDurableRegistry(store, () => 1_200);
     expect(yield* after.resolve(tokenOf(issued))).toBeUndefined();
   }).pipe(Effect.provide(layerSecretStore())),
+);
+
+it.effect(
+  "forgets a persisted credential when the clock reads earlier than its last sign of life",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* ServerSecretStore.ServerSecretStore;
+      const before = yield* makeDurableRegistry(store, () => 1_000);
+      const issued = yield* before.issue({
+        threadId: ThreadId.make("thread-clock-back"),
+        providerInstanceId: ProviderInstanceId.make("grok"),
+      });
+      // After a restart only wall time is known; a clock behind the record fails closed.
+      const after = yield* makeDurableRegistry(store, () => 900);
+      expect(yield* after.resolve(tokenOf(issued))).toBeUndefined();
+    }).pipe(Effect.provide(layerSecretStore())),
 );
 
 it.effect("re-issues the same token across revocation and capability changes", () =>

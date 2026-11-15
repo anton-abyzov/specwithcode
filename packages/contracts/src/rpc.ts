@@ -16,6 +16,7 @@ import { PROJECT_PLAN_LINK_RPC_METHODS, projectPlanLinkRpcs } from "./projectPla
 import { LIMIT_HANDOFF_RPC_METHODS, limitHandoffRpcs } from "./limitHandoff.ts";
 import { USAGE_LIMIT_HISTORY_RPC_METHODS, usageLimitHistoryRpcs } from "./usageLimitHistory.ts";
 import { USAGE_RESET_LEDGER_RPC_METHODS, usageResetLedgerRpcs } from "./usageResetLedger.ts";
+import { RESET_ANNOUNCEMENT_RPC_METHODS, resetAnnouncementRpcs } from "./resetAnnouncements.ts";
 import { provisionRpcs } from "./provision.ts";
 import { machineToolsRpcs } from "./machineTools.ts";
 import { projectCredentialsRpcs } from "./projectCredentials.ts";
@@ -455,6 +456,7 @@ export const WS_METHODS = {
   ...LIMIT_HANDOFF_RPC_METHODS,
   ...USAGE_LIMIT_HISTORY_RPC_METHODS,
   ...USAGE_RESET_LEDGER_RPC_METHODS,
+  ...RESET_ANNOUNCEMENT_RPC_METHODS,
   ...MANAGED_UPDATES_RPC_METHODS,
   ...PROJECT_CONNECTION_RPC_METHODS,
   ...BROWSER_BRIDGE_RPC_METHODS,
@@ -2417,6 +2419,11 @@ export const WsUsageResetLedgerRpcGroup = RpcGroup.make(...usageResetLedgerRpcs)
   RpcScopeAuthorization,
 );
 
+/** Reset announcements read from the public feed; its own group for the same depth reason. */
+export const WsResetAnnouncementRpcGroup = RpcGroup.make(...resetAnnouncementRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 /** Folder copy between machines; its own group for the same depth reason. */
 export const WsFolderCopyRpcGroup = RpcGroup.make(...folderCopyRpcs).middleware(
   RpcScopeAuthorization,
@@ -2503,6 +2510,7 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsLimitHandoffRpcGroup)
   .merge(WsUsageLimitHistoryRpcGroup)
   .merge(WsUsageResetLedgerRpcGroup)
+  .merge(WsResetAnnouncementRpcGroup)
   .merge(WsFolderCopyRpcGroup)
   .merge(WsProjectKnowledgeRpcGroup)
   .merge(WsProjectPlanningRpcGroup)

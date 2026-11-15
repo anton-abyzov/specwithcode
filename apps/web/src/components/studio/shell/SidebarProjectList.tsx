@@ -579,7 +579,7 @@ export function ProjectRow(props: {
   const quiet = archived || muted;
   const coverageText =
     !quiet && props.attentionComplete === false
-      ? (props.attentionLabel ?? "Some machines are offline")
+      ? (props.attentionLabel ?? "Some machines can't be reached")
       : null;
   const waiting = quiet ? 0 : props.waiting;
   const [renaming, setRenaming] = useState<RenameState | null>(null);
@@ -734,18 +734,27 @@ export function ProjectRow(props: {
               ) : null}
               {props.linkSuggestion && !shared ? (
                 // Opens the link dialog, which compares both folders before anything links.
-                <span
-                  className="sws-side-row-pin sws-side-row-link-suggestion"
-                  role="img"
-                  aria-label={`${props.linkSuggestion.label}. Link them?`}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    props.linkSuggestion?.onLink();
-                  }}
-                >
-                  <Link2Icon aria-hidden />
-                </span>
+                // A mouse shortcut, as Review is below: the row is a link, so no control
+                // nests in it. The row's name says the offer, and its menu holds the same
+                // action for the keyboard and screen readers.
+                <>
+                  <span className="sr-only">, {props.linkSuggestion.label}</span>
+                  <span
+                    className="sws-side-row-link-suggestion"
+                    aria-hidden="true"
+                    data-link-suggestion=""
+                    title={`${props.linkSuggestion.label}. ${props.linkSuggestion.action}`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      props.linkSuggestion?.onLink();
+                    }}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                  >
+                    <Link2Icon aria-hidden />
+                    {tx("Link")}
+                  </span>
+                </>
               ) : null}
               {shared ? (
                 <span
