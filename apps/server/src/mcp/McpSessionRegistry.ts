@@ -113,11 +113,20 @@ export class McpSessionRegistry extends Context.Service<
   McpSessionRegistryShape
 >()("specweave-studio/mcp/McpSessionRegistry") {}
 
+/**
+ * When a credential last showed a sign of life. A record restored after a
+ * restart has no monotonic reading until its next sign of life.
+ */
+interface AliveMark {
+  readonly wallMs: number;
+  readonly monotonicMs: number | undefined;
+}
+
 /** Registry credentials always belong to a provider session, so their scope has a thread. */
 interface CredentialRecord {
   readonly tokenHash: string;
   readonly scope: McpInvocationContext.McpThreadInvocationScope;
-  readonly lastAliveAt: number;
+  readonly lastAlive: AliveMark;
 }
 
 interface RegistryState {
@@ -127,6 +136,7 @@ interface RegistryState {
 
 export interface McpSessionRegistryOptions {
   readonly livenessWindowMs?: number;
+  /** Overrides the wall clock only; elapsed time also comes from the monotonic clock. */
   readonly now?: () => number;
   /**
    * Where the derivation key, the credential records (token hashes only) and
@@ -204,6 +214,21 @@ const credentialFileSecretName = (
     .digest("hex")
     .slice(0, 32)}`;
 
+/**
+ * Time since `since`. The larger of wall and monotonic elapsed time wins, so
+ * stepping the wall clock back never extends a credential, while wall time
+ * that passes during host sleep still counts. Without a monotonic reading (a
+ * record restored after a restart) only wall time is known, and a wall clock
+ * that reads earlier than the mark counts as expired.
+ */
+const elapsedMs = (since: AliveMark, now: AliveMark): number => {
+  const wallElapsed = now.wallMs - since.wallMs;
+  if (since.monotonicMs === undefined || now.monotonicMs === undefined) {
+    return wallElapsed < 0 ? Number.POSITIVE_INFINITY : wallElapsed;
+  }
+  return Math.max(wallElapsed, now.monotonicMs - since.monotonicMs);
+};
+
 // A wildcard bind is reachable on loopback, which is where the provider
 // subprocesses run; anything else is announced as the address it bound.
 const getHttpMcpEndpointHost = (address: NetAddress.IpAddress): string =>
@@ -224,6 +249,10 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const retiredThreads =
     options.retiredThreads ?? Option.getOrUndefined(yield* Effect.serviceOption(McpRetiredThreads));
   const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
+  const currentAliveMark: Effect.Effect<AliveMark> = Effect.all({
+    wallMs: currentTimeMillis,
+    monotonicMs: Clock.monotonicTimeNanos.pipe(Effect.map((nanos) => Number(nanos / 1_000_000n))),
+  });
   const livenessWindowMs = options.livenessWindowMs ?? DEFAULT_LIVENESS_WINDOW_MS;
   const livenessPersistIntervalMs = Math.min(
     LIVENESS_PERSIST_INTERVAL_MS,
@@ -245,13 +274,14 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       .digest("SHA-256", new TextEncoder().encode(token))
       .pipe(Effect.map(bytesToHex), Effect.orDie);
 
-  const restore = (persisted: PersistedState, timestamp: number): RegistryState => {
+  const restore = (persisted: PersistedState, now: AliveMark): RegistryState => {
     const records = new Map<string, CredentialRecord>();
     for (const record of persisted.records) {
-      if (timestamp - record.lastAliveAt > livenessWindowMs) continue;
+      const lastAlive: AliveMark = { wallMs: record.lastAliveAt, monotonicMs: undefined };
+      if (elapsedMs(lastAlive, now) > livenessWindowMs) continue;
       records.set(record.tokenHash, {
         tokenHash: record.tokenHash,
-        lastAliveAt: record.lastAliveAt,
+        lastAlive,
         scope: {
           environmentId,
           requestNamespace: record.providerSessionId,
@@ -286,10 +316,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
    * every earlier token instead of resetting generations under the old key.
    * The new key reaches the store with the first persisted state.
    */
-  const loadKeyAndState = (
-    store: ServerSecretStore.ServerSecretStore["Service"],
-    timestamp: number,
-  ) =>
+  const loadKeyAndState = (store: ServerSecretStore.ServerSecretStore["Service"], now: AliveMark) =>
     Effect.gen(function* () {
       const storedKey = yield* store.get(CREDENTIAL_KEY_SECRET);
       const storedState = yield* store.get(CREDENTIAL_STATE_SECRET);
@@ -308,7 +335,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         ) {
           return {
             key,
-            state: restore(restored.value, timestamp),
+            state: restore(restored.value, now),
             // Expired records included: their thread may have been retired
             // by an invalidation that never reached the store.
             persistedThreadIds: [
@@ -329,15 +356,15 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       ),
     );
 
-  const initialTimestamp = yield* currentTimeMillis;
+  const initialAlive = yield* currentAliveMark;
   const loaded =
-    secretStore === undefined ? undefined : yield* loadKeyAndState(secretStore, initialTimestamp);
+    secretStore === undefined ? undefined : yield* loadKeyAndState(secretStore, initialAlive);
   const derivationKey: Uint8Array = loaded?.key ?? (yield* generateKey);
   const keyId = keyIdOf(derivationKey);
   const initialState = loaded?.state ?? emptyState;
   const state = yield* SynchronizedRef.make<RegistryState>(initialState);
-  const persistedAliveAt = new Map<string, number>(
-    Array.from(initialState.records, ([tokenHash, record]) => [tokenHash, record.lastAliveAt]),
+  const persistedAliveAt = new Map<string, AliveMark>(
+    Array.from(initialState.records, ([tokenHash, record]) => [tokenHash, record.lastAlive]),
   );
   /** Whether the store holds `derivationKey`; false until a new key is first written. */
   let keyStored = loaded !== undefined;
@@ -378,7 +405,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
                 providerInstanceId: record.scope.thread.providerInstanceId,
                 capabilities: Array.from(record.scope.capabilities),
                 issuedAt: record.scope.issuedAt,
-                lastAliveAt: record.lastAliveAt,
+                lastAliveAt: record.lastAlive.wallMs,
               })),
             });
             yield* secretStore.set(CREDENTIAL_STATE_SECRET, new TextEncoder().encode(encoded));
@@ -391,7 +418,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
             revocationPending = false;
             persistedAliveAt.clear();
             for (const record of records) {
-              persistedAliveAt.set(record.tokenHash, record.lastAliveAt);
+              persistedAliveAt.set(record.tokenHash, record.lastAlive);
             }
           }),
         );
@@ -464,12 +491,12 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           ),
         );
 
-  const persistIfLivenessStale = (tokenHashes: Iterable<string>, timestamp: number) =>
+  const persistIfLivenessStale = (tokenHashes: Iterable<string>, now: AliveMark) =>
     Effect.suspend(() => {
       if (revocationPending) return persistRevocation;
       for (const tokenHash of tokenHashes) {
         const persistedAt = persistedAliveAt.get(tokenHash);
-        if (persistedAt === undefined || timestamp - persistedAt >= livenessPersistIntervalMs) {
+        if (persistedAt === undefined || elapsedMs(persistedAt, now) >= livenessPersistIntervalMs) {
           return persist;
         }
       }
@@ -521,17 +548,19 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
    * interval) after its last stored sign of life, so a credential that only a
    * failed revocation left on disk cannot be kept alive indefinitely.
    */
-  const isAlive = (record: CredentialRecord, timestamp: number) => {
-    if (timestamp - record.lastAliveAt > livenessWindowMs) return false;
+  const isAlive = (record: CredentialRecord, now: AliveMark) => {
+    if (elapsedMs(record.lastAlive, now) > livenessWindowMs) return false;
     const storedAliveAt = persistedAliveAt.get(record.tokenHash);
     return (
       storedAliveAt === undefined ||
-      timestamp - storedAliveAt <= livenessWindowMs + livenessPersistIntervalMs
+      elapsedMs(storedAliveAt, now) <= livenessWindowMs + livenessPersistIntervalMs
     );
   };
 
-  const pruneDead = (records: ReadonlyMap<string, CredentialRecord>, timestamp: number) => {
-    const next = new Map(Array.from(records).filter(([, record]) => isAlive(record, timestamp)));
+  // Dropping a dead record is what keeps it expired: no later clock reading
+  // or `touch` brings it back, only a new `issue`.
+  const pruneDead = (records: ReadonlyMap<string, CredentialRecord>, now: AliveMark) => {
+    const next = new Map(Array.from(records).filter(([, record]) => isAlive(record, now)));
     return next.size === records.size ? records : next;
   };
 
@@ -542,7 +571,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   );
 
   const issueUnlocked = Effect.fnUntraced(function* (request: McpCredentialRequest) {
-    const issuedAt = yield* currentTimeMillis;
+    const issuedAlive = yield* currentAliveMark;
+    const issuedAt = issuedAlive.wallMs;
     const freshProviderSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
     const threadId = ThreadId.make(request.threadId);
     const providerInstanceId = ProviderInstanceId.make(request.providerInstanceId);
@@ -558,7 +588,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         const generation = current.generations.get(threadId) ?? 0;
         const rawToken = deriveToken(threadId, providerInstanceId, generation);
         const tokenHash = yield* hashToken(rawToken);
-        const records = new Map(pruneDead(current.records, issuedAt));
+        const records = new Map(pruneDead(current.records, issuedAlive));
         const existing = records.get(tokenHash);
         // A credential that is still honored keeps its identity, so a live
         // session's record of it stays accurate across re-issues.
@@ -572,7 +602,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           capabilities,
           issuedAt: existing?.scope.issuedAt ?? issuedAt,
         };
-        records.set(tokenHash, { tokenHash, scope, lastAliveAt: issuedAt });
+        records.set(tokenHash, { tokenHash, scope, lastAlive: issuedAlive });
         const reduced =
           existing !== undefined &&
           Array.from(existing.scope.capabilities).some(
@@ -607,36 +637,36 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     function* (rawToken) {
       if (rawToken.length === 0) return undefined;
       const tokenHash = yield* hashToken(rawToken);
-      const timestamp = yield* currentTimeMillis;
+      const alive = yield* currentAliveMark;
       const scope = yield* SynchronizedRef.modify(state, (current) => {
-        const records = pruneDead(current.records, timestamp);
+        const records = pruneDead(current.records, alive);
         const record = records.get(tokenHash);
         if (!record) return [undefined, { ...current, records }] as const;
         const next = new Map(records);
-        next.set(tokenHash, { ...record, lastAliveAt: timestamp });
+        next.set(tokenHash, { ...record, lastAlive: alive });
         return [record.scope, { ...current, records: next }] as const;
       });
-      if (scope !== undefined) yield* persistIfLivenessStale([tokenHash], timestamp);
+      if (scope !== undefined) yield* persistIfLivenessStale([tokenHash], alive);
       return scope;
     },
   );
 
   const touch: McpSessionRegistryShape["touch"] = Effect.fn("McpSessionRegistry.touch")(
     function* (threadId) {
-      const timestamp = yield* currentTimeMillis;
+      const alive = yield* currentAliveMark;
       const touched = yield* SynchronizedRef.modify(state, (current) => {
-        const records = pruneDead(current.records, timestamp);
+        const records = pruneDead(current.records, alive);
         const next = new Map(records);
         const touched: Array<string> = [];
         for (const [tokenHash, record] of records) {
           if (record.scope.thread.threadId === threadId) {
-            next.set(tokenHash, { ...record, lastAliveAt: timestamp });
+            next.set(tokenHash, { ...record, lastAlive: alive });
             touched.push(tokenHash);
           }
         }
         return [touched, { ...current, records: next }] as const;
       });
-      yield* persistIfLivenessStale(touched, timestamp);
+      yield* persistIfLivenessStale(touched, alive);
     },
   );
 
