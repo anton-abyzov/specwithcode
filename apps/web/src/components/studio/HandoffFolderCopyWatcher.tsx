@@ -549,7 +549,8 @@ export function HandoffFolderCopyWatcher({
           }
           return false;
         }
-        if (firstCheck) {
+        // A copy closed at its review that finished elsewhere was never seen: announce it.
+        if (firstCheck && !(reviewOnly && destination.value.state !== "previewed")) {
           // Found waiting after a restart: nothing else says so, so the toast and a system
           // notification do, each with a way to the review.
           if (activity?.waiting && !reviewOnly) {
@@ -624,7 +625,8 @@ export function HandoffFolderCopyWatcher({
         named(copyActivityFromSource(source.value, machine, sourceLabel)),
       );
       if (source.value.state === "scanning") return true;
-      if (firstCheck && !saved.auto) return false;
+      // Only observed: a copy closed at its review never starts a new comparison.
+      if (reviewOnly || (firstCheck && !saved.auto)) return false;
       if (source.value.summary && source.value.state !== "failed") {
         if (saved.auto) {
           try {

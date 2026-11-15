@@ -995,6 +995,72 @@ it("only shows a copy closed at its review as waiting: no approval, no toast", a
   }
 });
 
+it("announces a copy closed at its review that finished elsewhere", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer();
+    state.handlers.copyStatus = () => copyStatus("applied");
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          projectName="Project"
+          machineLabel={() => "M3"}
+          reviewOnly
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(state.toasts).toHaveLength(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("never starts a new comparison for a copy closed at its review", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ auto: true });
+    const calls: string[] = [];
+    state.handlers.copyStatus = notFound;
+    state.handlers.copySourceStatus = () => ({ state: "scanned", summary, progress: null, error: null });
+    state.handlers.copyOffer = () => {
+      calls.push("copyOffer");
+      return {
+        operationId: "00000000-0000-4000-8000-000000000009",
+        sourceEnvironmentId: "m4",
+        sourceProjectId: "source",
+        sourceUrl: "https://m4",
+        sourceMachine: "M4",
+        token: "fresh",
+        title: "Project",
+        mode: "copy-only",
+        status: { state: "scanned", summary, error: null },
+      };
+    };
+    state.handlers.copyStart = () => {
+      calls.push("copyStart");
+      return copyStatus("scanning");
+    };
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          projectName="Project"
+          machineLabel={() => "M3"}
+          reviewOnly
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(calls).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("keeps a newer copy another tab saved while a closed copy's status was in flight", async () => {
   vi.useFakeTimers();
   try {
