@@ -807,7 +807,7 @@ it("remembers the machine silently, only once a move succeeds", async () => {
 it("opens on the copy with the coordinator kept here, even where the project is saved", async () => {
   state.environments = machineEnvironments;
   await mount("as-opened");
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("clone");
   expect(props().intent).toBe("copy");
   expect(props().selected).toBe("m1:target");
   expect((props().copyFlow as { props: Record<string, unknown> }).props.defaultMode).toBe(
@@ -819,7 +819,7 @@ it("opens on a copy where the project has no saved folder", async () => {
   state.environments = machineEnvironments;
   state.projects = [source];
   await mount("as-opened");
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("clone");
 });
 
 it("names the copy flow's machine in the title once one is chosen", async () => {
@@ -848,7 +848,7 @@ it("opens straight on the folder copy review, on the machine Run on picked", asy
     ),
   );
   expect(props().intent).toBe("copy");
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("clone");
   expect((props().copyFlow as { props: Record<string, unknown> }).props).toMatchObject({
     preferredMachine: "m3",
     defaultMode: "copy-only",
@@ -873,7 +873,7 @@ it("syncs into the copy chosen in the menu: its machine and folder, never a draf
     ),
   );
   expect(props().intent).toBe("copy");
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("clone");
   expect(props().sync).toEqual({ machine: "M3", folder: "/m3-target" });
   const copy = (props().copyFlow as { props: Record<string, unknown> }).props;
   // Requested, so a saved draft or last copy cannot swap the machine or its folder.
@@ -978,7 +978,7 @@ it("opens as a move, and switching the Git move to files only uses the copy flow
   await act(async () => props().onMethodChange!("folder"));
   expect(props().intent).toBe("move");
   await act(async () => props().onIntentChange!("copy"));
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("clone");
   expect(props().intent).toBe("copy");
   expect((props().copyFlow as { props: Record<string, unknown> }).props.defaultMode).toBe(
     "copy-only",
@@ -1051,7 +1051,7 @@ it("starts over from the default choices after closing a review", async () => {
   expect(props().phase).toBe("choose");
   expect(props().preview).toBeNull();
   // Reopening starts on the defaults: the copy, with the coordinator kept here.
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("clone");
 });
 
 it("keeps a published checkpoint frozen until it finishes or is recovered", async () => {
@@ -1109,7 +1109,7 @@ it("starts fresh after closing a review whose destination check failed", async (
   await act(async () => props().onOpenChange(false));
   expect(localStorage.getItem(key)).toBeNull();
   await act(async () => container.querySelector("button")!.click());
-  expect(props().method).toBe("copy");
+  expect(props().method).toBe("clone");
   expect(props().error).toBeNull();
 });
 

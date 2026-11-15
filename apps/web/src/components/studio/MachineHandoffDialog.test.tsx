@@ -558,13 +558,19 @@ describe("handoff file method and intent", () => {
 
   it("puts how files travel under Details, in the copy flow and the Git move alike", async () => {
     const onMethodChange = vi.fn();
-    await handoff({ method: "copy", onMethodChange, copyFlow });
+    await handoff({ method: "clone", onMethodChange, copyFlow });
     expect(document.querySelector('[data-testid="copy-flow"]')).not.toBeNull();
     expect(document.querySelector('[data-slot="machine-option"]')).toBeNull();
     expect(document.querySelector('[data-slot="handoff-method"] legend')?.textContent).toBe(
       "How files travel",
     );
-    expect(methodRadio("Copy everything").getAttribute("aria-checked")).toBe("true");
+    // Download from GitHub is the default and comes first; copying everything is second.
+    const labels = [
+      ...document.querySelectorAll('[data-slot="handoff-method"] [role="radio"]'),
+    ].map((node) => node.closest("label")?.textContent ?? "");
+    expect(labels[0]).toContain("Download from GitHub (recommended)");
+    expect(labels[1]).toContain("Copy everything");
+    expect(methodRadio("Download from GitHub").getAttribute("aria-checked")).toBe("true");
     await click(methodRadio("Git only, no file copy"));
     expect(onMethodChange).toHaveBeenCalledExactlyOnceWith("folder");
     await handoff({
@@ -580,7 +586,7 @@ describe("handoff file method and intent", () => {
     expect(more.querySelector('[data-slot="handoff-workspace-summary"]')).not.toBeNull();
     expect(methodRadio("Git only, no file copy").getAttribute("aria-checked")).toBe("true");
     expect(button("Move project to MacBook Pro")).toBeDefined();
-    await click(methodRadio("Clone clean repositories from Git"));
+    await click(methodRadio("Download from GitHub"));
     expect(onMethodChange).toHaveBeenLastCalledWith("clone");
   });
 
