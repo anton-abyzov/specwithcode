@@ -39,10 +39,10 @@ import {
   applyFeedReadings,
   decodeAnnouncementFile,
   listedAnnouncements,
+  recordIntoFile,
   encodeAnnouncementFile,
   fetchFeed,
 } from "./feeds.ts";
-import { recordIntoFile } from "./recordTool.ts";
 
 const FIRST_CHECK_DELAY = Duration.seconds(45);
 /** AC-08: at most every 30 minutes. */

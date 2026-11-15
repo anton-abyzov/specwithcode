@@ -273,3 +273,21 @@ export function applyFeedReadings(
     },
   };
 }
+
+/**
+ * `file` with `announcement` merged in, and whether it was new. A post already
+ * known by its link stays, except that a confirmed recording replaces a recorded
+ * promise; a recording never replaces what the feed brought.
+ */
+export function recordIntoFile(
+  file: AnnouncementFile,
+  announcement: ResetAnnouncement,
+  now: number,
+): { readonly file: AnnouncementFile; readonly recorded: boolean } {
+  const known = file.announcements.find((entry) => entry.sourceUrl === announcement.sourceUrl);
+  const takesPlace = known === undefined || replaces(announcement, known);
+  const announcements = mergeAnnouncements(file.announcements, [announcement], now);
+  // New or replacing a recorded promise, and still kept within the retention and the cap.
+  const recorded = takesPlace && announcements.includes(announcement);
+  return { file: recorded ? { ...file, announcements } : file, recorded };
+}
