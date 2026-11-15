@@ -2057,7 +2057,6 @@ export function ProjectWorkspaceSurface({
                   <>
                     <ProjectOrchestratorSwitcher
                       project={project}
-                      members={iconCheckouts}
                       label={environment?.label ?? "Host"}
                       connected={connected}
                       isThisDevice={hostIsThisDevice}
