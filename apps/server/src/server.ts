@@ -131,6 +131,7 @@ import * as MachineLimitHandoff from "./orchestration-v2/MachineLimitHandoff.ts"
 import * as DeviceSignInHttp from "./auth/deviceSignInHttp.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
 import * as UsageLimitHistory from "./usage/UsageLimitHistory.ts";
+import * as UsageResetLedger from "./usage/UsageResetLedger.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as StudioProjectFileLoader from "./project/StudioProjectFileLoader.ts";
@@ -903,6 +904,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ProviderUsageLimitsIngestion.layer,
   // Quota over time for burn rates and run-out estimates on the pooled limits view.
   UsageLimitHistory.layer,
+  // What each subscription window had used when it reset, kept for a year.
+  UsageResetLedger.layer,
   layerProviderInstallationRefresh,
   // Looks for installed agents once at start, and turns on the signed-in ones nobody decided on.
   ProviderDiscovery.layer,

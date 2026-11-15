@@ -376,6 +376,17 @@ export type MachineNickname = typeof MachineNickname.Type;
 export const MachineNicknames = Schema.Record(TrimmedNonEmptyString, MachineNickname);
 export type MachineNicknames = typeof MachineNicknames.Type;
 
+/**
+ * The day of the month each subscription renews, keyed by the account key the
+ * usage views use, for providers that report no renewal date. Set by the
+ * person; this machine only.
+ */
+export const SubscriptionRenewalDays = Schema.Record(
+  TrimmedNonEmptyString,
+  Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 31 })),
+);
+export type SubscriptionRenewalDays = typeof SubscriptionRenewalDays.Type;
+
 export const LoadBalancingWeights = Schema.Record(
   TrimmedNonEmptyString,
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
@@ -2102,6 +2113,10 @@ export const ServerSettings = Schema.Struct({
    * entry for each machine, so every device shows the same name.
    */
   machineNicknames: MachineNicknames.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Renewal day per account, where the provider reports none; see `SubscriptionRenewalDays`. */
+  subscriptionRenewalDays: SubscriptionRenewalDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   /**
    * Retired environment tier for the new-thread workspace, which is now each
    * project's own choice (its override, then its specweave-studio.json, then
@@ -2519,6 +2534,8 @@ export const ServerSettingsPatch = Schema.Struct({
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
   /** Merged per machine, newest stamp wins; never replaces the whole map. */
   machineNicknames: Schema.optionalKey(MachineNicknames),
+  /** Merged by account key; an entry left out keeps its day. */
+  subscriptionRenewalDays: Schema.optionalKey(SubscriptionRenewalDays),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newProjectThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
