@@ -101,14 +101,19 @@ const composite = (
     catch: (cause) => new AndroidIconRenderError({ layer, cause }),
   });
 
+const BrandSettings = Schema.Struct({
+  tile: Schema.Struct({ top: Schema.String, bottom: Schema.String }),
+});
+const decodeBrandSettings = Schema.decodeUnknownEffect(Schema.fromJsonString(BrandSettings));
+
 const readBrandSettings = Effect.fn("androidIcons.readBrandSettings")(function* (
   repositoryRoot: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const settings = JSON.parse(
+  const settings = yield* decodeBrandSettings(
     yield* fs.readFileString(path.join(repositoryRoot, BRAND_SETTINGS)),
-  ) as { readonly tile: { readonly top: string; readonly bottom: string } };
+  ).pipe(Effect.mapError((cause) => new AndroidIconRenderError({ layer: BRAND_SETTINGS, cause })));
   return settings.tile;
 });
 
