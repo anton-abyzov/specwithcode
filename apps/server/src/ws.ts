@@ -292,6 +292,7 @@ import {
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitHistory from "./usage/UsageLimitHistory.ts";
+import * as UsageResetLedger from "./usage/UsageResetLedger.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -3551,6 +3552,7 @@ const inferredWebSocketLayer = Layer.unwrap(
                   ProjectWorkspaceRpc.layerPlanningRpcHandlers,
                   designLayers.layerRpcHandlers(session),
                   UsageLimitHistory.layerRpcHandlers,
+                  UsageResetLedger.layerRpcHandlers,
                   skillsActionsHandlers,
                 ),
               ),

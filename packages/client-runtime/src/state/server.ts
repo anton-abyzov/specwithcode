@@ -1173,6 +1173,12 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.usageLimitsHistory,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
+    /** Closed quota periods per account: what each window had used when it reset. */
+    usageResetLedger: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:usage-limits:resets",
+      tag: WS_METHODS.usageLimitsResets,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     /** CLIProxyAPI installs on the host's own machine; the reply never carries a key. */
     detectLocalUsageHubs: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:detect-local-usage-hubs",
