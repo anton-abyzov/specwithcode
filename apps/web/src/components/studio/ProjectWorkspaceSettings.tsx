@@ -199,7 +199,6 @@ export function ProjectWorkspaceSettings({
   const [coordinator, setCoordinator] = useState<ModelSelection | null>(
     snapshot.settings.coordinatorModelSelection,
   );
-  const [worker, setWorker] = useState<ModelSelection | null>(project.defaultModelSelection);
   const [environment, setEnvironment] = useState(
     snapshot.settings.environment ?? { additionalFolders: [], repositories: [] },
   );
@@ -243,6 +242,14 @@ export function ProjectWorkspaceSettings({
   const [confirmation, setConfirmation] = useState("");
   const [closeWarning, setCloseWarning] = useState(false);
   const hostConfig = useEnvironment(project.environmentId)?.serverConfig;
+  // The model new threads really start on: a saved project override wins over the
+  // project's own field, so the picker shows it and an unchanged save keeps it.
+  const effectiveWorker = hostConfig?.settings
+    ? resolveProjectSettings(hostConfig.settings, project.id, project).settings
+        .defaultModelSelection
+    : project.defaultModelSelection;
+  const [workerEdit, setWorker] = useState<ModelSelection | null | undefined>(undefined);
+  const worker = workerEdit === undefined ? (effectiveWorker ?? null) : workerEdit;
   // What the coordinator runs on while no override is saved, in the same order as the
   // project view, so both name the same model; shown so the picker is never blank.
   const inheritedCoordinator = resolveCoordinatorModelSelection({
@@ -317,7 +324,9 @@ export function ProjectWorkspaceSettings({
       input: {
         projectId: project.id,
         ...(titleEdited && ownsName ? { title: title.trim() } : {}),
-        defaultModelSelection: worker,
+        // Only a model the person picked here is sent, so saving another field
+        // never rewrites the project's model or drops a saved override.
+        ...(workerEdit === undefined ? {} : { defaultModelSelection: workerEdit }),
         workspaceSettings: {
           expectedRevision: baseRevision,
           goal,
@@ -335,6 +344,7 @@ export function ProjectWorkspaceSettings({
       return false;
     }
     setDirty(false);
+    setWorker(undefined);
     setTitleEdited(false);
     setEnvironmentEdited(false);
     setBaseRevision(baseRevision + 1);
@@ -856,7 +866,7 @@ export function ProjectWorkspaceSettings({
                   setGoal(snapshot.settings.goal);
                   setInstructions(snapshot.settings.instructions);
                   setCoordinator(snapshot.settings.coordinatorModelSelection);
-                  setWorker(project.defaultModelSelection);
+                  setWorker(undefined);
                   setAutoResume(snapshot.settings.autoResume);
                   setEnvironment(
                     snapshot.settings.environment ?? { additionalFolders: [], repositories: [] },

@@ -94,7 +94,6 @@ export const pt: PhraseCatalog = {
   "Custom worktree folder": "Pasta de worktrees personalizada",
   Danger: "Zona de perigo",
   "Data & privacy": "Dados e privacidade",
-  "Decision model": "Modelo de decisão",
   "Default browser appearance": "Aparência padrão do navegador",
   "Default browser profile": "Perfil de navegador padrão",
   "Default browser viewport": "Viewport padrão do navegador",

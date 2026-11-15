@@ -118,7 +118,15 @@ const waitUnderLabel = (t: Translate, value: string) =>
  * project-scoped, so a project can keep Claude and fall back to Codex while
  * another waits for the reset.
  */
-export function ProviderLimitSettings() {
+/**
+ * `part` splits the rows for the Models page: "policy" is the short "When a
+ * limit hits" group, "advanced" the rest. A saved fallback order shows under
+ * "advanced" only while it exists, with a way back to the tracks. Without
+ * `part` every row renders, as in the project dialog.
+ */
+export function ProviderLimitSettings({ part }: { readonly part?: "policy" | "advanced" } = {}) {
+  const policy = part !== "advanced";
+  const advanced = part !== "policy";
   const tx = useTx();
   const t = useT();
   const { scope, search, target } = useSettingsScope();
@@ -138,6 +146,7 @@ export function ProviderLimitSettings() {
     (settings.modelLanes?.complex?.length ?? 0) + (settings.modelLanes?.routine?.length ?? 0);
   const usesTiers = fallbackOrder.length === 0 && tierCount > 0;
   const chainSet = fallbackOrder.length > 0 || tierCount > 0;
+  const showOrder = part === undefined || fallbackOrder.length > 0;
   // The list is the setting; its first entry keeps older clients' single fallback in step.
   const saveFallbackOrder = (order: ReadonlyArray<ModelSelection>) =>
     updateSettings({
@@ -254,471 +263,510 @@ export function ProviderLimitSettings() {
 
   return (
     <>
-      <SettingsRow
-        serverScoped
-        settingKeys={["providerLimitAction"]}
-        mixed={mixedAction}
-        id="provider-limit-action"
-        title={t("limitSettings.action.title")}
-        description={
-          isProjectScope
-            ? t("limitSettings.action.descriptionProject")
-            : t("limitSettings.action.description")
-        }
-        resetAction={
-          settings.providerLimitAction !== "switch" ? (
-            <SettingResetButton
-              label={tx("usage limit rule")}
-              onClick={() => updateSettings({ providerLimitAction: "switch" })}
-            />
-          ) : null
-        }
-        control={
-          <Select
-            value={mixedAction ? null : settings.providerLimitAction}
-            onValueChange={(value) => {
-              if (value === "ask" || value === "wait" || value === "switch")
-                updateSettings({ providerLimitAction: value });
-            }}
-          >
-            <SelectTrigger size="sm" aria-label={t("limitSettings.action.title")}>
-              <SelectValue>
-                {(value: string | null) =>
-                  value === "ask" || value === "wait" || value === "switch"
-                    ? actionLabel(t, value)
-                    : t("limitSettings.mixed")
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              {PROVIDER_LIMIT_ACTIONS.map((action) => (
-                <SelectItem key={action} value={action}>
-                  {actionLabel(t, action)}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        }
-      />
-      <SettingsRow
-        serverScoped
-        settingKeys={["providerLimitFallbackModels", "providerLimitFallbackModelSelection"]}
-        mixed={mixedFallback}
-        id="provider-limit-fallback"
-        title={t("limitSettings.order.title")}
-        description={[
-          t("limitSettings.order.description"),
-          tierCount > 0 ? t("limitSettings.order.descriptionTiers") : null,
-          settings.providerLimitFallbackListOnly && chainSet
-            ? t("limitSettings.order.descriptionWaits")
-            : t("limitSettings.order.descriptionAny"),
-        ]
-          .filter((part) => part !== null)
-          .join(t("common.sentenceSpace"))}
-        status={
-          fallbackOrder.length === 0 && !mixedFallback
-            ? usesTiers
-              ? t("limitSettings.order.statusTiers")
-              : t("limitSettings.order.statusAny")
-            : undefined
-        }
-        resetAction={
-          fallbackOrder.length > 0 ? (
-            <SettingResetButton
-              label={tx("fallback order")}
-              onClick={() => saveFallbackOrder([])}
-            />
-          ) : null
-        }
-        control={
-          pickerSelection ? (
-            <ProviderModelPicker
-              activeInstanceId={pickerSelection.instanceId}
-              model={pickerSelection.model}
-              lockedProvider={null}
-              instanceEntries={entries}
-              modelOptionsByInstance={modelOptions}
-              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-              triggerLabel={
-                mixedFallback ? t("limitSettings.mixed") : t("limitSettings.order.addModel")
-              }
-              triggerAriaLabel={t("limitSettings.order.addAria")}
-              disabled={fallbackOrder.length >= MAX_FALLBACK_MODELS}
-              onInstanceModelChange={(instanceId, model) =>
-                saveFallbackOrder(addFallbackEntry(fallbackOrder, instanceId, model))
-              }
-            />
-          ) : (
-            <span className="text-sm text-muted-foreground">
-              {t("limitSettings.order.noProviders")}
-            </span>
-          )
-        }
-      >
-        <FallbackOrderList
-          order={fallbackOrder}
-          providers={providers}
-          onChange={saveFallbackOrder}
-          statuses={fallbackStatuses}
-        />
-      </SettingsRow>
-      {chainSet ? (
-        <SettingsRow
-          serverScoped
-          settingKeys={["providerLimitFallbackListOnly"]}
-          mixed={mixedListOnly}
-          id="provider-limit-fallback-list-only"
-          title={t("limitSettings.listOnly.title")}
-          description={
-            usesTiers
-              ? t("limitSettings.listOnly.descriptionTiers")
-              : t("limitSettings.listOnly.descriptionOrder")
-          }
-          resetAction={
-            settings.providerLimitFallbackListOnly ? (
-              <SettingResetButton
-                label={tx("only these models")}
-                onClick={() => updateSettings({ providerLimitFallbackListOnly: false })}
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.providerLimitFallbackListOnly}
-              onCheckedChange={(checked) =>
-                updateSettings({ providerLimitFallbackListOnly: Boolean(checked) })
-              }
-              aria-label={t("limitSettings.listOnly.title")}
-            />
-          }
-        />
-      ) : null}
-      <SettingsRow
-        serverScoped
-        settingKeys={["providerLimitExcludedModels"]}
-        mixed={mixedExcluded}
-        id="provider-limit-options"
-        title={t("limitSettings.options.title")}
-        description={t("limitSettings.options.description")}
-        status={
-          excludedModels.length === 0 && !mixedExcluded
-            ? t("limitSettings.options.none")
-            : t("limitSettings.options.count", { count: excludedModels.length })
-        }
-        resetAction={
-          excludedModels.length > 0 ? (
-            <SettingResetButton
-              label={tx("excluded models")}
-              onClick={() => updateSettings({ providerLimitExcludedModels: [] })}
-            />
-          ) : null
-        }
-      >
-        <FallbackOptionsPanel
-          groups={fallbackOptions}
-          disabled={mixedExcluded}
-          onToggleExcluded={(model, instanceId) =>
-            updateSettings({
-              providerLimitExcludedModels: [
-                ...toggleExcludedModel(excludedModels, model, instanceId),
-              ],
-            })
-          }
-        />
-      </SettingsRow>
-      <MachineFallbackSettings />
-      <SettingsRow
-        serverScoped
-        settingKeys={["providerLimitSwitchAtPercent"]}
-        mixed={mixedSwitchAt}
-        id="provider-limit-switch-at"
-        title={t("limitSettings.switchAt.title")}
-        description={t("limitSettings.switchAt.description")}
-        resetAction={
-          mixedSwitchAt || switchAt !== DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT ? (
-            <SettingResetButton
-              label={tx("switch threshold")}
-              onClick={() => {
-                leaveCustomSwitchAt();
-                updateSettings({
-                  providerLimitSwitchAtPercent: DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT,
-                });
-              }}
-            />
-          ) : null
-        }
-        control={
-          <div className="flex flex-col items-end gap-1">
-            <div className="flex flex-wrap items-center justify-end gap-2">
+      {policy ? (
+        <>
+          <SettingsRow
+            serverScoped
+            settingKeys={["providerLimitAction"]}
+            mixed={mixedAction}
+            id="provider-limit-action"
+            title={t("limitSettings.action.title")}
+            description={
+              isProjectScope
+                ? t("limitSettings.action.descriptionProject")
+                : t("limitSettings.action.description")
+            }
+            resetAction={
+              settings.providerLimitAction !== "switch" ? (
+                <SettingResetButton
+                  label={tx("usage limit rule")}
+                  onClick={() => updateSettings({ providerLimitAction: "switch" })}
+                />
+              ) : null
+            }
+            control={
               <Select
-                value={switchAtMode}
+                value={mixedAction ? null : settings.providerLimitAction}
                 onValueChange={(value) => {
-                  if (value === SWITCH_AT_CUSTOM) {
-                    setCustomSwitchAt(true);
-                    setSwitchAtInvalid(false);
-                  } else if (value === "off") {
-                    leaveCustomSwitchAt();
-                    updateSettings({ providerLimitSwitchAtPercent: null });
-                  } else if (value !== null && isSwitchAtPreset(value)) {
-                    leaveCustomSwitchAt();
-                    updateSettings({ providerLimitSwitchAtPercent: Number(value) });
-                  }
+                  if (value === "ask" || value === "wait" || value === "switch")
+                    updateSettings({ providerLimitAction: value });
                 }}
               >
-                <SelectTrigger size="sm" aria-label={t("limitSettings.switchAt.title")}>
+                <SelectTrigger size="sm" aria-label={t("limitSettings.action.title")}>
                   <SelectValue>
                     {(value: string | null) =>
-                      value === "off"
-                        ? t("limitSettings.switchAt.off")
-                        : value === null
-                          ? t("limitSettings.mixed")
-                          : value === SWITCH_AT_CUSTOM
-                            ? switchAt === null || mixedSwitchAt
-                              ? t("limitSettings.switchAt.custom")
-                              : switchAtLabel(t, String(switchAt))
-                            : switchAtLabel(t, value)
+                      value === "ask" || value === "wait" || value === "switch"
+                        ? actionLabel(t, value)
+                        : t("limitSettings.mixed")
                     }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {SWITCH_AT_OPTIONS.map((option) => (
-                    <SelectItem key={option} value={option}>
-                      {option === "off"
-                        ? t("limitSettings.switchAt.off")
-                        : option === String(DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT)
-                          ? t("limitSettings.switchAtOptionDefault", {
-                              percent: percentLeft(Number(option)),
-                            })
-                          : switchAtLabel(t, option)}
+                  {PROVIDER_LIMIT_ACTIONS.map((action) => (
+                    <SelectItem key={action} value={action}>
+                      {actionLabel(t, action)}
                     </SelectItem>
                   ))}
-                  <SelectItem value={SWITCH_AT_CUSTOM}>
-                    {t("limitSettings.switchAt.custom")}
-                  </SelectItem>
                 </SelectPopup>
               </Select>
-              {switchAtMode === SWITCH_AT_CUSTOM ? (
-                <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Input
-                    size="sm"
-                    className="w-16"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    aria-label={t("limitSettings.switchAt.customLabel")}
-                    aria-invalid={switchAtInvalid || undefined}
-                    aria-describedby={switchAtInvalid ? switchAtErrorId : undefined}
-                    placeholder={String(percentLeft(DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT))}
-                    value={
-                      switchAtDraft ??
-                      (switchAt === null || mixedSwitchAt ? "" : String(percentLeft(switchAt)))
-                    }
-                    onChange={(event) => {
-                      setSwitchAtDraft(event.currentTarget.value);
-                      setSwitchAtInvalid(false);
-                    }}
-                    onBlur={commitSwitchAtDraft}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        commitSwitchAtDraft();
+            }
+          />
+        </>
+      ) : null}
+      {advanced ? (
+        <>
+          {showOrder ? (
+            <>
+              <SettingsRow
+                serverScoped
+                settingKeys={["providerLimitFallbackModels", "providerLimitFallbackModelSelection"]}
+                mixed={mixedFallback}
+                id="provider-limit-fallback"
+                title={t("limitSettings.order.title")}
+                description={[
+                  t("limitSettings.order.description"),
+                  tierCount > 0 ? t("limitSettings.order.descriptionTiers") : null,
+                  settings.providerLimitFallbackListOnly && chainSet
+                    ? t("limitSettings.order.descriptionWaits")
+                    : t("limitSettings.order.descriptionAny"),
+                ]
+                  .filter((part) => part !== null)
+                  .join(t("common.sentenceSpace"))}
+                status={
+                  fallbackOrder.length === 0 && !mixedFallback
+                    ? usesTiers
+                      ? t("limitSettings.order.statusTiers")
+                      : t("limitSettings.order.statusAny")
+                    : undefined
+                }
+                resetAction={
+                  fallbackOrder.length > 0 ? (
+                    <SettingResetButton
+                      label={tx("fallback order")}
+                      onClick={() => saveFallbackOrder([])}
+                    />
+                  ) : null
+                }
+                control={
+                  pickerSelection ? (
+                    <ProviderModelPicker
+                      activeInstanceId={pickerSelection.instanceId}
+                      model={pickerSelection.model}
+                      lockedProvider={null}
+                      instanceEntries={entries}
+                      modelOptionsByInstance={modelOptions}
+                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                      triggerLabel={
+                        mixedFallback ? t("limitSettings.mixed") : t("limitSettings.order.addModel")
                       }
-                    }}
-                  />
-                  {t("limitSettings.switchAt.customUnit")}
-                </label>
+                      triggerAriaLabel={t("limitSettings.order.addAria")}
+                      disabled={fallbackOrder.length >= MAX_FALLBACK_MODELS}
+                      onInstanceModelChange={(instanceId, model) =>
+                        saveFallbackOrder(addFallbackEntry(fallbackOrder, instanceId, model))
+                      }
+                    />
+                  ) : (
+                    <span className="text-sm text-muted-foreground">
+                      {t("limitSettings.order.noProviders")}
+                    </span>
+                  )
+                }
+              >
+                <FallbackOrderList
+                  order={fallbackOrder}
+                  providers={providers}
+                  onChange={saveFallbackOrder}
+                  statuses={fallbackStatuses}
+                />
+              </SettingsRow>
+              {part !== undefined ? (
+                <div className="px-3 pb-2">
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() => saveFallbackOrder([])}
+                  >
+                    {tx("Use tracks")}
+                  </Button>
+                </div>
               ) : null}
-            </div>
-            {switchAtInvalid ? (
-              <p id={switchAtErrorId} role="alert" className="text-xs text-destructive-foreground">
-                {t("limitSettings.switchAt.customError", {
-                  min: SWITCH_AT_LEFT_MIN,
-                  max: SWITCH_AT_LEFT_MAX,
-                })}
-              </p>
-            ) : null}
-          </div>
-        }
-      />
-      <SettingsRow
-        serverScoped
-        settingKeys={["providerLimitWaitUnderMinutes"]}
-        mixed={mixedWaitUnder}
-        id="provider-limit-wait-under"
-        title={t("limitSettings.waitUnder.title")}
-        description={t("limitSettings.waitUnder.description")}
-        resetAction={
-          settings.providerLimitWaitUnderMinutes !== DEFAULT_PROVIDER_LIMIT_WAIT_UNDER_MINUTES ? (
-            <SettingResetButton
-              label={tx("reset wait")}
-              onClick={() =>
+            </>
+          ) : null}
+          {chainSet ? (
+            <SettingsRow
+              serverScoped
+              settingKeys={["providerLimitFallbackListOnly"]}
+              mixed={mixedListOnly}
+              id="provider-limit-fallback-list-only"
+              title={t("limitSettings.listOnly.title")}
+              description={
+                usesTiers
+                  ? t("limitSettings.listOnly.descriptionTiers")
+                  : t("limitSettings.listOnly.descriptionOrder")
+              }
+              resetAction={
+                settings.providerLimitFallbackListOnly ? (
+                  <SettingResetButton
+                    label={tx("only these models")}
+                    onClick={() => updateSettings({ providerLimitFallbackListOnly: false })}
+                  />
+                ) : null
+              }
+              control={
+                <Switch
+                  checked={settings.providerLimitFallbackListOnly}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ providerLimitFallbackListOnly: Boolean(checked) })
+                  }
+                  aria-label={t("limitSettings.listOnly.title")}
+                />
+              }
+            />
+          ) : null}
+          <SettingsRow
+            serverScoped
+            settingKeys={["providerLimitExcludedModels"]}
+            mixed={mixedExcluded}
+            id="provider-limit-options"
+            title={t("limitSettings.options.title")}
+            description={t("limitSettings.options.description")}
+            status={
+              excludedModels.length === 0 && !mixedExcluded
+                ? t("limitSettings.options.none")
+                : t("limitSettings.options.count", { count: excludedModels.length })
+            }
+            resetAction={
+              excludedModels.length > 0 ? (
+                <SettingResetButton
+                  label={tx("excluded models")}
+                  onClick={() => updateSettings({ providerLimitExcludedModels: [] })}
+                />
+              ) : null
+            }
+          >
+            <FallbackOptionsPanel
+              groups={fallbackOptions}
+              disabled={mixedExcluded}
+              onToggleExcluded={(model, instanceId) =>
                 updateSettings({
-                  providerLimitWaitUnderMinutes: DEFAULT_PROVIDER_LIMIT_WAIT_UNDER_MINUTES,
+                  providerLimitExcludedModels: [
+                    ...toggleExcludedModel(excludedModels, model, instanceId),
+                  ],
                 })
               }
             />
-          ) : null
-        }
-        control={
-          <Select
-            value={mixedWaitUnder ? null : String(settings.providerLimitWaitUnderMinutes)}
-            onValueChange={(value) => {
-              if (value !== null && (WAIT_UNDER_OPTIONS as readonly string[]).includes(value))
-                updateSettings({ providerLimitWaitUnderMinutes: Number(value) });
-            }}
-          >
-            <SelectTrigger size="sm" aria-label={t("limitSettings.waitUnder.title")}>
-              <SelectValue>
-                {(value: string | null) =>
-                  value === null ? t("limitSettings.mixed") : waitUnderLabel(t, value)
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              {WAIT_UNDER_OPTIONS.map((option) => (
-                <SelectItem key={option} value={option}>
-                  {waitUnderLabel(t, option)}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        }
-      />
-      <SettingsRow
-        serverScoped
-        settingKeys={["autoApproveSubscriptionChange"]}
-        mixed={mixedSubscriptionChange}
-        id="provider-limit-auto-approve-subscription-change"
-        title={t("limitSettings.subscription.title")}
-        description={t("limitSettings.subscription.description")}
-        resetAction={
-          settings.autoApproveSubscriptionChange === false ? (
-            <SettingResetButton
-              label={tx("subscription change approval")}
-              tooltip={tx("Continue on a new subscription automatically")}
-              onClick={() => updateSettings({ autoApproveSubscriptionChange: true })}
-            />
-          ) : null
-        }
-        control={
-          <Switch
-            aria-label={t("limitSettings.subscription.title")}
+          </SettingsRow>
+          <MachineFallbackSettings />
+        </>
+      ) : null}
+      {policy ? (
+        <>
+          <SettingsRow
+            serverScoped
+            settingKeys={["providerLimitSwitchAtPercent"]}
+            mixed={mixedSwitchAt}
+            id="provider-limit-switch-at"
+            title={t("limitSettings.switchAt.title")}
+            description={t("limitSettings.switchAt.description")}
+            resetAction={
+              mixedSwitchAt || switchAt !== DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT ? (
+                <SettingResetButton
+                  label={tx("switch threshold")}
+                  onClick={() => {
+                    leaveCustomSwitchAt();
+                    updateSettings({
+                      providerLimitSwitchAtPercent: DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT,
+                    });
+                  }}
+                />
+              ) : null
+            }
+            control={
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <Select
+                    value={switchAtMode}
+                    onValueChange={(value) => {
+                      if (value === SWITCH_AT_CUSTOM) {
+                        setCustomSwitchAt(true);
+                        setSwitchAtInvalid(false);
+                      } else if (value === "off") {
+                        leaveCustomSwitchAt();
+                        updateSettings({ providerLimitSwitchAtPercent: null });
+                      } else if (value !== null && isSwitchAtPreset(value)) {
+                        leaveCustomSwitchAt();
+                        updateSettings({ providerLimitSwitchAtPercent: Number(value) });
+                      }
+                    }}
+                  >
+                    <SelectTrigger size="sm" aria-label={t("limitSettings.switchAt.title")}>
+                      <SelectValue>
+                        {(value: string | null) =>
+                          value === "off"
+                            ? t("limitSettings.switchAt.off")
+                            : value === null
+                              ? t("limitSettings.mixed")
+                              : value === SWITCH_AT_CUSTOM
+                                ? switchAt === null || mixedSwitchAt
+                                  ? t("limitSettings.switchAt.custom")
+                                  : switchAtLabel(t, String(switchAt))
+                                : switchAtLabel(t, value)
+                        }
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end" alignItemWithTrigger={false}>
+                      {SWITCH_AT_OPTIONS.map((option) => (
+                        <SelectItem key={option} value={option}>
+                          {option === "off"
+                            ? t("limitSettings.switchAt.off")
+                            : option === String(DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT)
+                              ? t("limitSettings.switchAtOptionDefault", {
+                                  percent: percentLeft(Number(option)),
+                                })
+                              : switchAtLabel(t, option)}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value={SWITCH_AT_CUSTOM}>
+                        {t("limitSettings.switchAt.custom")}
+                      </SelectItem>
+                    </SelectPopup>
+                  </Select>
+                  {switchAtMode === SWITCH_AT_CUSTOM ? (
+                    <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <Input
+                        size="sm"
+                        className="w-16"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        aria-label={t("limitSettings.switchAt.customLabel")}
+                        aria-invalid={switchAtInvalid || undefined}
+                        aria-describedby={switchAtInvalid ? switchAtErrorId : undefined}
+                        placeholder={String(percentLeft(DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT))}
+                        value={
+                          switchAtDraft ??
+                          (switchAt === null || mixedSwitchAt ? "" : String(percentLeft(switchAt)))
+                        }
+                        onChange={(event) => {
+                          setSwitchAtDraft(event.currentTarget.value);
+                          setSwitchAtInvalid(false);
+                        }}
+                        onBlur={commitSwitchAtDraft}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            commitSwitchAtDraft();
+                          }
+                        }}
+                      />
+                      {t("limitSettings.switchAt.customUnit")}
+                    </label>
+                  ) : null}
+                </div>
+                {switchAtInvalid ? (
+                  <p
+                    id={switchAtErrorId}
+                    role="alert"
+                    className="text-xs text-destructive-foreground"
+                  >
+                    {t("limitSettings.switchAt.customError", {
+                      min: SWITCH_AT_LEFT_MIN,
+                      max: SWITCH_AT_LEFT_MAX,
+                    })}
+                  </p>
+                ) : null}
+              </div>
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["providerLimitWaitUnderMinutes"]}
+            mixed={mixedWaitUnder}
+            id="provider-limit-wait-under"
+            title={t("limitSettings.waitUnder.title")}
+            description={t("limitSettings.waitUnder.description")}
+            resetAction={
+              settings.providerLimitWaitUnderMinutes !==
+              DEFAULT_PROVIDER_LIMIT_WAIT_UNDER_MINUTES ? (
+                <SettingResetButton
+                  label={tx("reset wait")}
+                  onClick={() =>
+                    updateSettings({
+                      providerLimitWaitUnderMinutes: DEFAULT_PROVIDER_LIMIT_WAIT_UNDER_MINUTES,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={mixedWaitUnder ? null : String(settings.providerLimitWaitUnderMinutes)}
+                onValueChange={(value) => {
+                  if (value !== null && (WAIT_UNDER_OPTIONS as readonly string[]).includes(value))
+                    updateSettings({ providerLimitWaitUnderMinutes: Number(value) });
+                }}
+              >
+                <SelectTrigger size="sm" aria-label={t("limitSettings.waitUnder.title")}>
+                  <SelectValue>
+                    {(value: string | null) =>
+                      value === null ? t("limitSettings.mixed") : waitUnderLabel(t, value)
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {WAIT_UNDER_OPTIONS.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {waitUnderLabel(t, option)}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+        </>
+      ) : null}
+      {advanced ? (
+        <>
+          <SettingsRow
+            serverScoped
+            settingKeys={["autoApproveSubscriptionChange"]}
             mixed={mixedSubscriptionChange}
-            checked={
-              mixedSubscriptionChange ? false : settings.autoApproveSubscriptionChange !== false
+            id="provider-limit-auto-approve-subscription-change"
+            title={t("limitSettings.subscription.title")}
+            description={t("limitSettings.subscription.description")}
+            resetAction={
+              settings.autoApproveSubscriptionChange === false ? (
+                <SettingResetButton
+                  label={tx("subscription change approval")}
+                  tooltip={tx("Continue on a new subscription automatically")}
+                  onClick={() => updateSettings({ autoApproveSubscriptionChange: true })}
+                />
+              ) : null
             }
-            onCheckedChange={(enabled) =>
-              updateSettings({ autoApproveSubscriptionChange: Boolean(enabled) })
+            control={
+              <Switch
+                aria-label={t("limitSettings.subscription.title")}
+                mixed={mixedSubscriptionChange}
+                checked={
+                  mixedSubscriptionChange ? false : settings.autoApproveSubscriptionChange !== false
+                }
+                onCheckedChange={(enabled) =>
+                  updateSettings({ autoApproveSubscriptionChange: Boolean(enabled) })
+                }
+              />
             }
           />
-        }
-      />
-      <SettingsRow
-        serverScoped
-        settingKeys={["providerLimitRedeemResets"]}
-        mixed={mixedRedeem}
-        id="provider-limit-redeem-resets"
-        title={t("limitSettings.redeem.title")}
-        description={t("limitSettings.redeem.description")}
-        resetAction={
-          settings.providerLimitRedeemResets ? (
-            <SettingResetButton
-              label={tx("banked reset use")}
-              tooltip={tx("Keep banked resets for manual use")}
-              onClick={() => updateSettings({ providerLimitRedeemResets: false })}
-            />
-          ) : null
-        }
-        control={
-          <Switch
-            aria-label={t("limitSettings.redeem.title")}
+          <SettingsRow
+            serverScoped
+            settingKeys={["providerLimitRedeemResets"]}
             mixed={mixedRedeem}
-            checked={mixedRedeem ? false : settings.providerLimitRedeemResets}
-            onCheckedChange={(enabled) => {
-              if (enabled) setConfirmingRedeem(true);
-              else updateSettings({ providerLimitRedeemResets: false });
-            }}
+            id="provider-limit-redeem-resets"
+            title={t("limitSettings.redeem.title")}
+            description={t("limitSettings.redeem.description")}
+            resetAction={
+              settings.providerLimitRedeemResets ? (
+                <SettingResetButton
+                  label={tx("banked reset use")}
+                  tooltip={tx("Keep banked resets for manual use")}
+                  onClick={() => updateSettings({ providerLimitRedeemResets: false })}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label={t("limitSettings.redeem.title")}
+                mixed={mixedRedeem}
+                checked={mixedRedeem ? false : settings.providerLimitRedeemResets}
+                onCheckedChange={(enabled) => {
+                  if (enabled) setConfirmingRedeem(true);
+                  else updateSettings({ providerLimitRedeemResets: false });
+                }}
+              />
+            }
           />
-        }
-      />
-      <SettingsRow
-        serverScoped
-        settingKeys={["providerLimitSpendCredits"]}
-        mixed={mixedSpend}
-        id="provider-limit-spend-credits"
-        title={t("limitSettings.spend.title")}
-        description={t("limitSettings.spend.description")}
-        resetAction={
-          settings.providerLimitSpendCredits ? (
-            <SettingResetButton
-              label={tx("credit spending")}
-              tooltip={tx("Stop spending credits automatically")}
-              onClick={() => updateSettings({ providerLimitSpendCredits: false })}
-            />
-          ) : null
-        }
-        control={
-          <Switch
-            aria-label={t("limitSettings.spend.title")}
+          <SettingsRow
+            serverScoped
+            settingKeys={["providerLimitSpendCredits"]}
             mixed={mixedSpend}
-            checked={mixedSpend ? false : settings.providerLimitSpendCredits}
-            onCheckedChange={(enabled) => {
-              if (enabled) setConfirmingSpend(true);
-              else updateSettings({ providerLimitSpendCredits: false });
-            }}
+            id="provider-limit-spend-credits"
+            title={t("limitSettings.spend.title")}
+            description={t("limitSettings.spend.description")}
+            resetAction={
+              settings.providerLimitSpendCredits ? (
+                <SettingResetButton
+                  label={tx("credit spending")}
+                  tooltip={tx("Stop spending credits automatically")}
+                  onClick={() => updateSettings({ providerLimitSpendCredits: false })}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label={t("limitSettings.spend.title")}
+                mixed={mixedSpend}
+                checked={mixedSpend ? false : settings.providerLimitSpendCredits}
+                onCheckedChange={(enabled) => {
+                  if (enabled) setConfirmingSpend(true);
+                  else updateSettings({ providerLimitSpendCredits: false });
+                }}
+              />
+            }
           />
-        }
-      />
-      <SettingsRow
-        serverScoped
-        settingKeys={["providerLimitUseApiCredits"]}
-        mixed={mixedApiCredits}
-        id="provider-limit-use-api-credits"
-        title={t("limitSettings.api.title")}
-        description={t("limitSettings.api.description")}
-        status={
-          mixedApiCredits
-            ? undefined
-            : apiKeyInstance
-              ? readyApiKeyInstances.length > 1
-                ? t("limitSettings.api.statusNext", {
-                    name: instanceName(apiKeyInstance),
-                    count: readyApiKeyInstances.length,
-                  })
-                : t("limitSettings.api.statusOne", { name: instanceName(apiKeyInstance) })
-              : apiKeyInstances[0]
-                ? t("limitSettings.api.statusNotReady", { name: instanceName(apiKeyInstances[0]) })
-                : t("limitSettings.api.statusNeeds")
-        }
-        resetAction={
-          settings.providerLimitUseApiCredits ? (
-            <SettingResetButton
-              label={tx("API credit use")}
-              tooltip={tx("Stop using API credits automatically")}
-              onClick={() => updateSettings({ providerLimitUseApiCredits: false })}
-            />
-          ) : null
-        }
-        control={
-          <div className="flex items-center gap-2">
-            {target ? (
-              <Button size="xs" variant="ghost" onClick={() => setAddingApiAccount(true)}>
-                {apiKeyInstances.length === 0
-                  ? t("limitSettings.api.addKey")
-                  : t("limitSettings.api.addAnother")}
-              </Button>
-            ) : null}
-            <Switch
-              aria-label={t("limitSettings.api.title")}
-              mixed={mixedApiCredits}
-              checked={mixedApiCredits ? false : settings.providerLimitUseApiCredits}
-              onCheckedChange={(enabled) => {
-                if (enabled) setConfirmingApiCredits(true);
-                else updateSettings({ providerLimitUseApiCredits: false });
-              }}
-            />
-          </div>
-        }
-      />
+          <SettingsRow
+            serverScoped
+            settingKeys={["providerLimitUseApiCredits"]}
+            mixed={mixedApiCredits}
+            id="provider-limit-use-api-credits"
+            title={t("limitSettings.api.title")}
+            description={t("limitSettings.api.description")}
+            status={
+              mixedApiCredits
+                ? undefined
+                : apiKeyInstance
+                  ? readyApiKeyInstances.length > 1
+                    ? t("limitSettings.api.statusNext", {
+                        name: instanceName(apiKeyInstance),
+                        count: readyApiKeyInstances.length,
+                      })
+                    : t("limitSettings.api.statusOne", { name: instanceName(apiKeyInstance) })
+                  : apiKeyInstances[0]
+                    ? t("limitSettings.api.statusNotReady", {
+                        name: instanceName(apiKeyInstances[0]),
+                      })
+                    : t("limitSettings.api.statusNeeds")
+            }
+            resetAction={
+              settings.providerLimitUseApiCredits ? (
+                <SettingResetButton
+                  label={tx("API credit use")}
+                  tooltip={tx("Stop using API credits automatically")}
+                  onClick={() => updateSettings({ providerLimitUseApiCredits: false })}
+                />
+              ) : null
+            }
+            control={
+              <div className="flex items-center gap-2">
+                {target ? (
+                  <Button size="xs" variant="ghost" onClick={() => setAddingApiAccount(true)}>
+                    {apiKeyInstances.length === 0
+                      ? t("limitSettings.api.addKey")
+                      : t("limitSettings.api.addAnother")}
+                  </Button>
+                ) : null}
+                <Switch
+                  aria-label={t("limitSettings.api.title")}
+                  mixed={mixedApiCredits}
+                  checked={mixedApiCredits ? false : settings.providerLimitUseApiCredits}
+                  onCheckedChange={(enabled) => {
+                    if (enabled) setConfirmingApiCredits(true);
+                    else updateSettings({ providerLimitUseApiCredits: false });
+                  }}
+                />
+              </div>
+            }
+          />
+        </>
+      ) : null}
       {target ? (
         <AddApiCreditAccountDialog
           open={addingApiAccount}

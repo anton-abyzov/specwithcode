@@ -280,6 +280,10 @@
       "types": "./src/providerUsageLinks.ts",
       "import": "./src/providerUsageLinks.ts"
     },
+    "./modelTrackRules": {
+      "types": "./src/modelTrackRules.ts",
+      "import": "./src/modelTrackRules.ts"
+    },
     "./modelTracks": {
       "types": "./src/modelTracks.ts",
       "import": "./src/modelTracks.ts"

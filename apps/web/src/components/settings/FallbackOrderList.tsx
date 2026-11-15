@@ -76,7 +76,7 @@ export function reorderFallbackEntry(
 export type ModelOrderStatus = ReviewerStepStatus;
 
 /** "3:30 PM" today, else "Fri 3:30 PM": a weekly reset is days away. */
-const clock = (ms: number) => {
+export const clock = (ms: number) => {
   const at = new Date(ms);
   return at.toDateString() === new Date().toDateString()
     ? at.toLocaleTimeString(getLocale(), { hour: "numeric", minute: "2-digit" })

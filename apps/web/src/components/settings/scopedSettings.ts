@@ -35,6 +35,7 @@ interface ScopedSettingsEnvironment {
       readonly capabilities: {
         readonly projectSettingsOverrides?: boolean | undefined;
         readonly projectSettingsOverrideChanges?: boolean | undefined;
+        readonly projectTrackOverrides?: boolean | undefined;
       };
     };
   } | null;
@@ -214,7 +215,15 @@ function projectOverrideChangeWrites(
 function projectOverrideWrites(
   scope: Extract<ResolvedSettingsScope, { kind: "project" | "checkout" }>,
   environments: readonly ScopedSettingsEnvironment[],
-  change: (settings: ServerSettings, projectId: ProjectId) => ProjectSettingsOverrideChange,
+  change: (
+    settings: ServerSettings,
+    projectId: ProjectId,
+    capabilities:
+      | NonNullable<
+          NonNullable<ScopedSettingsEnvironment["serverConfig"]>["environment"]
+        >["capabilities"]
+      | undefined,
+  ) => ProjectSettingsOverrideChange,
 ): ScopedServerWrite[] {
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
   const targets = scope.members.flatMap((member) => {
@@ -225,7 +234,9 @@ function projectOverrideWrites(
       ? [{ environmentId: member.environmentId, projectId: member.id }]
       : [];
   });
-  return projectOverrideChangeWrites(environments, targets, change);
+  return projectOverrideChangeWrites(environments, targets, (settings, projectId, environmentId) =>
+    change(settings, projectId, byId.get(environmentId)?.serverConfig?.environment?.capabilities),
+  );
 }
 
 /**
@@ -256,7 +267,7 @@ export function planScopedSettingsPatch(
       : isProjectScope
         ? unscopableKeys.length > 0
           ? []
-          : projectOverrideWrites(scope, environments, (settings, projectId) => {
+          : projectOverrideWrites(scope, environments, (settings, projectId, capabilities) => {
               // Object-valued keys arrive as partial patches (the writing style
               // rows send one field); an override entry stores the whole value,
               // so complete the patch from the target's effective value.
@@ -285,6 +296,22 @@ export function planScopedSettingsPatch(
                   continue;
                 }
                 const base = effective[key as keyof ServerSettings];
+                // Tracks and the review policy store only what the project
+                // changed; every other field keeps following this machine.
+                // An older server fills a partial value with defaults, so it
+                // gets the whole object, as before.
+                if (
+                  (key === "modelLanes" || key === "adversarialReview") &&
+                  capabilities?.projectTrackOverrides === true &&
+                  isPlainObject(value) &&
+                  isPlainObject(base)
+                ) {
+                  const own = settings.projectSettingsOverrides[projectId]?.[key];
+                  const changed = changedFields(value, base);
+                  if (own !== undefined || Object.keys(changed).length > 0)
+                    set[key] = { ...own, ...changed };
+                  continue;
+                }
                 set[key] =
                   isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
               }
@@ -315,7 +342,16 @@ export function planScopedSettingsPatch(
                         },
                       },
                     }
-                  : serverPatch,
+                  : serverPatch.modelLanes !== undefined && environment.serverConfig
+                    ? {
+                        // A track save names one lane; each machine keeps its other lane.
+                        ...serverPatch,
+                        modelLanes: {
+                          ...environment.serverConfig.settings.modelLanes,
+                          ...serverPatch.modelLanes,
+                        },
+                      }
+                    : serverPatch,
             }))
           : [];
   const hasClientWrite = Object.keys(clientPatch).length > 0;
@@ -491,4 +527,17 @@ export async function persistScopedSettingsPatch(
     failedEnvironments,
     savedEnvironmentCount: plan.serverWrites.length - failedEnvironments.length,
   };
+}
+
+/** The fields of `patch` whose value differs from what the target resolves to now. */
+function changedFields(
+  patch: Record<string, unknown>,
+  effective: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(patch).filter(
+      ([field, value]) =>
+        value !== undefined && JSON.stringify(value) !== JSON.stringify(effective[field]),
+    ),
+  );
 }

@@ -91,7 +91,6 @@ export const ja: PhraseCatalog = {
   "Custom worktree folder": "カスタムのワークツリーフォルダー",
   Danger: "危険な操作",
   "Data & privacy": "データとプライバシー",
-  "Decision model": "判断用モデル",
   "Default browser appearance": "ブラウザーの既定の外観",
   "Default browser profile": "既定のブラウザープロファイル",
   "Default browser viewport": "ブラウザーの既定のビューポート",

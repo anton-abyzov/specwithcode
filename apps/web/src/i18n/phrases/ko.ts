@@ -91,7 +91,6 @@ export const ko: PhraseCatalog = {
   "Custom worktree folder": "사용자 지정 워크트리 폴더",
   Danger: "위험 구역",
   "Data & privacy": "데이터 및 개인정보",
-  "Decision model": "결정 모델",
   "Default browser appearance": "기본 브라우저 모양",
   "Default browser profile": "기본 브라우저 프로필",
   "Default browser viewport": "기본 브라우저 뷰포트",

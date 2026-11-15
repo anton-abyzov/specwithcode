@@ -20,6 +20,11 @@ import {
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import { isSameModel, sameModelOn } from "./modelIdentity.ts";
+import {
+  isGeminiSpendProvider,
+  isPerTokenProvider,
+  isUnknownBillingAgent,
+} from "./providerFallback.ts";
 import { type ModelFamily, modelFamily } from "./modelVendor.ts";
 
 type TrackProvider = Pick<ServerProvider, "instanceId" | "driver" | "enabled" | "models"> &
@@ -70,8 +75,8 @@ export function isFreePlanProvider(provider: Partial<Pick<ServerProvider, "auth"
   return /\bfree\b/i.test(provider.auth?.label ?? "");
 }
 
-export interface ModelProviderChoice {
-  readonly provider: TrackProvider;
+export interface ModelProviderChoice<P extends TrackProvider = TrackProvider> {
+  readonly provider: P;
   /** The model as this provider spells it. */
   readonly slug: string;
 }
@@ -83,15 +88,15 @@ export interface ModelProviderChoice {
  * `usedPercent` is the room reading; a provider it returns null for sorts
  * after every provider with a reading.
  */
-export function providersForModel(input: {
-  readonly providers: ReadonlyArray<TrackProvider>;
+export function providersForModel<P extends TrackProvider>(input: {
+  readonly providers: ReadonlyArray<P>;
   readonly model: ModelNames;
   /** "Also served by": providers the person ranked for the same model. */
   readonly order?: ReadonlyArray<ProviderInstanceId> | undefined;
-  readonly usedPercent?: ((provider: TrackProvider, slug: string) => number | null) | undefined;
+  readonly usedPercent?: ((provider: P, slug: string) => number | null) | undefined;
   /** A free-tail entry: an account on a free plan comes before the maker's paid one. */
   readonly preferFree?: boolean | undefined;
-}): ReadonlyArray<ModelProviderChoice> {
+}): ReadonlyArray<ModelProviderChoice<P>> {
   const personRank = (instanceId: ProviderInstanceId) => {
     const index = input.order?.indexOf(instanceId) ?? -1;
     return index === -1 ? Number.MAX_SAFE_INTEGER : index;
@@ -126,6 +131,20 @@ export function providersForModel(input: {
     .map((entry) => entry.choice);
 }
 
+/** A source the app never starts work on by itself: billed per token, or billing unknown. */
+export function isHeldSource(provider: ServerProvider, slug?: string | undefined): boolean {
+  // The model's own billing counts too: a plan source can list one model it bills per use.
+  const billing = providerModelBilling(provider, slug);
+  if (billing === "unknown" || isPaidModelBilling(billing)) return true;
+  // A provider described without its sign-in (a bare list of models) says nothing about billing.
+  if ((provider as Partial<ServerProvider>).auth === undefined) return false;
+  return (
+    isPerTokenProvider(provider) ||
+    isGeminiSpendProvider(provider) ||
+    isUnknownBillingAgent(provider)
+  );
+}
+
 /** Whether `model` is a built-in free entry: it closes Daily and never serves Complex or Review. */
 export function isFreeTrackModel(model: ModelNames): boolean {
   return DEFAULT_MODEL_TRACKS.daily.some(
@@ -141,13 +160,21 @@ export function isFreeTrackModel(model: ModelNames): boolean {
 export function defaultTrackSelections(
   track: ModelTrack,
   providers: ReadonlyArray<TrackProvider>,
+  /** The saved Sources order: a source the person ranked first wins over the maker's harness. */
+  order?: ReadonlyArray<ProviderInstanceId> | null,
 ): ReadonlyArray<ModelSelection> {
   return DEFAULT_MODEL_TRACKS[track].flatMap((entry) => {
+    // Never a source billed per token or with unknown billing: a built-in
+    // entry is nobody's spending choice, whatever a saved Sources order ranks first.
     const best = providersForModel({
       providers,
       model: { slug: entry.model },
+      order: order ?? undefined,
       preferFree: entry.free,
-    })[0];
+    }).find(
+      ({ provider, slug }) =>
+        !isHeldSource(provider as Partial<ServerProvider> as ServerProvider, slug),
+    );
     return best === undefined ? [] : [{ instanceId: best.provider.instanceId, model: best.slug }];
   });
 }
@@ -166,6 +193,7 @@ export interface EffectiveModelLanes {
 export function effectiveModelLanes(
   lanes: ModelLanes | null | undefined,
   providers: ReadonlyArray<TrackProvider>,
+  order?: ReadonlyArray<ProviderInstanceId> | null,
 ): EffectiveModelLanes {
   const saved = (lane: ModelLane) => lanes?.[lane] ?? [];
   const builtIn = {
@@ -174,8 +202,12 @@ export function effectiveModelLanes(
   };
   return {
     lanes: {
-      routine: builtIn.routine ? defaultTrackSelections("daily", providers) : saved("routine"),
-      complex: builtIn.complex ? defaultTrackSelections("complex", providers) : saved("complex"),
+      routine: builtIn.routine
+        ? defaultTrackSelections("daily", providers, order)
+        : saved("routine"),
+      complex: builtIn.complex
+        ? defaultTrackSelections("complex", providers, order)
+        : saved("complex"),
     },
     builtIn,
   };

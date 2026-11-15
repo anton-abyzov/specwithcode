@@ -47,7 +47,12 @@ import {
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { LearnedModelPreferences, ModelLanes, TaskRoutingSettings } from "./taskRouting.ts";
+import {
+  LearnedModelPreferences,
+  ModelLanes,
+  ModelLanesOverride,
+  TaskRoutingSettings,
+} from "./taskRouting.ts";
 import {
   AdversarialReviewSettings,
   AdversarialReviewSettingsPatch,
@@ -1768,9 +1773,11 @@ export const ProjectSettingsOverrides = Schema.Struct({
   providerLimitTargetOrder: Schema.optionalKey(ProviderLimitTargetOrder),
   providerLimitUnknownUsageEligible: Schema.optionalKey(Schema.Boolean),
   taskRouting: Schema.optionalKey(TaskRoutingSettings),
-  modelLanes: Schema.optionalKey(ModelLanes),
+  modelLanes: Schema.optionalKey(ModelLanesOverride),
   modelTiers: Schema.optionalKey(ProviderModelTiers),
-  adversarialReview: Schema.optionalKey(AdversarialReviewSettings),
+  // Only the fields the project changed: the rest follow the machine. An
+  // empty reviewer list is the built-in order.
+  adversarialReview: Schema.optionalKey(AdversarialReviewSettingsPatch),
   learnedModelPreferences: Schema.optionalKey(LearnedModelPreferences),
   keepActiveThreadsPerProject: Schema.optionalKey(KeepActiveThreadsPerProject),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);

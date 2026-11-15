@@ -87,6 +87,7 @@ import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { usePhoneKeyboard } from "../../hooks/usePhoneKeyboard";
 import { useClientSettings } from "../../hooks/useSettings";
 import { isEditableFocused } from "../../lib/editableFocus";
+import { isUnansweredEnvironmentRequest, readableConnectionReason } from "../../lib/machineStatus";
 import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { projectEnvironment } from "../../state/projects";
@@ -565,6 +566,26 @@ export function ProjectWorkspaceSurface({
   const navigate = useNavigate();
   const connected = environment?.connection.phase === "connected";
   const designs = useProjectDesigns(project.environmentId, project.id, connected);
+  // A read that got no answer while the host was away is the host's state, which
+  // the line above the message box already says; it is read again once the host is back.
+  const workspaceError =
+    query.error === null
+      ? null
+      : !connected && isUnansweredEnvironmentRequest(query.error)
+        ? null
+        : readableConnectionReason(query.error);
+  // Only on the way back: a read that fails while connected keeps its banner and Retry.
+  const workspaceReadFailed = query.failure !== null;
+  const workspaceReadFailedRef = useRef(workspaceReadFailed);
+  useEffect(() => {
+    workspaceReadFailedRef.current = workspaceReadFailed;
+  }, [workspaceReadFailed]);
+  const wasConnectedRef = useRef(connected);
+  useEffect(() => {
+    const cameBack = connected && !wasConnectedRef.current;
+    wasConnectedRef.current = connected;
+    if (cameBack && workspaceReadFailedRef.current) refreshWorkspace();
+  }, [connected, refreshWorkspace]);
   // This machine reads as busy, never offline: a short blip shows neutral
   // text and only a stall past the grace says more. The grace runs in the same
   // phases as the chat banner's, so the two surfaces agree. Remote hosts keep
@@ -1854,6 +1875,7 @@ export function ProjectWorkspaceSurface({
                     cwd: project.workspaceRoot,
                     uploadsSupported,
                     canAttach: canOperate && connected,
+                    hostReachable: connected,
                     maxFileBytes,
                     composerProblem,
                   },
@@ -1863,9 +1885,9 @@ export function ProjectWorkspaceSurface({
             ) : null}
             <div className="contents">
               <h2 className="sr-only">{machinePrivate ? "Percy" : "Coordinator"}</h2>
-              {query.error && (
+              {workspaceError && (
                 <p className="project-notice sws-pane-notice" role="alert">
-                  {query.error}{" "}
+                  {workspaceError}{" "}
                   <Button variant="outline" size="xs" onClick={query.refresh}>
                     Retry
                   </Button>

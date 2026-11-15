@@ -93,7 +93,6 @@ export const ru: PhraseCatalog = {
   "Custom worktree folder": "Своя папка для worktree",
   Danger: "Опасная зона",
   "Data & privacy": "Данные и приватность",
-  "Decision model": "Модель для решений",
   "Default browser appearance": "Оформление браузера по умолчанию",
   "Default browser profile": "Профиль браузера по умолчанию",
   "Default browser viewport": "Размер окна браузера по умолчанию",

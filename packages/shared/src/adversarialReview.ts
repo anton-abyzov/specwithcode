@@ -10,11 +10,12 @@
  */
 import type {
   ModelSelection,
+  ProviderInstanceId,
   ProviderModelTier,
   ProviderModelTiers,
   ServerProvider,
 } from "@specweave-studio/contracts";
-import { defaultTrackSelections } from "./modelTracks.ts";
+import { defaultTrackSelections, providersForModel } from "./modelTracks.ts";
 import { type ModelFamily, modelFamily } from "./fallbackOptions.ts";
 import { describeModel, isSameModel, sameModelOn } from "./modelIdentity.ts";
 import { fallbackSelectionKey, tierModelFor } from "./modelTiers.ts";
@@ -71,6 +72,8 @@ export function defaultReviewerChain(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly tier: ProviderModelTier;
   readonly tiers?: ProviderModelTiers | undefined;
+  /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
+  readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
 }): ReadonlyArray<ModelSelection> {
   const picks = input.providers
     .filter((provider) => provider.enabled)
@@ -86,7 +89,10 @@ export function defaultReviewerChain(input: {
     .map((entry) => entry.selection);
   const seen = new Set<string>();
   // The track names everyday reviewers; a frontier review keeps each provider's frontier model.
-  const track = input.tier === "regular" ? defaultTrackSelections("review", input.providers) : [];
+  const track =
+    input.tier === "regular"
+      ? defaultTrackSelections("review", input.providers, input.sourceOrder)
+      : [];
   return [...track, ...byFamily].filter((entry) => {
     const key = fallbackSelectionKey(entry);
     return seen.has(key) ? false : (seen.add(key), true);
@@ -111,6 +117,8 @@ export function reviewerOrderGroups(input: {
   readonly reviewers: ReadonlyArray<ModelSelection>;
   readonly tier: ProviderModelTier;
   readonly tiers?: ProviderModelTiers | undefined;
+  /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
+  readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
 }): ReadonlyArray<ReviewerOrderGroup> {
   const base = input.reviewers.length > 0 ? input.reviewers : defaultReviewerChain(input);
   // Only a person's own list pins places; the default order groups freely.
@@ -130,10 +138,13 @@ export function reviewerOrderGroups(input: {
       entry.model,
     );
     const alternates: ModelSelection[] = [];
-    for (const provider of input.providers) {
-      if (provider.instanceId === entry.instanceId || !provider.enabled) continue;
-      const slug = sameModelOn(provider, names);
-      if (slug === undefined) continue;
+    // The same ranking the Models page shows: the saved Sources order, then the maker's harness.
+    for (const { provider, slug } of providersForModel({
+      providers: input.providers,
+      model: names,
+      order: input.sourceOrder,
+    })) {
+      if (provider.instanceId === entry.instanceId) continue;
       const alternate = { instanceId: provider.instanceId, model: slug };
       if (listed.has(fallbackSelectionKey(alternate))) continue;
       if (claim(alternate)) alternates.push(alternate);
@@ -149,6 +160,8 @@ export function reviewerChain(input: {
   readonly reviewers: ReadonlyArray<ModelSelection>;
   readonly tier: ProviderModelTier;
   readonly tiers?: ProviderModelTiers | undefined;
+  /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
+  readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
 }): ReadonlyArray<ModelSelection> {
   return reviewerOrderGroups(input).flatMap((group) => [group.primary, ...group.alternates]);
 }
@@ -189,6 +202,8 @@ export function describeReviewerOrder(input: {
   readonly reviewers: ReadonlyArray<ModelSelection>;
   readonly tier: ProviderModelTier;
   readonly tiers?: ProviderModelTiers | undefined;
+  /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
+  readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
   readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
   readonly nowMs: number;
 }): ReviewerOrderView {
@@ -213,12 +228,16 @@ export function describeReviewerOrder(input: {
     const unavailable: FallbackOrderUnavailable | null =
       entry === undefined ? (provider === undefined ? "missing" : "not-ready") : entry.unavailable;
     const unconsented = !named.has(key) && isUnknownBillingAgent(provider, selection.model);
+    // As `resolveReviewer` reads it: a Gemini or Vertex account nobody named never reviews.
+    const unnamedSpend = !named.has(key) && isGeminiSpendProvider(provider);
     const status: ReviewerStepStatus =
-      unconsented && (unavailable === null || unavailable === "unverified")
-        ? "unknown-billing"
-        : unavailable === null || unavailable === "current"
-          ? "ready"
-          : unavailable;
+      unnamedSpend && (unavailable === null || unavailable === "unverified")
+        ? "per-token"
+        : unconsented && (unavailable === null || unavailable === "unverified")
+          ? "unknown-billing"
+          : unavailable === null || unavailable === "current"
+            ? "ready"
+            : unavailable;
     return {
       selection,
       family: selectionFamily(input.providers, selection),
@@ -247,6 +266,8 @@ export function resolveReviewer(input: {
   readonly reviewers: ReadonlyArray<ModelSelection>;
   readonly tier: ProviderModelTier;
   readonly tiers?: ProviderModelTiers | undefined;
+  /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
+  readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
   readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
   readonly nowMs: number;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
