@@ -609,7 +609,7 @@ export function ProjectWorkspaceSettings({
                           summary="Custom fallback order, exclusions, spending, review depth"
                         >
                           <SettingsGroup>
-                            <ProviderLimitSettings part="advanced" />
+                            <ProviderLimitSettings part="advanced" tracks />
                             <AdversarialReviewSettings part="depth" />
                           </SettingsGroup>
                         </FoldedSettingsSection>

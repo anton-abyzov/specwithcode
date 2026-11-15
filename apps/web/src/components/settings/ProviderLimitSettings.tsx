@@ -23,6 +23,7 @@ import { describeModel } from "@specweave-studio/shared/modelIdentity";
 import {
   addTrackEntry,
   describeTrack,
+  type TrackEntryRefusal,
   trackEntryRefusal,
 } from "@specweave-studio/shared/modelTrackRules";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
@@ -58,6 +59,7 @@ import {
   type ModelOrderStep,
 } from "./FallbackOrderList";
 import { MachineFallbackSettings } from "./MachineFallbackSettings";
+import { TRACK_ENTRY_REFUSALS } from "./ModelTracksSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -131,7 +133,17 @@ const waitUnderLabel = (t: Translate, value: string) =>
  * "advanced" only while it exists, with a way back to the tracks. Without
  * `part` every row renders, as in the project dialog.
  */
-export function ProviderLimitSettings({ part }: { readonly part?: "policy" | "advanced" } = {}) {
+export function ProviderLimitSettings({
+  part,
+  tracks = false,
+}: {
+  readonly part?: "policy" | "advanced";
+  /**
+   * The project runs on Tracks: the tracks are its one model list, so a saved
+   * fallback order shows read-only with "Add to Daily" and "Use tracks".
+   */
+  readonly tracks?: boolean;
+} = {}) {
   const policy = part !== "advanced";
   const advanced = part !== "policy";
   const tx = useTx();
@@ -148,6 +160,7 @@ export function ProviderLimitSettings({ part }: { readonly part?: "policy" | "ad
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
   );
   const fallbackOrder = fallbackModelOrder(settings);
+  const nowMs = useRelativeTimeTick(60_000);
   // With no order set, the ranked model tiers are where a limited thread continues.
   const tierCount =
     (settings.modelLanes?.complex?.length ?? 0) + (settings.modelLanes?.routine?.length ?? 0);
@@ -160,16 +173,27 @@ export function ProviderLimitSettings({ part }: { readonly part?: "policy" | "ad
       providerLimitFallbackModels: [...order],
       providerLimitFallbackModelSelection: order[0] ?? null,
     });
-  // Folds a saved order into Daily, behind what Daily holds now, and clears it: one list
-  // to set. An entry Daily refuses (already there, billed per token) is left out.
+  const [foldRefused, setFoldRefused] = useState<
+    ReadonlyArray<{ readonly name: string; readonly reason: TrackEntryRefusal }>
+  >([]);
+  const dailyRows = describeTrack({
+    track: "daily",
+    saved: settings.modelLanes?.routine ?? [],
+    providers,
+    sourceOrder: settings.defaultModelProviders,
+    nowMs,
+  });
+  // Built-in Daily models nothing here runs: saving Daily as the person's own leaves them out.
+  const dailyUnlisted =
+    (settings.modelLanes?.routine ?? []).length === 0
+      ? dailyRows.filter((row) => row.selection === null).map((row) => row.name)
+      : [];
+  // Folds a saved order into Daily, behind what Daily holds now. Entries Daily takes (or
+  // already holds) leave the order; any it refuses stay in it, named with the reason.
   const addOrderToDaily = () => {
-    let daily = describeTrack({
-      track: "daily",
-      saved: settings.modelLanes?.routine ?? [],
-      providers,
-      sourceOrder: settings.defaultModelProviders,
-      nowMs,
-    }).flatMap((row) => (row.selection === null ? [] : [row.selection]));
+    let daily = dailyRows.flatMap((row) => (row.selection === null ? [] : [row.selection]));
+    const kept: ModelSelection[] = [];
+    const refusedNames: { name: string; reason: TrackEntryRefusal }[] = [];
     for (const entry of fallbackOrder) {
       const refused = trackEntryRefusal({
         track: "daily",
@@ -183,11 +207,23 @@ export function ProviderLimitSettings({ part }: { readonly part?: "policy" | "ad
       });
       if (refused === null)
         daily = [...addTrackEntry({ track: "daily", entries: daily, providers, entry })];
+      else if (refused !== "duplicate") {
+        kept.push(entry);
+        refusedNames.push({
+          name:
+            describeModel(
+              providers.find((provider) => provider.instanceId === entry.instanceId),
+              entry.model,
+            ).name ?? entry.model,
+          reason: refused,
+        });
+      }
     }
+    setFoldRefused(refusedNames);
     updateSettings({
       modelLanes: { routine: [...daily] } as unknown as ModelLanes,
-      providerLimitFallbackModels: [],
-      providerLimitFallbackModelSelection: null,
+      providerLimitFallbackModels: kept,
+      providerLimitFallbackModelSelection: kept[0] ?? null,
     });
   };
   const pickerSelection = resolveDefaultProviderModelSelection(providers, fallbackOrder[0] ?? null);
@@ -206,7 +242,6 @@ export function ProviderLimitSettings({ part }: { readonly part?: "policy" | "ad
   const mixedSwitchAt = useScopedSettingsMixed(["providerLimitSwitchAtPercent"]);
   const mixedExcluded = useScopedSettingsMixed(["providerLimitExcludedModels"]);
   const excludedModels = settings.providerLimitExcludedModels;
-  const nowMs = useRelativeTimeTick(60_000);
   const fallbackOptions = describeFallbackOptions({
     providers,
     rule: settings,
@@ -352,7 +387,70 @@ export function ProviderLimitSettings({ part }: { readonly part?: "policy" | "ad
       ) : null}
       {advanced ? (
         <>
-          {showOrder ? (
+          {tracks ? (
+            fallbackOrder.length > 0 || foldRefused.length > 0 ? (
+              <SettingsRow
+                serverScoped
+                settingKeys={["providerLimitFallbackModels", "providerLimitFallbackModelSelection"]}
+                mixed={mixedFallback}
+                id="provider-limit-fallback"
+                title={tx("Saved fallback order")}
+                description={tx(
+                  "Saved before this project used tracks. A limited thread still tries these first. Add them to Daily to keep one list, or drop them and use the tracks.",
+                )}
+              >
+                {fallbackOrder.length > 0 ? (
+                  <ol
+                    className="list-decimal px-8 pb-1 text-sm"
+                    aria-label={tx("Saved fallback order")}
+                  >
+                    {fallbackOrder.map((entry) => (
+                      <li key={`${entry.instanceId}:${entry.model}`}>
+                        {describeModel(
+                          providers.find((provider) => provider.instanceId === entry.instanceId),
+                          entry.model,
+                        ).name ?? entry.model}
+                      </li>
+                    ))}
+                  </ol>
+                ) : null}
+                {dailyUnlisted.length > 0 && fallbackOrder.length > 0 ? (
+                  <p className="px-3 pb-1 text-xs text-muted-foreground">
+                    {`${tx("Adding saves Daily as yours without")} ${dailyUnlisted.join(", ")}${tx(
+                      ": nothing here runs it yet.",
+                    )}`}
+                  </p>
+                ) : null}
+                {foldRefused.length > 0 ? (
+                  <ul className="px-3 pb-1 text-xs text-warning-foreground" role="status">
+                    {foldRefused.map((entry) => (
+                      <li key={entry.name}>
+                        {`${entry.name} ${tx("stays here:")} ${tx(TRACK_ENTRY_REFUSALS[entry.reason])}`}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {fallbackOrder.length > 0 ? (
+                  <div className="flex flex-wrap gap-2 px-3 pb-2">
+                    <Button type="button" size="xs" variant="outline" onClick={addOrderToDaily}>
+                      {tx("Add to Daily")}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={() => {
+                        setFoldRefused([]);
+                        saveFallbackOrder([]);
+                      }}
+                    >
+                      {tx("Use tracks")}
+                    </Button>
+                  </div>
+                ) : null}
+              </SettingsRow>
+            ) : null
+          ) : showOrder ? (
             <>
               <SettingsRow
                 serverScoped
@@ -433,15 +531,17 @@ export function ProviderLimitSettings({ part }: { readonly part?: "policy" | "ad
               ) : null}
             </>
           ) : null}
-          {chainSet ? (
+          {chainSet || tracks ? (
             <SettingsRow
               serverScoped
               settingKeys={["providerLimitFallbackListOnly"]}
               mixed={mixedListOnly}
               id="provider-limit-fallback-list-only"
-              title={usesTiers ? tx("Stay on my tracks") : t("limitSettings.listOnly.title")}
+              title={
+                usesTiers || tracks ? tx("Stay on my tracks") : t("limitSettings.listOnly.title")
+              }
               description={
-                usesTiers
+                usesTiers || tracks
                   ? t("limitSettings.listOnly.descriptionTiers")
                   : t("limitSettings.listOnly.descriptionOrder")
               }

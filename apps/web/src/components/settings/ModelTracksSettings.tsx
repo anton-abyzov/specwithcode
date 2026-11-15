@@ -77,7 +77,7 @@ const TRACK_HINTS: Record<ModelTrack, string> = {
   review: "A different model family checks finished work",
 };
 
-const ENTRY_REFUSALS: Record<TrackEntryRefusal, string> = {
+export const TRACK_ENTRY_REFUSALS: Record<TrackEntryRefusal, string> = {
   duplicate: "That model is already in this list.",
   full: "This list is full. Remove a model first.",
   "free-in-hard-track": "Free models only close Daily. Hard work and reviews wait for a reset.",
@@ -395,7 +395,7 @@ function TrackCard(props: {
           </span>
         )}
       </div>
-      {refusal !== null ? <Note tone="warning">{tx(ENTRY_REFUSALS[refusal])}</Note> : null}
+      {refusal !== null ? <Note tone="warning">{tx(TRACK_ENTRY_REFUSALS[refusal])}</Note> : null}
       {saved.length === 0 && unlisted.length > 0 ? (
         <Note>
           {`${tx("Changing this list saves it as yours without")} ${unlisted
