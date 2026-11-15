@@ -347,13 +347,19 @@ describe("MCP result byte budget", () => {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         const capabilities = service.capabilities as (
           scope: McpInvocationScope,
-          input?: { readonly providerInstanceId?: ProviderInstanceId; readonly modelOffset?: number },
+          input?: {
+            readonly providerInstanceId?: ProviderInstanceId;
+            readonly modelOffset?: number;
+          },
         ) => ReturnType<typeof service.capabilities>;
         const compact = yield* capabilities(scope);
         expect(bytes(compact)).toBeLessThanOrEqual(BUDGET_BYTES);
         // Every instance and model id is still listed.
         expect(
-          compact.providers.map((provider) => [provider.providerInstanceId, provider.models.length]),
+          compact.providers.map((provider) => [
+            provider.providerInstanceId,
+            provider.models.length,
+          ]),
         ).toEqual(catalog.map((provider) => [provider.instanceId, provider.models.length]));
 
         // One instance's full detail, paged by modelOffset, reaches every model's options.
@@ -364,7 +370,9 @@ describe("MCP result byte budget", () => {
           const page = (yield* capabilities(scope, {
             providerInstanceId: devin,
             modelOffset: offset,
-          })) as typeof compact & { readonly detail?: { readonly nextModelOffset?: number | null } };
+          })) as typeof compact & {
+            readonly detail?: { readonly nextModelOffset?: number | null };
+          };
           expect(bytes(page)).toBeLessThanOrEqual(BUDGET_BYTES);
           expect(page.providers.map((provider) => provider.providerInstanceId)).toEqual([devin]);
           options.push(...page.providers[0]!.models.map((model) => model.options));

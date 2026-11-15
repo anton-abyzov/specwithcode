@@ -120,9 +120,7 @@ const rowsFor = (
   filter: ProjectionRecordFilter | undefined,
 ) =>
   fields.reduce((total, field) => {
-    const records = (callerProjection as unknown as Record<string, ReadonlyArray<unknown>>)[
-      field
-    ];
+    const records = (callerProjection as unknown as Record<string, ReadonlyArray<unknown>>)[field];
     if (records === undefined) return total;
     const kept = records.filter((record) => {
       const row = record as { readonly role?: string; readonly type?: string };
@@ -149,9 +147,7 @@ const harness = (reads: Array<CallerRead>) =>
                 ...fields.map((field) => [
                   field,
                   field === "turnItems" && filter?.turnItemTypes !== undefined
-                    ? source.turnItems.filter((item) =>
-                        filter.turnItemTypes!.includes(item.type),
-                      )
+                    ? source.turnItems.filter((item) => filter.turnItemTypes!.includes(item.type))
                     : source[field],
                 ]),
               ]) as never,
@@ -238,11 +234,10 @@ describe("caller load", () => {
     }).pipe(Effect.provide(harness(reads)), Effect.runPromise);
     const kinds = [...new Set(reads.flatMap((read) => read.fields))].toSorted();
     // At most the caller's run, plus the kinds this tool reads (one request row per card).
-    expect(reads.reduce((total, read) => total + read.rows, 0), name).toBeLessThanOrEqual(
-      1 + (needs.includes("runtimeRequests") ? 100 : 0),
-    );
     expect(
-      kinds.filter((kind) => HEAVY_KINDS.includes(kind) && !needs.includes(kind)),
-    ).toEqual([]);
+      reads.reduce((total, read) => total + read.rows, 0),
+      name,
+    ).toBeLessThanOrEqual(1 + (needs.includes("runtimeRequests") ? 100 : 0));
+    expect(kinds.filter((kind) => HEAVY_KINDS.includes(kind) && !needs.includes(kind))).toEqual([]);
   });
 });

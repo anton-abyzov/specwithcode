@@ -84,9 +84,9 @@ describe("mcpResultBudget", () => {
     expect(modelCount(large)).toBe(400);
     expect(large?.models.length).toBeLessThan(400);
     expect(large?.models.length).toBeGreaterThan(0);
-    expect(compact.providers.every((provider) => provider.models.every((m) => m.label === null))).toBe(
-      true,
-    );
+    expect(
+      compact.providers.every((provider) => provider.models.every((m) => m.label === null)),
+    ).toBe(true);
   });
 
   it("pages one instance in full by model offset", () => {

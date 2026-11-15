@@ -46,9 +46,7 @@ export function createTerminalEnvironmentAtoms<R, E>(
             ...input,
             // The scan below keeps this much; the server sends no more history than that.
             maxHistoryBytes: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
-          }).pipe(
-            Stream.scan(nextTerminalAttachSeedState, applyTerminalAttachStreamEvent),
-          ),
+          }).pipe(Stream.scan(nextTerminalAttachSeedState, applyTerminalAttachStreamEvent)),
         ),
     }),
     attach: createEnvironmentSubscriptionAtomFamily(runtime, {
@@ -59,9 +57,7 @@ export function createTerminalEnvironmentAtoms<R, E>(
             ...input,
             // The scan below keeps this much; the server sends no more history than that.
             maxHistoryBytes: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
-          }).pipe(
-            Stream.scan(nextTerminalAttachSeedState, applyTerminalAttachStreamEvent),
-          ),
+          }).pipe(Stream.scan(nextTerminalAttachSeedState, applyTerminalAttachStreamEvent)),
         ),
     }),
     events: createEnvironmentRpcSubscriptionAtomFamily(runtime, {

@@ -403,7 +403,11 @@ export interface ProjectionTimelinePage {
 export const selectTimelinePage = <Row extends { readonly position: number }>(
   matching: ReadonlyArray<Row>,
   options: ProjectionTimelinePageOptions,
-): { readonly page: ReadonlyArray<Row>; readonly hasMore: boolean; readonly hasEarlier: boolean } => {
+): {
+  readonly page: ReadonlyArray<Row>;
+  readonly hasMore: boolean;
+  readonly hasEarlier: boolean;
+} => {
   if (options.beforePosition === undefined) {
     const page = matching.slice(0, options.limit);
     return { page, hasMore: matching.length > page.length, hasEarlier: false };

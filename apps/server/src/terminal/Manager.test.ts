@@ -524,7 +524,9 @@ it.layer(
       if (!process) return;
 
       // Two-byte characters make an odd budget land inside a code point.
-      const output = Array.from({ length: 400 }, (_, line) => `line ${line} \u00e9\u00e9\n`).join("");
+      const output = Array.from({ length: 400 }, (_, line) => `line ${line} \u00e9\u00e9\n`).join(
+        "",
+      );
       process.emitData(output);
       yield* waitFor(
         manager.open(openInput()).pipe(Effect.map((snapshot) => snapshot.history === output)),

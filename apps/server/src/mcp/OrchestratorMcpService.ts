@@ -3833,11 +3833,7 @@ const make = Effect.gen(function* () {
           `,"omittedItems":${rendered.length},"earlierPosition":${Number.MAX_SAFE_INTEGER}`.length;
         const recentRuns = runs.slice(
           0,
-          newestItemsThatFit(
-            runs.toReversed(),
-            fixedBytes([]),
-            MCP_RESULT_MAX_BYTES,
-          ),
+          newestItemsThatFit(runs.toReversed(), fixedBytes([]), MCP_RESULT_MAX_BYTES),
         );
         const kept = newestItemsThatFit(
           forward ? rendered.toReversed() : rendered,

@@ -753,8 +753,8 @@ function makeLocalCommandHarness(input: {
                 ),
               )
             : input.failReadsAfterRunning === true ||
-              input.startsRootRun === true ||
-              input.realCreditExecution === true
+                input.startsRootRun === true ||
+                input.realCreditExecution === true
               ? Effect.succeed({
                   driver: providerThread.driver,
                   providerSession: {

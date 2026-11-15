@@ -63,8 +63,7 @@ export interface CatalogDetail {
   readonly nextModelOffset?: number | null;
 }
 
-const COMPACT_NOTE =
-  "Model options are omitted. Pass providerInstanceId for one instance in full.";
+const COMPACT_NOTE = "Model options are omitted. Pass providerInstanceId for one instance in full.";
 const CUT_NOTE =
   "Model labels and some model ids are omitted (see modelCount). Pass providerInstanceId for one instance in full.";
 
@@ -128,7 +127,7 @@ export function compactCatalog<
   // The running size is an estimate (commas, ids that need escaping); measure and tighten.
   let target = maxBytes;
   let cut = cutTo(target);
-  for (let over = serializedBytes(cut) - maxBytes; over > 0 && target > 0; ) {
+  for (let over = serializedBytes(cut) - maxBytes; over > 0 && target > 0;) {
     target -= over;
     cut = cutTo(target);
     over = serializedBytes(cut) - maxBytes;
