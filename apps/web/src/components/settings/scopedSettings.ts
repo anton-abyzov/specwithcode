@@ -285,8 +285,14 @@ export function planScopedSettingsPatch(
                   continue;
                 }
                 const base = effective[key as keyof ServerSettings];
-                set[key] =
+                const whole =
                   isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
+                // A track the project did not change is stored empty, so it keeps
+                // following this machine's order (see `resolveProjectSettings`).
+                set[key] =
+                  key === "modelLanes" || key === "adversarialReview"
+                    ? withoutInheritedTracks(whole, settings[key])
+                    : whole;
               }
               return {
                 ...(Object.keys(set).length > 0 ? { set: set as ProjectSettingsOverrides } : {}),
@@ -491,4 +497,16 @@ export async function persistScopedSettingsPatch(
     failedEnvironments,
     savedEnvironmentCount: plan.serverWrites.length - failedEnvironments.length,
   };
+}
+
+/** `value` with each track list that equals the machine's own emptied. */
+function withoutInheritedTracks(value: unknown, machine: unknown): unknown {
+  if (!isPlainObject(value) || !isPlainObject(machine)) return value;
+  const next: Record<string, unknown> = { ...value };
+  for (const field of ["complex", "routine", "reviewers"]) {
+    const list = next[field];
+    if (Array.isArray(list) && JSON.stringify(list) === JSON.stringify(machine[field]))
+      next[field] = [];
+  }
+  return next;
 }

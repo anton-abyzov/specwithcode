@@ -221,8 +221,8 @@ export function describeReviewerOrder(input: {
         : unconsented && (unavailable === null || unavailable === "unverified")
           ? "unknown-billing"
           : unavailable === null || unavailable === "current"
-          ? "ready"
-          : unavailable;
+            ? "ready"
+            : unavailable;
     return {
       selection,
       family: selectionFamily(input.providers, selection),

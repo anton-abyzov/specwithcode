@@ -200,6 +200,20 @@ function resolveProjectOverrides(
     effective[key] = value;
     sources[key] = "project";
   }
+  // Tracks are saved one at a time: a project that set only its Daily order
+  // keeps this machine's Complex and Review orders, and follows later edits to them.
+  if (sources.modelLanes === "project") {
+    const own = effective.modelLanes as ServerSettings["modelLanes"];
+    effective.modelLanes = {
+      complex: own.complex.length > 0 ? own.complex : settings.modelLanes.complex,
+      routine: own.routine.length > 0 ? own.routine : settings.modelLanes.routine,
+    };
+  }
+  if (sources.adversarialReview === "project") {
+    const own = effective.adversarialReview as ServerSettings["adversarialReview"];
+    if (own.reviewers.length === 0 && settings.adversarialReview.reviewers.length > 0)
+      effective.adversarialReview = { ...own, reviewers: settings.adversarialReview.reviewers };
+  }
   // Same per-project rule as the no-overrides path above: without the
   // project's own workspace choice, the environment tier's stored value is
   // not inherited.

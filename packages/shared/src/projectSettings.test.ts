@@ -48,6 +48,34 @@ describe("resolveProjectSettings", () => {
     ).toBe(false);
   });
 
+  it("lets a project change one track and inherit the machine's other tracks", () => {
+    const pick = (instance: string, model: string) =>
+      createModelSelection(ProviderInstanceId.make(instance), model);
+    const sol = pick("codex", "gpt-6.1-sol");
+    const fable = pick("claudeAgent", "claude-fable-5-2");
+    const opus = pick("claudeAgent", "claude-opus-5-5");
+    const resolved = resolveProjectSettings(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        modelLanes: { complex: [fable], routine: [sol] },
+        adversarialReview: { ...DEFAULT_SERVER_SETTINGS.adversarialReview, reviewers: [sol] },
+        projectSettingsOverrides: {
+          [projectId]: {
+            modelLanes: { complex: [], routine: [opus] },
+            adversarialReview: { autoOnFeatureComplete: true, reviewers: [], tier: "regular" },
+          },
+        },
+      },
+      projectId,
+    ).settings;
+    expect(resolved.modelLanes).toEqual({ complex: [fable], routine: [opus] });
+    expect(resolved.adversarialReview).toEqual({
+      autoOnFeatureComplete: true,
+      reviewers: [sol],
+      tier: "regular",
+    });
+  });
+
   it("treats a null project like an absent one before the shell snapshot arrives", () => {
     // The mobile new-task flow resolves settings while its selected project is
     // still null; reading the aggregate's legacy fields off null crashed launch.

@@ -749,6 +749,44 @@ describe("partial object patches at project scope", () => {
       },
     });
   });
+
+  it("stores only the track a project changed, so the others keep following the machine", () => {
+    const environmentId = EnvironmentId.make("laptop");
+    const projectId = ProjectId.make("fleet");
+    const sol = { instanceId: "codex", model: "gpt-6.1-sol" };
+    const fable = { instanceId: "claudeAgent", model: "claude-fable-5-2" };
+    const opus = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+    const plan = planScopedSettingsPatch(
+      {
+        kind: "project",
+        group: {} as never,
+        environmentId: null,
+        label: "fleet",
+        members: [{ id: projectId, environmentId } as never],
+        environmentIds: [environmentId],
+      },
+      [
+        {
+          environmentId,
+          label: "Laptop",
+          connection: { phase: "connected" },
+          serverConfig: {
+            settings: {
+              ...DEFAULT_SERVER_SETTINGS,
+              modelLanes: { complex: [fable], routine: [sol] },
+            },
+            environment: { capabilities: { projectSettingsOverrides: true } },
+          },
+        } as never,
+      ],
+      { modelLanes: { complex: [fable], routine: [opus, sol] } as never },
+    );
+    expect(plan.serverWrites[0]?.patch).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: { modelLanes: { complex: [], routine: [opus, sol] } },
+      },
+    });
+  });
 });
 
 describe("project override edits and undo", () => {
