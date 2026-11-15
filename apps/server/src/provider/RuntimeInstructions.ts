@@ -196,9 +196,10 @@ Documents you make or cite live in SpecWithCode: save each as a report with stud
 /**
  * Shared by both styles: the app reads `**Blockers:**` to mark a thread Blocked.
  * Every thread and subagent pays for this on every turn, so it holds only what a
- * worker acts on. The coordinator's closure protocol lives in its role
- * (ProjectWorkspaceService.ts) and in the studio_thread_record_delivery
- * description; RuntimeInstructions.test.ts caps the block.
+ * worker acts on. The goal owner's closure protocol lives in the
+ * studio_thread_record_delivery description (the coordinator role repeats the
+ * parent-obligation and no-polling lines); RuntimeInstructions.test.ts caps
+ * the block.
  */
 const REPORT_RULES =
   "A blocker is a decision only the user can make or a step only they can take outside the app; settle anything an agent can (another session's run, CI, a merge, a retry, a safe default) or name it as the next step. When you are blocked, end with a paragraph opening **Blockers:** that asks the one question, with the options and your recommendation.\n" +
