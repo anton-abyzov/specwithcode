@@ -84,12 +84,18 @@ const mayRead = (relative: string) =>
 async function readMarker(absolute: string): Promise<string | null> {
   let handle: NodeFSP.FileHandle | null = null;
   try {
+    // Windows has no O_NOFOLLOW: the name is checked first, on every system.
+    const seen = await NodeFSP.lstat(absolute);
+    if (!seen.isFile()) return null;
     handle = await NodeFSP.open(
       absolute,
       NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
     );
     const stat = await handle.stat();
     if (!stat.isFile()) return null;
+    // Swapped for a link between the check and the open.
+    if (seen.ino !== 0 && stat.ino !== 0 && (seen.ino !== stat.ino || seen.dev !== stat.dev))
+      return null;
     const buffer = Buffer.alloc(Math.min(stat.size, MAX_MARKER_BYTES));
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     return buffer.subarray(0, bytesRead).toString("utf8");
