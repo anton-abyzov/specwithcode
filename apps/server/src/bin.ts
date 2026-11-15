@@ -41,7 +41,6 @@ if (
     runtimeMain: import.meta.main,
   })
 ) {
-  ignoreOutputStreamErrors([process.stdout, process.stderr]);
   // Before anything imports node:sqlite, which warns that it is experimental.
   quietSqliteExperimentalWarning();
   const command = process.argv[2];
@@ -52,6 +51,9 @@ if (
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
   } else {
+    // Only here: the commands above answer on stdout for another program, so a broken
+    // pipe there must stay a failure the caller sees.
+    ignoreOutputStreamErrors([process.stdout, process.stderr]);
     // Before the CLI graph loads: the pool is sized on its first job, and
     // Effect's file system captures node:fs at import.
     ensureServerThreadPoolSize();
