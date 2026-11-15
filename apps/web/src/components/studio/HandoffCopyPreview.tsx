@@ -505,9 +505,10 @@ function RepositoryControls({
           <p>
             <span className="font-medium text-foreground">Download from GitHub</span>: {target}{" "}
             downloads the committed files from the repository&rsquo;s remote (GitHub or another Git
-            host), and {source} sends only uncommitted and untracked files. Less crosses between the
-            machines, so large repositories arrive sooner. Recommended for a machine that does not
-            have the project yet.
+            host), and {source} sends only uncommitted, untracked and ignored files and the secrets
+            you include. Less crosses between the machines, so large repositories arrive sooner. A
+            repository with unpushed commits or stashes is always copied from {source}. Recommended
+            for a machine that does not have the project yet.
           </p>
           <p>
             <span className="font-medium text-foreground">Copy from {source}</span>: every file,

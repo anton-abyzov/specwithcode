@@ -210,6 +210,22 @@ const sentSecrets = () =>
     .filter(([name]) => name === "copySecrets")
     .map(([, request]) => (request as { input: { paths: string[] } }).input.paths);
 
+it("keeps Details closed for the Download from GitHub default and opens it for another way", async () => {
+  await mount({ dialog: true, method: "clone" });
+  const details = () =>
+    [...document.querySelectorAll<HTMLElement>("button")].find(
+      (node) => node.textContent?.trim() === "Details",
+    )!;
+  expect(details().getAttribute("aria-expanded")).toBe("false");
+  expect(document.body.textContent).toContain(
+    "repositories new there download from GitHub, and uncommitted and ignored files come from M4",
+  );
+  act(() => root.unmount());
+  root = createRoot(container);
+  await mount({ dialog: true, method: "copy" });
+  expect(details().getAttribute("aria-expanded")).toBe("true");
+});
+
 it("sends secret files by default, shown as one included line that lists them on Show", async () => {
   statuses = [
     copyStatus("previewed"),

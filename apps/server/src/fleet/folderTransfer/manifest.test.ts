@@ -107,7 +107,13 @@ describe("scanFolder", () => {
       "repositories/svc-b",
     ]);
     const serviceB = byPath.get("repositories/svc-b")!;
-    expect(serviceB).toMatchObject({ kind: "main", branch: "main", stashCount: 1 });
+    // The local-only branch's commit is not on origin; a clone would leave it behind.
+    expect(serviceB).toMatchObject({
+      kind: "main",
+      branch: "main",
+      stashCount: 1,
+      localOnlyCommits: 1,
+    });
     expect(Object.keys(serviceB.branches).toSorted()).toEqual(["local-only", "main"]);
     expect(serviceB.status).toEqual(expect.arrayContaining([" M src/b.ts", "?? scratch.txt"]));
     expect(serviceB.identity).toMatch(/^file:\/\/.*svc-b\.git$/);
@@ -116,6 +122,7 @@ describe("scanFolder", () => {
     const serviceA = byPath.get("repositories/svc-a")!;
     expect(serviceA.worktrees).toEqual([]);
     expect(Object.keys(serviceA.branches).toSorted()).toEqual(["feature", "main"]);
+    expect(serviceA.localOnlyCommits).toBe(0);
     expect(
       scan.entries.some((item) => item.path.startsWith("repositories/svc-a/.git/worktrees/")),
     ).toBe(false);

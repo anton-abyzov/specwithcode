@@ -60,6 +60,11 @@ export interface RepositoryInfo {
   readonly branches: Readonly<Record<string, string>>;
   readonly stash: string | null;
   readonly stashCount: number;
+  /**
+   * Commits on local branches or HEAD that no remote-tracking branch has, as of the last
+   * fetch: work a clone from origin would leave behind. Absent from older sources.
+   */
+  readonly localOnlyCommits?: number;
   /** Canonical origin without credentials, or null without one. */
   readonly identity: string | null;
   /** The origin URL with any user name or password removed, for "clone from origin". */
@@ -238,6 +243,15 @@ async function readRepository(
   const origin = await runGit(absolute, ["config", "--get", "remote.origin.url"], {
     allowFailure: true,
   });
+  const localOnly =
+    kind === "main" && head !== null
+      ? await runGit(absolute, ["rev-list", "--count", "HEAD", "--branches", "--not", "--remotes"], {
+          allowFailure: true,
+        })
+      : null;
+  // Unreadable counts as local work: such a repository is copied, never cloned.
+  const localOnlyCommits =
+    localOnly === null ? 0 : localOnly.code === 0 ? Number(localOnly.stdout.trim()) || 0 : 1;
   const identity = origin.code === 0 ? canonicalOrigin(origin.stdout.trim()) : null;
   const originUrl = identity ? withoutCredentials(origin.stdout.trim()) : null;
   const status = (
@@ -300,6 +314,7 @@ async function readRepository(
       branches,
       stash,
       stashCount,
+      localOnlyCommits,
       identity,
       origin: originUrl,
       status,

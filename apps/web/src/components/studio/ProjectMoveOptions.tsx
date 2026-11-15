@@ -192,7 +192,7 @@ const METHODS: ReadonlyArray<{
     value: "clone",
     label: "Download from GitHub (recommended)",
     detail:
-      "Repositories download from GitHub or their Git host; uncommitted and ignored files and secrets come from this machine.",
+      "Repositories new there download from GitHub or their Git host; one with unpushed commits or stashes is copied whole. Uncommitted and ignored files, and secrets unless you leave them out, come from this machine.",
   },
   {
     value: "copy",

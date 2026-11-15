@@ -185,6 +185,8 @@ export interface FixtureOptions {
   defaultMode?: "copy-only" | "copy-and-move";
   preferredMachine?: string;
   machineRequested?: boolean;
+  /** How files travel, as the dialog holds it. */
+  method?: "copy" | "clone";
 }
 export function CopyFixture(overrides: FixtureOptions) {
   const [busy, setBusy] = useState(false);
@@ -201,7 +203,7 @@ export function CopyFixture(overrides: FixtureOptions) {
       }
       coordinatorId={(overrides.coordinatorId ?? "coordinator") as never}
       sourceLabel="M4"
-      method="copy"
+      method={overrides.method ?? "copy"}
       machines={[
         { id: "m3" as never, label: "M3", unavailable: overrides.m3Unavailable ?? null },
         {
@@ -238,7 +240,7 @@ export function CopyFixture(overrides: FixtureOptions) {
       destinations={[]}
       selected=""
       onSelect={() => {}}
-      method="copy"
+      method={overrides.method ?? "copy"}
       onMethodChange={() => {}}
       copyBusy={busy}
       copyLocked={locked}

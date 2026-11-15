@@ -311,6 +311,30 @@ describe("repository matrix", () => {
     expect(result.actions.map((action) => action.path)).toEqual(["svc/notes.md"]);
   });
 
+  it("a repository with commits or stashes not on origin is copied whole, never cloned", () => {
+    const result = plan({
+      repositories: [
+        sourceRepo("."),
+        sourceRepo("ahead", { localOnlyCommits: 2 }),
+        sourceRepo("stashed", { stash: B, stashCount: 1 }),
+        sourceRepo("pushed", { localOnlyCommits: 0 }),
+      ],
+      entries: [
+        file("ahead/src/a.ts", "a", { repo: "ahead" }),
+        file("stashed/src/b.ts", "b", { repo: "stashed" }),
+        file("pushed/src/c.ts", "c", { repo: "pushed" }),
+      ],
+      clone: [repoRowId("ahead"), repoRowId("stashed"), repoRowId("pushed")],
+    });
+    for (const path of ["ahead", "stashed"]) {
+      expect(row(result, repoRowId(path))).toMatchObject({ clone: false, cloneAvailable: false });
+      expect(row(result, repoRowId(path)).detail).toContain("not on origin");
+      expect(step(result, path).kind).toBe("copy");
+    }
+    expect(row(result, repoRowId("pushed"))).toMatchObject({ clone: true, cloneAvailable: true });
+    expect(step(result, "pushed").kind).toBe("clone");
+  });
+
   it("a clone this machine cannot read is copied whole, and a readable one uses that address", () => {
     const result = plan({
       repositories: [sourceRepo("."), sourceRepo("svc"), sourceRepo("web")],

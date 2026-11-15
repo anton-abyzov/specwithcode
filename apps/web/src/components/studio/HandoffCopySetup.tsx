@@ -174,7 +174,7 @@ export function HandoffCopySetup({
             All files in{" "}
             <span className="font-mono">{lastSegment(scope?.selected.copyRoot ?? sourceRoot)}</span>
             {dialog?.method === "clone"
-              ? `: commits download from GitHub, and ${along.uncommittedFiles ? `${along.uncommittedFiles.toLocaleString("en-US")} uncommitted ${along.uncommittedFiles === 1 ? "file" : "files"}` : "uncommitted"} and ignored files come from ${sourceLabel}`
+              ? `: repositories new there download from GitHub, and ${along.uncommittedFiles ? `${along.uncommittedFiles.toLocaleString("en-US")} uncommitted ${along.uncommittedFiles === 1 ? "file" : "files"}` : "uncommitted"} and ignored files come from ${sourceLabel}`
               : along.uncommittedFiles
                 ? `, including ${along.uncommittedFiles.toLocaleString("en-US")} uncommitted ${along.uncommittedFiles === 1 ? "file" : "files"}`
                 : ", including uncommitted and ignored files"}

@@ -188,7 +188,8 @@ export async function reachableOrigin(
   for (const candidate of originCandidates(origin)) {
     const result = await runGit(cwd, ["ls-remote", "--quiet", "--heads", candidate], {
       allowFailure: true,
-      timeoutMs: 45_000,
+      // A readable origin answers in seconds; this only bounds a network that never does.
+      timeoutMs: 20_000,
       env: remoteEnv(),
       ...(signal ? { signal } : {}),
     }).catch(() => null);
