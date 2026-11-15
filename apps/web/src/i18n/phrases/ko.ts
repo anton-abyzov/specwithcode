@@ -4538,7 +4538,7 @@ export const ko: PhraseCatalog = {
   "move pending": "이동 대기 중",
   "coordinator": "코디네이터",
   "not linked": "따로 등록됨",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.": "연결 안 됨: {machine}은(는) 이 저장소에 대해 자체 코디네이터, 스레드, 메모리를 사용합니다.",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.": "따로 등록됨: {machine}은(는) 이 저장소에 대해 자체 코디네이터, 스레드, 메모리를 사용합니다.",
   "{value}Messages go to Percy. {value2}": "{value}메시지는 Percy에게 전달됩니다. {value2}",
   "Show only topics that need you in {project}": "{project}에서 응답이 필요한 주제만 보기",
   "New topic in {title}": "{title}에서 새 주제",

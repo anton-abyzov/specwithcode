@@ -356,7 +356,6 @@ export function OrchestratorSwitcher({
  */
 export function ProjectOrchestratorSwitcher({
   project,
-  members: _members,
   label,
   connected,
   isThisDevice,
@@ -370,7 +369,6 @@ export function ProjectOrchestratorSwitcher({
   onCopy = null,
 }: {
   project: EnvironmentProject;
-  members: readonly EnvironmentProject[];
   label: string;
   connected: boolean;
   isThisDevice: boolean;
