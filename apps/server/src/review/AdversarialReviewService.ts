@@ -193,6 +193,7 @@ const make = Effect.gen(function* () {
       tier: input.tier ?? settings.adversarialReview.tier,
       tiers: settings.modelTiers,
       excludedModels: settings.providerLimitExcludedModels,
+      sourceOrder: settings.defaultModelProviders,
       nowMs,
       limitedInstanceIds: yield* limitedInstances(nowMs),
     });

@@ -101,6 +101,7 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
     tier: review.tier,
     tiers: settings.modelTiers,
     excludedModels: settings.providerLimitExcludedModels,
+    sourceOrder: settings.defaultModelProviders,
     nowMs,
   });
   const steps = view.groups.map((group) => ({ ...group.primary, alternates: group.alternates }));

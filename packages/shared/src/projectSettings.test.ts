@@ -61,8 +61,8 @@ describe("resolveProjectSettings", () => {
         adversarialReview: { ...DEFAULT_SERVER_SETTINGS.adversarialReview, reviewers: [sol] },
         projectSettingsOverrides: {
           [projectId]: {
-            modelLanes: { complex: [], routine: [opus] },
-            adversarialReview: { autoOnFeatureComplete: true, reviewers: [], tier: "regular" },
+            modelLanes: { routine: [opus] },
+            adversarialReview: { autoOnFeatureComplete: true },
           },
         },
       },
@@ -74,6 +74,24 @@ describe("resolveProjectSettings", () => {
       reviewers: [sol],
       tier: "regular",
     });
+    // An empty list the project saved is its choice of the built-in order, and a
+    // whole object stored by an older version still applies as it was.
+    const builtIn = resolveProjectSettings(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        modelLanes: { complex: [fable], routine: [sol] },
+        adversarialReview: { ...DEFAULT_SERVER_SETTINGS.adversarialReview, reviewers: [sol] },
+        projectSettingsOverrides: {
+          [projectId]: {
+            modelLanes: { complex: [], routine: [opus] },
+            adversarialReview: { reviewers: [] },
+          },
+        },
+      },
+      projectId,
+    ).settings;
+    expect(builtIn.modelLanes).toEqual({ complex: [], routine: [opus] });
+    expect(builtIn.adversarialReview.reviewers).toEqual([]);
   });
 
   it("treats a null project like an absent one before the shell snapshot arrives", () => {

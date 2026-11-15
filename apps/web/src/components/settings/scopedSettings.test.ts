@@ -756,35 +756,52 @@ describe("partial object patches at project scope", () => {
     const sol = { instanceId: "codex", model: "gpt-6.1-sol" };
     const fable = { instanceId: "claudeAgent", model: "claude-fable-5-2" };
     const opus = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
-    const plan = planScopedSettingsPatch(
-      {
-        kind: "project",
-        group: {} as never,
-        environmentId: null,
-        label: "fleet",
-        members: [{ id: projectId, environmentId } as never],
-        environmentIds: [environmentId],
-      },
-      [
+    const planFor = (patch: Parameters<typeof planScopedSettingsPatch>[2]) =>
+      planScopedSettingsPatch(
         {
-          environmentId,
-          label: "Laptop",
-          connection: { phase: "connected" },
-          serverConfig: {
-            settings: {
-              ...DEFAULT_SERVER_SETTINGS,
-              modelLanes: { complex: [fable], routine: [sol] },
+          kind: "project",
+          group: {} as never,
+          environmentId: null,
+          label: "fleet",
+          members: [{ id: projectId, environmentId } as never],
+          environmentIds: [environmentId],
+        },
+        [
+          {
+            environmentId,
+            label: "Laptop",
+            connection: { phase: "connected" },
+            serverConfig: {
+              settings: {
+                ...DEFAULT_SERVER_SETTINGS,
+                modelLanes: { complex: [fable], routine: [sol] },
+              },
+              environment: { capabilities: { projectSettingsOverrides: true } },
             },
-            environment: { capabilities: { projectSettingsOverrides: true } },
-          },
-        } as never,
-      ],
-      { modelLanes: { complex: [fable], routine: [opus, sol] } as never },
-    );
+          } as never,
+        ],
+        patch,
+      );
+    const plan = planFor({ modelLanes: { complex: [fable], routine: [opus, sol] } as never });
     expect(plan.serverWrites[0]?.patch).toEqual({
       projectSettingsOverrides: {
-        [projectId]: { modelLanes: { complex: [], routine: [opus, sol] } },
+        [projectId]: { modelLanes: { routine: [opus, sol] } },
       },
+    });
+    // "Use the built-in order" is a choice of its own: the empty list is stored.
+    expect(
+      planFor({ modelLanes: { complex: [], routine: [sol] } as never }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: { [projectId]: { modelLanes: { complex: [] } } },
+    });
+    // One review field never freezes the others.
+    expect(
+      planFor({ adversarialReview: { reviewers: [opus] } as never }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: { [projectId]: { adversarialReview: { reviewers: [opus] } } },
+    });
+    expect(planFor({ adversarialReview: { tier: "frontier" } }).serverWrites[0]?.patch).toEqual({
+      projectSettingsOverrides: { [projectId]: { adversarialReview: { tier: "frontier" } } },
     });
   });
 });

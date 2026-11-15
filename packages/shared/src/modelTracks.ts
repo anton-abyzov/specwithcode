@@ -141,11 +141,14 @@ export function isFreeTrackModel(model: ModelNames): boolean {
 export function defaultTrackSelections(
   track: ModelTrack,
   providers: ReadonlyArray<TrackProvider>,
+  /** The saved Sources order: a source the person ranked first wins over the maker's harness. */
+  order?: ReadonlyArray<ProviderInstanceId> | null,
 ): ReadonlyArray<ModelSelection> {
   return DEFAULT_MODEL_TRACKS[track].flatMap((entry) => {
     const best = providersForModel({
       providers,
       model: { slug: entry.model },
+      order: order ?? undefined,
       preferFree: entry.free,
     })[0];
     return best === undefined ? [] : [{ instanceId: best.provider.instanceId, model: best.slug }];
@@ -166,6 +169,7 @@ export interface EffectiveModelLanes {
 export function effectiveModelLanes(
   lanes: ModelLanes | null | undefined,
   providers: ReadonlyArray<TrackProvider>,
+  order?: ReadonlyArray<ProviderInstanceId> | null,
 ): EffectiveModelLanes {
   const saved = (lane: ModelLane) => lanes?.[lane] ?? [];
   const builtIn = {
@@ -174,8 +178,12 @@ export function effectiveModelLanes(
   };
   return {
     lanes: {
-      routine: builtIn.routine ? defaultTrackSelections("daily", providers) : saved("routine"),
-      complex: builtIn.complex ? defaultTrackSelections("complex", providers) : saved("complex"),
+      routine: builtIn.routine
+        ? defaultTrackSelections("daily", providers, order)
+        : saved("routine"),
+      complex: builtIn.complex
+        ? defaultTrackSelections("complex", providers, order)
+        : saved("complex"),
     },
     builtIn,
   };

@@ -10,7 +10,6 @@ import {
 import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   SortableContext,
-  arrayMove,
   sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
@@ -27,9 +26,11 @@ import {
 import { createModelSelection } from "@specweave-studio/shared/model";
 import { describeModel } from "@specweave-studio/shared/modelIdentity";
 import {
+  addTrackEntry,
   describeSources,
   describeTrack,
   moveSource,
+  moveTrackEntry,
   singleReviewFamily,
   type SourceMoveRefusal,
   type SourceRow,
@@ -37,6 +38,7 @@ import {
   type TrackEntryRefusal,
   trackEntryRefusal,
   type TrackRow,
+  type TrackSource,
 } from "@specweave-studio/shared/modelTrackRules";
 import { TRACK_LANES } from "@specweave-studio/shared/modelTracks";
 import { GripVerticalIcon, XIcon } from "lucide-react";
@@ -59,7 +61,7 @@ import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { clock } from "./FallbackOrderList";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { SETTINGS_PICKER_TRIGGER_CLASSNAME } from "./settingsLayout";
+import { SETTINGS_PICKER_TRIGGER_CLASSNAME, useRelativeTimeTick } from "./settingsLayout";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -78,7 +80,23 @@ const ENTRY_REFUSALS: Record<TrackEntryRefusal, string> = {
   duplicate: "That model is already in this list.",
   full: "This list is full. Remove a model first.",
   "free-in-hard-track": "Free models only close Daily. Hard work and reviews wait for a reset.",
+  "free-not-last":
+    "A free model stays last on Daily, so it is only used when nothing else has room.",
+  "per-token":
+    "That source is billed per use, so a track never starts work on it. Pick it for one thread instead.",
+  "unknown-billing":
+    "That source does not say how it bills, so a track never starts work on it. Pick it for one thread instead.",
 };
+
+/** What a source billed per use, or with unknown billing, does for a row. */
+function holdNote(source: TrackSource, track: ModelTrack, tx: Tx): string | null {
+  if (source.hold === null) return null;
+  const billing = source.hold === "per-token" ? tx("Billed per use") : tx("Billing unknown");
+  if (source.used) return billing;
+  return track === "review"
+    ? `${billing}, ${tx("never reviews")}`
+    : `${billing}, ${tx("never automatic")}`;
+}
 
 const SOURCE_REFUSALS: Record<SourceMoveRefusal, string> = {
   "held-source": "Billed per use or with unknown billing, so it is never picked on its own.",
@@ -226,6 +244,8 @@ function TrackCard(props: {
   readonly mixed: boolean;
   readonly picker: (onPick: (selection: ModelSelection) => void, disabled: boolean) => ReactNode;
   readonly control?: ReactNode;
+  /** A line under the list, such as when the track applies. */
+  readonly note?: ReactNode;
   readonly onSave: (models: ReadonlyArray<ModelSelection>) => void;
 }) {
   const tx = useTx();
@@ -252,10 +272,19 @@ function TrackCard(props: {
       model: describeModel(provider, selection.model),
       existing: current,
       providers,
+      instanceId: selection.instanceId,
     });
     setRefusal(reason);
-    if (reason === null) props.onSave([...current, selection]);
+    if (reason === null)
+      props.onSave(addTrackEntry({ track, entries: current, providers, entry: selection }));
   };
+  const move = (from: number, to: number) => {
+    const result = moveTrackEntry({ track, entries: current, providers, from, to });
+    if ("refused" in result) return setRefusal(result.refused);
+    setRefusal(null);
+    props.onSave(result.entries);
+  };
+  const unlisted = rows.filter((row) => row.selection === null);
 
   return (
     <Card
@@ -264,11 +293,7 @@ function TrackCard(props: {
       hint={tx(TRACK_HINTS[track])}
       control={props.control}
     >
-      <SortableList
-        label={`${title} ${tx("order")}`}
-        ids={movable.map(key)}
-        onMove={(from, to) => props.onSave(arrayMove([...current], from, to))}
-      >
+      <SortableList label={`${title} ${tx("order")}`} ids={movable.map(key)} onMove={move}>
         {rows.map((row, index) => (
           <SortableRow
             key={key(row)}
@@ -283,6 +308,11 @@ function TrackCard(props: {
                 {row.free ? (
                   <Badge variant="info" size="sm">
                     {tx("Free, used last")}
+                  </Badge>
+                ) : null}
+                {row.misplaced ? (
+                  <Badge variant="warning" size="sm">
+                    {tx("Free model: remove it, hard work waits for a reset")}
                   </Badge>
                 ) : null}
                 {row.follows !== null ? (
@@ -305,13 +335,21 @@ function TrackCard(props: {
                 ) : (
                   row.sources.map((source, at) => {
                     const chip = statusChip(source.status, tx);
+                    const hold = holdNote(source, track, tx);
                     return (
                       <li key={source.provider.instanceId} className="flex items-center gap-1">
-                        {at > 0 ? <span aria-hidden>{tx("then")}</span> : null}
+                        {at > 0 && source.used ? <span aria-hidden>{tx("then")}</span> : null}
                         <span className="text-foreground">{props.sourceName(source.provider)}</span>
-                        <Badge variant={chip.variant} size="sm">
-                          {chip.label}
-                        </Badge>
+                        {source.used ? (
+                          <Badge variant={chip.variant} size="sm">
+                            {chip.label}
+                          </Badge>
+                        ) : null}
+                        {hold !== null ? (
+                          <Badge variant="warning" size="sm">
+                            {hold}
+                          </Badge>
+                        ) : null}
                       </li>
                     );
                   })
@@ -345,6 +383,16 @@ function TrackCard(props: {
         )}
       </div>
       {refusal !== null ? <Note tone="warning">{tx(ENTRY_REFUSALS[refusal])}</Note> : null}
+      {saved.length === 0 && unlisted.length > 0 ? (
+        <Note>
+          {`${tx("Changing this list saves it as yours without")} ${unlisted
+            .map((row) => row.name)
+            .join(", ")}${tx(
+            ': nothing here runs it yet. "Use the built-in order" brings it back.',
+          )}`}
+        </Note>
+      ) : null}
+      {props.note ?? null}
       {sameFamily !== null ? (
         <Note tone="warning">
           {tx(
@@ -365,6 +413,7 @@ function sourceKind(row: SourceRow, tx: Tx): string {
 
 function SourcesCard(props: {
   readonly rows: ReadonlyArray<SourceRow>;
+  readonly order: ReadonlyArray<ProviderInstanceId>;
   readonly saved: boolean;
   readonly sourceName: (provider: ServerProvider) => string;
   readonly onSave: (order: ReadonlyArray<ProviderInstanceId>) => void;
@@ -373,7 +422,7 @@ function SourcesCard(props: {
   const [refusal, setRefusal] = useState<SourceMoveRefusal | null>(null);
   const { rows } = props;
   const move = (from: number, to: number) => {
-    const result = moveSource(rows, from, to);
+    const result = moveSource(rows, from, to, props.order);
     if ("refused" in result) return setRefusal(result.refused);
     setRefusal(null);
     props.onSave(result.order);
@@ -441,7 +490,8 @@ export function ModelTracksSettings() {
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
   );
-  const [nowMs] = useState(() => Date.now());
+  // Limit chips follow the clock, so a reset that passes while the page is open shows.
+  const nowMs = useRelativeTimeTick(60_000);
   const mixedLanes = useScopedSettingsMixed(["modelLanes"]);
   const mixedReview = useScopedSettingsMixed(["adversarialReview"]);
 
@@ -501,6 +551,15 @@ export function ModelTracksSettings() {
           mixed={track === "review" ? mixedReview : mixedLanes}
           picker={picker(track)}
           onSave={(models) => save(track, models)}
+          note={
+            track === "review" && review.tier === "frontier" ? (
+              <Note>
+                {tx(
+                  "Review depth is set to Frontier, so a review uses each source's strongest model while this list is the built-in one. A list you save here is used as it is.",
+                )}
+              </Note>
+            ) : null
+          }
           control={
             track === "review" ? (
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -521,6 +580,7 @@ export function ModelTracksSettings() {
       ))}
       <SourcesCard
         rows={describeSources({ providers, order: sourceOrder, nowMs })}
+        order={sourceOrder}
         saved={sourceOrder.length > 0}
         sourceName={sourceName}
         onSave={(order) => updateSettings({ defaultModelProviders: [...order] })}

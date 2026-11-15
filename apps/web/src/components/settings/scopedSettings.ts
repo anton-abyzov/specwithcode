@@ -285,14 +285,21 @@ export function planScopedSettingsPatch(
                   continue;
                 }
                 const base = effective[key as keyof ServerSettings];
-                const whole =
-                  isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
-                // A track the project did not change is stored empty, so it keeps
-                // following this machine's order (see `resolveProjectSettings`).
+                // Tracks and the review policy store only what the project
+                // changed; every other field keeps following this machine.
+                if (
+                  (key === "modelLanes" || key === "adversarialReview") &&
+                  isPlainObject(value) &&
+                  isPlainObject(base)
+                ) {
+                  const own = settings.projectSettingsOverrides[projectId]?.[key];
+                  const changed = changedFields(value, base);
+                  if (own !== undefined || Object.keys(changed).length > 0)
+                    set[key] = { ...own, ...changed };
+                  continue;
+                }
                 set[key] =
-                  key === "modelLanes" || key === "adversarialReview"
-                    ? withoutInheritedTracks(whole, settings[key])
-                    : whole;
+                  isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
               }
               return {
                 ...(Object.keys(set).length > 0 ? { set: set as ProjectSettingsOverrides } : {}),
@@ -499,14 +506,15 @@ export async function persistScopedSettingsPatch(
   };
 }
 
-/** `value` with each track list that equals the machine's own emptied. */
-function withoutInheritedTracks(value: unknown, machine: unknown): unknown {
-  if (!isPlainObject(value) || !isPlainObject(machine)) return value;
-  const next: Record<string, unknown> = { ...value };
-  for (const field of ["complex", "routine", "reviewers"]) {
-    const list = next[field];
-    if (Array.isArray(list) && JSON.stringify(list) === JSON.stringify(machine[field]))
-      next[field] = [];
-  }
-  return next;
+/** The fields of `patch` whose value differs from what the target resolves to now. */
+function changedFields(
+  patch: Record<string, unknown>,
+  effective: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(patch).filter(
+      ([field, value]) =>
+        value !== undefined && JSON.stringify(value) !== JSON.stringify(effective[field]),
+    ),
+  );
 }

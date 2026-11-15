@@ -126,26 +126,47 @@ export function moveSource(
   rows: ReadonlyArray<SourceRow>,
   from: number,
   to: number,
+  /** The order saved before the move: ids not shown now (a disabled source) keep a place. */
+  saved: ReadonlyArray<ProviderInstanceId> = [],
 ): { readonly order: ReadonlyArray<ProviderInstanceId> } | { readonly refused: SourceMoveRefusal } {
   const moving = rows[from];
   const target = rows[to];
   if (moving === undefined || target === undefined || from === to)
-    return { order: automaticOrder(rows) };
+    return { order: fullOrder(rows, saved) };
   if (moving.hold !== null) return { refused: "held-source" };
   if (target.hold !== null) return { refused: "into-held" };
   const next = [...rows];
   next.splice(to, 0, ...next.splice(from, 1));
-  return { order: automaticOrder(next) };
+  return { order: fullOrder(next, saved) };
 }
 
-const automaticOrder = (rows: ReadonlyArray<SourceRow>) =>
-  rows.filter((row) => row.hold === null).map((row) => row.provider.instanceId);
+/**
+ * The order to save: the rows as shown (held ones are already last), then
+ * every id saved before that has no row now. A held source the person named
+ * keeps its name in the list, which is what lets the same model continue on it.
+ */
+function fullOrder(
+  rows: ReadonlyArray<SourceRow>,
+  saved: ReadonlyArray<ProviderInstanceId>,
+): ReadonlyArray<ProviderInstanceId> {
+  const shown = rows.map((row) => row.provider.instanceId);
+  const named = new Set(saved);
+  const kept = shown.filter((id, at) => rows[at]!.hold === null || named.has(id));
+  return [...kept, ...saved.filter((id) => !shown.includes(id))];
+}
 
 export interface TrackSource {
   readonly provider: ServerProvider;
   /** The model as this source spells it. */
   readonly slug: string;
   readonly status: SourceStatus;
+  /** Set when this source is billed per token or its billing is unknown. */
+  readonly hold: SourceHold | null;
+  /**
+   * Whether the app starts work here by itself. False for a held source nobody
+   * named, and for any held source in Review, which never reviews on one.
+   */
+  readonly used: boolean;
 }
 
 export interface TrackRow {
@@ -157,6 +178,8 @@ export interface TrackRow {
   readonly builtIn: boolean;
   /** Free tail: tried last, on a free plan first. */
   readonly free: boolean;
+  /** A free model saved in Complex or Review, where it does not belong. */
+  readonly misplaced: boolean;
   /** The newer release this entry runs on, when its source lists one. */
   readonly follows: string | null;
   /** Where the model runs, first tried first. Empty when nothing here lists it. */
@@ -176,27 +199,52 @@ export function describeTrack(input: {
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | null | undefined;
   readonly nowMs: number;
 }): ReadonlyArray<TrackRow> {
+  // The order the resolvers walk: the entry's own source (for a built-in row,
+  // the best one before room is read), then the others by the Sources order,
+  // the maker's harness and, outside Review, the most room. Held sources come
+  // last and are never started on unless the person named one.
   const sourcesOf = (slug: string, free: boolean, named?: ProviderInstanceId) => {
-    const all = providersForModel({
-      providers: input.providers,
-      model: { slug },
-      order: input.sourceOrder ?? undefined,
-      preferFree: free,
-    }).filter(({ provider }) => provider.instanceId === named || sourceHold(provider) === null);
+    const ranked = (withRoom: boolean) =>
+      providersForModel({
+        providers: input.providers,
+        model: { slug },
+        order: input.sourceOrder ?? undefined,
+        preferFree: free,
+        ...(withRoom && input.track !== "review"
+          ? {
+              usedPercent: (provider: ServerProvider, served: string) =>
+                providerUsedPercent(provider, input.nowMs, served),
+            }
+          : {}),
+      });
+    const open = (list: ReturnType<typeof ranked>) =>
+      list.filter(({ provider }) => sourceHold(provider) === null);
+    const first =
+      named ?? open(ranked(false))[0]?.provider.instanceId ?? ranked(false)[0]?.provider.instanceId;
+    const all = ranked(true);
     return [
-      ...all.filter(({ provider }) => provider.instanceId === named),
-      ...all.filter(({ provider }) => provider.instanceId !== named),
-    ].map(({ provider, slug: served }) => ({
-      provider,
-      slug: served,
-      status: sourceStatus(provider, input.nowMs, served),
-    }));
+      ...all.filter(({ provider }) => provider.instanceId === first),
+      ...open(all).filter(({ provider }) => provider.instanceId !== first),
+      ...all.filter(
+        ({ provider }) => provider.instanceId !== first && sourceHold(provider) !== null,
+      ),
+    ].map(({ provider, slug: served }) => {
+      const hold = sourceHold(provider);
+      return {
+        provider,
+        slug: served,
+        status: sourceStatus(provider, input.nowMs, served),
+        hold,
+        used: hold === null || (provider.instanceId === named && input.track !== "review"),
+      };
+    });
   };
   if (input.saved.length > 0) {
     return input.saved.map((selection) => {
       const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
       const names = describeModel(provider, selection.model);
-      const free = input.track === "daily" && isFreeTrackModel(names);
+      const freeModel = isFreeTrackModel(names);
+      const free = input.track === "daily" && freeModel;
       const newer =
         provider !== undefined && provider.models.some((model) => model.slug === selection.model)
           ? newerOfFamily(provider, selection.model)
@@ -207,6 +255,7 @@ export function describeTrack(input: {
         name: names.name ?? selection.model,
         builtIn: false,
         free,
+        misplaced: freeModel && input.track !== "daily",
         follows: newer ?? null,
         sources: sourcesOf(selection.model, free, selection.instanceId),
       };
@@ -215,7 +264,8 @@ export function describeTrack(input: {
   return DEFAULT_MODEL_TRACKS[input.track].map((entry) => {
     const free = entry.free === true;
     const sources = sourcesOf(entry.model, free);
-    const first = sources[0];
+    // A built-in row starts only on a source the app picks by itself.
+    const first = sources.find((source) => source.used);
     return {
       selection:
         first === undefined ? null : { instanceId: first.provider.instanceId, model: first.slug },
@@ -226,13 +276,19 @@ export function describeTrack(input: {
           : (describeModel(first.provider, first.slug).name ?? entry.name),
       builtIn: true,
       free,
+      misplaced: false,
       follows: first === undefined ? null : (newerOfFamily(first.provider, first.slug) ?? null),
       sources,
     };
   });
 }
 
-export type TrackEntryRefusal = "duplicate" | "full" | "free-in-hard-track";
+export type TrackEntryRefusal =
+  | "duplicate"
+  | "full"
+  | "free-in-hard-track"
+  | "free-not-last"
+  | SourceHold;
 
 /** Why `model` cannot join `track`, or null when it can. */
 export function trackEntryRefusal(input: {
@@ -240,6 +296,8 @@ export function trackEntryRefusal(input: {
   readonly model: { readonly slug: string; readonly name?: string };
   readonly existing: ReadonlyArray<ModelSelection>;
   readonly providers: ReadonlyArray<ServerProvider>;
+  /** The source picked for the new entry: one billed per token is never added to a track. */
+  readonly instanceId?: ProviderInstanceId | undefined;
 }): TrackEntryRefusal | null {
   const names = (selection: ModelSelection) =>
     describeModel(
@@ -249,7 +307,64 @@ export function trackEntryRefusal(input: {
   if (input.existing.some((entry) => isSameModel(names(entry), input.model))) return "duplicate";
   if (input.existing.length >= MAX_LANE_MODELS) return "full";
   if (input.track !== "daily" && isFreeTrackModel(input.model)) return "free-in-hard-track";
-  return null;
+  const source = input.providers.find((entry) => entry.instanceId === input.instanceId);
+  return source === undefined ? null : sourceHold(source);
+}
+
+/**
+ * The track after moving the entry at `from` to `to`, or why it cannot move:
+ * on Daily a free entry stays after every other one, so it is only used last.
+ */
+export function moveTrackEntry(input: {
+  readonly track: ModelTrack;
+  readonly entries: ReadonlyArray<ModelSelection>;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly from: number;
+  readonly to: number;
+}):
+  | { readonly entries: ReadonlyArray<ModelSelection> }
+  | { readonly refused: Extract<TrackEntryRefusal, "free-not-last"> } {
+  const next = [...input.entries];
+  if (next[input.from] === undefined || next[input.to] === undefined) return { entries: next };
+  next.splice(input.to, 0, ...next.splice(input.from, 1));
+  if (input.track !== "daily") return { entries: next };
+  const free = next.map((entry) =>
+    isFreeTrackModel(
+      describeModel(
+        input.providers.find((provider) => provider.instanceId === entry.instanceId),
+        entry.model,
+      ),
+    ),
+  );
+  const firstFree = free.indexOf(true);
+  return firstFree !== -1 && free.slice(firstFree).includes(false)
+    ? { refused: "free-not-last" }
+    : { entries: next };
+}
+
+/**
+ * An entry appended to a track in the place the rules give it: on Daily a
+ * paid entry goes before the free tail.
+ */
+export function addTrackEntry(input: {
+  readonly track: ModelTrack;
+  readonly entries: ReadonlyArray<ModelSelection>;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly entry: ModelSelection;
+}): ReadonlyArray<ModelSelection> {
+  if (input.track !== "daily") return [...input.entries, input.entry];
+  const isFree = (entry: ModelSelection) =>
+    isFreeTrackModel(
+      describeModel(
+        input.providers.find((provider) => provider.instanceId === entry.instanceId),
+        entry.model,
+      ),
+    );
+  if (isFree(input.entry)) return [...input.entries, input.entry];
+  const tail = input.entries.findIndex(isFree);
+  return tail === -1
+    ? [...input.entries, input.entry]
+    : [...input.entries.slice(0, tail), input.entry, ...input.entries.slice(tail)];
 }
 
 /** The single family every Review row belongs to, when a review could not cross families. */

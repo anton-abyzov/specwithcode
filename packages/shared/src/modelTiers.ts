@@ -133,7 +133,11 @@ function tierFallbackChain(
   options: TierChainOptions,
 ): { readonly order: ReadonlyArray<ModelSelection>; readonly builtIn: ReadonlySet<string> } {
   const saved = input.modelLanes;
-  const { lanes, builtIn: builtInLane } = effectiveModelLanes(saved, providers);
+  const { lanes, builtIn: builtInLane } = effectiveModelLanes(
+    saved,
+    providers,
+    input.defaultModelProviders,
+  );
   const first =
     tierOfModel(saved, currentModel) ??
     tierOfModel(saved, input.defaultModelSelection?.model) ??
