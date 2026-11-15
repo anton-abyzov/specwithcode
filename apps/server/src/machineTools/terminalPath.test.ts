@@ -243,6 +243,16 @@ describe("syncTerminalPath", () => {
     expect(read()).toBe("# mine\n");
   });
 
+  it("does not mistake its own removal for an opt-out when the new shell's file is refused", async () => {
+    touch(NodePath.join(home, ".local/bin/claude"));
+    await sync();
+    const bashProfile = NodePath.join(home, ".bash_profile");
+    touch(bashProfile, `${TERMINAL_PATH_START}\nmine\n`);
+    expect(await sync({ shell: "/bin/bash" })).toBe("malformed");
+    expect(read()).not.toContain(TERMINAL_PATH_START);
+    expect(await sync()).toBe("added");
+  });
+
   it("keeps folders a second, duplicate block listed", async () => {
     const other = pinned(NodePath.join(home, ".specweave-studio")).specweave;
     touch(NodePath.join(other, "specweave"));

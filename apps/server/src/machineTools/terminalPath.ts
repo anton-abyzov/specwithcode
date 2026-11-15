@@ -359,6 +359,12 @@ export async function syncTerminalPath(input: TerminalPathInput): Promise<Termin
   if (state !== "unknown")
     for (const stale of state.filter((entry) => entry !== file))
       if (await removeStaleBlock(stale, fs)) recorded = recorded.filter((entry) => entry !== stale);
+  // Saved now: a pass that stops below must not leave a block the app removed looking deleted.
+  let persisted: ReadonlyArray<string> | "unknown" = state;
+  if (state !== "unknown" && recorded.join("\n") !== state.join("\n")) {
+    await writeState(home, recorded, fs);
+    persisted = [...recorded];
+  }
 
   const info = await fs.inspect(file);
   if (!editable(info)) return "unsupported";
@@ -397,7 +403,7 @@ export async function syncTerminalPath(input: TerminalPathInput): Promise<Termin
     if (action !== "removed") recorded.push(file);
   }
   const changed =
-    state === "unknown" ? recorded.length > 0 : recorded.join("\n") !== state.join("\n");
+    persisted === "unknown" ? recorded.length > 0 : recorded.join("\n") !== persisted.join("\n");
   if (changed) await writeState(home, recorded, fs);
   return action;
 }
@@ -433,7 +439,7 @@ async function sweepTemporaries(dir: string, base: string): Promise<void> {
     const temporary = NodePath.join(dir, name);
     const info = await NodeFSP.lstat(temporary).catch(() => null);
     if (info?.isFile() && Date.now() - info.mtimeMs > TEMPORARY_STALE_MS)
-      await NodeFSP.rm(temporary, { force: true });
+      await NodeFSP.rm(temporary, { force: true }).catch(() => undefined);
   }
 }
 
