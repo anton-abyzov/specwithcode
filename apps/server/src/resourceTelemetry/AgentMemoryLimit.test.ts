@@ -141,6 +141,11 @@ describe("the service's groups", () => {
       heldBytesOf("1000\n", "anon 500\nfile 400\ninactive_file 250\nactive_file 50\nshmem 100\n"),
       700,
     );
+    // Some kernels keep shared memory on the file lists; without swap it stays.
+    assert.equal(
+      heldBytesOf("1000\n", "anon 100\nfile 800\ninactive_file 500\nactive_file 300\nshmem 600\n"),
+      800,
+    );
     assert.equal(heldBytesOf("1000\n", ""), 1000);
     assert.isNull(heldBytesOf("", ""));
   });
@@ -262,7 +267,11 @@ describe("makeAgentMemoryLimit", () => {
           relativePath: `${UNIT}/agents`,
           path: NodePath.join(machine.unit, "agents"),
           limitBytes: expected,
+          appsPath: NodePath.join(machine.unit, "apps"),
         });
+        // An app opened now goes to its group before it can fork.
+        recordUserOpenedApp(41);
+        assert.equal(machine.read("apps/cgroup.procs"), "20\n41\n");
       } finally {
         forgetExitedUserApps(() => false);
         setAgentWorkCgroup(undefined);

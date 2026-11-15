@@ -75,7 +75,7 @@ function fakeMachine() {
   };
   const machine = {
     proc,
-    group: () => ({ relativePath: "/agents", path: agents, limitBytes: 10 * GIB }),
+    group: () => ({ relativePath: "/agents", path: agents, limitBytes: 10 * GIB, appsPath: "/apps" }),
     start: (each: Proc) => start(agents, each),
     startInSession: (each: Proc) => start(NodePath.join(agents, "studio-acp-1-x"), each),
     end: (pid: number) => NodeFS.rmSync(NodePath.join(proc, String(pid)), { recursive: true }),
@@ -146,22 +146,22 @@ describe("makeAgentMemoryNotice", () => {
       machine.start([13, "vite", 2, "thread-b"]);
       yield* notice.pass;
 
-      // Both of thread-a's builds were ended: one message. Pid 13 now names another
-      // process, so the recorded 13 is gone too.
+      // Two were ended, the largest: both thread-a's, so one message. Pid 13 now
+      // names another process, but only two were ended.
       machine.end(11);
       machine.end(12);
       machine.end(13);
       machine.start([13, "sleep", 2, "thread-b", "999"]);
       machine.kills(2);
       yield* notice.pass;
-      assert.deepEqual(sink.messages.map(([each]) => each.pid), [11, 13]);
+      assert.deepEqual(sink.messages.map(([each]) => each.pid), [11]);
 
       machine.start([14, "tsc", 4, "thread-a"]);
       yield* notice.pass;
       machine.end(14);
       machine.kills(3);
       yield* notice.pass;
-      assert.equal(sink.messages.length, 2, "not again within a minute");
+      assert.equal(sink.messages.length, 1, "not again within a minute");
 
       yield* TestClock.adjust("61 seconds");
       machine.start([15, "tsc", 4, "thread-a"]);
@@ -169,7 +169,33 @@ describe("makeAgentMemoryNotice", () => {
       machine.end(15);
       machine.kills(4);
       yield* notice.pass;
-      assert.deepEqual(sink.messages.map(([each]) => each.pid), [11, 13, 15]);
+      assert.deepEqual(sink.messages.map(([each]) => each.pid), [11, 15]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("blames only as many as the kernel ended, largest first", () =>
+    Effect.gen(function* () {
+      const machine = fakeMachine();
+      const sink = told();
+      const notice = yield* makeAgentMemoryNotice({
+        procRoot: machine.proc,
+        group: machine.group,
+        notify: sink.notify,
+      });
+      machine.use(9);
+      machine.start([11, "tsc", 6, "thread-a"]);
+      machine.start([12, "vitest", 2, "thread-b"]);
+      yield* notice.pass;
+      // The typecheck was ended; the test run finished on its own at the same time.
+      machine.end(11);
+      machine.end(12);
+      machine.kills(1);
+      yield* notice.pass;
+      assert.deepEqual(
+        sink.messages.map(([each]) => each.threadId),
+        ["thread-a"],
+      );
+      assert.deepEqual(notice.state.recorded, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

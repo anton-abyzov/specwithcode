@@ -182,7 +182,11 @@ export const makeAgentMemoryNotice = Effect.fn("makeAgentMemoryNotice")(function
     const kills = parseOomKills(yield* readText(`${current.path}/memory.events`));
     if (kills !== null && state.kills !== null && kills > state.kills) {
       const gone = yield* Effect.forEach(state.recorded, isGone);
-      const ended = state.recorded.filter((_, index) => gone[index]);
+      // The kernel ends the largest first, and says how many: a recorded
+      // process that finished on its own in the same pass is not one of them.
+      const ended = state.recorded
+        .filter((_, index) => gone[index])
+        .slice(0, kills - state.kills);
       const now = yield* Clock.currentTimeMillis;
       if (ended.length === 0) {
         yield* Effect.logWarning("agent work passed its memory limit; the kernel ended a process", {
@@ -205,7 +209,7 @@ export const makeAgentMemoryNotice = Effect.fn("makeAgentMemoryNotice")(function
         state.toldAt.set(victim.threadId, now);
         yield* options.notify(victim, current.limitBytes);
       }
-      state.recorded = state.recorded.filter((each) => !ended.includes(each));
+      state.recorded = state.recorded.filter((_, index) => !gone[index]);
     }
     if (kills !== null) state.kills = kills;
     const used = Number((yield* readText(`${current.path}/memory.current`)).trim());

@@ -170,12 +170,20 @@ export function groupOf(
 const parsePids = (procs: string) =>
   procs.split("\n").flatMap((line) => (/^\d+$/.test(line) ? [Number(line)] : []));
 
-/** `memory.current` without the file cache the kernel drops before it kills. */
+/**
+ * `memory.current` without the file cache the kernel drops before it kills.
+ * Shared memory (tmpfs, shm) counts as file memory but cannot be dropped
+ * without swap, so it stays held whichever list the kernel keeps it on.
+ */
 export function heldBytesOf(current: string, stat: string): number | null {
   const total = Number(current.trim());
   if (current.trim() === "" || !Number.isFinite(total)) return null;
   const field = (name: string) => Number(new RegExp(`^${name} (\\d+)$`, "m").exec(stat)?.[1] ?? 0);
-  return Math.max(0, total - field("inactive_file") - field("active_file"));
+  const onFileLists = field("inactive_file") + field("active_file");
+  const droppable = /^file \d+$/m.test(stat)
+    ? Math.min(onFileLists, Math.max(0, field("file") - field("shmem")))
+    : onFileLists;
+  return Math.max(0, total - droppable);
 }
 
 class AgentMemoryLimitUnavailable extends Schema.TaggedError<AgentMemoryLimitUnavailable>()(
@@ -421,6 +429,7 @@ export const makeAgentMemoryLimit = Effect.fn("makeAgentMemoryLimit")(function* 
       relativePath: layout.agentsRelative,
       path: layout.agentsPath,
       limitBytes: limit,
+      appsPath: layout.appsPath,
     });
     return true;
   });
