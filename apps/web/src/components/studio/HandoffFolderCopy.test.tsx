@@ -210,6 +210,22 @@ const sentSecrets = () =>
     .filter(([name]) => name === "copySecrets")
     .map(([, request]) => (request as { input: { paths: string[] } }).input.paths);
 
+it("keeps Details closed for the Download from GitHub default and opens it for another way", async () => {
+  await mount({ dialog: true, method: "clone" });
+  const details = () =>
+    [...document.querySelectorAll<HTMLElement>("button")].find(
+      (node) => node.textContent?.trim() === "Details",
+    )!;
+  expect(details().getAttribute("aria-expanded")).toBe("false");
+  expect(document.body.textContent).toContain(
+    "repositories new there and fully pushed download from GitHub or their Git host, and uncommitted and ignored files come from M4",
+  );
+  act(() => root.unmount());
+  root = createRoot(container);
+  await mount({ dialog: true, method: "copy" });
+  expect(details().getAttribute("aria-expanded")).toBe("true");
+});
+
 it("sends secret files by default, shown as one included line that lists them on Show", async () => {
   statuses = [
     copyStatus("previewed"),
@@ -220,12 +236,17 @@ it("sends secret files by default, shown as one included line that lists them on
   await mount();
   const along = container.querySelector('[data-slot="copy-along-secrets"]')!;
   expect(along.textContent).toContain("Secrets (.env, keys): included");
+  // What secrets are for, so the person can decide.
+  const reason =
+    "Agents can read and fix the code without them; they are needed to run the app or services, live tests, or MCP and Chrome sessions on M3.";
+  expect(along.textContent).toContain(reason);
   await click("Copy to M3");
   const include = container.querySelector<HTMLElement>(
     '[data-slot="copy-secrets-include"] [data-slot="checkbox"]',
   )!;
   expect(include.getAttribute("aria-checked")).toBe("true");
   expect(container.textContent).toContain("Secrets (.env, keys): 1 file, included");
+  expect(container.querySelector('[data-slot="copy-secrets"]')!.textContent).toContain(reason);
   expect(container.textContent).not.toContain("API_TOKEN");
   // No second confirmation: the checked line is the consent.
   expect(container.querySelector('[data-slot="copy-secrets-confirm"]')).toBeNull();

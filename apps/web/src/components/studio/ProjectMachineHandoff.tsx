@@ -60,7 +60,11 @@ import {
   unwatchCopy,
   watchCopy,
 } from "../../studio/folderCopyActivity";
-import { copyDestinationKey, type HandoffFolderMethod } from "../../studio/folderCopy";
+import {
+  copyDestinationKey,
+  DEFAULT_COPY_METHOD,
+  type HandoffFolderMethod,
+} from "../../studio/folderCopy";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
 import { isArchivedMember } from "../../studio/projectListVisibility";
 import { useStudioFleet } from "../../studio/fleet";
@@ -217,7 +221,7 @@ export function ProjectMachineHandoff({
   };
   const [canRestart, setCanRestart] = useState(false);
   // A machine that has the project updates through Git; a copy is for one that does not.
-  const [method, setMethod] = useState<HandoffFolderMethod>("copy");
+  const [method, setMethod] = useState<HandoffFolderMethod>(DEFAULT_COPY_METHOD);
   // Opening the dialog means moving the project; "Copy files only" is the other choice.
   const [intent, setIntent] = useState<MoveIntent>("move");
   // "Sync to X…": X already has this project, so only files travel, into its own folder.
@@ -470,7 +474,9 @@ export function ProjectMachineHandoff({
     );
     setIntent("move");
     setSyncKey(null);
-    setMethod(existing && ownCheckout(project) && ownCheckout(existing) ? "folder" : "copy");
+    setMethod(
+      existing && ownCheckout(project) && ownCheckout(existing) ? "folder" : DEFAULT_COPY_METHOD,
+    );
     setSelected(requestedTarget);
     setPickerMachine(null);
     setSnapshot(null);
@@ -864,7 +870,7 @@ export function ProjectMachineHandoff({
         gitPending = pending !== null;
         setIntent(pending ? "move" : "copy");
         if (pending) setMethod("folder");
-        else if (!copyPending) setMethod("copy");
+        else if (!copyPending) setMethod(DEFAULT_COPY_METHOD);
         const saved = readHandoffMachinePreference(preferenceKey);
         setPreference(saved);
         const preferred = pickHandoffMachine(machines, saved);
@@ -888,7 +894,7 @@ export function ProjectMachineHandoff({
     if (mode === "move" && !snapshot) setIntent("move");
     if ((mode === "copy" || mode === "sync") && !snapshot && !gitPending) {
       setIntent("copy");
-      setMethod("copy");
+      setMethod(DEFAULT_COPY_METHOD);
       if (machine) {
         setSelected("");
         setPickerMachine(machine);
@@ -960,7 +966,7 @@ export function ProjectMachineHandoff({
           // Git always continues the project there; copying files only uses the copy flow.
           if (next !== "copy" || discardPreview() === "failed") return;
           setIntent("copy");
-          setMethod("copy");
+          setMethod(DEFAULT_COPY_METHOD);
         }}
         sourceChanges={sourceChanges}
         leftBehind={

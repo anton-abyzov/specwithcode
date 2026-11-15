@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from "react";
 import type { EnvironmentId, FolderCopyMode } from "@specweave-studio/contracts";
-import { copiedProjectFolder } from "../../studio/folderCopy";
+import { copiedProjectFolder, DEFAULT_COPY_METHOD } from "../../studio/folderCopy";
 import { MachineOptionRows, type MachineOption } from "../handoff/MachineOptionRows";
 import { Checkbox } from "../ui/checkbox";
+import { secretsReason } from "./handoffCopySecrets";
 import { HandoffCopyScope, type useCopyScope } from "./HandoffCopyScope";
 import { RemoteFolderBrowser } from "./RemoteFolderBrowser";
 import {
@@ -172,9 +173,11 @@ export function HandoffCopySetup({
           <AlongLine>
             All files in{" "}
             <span className="font-mono">{lastSegment(scope?.selected.copyRoot ?? sourceRoot)}</span>
-            {along.uncommittedFiles
-              ? `, including ${along.uncommittedFiles.toLocaleString("en-US")} uncommitted ${along.uncommittedFiles === 1 ? "file" : "files"}`
-              : ", including uncommitted and ignored files"}
+            {dialog?.method === "clone"
+              ? `: repositories new there and fully pushed download from GitHub or their Git host, and ${along.uncommittedFiles ? `${along.uncommittedFiles.toLocaleString("en-US")} uncommitted ${along.uncommittedFiles === 1 ? "file" : "files"}` : "uncommitted"} and ignored files come from ${sourceLabel}`
+              : along.uncommittedFiles
+                ? `, including ${along.uncommittedFiles.toLocaleString("en-US")} uncommitted ${along.uncommittedFiles === 1 ? "file" : "files"}`
+                : ", including uncommitted and ignored files"}
           </AlongLine>
           <li className="min-w-0" data-slot="copy-along-secrets">
             <label className="flex cursor-pointer items-start gap-2.5">
@@ -193,7 +196,8 @@ export function HandoffCopySetup({
                     ? along.secretsLocked
                     : along.includeSecrets
                       ? `Sent only to ${targetLabel}, readable only by your user there.`
-                      : `They stay on ${sourceLabel}.`}
+                      : `They stay on ${sourceLabel}.`}{" "}
+                  {secretsReason(targetLabel)}
                 </span>
               </span>
             </label>
@@ -213,7 +217,9 @@ export function HandoffCopySetup({
         disabled={disabled}
       />
       <MoreOptions
-        defaultOpen={chooseFirst || narrowed || (dialog !== null && dialog.method !== "copy")}
+        defaultOpen={
+          chooseFirst || narrowed || (dialog !== null && dialog.method !== DEFAULT_COPY_METHOD)
+        }
       >
         {along?.details}
         <FilesTravelChoice />

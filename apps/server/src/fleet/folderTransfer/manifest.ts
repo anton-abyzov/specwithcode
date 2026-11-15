@@ -51,6 +51,12 @@ export interface ManifestEntry {
   readonly portableGit?: boolean;
 }
 
+/**
+ * Refs a clone from origin recreates, remote caches (remote-tracking and `git maintenance`
+ * prefetch refs), or the stash the plan already counts.
+ */
+const CLONE_CARRIED_REF = /^refs\/(?:heads\/|tags\/|remotes\/|prefetch\/|stash$)/u;
+
 export interface RepositoryInfo {
   readonly path: string;
   /** main: has a `.git` folder; linked: a linked worktree; gitfile: another `.git` file (submodule). */
@@ -60,6 +66,12 @@ export interface RepositoryInfo {
   readonly branches: Readonly<Record<string, string>>;
   readonly stash: string | null;
   readonly stashCount: number;
+  /**
+   * Commits on HEAD, local branches or tags that no origin remote-tracking branch has, as of
+   * the last fetch, plus one for refs a clone drops (notes, custom refs) or an unborn HEAD:
+   * work a clone from origin would leave behind. Absent from older sources.
+   */
+  readonly localOnlyCommits?: number;
   /** Canonical origin without credentials, or null without one. */
   readonly identity: string | null;
   /** The origin URL with any user name or password removed, for "clone from origin". */
@@ -238,6 +250,34 @@ async function readRepository(
   const origin = await runGit(absolute, ["config", "--get", "remote.origin.url"], {
     allowFailure: true,
   });
+  // Only origin counts: a clone fetches nothing from other remotes. Skipped without an origin.
+  // An unborn HEAD makes rev-list fail, which counts as local work like any unreadable answer.
+  const localOnly =
+    kind === "main" && origin.code === 0
+      ? await runGit(
+          absolute,
+          ["rev-list", "--count", "HEAD", "--branches", "--tags", "--not", "--remotes=origin"],
+          { allowFailure: true },
+        )
+      : null;
+  // Refs a clone never brings (notes, custom refs, filter-branch backups) are local work too.
+  const otherRefs =
+    localOnly === null
+      ? null
+      : await runGit(absolute, ["for-each-ref", "--format=%(refname)"], { allowFailure: true });
+  const keepsOtherRefs =
+    otherRefs !== null &&
+    (otherRefs.code !== 0 ||
+      otherRefs.stdout
+        .split("\n")
+        .some((ref) => ref.length > 0 && !CLONE_CARRIED_REF.test(ref)));
+  // Unreadable counts as local work: such a repository is copied, never cloned.
+  const localOnlyCommits =
+    localOnly === null
+      ? 0
+      : localOnly.code === 0
+        ? (Number(localOnly.stdout.trim()) || 0) + (keepsOtherRefs ? 1 : 0)
+        : 1;
   const identity = origin.code === 0 ? canonicalOrigin(origin.stdout.trim()) : null;
   const originUrl = identity ? withoutCredentials(origin.stdout.trim()) : null;
   const status = (
@@ -300,6 +340,7 @@ async function readRepository(
       branches,
       stash,
       stashCount,
+      localOnlyCommits,
       identity,
       origin: originUrl,
       status,

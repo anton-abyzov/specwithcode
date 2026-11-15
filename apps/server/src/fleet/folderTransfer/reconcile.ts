@@ -289,6 +289,7 @@ export function planReconcile(input: PlanInput): Plan {
       const cloneAvailable =
         !destination &&
         !insideSkipped &&
+        !hasLocalOnlyWork(source) &&
         source.kind === "main" &&
         source.identity !== null &&
         !source.identity.startsWith("file://");
@@ -328,10 +329,13 @@ export function planReconcile(input: PlanInput): Plan {
       const unreachable = clone.has(id) && cloneOrigin === null;
       // Files that were here before the copy are never cloned over: taking theirs
       // replaces the folder whole (see the blocked row below), so Undo puts them back.
+      // Unpushed commits or stashes would stay behind in a clone: always copied whole.
+      const localWork = hasLocalOnlyWork(source);
       const cloneAvailable =
         source.kind === "main" &&
         source.identity !== null &&
         !source.identity.startsWith("file://") &&
+        !localWork &&
         !unreachable &&
         !blocked &&
         !rootOccupied;
@@ -381,7 +385,9 @@ export function planReconcile(input: PlanInput): Plan {
               ? "A worktree not on this machine yet; added to the existing repository."
               : unreachable
                 ? "Not on this machine yet; copied with its history, because this machine cannot read its origin."
-                : "Not on this machine yet; copied with its history, branches and stashes.",
+                : localWork && source.identity !== null && source.kind === "main"
+                  ? "Not on this machine yet; copied with its history, because it has commits or stashes that are not on origin."
+                  : "Not on this machine yet; copied with its history, branches and stashes.",
           choices: [],
           decision: null,
           needsDecision: false,
@@ -893,4 +899,12 @@ export function pullRequirements(plan: Plan): {
     });
   }
   return { files, directories };
+}
+
+/**
+ * Commits or stashes a clone from origin would leave on the source. An older source does
+ * not count its commits, so its repositories are copied whole.
+ */
+function hasLocalOnlyWork(source: RepositoryInfo): boolean {
+  return (source.localOnlyCommits ?? 1) > 0 || source.stashCount > 0;
 }
