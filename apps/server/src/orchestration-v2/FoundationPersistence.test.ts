@@ -2583,6 +2583,13 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         yield* TestClock.adjust("1 millis");
         yield* Deferred.await(completed);
         assert.equal(yield* Ref.get(executions), 2);
+        // Leave the daemon only after the retry is settled, so no running row outlives it.
+        let settled = false;
+        while (!settled) {
+          const effect = yield* outbox.get(effectId);
+          settled = Option.isSome(effect) && effect.value.status === "succeeded";
+          if (!settled) yield* Effect.yieldNow;
+        }
       }).pipe(Effect.provide(layerWorker), Effect.scoped);
     }).pipe(Effect.provide(TestClock.layer())),
   );
