@@ -339,6 +339,9 @@ export const CodexProviderCapabilitiesV2 = {
   },
 } satisfies OrchestrationV2ProviderCapabilities;
 
+// Initialize normally answers in under a second; leave room for a slow first launch.
+const CODEX_INITIALIZE_TIMEOUT = "30 seconds";
+
 function toProtocolError(detail: string, payload?: unknown): ProviderAdapterProtocolError {
   return new ProviderAdapterProtocolError({
     driver: CODEX_PROVIDER,
@@ -1903,8 +1906,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           ProviderAdapterV2TurnInput["projectContext"]
         >();
         const restoredProjectCompactions = new Set<string>();
+        // Native thread id to the compaction whose context waits for turn/completed.
+        const compactionsAwaitingContextRestore = new Map<string, string>();
         // Codex drops client developer messages during compaction but only
-        // resends additionalContext when it changes. Restore the current entries.
+        // resends additionalContext when it changes. Restore the current entries
+        // after turn/completed: items injected mid-turn make the turn sample again.
         const restoreAdditionalContext = (threadId: string, compactionId: string) => {
           const key = JSON.stringify([threadId, compactionId]);
           return Effect.gen(function* () {
@@ -1958,7 +1964,16 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         // Set when Codex reports that its account changed outside this
         // process; the session manager then replaces the process.
         let authChanged = false;
+        const events = yield* Queue.unbounded<
+          ProviderAdapterV2Event,
+          ProviderAdapterEventStreamError
+        >();
         const initialized = yield* Ref.make(false);
+        // Set once initialize timed out. The session is then retiring, so
+        // waiting threads fail at once instead of sending initialize again.
+        const initializeTimeout = yield* Ref.make<ProviderAdapterEventStreamError | undefined>(
+          undefined,
+        );
         // Threads share this app-server, and Codex rejects a second
         // `initialize`. Callers wait for an in-flight handshake instead of
         // starting their own; a failed handshake leaves the flag unset so the
@@ -1970,6 +1985,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             if (alreadyInitialized) {
               return;
             }
+            const timedOut = yield* Ref.get(initializeTimeout);
+            if (timedOut !== undefined) return yield* timedOut;
 
             yield* client
               .request("initialize", {
@@ -1987,6 +2004,24 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                       ? Effect.void
                       : Effect.fail(error),
                 }),
+                // A hung app-server never answers, and every thread on this
+                // shared session waits behind the permit. Failing the event
+                // stream retires the session, so the next run starts a fresh
+                // app-server.
+                Effect.timeoutOrElse({
+                  duration: CODEX_INITIALIZE_TIMEOUT,
+                  orElse: () => {
+                    const error = new ProviderAdapterEventStreamError({
+                      driver: CODEX_PROVIDER,
+                      providerSessionId: input.providerSessionId,
+                      cause: `Codex app-server did not answer initialize within ${CODEX_INITIALIZE_TIMEOUT}.`,
+                    });
+                    return Ref.set(initializeTimeout, error).pipe(
+                      Effect.andThen(Queue.fail(events, error)),
+                      Effect.andThen(Effect.fail(error)),
+                    );
+                  },
+                }),
               );
             yield* client.notify("initialized", undefined);
             yield* Ref.set(initialized, true);
@@ -2000,10 +2035,6 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           model: input.modelSelection.model,
           now,
         });
-        const events = yield* Queue.unbounded<
-          ProviderAdapterV2Event,
-          ProviderAdapterEventStreamError
-        >();
         // Drain final notifications before the session manager retires the dead process.
         // Queue.fail lets readers take items already buffered before they see the failure.
         yield* client.awaitTermination.pipe(
@@ -4819,11 +4850,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         yield* client.handleServerNotification("item/completed", (payload) =>
           Effect.gen(function* () {
             if (payload.item.type === "contextCompaction")
-              // The notification callback runs on the input reader. Let it read
-              // the injection response while the session-scoped request waits.
-              yield* restoreAdditionalContext(payload.threadId, payload.item.id).pipe(
-                Effect.forkIn(scope, { startImmediately: true }),
-              );
+              compactionsAwaitingContextRestore.set(payload.threadId, payload.item.id);
             if (
               (payload.item.type === "subAgentActivity" ||
                 payload.item.type === "collabAgentToolCall") &&
@@ -6078,6 +6105,15 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
         yield* client.handleServerNotification("turn/completed", (payload) =>
           Effect.gen(function* () {
+            const compactionId = compactionsAwaitingContextRestore.get(payload.threadId);
+            if (compactionId !== undefined) {
+              compactionsAwaitingContextRestore.delete(payload.threadId);
+              // The notification callback runs on the input reader. Let it read
+              // the injection response while the session-scoped request waits.
+              yield* restoreAdditionalContext(payload.threadId, compactionId).pipe(
+                Effect.forkIn(scope, { startImmediately: true }),
+              );
+            }
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
             if (context === undefined) {
               return;
