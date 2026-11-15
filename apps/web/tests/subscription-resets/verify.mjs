@@ -98,6 +98,42 @@ try {
     assert.equal(await banner.getByRole("button", { name: "Dismiss until the next reset" }).count(), 1);
     await banner.screenshot({ path: join(output, "quota-alert-banner-dark.png") });
   });
+  await check("the boost starts for the picked projects, is named with its end, and ends", async () => {
+    const banner = page.locator("[data-quota-alert-banner]");
+    await banner.getByRole("button", { name: "Use it for new threads until it resets" }).click();
+    // Focus follows the picker in, and comes back to the button on Cancel.
+    assert.equal(await banner.getByLabel("Every project").evaluate((el) => el === document.activeElement), true);
+    await banner.getByRole("button", { name: "Cancel" }).click();
+    const start = banner.getByRole("button", { name: "Use it for new threads until it resets" });
+    assert.equal(await start.evaluate((el) => el === document.activeElement), true);
+    await start.click();
+    await banner.getByLabel("Every project").uncheck();
+    assert.equal(await banner.getByRole("button", { name: "Start" }).isDisabled(), true);
+    await banner.getByLabel("Atlas").check();
+    await banner.getByRole("button", { name: "Start" }).click();
+    assert.match(await banner.innerText(), /New threads use Codex Pro until /);
+    assert.equal(
+      await banner.getByRole("button", { name: "End now" }).evaluate((el) => el === document.activeElement),
+      true,
+    );
+    // Atlas lives on two machines: both of its ids are covered.
+    assert.equal(
+      await page.locator("[data-fixture-boost-projects]").getAttribute("data-fixture-boost-projects"),
+      "2",
+    );
+    assert.equal(
+      await banner.getByRole("button", { name: "Use it for new threads until it resets" }).count(),
+      0,
+    );
+    await banner.screenshot({ path: join(output, "quota-boost-running-dark.png") });
+    await banner.getByRole("button", { name: "End now" }).click();
+    assert.equal(await banner.locator("[data-quota-boost]").count(), 0);
+    // The banner calls the handler it is given and opens nothing itself.
+    await banner.getByRole("button", { name: "See subscriptions" }).click();
+    assert.equal(page.context().pages().length, 1);
+    await banner.getByRole("button", { name: "Use it for new threads until it resets" }).click();
+    await banner.screenshot({ path: join(output, "quota-boost-pick-dark.png") });
+  });
   await open("full", "light", 1280);
   await page.locator("[data-quota-alert-banner]").screenshot({
     path: join(output, "quota-alert-banner-light.png"),
