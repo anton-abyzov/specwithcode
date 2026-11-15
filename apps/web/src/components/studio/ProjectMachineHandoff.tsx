@@ -85,6 +85,7 @@ import { MoveDialogHold } from "../../studio/moveDialogHold";
 import { HandoffAccountMachines } from "./HandoffAccountMachines";
 import { HandoffBusyThreads } from "./HandoffBusyThreads";
 import { refusedBusyOf } from "./handoffCopySteps";
+import { readPendingCopy } from "./handoffFolderCopyPending";
 
 function previewInput(projectId: ProjectId, bundle: MachineHandoffBundle) {
   return {
@@ -425,7 +426,9 @@ export function ProjectMachineHandoff({
     // The folder copy keeps running on the machines; say when it is ready.
     // The app-wide watcher follows it, whichever project is open next.
     const activityKey = copyActivityKey(project.environmentId, project.id);
-    if (!value && open && copyRunning.current)
+    // A copy waiting at its review stays followed too: the sidebar, banner and Needs you
+    // offer Review again, as they do after a restart, instead of the copy going quiet.
+    if (!value && open && (copyRunning.current || copyAwaitsReview(project)))
       watchCopy({
         environmentId: project.environmentId,
         projectId: project.id,
@@ -1093,4 +1096,10 @@ export function ProjectMachineHandoff({
       />
     </>
   );
+}
+
+/** A folder copy saved for this project that nobody cancelled: it waits on the machines. */
+function copyAwaitsReview(project: { readonly environmentId: string; readonly id: string }) {
+  const saved = readPendingCopy(folderCopyStorageKey(project.environmentId, project.id));
+  return saved !== null && !saved.cancelled;
 }

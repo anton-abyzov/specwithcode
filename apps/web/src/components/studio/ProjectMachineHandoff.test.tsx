@@ -1258,6 +1258,34 @@ it("lets a running folder copy close, keeps it, and watches it app wide until th
   expect(currentCopyWatches().has("m4:source")).toBe(true);
 });
 
+it("keeps a copy waiting at its review followed after the dialog closes, so Review stays offered", async () => {
+  resetCopyActivityForTests();
+  state.environments = machineEnvironments;
+  await mount();
+  await act(async () => props().onMethodChange!("copy"));
+  const pointer = "specwithcode:folder-copy:m4:source";
+  // Nothing saved: closing leaves nothing behind.
+  await act(async () => props().onOpenChange(false));
+  expect(currentCopyWatches().size).toBe(0);
+  // A measured copy waits for the person; the dialog is not busy at its review.
+  await act(async () => copyOpener("m4:source")?.() ?? props().onOpenChange(true));
+  localStorage.setItem(pointer, JSON.stringify({ operationId: "op", environmentId: "m3" }));
+  await act(async () => props().onOpenChange(false));
+  expect(currentCopyWatches().get("m4:source")).toMatchObject({ projectId: "source" });
+  // Review from the sidebar, banner or Needs you reopens this dialog on the same copy.
+  await act(async () => copyOpener("m4:source")!());
+  expect(props().open).toBe(true);
+  expect(currentCopyWatches().size).toBe(0);
+  // A cancelled copy is not followed.
+  localStorage.setItem(
+    pointer,
+    JSON.stringify({ operationId: "op", environmentId: "m3", cancelled: true }),
+  );
+  await act(async () => props().onOpenChange(false));
+  expect(currentCopyWatches().size).toBe(0);
+  localStorage.removeItem(pointer);
+});
+
 it("opens Move coordinator to X with its own checkout as the Git move: nothing to copy", async () => {
   state.environments = machineEnvironments;
   state.projects = [source, target, { ...target, id: "m3-target", environmentId: "m3" }];
