@@ -320,7 +320,9 @@ async function main() {
     await page.waitForURL(/\/load-bench-thread-1-39/, { timeout: 30_000 });
     const environmentId = new URL(page.url()).pathname.split("/")[1];
     const threadUrl = `/${environmentId}/${THREAD_ID}`;
-    const panelUrl = `${projectLink.href}&thread=${THREAD_ID}`;
+    const panel = new URL(projectLink.href, origin);
+    panel.searchParams.set("thread", THREAD_ID);
+    const panelUrl = panel.pathname + panel.search;
     log("chat", threadUrl, "panel", panelUrl);
     const shortcut = () => page.keyboard.press("Meta+Shift+Comma");
     const palette = async () => {

@@ -73,7 +73,7 @@ try {
       `http://127.0.0.1:${server.address().port}/?theme=${theme}&live=off&scenario=automated-attention`,
     );
     // Projects checks made stay out of the sidebar, but the open one and any that wait on the person are listed.
-    await page.locator('[aria-label="Open or waiting projects"] .sws-project-row').waitFor();
+    await row(page, "1164 handoff move check").waitFor();
     const folded = await page
       .locator("aside button")
       .evaluateAll((items) =>
