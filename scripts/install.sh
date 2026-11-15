@@ -65,23 +65,20 @@ fail() {
   exit 1
 }
 
-# Percent-encodes one value for a URL query, byte by byte (POSIX sh, no external encoder).
-# Byte-wise in a subshell: under LC_ALL=C each step takes one byte, so a multibyte letter becomes
-# its UTF-8 bytes in every shell, and the letter class lists letters instead of a locale range.
-urlencode() (
-  LC_ALL=C
-  export LC_ALL
-  rest="$1" encoded=''
-  while [ -n "$rest" ]; do
-    char="${rest%"${rest#?}"}"
-    rest="${rest#?}"
-    case "$char" in
-      [abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.~_-]) encoded="${encoded}${char}" ;;
-      *) encoded="${encoded}$(printf '%s' "$char" | od -An -tx1 | tr -d ' \n' | sed 's/\(..\)/%\1/g' | tr 'a-f' 'A-F')" ;;
-    esac
-  done
-  printf '%s' "$encoded"
-)
+# Percent-encodes one value for a URL query, byte by byte, in one awk pass (a shell loop spawns
+# processes per character and takes seconds on a slow runner). Under LC_ALL=C awk reads bytes, so
+# a multibyte letter becomes its UTF-8 bytes and [A-Za-z] means ASCII letters only.
+urlencode() {
+  printf '%s' "$1" | LC_ALL=C awk '
+    BEGIN { RS = "\001"; for (i = 1; i < 256; i++) ord[sprintf("%c", i)] = i }
+    {
+      for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        if (c ~ /[A-Za-z0-9._~-]/) printf "%s", c
+        else printf "%%%02X", ord[c]
+      }
+    }'
+}
 
 # One line with a GitHub new-issue link prefilled with the error, version and platform. Only
 # printed: nothing is sent unless the person opens the link and submits the issue themselves.
