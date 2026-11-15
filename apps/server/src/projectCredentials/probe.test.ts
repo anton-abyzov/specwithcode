@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - temp folders holding stand-in tools.
+// @effect-diagnostics globalTimers:off - a stand-in tool that takes a moment.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -181,13 +182,38 @@ describe("resolveProbeBinary", () => {
   });
 });
 
+describe("resolveProbeBinary and project roots", () => {
+  it("matches a root stored through a link, and one that differs only in case on macOS", async () => {
+    const planted = await tool(NodePath.join(project, "bin"), "gh");
+    await NodeFSP.symlink(planted, NodePath.join(tools, "gh"));
+    const linked = NodePath.join(base, "linked-project");
+    await NodeFSP.symlink(project, linked);
+    expect(await resolveProbeBinary("gh", [tools], [linked], "linux")).toBeNull();
+    expect(await resolveProbeBinary("gh", [tools], [project.toUpperCase()], "darwin")).toBeNull();
+  });
+
+  it("ignores an empty, relative or whole-disk root instead of ruling out every tool", async () => {
+    const gh = await tool(tools, "gh");
+    expect(await resolveProbeBinary("gh", [tools], ["", "  ", "relative/root", "/"], "linux")).toBe(
+      gh,
+    );
+  });
+});
+
 describe("probeFolders and probeEnvironment", () => {
   it("never include the working directory or a project", () => {
-    const folders = probeFolders({ platform: "linux", home: "/home/me", managed: ["/app/gh/bin"] });
+    const folders = probeFolders({ platform: "linux", managed: ["/app/gh/bin"] });
     expect(folders).toContain("/usr/bin");
     expect(folders).toContain("/app/gh/bin");
     expect(folders.every((folder) => NodePath.isAbsolute(folder))).toBe(true);
-    expect(probeFolders({ platform: "win32", home: "C:\\Users\\me", managed: [] })).toEqual([]);
+    expect(probeFolders({ platform: "win32", managed: [] })).toEqual([]);
+    // Nothing under a home folder: anything run as the person could have left a tool there.
+    for (const platform of ["linux", "darwin"] as const)
+      expect(
+        probeFolders({ platform, managed: [] }).filter(
+          (folder) => folder.startsWith("/Users/") || /^\/home\/(?!linuxbrew\/)/u.test(folder),
+        ),
+      ).toEqual([]);
     expect(
       Object.keys(probeEnvironment({ home: "/home/me", folders, inherited: {} })).sort(),
     ).toEqual([
@@ -216,18 +242,35 @@ describe("spawnProbe", () => {
     expect(run).toEqual({ exitCode: 0, printed: true, timedOut: false });
     expect(JSON.stringify(run)).not.toContain("account-name");
     const hang = await tool(tools, "hang", "#!/bin/sh\nsleep 30\n");
+    const started = Date.now();
     const stopped = await spawnProbe(hang, [], {
       cwd: base,
       env: { PATH: "/usr/bin:/bin" },
       timeoutMs: 200,
     });
     expect(stopped.timedOut).toBe(true);
+    expect(Date.now() - started).toBeLessThan(5000);
     const missing = await spawnProbe(NodePath.join(tools, "absent"), [], {
       cwd: base,
       env: {},
       timeoutMs: 1000,
     });
     expect(missing.exitCode).toBeNull();
+  });
+});
+
+describe("spawnProbe time limit", () => {
+  it("ends the wait when a tool leaves a child holding its output open", async () => {
+    // The tool exits at once; its background child keeps stdout open for 30 seconds.
+    const leaver = await tool(tools, "leaver", "#!/bin/sh\n(sleep 30) &\nexit 0\n");
+    const started = Date.now();
+    const run = await spawnProbe(leaver, [], {
+      cwd: base,
+      env: { PATH: "/usr/bin:/bin" },
+      timeoutMs: 300,
+    });
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(run.timedOut).toBe(true);
   });
 });
 

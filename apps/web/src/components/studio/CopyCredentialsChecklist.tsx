@@ -60,7 +60,7 @@ function statusLine(
     case "not_signed_in":
       return { text: on(tx("Not signed in on {targetLabel}")), tone: "attention" };
     case "tool_missing":
-      return { text: on(tx("Its tool is not installed on {targetLabel}")), tone: "attention" };
+      return { text: on(tx("Its tool was not found on {targetLabel}")), tone: "attention" };
     case "unknown":
       return { text: on(tx("Check it on {targetLabel} yourself")), tone: "muted" };
     case "ready":
@@ -194,10 +194,9 @@ function Row({
           </p>
           {probe.status === "tool_missing" && (
             <p className="text-xs text-warning-foreground">
-              {tx("Install its command-line tool on {targetLabel} first.").replace(
-                "{targetLabel}",
-                targetLabel,
-              )}
+              {tx(
+                "Install its command-line tool on {targetLabel} if it is missing, then sign in.",
+              ).replace("{targetLabel}", targetLabel)}
             </p>
           )}
           <Command
@@ -409,7 +408,9 @@ export function CopyCredentialsChecklist({
   const scan = useAtomCommand(projectCredentials.scan, { reportFailure: false });
   const probe = useAtomCommand(projectCredentials.probe, { reportFailure: false });
   const saveList = useAtomCommand(projectCredentials.save, { reportFailure: false });
-  const skipsAtom = credentialSkipsAtom(`${sourceEnvironmentId}:${projectId}`);
+  const skipsAtom = credentialSkipsAtom(
+    `${sourceEnvironmentId}:${projectId}:${destinationEnvironmentId}`,
+  );
   const chosen = useAtomValue(skipsAtom);
   const setChosen = useAtomSet(skipsAtom);
   const [rows, setRows] = useState<ReadonlyArray<ProjectCredentialRow>>([]);

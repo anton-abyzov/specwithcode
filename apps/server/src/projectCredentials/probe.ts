@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - spawns one pinned tool with a fixed environment.
+// @effect-diagnostics globalTimers:off - the timeout that stops a hung tool.
 /**
  * Whether this machine has a credential, asked of the tool that owns it. The
  * command comes from the catalog and is pinned on every side a project or the
@@ -60,10 +61,13 @@ const FIXED_ENV: Readonly<Record<string, string>> = {
   NO_COLOR: "1",
 };
 
-/** Where command-line tools are installed, in the order they are searched. */
+/**
+ * Where command-line tools are looked for, in order: system folders and the
+ * folders the app installed tools into. Nothing under the home folder, since
+ * anything run as the person could have left a tool there.
+ */
 export function probeFolders(input: {
   readonly platform: NodeJS.Platform;
-  readonly home: string;
   /** Folders the app installed tools into (its own gh). */
   readonly managed: ReadonlyArray<string>;
 }): Array<string> {
@@ -72,12 +76,7 @@ export function probeFolders(input: {
     input.platform === "darwin"
       ? ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
       : ["/usr/local/bin", "/usr/bin", "/bin", "/snap/bin", "/home/linuxbrew/.linuxbrew/bin"];
-  return [
-    ...system,
-    NodePath.join(input.home, ".local", "bin"),
-    NodePath.join(input.home, "google-cloud-sdk", "bin"),
-    ...input.managed,
-  ];
+  return [...system, ...input.managed];
 }
 
 export function probeEnvironment(input: {
@@ -97,10 +96,35 @@ export function probeEnvironment(input: {
   return env;
 }
 
+/** macOS and Windows folders ignore case: `/Users/Me/App` is `/users/me/app` there. */
+const comparable = (path: string, platform: NodeJS.Platform) =>
+  platform === "darwin" || platform === "win32" ? path.normalize("NFC").toLowerCase() : path;
+
 const inside = (root: string, value: string) => {
   const relative = NodePath.relative(root, value);
   return relative === "" || (!relative.startsWith("..") && !NodePath.isAbsolute(relative));
 };
+
+/**
+ * Project folders as they really are on disk, so a root stored through a link
+ * still matches a tool's real path. An empty root, a relative one and the top
+ * of the disk are dropped: the first two would be read against the server's
+ * own folder, the last would rule out every tool.
+ */
+async function realProjectRoots(
+  projectRoots: ReadonlyArray<string>,
+  platform: NodeJS.Platform,
+): Promise<Array<string>> {
+  const roots: Array<string> = [];
+  for (const root of projectRoots) {
+    if (root.trim() === "" || !NodePath.isAbsolute(root)) continue;
+    const resolved = NodePath.resolve(root);
+    const real = await NodeFSP.realpath(resolved).catch(() => resolved);
+    for (const candidate of new Set([resolved, real]))
+      if (candidate !== NodePath.parse(candidate).root) roots.push(comparable(candidate, platform));
+  }
+  return roots;
+}
 
 /**
  * The tool's real path, from the first folder that has it. A copy whose real
@@ -111,12 +135,14 @@ export async function resolveProbeBinary(
   binary: string,
   folders: ReadonlyArray<string>,
   projectRoots: ReadonlyArray<string>,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<string | null> {
   if (binary.includes("/") || binary.includes("\\")) return null;
+  const roots = await realProjectRoots(projectRoots, platform);
   for (const folder of folders) {
     const real = await NodeFSP.realpath(NodePath.join(folder, binary)).catch(() => null);
     if (real === null) continue;
-    if (projectRoots.some((root) => inside(root, real))) continue;
+    if (roots.some((root) => inside(root, comparable(real, platform)))) continue;
     const usable = await NodeFSP.stat(real)
       .then((stat) => stat.isFile())
       .catch(() => false);
@@ -146,32 +172,51 @@ export type ProbeSpawn = (
   },
 ) => Promise<ProbeRun>;
 
-/** Runs the tool with no shell and no terminal; what it prints is counted, not kept. */
+/**
+ * Runs the tool with no shell and no terminal; what it prints is counted, not kept.
+ * The time limit ends the wait itself: a tool can leave a child holding its output
+ * open, and waiting for that output to close would outlast the limit. The tool runs
+ * in its own process group so the limit stops what it started too.
+ */
 export const spawnProbe: ProbeSpawn = (path, args, options) =>
   new Promise<ProbeRun>((resolve) => {
     let printed = false;
-    let timedOut = false;
+    let settled = false;
     const child = NodeChildProcess.spawn(path, [...args], {
       cwd: options.cwd,
       env: options.env,
       shell: false,
+      detached: true,
       stdio: ["ignore", "pipe", "ignore"],
       windowsHide: true,
     });
+    const settle = (run: ProbeRun) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(run);
+    };
+    const stop = () => {
+      try {
+        // The whole group: the tool and anything it started.
+        if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+      child.stdout?.destroy();
+    };
     const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
+      stop();
+      settle({ exitCode: null, printed: false, timedOut: true });
     }, options.timeoutMs);
     child.stdout?.on("data", (chunk: Buffer) => {
       if (!printed && chunk.toString("latin1").trim() !== "") printed = true;
     });
-    child.on("error", () => {
-      clearTimeout(timer);
-      resolve({ exitCode: null, printed: false, timedOut });
-    });
+    child.on("error", () => settle({ exitCode: null, printed: false, timedOut: false }));
     child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ exitCode: code, printed, timedOut });
+      // Whatever the tool left running goes with it.
+      stop();
+      settle({ exitCode: code, printed, timedOut: false });
     });
   });
 
@@ -197,7 +242,12 @@ export async function probeCredential(
 ): Promise<ProjectCredentialStatus> {
   const probe = credentialEntry(id)?.probe ?? null;
   if (probe === null || machine.platform === "win32") return "unknown";
-  const path = await resolveProbeBinary(probe.binary, machine.folders, machine.projectRoots);
+  const path = await resolveProbeBinary(
+    probe.binary,
+    machine.folders,
+    machine.projectRoots,
+    machine.platform,
+  );
   if (path === null) return "tool_missing";
   const run = await machine.spawn(path, probe.args, {
     cwd: machine.home,

@@ -31,9 +31,12 @@ export const projectCredentials = {
 
 /**
  * The rows a person marked as not needed, per project. Kept while the app is
- * open, so the choice holds from the review to the Done screen of one copy.
+ * open, so the choice holds from the review to the Done screen of one copy
+ * to one machine.
  * `null` until the person changes something: the saved list's skips apply.
  */
-export const credentialSkipsAtom = Atom.family((_key: `${EnvironmentId}:${ProjectId}`) =>
-  Atom.make<ReadonlyArray<ProjectCredentialId> | null>(null).pipe(Atom.keepAlive),
+export const credentialSkipsAtom = Atom.family(
+  // Per destination too: what one machine does not need, another may.
+  (_key: `${EnvironmentId}:${ProjectId}:${EnvironmentId}`) =>
+    Atom.make<ReadonlyArray<ProjectCredentialId> | null>(null).pipe(Atom.keepAlive),
 );

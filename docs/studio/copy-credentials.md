@@ -5,7 +5,7 @@ Copy to another machine carries the project folder and the secret files inside i
 The review and Done screens of a copy show **Credentials this project uses**. It answers three questions.
 
 - **What does this project use?** The source machine reads names in the project: Terraform providers, commands in scripts, workflows, a Makefile and `package.json`, files such as `wrangler.jsonc` or `Chart.yaml`, and the hosts of its Git remotes. It never opens a secret file and reports no file content.
-- **Does the new machine have it?** The destination asks each tool it has, for example `gh auth status` or `az account show`, and answers with one word: ready, not signed in, tool not installed, or check it yourself. npm, Wrangler, container registries and SSH have no check, and Windows machines answer "check it yourself".
+- **Does the new machine have it?** The destination asks each tool it has, for example `gh auth status` or `az account show`, and answers with one word: ready, not signed in, tool not found, or check it yourself. npm, Wrangler, container registries and SSH have no check, and Windows machines answer "check it yourself".
 - **How do I set it up there?** Sign in there shows the command for that machine, with Copy and Check again. For SSH keys the row says to create a new key on the new machine and add it where the old one is trusted. Nothing in this list is sent.
 
 Skip marks a row as not needed. Rows the new machine already has sit under Ready.
@@ -29,4 +29,4 @@ It holds names from the app's own list, a skip mark and a short note. It has no 
 
 ## What the check does on the destination
 
-The check runs only commands from the app's own list, found by full path in system and app-managed folders, never a tool inside a project. It runs in the home folder with a short fixed environment, stops after 10 seconds and keeps nothing the tool prints. Results are kept for a minute and a machine is checked at most six times a minute. A client needs permission to run work on the machine to ask; reading files is not enough.
+The check runs only commands from the app's own list, found by full path in system folders (`/usr/bin`, `/usr/local/bin`, Homebrew) and the folders the app installed tools into, never a tool inside a project or the home folder. A tool installed only under the home folder shows as not found; check that one yourself. It runs in the home folder with a short fixed environment, stops after 10 seconds and keeps nothing the tool prints. Results are kept for a minute and a machine is checked at most six times a minute. A client needs permission to run work on the machine to ask; reading files is not enough.

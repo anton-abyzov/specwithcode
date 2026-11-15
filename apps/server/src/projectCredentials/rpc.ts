@@ -79,7 +79,7 @@ export const layerRpcHandlers = WsProjectCredentialsRpcGroup.middleware(RpcInstr
       return {
         platform,
         home,
-        folders: probeFolders({ platform, home, managed }),
+        folders: probeFolders({ platform, managed }),
         projectRoots,
         // Read once per batch and filtered to a short list in probe.ts.
         inherited: process.env,
