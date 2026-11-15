@@ -27,8 +27,8 @@ name: Release Windows and Linux
 # the Rust helpers are native, and the smoke tests run the real binaries. Every leg is required: a
 # release missing arm64 would move native arm64 Windows installs onto the x64 build for good
 # (electron-updater falls back to the first file) and leave arm64 Linux without a feed. A failed
-# leg holds the attach back; the daily catch-up run builds it again. Releases from before arm64
-# count as complete with x64 alone.
+# leg holds the attach back; the retry job (on publish) or the daily catch-up run builds it again.
+# Releases from before arm64 count as complete with x64 alone.
 #
 # Linux builds on Ubuntu 22.04 (glibc 2.35), the oldest release docs/user/install.md supports: a
 # native binary built on a newer glibc does not load on an older one. The glibc floor step fails a
@@ -47,7 +47,8 @@ name: Release Windows and Linux
 #     ever overwritten.
 #   on publish: with the repository variable RELEASE_WINDOWS_LINUX_ON_PUBLISH set to true, a
 #     published X.Y.Z release in this repository starts a real run by itself. Off: the release
-#     tooling dispatches a real run once per release instead.
+#     tooling dispatches a real run once per release instead. When that run fails, its retry job
+#     dispatches one more real run for the version; a dispatched run that fails is not retried.
 #   daily catch-up: once a day a real run attaches the Windows and Linux apps to the newest
 #     published release if it still lacks them (a release whose dispatch failed or never
 #     happened), and stops at Plan within seconds when that release has them already.
@@ -1222,3 +1223,107 @@ jobs:
             } >> "$body"
             gh release edit "v$VERSION" -R "$repo" --notes-file "$body"
           done
+
+  # A failed run that the published release started left its version without Windows and Linux
+  # apps: release-macos.yml's windows_linux job saw this run going and started nothing, and the
+  # daily catch-up only looks at the newest release (1.0.304: the update proof timed out, and
+  # nothing built it again). So that run starts the build once more, as a dispatched run. A
+  # dispatched or scheduled run never gets here, so a second failure ends it: no loop. A cancelled
+  # run is left alone. No concurrency group and no environment: every other job of this run has
+  # ended, so the new run neither waits behind this one nor is cancelled by it.
+  retry:
+    name: Start the build again after a failed release run
+    needs: [plan, windows, linux, linux-update-proof, publish]
+    if: ${{ failure() && !cancelled() && github.event_name == 'release' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.20.0
+
+      - name: Fetch release helper
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tool="$RUNNER_TEMP/release-tools/release-windows-linux.ts"
+          mkdir -p "$(dirname "$tool")"
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/$GITHUB_REPOSITORY/contents/scripts/release-windows-linux.ts?ref=$GITHUB_SHA" > "$tool"
+          echo "TOOL=$tool" >> "$GITHUB_ENV"
+
+      - name: Start the Windows and Linux build again
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          # From the event, not from Plan: Plan may be the job that failed.
+          version="${RELEASE_TAG#v}"
+          if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::notice::$RELEASE_TAG is not an X.Y.Z release; another run would fail the same way."
+            exit 0
+          fi
+          # Made a draft again or deleted since it was published: nothing to build against (this
+          # token reads a draft as not found). Any other gh error fails the job, so a rate limit
+          # never passes for "not published".
+          if ! draft="$(gh release view "v$version" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>&1)"; then
+            case "$draft" in
+              *"release not found"*) draft=missing ;;
+              *) echo "$draft"; exit 1 ;;
+            esac
+          fi
+          if [ "$draft" != false ]; then
+            echo "::notice::v$version is not published any more; not building it again."
+            exit 0
+          fi
+          # A run that failed after it began to upload left files a second run refuses to
+          # overwrite, and replacing published files is a person's call. As in Plan's catch-up:
+          # build only when no release holds any of the attach (release-state exits 3), stop when
+          # all hold all of it (0), and fail with how to repair anything between (4, or a mix).
+          states=""
+          for repo in $RELEASE_REPOSITORIES; do
+            status=0
+            node "$TOOL" release-state --version "$version" --repo "$repo" || status=$?
+            case "$status" in 0 | 3) states="$states$status" ;; *) exit "$status" ;; esac
+          done
+          if [ -z "${states//0/}" ]; then
+            echo "::notice::v$version already has its Windows and Linux apps; nothing to build again."
+            exit 0
+          fi
+          if [ -n "${states//3/}" ]; then
+            echo "::error::v$version has its Windows and Linux apps on one release only. Repair it: run Release Windows and Linux by hand with version=$version, dry_run=false and replace=true."
+            exit 1
+          fi
+          # One dispatched run per version: none while one is going or has succeeded (by hand, or
+          # release-macos.yml's windows_linux job, which matches the same title). A dry run has
+          # another title and attaches nothing.
+          dispatched() {  # dispatched FILTER: the newest matching dispatched run of this version
+            gh run list -R "$GITHUB_REPOSITORY" --workflow release-windows-linux.yml \
+              --event workflow_dispatch --limit 50 --json displayTitle,conclusion,url \
+              --jq "[.[] | select(.displayTitle == \"Release Windows and Linux $version\" and ($1))][0].url // empty"
+          }
+          started="$(dispatched '.conclusion == "" or .conclusion == "success"')"
+          if [ -n "$started" ]; then
+            echo "::notice::The Windows and Linux build for $version is already going or done: $started"
+            exit 0
+          fi
+          gh workflow run release-windows-linux.yml -R "$GITHUB_REPOSITORY" \
+            -f version="$version" -f dry_run=false
+          # The run is listed a few seconds after the dispatch. Wait for it, so this run does not
+          # end, and stop counting as started for release-macos.yml, before the new one counts.
+          url=""
+          for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            sleep 5
+            url="$(dispatched '.conclusion == ""' || true)"
+            if [ -n "$url" ]; then break; fi
+          done
+          echo "::notice::This run failed; started the Windows and Linux build for $version again${url:+: $url}"
+          echo "### Started the build for $version again${url:+: $url}" >> "$GITHUB_STEP_SUMMARY"
