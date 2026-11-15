@@ -240,14 +240,15 @@ describe("existing copy update (1326)", () => {
     }),
   );
 
-  it.effect("re-checks use right before each repository moves", () =>
+  it.effect("checks every repository for use before the first one moves", () =>
     Effect.gen(function* () {
       const f = fixture();
       changeCode(f);
       const manifest = yield* sync(f);
       yield* publishSync(f, manifest);
+      const before = [f.destination, f.destinationNested].map((cwd) => snapshot(cwd));
       const asked: Array<string> = [];
-      // A thread starts in the nested repository after the root moved.
+      // A thread works in the nested repository, the second one to move.
       const busyNested: HandoffGit.ExistingCopyGuard = {
         inUse: (folder) =>
           Effect.sync(() => {
@@ -259,7 +260,44 @@ describe("existing copy update (1326)", () => {
         reason: "in-use",
         repository: "repositories/nested",
       });
+      // The root was asked about and left where it was: no repository is ahead of another.
       expect(asked).toEqual([f.destination, f.destinationNested]);
+      expect([f.destination, f.destinationNested].map((cwd) => snapshot(cwd))).toEqual(before);
+      // Once it is free, the same operation updates the whole umbrella.
+      yield* update(f, manifest);
+      expect(git(f.destination, "rev-parse", "HEAD")).toBe(manifest.repositories[0]!.head);
+      expect(git(f.destinationNested, "rev-parse", "HEAD")).toBe(manifest.repositories[1]!.head);
+    }),
+  );
+
+  it.effect("re-checks use right before each repository moves", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      changeCode(f);
+      const manifest = yield* sync(f);
+      yield* publishSync(f, manifest);
+      const asked: Array<string> = [];
+      // A thread starts in the nested repository after every check passed and the root moved.
+      const startsLate: HandoffGit.ExistingCopyGuard = {
+        inUse: (folder) =>
+          Effect.sync(() => {
+            asked.push(folder);
+            return (
+              folder === f.destinationNested &&
+              asked.filter((seen) => seen === f.destinationNested).length > 1
+            );
+          }),
+      };
+      expect(yield* refusal(update(f, manifest, startsLate))).toMatchObject({
+        reason: "in-use",
+        repository: "repositories/nested",
+      });
+      expect(asked).toEqual([
+        f.destination,
+        f.destinationNested,
+        f.destination,
+        f.destinationNested,
+      ]);
       expect(git(f.destination, "rev-parse", "HEAD")).toBe(manifest.repositories[0]!.head);
       const nestedBefore = git(f.destinationNested, "rev-parse", "HEAD");
       expect(nestedBefore).not.toBe(manifest.repositories[1]!.head);
@@ -355,7 +393,85 @@ describe("existing copy update (1326)", () => {
       "remote.origin.uploadpack",
       "remote.origin.url",
     ]);
+    // A host or user that ssh would read as an option never reaches a fetch.
+    expect(
+      unsafeExistingCopyConfig([
+        ["remote.origin.url", "ssh://-oProxyCommand=evil@github.com/org/repo.git"],
+        ["remote.origin.pushurl", "ssh://git@-oProxyCommand=evil/org/repo.git"],
+        ["remote.mirror.url", "-oProxyCommand=evil:org/repo.git"],
+        ["remote.other.url", "git@-oProxyCommand=evil:org/repo.git"],
+        ["submodule.lib.url", "ssh://-oProxyCommand=evil/org/lib.git"],
+        ["remote.fine.url", "ssh://git@github.com/org/repo.git"],
+        ["remote.scp.url", "git@github.com:org/repo.git"],
+        ["remote.web.url", "https://github.com/org/-repo.git"],
+        ["remote.local.url", "../-sibling/repo.git"],
+        ["remote.drive.url", "C:\\repos\\app.git"],
+      ]),
+    ).toEqual([
+      "remote.mirror.url",
+      "remote.origin.pushurl",
+      "remote.origin.url",
+      "remote.other.url",
+      "submodule.lib.url",
+    ]);
+    // A submodule's Git folder names its checkout; any other `core.worktree` is refused.
+    const worktree = [["core.worktree", "../../../repositories/nested"]] as const;
+    expect(unsafeExistingCopyConfig(worktree)).toEqual(["core.worktree"]);
+    expect(unsafeExistingCopyConfig(worktree, { keepWorktree: () => false })).toEqual([
+      "core.worktree",
+    ]);
+    expect(unsafeExistingCopyConfig(worktree, { keepWorktree: () => true })).toEqual([]);
   });
+
+  it.effect("refuses a remote URL that ssh would read as an option, before any fetch", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      changeCode(f);
+      const manifest = yield* sync(f);
+      yield* publishSync(f, manifest);
+      git(
+        f.destination,
+        "config",
+        "remote.origin.url",
+        "ssh://-oProxyCommand=evil@github.com/org/repo.git",
+      );
+      const before = snapshot(f.destination);
+      for (const attempt of [check(f, manifest), update(f, manifest)])
+        expect(yield* refusal(attempt)).toEqual({
+          reason: "unsafe-git-config",
+          repository: ".",
+          unsafeConfig: ["remote.origin.url"],
+        });
+      expect(snapshot(f.destination)).toEqual(before);
+      // No call into the copy reached origin.
+      for (const call of calls.filter((call) => call.cwd?.startsWith(f.destination)))
+        for (const reaching of ["fetch", "ls-remote", "push", "lfs"])
+          expect(call.args).not.toContain(reaching);
+    }),
+  );
+
+  it.effect("refuses a submodule whose Git folder names another folder as its checkout", () =>
+    Effect.gen(function* () {
+      const f = fixture(true);
+      changeCode(f);
+      const manifest = yield* sync(f);
+      yield* publishSync(f, manifest);
+      const elsewhere = NodePath.join(f.base, "elsewhere");
+      NodeFS.mkdirSync(elsewhere);
+      const gitDir = git(f.destinationNested, "rev-parse", "--absolute-git-dir");
+      // Written straight into the file: Git would refuse to work in the folder otherwise.
+      NodeFS.appendFileSync(
+        NodePath.join(gitDir, "config.worktree"),
+        `[core]\n\tworktree = ${NodePath.relative(gitDir, elsewhere)}\n`,
+      );
+      const before = git(f.destination, "rev-parse", "HEAD");
+      expect(yield* refusal(update(f, manifest))).toMatchObject({
+        reason: "unsafe-git-config",
+        unsafeConfig: ["core.worktree"],
+      });
+      expect(git(f.destination, "rev-parse", "HEAD")).toBe(before);
+    }),
+  );
 
   // --- Review findings on #366 (Sol, November 14, 2026) ---
 
@@ -728,11 +844,14 @@ describe("existing copy update (1326)", () => {
       write(NodePath.join(existing, ".git", "info", "attributes"), "* filter=evil\n");
       const later = 4_102_444_800;
       NodeFS.utimesSync(NodePath.join(existing, "feature.ts"), later, later);
+      const before = git(f.destination, "rev-parse", "HEAD");
       expect(yield* refusal(update(f, manifest))).toEqual({
         reason: "unsafe-git-config",
         repository: "vendor/lib",
         unsafeConfig: ["filter.evil.clean"],
       });
+      // Refused before the merge that adds the submodule: the root has not moved.
+      expect(git(f.destination, "rev-parse", "HEAD")).toBe(before);
       expect(NodeFS.existsSync(marker)).toBe(false);
     }),
   );

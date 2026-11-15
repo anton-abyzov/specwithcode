@@ -19,6 +19,8 @@ import {
 } from "./handoffGitConfig.ts";
 import {
   canonicalOrigin,
+  type CheckpointWorker,
+  type ExistingCopyGuard,
   HANDOFF_HEAD,
   HANDOFF_OPERATION,
   handoffRef,
@@ -26,89 +28,18 @@ import {
   HandoffGitManifest,
   type HandoffGitMaterialization,
   type HandoffGitRepository,
+  type HandoffGitService,
+  type ManifestInput,
   safeRelativePath,
   validManifest,
 } from "./handoffGitTypes.ts";
 
 type Stage = HandoffGitError["stage"];
-type CheckpointWorker = {
-  readonly worktreePath: string | null;
-  readonly branch: string | null;
-};
-type ManifestInput = {
-  readonly workspaceRoot: string;
-  readonly manifest: HandoffGitManifest;
-  readonly resumeProjectFolder?: boolean;
-};
-/**
- * Updating a destination's existing copy (1326): `inUse` says whether a thread or another
- * project works in a folder; it is asked again right before each repository moves.
- */
-export interface ExistingCopyGuard {
-  readonly inUse: (folder: string) => Effect.Effect<boolean>;
-}
+export type { ExistingCopyGuard } from "./handoffGitTypes.ts";
 
-export class HandoffGit extends Context.Service<
-  HandoffGit,
-  {
-    readonly inspect: (input: {
-      readonly operationId: string;
-      readonly workspaceRoot: string;
-      /** Name what is checked out even with uncommitted changes: nothing is sent through Git. */
-      readonly allowChanges?: boolean;
-    }) => Effect.Effect<HandoffGitManifest, HandoffGitError>;
-    /** The destination's folder holds the same repository as the source's root. */
-    readonly verifyRootIdentity: (input: ManifestInput) => Effect.Effect<void, HandoffGitError>;
-    readonly preflight: (input: ManifestInput) => Effect.Effect<void, HandoffGitError>;
-    readonly verifyWorkerCheckpoints: (
-      input: ManifestInput & {
-        readonly workers: ReadonlyArray<{
-          readonly worktreePath: string | null;
-          readonly branch: string | null;
-        }>;
-      },
-    ) => Effect.Effect<void, HandoffGitError>;
-    /**
-     * The workers verifyWorkerCheckpoints would refuse, for a handoff that leaves
-     * them on the source: any number of them, without refusing any. Past
-     * MAX_REPORTED_WORKTREES surviving worktrees, the rest are reported unchecked.
-     */
-    readonly reportWorkerCheckpoints: (
-      input: ManifestInput & { readonly workers: ReadonlyArray<CheckpointWorker> },
-    ) => Effect.Effect<ReadonlyArray<CheckpointWorker>, HandoffGitError>;
-    /** `allowChanges`: a Git sync move publishes each repository's HEAD whatever is uncommitted. */
-    readonly publish: (
-      input: ManifestInput & { readonly publish: true; readonly allowChanges?: boolean },
-    ) => Effect.Effect<HandoffGitManifest, HandoffGitError>;
-    /**
-     * Whether an existing copy can be brought to the manifest heads, without changing it:
-     * fails with the reason it cannot (a Git sync move's preview).
-     */
-    readonly checkExistingCopy: (
-      input: ManifestInput & { readonly existingCopy: ExistingCopyGuard },
-    ) => Effect.Effect<void, HandoffGitError>;
-    /**
-     * The folders an existing copy's update touches: each manifest repository there and every
-     * linked worktree of it, wherever that is. Work starting in any of them waits for the
-     * update (the caller locks their projects). Never fails; the update's own checks refuse.
-     */
-    readonly existingCopyFolders: (input: ManifestInput) => Effect.Effect<ReadonlyArray<string>>;
-    /**
-     * workspaceRoot must come from a registered project; worktreeParent is server-owned configuration.
-     * `existingCopy` (with useProjectFolder): the folder is a copy that predates this move, so its
-     * `.git/config` is checked against the safe list first, its root must be on a branch, each
-     * repository is re-checked for use right before it moves, and Git LFS files download as their
-     * own step.
-     */
-    readonly materialize: (
-      input: ManifestInput & {
-        readonly worktreeParent: string;
-        readonly useProjectFolder?: boolean;
-        readonly existingCopy?: ExistingCopyGuard;
-      },
-    ) => Effect.Effect<HandoffGitMaterialization, HandoffGitError>;
-  }
->()("specweave-studio/fleet/handoffGit") {}
+export class HandoffGit extends Context.Service<HandoffGit, HandoffGitService>()(
+  "specweave-studio/fleet/handoffGit",
+) {}
 
 // Dependency/build caches are not project repositories. Git ignore rules are NOT
 // used: initialized repositories in ignored repositories/ or other source dirs
@@ -476,7 +407,20 @@ const make = Effect.gen(function* () {
       );
       entries.push(...parseNullConfigList(listed.stdout));
     }
-    return entries;
+    // A `core.worktree` is read relative to the Git folder. A submodule's names its checkout:
+    // the only value that may stay is a relative one naming the folder being checked.
+    const folder = yield* io(fs.realPath(cwd), stage);
+    const ownWorktree = new Set<string>();
+    for (const [key, value] of entries) {
+      if (key.trim().toLowerCase() !== "core.worktree") continue;
+      if (value === "" || path.isAbsolute(value) || /^[A-Za-z]:|[\\\u0000-\u001f]/.test(value))
+        continue;
+      const named = yield* fs
+        .realPath(path.resolve(gitDir, value))
+        .pipe(Effect.orElseSucceed(() => null));
+      if (named === folder) ownWorktree.add(value);
+    }
+    return { entries, keepWorktree: (value: string) => ownWorktree.has(value) };
   });
   /**
    * Where a repository of an existing copy keeps its Git data. Admitted: a Git folder inside
@@ -551,7 +495,8 @@ const make = Effect.gen(function* () {
   /**
    * One repository's config, then each initialized submodule's, since `status
    * --ignore-submodules=none` runs Git (and its filters) in every one of them, listed in the
-   * manifest or not.
+   * manifest or not. With `incoming`, the submodules that commit names are checked too: a
+   * merge to it makes status enter their folders when they are already there.
    */
   const guardConfigTree: (
     admitted: Array<string>,
@@ -560,6 +505,7 @@ const make = Effect.gen(function* () {
     stage: Stage,
     guarded: Set<string>,
     depth: number,
+    incoming?: string,
   ) => Effect.Effect<void, HandoffGitError> = Effect.fn("HandoffGit.guardConfigTree")(function* (
     admitted: Array<string>,
     cwd: string,
@@ -567,24 +513,32 @@ const make = Effect.gen(function* () {
     stage: Stage,
     guarded: Set<string>,
     depth: number,
+    incoming?: string,
   ) {
     const real = yield* io(fs.realPath(cwd), stage);
-    if (guarded.has(real)) return;
-    guarded.add(real);
-    if (depth > 16 || guarded.size > 512)
-      return yield* blocked(stage, "scan-limit", { repository: relativePath });
-    const unsafeConfig = unsafeExistingCopyConfig(yield* ownConfig(cwd, stage));
-    if (unsafeConfig.length > 0)
-      return yield* blocked(stage, "unsafe-git-config", {
-        repository: relativePath,
-        unsafeConfig: unsafeConfig.slice(0, 32),
-      });
-    yield* guardStorage(admitted, cwd, stage).pipe(at(relativePath));
-    for (const entry of (yield* git(cwd, ["ls-files", "--stage", "-z"], stage)).stdout.split(
-      "\0",
-    )) {
-      if (!entry.startsWith("160000 ")) continue;
-      const submodule = entry.slice(entry.indexOf("\t") + 1);
+    const listings: Array<string> = [];
+    // Reached before as a submodule of another repository: only the incoming commit is new.
+    if (!guarded.has(real)) {
+      guarded.add(real);
+      if (depth > 16 || guarded.size > 512)
+        return yield* blocked(stage, "scan-limit", { repository: relativePath });
+      const { entries, keepWorktree } = yield* ownConfig(cwd, stage);
+      const unsafeConfig = unsafeExistingCopyConfig(entries, { keepWorktree });
+      if (unsafeConfig.length > 0)
+        return yield* blocked(stage, "unsafe-git-config", {
+          repository: relativePath,
+          unsafeConfig: unsafeConfig.slice(0, 32),
+        });
+      yield* guardStorage(admitted, cwd, stage).pipe(at(relativePath));
+      listings.push((yield* git(cwd, ["ls-files", "--stage", "-z"], stage)).stdout);
+    }
+    if (incoming !== undefined)
+      listings.push((yield* git(cwd, ["ls-tree", "-r", "-z", incoming], stage)).stdout);
+    const submodules = new Set<string>();
+    for (const listing of listings)
+      for (const entry of listing.split("\0"))
+        if (entry.startsWith("160000 ")) submodules.add(entry.slice(entry.indexOf("\t") + 1));
+    for (const submodule of submodules) {
       const child = relativePath === "." ? submodule : `${relativePath}/${submodule}`;
       if (!safeRelativePath(submodule))
         return yield* blocked(stage, "unsafe-path", { repository: child });
@@ -603,11 +557,13 @@ const make = Effect.gen(function* () {
   });
   /**
    * Before any status, fetch or merge in an existing copy: every manifest repository is there,
-   * holds only safe config, and the root is on a branch.
+   * holds only safe config, and the root is on a branch. With `incoming` (the source heads
+   * are fetched), the submodules those heads name are checked as well, before any merge.
    */
   const guardExistingCopy = Effect.fn("HandoffGit.guardExistingCopy")(function* (
     input: ManifestInput,
     stage: Stage,
+    incoming = false,
   ) {
     const guarded = new Set<string>();
     // The project folder first; a linked worktree's main repository joins when it checks out.
@@ -617,7 +573,16 @@ const make = Effect.gen(function* () {
       const cwd = yield* resolveRepository(input.workspaceRoot, relativePath, stage).pipe(
         at(relativePath),
       );
-      yield* guardConfigTree(admitted, cwd, relativePath, stage, guarded, 0);
+      const moves = incoming && (yield* text(cwd, ["rev-parse", "HEAD"], stage)) !== repository.head;
+      yield* guardConfigTree(
+        admitted,
+        cwd,
+        relativePath,
+        stage,
+        guarded,
+        0,
+        moves ? repository.head : undefined,
+      );
       if (
         relativePath === "." &&
         (yield* git(cwd, ["symbolic-ref", "-q", "HEAD"], stage, true)).code !== 0
@@ -1335,6 +1300,21 @@ const make = Effect.gen(function* () {
           // An existing copy refuses before any merge when its LFS files could not download.
           if (existingCopy && !lfs && needsLfs.size > 0)
             return yield* blocked(stage, "needs-lfs", { repository: [...needsLfs][0]! });
+          if (existingCopy) {
+            // Every repository that still has to move is free, and every submodule the source
+            // heads name holds only safe config, before the first merge: a refusal here
+            // leaves the whole copy where it was, never some repositories ahead of others.
+            for (const repository of input.manifest.repositories) {
+              const cwd = yield* resolveRepository(
+                input.workspaceRoot,
+                repository.relativePath,
+                stage,
+              );
+              if ((yield* text(cwd, ["rev-parse", "HEAD"], stage)) !== repository.head)
+                yield* notInUse(existingCopy, cwd, repository.relativePath, stage);
+            }
+            yield* guardExistingCopy(input, stage, true);
+          }
           const repositories: Array<HandoffGitRepository & { readonly worktreePath: string }> = [];
           // Advance the root before nested repositories, then validate the complete umbrella.
           for (const repository of input.manifest.repositories) {

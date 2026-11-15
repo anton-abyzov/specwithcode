@@ -1,4 +1,7 @@
-import { safeGitConfigEntries } from "./folderTransfer/safeGitConfig.ts";
+import {
+  safeGitConfigEntries,
+  type SafeGitConfigOptions,
+} from "./folderTransfer/safeGitConfig.ts";
 
 /**
  * `.git/config` keys an existing copy may hold beyond the folder copy's safe list
@@ -32,12 +35,40 @@ const STANDARD_LFS_FILTER = new Map([
 const HELPER_URL = /^[A-Za-z][A-Za-z0-9+.-]*::/;
 
 /**
+ * Whether fetching from a remote URL could start a program of the URL's choosing. A
+ * `<helper>::<address>` form names one outright, and a host or user that starts with `-`
+ * (`ssh://-oProxyCommand=...@host/repo`) would be read by ssh as an option. The same host
+ * and user rules as the folder copy's `safeRemoteUrl`; a local path stays fine here.
+ */
+function remoteUrlRunsSomething(raw: string): boolean {
+  const value = raw.trim();
+  if (HELPER_URL.test(value) || /[\u0000-\u001f\u007f]/.test(value)) return true;
+  const optionLike = (authority: string) => {
+    const at = authority.lastIndexOf("@");
+    return authority.slice(at + 1).startsWith("-") || (at >= 0 && authority.startsWith("-"));
+  };
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(value);
+  if (scheme) {
+    const rest = value.slice(scheme[0].length);
+    const end = rest.search(/[/?#]/);
+    return optionLike(end < 0 ? rest : rest.slice(0, end));
+  }
+  // scp-like `[user@]host:path`: a colon before any slash.
+  const colon = value.indexOf(":");
+  const slash = value.indexOf("/");
+  return colon > 0 && (slash < 0 || colon < slash) && optionLike(value.slice(0, colon));
+}
+
+/**
  * The keys of a destination's own `.git/config` entries that could run a command or reach
  * elsewhere during the update, sorted and without values (a URL may hold a token). Remote
  * URLs are judged for running something, not for carrying: a local path is fine here.
+ * `keepWorktree` says whether a `core.worktree` value names the repository's own folder
+ * (a submodule's Git folder holds one); without it every `core.worktree` is unsafe.
  */
 export function unsafeExistingCopyConfig(
   entries: ReadonlyArray<readonly [string, string]>,
+  options: SafeGitConfigOptions = {},
 ): Array<string> {
   const unsafe = new Set<string>();
   for (const [rawKey, value] of entries) {
@@ -54,8 +85,7 @@ export function unsafeExistingCopyConfig(
         (section === "remote" && (name === "url" || name === "pushurl")) ||
         (section === "submodule" && name === "url")
       ) {
-        if (!HELPER_URL.test(value.trim())) continue;
-        unsafe.add(key);
+        if (remoteUrlRunsSomething(value)) unsafe.add(key);
         continue;
       }
       if (section === "remote" && ["push", "prune", "mirror", "skipdefaultupdate"].includes(name))
@@ -63,7 +93,7 @@ export function unsafeExistingCopyConfig(
       if (section === "submodule" && name === "ignore") continue;
       if (section === "maintenance" && (name === "enabled" || name === "schedule")) continue;
     }
-    if (safeGitConfigEntries([[key, value]]).length === 1) continue;
+    if (safeGitConfigEntries([[key, value]], options).length === 1) continue;
     unsafe.add(key);
   }
   return [...unsafe].sort();
