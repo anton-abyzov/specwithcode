@@ -398,6 +398,17 @@ export const SubscriptionTargets = Schema.Record(
 );
 export type SubscriptionTargets = typeof SubscriptionTargets.Type;
 
+/**
+ * Dismissed use-it-or-lose-it alerts: per alert key, the end (epoch ms) of the
+ * period that was dismissed. A later period alerts again, and each key holds
+ * one value, so the map never grows past the account windows.
+ */
+export const QuotaAlertDismissals = Schema.Record(
+  TrimmedNonEmptyString,
+  Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 8.64e15 })),
+);
+export type QuotaAlertDismissals = typeof QuotaAlertDismissals.Type;
+
 /** What a subscription costs a month, by account key; only weighs the efficiency score. */
 export const SubscriptionPrices = Schema.Record(
   TrimmedNonEmptyString,
@@ -2139,6 +2150,9 @@ export const ServerSettings = Schema.Struct({
   subscriptionTargets: SubscriptionTargets.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /** Monthly price per account; see `SubscriptionPrices`. */
   subscriptionPrices: SubscriptionPrices.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Warn when subscription quota is about to reset unused; see `quotaAlerts` in shared. */
+  quotaAlertsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  quotaAlertDismissals: QuotaAlertDismissals.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
    * Retired environment tier for the new-thread workspace, which is now each
    * project's own choice (its override, then its specweave-studio.json, then
@@ -2561,6 +2575,9 @@ export const ServerSettingsPatch = Schema.Struct({
   /** Merged by account key, like the renewal days. */
   subscriptionTargets: Schema.optionalKey(SubscriptionTargets),
   subscriptionPrices: Schema.optionalKey(SubscriptionPrices),
+  quotaAlertsEnabled: Schema.optionalKey(Schema.Boolean),
+  /** Merged by alert key. */
+  quotaAlertDismissals: Schema.optionalKey(QuotaAlertDismissals),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newProjectThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),

@@ -377,6 +377,23 @@ export function ModelLanesSettings() {
         }
       />
 
+      {isProjectScope ? null : (
+        <SettingsRow
+          serverScoped
+          settingKeys={["quotaAlertsEnabled"]}
+          id="quota-alerts"
+          title="Warn before quota resets unused"
+          description="Shows a banner above the project list, and one notification, when a subscription is about to lose quota: a weekly window within a day of its reset with at least 40% left (a 5-hour window within 90 minutes), a banked reset in its last day, a renewal within a day with quota unused, or a limit the provider reset early. Dismissing it holds until the next reset."
+          control={
+            <Switch
+              aria-label="Warn before quota resets unused"
+              checked={settings.quotaAlertsEnabled}
+              onCheckedChange={(quotaAlertsEnabled) => updateSettings({ quotaAlertsEnabled })}
+            />
+          }
+        />
+      )}
+
       <SettingsRow
         serverScoped
         settingKeys={["learnedModelPreferences"]}

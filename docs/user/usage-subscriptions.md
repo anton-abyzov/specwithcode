@@ -50,3 +50,16 @@ Each machine records a reset when it reads a weekly or monthly window before and
 over, and keeps the record for a year. Nothing is recorded when the app was not running for a
 whole window, because the spend in that time is unknown. Records start from the version that
 added this view; earlier resets are not shown.
+
+## Warnings before quota resets unused
+
+A banner above the project list says when a subscription is about to lose quota, the soonest loss first:
+
+- a weekly window within a day of its reset with at least 40% left, or a 5-hour window within 90 minutes;
+- a banked reset in its last day;
+- a subscription renewing within a day with at least 40% of its quota unused;
+- a limit the provider reset early, for six hours after it happened.
+
+"See subscriptions" opens this page. The X dismisses the banner until the next reset of the windows it named. When the app is not in front and notifications are connected, each warning also raises one notification per period.
+
+An offline machine's reading is stale, so it raises no warning. Turn the warnings off under Settings > Models, "Warn before quota resets unused"; the choice is saved on your main machine.

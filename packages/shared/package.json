@@ -524,6 +524,10 @@
       "types": "./src/usageResetLedger.ts",
       "import": "./src/usageResetLedger.ts"
     },
+    "./quotaAlerts": {
+      "types": "./src/quotaAlerts.ts",
+      "import": "./src/quotaAlerts.ts"
+    },
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",
       "import": "./src/desktopAppControl.ts"

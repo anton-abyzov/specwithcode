@@ -10,7 +10,9 @@ import {
 } from "@specweave-studio/contracts";
 import type { LimitAccount } from "@specweave-studio/shared/usageLimits";
 import { limitAccountKey } from "@specweave-studio/shared/usageLimits";
+import { quotaAlerts } from "@specweave-studio/shared/quotaAlerts";
 import { barColor } from "../../src/components/usage/UsageLimits";
+import { QuotaAlertBanner } from "../../src/components/usage/alerts/QuotaAlertBanner";
 import { SubscriptionsDashboard } from "../../src/components/usage/subscriptions/SubscriptionsDashboard";
 import { SubscriptionRow } from "../../src/components/usage/subscriptions/SubscriptionRow";
 import { subscriptionLabel } from "../../src/components/usage/subscriptions/SubscriptionsView";
@@ -168,6 +170,30 @@ const history = new Map(
 createRoot(document.getElementById("root")!).render(
   <div className="min-h-screen bg-background text-foreground">
   <main className="mx-auto flex max-w-5xl flex-col gap-6 p-4" data-fixture-ready="">
+    {/* The banner at the sidebar's width, over the same accounts. */}
+    <div className="w-64" data-fixture-banner="">
+      <QuotaAlertBanner
+        alerts={quotaAlerts(
+          rows,
+          empty
+            ? []
+            : [
+                {
+                  accountKey: "codex:team@example.com",
+                  driver: "codex",
+                  windowId: "secondary",
+                  windowTitle: "Weekly",
+                  endedAt: now - 2 * HOUR,
+                },
+              ],
+          now,
+        )}
+        labelOf={(alert) => (byKey.get(alert.accountKey)?.plan ? `Codex ${byKey.get(alert.accountKey)?.plan}` : "Codex")}
+        now={now}
+        onOpen={() => undefined}
+        onDismiss={() => undefined}
+      />
+    </div>
     <SubscriptionsDashboard
       ledger={periods}
       rows={rows}
