@@ -4583,14 +4583,16 @@ export const ja: PhraseCatalog = {
   "View this project on": "このプロジェクトを表示するマシン",
   "Move coordinator to {machine}…": "コーディネーターを {machine} に移動…",
   "coordinator paused": "コーディネーター一時停止中",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine} は以前のコーディネーターを保持しており、現在はワーカーのみを実行しています。表示してその会話を読むか、再実行できます。",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
+    "{machine} は以前のコーディネーターを保持しており、現在はワーカーのみを実行しています。表示してその会話を読むか、再実行できます。",
   "Machine access settings": "マシンのアクセス設定",
   "{machine} offline": "{machine} はオフライン",
   "workers only": "ワーカーのみ",
   "move pending": "移動の確認待ち",
-  "coordinator": "コーディネーター",
+  coordinator: "コーディネーター",
   "not linked": "未リンク",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.": "未リンク: {machine} はこのリポジトリ用に独自のコーディネーター、スレッド、メモリを持っています。",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
+    "未リンク: {machine} はこのリポジトリ用に独自のコーディネーター、スレッド、メモリを持っています。",
   "{value}Messages go to Percy. {value2}": "{value}メッセージは Percy に届きます。{value2}",
   "Show only topics that need you in {project}": "{project} で対応が必要なトピックのみ表示",
   "New topic in {title}": "{title} で新しいトピック",
@@ -5051,5 +5053,5 @@ export const ja: PhraseCatalog = {
   "Can't reach this host": "このホストに接続できません",
   "Some machines can't be reached": "一部のマシンに接続できません",
   "not answering": "応答なし",
-  "reconnecting": "再接続中",
+  reconnecting: "再接続中",
 };

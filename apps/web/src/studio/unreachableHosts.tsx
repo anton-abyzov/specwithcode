@@ -54,7 +54,9 @@ export function useHostReachStates(): MachineReachStates {
 }
 
 /** What one machine reads as now, or undefined when the app has not judged it. */
-export function useHostReach(environmentId: string | null | undefined): MachineReachState | undefined {
+export function useHostReach(
+  environmentId: string | null | undefined,
+): MachineReachState | undefined {
   const states = useContext(MachineReachContext);
   return environmentId ? states.get(environmentId) : undefined;
 }

@@ -134,15 +134,17 @@ describe("threadResolveBlockedReason", () => {
         machineLabel: "dd2fc230",
       }),
     ).toBe("That machine isn't connected right now, so this thread can't be resolved.");
-    expect(threadResolveBlockedReason({ ...base, connection: null, machineLabel: "dd2fc230" })).toBe(
+    expect(
+      threadResolveBlockedReason({ ...base, connection: null, machineLabel: "dd2fc230" }),
+    ).toBe(
       "This device is not paired with that machine, so this thread can't be resolved from here.",
     );
     expect(threadResolveBlockedReason({ ...base, access: "denied", machineLabel: undefined })).toBe(
       "This connection can't change threads there.",
     );
-    expect(threadResolveBlockedReason({ ...base, access: "unknown", machineLabel: "dd2fc230" })).toBe(
-      "Still checking this browser's access to that machine. Try again in a moment.",
-    );
+    expect(
+      threadResolveBlockedReason({ ...base, access: "unknown", machineLabel: "dd2fc230" }),
+    ).toBe("Still checking this browser's access to that machine. Try again in a moment.");
     expect(
       threadResolveBlockedReason({ ...base, supportsSettlement: false, machineLabel: "dd2fc230" }),
     ).toBe("That machine runs an older version that can't resolve threads. Update it first.");
@@ -157,8 +159,8 @@ describe("threadResolveBlockedReason", () => {
     expect(threadResolveBlockedReason(reconnecting)).toBe(
       "Reconnecting to Ministorm. Try again in a moment.",
     );
-    expect(
-      threadResolveBlockedReason({ ...reconnecting, reach: "not-answering" }),
-    ).toBe("Ministorm isn't connected right now, so this thread can't be resolved.");
+    expect(threadResolveBlockedReason({ ...reconnecting, reach: "not-answering" })).toBe(
+      "Ministorm isn't connected right now, so this thread can't be resolved.",
+    );
   });
 });

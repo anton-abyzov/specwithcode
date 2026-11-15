@@ -19,9 +19,7 @@ describe("threadMachinePresentation", () => {
     const machine = threadMachinePresentation(base);
     expect(machine.label).toBe("linuxbox");
     expect(machine.warning).toBeNull();
-    expect(machine.tip).toBe(
-      "Runs on linuxbox (Linux). To move it, use ⋯ › Move thread.",
-    );
+    expect(machine.tip).toBe("Runs on linuxbox (Linux). To move it, use ⋯ › Move thread.");
   });
 
   it("says a personal assistant's chat stays on its machine", () => {

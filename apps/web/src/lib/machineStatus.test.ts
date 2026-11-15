@@ -19,7 +19,10 @@ import {
 
 describe("machineStatus", () => {
   const NOW = 1_000_000;
-  const dropped = (secondsAgo: number, cause?: "not-answering" | "no-service" | "relay-unreachable") =>
+  const dropped = (
+    secondsAgo: number,
+    cause?: "not-answering" | "no-service" | "relay-unreachable",
+  ) =>
     ({
       phase: "reconnecting",
       error: "M1 could not establish a WebSocket connection.",
@@ -142,7 +145,12 @@ describe("savedMachineStatus", () => {
     });
     // Inside its grace the row is calm and shows no error text.
     expect(
-      savedMachineStatus({ ...connection, lostAt: 990_000, lastConnectedAt: 990_000 }, true, false, 1_000_000),
+      savedMachineStatus(
+        { ...connection, lostAt: 990_000, lastConnectedAt: 990_000 },
+        true,
+        false,
+        1_000_000,
+      ),
     ).toEqual({ text: "Reconnecting", tone: "muted", reason: null, retryable: true });
     expect(savedMachineStatus({ phase: "offline", error: null }, true, true).text).toBe(
       "Catching up",

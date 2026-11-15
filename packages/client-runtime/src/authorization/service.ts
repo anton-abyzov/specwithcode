@@ -726,10 +726,7 @@ export const make = Effect.gen(function* () {
               failure._tag === "EnvironmentAuthInvalidError" ||
               (failure._tag === "ConnectionBlockedError" && failure.reason === "authentication")
             ) {
-              yield* recordRejectedRenewal(
-                input.expectedEnvironmentId,
-                selected.token.accessToken,
-              );
+              yield* recordRejectedRenewal(input.expectedEnvironmentId, selected.token.accessToken);
             }
           }),
         );

@@ -63,7 +63,9 @@ function environment(
   environmentId: EnvironmentId,
   entry: typeof primaryEntry | typeof remoteEntry,
   phase: EnvironmentConnectionPhase,
-  facts: Partial<Pick<EnvironmentConnectionPresentation, "lostAt" | "lastConnectedAt" | "cause">> = {},
+  facts: Partial<
+    Pick<EnvironmentConnectionPresentation, "lostAt" | "lastConnectedAt" | "cause">
+  > = {},
 ) {
   return {
     environmentId,
@@ -142,7 +144,10 @@ describe("unreachableEnvironmentIds", () => {
 
   it("leaves out a remote host that dropped less than a minute ago", () => {
     expect(
-      unreachableEnvironmentIds([environment(REMOTE_ID, remoteEntry, "reconnecting", lost(16))], NOW),
+      unreachableEnvironmentIds(
+        [environment(REMOTE_ID, remoteEntry, "reconnecting", lost(16))],
+        NOW,
+      ),
     ).toEqual([]);
   });
 

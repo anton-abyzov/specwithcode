@@ -4530,14 +4530,16 @@ export const ko: PhraseCatalog = {
   "View this project on": "이 프로젝트를 볼 컴퓨터",
   "Move coordinator to {machine}…": "코디네이터를 {machine}(으)로 이동…",
   "coordinator paused": "코디네이터 일시 중지됨",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine}은(는) 이전 코디네이터를 유지하고 있으며 지금은 워커만 실행합니다. 열어서 그 대화를 읽거나 다시 실행하세요.",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
+    "{machine}은(는) 이전 코디네이터를 유지하고 있으며 지금은 워커만 실행합니다. 열어서 그 대화를 읽거나 다시 실행하세요.",
   "Machine access settings": "컴퓨터 접근 설정",
   "{machine} offline": "{machine} 오프라인",
   "workers only": "워커 전용",
   "move pending": "이동 대기 중",
-  "coordinator": "코디네이터",
+  coordinator: "코디네이터",
   "not linked": "따로 등록됨",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.": "따로 등록됨: {machine}은(는) 이 저장소에 대해 자체 코디네이터, 스레드, 메모리를 사용합니다.",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
+    "따로 등록됨: {machine}은(는) 이 저장소에 대해 자체 코디네이터, 스레드, 메모리를 사용합니다.",
   "{value}Messages go to Percy. {value2}": "{value}메시지는 Percy에게 전달됩니다. {value2}",
   "Show only topics that need you in {project}": "{project}에서 응답이 필요한 주제만 보기",
   "New topic in {title}": "{title}에서 새 주제",
@@ -4993,5 +4995,5 @@ export const ko: PhraseCatalog = {
   "Can't reach this host": "이 호스트에 연결할 수 없습니다",
   "Some machines can't be reached": "일부 기기에 연결할 수 없습니다",
   "not answering": "응답 없음",
-  "reconnecting": "다시 연결 중",
+  reconnecting: "다시 연결 중",
 };

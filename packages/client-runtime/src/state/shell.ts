@@ -244,38 +244,38 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   // the wait, and a late marker changes nothing.
   const watchdogScope = yield* Scope.Scope;
   const completionWatchdog = yield* Ref.make<Fiber.Fiber<void> | undefined>(undefined);
-  const armCompletionWatchdog = Effect.fn("EnvironmentShellState.armCompletionWatchdog")(
-    function* (session: RpcSession) {
-      const previous = yield* Ref.getAndSet(completionWatchdog, undefined);
-      if (previous !== undefined) yield* Fiber.interrupt(previous);
-      yield* Ref.set(lastStreamActivityAt, yield* Clock.currentTimeMillis);
-      const watchdog = yield* Effect.gen(function* () {
-        for (;;) {
-          const quietMs = (yield* Clock.currentTimeMillis) - (yield* Ref.get(lastStreamActivityAt));
-          if (quietMs >= SHELL_RESUME_COMPLETION_TIMEOUT_MS) break;
-          yield* Effect.sleep(SHELL_RESUME_COMPLETION_TIMEOUT_MS - quietMs);
-        }
-        yield* applyLock.withPermits(1)(
-          Effect.gen(function* () {
-            if (!(yield* Ref.get(awaitingCompletion))) return;
-            if ((yield* Ref.get(activeSubscriptionSession)) !== session) return;
-            const currentSession = yield* SubscriptionRef.get(supervisor.session);
-            if (Option.isNone(currentSession) || currentSession.value !== session) return;
-            yield* Effect.logWarning(
-              "Environment shell resume never confirmed synchronization; treating the list as caught up.",
-            ).pipe(Effect.annotateLogs({ environmentId }));
-            yield* Ref.set(awaitingCompletion, false);
-            yield* SubscriptionRef.update(state, (current) =>
-              Option.isSome(current.snapshot) && current.status === "synchronizing"
-                ? { ...current, status: "live" as const, error: Option.none() }
-                : current,
-            );
-          }),
-        );
-      }).pipe(Effect.forkIn(watchdogScope));
-      yield* Ref.set(completionWatchdog, watchdog);
-    },
-  );
+  const armCompletionWatchdog = Effect.fn("EnvironmentShellState.armCompletionWatchdog")(function* (
+    session: RpcSession,
+  ) {
+    const previous = yield* Ref.getAndSet(completionWatchdog, undefined);
+    if (previous !== undefined) yield* Fiber.interrupt(previous);
+    yield* Ref.set(lastStreamActivityAt, yield* Clock.currentTimeMillis);
+    const watchdog = yield* Effect.gen(function* () {
+      for (;;) {
+        const quietMs = (yield* Clock.currentTimeMillis) - (yield* Ref.get(lastStreamActivityAt));
+        if (quietMs >= SHELL_RESUME_COMPLETION_TIMEOUT_MS) break;
+        yield* Effect.sleep(SHELL_RESUME_COMPLETION_TIMEOUT_MS - quietMs);
+      }
+      yield* applyLock.withPermits(1)(
+        Effect.gen(function* () {
+          if (!(yield* Ref.get(awaitingCompletion))) return;
+          if ((yield* Ref.get(activeSubscriptionSession)) !== session) return;
+          const currentSession = yield* SubscriptionRef.get(supervisor.session);
+          if (Option.isNone(currentSession) || currentSession.value !== session) return;
+          yield* Effect.logWarning(
+            "Environment shell resume never confirmed synchronization; treating the list as caught up.",
+          ).pipe(Effect.annotateLogs({ environmentId }));
+          yield* Ref.set(awaitingCompletion, false);
+          yield* SubscriptionRef.update(state, (current) =>
+            Option.isSome(current.snapshot) && current.status === "synchronizing"
+              ? { ...current, status: "live" as const, error: Option.none() }
+              : current,
+          );
+        }),
+      );
+    }).pipe(Effect.forkIn(watchdogScope));
+    yield* Ref.set(completionWatchdog, watchdog);
+  });
 
   const foregroundResubscriptions = Option.match(wakeups, {
     onNone: () => Stream.never,

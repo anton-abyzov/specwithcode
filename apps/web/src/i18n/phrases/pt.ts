@@ -4589,14 +4589,16 @@ export const pt: PhraseCatalog = {
   "View this project on": "Ver este projeto em",
   "Move coordinator to {machine}…": "Mover o coordenador para {machine}…",
   "coordinator paused": "coordenador pausado",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine} manteve o coordenador de antes e agora só executa workers. Abra-o para ler essa conversa ou executá-lo de novo.",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
+    "{machine} manteve o coordenador de antes e agora só executa workers. Abra-o para ler essa conversa ou executá-lo de novo.",
   "Machine access settings": "Configurações de acesso entre máquinas",
   "{machine} offline": "{machine} offline",
   "workers only": "apenas workers",
   "move pending": "mudança pendente",
-  "coordinator": "coordenador",
+  coordinator: "coordenador",
   "not linked": "não vinculado",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.": "Não vinculado: {machine} tem o próprio coordenador, threads e memória para este repositório.",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
+    "Não vinculado: {machine} tem o próprio coordenador, threads e memória para este repositório.",
   "{value}Messages go to Percy. {value2}": "{value}As mensagens vão para o Percy. {value2}",
   "Show only topics that need you in {project}":
     "Mostrar só os tópicos que precisam de você em {project}",
@@ -5055,5 +5057,5 @@ export const pt: PhraseCatalog = {
   "Can't reach this host": "Não é possível acessar este host",
   "Some machines can't be reached": "Algumas máquinas estão inacessíveis",
   "not answering": "sem resposta",
-  "reconnecting": "reconectando",
+  reconnecting: "reconectando",
 };

@@ -64,10 +64,7 @@ import type { DraftThreadEnvMode } from "../composerDraftStore";
 import { collapseExpandedComposerCursor, type ComposerSubmissionIntent } from "../composer-logic";
 import type { ReviewCommentContext } from "../reviewCommentContext";
 import { derivePhase, type TimelineEntry } from "../session-logic";
-import {
-  CONNECTION_WARNING_GRACE_MS,
-  type EnvironmentConnectionPresentation,
-} from "@specweave-studio/client-runtime/connection";
+import { CONNECTION_WARNING_GRACE_MS } from "@specweave-studio/client-runtime/connection";
 import type { PreviewMiniPlayerSource } from "../previewMiniPlayerStore";
 import type { DesktopPreviewOverlay } from "../previewStateStore";
 import type { RightPanelSurface } from "../rightPanelStore";

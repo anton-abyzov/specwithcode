@@ -739,22 +739,23 @@ describe("threads on this machine while its server catches up", () => {
   it("are never Host offline and still wait on the person", () => {
     const blocked = thread({ reportedBlocker: "Commit these changes, or discard them?" });
     const unreachable = new Set<string>(
-      unreachableEnvironmentIds([
-        {
-          environmentId: blocked.environmentId,
-          entry: {
-            target: { _tag: "PrimaryConnectionTarget", httpBaseUrl: "http://127.0.0.1:8319" },
+      unreachableEnvironmentIds(
+        [
+          {
+            environmentId: blocked.environmentId,
+            entry: {
+              target: { _tag: "PrimaryConnectionTarget", httpBaseUrl: "http://127.0.0.1:8319" },
+            },
+            connection: { phase: "reconnecting", lostAt: 0, lastConnectedAt: 0 },
           },
-          connection: { phase: "reconnecting", lostAt: 0, lastConnectedAt: 0 },
-        },
-        {
-          environmentId: "m1",
-          entry: { target: { _tag: "RelayConnectionTarget" } },
-          connection: { phase: "reconnecting", lostAt: 0, lastConnectedAt: 0 },
-        },
-      ] as never,
-      // Past the reconnect grace: the remote host is down, this machine is busy.
-      90_000,
+          {
+            environmentId: "m1",
+            entry: { target: { _tag: "RelayConnectionTarget" } },
+            connection: { phase: "reconnecting", lostAt: 0, lastConnectedAt: 0 },
+          },
+        ] as never,
+        // Past the reconnect grace: the remote host is down, this machine is busy.
+        90_000,
       ),
     );
     expect([...unreachable]).toEqual(["m1"]);

@@ -124,9 +124,7 @@ export function useUnreachableEnvironmentIds(): ReadonlySet<string> {
   const states = useMachineReachStates();
   return useMemo(
     () =>
-      new Set(
-        [...states].filter(([, state]) => isEnvironmentUnreachable(state)).map(([id]) => id),
-      ),
+      new Set([...states].filter(([, state]) => isEnvironmentUnreachable(state)).map(([id]) => id)),
     [states],
   );
 }

@@ -86,7 +86,9 @@ function statusText(block: HostLimitBlock, now: number): string {
   if (block.status === "online") return read ? `Online · read ${read}` : "Online";
   if (block.status === "connecting")
     return read ? `${block.statusWord} · last read ${read}` : block.statusWord;
-  return read ? `${block.statusWord} · last read ${read}` : `${block.statusWord} · no saved reading`;
+  return read
+    ? `${block.statusWord} · last read ${read}`
+    : `${block.statusWord} · no saved reading`;
 }
 
 function ProviderIcon({ row, size }: { row: HostProviderRow; size: "sm" | "md" }) {

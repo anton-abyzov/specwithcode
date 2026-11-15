@@ -10,7 +10,6 @@ import * as Option from "effect/Option";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
-import { isThisMachineTarget } from "../connection/desktopLocal";
 import {
   environmentPresentations,
   environmentSummaries,

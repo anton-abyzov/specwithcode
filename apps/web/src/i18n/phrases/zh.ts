@@ -4404,14 +4404,16 @@ export const zh: PhraseCatalog = {
   "View this project on": "查看此项目的电脑",
   "Move coordinator to {machine}…": "将协调器移到 {machine}…",
   "coordinator paused": "协调器已暂停",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine} 保留了之前的协调器，现在只运行 worker。查看它以阅读那段对话或重新运行。",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
+    "{machine} 保留了之前的协调器，现在只运行 worker。查看它以阅读那段对话或重新运行。",
   "Machine access settings": "电脑访问设置",
   "{machine} offline": "{machine} 离线",
   "workers only": "仅工作节点",
   "move pending": "移动待确认",
-  "coordinator": "协调者",
+  coordinator: "协调者",
   "not linked": "未关联",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.": "未关联：{machine} 为此仓库运行自己的协调者、线程和记忆。",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
+    "未关联：{machine} 为此仓库运行自己的协调者、线程和记忆。",
   "{value}Messages go to Percy. {value2}": "{value}消息会发送给 Percy。{value2}",
   "Show only topics that need you in {project}": "只显示 {project} 中需要你处理的主题",
   "New topic in {title}": "在 {title} 中新建主题",
@@ -4853,5 +4855,5 @@ export const zh: PhraseCatalog = {
   "Can't reach this host": "无法访问此主机",
   "Some machines can't be reached": "部分机器无法访问",
   "not answering": "无响应",
-  "reconnecting": "正在重新连接",
+  reconnecting: "正在重新连接",
 };

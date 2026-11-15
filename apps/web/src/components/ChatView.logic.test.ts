@@ -2300,7 +2300,9 @@ describe("environmentUnavailableBanner", () => {
       });
       expect(banner.calm).toBe(true);
       expect(banner.variant).toBe("info");
-      expect(banner.title).toBe(reach === "reconnecting" ? "Reconnecting to M1…" : "Connecting to M1…");
+      expect(banner.title).toBe(
+        reach === "reconnecting" ? "Reconnecting to M1…" : "Connecting to M1…",
+      );
       expect(banner.describe(1_000, 61_000)).toBe("");
       expect(banner.waitsForGrace).toBe(true);
     }

@@ -258,9 +258,7 @@ export function ProjectThreadAvailability({
             data-reach-state={state}
             data-unavailable-thread-host={environmentId}
           >
-            {words
-              ? tx(words.headline, { machine: name })
-              : `This app is not connected to ${name}`}{" "}
+            {words ? tx(words.headline, { machine: name }) : `This app is not connected to ${name}`}{" "}
             — {say("the thread list may be incomplete. Cached threads may be out of date.")}
             {detail ? ` ${detail}.` : null}
             {words?.hint ? ` ${tx(words.hint)}` : null}

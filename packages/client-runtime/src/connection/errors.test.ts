@@ -137,9 +137,7 @@ describe("mapRemoteDpopEnvironmentError", () => {
       reason: "invalid_credential",
       traceId: "trace-descriptor",
     });
-    expect(mapRemoteEnvironmentError(error).message).toBe(
-      "The environment credential is invalid.",
-    );
+    expect(mapRemoteEnvironmentError(error).message).toBe("The environment credential is invalid.");
     expect(mapRemoteDpopEnvironmentError(error).message).toBe(
       `The environment credential is invalid. ${DPOP_UNKNOWN_HINT}`,
     );
@@ -192,10 +190,7 @@ it("preserves the required device reapproval reason for direct and relay connect
     reason: "device_reapproval_required",
     traceId: "trace-reapprove",
   });
-  for (const mapped of [
-    mapRemoteEnvironmentError(error),
-    mapRemoteDpopEnvironmentError(error),
-  ]) {
+  for (const mapped of [mapRemoteEnvironmentError(error), mapRemoteDpopEnvironmentError(error)]) {
     expect(mapped.message).toContain("Approve this device again");
     // Says so as data, so a fleet machine can be paired again on its own.
     expect(mapped._tag === "ConnectionBlockedError" && mapped.reapprovalRequired).toBe(true);

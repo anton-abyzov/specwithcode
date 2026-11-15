@@ -47,7 +47,8 @@ export function overviewMachineState(input: {
   readonly stale: boolean;
 }): OverviewMachineState {
   const reach = input.reach === "connected" && input.stale ? "catching-up" : input.reach;
-  if (reach === "connected") return { state: "Online", tone: "moss", word: "online", counted: true };
+  if (reach === "connected")
+    return { state: "Online", tone: "moss", word: "online", counted: true };
   return {
     state: machineReachWords(reach).short.replace(/…$/, ""),
     tone: reach === "stopped" ? "red" : "amber",

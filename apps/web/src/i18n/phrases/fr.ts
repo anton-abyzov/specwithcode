@@ -4620,14 +4620,16 @@ export const fr: PhraseCatalog = {
   "View this project on": "Voir ce projet sur",
   "Move coordinator to {machine}…": "Déplacer le coordinateur vers {machine}…",
   "coordinator paused": "coordinateur en pause",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine} a gardé son coordinateur d'avant et n'exécute plus que des workers. Affichez-le pour lire cette conversation ou le relancer.",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
+    "{machine} a gardé son coordinateur d'avant et n'exécute plus que des workers. Affichez-le pour lire cette conversation ou le relancer.",
   "Machine access settings": "Réglages d’accès entre machines",
   "{machine} offline": "{machine} hors ligne",
   "workers only": "workers uniquement",
   "move pending": "déplacement en attente",
-  "coordinator": "coordinateur",
+  coordinator: "coordinateur",
   "not linked": "non lié",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.": "Non lié : {machine} a son propre coordinateur, ses fils et sa mémoire pour ce dépôt.",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
+    "Non lié : {machine} a son propre coordinateur, ses fils et sa mémoire pour ce dépôt.",
   "{value}Messages go to Percy. {value2}": "{value}Les messages vont à Percy. {value2}",
   "Show only topics that need you in {project}":
     "Afficher seulement les sujets qui ont besoin de vous dans {project}",
@@ -5092,5 +5094,5 @@ export const fr: PhraseCatalog = {
   "Can't reach this host": "Impossible de joindre cet hôte",
   "Some machines can't be reached": "Certaines machines sont injoignables",
   "not answering": "ne répond pas",
-  "reconnecting": "en reconnexion",
+  reconnecting: "en reconnexion",
 };

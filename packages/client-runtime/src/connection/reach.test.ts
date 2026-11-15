@@ -79,7 +79,10 @@ describe("machineReach", () => {
     }
     // A device with no network is not called offline either while it may be a blip.
     expect(
-      state({ phase: "offline", lostAt: LOST_AT, lastConnectedAt: LOST_AT, cause: "no-network" }, INSIDE),
+      state(
+        { phase: "offline", lostAt: LOST_AT, lastConnectedAt: LOST_AT, cause: "no-network" },
+        INSIDE,
+      ),
     ).toBe("reconnecting");
   });
 
@@ -105,7 +108,10 @@ describe("machineReach", () => {
     ];
     for (const now of [INSIDE, AFTER, AFTER + 600_000]) {
       const states = variants.map((variant) =>
-        state({ lostAt: LOST_AT, lastConnectedAt: LOST_AT, cause: "not-answering", ...variant }, now),
+        state(
+          { lostAt: LOST_AT, lastConnectedAt: LOST_AT, cause: "not-answering", ...variant },
+          now,
+        ),
       );
       expect(new Set(states).size).toBe(1);
     }
@@ -124,9 +130,9 @@ describe("machineReach", () => {
 
   it("reads a connected machine as connected, or catching up while its list resyncs", () => {
     expect(state({ phase: "connected" }, AFTER)).toBe("connected");
-    expect(machineReach(connection({ phase: "connected" }), AFTER, { listSyncing: true }).state).toBe(
-      "catching-up",
-    );
+    expect(
+      machineReach(connection({ phase: "connected" }), AFTER, { listSyncing: true }).state,
+    ).toBe("catching-up");
     // A resync says nothing about a machine without a session.
     expect(
       machineReach(connection({ lostAt: LOST_AT, cause: "no-service" }), AFTER, {
@@ -142,7 +148,10 @@ describe("machineReach", () => {
     );
     // A person asked to try the refused connection again: it is being tried.
     expect(
-      state({ phase: "connecting", lostAt: LOST_AT, lastConnectedAt: LOST_AT, cause: "stopped" }, AFTER),
+      state(
+        { phase: "connecting", lostAt: LOST_AT, lastConnectedAt: LOST_AT, cause: "stopped" },
+        AFTER,
+      ),
     ).toBe("reconnecting");
   });
 

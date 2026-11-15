@@ -4578,14 +4578,16 @@ export const ru: PhraseCatalog = {
   "View this project on": "Смотреть проект на",
   "Move coordinator to {machine}…": "Перенести координатора на {machine}…",
   "coordinator paused": "координатор на паузе",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine} сохранил прежний координатор и сейчас выполняет только воркеры. Откройте его, чтобы прочитать тот разговор или запустить его снова.",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
+    "{machine} сохранил прежний координатор и сейчас выполняет только воркеры. Откройте его, чтобы прочитать тот разговор или запустить его снова.",
   "Machine access settings": "Настройки доступа между машинами",
   "{machine} offline": "{machine} не в сети",
   "workers only": "только исполнители",
   "move pending": "перенос не подтверждён",
-  "coordinator": "координатор",
+  coordinator: "координатор",
   "not linked": "не связан",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.": "Не связан: у {machine} свой координатор, свои треды и своя память для этого репозитория.",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
+    "Не связан: у {machine} свой координатор, свои треды и своя память для этого репозитория.",
   "{value}Messages go to Percy. {value2}": "{value}Сообщения идут в Percy. {value2}",
   "Show only topics that need you in {project}":
     "Показать только темы, которые ждут вас в {project}",
@@ -5048,5 +5050,5 @@ export const ru: PhraseCatalog = {
   "Can't reach this host": "Нет связи с этим хостом",
   "Some machines can't be reached": "Некоторые машины недоступны",
   "not answering": "не отвечает",
-  "reconnecting": "переподключается",
+  reconnecting: "переподключается",
 };

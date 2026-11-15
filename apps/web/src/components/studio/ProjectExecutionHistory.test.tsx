@@ -362,29 +362,32 @@ it.each([
   ["not-answering", "M4 isn't answering", "Retrying by itself"],
   ["offline", "M4 is offline", "Retrying by itself"],
   ["no-network", "This device has no network", "Reconnects when the network is back"],
-] as const)("says why a %s machine is down and when it last answered", async (reach, words, next) => {
-  vi.useFakeTimers();
-  vi.setSystemTime(10 * 60_000);
-  state.m4Offline = true;
-  state.m4LastConnectedAt = 7 * 60_000;
-  try {
-    await act(async () =>
-      root.render(
-        <MachineReachContext.Provider value={new Map([["m4", reach]])}>
-          <ProjectThreadAvailability scopes={[scopes[0]!]} />
-        </MachineReachContext.Provider>,
-      ),
-    );
-    expect(container.textContent).toContain(words);
-    expect(container.textContent).toContain(`Last answered 3m ago · ${next}.`);
-    expect(container.textContent).not.toContain("DNS or firewall");
-    expect(container.querySelector('[data-slot="offline-retry"]')).not.toBeNull();
-  } finally {
-    state.m4Offline = false;
-    state.m4LastConnectedAt = null;
-    vi.useRealTimers();
-  }
-});
+] as const)(
+  "says why a %s machine is down and when it last answered",
+  async (reach, words, next) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10 * 60_000);
+    state.m4Offline = true;
+    state.m4LastConnectedAt = 7 * 60_000;
+    try {
+      await act(async () =>
+        root.render(
+          <MachineReachContext.Provider value={new Map([["m4", reach]])}>
+            <ProjectThreadAvailability scopes={[scopes[0]!]} />
+          </MachineReachContext.Provider>,
+        ),
+      );
+      expect(container.textContent).toContain(words);
+      expect(container.textContent).toContain(`Last answered 3m ago · ${next}.`);
+      expect(container.textContent).not.toContain("DNS or firewall");
+      expect(container.querySelector('[data-slot="offline-retry"]')).not.toBeNull();
+    } finally {
+      state.m4Offline = false;
+      state.m4LastConnectedAt = null;
+      vi.useRealTimers();
+    }
+  },
+);
 
 it("adds the network hint only when the relay itself could not be reached", async () => {
   state.m4Offline = true;

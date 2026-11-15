@@ -297,8 +297,7 @@ export function savedMachineStatus(
     case "connecting":
       return { text: "Connecting", tone: "muted", ...quiet };
     case "reconnecting": {
-      if (isThisMachine)
-        return { text: "Reconnecting", tone: "error", reason, retryable: true };
+      if (isThisMachine) return { text: "Reconnecting", tone: "error", reason, retryable: true };
       // Inside its grace a machine is only reconnecting; after it, the row says why.
       const state = machineReach(connection, now).state;
       const down = isMachineReachDown(state);

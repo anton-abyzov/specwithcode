@@ -561,10 +561,7 @@ import {
   recordChatContinuation,
   useChatContinuationsVersion,
 } from "../lib/chatContinuations";
-import {
-  environmentUnavailableSendToast,
-  isThisMachineCatchingUp,
-} from "../lib/machineStatus";
+import { environmentUnavailableSendToast, isThisMachineCatchingUp } from "../lib/machineStatus";
 import { isDesktopLocalConnectionTarget, isThisMachineTarget } from "../connection/desktopLocal";
 import { useEnvironmentDisconnectDelay } from "../hooks/useEnvironmentDisconnectDelay";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
