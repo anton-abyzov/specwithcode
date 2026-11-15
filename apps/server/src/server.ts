@@ -216,6 +216,7 @@ import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as AgentMemoryLimit from "./resourceTelemetry/AgentMemoryLimit.ts";
+import * as AgentMemoryNotice from "./resourceTelemetry/AgentMemoryNotice.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as MemoryGuard from "./resourceTelemetry/MemoryGuard.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
@@ -755,6 +756,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(ScheduledTaskRunReactor.start),
   // Wakes the thread that launched a worker on this machine when the worker's run ends.
   Layer.effectDiscard(LaunchedWorkerWake.start),
+  // Tells a thread when its command was ended for passing the agent memory limit.
+  Layer.effectDiscard(AgentMemoryNotice.start),
   // Starts the background checks of whether iOS Simulators and Xcode builds run here, which machines report to each other.
   Layer.effectDiscard(
     Effect.map(HostProcessPlatform, (platform) => {
