@@ -202,6 +202,51 @@ describe("quotaAlerts", () => {
     ).toEqual([]);
   });
 
+  it("warns that a promised reset will replace what is left, and says expected", () => {
+    const weekly = (extra: object = {}) => [
+      { id: "secondary", title: "Weekly", leftPercent: 62, resetsAt: now + 4 * DAY, long: true, durationMs: 7 * DAY, ...extra },
+    ];
+    const promise = { id: "p1", driver: "codex", publishedAt: now - 2 * HOUR, sourceUrl: "https://x.com/example/status/9" };
+    const [alert, ...rest] = quotaAlerts([account({ windows: weekly() })], [], now, [promise]);
+    expect(rest).toEqual([]);
+    expect(alert).toMatchObject({
+      key: "codex:pro@example.com|expected",
+      kind: "expectedReset",
+      periodEnd: now + 4 * DAY,
+      expectedUntil: now + 22 * HOUR,
+      windowId: "secondary",
+      windowResetsAt: now + 4 * DAY,
+      sourceUrl: "https://x.com/example/status/9",
+    });
+    expect(describeQuotaAlert(alert!, "Codex Pro", now)).toBe(
+      "Codex Pro reset expected today: 62% left on m4 will be replaced",
+    );
+    // A second post about the same reset is the same warning: the dismissal holds.
+    const reposted = quotaAlerts([account({ windows: weekly() })], [], now, [
+      promise,
+      { ...promise, id: "p2", publishedAt: now - HOUR },
+    ]);
+    expect(reposted).toHaveLength(1);
+    expect(visibleQuotaAlerts(reposted, { [alert!.key]: alert!.periodEnd })).toEqual([]);
+    // It leads a window that resets sooner than this window does but later than the promise.
+    const other = account({
+      accountKey: "codex:team@example.com",
+      windows: [{ id: "secondary", title: "Weekly", leftPercent: 90, resetsAt: now + 30 * HOUR, long: true, durationMs: 7 * DAY }],
+    });
+    const mine = account({ driver: "claudeAgent", windows: weekly() });
+    expect(
+      quotaAlerts([other, mine], [], now, [{ ...promise, driver: "claudeAgent" }]).map((entry) => entry.kind),
+    ).toEqual(["expectedReset", "window"]);
+    // Another provider's promise, an old one, and little left: nothing.
+    expect(quotaAlerts([account({ windows: weekly() })], [], now, [{ ...promise, driver: "claudeAgent" }])).toEqual([]);
+    expect(quotaAlerts([account({ windows: weekly() })], [], now, [{ ...promise, publishedAt: now - 25 * HOUR }])).toEqual([]);
+    expect(quotaAlerts([account({ windows: weekly({ leftPercent: 12 }) })], [], now, [promise])).toEqual([]);
+    // The window began after the post: the reset has arrived.
+    expect(
+      quotaAlerts([account({ windows: weekly({ resetsAt: now + 7 * DAY - HOUR }) })], [], now, [promise]),
+    ).toEqual([]);
+  });
+
   it("reports an early reset for six hours, after what is about to be lost", () => {
     const early = {
       accountKey: "codex:pro@example.com",

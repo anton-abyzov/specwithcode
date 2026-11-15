@@ -24,10 +24,17 @@ export const RENEWAL_WINDOW_APART_MS = 12 * HOUR;
 export const QUOTA_ALERT_LEAD_MS = 48 * HOUR;
 /** Under this long to the reset there is nothing left to do about it, so nothing is said. */
 export const QUOTA_ALERT_MIN_TIME_TO_ACT_MS = HOUR;
+/** A promised reset is expected for this long after its post. */
+export const EXPECTED_RESET_WINDOW_MS = 24 * HOUR;
 /** An early reset is news for this long. */
 export const EARLY_RESET_NOTICE_MS = 6 * HOUR;
 
-export type QuotaAlertKind = "window" | "bankedReset" | "renewal" | "earlyReset";
+export type QuotaAlertKind =
+  | "window"
+  | "bankedReset"
+  | "renewal"
+  | "earlyReset"
+  | "expectedReset";
 
 export interface QuotaAlertWindow {
   readonly id: string;
@@ -97,6 +104,15 @@ export interface QuotaAlertEarlyReset {
   readonly endedAt: number;
 }
 
+/** A reset a named source promised and that has not happened yet, from the announcement feed. */
+export interface QuotaAlertExpectedReset {
+  readonly id: string;
+  /** The provider driver whose accounts it concerns. */
+  readonly driver: string;
+  readonly publishedAt: number;
+  readonly sourceUrl: string;
+}
+
 export interface QuotaAlert {
   /** The account and what about it; the same across periods, so a dismissal replaces the last. */
   readonly key: string;
@@ -112,6 +128,10 @@ export interface QuotaAlert {
   readonly windowResetsAt?: number;
   /** When the plan renews, for a renewal alert's sentence. */
   readonly renewsAt?: number;
+  /** When an expected reset stops being expected: a day after its post. */
+  readonly expectedUntil?: number;
+  /** The post behind an expected reset. */
+  readonly sourceUrl?: string;
   /** The window's title; absent for a banked reset. */
   readonly windowTitle?: string;
   /** What is left to use, 0..100; absent for a banked reset and an early reset. */
@@ -141,6 +161,7 @@ export function quotaAlerts(
   accounts: readonly QuotaAlertAccount[],
   earlyResets: readonly QuotaAlertEarlyReset[],
   now: number,
+  expectedResets: readonly QuotaAlertExpectedReset[] = [],
 ): QuotaAlert[] {
   const alerts: QuotaAlert[] = [];
   const machinesOf = new Map<string, readonly string[]>();
@@ -160,6 +181,52 @@ export function quotaAlerts(
           count: account.credits.count,
         });
       }
+    }
+    // A reset promised today replaces whatever is left of the subscription's own quota,
+    // well before the window's reset, so it speaks first. "Expected", never "announced":
+    // it is a promise, and it ends when the window starts over or a day after the post.
+    const promise = expectedResets
+      .filter(
+        (expected) =>
+          expected.driver === account.driver &&
+          expected.publishedAt <= now &&
+          now - expected.publishedAt < EXPECTED_RESET_WINDOW_MS,
+      )
+      .toSorted((left, right) => right.publishedAt - left.publishedAt)[0];
+    const replaced =
+      promise === undefined
+        ? undefined
+        : account.windows
+            .filter(
+              (window) =>
+                window.long &&
+                window.scoped !== true &&
+                window.resetsAt !== null &&
+                // A window that began after the post is the reset having arrived.
+                (window.durationMs == null ||
+                  window.resetsAt - window.durationMs <= promise.publishedAt) &&
+                window.resetsAt - now >= QUOTA_ALERT_MIN_TIME_TO_ACT_MS &&
+                window.leftPercent >= EXPIRING_QUOTA_MIN_LEFT_PERCENT,
+            )
+            .toSorted((left, right) => (left.resetsAt ?? 0) - (right.resetsAt ?? 0))[0];
+    if (promise !== undefined && replaced !== undefined && replaced.resetsAt !== null) {
+      alerts.push({
+        ...base,
+        key: `${accountKey}|expected`,
+        // The period is the window's own: a second post about the same reset is the same
+        // warning, so a dismissal or a notification holds across reposts. A chosen limit:
+        // it also holds for a different promise posted later in the same window period,
+        // since a dismissal records a period end and not which post it was about.
+        periodEnd: replaced.resetsAt,
+        kind: "expectedReset",
+        expectedUntil: promise.publishedAt + EXPECTED_RESET_WINDOW_MS,
+        windowId: replaced.id,
+        windowResetsAt: replaced.resetsAt,
+        windowTitle: replaced.title,
+        leftPercent: replaced.leftPercent,
+        sourceUrl: promise.sourceUrl,
+      });
+      continue;
     }
     // One line per subscription: the window that resets first speaks for it.
     const going = account.windows
@@ -212,7 +279,11 @@ export function quotaAlerts(
     });
   }
   // What is about to be lost first; an early reset is news, not a loss, so it follows.
-  const rank = (alert: QuotaAlert) => (alert.kind === "earlyReset" ? Number.MAX_SAFE_INTEGER : alert.periodEnd);
+  // An expected reset replaces its quota within a day of the post, not at the window's end.
+  const rank = (alert: QuotaAlert) =>
+    alert.kind === "earlyReset"
+      ? Number.MAX_SAFE_INTEGER
+      : (alert.expectedUntil ?? alert.periodEnd);
   return alerts.toSorted((left, right) => rank(left) - rank(right) || left.key.localeCompare(right.key));
 }
 
@@ -272,5 +343,9 @@ export function describeQuotaAlert(alert: QuotaAlert, label: string, now: number
       return `${where}: renews in ${duration((alert.renewsAt ?? alert.periodEnd) - now)} with ${left}% of its ${window} quota unused`;
     case "earlyReset":
       return `${where} reset early: ${window} back to 100%`;
+    case "expectedReset":
+      return `${label} reset expected today: ${left}% left${
+        alert.machines.length === 0 ? "" : ` on ${alert.machines.join(", ")}`
+      } will be replaced`;
   }
 }

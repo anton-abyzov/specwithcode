@@ -86,6 +86,19 @@ describe("quotaBoostEnd", () => {
     expect(quotaBoostEnd(renewal, weekly, NOW + 7 * HOUR)).toBe("reset");
   });
 
+  it("runs a boost started from an expected reset until that reset arrives, or a day passes", () => {
+    // Promised today; the weekly window was heading for a reset in four days.
+    const promised = boost({ until: NOW + 20 * HOUR, resetsAtStart: NOW + 4 * 24 * HOUR });
+    expect(quotaBoostEnd(promised, [window({ resetsAt: NOW + 4 * 24 * HOUR })], NOW)).toBeNull();
+    // The reset arrives: a fresh week begins.
+    expect(quotaBoostEnd(promised, [window({ resetsAt: NOW + 7 * 24 * HOUR + HOUR })], NOW + HOUR)).toBe(
+      "earlyReset",
+    );
+    expect(quotaBoostEnd(promised, [window({ resetsAt: NOW + 4 * 24 * HOUR })], NOW + 21 * HOUR)).toBe(
+      "reset",
+    );
+  });
+
   it("does not end on an account it cannot read", () => {
     expect(quotaBoostEnd(boost(), undefined, NOW)).toBeNull();
     expect(quotaBoostEnd(boost(), [window({ id: "session", leftPercent: 0 })], NOW)).toBeNull();

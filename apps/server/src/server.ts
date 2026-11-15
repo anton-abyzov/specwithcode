@@ -131,6 +131,7 @@ import * as MachineLimitHandoff from "./orchestration-v2/MachineLimitHandoff.ts"
 import * as DeviceSignInHttp from "./auth/deviceSignInHttp.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
 import * as UsageLimitHistory from "./usage/UsageLimitHistory.ts";
+import * as ResetAnnouncementMonitor from "./resetAnnouncements/ResetAnnouncementMonitor.ts";
 import * as UsageResetLedger from "./usage/UsageResetLedger.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
@@ -906,6 +907,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   UsageLimitHistory.layer,
   // What each subscription window had used when it reset, kept for a year.
   UsageResetLedger.layer,
+  // Posts announcing a limits reset, read from the public feed every half hour.
+  ResetAnnouncementMonitor.layerStart.pipe(Layer.provideMerge(ResetAnnouncementMonitor.layer)),
   layerProviderInstallationRefresh,
   // Looks for installed agents once at start, and turns on the signed-in ones nobody decided on.
   ProviderDiscovery.layer,

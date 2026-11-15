@@ -134,6 +134,18 @@ try {
     await banner.getByRole("button", { name: "Use it for new threads until it resets" }).click();
     await banner.screenshot({ path: join(output, "quota-boost-pick-dark.png") });
   });
+  await check("reset announcements list the kind and link, and say the feed looks stopped", async () => {
+    const list = page.locator("[data-reset-announcements]");
+    const text = await list.innerText();
+    assert.match(text, /Codex · Reset expected/);
+    assert.match(text, /Claude · Full reset/);
+    assert.match(text, /It may have stopped updating\./);
+    assert.equal(
+      await list.getByRole("link", { name: "Usage limits reset for all paid plans" }).getAttribute("href"),
+      "https://example.com/posts/1",
+    );
+    await list.screenshot({ path: join(output, "reset-announcements-dark.png") });
+  });
   await open("full", "light", 1280);
   await page.locator("[data-quota-alert-banner]").screenshot({
     path: join(output, "quota-alert-banner-light.png"),

@@ -14,6 +14,7 @@ import { limitAccountKey } from "@specweave-studio/shared/usageLimits";
 import { quotaAlerts } from "@specweave-studio/shared/quotaAlerts";
 import { barColor } from "../../src/components/usage/UsageLimits";
 import { QuotaAlertBanner } from "../../src/components/usage/alerts/QuotaAlertBanner";
+import { ResetAnnouncements } from "../../src/components/usage/subscriptions/ResetAnnouncements";
 import { SubscriptionsDashboard } from "../../src/components/usage/subscriptions/SubscriptionsDashboard";
 import { SubscriptionRow } from "../../src/components/usage/subscriptions/SubscriptionRow";
 import { subscriptionLabel } from "../../src/components/usage/subscriptions/SubscriptionsView";
@@ -264,6 +265,33 @@ createRoot(document.getElementById("root")!).render(
       </div>
     )}
 
+    <ResetAnnouncements
+      announcements={
+        empty
+          ? []
+          : [
+              {
+                id: "promise",
+                provider: "codex",
+                kind: "expected_reset",
+                headline: "A limits reset is promised by end of day",
+                sourceUrl: "https://example.com/posts/2",
+                publishedAt: iso(now - 40 * DAY),
+              },
+              {
+                id: "reset",
+                provider: "claude",
+                kind: "full_reset",
+                headline: "Usage limits reset for all paid plans",
+                sourceUrl: "https://example.com/posts/1",
+                publishedAt: iso(now - 45 * DAY),
+              },
+            ] as never
+      }
+      checkedAt={now}
+      enabled
+      now={now}
+    />
   </main>
   </div>,
 );

@@ -175,6 +175,7 @@ export const RPC_REQUIRED_SCOPES = {
   // The same quota the server config already carries, kept over time.
   [WS_METHODS.usageLimitsHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.usageLimitsResets]: AuthOrchestrationReadScope,
+  [WS_METHODS.resetAnnouncementsList]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRefreshUsageRates]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverSignalProcess]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,

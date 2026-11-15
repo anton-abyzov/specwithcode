@@ -83,6 +83,14 @@ describe("QuotaAlertBanner", () => {
     expect(html).not.toContain("Dismiss until the next reset");
   });
 
+  it("says a promised reset is expected and links its source", () => {
+    const promise = { id: "p", driver: "codex", publishedAt: now - HOUR, sourceUrl: "https://x.com/example/status/9" };
+    const html = render(quotaAlerts([account("codex:a@x.dev", 96 * HOUR, 62)], [], now, [promise]));
+    expect(html).toContain("Codex Pro reset expected today: 62% left on m4 will be replaced");
+    expect(html).toContain('href="https://x.com/example/status/9"');
+    expect(html).not.toContain("announced");
+  });
+
   it("names a plan once, without repeating the provider", () => {
     expect(planLabel("Claude", "Claude Ultra Subscription")).toBe("Claude Ultra");
     expect(planLabel("Codex", "Pro")).toBe("Codex Pro");
