@@ -582,6 +582,7 @@ import { workspacePreparationRetryRunIds } from "@specweave-studio/client-runtim
 import { CoordinatorNativeControls } from "./studio/CoordinatorNativeControls";
 import { resolveProviderSkillsForCwd } from "@specweave-studio/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
+import { useChatGitStatus } from "../state/chatGitStatus";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useProjectClone } from "../state/projectClones";
 import { clearAddToMachineJob, readAddToMachineJob } from "../studio/addToMachine";
@@ -4943,7 +4944,7 @@ function useChatViewState(props: ChatViewProps) {
       })
     : null;
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
-  const gitStatusQuery = useEnvironmentQuery(
+  const gitStatusQuery = useChatGitStatus(
     gitStatusCwd === null
       ? null
       : vcsEnvironment.status({
@@ -13829,6 +13830,11 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
     const title = truncate(titleSeed);
+    // Read before the send clears the draft: whether anyone picked this model.
+    const sendModelUnnamed =
+      isLocalDraftThread &&
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+        ?.modelSelectionExplicit !== true;
     const threadCreateModelSelection = createModelSelection(
       ctxSelectedModelSelection.instanceId,
       ctxSelectedModel || activeProjectDefaultModelSelection?.model || DEFAULT_MODEL,
@@ -13918,6 +13924,8 @@ export default function ChatView(props: ChatViewProps) {
                 input: {
                   commandId: commandIdForSend,
                   threadId: threadIdForSend,
+                  // No pick in this composer: a project on Tracks chooses the model.
+                  ...(sendModelUnnamed ? { modelUnnamed: true } : {}),
                   message: {
                     messageId: messageIdForSend,
                     role: "user",

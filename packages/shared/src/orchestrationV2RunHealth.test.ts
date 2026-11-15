@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  activeWorkPhrase,
   classifyRunHealth,
   deriveActiveRunWork,
   RUN_STALL_IDLE_MS,
@@ -32,7 +33,29 @@ describe("deriveActiveRunWork", () => {
       ],
       toMillis: (time: number) => time,
     });
-    expect(work).toEqual({ label: "pnpm test", startedAt: 900 });
+    expect(work).toEqual({ label: "pnpm test", kind: "command", startedAt: 900 });
+  });
+
+  it("says what kind of step is in flight", () => {
+    const kindOf = (overrides: Record<string, unknown>) =>
+      deriveActiveRunWork({
+        activeRunId: "run-1",
+        turnItems: [item(overrides)],
+        toMillis: (time: number) => time,
+      })?.kind;
+    expect(kindOf({})).toBe("command");
+    // A command's title is still a command, whatever the title says.
+    expect(kindOf({ title: "Ran command · cd /Users/anton" })).toBe("command");
+    expect(kindOf({ type: "subagent", prompt: "Review the diff" })).toBe("subagent");
+    expect(kindOf({ type: "dynamic_tool", toolName: "mcp__docs__search" })).toBe("tool");
+    expect(
+      kindOf({
+        type: "dynamic_tool",
+        toolName: "mcp__studio-code__studio_thread_wait",
+        input: { threadId: "worker" },
+      }),
+    ).toBe("thread");
+    expect(kindOf({ type: "dynamic_tool", toolName: "delegate_task" })).toBe("task");
   });
 
   it("is null between steps or without an active run", () => {
@@ -46,6 +69,28 @@ describe("deriveActiveRunWork", () => {
     expect(
       deriveActiveRunWork({ activeRunId: null, turnItems: [item({})], toMillis: (t: number) => t }),
     ).toBeNull();
+  });
+});
+
+describe("activeWorkPhrase", () => {
+  it("says the step in words and never repeats its label", () => {
+    expect(activeWorkPhrase("cd /Users/anton/app && pnpm test", "command")).toBe(
+      "Running a command",
+    );
+    expect(activeWorkPhrase("mcp__docs__search", "tool")).toBe("Using a tool");
+    expect(activeWorkPhrase("Review the diff", "subagent")).toBe("Waiting on a subagent");
+    expect(activeWorkPhrase("another thread", "thread")).toBe("Waiting on another thread");
+    expect(activeWorkPhrase("a delegated task", "task")).toBe("Waiting on a delegated task");
+  });
+
+  it("reads the kind from a fixed label when an older server sends none", () => {
+    expect(activeWorkPhrase("another thread")).toBe("Waiting on another thread");
+    expect(activeWorkPhrase("a delegated task")).toBe("Waiting on a delegated task");
+    expect(activeWorkPhrase("a subagent")).toBe("Waiting on a subagent");
+    expect(activeWorkPhrase("a tool")).toBe("Using a tool");
+    // A command and a tool's title look alike without the kind.
+    expect(activeWorkPhrase("W=/Users/anton/work; cd $W")).toBe("Running a step");
+    expect(activeWorkPhrase(null)).toBe("Running a step");
   });
 });
 
@@ -105,6 +150,7 @@ describe("waits on other threads", () => {
     });
     expect(work).toEqual({
       label: "another thread",
+      kind: "thread",
       startedAt: 900,
       waitThreadId: "release-worker",
     });

@@ -5,7 +5,7 @@ import {
   type SlowRpcAckRequest,
   useSlowRpcAckRequests,
 } from "../rpc/requestLatencyState";
-import { useEnvironments } from "../state/environments";
+import { useNamedEnvironments } from "./settings/useNamedEnvironments";
 import { toastManager } from "./ui/toast";
 
 type ToastId = ReturnType<typeof toastManager.add>;
@@ -53,7 +53,8 @@ function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRe
  */
 export function SlowRpcRequestToastCoordinator() {
   const slowRequests = useSlowRpcAckRequests();
-  const { environments } = useEnvironments();
+  // Named as the sidebar names them ("m4"), not by host label.
+  const { environments } = useNamedEnvironments();
   const labels = useMemo(
     () =>
       new Map<string, string>(
@@ -62,7 +63,9 @@ export function SlowRpcRequestToastCoordinator() {
     [environments],
   );
   /** The warning on screen for each machine, and the requests it lists. */
-  const shownRef = useRef(new Map<string | null, { id: ToastId; requestIds: ReadonlySet<string> }>());
+  const shownRef = useRef(
+    new Map<string | null, { id: ToastId; requestIds: ReadonlySet<string> }>(),
+  );
   /**
    * Requests the user already dismissed a machine's warning for. The warning
    * stays away until that machine has a slow request the user has not seen.

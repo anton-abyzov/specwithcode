@@ -423,6 +423,48 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  it.effect("tells the server when nobody picked the new thread's model", () =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
+      const send = (commandId: string, modelUnnamed: boolean, create: boolean) =>
+        startThreadTurn({
+          commandId: CommandId.make(commandId),
+          threadId: v2ThreadId,
+          message: {
+            messageId: MessageId.make(`message-${commandId}`),
+            role: "user",
+            text: "Fix the typo",
+            attachments: [],
+          },
+          modelUnnamed,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          bootstrap: create
+            ? {
+                createThread: {
+                  projectId: ProjectId.make("project-1"),
+                  title: "Thread",
+                  modelSelection: v2Projection.thread.modelSelection,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  branch: null,
+                  worktreePath: null,
+                  createdAt: "2026-06-20T00:00:00.000Z",
+                },
+              }
+            : { prepareWorktree: { projectCwd: "/workspace/project", baseBranch: "main" } },
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      yield* send("launch-unnamed", true, true);
+      yield* send("launch-picked", false, true);
+      // An existing thread already has its model: the flag is for new threads only.
+      yield* send("launch-existing", true, false);
+
+      expect(launches.map((launch) => launch.modelUnnamed)).toEqual([true, undefined, undefined]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("provisions an origin-based worktree for an existing empty thread", () =>
     Effect.gen(function* () {
       const launches: OrchestrationV2ThreadLaunchInput[] = [];

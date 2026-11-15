@@ -396,7 +396,7 @@ describe("installServiceUpdates", () => {
     return Effect.gen(function* () {
       const changes = yield* Queue.unbounded<DesktopUpdateState>();
       const layer = Layer.mergeAll(
-        DesktopIpc.layer(ipcMain),
+        DesktopIpc.layerTest(ipcMain),
         Layer.succeed(DesktopEnvironmentModule.DesktopEnvironment, {
           homeDirectory: "/synthetic/home",
           platform: "darwin",

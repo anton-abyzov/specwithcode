@@ -46,6 +46,8 @@ async function makeFixture(options: {
   readonly corruptChecksum?: boolean;
   readonly gate?: boolean;
   readonly failArchive?: boolean;
+  /** Cut the first archive download off half way; serve the rest to a Range request. */
+  readonly dropOnce?: boolean;
 }): Promise<Fixture> {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "studio-install-"));
   const home = NodePath.join(root, "home");
@@ -113,9 +115,26 @@ async function makeFixture(options: {
     close: async () => {},
   };
   const server = NodeHttp.createServer((request, response) => {
-    requests.push(request.url ?? "");
+    requests.push(
+      request.headers.range ? `${request.url} ${request.headers.range}` : (request.url ?? ""),
+    );
+    const half = Math.floor(archive.length / 2);
     if (request.url === `/v${VERSION}/SHA256SUMS`) {
       response.end(sums);
+    } else if (request.url === `/v${VERSION}/${archiveName}` && options.dropOnce) {
+      const range = /^bytes=(\d+)-$/.exec(request.headers.range ?? "");
+      if (range) {
+        const start = Number(range[1]);
+        response.writeHead(206, {
+          "Content-Length": archive.length - start,
+          "Content-Range": `bytes ${start}-${archive.length - 1}/${archive.length}`,
+        });
+        response.end(archive.subarray(start));
+      } else {
+        response.writeHead(200, { "Content-Length": archive.length });
+        // Ending the socket after half the body sends a clean FIN, so curl sees a short transfer.
+        response.write(archive.subarray(0, half), () => request.socket.end());
+      }
     } else if (request.url === `/v${VERSION}/${archiveName}` && options.failArchive) {
       response.writeHead(500).end();
     } else if (request.url === `/v${VERSION}/${archiveName}`) {
@@ -462,6 +481,34 @@ describe.skipIf(
       "#!/bin/sh\necho mine\n",
     );
     expect(fixture.requests).toEqual([]);
+  });
+
+  it("resumes a download cut off part way, once, before checking it", async () => {
+    const fixture = await makeFixture({ platform: "linux", arch: hostArch, dropOnce: true });
+    const result = await runInstaller(fixture, ["--no-service"]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stderr).toContain("resuming...");
+    const archive = fixture.requests.filter((url) => url.includes(".tar.gz"));
+    expect(archive).toHaveLength(2);
+    expect(archive[1]).toMatch(/ bytes=[1-9]\d*-$/);
+    expect(
+      NodeFS.existsSync(NodePath.join(fixture.home, `.specwithcode/runtime/versions/${VERSION}`)),
+    ).toBe(true);
+  });
+
+  it("prints a prefilled issue link when it fails, and sends nothing", async () => {
+    const fixture = await makeFixture({ platform: "linux", arch: hostArch, failArchive: true });
+    const result = await runInstaller(fixture, ["--no-service"]);
+    expect(result.code).toBe(1);
+    const line = result.stderr.split("\n").find((text) => text.startsWith("Report this failure: "));
+    expect(line).toBeDefined();
+    const url = new URL(line!.slice("Report this failure: ".length));
+    expect(url.origin + url.pathname).toBe("https://github.com/anton-abyzov/specwithcode/issues/new");
+    expect(url.searchParams.get("title")).toMatch(/^install\.sh: could not download studio-/);
+    expect(url.searchParams.get("body")).toContain(`Version: ${VERSION}`);
+    expect(url.searchParams.get("body")).toContain(`Platform: linux-${hostArch}`);
+    // A 500 is not resumed: the file is empty, so there is nothing to continue.
+    expect(fixture.requests.filter((request) => request.includes(".tar.gz"))).toHaveLength(1);
   });
 
   it("refuses an archive whose checksum does not match and keeps nothing", async () => {

@@ -3211,9 +3211,13 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 .sws-thread-action:hover {
   border-color: var(--input);
 }
-.sws-thread-action:disabled {
+.sws-thread-action:disabled,
+.sws-thread-action[aria-disabled="true"] {
   cursor: not-allowed;
   color: var(--muted-foreground);
+}
+.sws-thread-action[aria-disabled="true"]:hover {
+  border-color: var(--border);
 }
 /* Resolve takes the age's place; the title and meta end before it, not under it. On
    hover the meta line's end is kept clear by a spacer inside the line, so the line's

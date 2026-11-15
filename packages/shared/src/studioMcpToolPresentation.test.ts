@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   STUDIO_MCP_TOOL_NAMES,
@@ -119,5 +119,28 @@ describe("resolveStudioMcpToolPresentation", () => {
   it("keeps unknown MCP tools on the generic renderer path", () => {
     expect(resolveStudioMcpToolPresentation("mcp__github__search_issues")).toBeNull();
     expect(resolveStudioMcpToolPresentation("studio-code.not_a_real_tool")).toBeNull();
+  });
+});
+
+describe("tool name resolution cache", () => {
+  it("parses a repeated name once and keeps long labels out of the cache", () => {
+    const names = ["mcp__studio-code__html_render", "studio-code.delegate_task", "Bash"];
+    const expected = names.map((name) => resolveStudioMcpToolPresentation(name));
+    const replace = vi.spyOn(String.prototype, "replace");
+    try {
+      for (let tick = 0; tick < 50; tick += 1) {
+        expect(names.map((name) => resolveStudioMcpToolPresentation(name))).toEqual(expected);
+      }
+      expect(replace).not.toHaveBeenCalled();
+
+      const longLabel = `mcp__studio-code__html_render ${"x".repeat(300)}`;
+      resolveStudioMcpToolPresentation(longLabel);
+      const afterFirstLong = replace.mock.calls.length;
+      // Not kept, so the second lookup parses the label again.
+      resolveStudioMcpToolPresentation(longLabel);
+      expect(replace.mock.calls.length).toBeGreaterThan(afterFirstLong);
+    } finally {
+      replace.mockRestore();
+    }
   });
 });

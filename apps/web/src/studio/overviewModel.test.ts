@@ -413,7 +413,9 @@ describe("native shells and explicit instance selection", () => {
     expect(stuck?.state).toBe("No activity for 30m");
     const tests = views.find((s) => s.thread.id === "tests");
     expect(tests?.attention).toBeNull();
-    expect(tests?.state).toBe("Waiting on pnpm test · 12m");
+    // A server older than the step's kind: still words, never the command.
+    expect(tests?.state).toBe("Running a step · 12m");
+    expect(tests?.stateDetail).toBe("pnpm test");
   });
   it("lists a run as stalled only after half an hour with nothing in flight", () => {
     const now = Date.parse("2026-10-15T12:00:00.000Z");
@@ -437,7 +439,11 @@ describe("native shells and explicit instance selection", () => {
           id: "quiet-build" as never,
           runtime: running,
           updatedAt: "2026-10-15T11:00:00.000Z",
-          activeWork: { label: "pnpm build", startedAt: "2026-10-15T10:55:00.000Z" },
+          activeWork: {
+            label: "cd /Users/anton/app && pnpm build",
+            kind: "command",
+            startedAt: "2026-10-15T10:55:00.000Z",
+          },
         }),
         shell({
           id: "waits-on-worker" as never,
@@ -460,10 +466,15 @@ describe("native shells and explicit instance selection", () => {
     // Its own command keeps the long-command allowance.
     expect(byId("quiet-build")).toMatchObject({
       attention: null,
-      state: "Waiting on pnpm build · 1h 5m",
+      state: "Running a command · 1h 5m",
+      stateDetail: "cd /Users/anton/app && pnpm build",
     });
     // Another thread's work is that thread's progress, not this one stalling.
-    expect(byId("waits-on-worker")?.attention).toBeNull();
+    expect(byId("waits-on-worker")).toMatchObject({
+      attention: null,
+      state: "Waiting on another thread · 3h 0m",
+      stateDetail: null,
+    });
   });
   it("lists a worker held for hours on a request as needing you, never as stalled", () => {
     const now = Date.parse("2026-10-15T12:00:00.000Z");

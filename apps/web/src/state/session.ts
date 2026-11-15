@@ -147,6 +147,33 @@ export function useEnvironmentsWithScope(
   return useAtomValue(permitted);
 }
 
+/**
+ * Subscribe to this browser's access to one scope on each listed environment. Unlike
+ * `useEnvironmentsWithScope`, a grant that has not loaded reads as "unknown", not as denied.
+ */
+export function useEnvironmentsScopeAccess(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  scope: AuthEnvironmentScope,
+): ReadonlyMap<EnvironmentId, EnvironmentScopeAccess> {
+  // Keyed on the IDs, so a list rebuilt with the same machines keeps one subscription.
+  const key = environmentIds.join("\n");
+  const access = useMemo(
+    () =>
+      Atom.make((get) => {
+        const byId = new Map<EnvironmentId, EnvironmentScopeAccess>();
+        for (const environmentId of key === "" ? [] : (key.split("\n") as EnvironmentId[])) {
+          byId.set(
+            environmentId,
+            environmentScopeAccess(get(environmentSession.sessionStateAtom(environmentId)), scope),
+          );
+        }
+        return byId;
+      }),
+    [key, scope],
+  );
+  return useAtomValue(access);
+}
+
 export function readEnvironmentScope(
   environmentId: EnvironmentId,
   scope: AuthEnvironmentScope,

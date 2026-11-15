@@ -2274,6 +2274,19 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
 });
 export type OrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
 
+/**
+ * What a running turn's newest unfinished step is: a shell command, a tool, a
+ * subagent, a wait on another thread or on a delegated task.
+ */
+export const OrchestrationV2ActiveWorkKind = Schema.Literals([
+  "command",
+  "tool",
+  "subagent",
+  "thread",
+  "task",
+]);
+export type OrchestrationV2ActiveWorkKind = typeof OrchestrationV2ActiveWorkKind.Type;
+
 export const OrchestrationV2ShellThreadStatus = Schema.Union([
   Schema.Literal("idle"),
   OrchestrationV2RunStatus,
@@ -2374,6 +2387,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
         startedAt: Schema.DateTimeUtc,
         /** The thread a wait is on, so the UI can link it instead of calling it stalled. */
         waitThreadId: Schema.optional(Schema.String),
+        /** What kind of step it is, so a summary can say it in words; absent from older servers. */
+        kind: Schema.optional(OrchestrationV2ActiveWorkKind),
       }),
     ),
   ),
@@ -2975,6 +2990,7 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
         label: Schema.String,
         startedAt: Schema.DateTimeUtcFromString,
         waitThreadId: Schema.optional(Schema.String),
+        kind: Schema.optional(OrchestrationV2ActiveWorkKind),
       }),
     ),
   ),
@@ -3946,6 +3962,11 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   title: TrimmedNonEmptyString,
   generateTitle: Schema.optional(Schema.Boolean),
   modelSelection: ModelSelection,
+  /**
+   * Nobody picked `modelSelection`: it is only what the composer showed. A
+   * project on Tracks then starts the thread on its Daily or Complex track.
+   */
+  modelUnnamed: Schema.optional(Schema.Boolean),
   /** The Auto routing decision behind `modelSelection`, kept on the thread. */
   routing: Schema.optional(TaskRoutingDecision),
   /** The model the thread stands in for: its launch moved off it because it had no room. */

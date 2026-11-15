@@ -244,6 +244,26 @@ in Git, such as a `.env` file or signing secrets, go through the file transfer
 tool, which asks you first. The build thread reports back with the result and
 where the built app or log is.
 
+## When agents run out of memory
+
+On a worker installed as a background service, SpecWithCode keeps the server
+and its tunnel apart from the work agents start. Agent commands (typechecks,
+builds, tests, terminals) share one memory limit with no swap of their own; it
+follows what the machine has spare and never drops below the larger of 4 GB
+and a quarter of the machine's memory. When agent work passes it, the system
+ends the largest agent process within seconds, and the thread that started it
+gets a message saying what was ended and why. The server, the tunnel and apps
+you opened from the app are not limited, so the worker keeps answering.
+
+A service installed by an earlier version picks this up on its next update:
+the server adds `Delegate=yes` to its systemd unit and reloads the user
+manager, which restarts nothing. Without cgroup v2 or delegation the worker
+runs as before and says so once in its service log. To turn the limit off, set
+`STUDIO_AGENT_MEMORY_LIMIT=off` in the service's environment.
+
+If a thread reports that its command was ended, run fewer heavy checks at the
+same time on that worker.
+
 ## Costs
 
 A worker idles at well under one CPU and a few hundred MB of memory; the
