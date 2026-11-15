@@ -13,7 +13,15 @@ import {
 } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { LaptopIcon, WifiOffIcon } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { useEnvironments } from "../../../state/environments";
 import { useMachineIdentities } from "../../../studio/machineIdentity";
@@ -46,18 +54,37 @@ export interface BoardThread {
 
 /**
  * One read answers for 100 threads, and a long-lived project has more, so the
- * board reads in pages: per machine, the threads still at work first, then the
- * newest. Past this many pages a machine's oldest threads are left unread and
- * the board stops claiming a card is free.
+ * board reads in pages. A thread's page comes from its id, not its place in
+ * the list, so a thread that starts, settles or moves up changes one page's
+ * read and leaves the others alone.
  */
-export const BOARD_THREAD_PAGES = 5;
+export const BOARD_THREAD_PAGES = 8;
+/** How full a page is planned, so ordinary growth does not overflow it. */
+const PAGE_FILL = 60;
 
 interface BoardThreadPage {
   readonly key: string;
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly threadIds: ReadonlyArray<ThreadId>;
+  /** The ids joined: what the read is for. */
+  readonly idsKey: string;
   readonly activityKey: string;
+}
+
+function idHash(id: string): number {
+  let hash = 0;
+  for (let index = 0; index < id.length; index += 1)
+    hash = (Math.imul(hash, 31) + id.charCodeAt(index)) >>> 0;
+  return hash;
+}
+
+/** 1 page up to 100 threads, then 2, 4 or 8: the count changes rarely, so pages hold still. */
+function pageCount(threads: number): number {
+  if (threads <= THREAD_INCREMENT_PROGRESS_MAX_THREADS) return 1;
+  let pages = 2;
+  while (pages < BOARD_THREAD_PAGES && threads / pages > PAGE_FILL) pages *= 2;
+  return pages;
 }
 
 /** The pages to read, and whether some thread fits in none of them. */
@@ -69,43 +96,62 @@ export function boardThreadPages(threads: ReadonlyArray<EnvironmentThreadShell>)
   for (const thread of threads) {
     if (thread.archivedAt !== null) continue;
     const key = `${thread.environmentId}\u0000${thread.projectId}`;
-    byMachine.set(key, [...(byMachine.get(key) ?? []), thread]);
+    const held = byMachine.get(key);
+    if (held) held.push(thread);
+    else byMachine.set(key, [thread]);
   }
   const pages: BoardThreadPage[] = [];
   let cut = false;
   for (const [key, held] of byMachine) {
-    const ordered = held.toSorted(
-      (left, right) =>
-        Number(threadTone(left) === "resolved") - Number(threadTone(right) === "resolved") ||
-        right.updatedAt.localeCompare(left.updatedAt),
-    );
-    const limit = BOARD_THREAD_PAGES * THREAD_INCREMENT_PROGRESS_MAX_THREADS;
-    if (ordered.length > limit) cut = true;
-    for (let start = 0; start < Math.min(ordered.length, limit); ) {
-      const page = ordered.slice(start, start + THREAD_INCREMENT_PROGRESS_MAX_THREADS);
+    const count = pageCount(held.length);
+    const buckets: EnvironmentThreadShell[][] = Array.from({ length: count }, () => []);
+    for (const thread of held) buckets[count === 1 ? 0 : idHash(thread.id) % count]!.push(thread);
+    buckets.forEach((bucket, index) => {
+      if (bucket.length === 0) return;
+      let page = bucket;
+      if (bucket.length > THREAD_INCREMENT_PROGRESS_MAX_THREADS) {
+        // Too many for one read: the threads still at work stay, then the newest.
+        cut = true;
+        page = bucket
+          .map((thread) => ({ thread, resolved: threadTone(thread) === "resolved" }))
+          .toSorted(
+            (left, right) =>
+              Number(left.resolved) - Number(right.resolved) ||
+              right.thread.updatedAt.localeCompare(left.thread.updatedAt),
+          )
+          .slice(0, THREAD_INCREMENT_PROGRESS_MAX_THREADS)
+          .map((entry) => entry.thread);
+      }
+      const threadIds = page.map((thread) => thread.id).toSorted();
       pages.push({
-        key: `${key}\u0000${start}`,
+        key: `${key}\u0000${count}\u0000${index}`,
         environmentId: page[0]!.environmentId,
         projectId: page[0]!.projectId,
-        threadIds: page.map((thread) => thread.id),
+        threadIds,
+        idsKey: threadIds.join(","),
         activityKey: page.reduce(
           (latest, thread) => (thread.updatedAt > latest ? thread.updatedAt : latest),
           "",
         ),
       });
-      start += THREAD_INCREMENT_PROGRESS_MAX_THREADS;
-    }
+    });
   }
   return { pages, cut };
 }
 
+interface BoardPageState {
+  /** The ids the state answers for; a page whose ids changed is not answered yet. */
+  readonly idsKey: string;
+  readonly state: ThreadIncrementState;
+}
+
 const BoardThreadPageLoader = memo(function BoardThreadPageLoader(props: {
   page: BoardThreadPage;
-  onChange: (key: string, state: ThreadIncrementState) => void;
+  onChange: (key: string, idsKey: string, state: ThreadIncrementState) => void;
 }) {
   const { page, onChange } = props;
   const state = useThreadIncrementState(page);
-  useEffect(() => onChange(page.key, state), [onChange, page.key, state]);
+  useEffect(() => onChange(page.key, page.idsKey, state), [onChange, page.key, page.idsKey, state]);
   return null;
 });
 
@@ -129,27 +175,60 @@ export function useBoardThreads(input: {
   readonly loaders: ReactNode;
 } {
   const { threads, machineLabels } = input;
-  const { pages, cut } = useMemo(() => boardThreadPages(threads), [threads]);
-  const [states, setStates] = useState(() => new Map<string, ThreadIncrementState>());
+  // The thread list is a new array on every update of any thread. A page whose
+  // threads and newest change are the same keeps its object, so its loader rests.
+  const held = useRef(new Map<string, BoardThreadPage>());
+  const { pages, cut } = useMemo(() => {
+    const next = boardThreadPages(threads);
+    const kept = new Map<string, BoardThreadPage>();
+    const pages = next.pages.map((page) => {
+      const before = held.current.get(page.key);
+      const same =
+        before !== undefined &&
+        before.idsKey === page.idsKey &&
+        before.activityKey === page.activityKey;
+      const entry = same ? before : page;
+      kept.set(page.key, entry);
+      return entry;
+    });
+    held.current = kept;
+    return { pages, cut: next.cut };
+  }, [threads]);
+  const pagesKey = pages.map((page) => page.key).join("\u0001");
+  const [states, setStates] = useState(() => new Map<string, BoardPageState>());
   const onChange = useCallback(
-    (key: string, state: ThreadIncrementState) =>
-      setStates((current) =>
-        current.get(key) === state ? current : new Map(current).set(key, state),
-      ),
+    (key: string, idsKey: string, state: ThreadIncrementState) =>
+      setStates((current) => {
+        const before = current.get(key);
+        return before?.state === state && before.idsKey === idsKey
+          ? current
+          : new Map(current).set(key, { idsKey, state });
+      }),
     [],
   );
-  const loaders = useMemo(
-    () =>
-      pages.map((page) => (
-        <BoardThreadPageLoader key={page.key} page={page} onChange={onChange} />
-      )),
-    [onChange, pages],
-  );
-  const answered = !cut && pages.every((page) => states.get(page.key)?.answered === true);
+  // Pages that no longer exist (the project crossed a page-count step) are forgotten.
+  useEffect(() => {
+    const live = new Set(pagesKey.split("\u0001"));
+    setStates((current) =>
+      [...current.keys()].every((key) => live.has(key))
+        ? current
+        : new Map([...current].filter(([key]) => live.has(key))),
+    );
+  }, [pagesKey]);
+  const loaders = pages.map((page) => (
+    <BoardThreadPageLoader key={page.key} page={page} onChange={onChange} />
+  ));
+  const answered =
+    !cut &&
+    pages.every((page) => {
+      const entry = states.get(page.key);
+      return entry?.idsKey === page.idsKey && entry.state.answered;
+    });
+  // A page being read again keeps its last answer for the threads it still holds.
   const links = useMemo(() => {
     const result = new Map<string, string>();
     for (const page of pages)
-      for (const [threadId, entry] of states.get(page.key)?.progress ?? [])
+      for (const [threadId, entry] of states.get(page.key)?.state.progress ?? [])
         result.set(`${page.environmentId}\u0000${threadId}`, entry.incrementId);
     return result;
   }, [pages, states]);

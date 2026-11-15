@@ -128,30 +128,43 @@ describe("useBoardThreads", () => {
     expect(seen.answered).toBe(false);
   });
 
-  it("reads a long project in pages, the threads at work first", async () => {
-    const threads = [
+  it("reads a long project in pages that hold still when one thread changes", async () => {
+    const make = (extra: EnvironmentThreadShell[] = []) => [
       ...Array.from({ length: 150 }, (_, index) =>
         thread(`old${index}`, "host", { settledOverride: "settled" }),
       ),
-      thread("busy", "host", { runtime: { status: "running" }, updatedAt: "2026-11-01T00:00:00Z" }),
+      thread("busy", "host", { runtime: { status: "running" } }),
+      ...extra,
     ];
     runtime.links = new Map([
       ["host:busy", "0002-build"],
       ["host:old149", "0001-plan"],
     ]);
-    await act(async () => root.render(<Probe threads={threads} />));
-    expect(runtime.reads.map((ids) => ids.length)).toEqual([100, 51]);
-    expect(runtime.reads[0]![0]).toBe("busy");
+    await act(async () => root.render(<Probe threads={make()} />));
+    // 151 threads: four pages, none past the read's limit, every thread in one.
+    expect(runtime.reads).toHaveLength(4);
+    expect(runtime.reads.every((ids) => ids.length <= 100)).toBe(true);
+    expect(runtime.reads.flat()).toHaveLength(151);
     expect([...seen.byIncrement.keys()].toSorted()).toEqual(["0001-plan", "0002-build"]);
+    expect(seen.answered).toBe(true);
+
+    // The same threads in a new array: nothing is read again.
+    await act(async () => root.render(<Probe threads={make()} />));
+    expect(runtime.reads).toHaveLength(4);
+    // A new thread changes one page only.
+    await act(async () => root.render(<Probe threads={make([thread("new", "host")])} />));
+    expect(runtime.reads).toHaveLength(5);
+    expect(runtime.reads[4]).toContain("new");
     expect(seen.answered).toBe(true);
   });
 
   it("stops calling cards free when a machine has more threads than it reads", async () => {
-    const threads = Array.from({ length: BOARD_THREAD_PAGES * 100 + 1 }, (_, index) =>
+    const threads = Array.from({ length: BOARD_THREAD_PAGES * 100 + 200 }, (_, index) =>
       thread(`t${index}`, "host"),
     );
     await act(async () => root.render(<Probe threads={threads} />));
     expect(runtime.reads).toHaveLength(BOARD_THREAD_PAGES);
+    expect(runtime.reads.every((ids) => ids.length <= 100)).toBe(true);
     expect(seen.answered).toBe(false);
   });
 });
