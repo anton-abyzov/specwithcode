@@ -212,7 +212,8 @@ describe("quotaAlerts", () => {
     expect(alert).toMatchObject({
       key: "codex:pro@example.com|expected",
       kind: "expectedReset",
-      periodEnd: now + 22 * HOUR,
+      periodEnd: now + 4 * DAY,
+      expectedUntil: now + 22 * HOUR,
       windowId: "secondary",
       windowResetsAt: now + 4 * DAY,
       sourceUrl: "https://x.com/example/status/9",
@@ -220,6 +221,13 @@ describe("quotaAlerts", () => {
     expect(describeQuotaAlert(alert!, "Codex Pro", now)).toBe(
       "Codex Pro reset expected today: 62% left on m4 will be replaced",
     );
+    // A second post about the same reset is the same warning: the dismissal holds.
+    const reposted = quotaAlerts([account({ windows: weekly() })], [], now, [
+      promise,
+      { ...promise, id: "p2", publishedAt: now - HOUR },
+    ]);
+    expect(reposted).toHaveLength(1);
+    expect(visibleQuotaAlerts(reposted, { [alert!.key]: alert!.periodEnd })).toEqual([]);
     // Another provider's promise, an old one, and little left: nothing.
     expect(quotaAlerts([account({ windows: weekly() })], [], now, [{ ...promise, driver: "claudeAgent" }])).toEqual([]);
     expect(quotaAlerts([account({ windows: weekly() })], [], now, [{ ...promise, publishedAt: now - 25 * HOUR }])).toEqual([]);

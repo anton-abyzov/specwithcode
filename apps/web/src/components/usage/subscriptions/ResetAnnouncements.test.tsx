@@ -62,5 +62,7 @@ describe("ResetAnnouncements", () => {
     expect(announcementDriver("codex")).toBe("codex");
     expect(announcementDriver("Claude")).toBe("claudeAgent");
     expect(announcementDriver("unknown")).toBeNull();
+    expect(announcementDriver("__proto__")).toBeNull();
+    expect(announcementDriver("toString")).toBeNull();
   });
 });

@@ -33,8 +33,7 @@ describe("reset announcement feeds", () => {
         item(),
         item({ id: "b", kind: "banked-reset", sourceUrl: "https://x.com/example/status/2" }),
         item({ id: "c", kind: "boost", sourceUrl: "https://x.com/example/status/3" }),
-      ),
-    );
+      ), now);
     expect(parsed.map((entry) => entry.kind)).toEqual(["full_reset", "banked_grant", "limit_change"]);
     expect(parsed[0]).toEqual({
       id: "codex-reset-2026-11-14",
@@ -56,30 +55,34 @@ describe("reset announcement feeds", () => {
           item({ sourceUrl: "http://x.com/example/status/1" }),
           item({ publishedAt: "soon" }),
           item({ headline: "  " }),
+          // A feed's own words must never find a prototype member.
+          item({ kind: "toString" }),
+          item({ kind: "__proto__" }),
+          item({ sourceUrl: `https://x.com/${"a".repeat(3000)}` }),
+          // Dated tomorrow: a wrong clock or a forgery.
+          item({ publishedAt: "2026-11-15T21:00:00.000Z" }),
           null,
           "text",
-        ),
-      ),
+        ), now),
     ).toEqual([]);
-    expect(parseConfirmedFeed("<html>")).toEqual([]);
-    expect(parseConfirmedFeed(JSON.stringify({ items: "no" }))).toEqual([]);
-    expect(parseConfirmedFeed(feed(item({ headline: "x".repeat(900) })))[0]?.headline).toHaveLength(240);
+    expect(parseConfirmedFeed("<html>", now)).toEqual([]);
+    expect(parseConfirmedFeed(JSON.stringify({ items: "no" }), now)).toEqual([]);
+    expect(parseConfirmedFeed(feed(item({ headline: "x".repeat(900) })), now)[0]?.headline).toHaveLength(240);
   });
 
   it("reads a promise only from the promised feed", () => {
     const promise = item({ kind: "reset-untyped", headline: "A reset is promised by end of day" });
-    expect(parsePromisedFeed(feed(promise, item({ kind: "policy" }))).map((entry) => entry.kind)).toEqual([
+    expect(parsePromisedFeed(feed(promise, item({ kind: "policy" })), now).map((entry) => entry.kind)).toEqual([
       "expected_reset",
     ]);
-    expect(parseConfirmedFeed(feed(promise))).toEqual([]);
+    expect(parseConfirmedFeed(feed(promise), now)).toEqual([]);
   });
 
   it("keeps each post once, a confirmed event replacing its promise, newest first", () => {
-    const [promise] = parsePromisedFeed(feed(item({ kind: "reset-untyped" })));
-    const [confirmed] = parseConfirmedFeed(feed(item()));
+    const [promise] = parsePromisedFeed(feed(item({ kind: "reset-untyped" })), now);
+    const [confirmed] = parseConfirmedFeed(feed(item()), now);
     const [older] = parseConfirmedFeed(
-      feed(item({ id: "old", sourceUrl: "https://x.com/example/status/0", publishedAt: "2026-11-01T00:00:00.000Z" })),
-    );
+      feed(item({ id: "old", sourceUrl: "https://x.com/example/status/0", publishedAt: "2026-11-01T00:00:00.000Z" })), now);
     const merged = mergeAnnouncements([promise!, older!], [confirmed!, promise!], now);
     expect(merged.map((entry) => [entry.id, entry.kind])).toEqual([
       ["codex-reset-2026-11-14", "full_reset"],
@@ -137,6 +140,16 @@ describe("reset announcement feeds", () => {
     expect(seen).toEqual([null, '"a"']);
     const failing = (async () => new Response("no", { status: 500 })) as typeof globalThis.fetch;
     expect(await fetchFeed("https://feed.example/alert.json", null, failing)).toEqual({ state: "failed" });
+    // A redirect is refused, not followed, and an oversized body is not read whole.
+    let redirectMode: RequestInit["redirect"];
+    const redirecting = (async (_url: unknown, init?: RequestInit) => {
+      redirectMode = init?.redirect;
+      return new Response(null, { status: 302, headers: { location: "http://169.254.169.254/" } });
+    }) as typeof globalThis.fetch;
+    expect(await fetchFeed("https://feed.example/alert.json", null, redirecting)).toEqual({ state: "failed" });
+    expect(redirectMode).toBe("manual");
+    const huge = (async () => new Response("x".repeat(1_200_000), { status: 200 })) as typeof globalThis.fetch;
+    expect(await fetchFeed("https://feed.example/alert.json", null, huge)).toEqual({ state: "failed" });
     const throwing = (async () => {
       throw new Error("offline");
     }) as typeof globalThis.fetch;

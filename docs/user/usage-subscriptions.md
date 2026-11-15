@@ -53,7 +53,7 @@ added this view; earlier resets are not shown.
 
 ## Reset announcements
 
-Under the live rows, **Reset announcements** lists posts in which a provider reset limits for everyone, granted a banked reset, changed a limit or promised a reset: the date, the provider, the kind and a link to the post. Your main machine reads them every half hour from a public feed (airesets.dev) and keeps each post once. The request carries nothing about you. A confirmed post about a provider you have a subscription with raises one notification while it is under two days old.
+Under the live rows, **Reset announcements** lists posts in which a provider reset limits for everyone, granted a banked reset, changed a limit or promised a reset: the date, the provider, the kind and a link to the post. Your main machine reads them every half hour from a public feed (airesets.dev) and keeps each post once. The request carries nothing about you. A confirmed post about a provider you have a subscription with raises one notification while it is under two days old, under the same conditions as the other warnings: the warnings are on, notifications are connected and the app is not in front. One machine sends it.
 
 The list says when the feed's newest event is more than 14 days old, since the feed may have stopped. Turn the feed off under Settings > Models, "Read reset announcements"; the list then keeps what was already read.
 

@@ -340,7 +340,7 @@ export function QuotaAlertBanner({
               data-quota-boost-start=""
               title={`New worker threads start on ${labelOf(boostable)} until ${untilLabel(
                 boostable.kind === "expectedReset"
-                  ? boostable.periodEnd
+                  ? (boostable.expectedUntil ?? boostable.periodEnd)
                   : (boostable.windowResetsAt ?? boostable.periodEnd),
                 now,
               )}. Open threads and the coordinator keep their model.`}
@@ -584,6 +584,7 @@ function LiveQuotaAlerts({
         announcement.kind === "expected_reset" ||
         driver === null ||
         !drivers.has(driver) ||
+        published > now ||
         now - published > ANNOUNCEMENT_NEWS_MS ||
         String(connected[0]) !== String(here)
       ) {
@@ -631,7 +632,7 @@ function LiveQuotaAlerts({
               // reset ends a day after its post, or sooner when the window starts over.
               until:
                 alert.kind === "expectedReset"
-                  ? alert.periodEnd
+                  ? (alert.expectedUntil ?? alert.periodEnd)
                   : (alert.windowResetsAt ?? alert.periodEnd),
               ...(alert.kind === "expectedReset" && alert.windowResetsAt !== undefined
                 ? { resetsAtStart: alert.windowResetsAt }

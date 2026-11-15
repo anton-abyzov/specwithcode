@@ -128,6 +128,8 @@ export interface QuotaAlert {
   readonly windowResetsAt?: number;
   /** When the plan renews, for a renewal alert's sentence. */
   readonly renewsAt?: number;
+  /** When an expected reset stops being expected: a day after its post. */
+  readonly expectedUntil?: number;
   /** The post behind an expected reset. */
   readonly sourceUrl?: string;
   /** The window's title; absent for a banked reset. */
@@ -211,8 +213,11 @@ export function quotaAlerts(
       alerts.push({
         ...base,
         key: `${accountKey}|expected`,
-        periodEnd: promise.publishedAt + EXPECTED_RESET_WINDOW_MS,
+        // The period is the window's own: a second post about the same reset is the same
+        // warning, so a dismissal or a notification holds across reposts.
+        periodEnd: replaced.resetsAt,
         kind: "expectedReset",
+        expectedUntil: promise.publishedAt + EXPECTED_RESET_WINDOW_MS,
         windowId: replaced.id,
         windowResetsAt: replaced.resetsAt,
         windowTitle: replaced.title,

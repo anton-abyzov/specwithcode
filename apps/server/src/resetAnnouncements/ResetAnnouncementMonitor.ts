@@ -74,17 +74,23 @@ export const makeWith = (fetcher: typeof globalThis.fetch) =>
         Effect.map(decodeAnnouncementFile),
         Effect.orElseSucceed(() => EMPTY_ANNOUNCEMENT_FILE),
       );
-      yield* Ref.set(file, fromDisk);
-      return fromDisk;
+      // Two first readers may both get here; whoever stored first stands, so a slow file
+      // read never replaces what a check has merged since.
+      return yield* Ref.updateAndGet(file, (stored) => stored ?? fromDisk).pipe(
+        Effect.map((stored) => stored ?? fromDisk),
+      );
     });
 
-    const enabled = settings.getSettings.pipe(
+    const setting = settings.getSettings.pipe(
       Effect.map((value) => value.resetAnnouncementsEnabled !== false),
-      Effect.orElseSucceed(() => true),
     );
+    /** For the list: unreadable settings do not claim the person turned it off. */
+    const enabled = setting.pipe(Effect.orElseSucceed(() => true));
+    /** For fetching: when the switch cannot be read, nothing is requested. */
+    const mayFetch = setting.pipe(Effect.orElseSucceed(() => false));
 
     const check = Effect.gen(function* () {
-      if (!(yield* enabled)) return;
+      if (!(yield* mayFetch)) return;
       const before = yield* current;
       const [confirmed, promised] = yield* Effect.all(
         [

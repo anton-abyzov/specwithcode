@@ -18,21 +18,20 @@ export interface ResetAnnouncementsView {
 }
 
 /** The feed's name for a provider, by the driver whose accounts it concerns. */
-const DRIVER_OF_PROVIDER: Readonly<Record<string, string>> = {
-  codex: "codex",
-  openai: "codex",
-  claude: "claudeAgent",
-  anthropic: "claudeAgent",
-  grok: "grok",
-  cursor: "cursor",
-  muse: "muse",
-  meta: "muse",
-  gemini: "antigravity",
-  google: "antigravity",
-};
+const DRIVER_OF_PROVIDER: ReadonlyMap<string, string> = new Map([
+  ["codex", "codex"],
+  ["openai", "codex"],
+  ["claude", "claudeAgent"],
+  ["anthropic", "claudeAgent"],
+  ["grok", "grok"],
+  ["cursor", "cursor"],
+  ["muse", "muse"],
+  ["meta", "muse"],
+]);
 
+/** Null for a provider the app has no subscription driver for: it is listed, never matched. */
 export const announcementDriver = (provider: string): string | null =>
-  DRIVER_OF_PROVIDER[provider.toLowerCase()] ?? null;
+  DRIVER_OF_PROVIDER.get(provider.toLowerCase()) ?? null;
 
 /**
  * Reset announcements as the main machine last read them. One machine reads
