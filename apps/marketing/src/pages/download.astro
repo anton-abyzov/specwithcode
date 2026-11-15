@@ -186,7 +186,7 @@ const linuxBuilds = [
 </Layout>
 
 <script>
-  import { fetchLatestRelease } from "../lib/releases";
+  import { fetchLatestRelease, RELEASES_URL } from "../lib/releases";
 
   const versionLabel = document.getElementById("version-label")!;
   const changelogLink = document.getElementById("changelog-link") as HTMLAnchorElement;

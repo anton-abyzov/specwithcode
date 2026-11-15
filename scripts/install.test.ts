@@ -132,7 +132,8 @@ async function makeFixture(options: {
         response.end(archive.subarray(start));
       } else {
         response.writeHead(200, { "Content-Length": archive.length });
-        response.write(archive.subarray(0, half), () => setTimeout(() => request.socket.destroy(), 50));
+        // Ending the socket after half the body sends a clean FIN, so curl sees a short transfer.
+        response.write(archive.subarray(0, half), () => request.socket.end());
       }
     } else if (request.url === `/v${VERSION}/${archiveName}` && options.failArchive) {
       response.writeHead(500).end();
