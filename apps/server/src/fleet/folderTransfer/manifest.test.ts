@@ -358,3 +358,38 @@ it("counts existing external folders and labels missing registrations without pr
   git(main, "worktree", "add", "-q", "-b", "added", added);
   expect((await scanFolder(main)).repositories[0]?.worktrees).toHaveLength(2);
 });
+
+it("counts commits a clone from origin would miss: other remotes and tags do not cover them", async () => {
+  const base = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "local-only-"));
+  try {
+    const origin = NodePath.join(base, "origin.git");
+    const backup = NodePath.join(base, "backup.git");
+    git(base, "init", "-q", "--bare", origin);
+    git(base, "init", "-q", "--bare", backup);
+    const repo = NodePath.join(base, "repo");
+    NodeFS.mkdirSync(repo);
+    git(repo, "init", "-q");
+    git(repo, "remote", "add", "origin", origin);
+    git(repo, "remote", "add", "backup", backup);
+    NodeFS.writeFileSync(NodePath.join(repo, "a.txt"), "a\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "pushed");
+    git(repo, "push", "-q", "origin", "main");
+    const count = async () => (await scanFolder(repo)).repositories[0]?.localOnlyCommits;
+    expect(await count()).toBe(0);
+    // Pushed only to another remote: a clone from origin still lacks it.
+    git(repo, "checkout", "-q", "-b", "side");
+    NodeFS.writeFileSync(NodePath.join(repo, "b.txt"), "b\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "backup only");
+    git(repo, "push", "-q", "backup", "side");
+    expect(await count()).toBe(1);
+    // Kept only by a tag once the branch is gone.
+    git(repo, "tag", "kept");
+    git(repo, "checkout", "-q", "main");
+    git(repo, "branch", "-q", "-D", "side");
+    expect(await count()).toBe(1);
+  } finally {
+    NodeFS.rmSync(base, { recursive: true, force: true });
+  }
+});

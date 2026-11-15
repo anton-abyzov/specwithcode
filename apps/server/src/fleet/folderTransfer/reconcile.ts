@@ -901,7 +901,10 @@ export function pullRequirements(plan: Plan): {
   return { files, directories };
 }
 
-/** Commits or stashes a clone from origin would leave on the source. */
+/**
+ * Commits or stashes a clone from origin would leave on the source. An older source does
+ * not count its commits, so its repositories are copied whole.
+ */
 function hasLocalOnlyWork(source: RepositoryInfo): boolean {
-  return (source.localOnlyCommits ?? 0) > 0 || source.stashCount > 0;
+  return (source.localOnlyCommits ?? 1) > 0 || source.stashCount > 0;
 }

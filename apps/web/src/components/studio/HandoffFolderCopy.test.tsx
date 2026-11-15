@@ -218,7 +218,7 @@ it("keeps Details closed for the Download from GitHub default and opens it for a
     )!;
   expect(details().getAttribute("aria-expanded")).toBe("false");
   expect(document.body.textContent).toContain(
-    "repositories new there download from GitHub, and uncommitted and ignored files come from M4",
+    "repositories new there and fully pushed download from GitHub or their Git host, and uncommitted and ignored files come from M4",
   );
   act(() => root.unmount());
   root = createRoot(container);

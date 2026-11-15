@@ -61,8 +61,8 @@ export interface RepositoryInfo {
   readonly stash: string | null;
   readonly stashCount: number;
   /**
-   * Commits on local branches or HEAD that no remote-tracking branch has, as of the last
-   * fetch: work a clone from origin would leave behind. Absent from older sources.
+   * Commits on HEAD, local branches or tags that no origin remote-tracking branch has, as of
+   * the last fetch: work a clone from origin would leave behind. Absent from older sources.
    */
   readonly localOnlyCommits?: number;
   /** Canonical origin without credentials, or null without one. */
@@ -243,11 +243,14 @@ async function readRepository(
   const origin = await runGit(absolute, ["config", "--get", "remote.origin.url"], {
     allowFailure: true,
   });
+  // Only origin counts: a clone fetches nothing from other remotes. Skipped without an origin.
   const localOnly =
-    kind === "main" && head !== null
-      ? await runGit(absolute, ["rev-list", "--count", "HEAD", "--branches", "--not", "--remotes"], {
-          allowFailure: true,
-        })
+    kind === "main" && head !== null && origin.code === 0
+      ? await runGit(
+          absolute,
+          ["rev-list", "--count", "HEAD", "--branches", "--tags", "--not", "--remotes=origin"],
+          { allowFailure: true },
+        )
       : null;
   // Unreadable counts as local work: such a repository is copied, never cloned.
   const localOnlyCommits =
