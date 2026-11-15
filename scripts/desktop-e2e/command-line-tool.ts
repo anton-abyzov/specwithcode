@@ -17,9 +17,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+
 import * as Tool from "../../apps/desktop/src/cli/commandLineTool.ts";
 import { makeNodeCommandLineToolHost } from "../../apps/desktop/src/cli/commandLineToolHost.ts";
 
+const HOST_PLATFORM = HostProcessPlatform.defaultValue();
 const { values } = NodeUtil.parseArgs({
   options: {
     resources: { type: "string" },
@@ -34,12 +37,12 @@ const resources = values.resources;
 const directVersion = (dir: string): string | undefined => {
   const root = NodePath.dirname(dir);
   const candidates =
-    process.platform === "darwin"
+    HOST_PLATFORM === "darwin"
       ? [
           NodePath.join(root, "MacOS", "SpecWithCode"),
           NodePath.join(root, "MacOS", "SpecWithCode (Nightly)"),
         ]
-      : process.platform === "win32"
+      : HOST_PLATFORM === "win32"
         ? [
             NodePath.join(root, "SpecWithCode.exe"),
             NodePath.join(root, "SpecWithCode (Nightly).exe"),
@@ -49,7 +52,7 @@ const directVersion = (dir: string): string | undefined => {
   if (exe === undefined) return undefined;
   const entry = NodePath.join(
     dir,
-    process.platform === "win32" ? "server.asar" : "app.asar",
+    HOST_PLATFORM === "win32" ? "server.asar" : "app.asar",
     "apps",
     "server",
     "dist",
@@ -70,7 +73,7 @@ if (!resources || !appVersion) {
   );
   process.exit(2);
 }
-const platform = process.platform;
+const platform = HOST_PLATFORM;
 if (platform === "win32" && !values["allow-user-path"] && process.env.GITHUB_ACTIONS !== "true") {
   console.error(
     "On Windows this edits the user PATH; pass --allow-user-path on a throwaway machine.",
