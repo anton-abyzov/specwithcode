@@ -51,8 +51,11 @@ export interface ManifestEntry {
   readonly portableGit?: boolean;
 }
 
-/** Refs a clone from origin recreates or that the plan already counts (the stash). */
-const CLONE_CARRIED_REF = /^refs\/(?:heads\/|tags\/|remotes\/|stash$)/u;
+/**
+ * Refs a clone from origin recreates, remote caches (remote-tracking and `git maintenance`
+ * prefetch refs), or the stash the plan already counts.
+ */
+const CLONE_CARRIED_REF = /^refs\/(?:heads\/|tags\/|remotes\/|prefetch\/|stash$)/u;
 
 export interface RepositoryInfo {
   readonly path: string;

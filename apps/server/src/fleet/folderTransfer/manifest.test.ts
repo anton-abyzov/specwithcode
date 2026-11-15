@@ -396,6 +396,9 @@ it("counts commits a clone from origin would miss: other remotes and tags do not
     expect(await count()).toBe(1);
     git(repo, "update-ref", "-d", "refs/notes/commits");
     expect(await count()).toBe(0);
+    // Background prefetch refs are a remote cache, not local work.
+    git(repo, "update-ref", "refs/prefetch/remotes/origin/main", "HEAD");
+    expect(await count()).toBe(0);
     // An unborn HEAD is never cloned over.
     git(repo, "checkout", "-q", "--orphan", "empty");
     expect(await count()).toBe(1);
