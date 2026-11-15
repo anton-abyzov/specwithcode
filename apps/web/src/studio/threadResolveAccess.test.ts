@@ -1,15 +1,44 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { threadResolveBlockedReason, type ThreadResolveAccessInput } from "./threadResolveAccess";
+import {
+  threadResolveAction,
+  threadResolveBlockedReason,
+  type ThreadResolveAccessInput,
+} from "./threadResolveAccess";
+
+describe("threadResolveAction", () => {
+  it("resolves an open thread and reopens a resolved or archived one", () => {
+    expect(threadResolveAction({ archivedAt: null, settledOverride: null })).toEqual({
+      action: "resolve",
+      needsSettlement: true,
+    });
+    expect(threadResolveAction({ archivedAt: null, settledOverride: "settled" })).toEqual({
+      action: "reopen",
+      needsSettlement: true,
+    });
+    expect(threadResolveAction({ archivedAt: "2026-10-14", settledOverride: "settled" })).toEqual({
+      action: "reopen",
+      needsSettlement: true,
+    });
+  });
+
+  it("needs no settlement support to restore history a server only archived", () => {
+    expect(threadResolveAction({ archivedAt: "2026-10-14", settledOverride: null })).toEqual({
+      action: "reopen",
+      needsSettlement: false,
+    });
+  });
+});
 
 describe("threadResolveBlockedReason", () => {
   const base: ThreadResolveAccessInput = {
-    canOperate: true,
+    access: "granted",
     connection: { phase: "connected" },
     supportsSettlement: true,
     environmentId: "dd2fc230",
     machineLabel: "Ministorm",
     action: "resolve",
+    needsSettlement: true,
   };
 
   it("allows a connected machine this browser may operate", () => {
@@ -24,19 +53,32 @@ describe("threadResolveBlockedReason", () => {
     expect(
       threadResolveBlockedReason({ ...base, connection: { phase: "error" }, action: "reopen" }),
     ).toBe("Ministorm isn't connected right now, so this thread can't be reopened.");
-    expect(threadResolveBlockedReason({ ...base, connection: null })).toContain("isn't connected");
     expect(
       threadResolveBlockedReason({
         ...base,
         connection: { phase: "disconnected", blockedReason: "authentication" },
       }),
     ).toBe("This browser is signed out of Ministorm. Sign in to it again to resolve this thread.");
-    expect(threadResolveBlockedReason({ ...base, canOperate: false })).toBe(
+    expect(threadResolveBlockedReason({ ...base, access: "signed-out", action: "reopen" })).toBe(
+      "This browser is signed out of Ministorm. Sign in to it again to reopen this thread.",
+    );
+    expect(threadResolveBlockedReason({ ...base, access: "denied" })).toBe(
       "This connection can't change threads on Ministorm.",
     );
   });
 
-  it("tells a machine that is still loading from one that is too old", () => {
+  it("tells a machine this device never paired with from one that dropped", () => {
+    // Reconnecting fixes a dropped machine and never an unknown one, so they read differently.
+    for (const connection of [null, undefined])
+      expect(threadResolveBlockedReason({ ...base, connection })).toBe(
+        "This device is not paired with Ministorm, so this thread can't be resolved from here.",
+      );
+  });
+
+  it("tells a grant or a machine that is still loading from a refusal", () => {
+    expect(threadResolveBlockedReason({ ...base, access: "unknown" })).toBe(
+      "Still checking this browser's access to Ministorm. Try again in a moment.",
+    );
     expect(threadResolveBlockedReason({ ...base, supportsSettlement: undefined })).toBe(
       "Still loading Ministorm's details. Try again in a moment.",
     );
@@ -45,13 +87,28 @@ describe("threadResolveBlockedReason", () => {
     );
   });
 
+  it("restores history a server only archived, whatever that server's version", () => {
+    const archivedOnly = { ...base, action: "reopen", needsSettlement: false } as const;
+    expect(threadResolveBlockedReason({ ...archivedOnly, supportsSettlement: false })).toBeNull();
+    expect(
+      threadResolveBlockedReason({ ...archivedOnly, supportsSettlement: undefined }),
+    ).toBeNull();
+    // The restore still runs on that machine, so its connection and grant still decide.
+    expect(threadResolveBlockedReason({ ...archivedOnly, access: "denied" })).toBe(
+      "This connection can't change threads on Ministorm.",
+    );
+    expect(
+      threadResolveBlockedReason({ ...archivedOnly, connection: { phase: "reconnecting" } }),
+    ).toContain("isn't connected");
+  });
+
   it("reports the connection before the grant and the version", () => {
     // A disconnected machine keeps its last grant and details, so neither says anything yet.
     expect(
       threadResolveBlockedReason({
         ...base,
         connection: { phase: "reconnecting" },
-        canOperate: false,
+        access: "denied",
         supportsSettlement: false,
       }),
     ).toContain("isn't connected");
@@ -59,17 +116,23 @@ describe("threadResolveBlockedReason", () => {
 
   it("never shows a machine's raw ID", () => {
     expect(
-      threadResolveBlockedReason({ ...base, connection: null, machineLabel: "dd2fc230" }),
-    ).toBe("That machine isn't connected right now, so this thread can't be resolved.");
-    expect(
-      threadResolveBlockedReason({ ...base, canOperate: false, machineLabel: undefined }),
-    ).toBe("This connection can't change threads there.");
-    expect(
       threadResolveBlockedReason({
         ...base,
-        supportsSettlement: false,
+        connection: { phase: "connecting" },
         machineLabel: "dd2fc230",
       }),
+    ).toBe("That machine isn't connected right now, so this thread can't be resolved.");
+    expect(threadResolveBlockedReason({ ...base, connection: null, machineLabel: "dd2fc230" })).toBe(
+      "This device is not paired with that machine, so this thread can't be resolved from here.",
+    );
+    expect(threadResolveBlockedReason({ ...base, access: "denied", machineLabel: undefined })).toBe(
+      "This connection can't change threads there.",
+    );
+    expect(threadResolveBlockedReason({ ...base, access: "unknown", machineLabel: "dd2fc230" })).toBe(
+      "Still checking this browser's access to that machine. Try again in a moment.",
+    );
+    expect(
+      threadResolveBlockedReason({ ...base, supportsSettlement: false, machineLabel: "dd2fc230" }),
     ).toBe("That machine runs an older version that can't resolve threads. Update it first.");
   });
 });

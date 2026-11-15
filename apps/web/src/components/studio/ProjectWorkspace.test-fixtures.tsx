@@ -129,6 +129,10 @@ const state = vi.hoisted(() => ({
   pairedHosts: [] as string[],
   /** Paired machines this browser may operate; a paired machine is read-only until listed. */
   operableHosts: [] as string[],
+  /** Re-reads the archive after history is restored. */
+  archivedRefresh: vi.fn<FixtureProcedure>(),
+  /** Machines whose grant for this browser has not loaded yet. */
+  accessPendingHosts: [] as string[],
   /** Machines whose server predates Resolve. */
   settlementUnsupportedHosts: [] as string[],
   /** Machines whose server details have not loaded yet. */
@@ -174,7 +178,12 @@ vi.mock("../settings/useSettingsProjectGroups", () => ({
 const noArchivedSnapshots = vi.hoisted(() => Object.freeze([]));
 vi.mock("../../lib/archivedThreadsState", () => ({
   // One list, as the atom answers: a fresh one per read would look like a new archive.
-  useArchivedThreadSnapshots: () => ({ snapshots: noArchivedSnapshots, error: null }),
+  useArchivedThreadSnapshots: () => ({
+    snapshots: noArchivedSnapshots,
+    error: null,
+    isLoading: false,
+    refresh: state.archivedRefresh,
+  }),
 }));
 vi.mock("../../state/entities", () => ({
   useAllEnvironmentShellsBootstrapped: () => state.shellsBootstrapped,
@@ -392,11 +401,19 @@ vi.mock("../files/AttachmentFilePreview", () => ({
 vi.mock("../../state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/session")>()),
   readEnvironmentScope: () => state.canOperate,
-  useEnvironmentsWithScope: () =>
-    new Set(
-      state.canOperate
-        ? ["host", ...state.recoveryHosts, ...state.operableHosts]
-        : [],
+  useEnvironmentsWithScope: () => new Set(state.canOperate ? ["host", ...state.recoveryHosts] : []),
+  // A paired machine's grant is denied until listed as operable; one still loading is unknown.
+  useEnvironmentsScopeAccess: (environmentIds: readonly string[]) =>
+    new Map(
+      environmentIds.map((environmentId) => [
+        environmentId,
+        state.accessPendingHosts.includes(environmentId)
+          ? "unknown"
+          : state.canOperate &&
+              ["host", ...state.recoveryHosts, ...state.operableHosts].includes(environmentId)
+            ? "granted"
+            : "denied",
+      ]),
     ),
   useEnvironmentScope: (_environmentId: string, scope: string) =>
     scope === "source-control:write"
@@ -896,6 +913,8 @@ beforeEach(() => {
   state.offlineHosts = [];
   state.pairedHosts = [];
   state.operableHosts = [];
+  state.accessPendingHosts = [];
+  state.archivedRefresh.mockClear();
   state.settlementUnsupportedHosts = [];
   state.serverConfigPendingHosts = [];
   state.syncingHosts = [];

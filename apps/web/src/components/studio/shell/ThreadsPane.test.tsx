@@ -217,6 +217,7 @@ describe("a row's Resolve for a thread that runs on another machine", () => {
     await act(async () => blocked.click());
     expect(onToggleResolved).not.toHaveBeenCalled();
     expect(add).toHaveBeenCalledWith({
+      id: "thread-resolve-blocked:ministorm:remote",
       type: "warning",
       title: "Can't resolve this thread",
       description: reason,

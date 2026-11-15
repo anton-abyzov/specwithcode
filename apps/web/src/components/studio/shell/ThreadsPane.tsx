@@ -1192,6 +1192,8 @@ export function ThreadsPane({
                               onClick={() => {
                                 if (resolveBlocked !== null) {
                                   toastManager.add({
+                                    // One notice per thread, however often it is clicked.
+                                    id: `thread-resolve-blocked:${thread.environmentId}:${thread.id}`,
                                     type: "warning",
                                     title: say(`Can't ${action.toLowerCase()} this thread`),
                                     description: resolveBlocked,

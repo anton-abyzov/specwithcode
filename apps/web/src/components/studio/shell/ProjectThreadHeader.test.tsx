@@ -324,7 +324,17 @@ describe("an open thread's header", () => {
     expect(resolve.getAttribute("aria-disabled")).toBe("true");
     await act(async () => resolve.click());
     expect(handlers.onToggleResolved).not.toHaveBeenCalled();
-    expect(add).toHaveBeenCalledWith({ type: "warning", title, description: reason });
+    expect(add).toHaveBeenCalledWith({
+      id: "thread-resolve-blocked:host:worker",
+      type: "warning",
+      title,
+      description: reason,
+    });
+    // A second click replaces that notice: the same id, never a second toast beside it.
+    await act(async () => resolve.click());
+    expect(new Set(add.mock.calls.map(([toast]) => toast.id))).toEqual(
+      new Set(["thread-resolve-blocked:host:worker"]),
+    );
   });
   it("renames while Resolve is off, as on another machine's thread", async () => {
     await act(() =>
@@ -520,6 +530,7 @@ describe("an open topic's header in the personal assistant", () => {
     );
     await act(async () => button("Resolve topic").click());
     expect(add).toHaveBeenCalledWith({
+      id: "thread-resolve-blocked:host:worker",
       type: "warning",
       title: "Can't resolve this topic",
       description: "Ministorm isn't connected right now, so this topic can't be resolved.",

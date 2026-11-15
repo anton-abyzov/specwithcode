@@ -186,6 +186,8 @@ export function ProjectThreadHeader(props: {
       return;
     }
     toastManager.add({
+      // One notice per thread: a second click replaces it instead of stacking another.
+      id: `thread-resolve-blocked:${thread.environmentId}:${thread.id}`,
       type: "warning",
       title: say(`Can't ${resolveLabel.toLowerCase()} this thread`),
       description: say(resolveBlockedReason),

@@ -7,12 +7,12 @@
  */
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { AuthOrchestrationOperateScope } from "@specweave-studio/contracts";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 import { useServerConfigs } from "../state/entities";
 import { useEnvironments } from "../state/environments";
-import { useEnvironmentsWithScope } from "../state/session";
-import { threadResolveBlockedReason } from "./threadResolveAccess";
+import { useEnvironmentsScopeAccess } from "../state/session";
+import { threadResolveAction, threadResolveBlockedReason } from "./threadResolveAccess";
 
 export type ThreadResolveTarget = Pick<
   EnvironmentThreadShell,
@@ -27,7 +27,12 @@ export function useThreadResolveBlockedReason(
   machineLabels?: ReadonlyMap<string, string>,
 ): (thread: ThreadResolveTarget) => string | null {
   const { environments } = useEnvironments();
-  const operable = useEnvironmentsWithScope(environments, AuthOrchestrationOperateScope);
+  const environmentIds = useMemo(
+    () => environments.map((environment) => environment.environmentId),
+    [environments],
+  );
+  // Every row of every machine reads the same grants, which the sidebar's rows already hold.
+  const access = useEnvironmentsScopeAccess(environmentIds, AuthOrchestrationOperateScope);
   const configs = useServerConfigs();
   return useCallback(
     (thread) => {
@@ -38,19 +43,20 @@ export function useThreadResolveBlockedReason(
       // The member map falls back to the ID; the machine's own label is better.
       const memberLabel = machineLabels?.get(thread.environmentId);
       return threadResolveBlockedReason({
-        canOperate: operable.has(thread.environmentId),
+        access: access.get(thread.environmentId) ?? "unknown",
         connection: environment?.connection,
         supportsSettlement:
-          config === undefined ? undefined : config.environment.capabilities.threadSettlement === true,
+          config === undefined
+            ? undefined
+            : config.environment.capabilities.threadSettlement === true,
         environmentId: thread.environmentId,
         machineLabel:
           memberLabel === undefined || memberLabel === thread.environmentId
             ? (environment?.label ?? memberLabel)
             : memberLabel,
-        action:
-          thread.archivedAt !== null || thread.settledOverride === "settled" ? "reopen" : "resolve",
+        ...threadResolveAction(thread),
       });
     },
-    [environments, operable, configs, machineLabels],
+    [environments, access, configs, machineLabels],
   );
 }

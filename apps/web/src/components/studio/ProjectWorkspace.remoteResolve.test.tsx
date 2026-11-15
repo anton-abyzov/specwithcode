@@ -109,6 +109,20 @@ describe("Resolve on a thread that runs on another machine", () => {
       "That machine runs an older version that can't resolve threads. Update it first.",
     ],
     [
+      "has not confirmed this browser's access yet",
+      () => {
+        state.accessPendingHosts = ["laptop"];
+      },
+      "Still checking this browser's access to that machine. Try again in a moment.",
+    ],
+    [
+      "was never paired with this device",
+      () => {
+        state.pairedHosts = [];
+      },
+      "This device is not paired with that machine, so this thread can't be resolved from here.",
+    ],
+    [
       "has not sent its details yet",
       () => {
         state.serverConfigPendingHosts = ["laptop"];
@@ -133,6 +147,53 @@ describe("Resolve on a thread that runs on another machine", () => {
       '[data-thread-id="worker"] .sws-thread-action',
     )!;
     expect(own.getAttribute("aria-disabled")).toBeNull();
+  });
+
+  describe("history on a machine that predates Resolve", () => {
+    const history = (overrides: Record<string, unknown>) => {
+      state.settlementUnsupportedHosts = ["laptop"];
+      state.shells = [
+        shell("coord"),
+        shell("worker"),
+        shell("laptop-worker", {
+          environmentId: "laptop" as never,
+          projectId: "remote-project" as never,
+          ...overrides,
+        }),
+      ];
+    };
+    // Resolved rows sit in a group that starts folded.
+    const showResolved = async () => {
+      if (container.querySelector('[data-thread-id="laptop-worker"]')) return;
+      const bar = [...container.querySelectorAll<HTMLButtonElement>(".sws-group-bar")].find(
+        (button) => button.textContent?.includes("Resolved"),
+      )!;
+      await act(async () => bar.click());
+    };
+
+    it("restores history that machine only archived: that needs no Resolve support", async () => {
+      history({ archivedAt: "2026-10-14T00:00:00Z" });
+      await render();
+      await showResolved();
+      expect(rowResolve().getAttribute("aria-label")).toBe("Reopen");
+      expect(rowResolve().getAttribute("aria-disabled")).toBeNull();
+      await act(async () => rowResolve().click());
+      // The fixture runs restore and reopen through one spy; restore goes first.
+      expect(state.settle.mock.calls[0]).toEqual([REMOTE, { navigate: false }]);
+      expect(state.archivedRefresh).toHaveBeenCalledOnce();
+    });
+
+    it("says why a thread that was also resolved there cannot be reopened", async () => {
+      history({ archivedAt: "2026-10-14T00:00:00Z", settledOverride: "settled" });
+      await render();
+      await showResolved();
+      expect(rowResolve().getAttribute("aria-disabled")).toBe("true");
+      await act(async () => rowResolve().click());
+      expect(state.settle).not.toHaveBeenCalled();
+      expect(warnings().at(-1)?.[0].description).toBe(
+        "That machine runs an older version that can't reopen threads. Update it first.",
+      );
+    });
   });
 
   it("blocks the project's own thread on the project's own machine, with the reason", async () => {
