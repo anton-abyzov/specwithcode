@@ -17,6 +17,7 @@ import {
 } from "@specweave-studio/contracts";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import type { RoutineTemplate } from "@specweave-studio/shared/routineTemplates";
+import { useRoutineModel } from "./useRoutineModel";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
@@ -49,6 +50,9 @@ export function RoutineQuickForm({
   const teamRules = useTeamRules(environmentId);
   const id = useId();
   const upsert = useAtomCommand(serverEnvironment.upsertScheduledTask);
+  // An everyday template runs on the coordinator's provider at its everyday model.
+  const routineModel = useRoutineModel(environmentId, template, modelSelection);
+  const modelsLoading = routineModel.kind === "loading";
   const [title, setTitle] = useState(template.title);
   const [prompt, setPrompt] = useState(template.prompt);
   const [inputs, setInputs] = useState(() =>
@@ -73,7 +77,8 @@ export function RoutineQuickForm({
 
   async function save() {
     if (saving) return;
-    if (modelSelection === null) {
+    if (routineModel.kind === "loading") return;
+    if (routineModel.kind === "none") {
       setError("Pick a coordinator model in this project's settings first.");
       return;
     }
@@ -102,7 +107,7 @@ export function RoutineQuickForm({
           projectId,
           threadId: null,
           workspaceStrategy: { type: "root" },
-          modelSelection,
+          modelSelection: routineModel.selection,
           runtimeMode: teamRulesClampRoutineMode(teamRules.state, "full-access"),
           interactionMode: "default",
           ownThread: true,
@@ -231,12 +236,19 @@ export function RoutineQuickForm({
       </label>
       <p className="project-muted">
         Runs in a thread of its own, named after the routine; each run continues it.
-        {scheduled ? " Each scheduled run uses your plan's limits." : ""}
+        {routineModel.kind === "ready" && routineModel.note !== null ? ` ${routineModel.note}` : ""}
+        {scheduled && routineModel.kind === "ready"
+          ? routineModel.perToken
+            ? " Each scheduled run is billed per token."
+            : routineModel.planBilled
+              ? " Each scheduled run uses your plan's limits."
+              : ""
+          : ""}
       </p>
       {error ? <p role="alert">{error}</p> : null}
       <div className="project-actions">
-        <button type="submit" className="project-control" disabled={saving}>
-          {saving ? "Saving…" : "Save routine"}
+        <button type="submit" className="project-control" disabled={saving || modelsLoading}>
+          {saving ? "Saving…" : modelsLoading ? "Loading models…" : "Save routine"}
         </button>
         <button
           type="button"
