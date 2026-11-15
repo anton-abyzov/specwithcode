@@ -585,6 +585,18 @@ How it runs:
   published release starts the real run itself, about 2.5 minutes sooner than the release-macos
   post-job can, and `release.sh` then skips its own dispatch. The post-job still dispatches when
   that run failed or was cancelled.
+- **Retry after a failed on-publish run.** The post-job usually runs while the on-publish run is
+  still building, counts it as started and dispatches nothing. So when that run fails, or a job
+  of it runs into its timeout, its last job (`retry`) dispatches one real run for the version
+  itself. It does nothing when a person cancelled the run, when the release is a draft, a
+  prerelease or gone, when a dispatched run for the version is going or has succeeded, or when
+  the release already holds the apps. A release that holds only part of them fails the job with
+  the `replace` dispatch that repairs it. A dispatched run that fails is not retried, so there is
+  one retry per published release (re-running the failed run by hand may dispatch once more);
+  after that the daily catch-up is the only automatic attempt, and only for the newest release.
+  Near 07:23 UTC the retry and the catch-up can both build the newest release. The second to
+  upload finds the files there: a catch-up run then ends green, a dispatched run red, and the
+  release is complete either way.
 
 Until it has run, Windows and Linux desktop installs find no `latest.yml` or `latest-linux.yml` on
 the new Latest release, report a failed update check and stay on their version. The slowest leg
@@ -929,3 +941,7 @@ If an idle-only rollout fails, it cancels only its own install request. It does 
 Release build outputs are reproducible artifacts, not database backups. After publication, fleet rollout and merge all complete, staging cleanup may remove generated runtime, asset and verification directories while retaining the release record, published commit, markers, logs and timing history. Failed, unfinished, locked, foreign and unrecognized stages remain intact. Cleanup uses the release's ownership lock and refuses ambiguous ownership; it never removes a lock to force progress.
 
 Inspect the plan with `python3 scripts/release/staging_retention.py --root ~/.specwithcode/release-staging --finished`; add `--apply` only to execute that verified plan through the same guarded helper. The release lifecycle also runs this after successful completion. This does not remove live installations, the installed app, project worktrees or the database rollback snapshot. Human-created verification homes do not become disposable merely because an unrelated release succeeded.
+
+## Requesting a release (agent summary)
+
+Releases follow the daily train (docs/studio/release-train.md): from 1.1.0 every requested release is an Insiders build (a GitHub prerelease), and only the Release train workflow promotes one to stable, once a day after a 24-hour soak, or at once for a merged pull request with the `hotfix` label (`bash scripts/release/request-release.sh --hotfix <pr>`; the label needs Anton's yes). Never make a release Latest or stable by hand. Requesting: `bash scripts/release/request-release.sh --by "<session or thread>"`. It joins the run already waiting for its turn, or dispatches Release macOS with no version; the workflow picks the version, runs wait in one queue, and a run that finds main already released ends green, so never choose a version or check for a running release first, and never dispatch a version you computed. Confirm a change shipped with `bash scripts/release/request-release.sh --released <commit>`; `--dry-run` prints what a run would decide, and `--wait` (in the background) stays until the run ends. Pass a version only to continue a failed release (`-f version=X.Y.Z -f resume=true`). `bash scripts/release/release.sh <version>` on a Mac is the fallback when Actions cannot run, with nothing queued or running in Release macOS. The runbook is docs/studio/releasing.md.

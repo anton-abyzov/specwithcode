@@ -110,6 +110,8 @@ vi.mock("../../sidebar/SidebarPlanProgress", () => ({
   useSidebarThreadPlans: () => ({ plans: new Map(), loaders: null }),
 }));
 vi.mock("../../../env", () => ({ isElectron: false }));
+// The banner reads every machine's limits; its own test covers it.
+vi.mock("../../usage/alerts/QuotaAlertBanner", () => ({ QuotaAlerts: () => null }));
 vi.mock("../../../state/server", () => ({
   primaryServerKeybindingsAtom: {},
   primaryServerConfigAtom: {},

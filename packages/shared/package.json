@@ -172,6 +172,10 @@
       "types": "./src/htmlRender.ts",
       "import": "./src/htmlRender.ts"
     },
+    "./officeSheet": {
+      "types": "./src/officeSheet/index.ts",
+      "import": "./src/officeSheet/index.ts"
+    },
     "./favicon": {
       "types": "./src/favicon.ts",
       "import": "./src/favicon.ts"
@@ -527,6 +531,10 @@
     "./usageResetLedger": {
       "types": "./src/usageResetLedger.ts",
       "import": "./src/usageResetLedger.ts"
+    },
+    "./quotaAlerts": {
+      "types": "./src/quotaAlerts.ts",
+      "import": "./src/quotaAlerts.ts"
     },
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",

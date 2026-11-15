@@ -89,7 +89,19 @@ try {
     }
   }
 
+  await open("full", "dark", 1280);
+  await check("the banner names the expiring account, then the early reset", async () => {
+    const banner = page.locator("[data-quota-alert-banner]");
+    const text = await banner.innerText();
+    assert.match(text, /Codex Pro on mini: 62% of its weekly quota resets in 9 h/);
+    assert.match(text, /reset early: weekly back to 100%/);
+    assert.equal(await banner.getByRole("button", { name: "Dismiss until the next reset" }).count(), 1);
+    await banner.screenshot({ path: join(output, "quota-alert-banner-dark.png") });
+  });
   await open("full", "light", 1280);
+  await page.locator("[data-quota-alert-banner]").screenshot({
+    path: join(output, "quota-alert-banner-light.png"),
+  });
   const rows = page.locator("[data-subscription-row]");
   await check("the account about to lose quota is first and its window is marked", async () => {
     assert.equal(await rows.count(), 3);
@@ -219,6 +231,7 @@ try {
     assert.equal(await page.locator("[data-fixture-empty]").count(), 1);
     assert.equal(await page.locator('[data-efficiency-chart="empty"]').count(), 1);
     assert.equal(await page.locator('[data-resets-table="empty"]').count(), 1);
+    assert.equal(await page.locator("[data-quota-alert-banner]").count(), 0);
     assert.match(await page.locator('[data-dashboard-tile="efficiency"]').innerText(), /Not enough history yet/);
     assert.doesNotMatch(await page.locator("body").innerText(), /\b0%/);
   });

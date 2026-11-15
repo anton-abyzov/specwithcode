@@ -180,6 +180,7 @@ import { chatRowPlan, describeThreadPlan } from "../../../studio/threadPlanProgr
 import { canRenameChat, checkChatTitle } from "../../../studio/threadTitles";
 import { ModelBadgeMark, useProviderEntriesByEnvironment } from "./ModelBadge";
 import { fallbackReason } from "../../chat/ModelStateTag";
+import { QuotaAlerts } from "../../usage/alerts/QuotaAlertBanner";
 import { SidebarChatRow } from "./SidebarChatRow";
 import {
   designsProjectId,
@@ -1063,6 +1064,8 @@ export default function StudioSidebar() {
               <span className="sws-side-row-label">{tx("Design")}</span>
             </Link>
           </div>
+
+          <QuotaAlerts onOpen={closeMobile} />
 
           <div className="sws-side-section" role="group" aria-labelledby="sws-side-projects">
             <div className="sws-side-heading">

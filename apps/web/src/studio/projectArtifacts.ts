@@ -17,6 +17,8 @@ import type {
 } from "@specweave-studio/contracts";
 
 import { canonicalLinkKey, isPlainTextLog } from "../artifactShelf";
+import { SHEET_ARTIFACT_SUFFIX } from "@specweave-studio/shared/officeSheet";
+
 import { libraryFileExtension, libraryFileType } from "./projectPaneModel";
 
 export type ProjectArtifactKind =
@@ -24,6 +26,7 @@ export type ProjectArtifactKind =
   | "slides"
   | "page"
   | "document"
+  | "sheet"
   | "image"
   | "video"
   | "data"
@@ -151,6 +154,7 @@ const VIDEO = new Set(["mp4", "mov", "webm", "m4v"]);
 const THREAD_MADE_KINDS = new Set<ProjectArtifactKind>([
   "page",
   "document",
+  "sheet",
   "image",
   "video",
   "slides",
@@ -158,6 +162,7 @@ const THREAD_MADE_KINDS = new Set<ProjectArtifactKind>([
 
 /** What a file is, read from its name. */
 export function artifactKindOfFile(path: string): ProjectArtifactKind {
+  if (path.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX)) return "sheet";
   const extension = libraryFileExtension(path);
   if (extension === "html" || extension === "htm") return "page";
   if (extension === "pptx" || extension === "key") return "slides";
@@ -463,6 +468,7 @@ const FILTER_OF: Record<ProjectArtifactKind, Exclude<ArtifactTypeFilter, "all">>
   slides: "designs",
   page: "pages",
   document: "documents",
+  sheet: "documents",
   image: "images",
   video: "images",
   data: "files",
@@ -507,6 +513,7 @@ export const ARTIFACT_KIND_LABELS: Record<ProjectArtifactKind, string> = {
   slides: "Deck",
   page: "Page",
   document: "Document",
+  sheet: "Sheet",
   image: "Image",
   video: "Video",
   data: "Data",
