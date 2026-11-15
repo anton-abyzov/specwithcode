@@ -96,6 +96,7 @@ export function reachFromPhase(
     case "unsupported":
       return "stopped";
     case "available":
+    case undefined:
       return "not-connected";
     default:
       return "offline";
@@ -418,4 +419,30 @@ export function readableConnectionReason(
     return `No answer from ${where} within ${seconds}s.`;
   }
   return `No answer from ${where}.`;
+}
+
+const KNOWN_PHASES = new Set<string>([
+  "available",
+  "offline",
+  "connecting",
+  "reconnecting",
+  "connected",
+  "error",
+  "unsupported",
+]);
+
+/**
+ * A machine's reach state, or, when the app has not judged it (no provider:
+ * tests, embedding), what its connection says now.
+ */
+export function hostReachOr(
+  state: MachineReachState | undefined,
+  connection: Pick<EnvironmentConnectionPresentation, "phase"> &
+    Partial<Pick<EnvironmentConnectionPresentation, "lostAt" | "lastConnectedAt" | "cause">>,
+  now = Date.now(),
+): MachineReachState {
+  if (state !== undefined) return state;
+  return KNOWN_PHASES.has(connection.phase)
+    ? machineReach(connection, now).state
+    : reachFromPhase(connection.phase as EnvironmentConnectionPresentation["phase"]);
 }

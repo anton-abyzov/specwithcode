@@ -5,15 +5,10 @@
  *
  * @module unreachableHosts
  */
-import {
-  machineReach,
-  type EnvironmentConnectionPresentation,
-  type MachineReachState,
-} from "@specweave-studio/client-runtime/connection";
+import type { MachineReachState } from "@specweave-studio/client-runtime/connection";
 import { createContext, useContext, useEffect, type ReactNode } from "react";
 
 import { recordMachinePhases } from "../lib/machineLastSeen";
-import { reachFromPhase } from "../lib/machineStatus";
 import {
   useEnvironments,
   useMachineReachStates,
@@ -61,27 +56,4 @@ export function useHostReach(
   return environmentId ? states.get(environmentId) : undefined;
 }
 
-const KNOWN_PHASES = new Set<string>([
-  "available",
-  "offline",
-  "connecting",
-  "reconnecting",
-  "connected",
-  "error",
-  "unsupported",
-]);
-
-/**
- * A machine's reach state, or, when the app has not judged it (no provider:
- * tests, embedding), what its connection says now.
- */
-export function hostReachOr(
-  state: MachineReachState | undefined,
-  connection: Pick<EnvironmentConnectionPresentation, "phase"> &
-    Partial<Pick<EnvironmentConnectionPresentation, "lostAt" | "lastConnectedAt" | "cause">>,
-): MachineReachState {
-  if (state !== undefined) return state;
-  return KNOWN_PHASES.has(connection.phase)
-    ? machineReach(connection, Date.now()).state
-    : reachFromPhase(connection.phase);
-}
+export { hostReachOr } from "../lib/machineStatus";

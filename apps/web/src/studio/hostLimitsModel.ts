@@ -24,11 +24,10 @@ import {
 } from "@specweave-studio/shared/usageWindows";
 import {
   isMachineReachDown,
-  machineReach,
   type ConnectionLossCause,
   type EnvironmentConnectionPhase,
 } from "@specweave-studio/client-runtime/connection";
-import { machineReachWords } from "../lib/machineStatus";
+import { hostReachOr, machineReachWords } from "../lib/machineStatus";
 import { planLabel } from "./accountSwitches";
 import { usageToneOfUsed } from "./usageIndicatorModel";
 
@@ -150,7 +149,7 @@ export function hostReachStatus(
       word: status === "online" ? "Online" : status === "connecting" ? "Connecting" : "Offline",
     };
   }
-  const reach = machineReach({ ...connection, phase }, now).state;
+  const reach = hostReachOr(undefined, { ...connection, phase }, now);
   return {
     status: isMachineReachDown(reach) ? "offline" : "connecting",
     word: machineReachWords(reach, phase).short.replace(/…$/, ""),
