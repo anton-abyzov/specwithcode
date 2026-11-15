@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Button } from "../ui/button";
 import { requestConnectionRetry } from "../../connection/retryRequests";
 import { paneWords } from "../../studio/assistantTerms";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
@@ -113,17 +114,21 @@ function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; labe
   return (
     <div aria-label={`Retained coordinator messages on ${label}`}>
       {history.hasMoreHistory && (
-        <button
-          disabled={history.loading}
-          onClick={() =>
-            void load({
-              environmentId: scope.environmentId,
-              input: { threadId: scope.coordinatorThreadId! },
-            })
-          }
-        >
-          Load earlier messages
-        </button>
+        <div className="my-2 flex justify-center">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={history.loading}
+            onClick={() =>
+              void load({
+                environmentId: scope.environmentId,
+                input: { threadId: scope.coordinatorThreadId! },
+              })
+            }
+          >
+            {history.loading ? "Loading…" : "Load earlier messages"}
+          </Button>
+        </div>
       )}
       {history.error && <p role="alert">{history.error}</p>}
       {thread.projection.messages.map((message) => {
