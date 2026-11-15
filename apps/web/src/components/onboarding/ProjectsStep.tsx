@@ -31,7 +31,7 @@ import { projectEnvironment } from "../../state/projects";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { CommandLineCard } from "../settings/CommandLineCard";
+import { CommandLineOffer } from "../settings/CommandLineTool";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -476,7 +476,7 @@ export function ImportStep({
         />
       ) : null}
       {/* The last step: offer the specwithcode command (Settings > Machines has the same card). */}
-      <CommandLineCard variant="offer" />
+      <CommandLineOffer />
       <WizardStepFooter
         error={visibleImportError}
         // Closing is off while an import runs, so the footer says when it comes back.
