@@ -9,6 +9,12 @@ import { useThreadHistory, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { threadEnvironment } from "../../state/threads";
 import { useMachineStillChecking } from "../../studio/machineChecking";
+import { hostReachOr, useHostReachStates } from "../../studio/unreachableHosts";
+import { useClockWhile } from "../../hooks/useClockWhile";
+import { useTx } from "../../i18n";
+import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
+import { machineReachDetail, machineReachWords } from "../../lib/machineStatus";
+import { isMachineReachDown } from "@specweave-studio/client-runtime/connection";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { routedThreadReplyDisplayText } from "@specweave-studio/shared/routedMessage";
 import { requestExecutionLabel, type ProjectExecutionScope } from "../../studio/projectDomain";
@@ -147,8 +153,9 @@ const RAW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-/i;
 export const OFFLINE_RETRY_MS = 30_000;
 
 /**
- * Tries the offline machine again now, and every 30 s while the notice shows. After the
- * machine restarts (an update), its connection can otherwise wait up to 10 minutes.
+ * Tries the machine again now, and every 30 s while the notice shows. The
+ * connection itself retries at most 60 s apart for 30 minutes after it last
+ * answered; after that its own wait grows to as much as 10 minutes.
  */
 function OfflineRetry() {
   useEffect(() => {
@@ -184,6 +191,15 @@ export function ProjectThreadAvailability({
   const { environments } = useNamedEnvironments();
   const nickname = useMachineNicknames();
   const stillChecking = useMachineStillChecking();
+  const reach = useHostReachStates();
+  const tx = useTx();
+  useMachineLastSeenVersion();
+  const down = [...new Set(scopes.map((scope) => scope.environmentId))].some((environmentId) => {
+    const state = reach.get(environmentId);
+    return state !== undefined && isMachineReachDown(state);
+  });
+  // "Last answered 5m ago" ages while the notice shows.
+  const now = useClockWhile(down);
   return (
     <>
       {[...new Set(scopes.map((scope) => scope.environmentId))].map((environmentId) => {
@@ -193,7 +209,10 @@ export function ProjectThreadAvailability({
         const name =
           environment?.label ??
           (known === environmentId && RAW_ID.test(known) ? "another machine" : known);
-        if (environment?.connection.phase === "connected") return null;
+        const state = environment
+          ? hostReachOr(reach.get(environmentId), environment.connection)
+          : undefined;
+        if (state === "connected") return null;
         // While the page is still finding out, it says so instead of "not connected".
         if (stillChecking(environmentId))
           return (
@@ -206,15 +225,43 @@ export function ProjectThreadAvailability({
               Checking {name}…
             </p>
           );
+        const words =
+          environment && state ? machineReachWords(state, environment.connection.phase) : null;
+        // Reconnecting, connecting and catching up are calm: the threads below
+        // keep their groups, and nothing is wrong yet.
+        if (words !== null && state !== undefined && !isMachineReachDown(state))
+          return (
+            <p
+              key={environmentId}
+              className="project-notice"
+              role="status"
+              data-reach-state={state}
+              data-settling-thread-host={environmentId}
+            >
+              {tx(words.headline, { machine: name })}
+            </p>
+          );
+        const detail =
+          words === null
+            ? null
+            : machineReachDetail(
+                words,
+                environment?.connection.lastConnectedAt ?? machineLastSeenAt(environmentId),
+                now,
+                tx,
+              );
         return (
           <p
             key={environmentId}
             className="project-notice"
             role="status"
+            data-reach-state={state}
             data-unavailable-thread-host={environmentId}
           >
-            {environment ? `${name} is offline` : `This app is not connected to ${name}`} —{" "}
-            {say("the thread list may be incomplete. Cached threads may be out of date.")}
+            {words ? tx(words.headline, { machine: name }) : `This app is not connected to ${name}`}{" "}
+            — {say("the thread list may be incomplete. Cached threads may be out of date.")}
+            {detail ? ` ${detail}.` : null}
+            {words?.hint ? ` ${tx(words.hint)}` : null}
             {environment ? <OfflineRetry /> : null}
           </p>
         );

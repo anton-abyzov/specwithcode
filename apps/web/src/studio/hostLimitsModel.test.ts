@@ -11,6 +11,7 @@ import {
   collectHostLimitBlocks,
   formatAgo,
   groupLimitsByAccount,
+  hostReachStatus,
   hostStatus,
   savableReadings,
   windowDisplayLabel,
@@ -278,6 +279,37 @@ describe("host limit blocks", () => {
     expect([...savableReadings(blocks, now).keys()].sort()).toEqual([m3, m4].sort());
   });
 
+  it("reads another machine by its reach, in the words every surface uses", () => {
+    const dropped = (secondsAgo: number, cause?: "not-answering" | "no-service") => ({
+      phase: "reconnecting",
+      lostAt: now - secondsAgo * 1_000,
+      lastConnectedAt: now - secondsAgo * 1_000,
+      ...(cause ? { cause } : {}),
+    });
+    expect(hostReachStatus({ phase: "connected" }, false, now)).toEqual({
+      status: "online",
+      word: "Online",
+    });
+    // A drop reads as reconnecting for its first minute, on every surface.
+    expect(hostReachStatus(dropped(16, "not-answering"), false, now)).toEqual({
+      status: "connecting",
+      word: "Reconnecting",
+    });
+    expect(hostReachStatus(dropped(61, "not-answering"), false, now)).toEqual({
+      status: "offline",
+      word: "Not answering",
+    });
+    expect(hostReachStatus(dropped(61, "no-service"), false, now)).toEqual({
+      status: "offline",
+      word: "Offline",
+    });
+    // This machine is never offline while its server is only busy.
+    expect(hostReachStatus(dropped(600), true, now)).toEqual({
+      status: "connecting",
+      word: "Connecting",
+    });
+  });
+
   it("maps connection phases and formats ages", () => {
     expect(hostStatus("connected")).toBe("online");
     expect(hostStatus("reconnecting")).toBe("connecting");
@@ -415,6 +447,7 @@ describe("groupLimitsByAccount", () => {
     isProjectHost: false,
     isThisMachine: false,
     status: "online",
+    statusWord: "Online",
     readAt: null,
     fromSavedReading: false,
     providers,

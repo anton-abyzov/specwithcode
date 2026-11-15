@@ -59,6 +59,7 @@ function block(
     isProjectHost: false,
     isThisMachine: false,
     status,
+    statusWord: status === "online" ? "Online" : status === "connecting" ? "Connecting" : "Offline",
     readAt: now - 4 * HOUR,
     fromSavedReading: status === "offline",
     providers,

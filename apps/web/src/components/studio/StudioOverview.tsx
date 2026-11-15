@@ -18,7 +18,8 @@ import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { assistantGroupsOf, assistantMembersOf, sortAssistantGroups } from "./assistantEntries";
 import { isExtraAssistant } from "../../studio/personalAssistant";
 import { useMachineIdentities } from "../../studio/machineIdentity";
-import { machineActivity, machineReach } from "../../studio/overviewMachines";
+import { machineActivity, overviewMachineState } from "../../studio/overviewMachines";
+import { hostReachOr, useHostReachStates } from "../../studio/unreachableHosts";
 import { machineVersionState } from "../settings/machineNextStep.logic";
 import { newestPlainRelease, resolveServerConfigVersionMismatch } from "../../versionSkew";
 import {
@@ -423,6 +424,7 @@ export function StudioOverview() {
       ),
   );
   const registry = useContext(RegistryContext);
+  const reachStates = useHostReachStates();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, {
     reportFailure: false,
   });
@@ -443,8 +445,8 @@ export function StudioOverview() {
     const environmentId = environment.environmentId;
     const config = environment.serverConfig ?? null;
     const mismatch = resolveServerConfigVersionMismatch(config, newestRelease);
-    const reach = machineReach({
-      phase: environment.connection.phase,
+    const reach = overviewMachineState({
+      reach: hostReachOr(reachStates.get(environmentId), environment.connection),
       // Something of it is listed: it answers now, or it did and its projects are still here.
       reported:
         environment.connection.phase === "connected" ||

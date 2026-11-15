@@ -29,7 +29,6 @@ import {
 } from "./model.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
-import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 import { connectionRouteId, connectionRoutes, entryWithRoutes } from "./routes.ts";
 import {
@@ -51,14 +50,23 @@ const RETRY_MAX_DELAY_MS = 300_000;
  * still reconnect at once.
  */
 export const OFFLINE_MACHINE_RETRY_MAX_DELAY_MS = 600_000;
+/**
+ * Cap for a machine this device had a session with in the last
+ * {@link RECENT_CONNECTION_WINDOW_MS}: it was just here, so it is most likely
+ * restarting or busy, and every window finds it again within a minute of its
+ * return whether or not anyone is looking at it.
+ */
+export const RECENT_MACHINE_RETRY_MAX_DELAY_MS = 60_000;
+export const RECENT_CONNECTION_WINDOW_MS = 30 * 60_000;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_TIMEOUT);
 const loopbackEstablishmentTimeout = Duration.fromInputUnsafe(
   LOOPBACK_CONNECTION_ESTABLISHMENT_TIMEOUT,
 );
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
-// Mobile resumes, explicit retries, and offline events want a fast answer:
-// the user is waiting, or the network may be gone.
+// Mobile resumes and offline events want a fast answer: the app just came
+// back, or the network may be gone. An explicit retry does not use it: a
+// machine that answers slowly would lose its session to the person's click.
 const QUICK_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
 // While connected over a fallback route, how often to look for a better one.
@@ -191,8 +199,16 @@ export function retryDelayMs(
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
 }
 
-export function retryMaxDelayMs(prefersLoopback: boolean, error: ConnectionAttemptError): number {
+export function retryMaxDelayMs(
+  prefersLoopback: boolean,
+  error: ConnectionAttemptError,
+  /** How long ago this device last had a session with the machine; null when it has had none. */
+  sinceLastConnectedMs: number | null = null,
+): number {
   if (prefersLoopback) return LOOPBACK_RETRY_MAX_DELAY_MS;
+  if (sinceLastConnectedMs !== null && sinceLastConnectedMs < RECENT_CONNECTION_WINDOW_MS) {
+    return RECENT_MACHINE_RETRY_MAX_DELAY_MS;
+  }
   // Only the machine itself being away earns the long cap; a relay or
   // provisioning failure keeps the normal ladder so clients recover quickly.
   return error._tag === "ConnectionTransientError" && error.machineOffline === true
@@ -266,6 +282,38 @@ function connectingState(
   };
 }
 
+type ConnectionReach = Required<
+  Pick<SupervisorConnectionState, "lastConnectedAt" | "lostAt" | "lossFailure">
+>;
+
+/**
+ * The reach facts that go with `next`. A session starting clears the loss; a
+ * connection nobody wants has none; every other state keeps the moment the
+ * loss began and the latest failure, including through an explicit retry that
+ * starts over with no failure of its own.
+ */
+function nextReach(
+  previous: ConnectionReach,
+  next: SupervisorConnectionState,
+  now: number,
+): ConnectionReach {
+  switch (next.phase) {
+    case "connected":
+      return { lastConnectedAt: now, lostAt: null, lossFailure: null };
+    case "available":
+      return { lastConnectedAt: previous.lastConnectedAt, lostAt: null, lossFailure: null };
+    case "offline":
+    case "connecting":
+    case "backoff":
+    case "blocked":
+      return {
+        lastConnectedAt: previous.lastConnectedAt,
+        lostAt: previous.lostAt ?? now,
+        lossFailure: next.lastFailure ?? previous.lossFailure,
+      };
+  }
+}
+
 function failureFromExit<A>(
   target: ConnectionTarget,
   exit: Exit.Exit<A, TracedAttemptFailure>,
@@ -334,9 +382,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const usesRelay = connectionRoutes(entry).some(
     (route) => route.target._tag === "RelayConnectionTarget",
   );
-  const setupTimeoutDetail = `${target.label} did not respond during connection setup.${
-    usesRelay ? ` ${NETWORK_BLOCKING_HINT}` : ""
-  }`;
+  // No network hint: setup reached past the relay, so the silence is the
+  // machine's, not this device's network.
+  const setupTimeoutDetail = `${target.label} did not respond during connection setup.`;
   yield* annotateTarget(target);
 
   const connectivity = yield* Connectivity.Connectivity;
@@ -358,13 +406,22 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // closed or failed before answering, so the follow-up reconnect skips the
   // first backoff rung instead of sleeping.
   const probeUnanswered = yield* Ref.make(false);
-  const state = yield* SubscriptionRef.make<SupervisorConnectionState>(
-    !initialIntent.desired
+  // When this device last had a session with the machine, since when it has
+  // had none while wanting one, and why the latest attempt failed. Merged into
+  // every published state, so a retry cannot blank what a person reads.
+  const reach = yield* Ref.make<ConnectionReach>({
+    lastConnectedAt: null,
+    lostAt: initialIntent.desired ? yield* Clock.currentTimeMillis : null,
+    lossFailure: null,
+  });
+  const state = yield* SubscriptionRef.make<SupervisorConnectionState>({
+    ...(!initialIntent.desired
       ? availableState(initialIntent, 0)
       : initialIntent.network === "offline" && !initiallyLoopback
         ? offlineState(initialIntent, 0, 0, null)
-        : connectingState(initialIntent, 0, 1, null),
-  );
+        : connectingState(initialIntent, 0, 1, null)),
+    ...(yield* Ref.get(reach)),
+  });
   const session = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(Option.none());
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none());
   // Learned routes arrive while a session is live, so the route list is read
@@ -507,7 +564,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const setState = Effect.fn("EnvironmentSupervisor.setState")(function* (
     next: SupervisorConnectionState,
   ) {
-    yield* SubscriptionRef.set(state, next);
+    const now = yield* Clock.currentTimeMillis;
+    const current = yield* Ref.updateAndGet(reach, (previous) => nextReach(previous, next, now));
+    yield* SubscriptionRef.set(state, { ...next, ...current });
   });
 
   const signal = Effect.fn("EnvironmentSupervisor.signal")(function* (next: SupervisorSignal) {
@@ -711,7 +770,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const remoteProbeTimeoutFor = (next: SupervisorSignal): Duration.Input | undefined => {
     switch (next._tag) {
       case "RetryRequested":
-        return QUICK_CONNECTION_PROBE_TIMEOUT;
+        return CONNECTION_PROBE_TIMEOUT;
       case "NetworkChanged":
         return next.network === "offline" ? QUICK_CONNECTION_PROBE_TIMEOUT : undefined;
       case "Wakeup":
@@ -828,7 +887,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           yield* Fiber.interrupt(probe);
           return endDuringProbe === "reset";
         }
-        // A retry or an offline report during a desktop foreground probe wants
+        // An offline report or a mobile resume during a running probe wants
         // its quicker answer, so it shortens the running probe.
         const signalTimeout = probeTimeoutFor(probeEvent.signal, loopback);
         if (signalTimeout !== undefined) {
@@ -982,7 +1041,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         })),
       ),
     ).pipe(exitUnlessInterrupted);
-    const connectedForMs = (yield* Clock.currentTimeMillis) - connectedAt;
+    const endedAt = yield* Clock.currentTimeMillis;
+    const connectedForMs = endedAt - connectedAt;
+    // The session is gone from here on, whatever state is published next.
+    yield* Ref.update(reach, (previous) => ({
+      ...previous,
+      lastConnectedAt: endedAt,
+      lostAt: endedAt,
+    }));
     if (Exit.isSuccess(connectedExit)) {
       return {
         _tag: "Interrupted",
@@ -1162,11 +1228,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
 
       failureCount += 1;
+      const lastConnectedAt = (yield* Ref.get(reach)).lastConnectedAt;
       const delayMs = Math.max(
         retryDelayMs(
           failureCount - 1,
           yield* Random.next,
-          retryMaxDelayMs(yield* prefersLoopback, error),
+          retryMaxDelayMs(
+            yield* prefersLoopback,
+            error,
+            lastConnectedAt === null ? null : (yield* Clock.currentTimeMillis) - lastConnectedAt,
+          ),
         ),
         retryAfterFloorMs(error),
       );

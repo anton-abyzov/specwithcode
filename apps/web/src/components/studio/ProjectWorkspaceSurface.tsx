@@ -209,7 +209,7 @@ import {
 import { useMachineNickname } from "../../studio/machineNickname";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { useUnreachableHosts } from "../../studio/unreachableHosts";
+import { useHostReach, useUnreachableHosts } from "../../studio/unreachableHosts";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import {
   environmentWaitsForReconnectGrace,
@@ -606,6 +606,7 @@ export function ProjectWorkspaceSurface({
     environmentWaitsForReconnectGrace(hostPhase, hostIsThisDevice)
       ? project.environmentId
       : null;
+  const hostReach = useHostReach(project.environmentId);
   const [graceElapsedEnvironmentId, setGraceElapsedEnvironmentId] = useState<string | null>(null);
   useEffect(() => {
     setGraceElapsedEnvironmentId(null);
@@ -621,6 +622,7 @@ export function ProjectWorkspaceSurface({
   };
   const admissionContext = {
     ...hostAdmission,
+    ...(hostReach === undefined ? {} : { reach: hostReach }),
     accessPending: operateAccess === "unknown",
     ...(environment?.label || machineName !== project.environmentId
       ? { machineLabel: machineName }
@@ -2083,7 +2085,7 @@ export function ProjectWorkspaceSurface({
                       isThisDevice={hostIsThisDevice}
                       disconnectedLabel={hostDisconnectedLabel(
                         environment?.connection,
-                        hostAdmission,
+                        admissionContext,
                       )}
                       current={`${project.environmentId}:${project.id}`}
                       copies={checkouts}

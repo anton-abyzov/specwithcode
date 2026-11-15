@@ -795,9 +795,9 @@ export function DraftMachinePicker(props: Props) {
             >
               {activeIsThisMachine
                 ? activeStatus?.text
-                : activeStatus?.retryable
-                  ? tx("Can't reach")
-                  : (activeStatus?.text ?? tx("Not saved"))}
+                : activeStatus
+                  ? tx(activeStatus.short)
+                  : tx("Not saved")}
             </span>
           )}
           {props.autoEnvironmentLabel && (
