@@ -1230,19 +1230,17 @@ jobs:
   # wait, and nothing built the version again). So that run starts the build once more, as a
   # dispatched run. A dispatched or scheduled run never gets here, so a second failure ends it:
   # no loop. Re-running this run by hand may dispatch again, once per attempt.
-  # A build or proof job that ran into its timeout ends cancelled, not failed, and failure() does
-  # not see it, so those results are named. A run a person cancelled is left alone, and so is a
-  # cancelled publish: another run of the version took its place in the queue, or it stopped
-  # in the middle of the upload.
+  # A job that ran into its timeout ends cancelled, not failed, and failure() does not see it, so
+  # a cancelled result counts too. That covers a publish job another run of the version pushed
+  # out of the queue (the step finds that run and stops) and one stopped in the middle of its
+  # upload (the step finds the release half attached and says how to repair it). A run a person
+  # cancelled is left alone: cancelled() is the whole run.
   # No concurrency group and no environment: every other job of this run has ended, so the new
   # run neither waits behind this one nor is cancelled by it.
   retry:
     name: Start the build again after a failed release run
     needs: [plan, windows, linux, linux-update-proof, publish]
-    if: >-
-      ${{ !cancelled() && github.event_name == 'release' && (failure() ||
-      needs.plan.result == 'cancelled' || needs.windows.result == 'cancelled' ||
-      needs.linux.result == 'cancelled' || needs.linux-update-proof.result == 'cancelled') }}
+    if: ${{ !cancelled() && github.event_name == 'release' && (failure() || contains(needs.*.result, 'cancelled')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -1336,6 +1334,7 @@ jobs:
           fi
           gh workflow run release-windows-linux.yml -R "$GITHUB_REPOSITORY" \
             -f version="$version" -f dry_run=false
+          by_hand=""
           # Started: nothing after this may fail the job. The run is listed a few seconds after
           # the dispatch. Wait for it, so this run does not end, and stop counting as started for
           # release-macos.yml, before the new one counts.

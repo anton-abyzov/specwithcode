@@ -578,9 +578,9 @@ How it runs:
   post-job can, and `release.sh` then skips its own dispatch. The post-job still dispatches when
   that run failed or was cancelled.
 - **Retry after a failed on-publish run.** The post-job usually runs while the on-publish run is
-  still building, counts it as started and dispatches nothing. So when that run fails, or a build
-  or proof job runs into its timeout, its last job (`retry`) dispatches one real run for the
-  version itself. It does nothing when a person cancelled the run, when the release is a draft, a
+  still building, counts it as started and dispatches nothing. So when that run fails, or a job
+  of it runs into its timeout, its last job (`retry`) dispatches one real run for the version
+  itself. It does nothing when a person cancelled the run, when the release is a draft, a
   prerelease or gone, when a dispatched run for the version is going or has succeeded, or when
   the release already holds the apps. A release that holds only part of them fails the job with
   the `replace` dispatch that repairs it. A dispatched run that fails is not retried, so there is

@@ -41,13 +41,11 @@ describe("release-windows-linux.yml retry job", () => {
     expect(names.at(-1)).toBe("retry");
     expect(retry?.needs).toEqual(names.filter((name) => name !== "retry"));
     // A job that ran into its timeout ends cancelled and failure() does not see it. cancelled()
-    // is the run a person cancelled. A cancelled publish is not a reason to build again.
+    // is the run a person cancelled.
     expect(retry?.if).toBe(
-      "${{ !cancelled() && github.event_name == 'release' && (failure() || " +
-        "needs.plan.result == 'cancelled' || needs.windows.result == 'cancelled' || " +
-        "needs.linux.result == 'cancelled' || needs.linux-update-proof.result == 'cancelled') }}",
+      "${{ !cancelled() && github.event_name == 'release' && (failure() || contains(needs.*.result, 'cancelled')) }}",
     );
-    expect(retry?.if ?? "").not.toMatch(/always\(\)|needs\.publish/);
+    expect(retry?.if ?? "").not.toMatch(/always\(\)/);
     for (const [name, job] of Object.entries(workflow.jobs)) {
       if (name !== "retry") expect([job.needs ?? []].flat(), name).not.toContain("retry");
     }
@@ -94,8 +92,8 @@ describe("release-windows-linux.yml retry job", () => {
   });
 
   describe("the step, run against a fake gh and release helper", () => {
-    // gh: `api .../releases/tags/vX` prints FAKE_RELEASE, or fails as gh does (the body on
-    // stdout, the status on stderr). `run list` filters FAKE_RUNS (FAKE_RUNS_AFTER once a run was
+    // gh: `api .../releases/tags/vX` filters the release FAKE_RELEASE by --jq, or fails as gh
+    // does (the body on stdout, the status on stderr). `run list` filters FAKE_RUNS (FAKE_RUNS_AFTER once a run was
     // dispatched) by --event and --jq, as gh does. node: release-state exits FAKE_STATE for this
     // repository and FAKE_STATE_FEED for another. sleep: returns at once.
     const fakeGh = `#!/usr/bin/env bash
@@ -106,7 +104,8 @@ case "$1 $2" in
     if [ -n "$FAKE_RELEASE_ERROR" ]; then
       echo '{"message":"x"}'; echo "gh: $FAKE_RELEASE_ERROR" >&2; exit 1
     fi
-    echo "$FAKE_RELEASE" ;;
+    while [ "$#" -gt 0 ]; do if [ "$1" = --jq ]; then expr="$2"; fi; shift; done
+    printf '%s' "$FAKE_RELEASE" | jq -r "$expr" ;;
   "run list")
     if [ -n "$FAKE_LIST_ERROR" ]; then echo "$FAKE_LIST_ERROR" >&2; exit 1; fi
     if [ -n "$FAKE_LIST_ERROR_AFTER" ] && grep -q '^dispatched$' "$FAKE_LOG"; then
@@ -131,6 +130,8 @@ while [ "$#" -gt 0 ]; do if [ "$1" = --repo ]; then repo="$2"; fi; shift; done
 if [ "$repo" = "$GITHUB_REPOSITORY" ]; then exit "$FAKE_STATE"; fi
 exit "$FAKE_STATE_FEED"
 `;
+    const release = (draft: boolean, prerelease: boolean) =>
+      JSON.stringify({ tag_name: "v1.0.304", draft, prerelease });
     const step = (env: Record<string, string>) => {
       const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "windows-linux-retry-"));
       NodeFS.writeFileSync(NodePath.join(dir, "gh"), fakeGh, { mode: 0o755 });
@@ -151,7 +152,7 @@ exit "$FAKE_STATE_FEED"
           RELEASE_REPOSITORIES: "owner/repo",
           TOOL: "release-windows-linux.ts",
           RELEASE_TAG: "v1.0.304",
-          FAKE_RELEASE: "false false",
+          FAKE_RELEASE: release(false, false),
           FAKE_RELEASE_ERROR: "",
           FAKE_LIST_ERROR: "",
           FAKE_LIST_ERROR_AFTER: "",
@@ -216,6 +217,11 @@ exit "$FAKE_STATE_FEED"
         "::warning::Dispatched the Windows and Linux build for 1.0.304",
       );
       expect(listed.output).not.toContain("::warning::");
+      // Once dispatched, a failure does not claim the build was not started.
+      const late = step({ GITHUB_STEP_SUMMARY: "/nonexistent-dir/summary" });
+      expect(late.dispatched).toBe(1);
+      expect(late.status).not.toBe(0);
+      expect(late.output).not.toContain("was not started again");
       // A listing that fails after the dispatch does not turn a started retry into a failure.
       for (const after of [
         { FAKE_LIST_ERROR_AFTER: "HTTP 502" },
@@ -274,9 +280,11 @@ exit "$FAKE_STATE_FEED"
         status: 0,
         dispatched: 0,
       });
-      for (const state of ["true false", "false true", "true true", ""]) {
+      for (const state of [release(true, false), release(false, true), release(true, true)]) {
         expect(outcome({ FAKE_RELEASE: state }), state).toEqual({ status: 0, dispatched: 0 });
       }
+      // Only a release the API calls neither draft nor prerelease is built again.
+      expect(outcome({ FAKE_RELEASE: '{"draft":false}' })).toEqual({ status: 0, dispatched: 0 });
       for (const tag of ["v1.0.304-rc.1", "1.0", "nightly", "v01.0.1", ""]) {
         const result = step({ RELEASE_TAG: tag });
         expect({ status: result.status, dispatched: result.dispatched }, tag).toEqual({
