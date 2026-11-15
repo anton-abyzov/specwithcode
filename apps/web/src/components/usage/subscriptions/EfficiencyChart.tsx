@@ -172,7 +172,14 @@ export function EfficiencyChart({
 }
 
 /** The score as a ring: the arc is the score, the track is what was planned and not used. */
-export function ScoreRing({ score }: { readonly score: number | null }) {
+export function ScoreRing({
+  score,
+  floor = false,
+}: {
+  readonly score: number | null;
+  /** The score is a floor: a reset behind it was read long before it happened. */
+  readonly floor?: boolean;
+}) {
   const grown = useGrowIn();
   const radius = 44;
   const length = 2 * Math.PI * radius;
@@ -183,7 +190,7 @@ export function ScoreRing({ score }: { readonly score: number | null }) {
       height="104"
       viewBox="0 0 104 104"
       role="img"
-      aria-label={score === null ? "Efficiency: not enough history yet" : `Efficiency ${Math.round(score)}%`}
+      aria-label={score === null ? "Efficiency: not enough history yet" : `Efficiency ${floor ? "at least " : ""}${Math.round(score)}%`}
       className="shrink-0"
     >
       <circle cx="52" cy="52" r={radius} fill="none" strokeWidth="9" className="stroke-muted" />

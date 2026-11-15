@@ -155,6 +155,7 @@ describe("SubscriptionsDashboard", () => {
     const html = dashboard([lost(now - 4 * DAY, 41), lost(now - 11 * DAY, 45, 9 * HOUR)]);
     expect(html).toContain('data-efficiency-floor="">at least');
     expect(html).toContain("at least 55% at its one reset");
+    expect(html).toContain('aria-label="Efficiency at least 57%"');
   });
 
   it("keeps a week with no reset reachable by keyboard", () => {

@@ -112,7 +112,7 @@ function TokensFact({ lost }: { readonly lost: number | null }) {
   return lost === null ? (
     <Fact
       value="Tokens not measurable"
-      note="needs an exact read and one account of the provider in use"
+      note="the spend behind this percent cannot be told apart here"
     />
   ) : lost === 0 ? (
     <Fact value="No tokens left unused" note="the quota was used up" />
@@ -138,7 +138,7 @@ function BusiestFact({ samples }: { readonly samples: ReturnType<typeof samplesO
 
 function RenewalFact({ renewal }: { readonly renewal: SubscriptionRenewal | null }) {
   return renewal === null ? (
-    <Fact value="Renewal not reported" note="set the day under Right now" />
+    <Fact value="Renewal not reported" note="the provider gives no date and no day is set" />
   ) : (
     <Fact
       value={`Renews ${formatDay(renewal.at)}`}

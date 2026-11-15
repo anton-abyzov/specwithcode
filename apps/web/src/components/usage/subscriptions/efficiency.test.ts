@@ -153,6 +153,19 @@ describe("efficiencyDashboard", () => {
     expect(dashboard.upperBound).toBe(true);
     expect(dashboard.columns[11]?.upperBound).toBe(true);
     expect(dashboard.columns[10]?.upperBound).toBe(false);
+    expect(dashboard.previousUpperBound).toBe(false);
+    const earlier = efficiencyDashboard(
+      [
+        period("codex:a@x.dev", 5, 20, { lastReadAt: iso(monday(5) - 3 * DAY) }),
+        period("codex:a@x.dev", 4, 30),
+        period("codex:a@x.dev", 1, 60),
+        period("codex:a@x.dev", 0, 70),
+      ],
+      now,
+      options(),
+    );
+    expect(earlier.upperBound).toBe(false);
+    expect(earlier.previousUpperBound).toBe(true);
   });
 
   it("counts each reset in one group, so groups add up to the range", () => {

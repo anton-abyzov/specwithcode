@@ -140,6 +140,8 @@ export interface EfficiencyDashboard {
   /** Average left unused per reset in the range. */
   readonly unusedPercent: number | null;
   readonly upperBound: boolean;
+  /** The span before the range holds a reset read long before it happened. */
+  readonly previousUpperBound: boolean;
   readonly resets: number;
   readonly groups: readonly DashboardGroup[];
   /** Resets in the range, newest first. */
@@ -281,7 +283,7 @@ export function efficiencyDashboard(
   const current = scoreBetween(periods, rangeStart, rangeEnd, options);
   const previous =
     options.range === "1y"
-      ? { score: null }
+      ? { score: null, inside: [] }
       : scoreBetween(periods, rangeStart - (rangeEnd - rangeStart), rangeStart, options);
   const { entries, byPrice } = weighted(current.inside, options);
   return {
@@ -292,6 +294,7 @@ export function efficiencyDashboard(
     previousScore: previous.score,
     unusedPercent: mean(entries, (entry) => entry.period.lostPercent),
     upperBound: current.inside.some((period) => period.upperBound),
+    previousUpperBound: previous.inside.some((period) => period.upperBound),
     resets: current.inside.length,
     groups: groupsOf(current.inside, options),
     periods: current.inside.toSorted((left, right) => right.endedAt - left.endedAt),

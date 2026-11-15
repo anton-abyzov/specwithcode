@@ -80,31 +80,39 @@ export function SubscriptionsView({
     return map;
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- accounts is rebuilt each render; its keys decide.
   }, [accounts.map((account) => account.key).join("\n")]);
-  // When each account of a provider was last seen, now or in the ledger. Usage is counted per
-  // provider, so a span's tokens are one account's only when no other account was seen after
-  // the span began. One that signed out before it never touched it.
-  const lastSeenOfDriver = new Map<string, Map<string, number>>();
-  const seen = (driver: string, key: string, at: number) => {
-    const keys = lastSeenOfDriver.get(driver) ?? new Map<string, number>();
-    keys.set(key, Math.max(keys.get(key) ?? 0, at));
-    lastSeenOfDriver.set(driver, keys);
+  // When each account of a provider was in use, now or in the ledger. Usage is counted per
+  // provider, so a span's tokens are one account's only when no other account was in use
+  // during it. An unknown start counts as always, so doubt withholds the estimate.
+  const spansOfDriver = new Map<string, Map<string, Array<{ from: number; to: number }>>>();
+  const span = (driver: string, key: string, from: number, to: number) => {
+    const keys = spansOfDriver.get(driver) ?? new Map<string, Array<{ from: number; to: number }>>();
+    keys.set(key, [...(keys.get(key) ?? []), { from, to }]);
+    spansOfDriver.set(driver, keys);
   };
   const timeOr = (value: string | undefined, fallback: number) => {
     const at = value === undefined ? Number.NaN : Date.parse(value);
     return Number.isFinite(at) ? at : fallback;
   };
+  const lastClosed = new Map<string, number>();
+  for (const period of periods) {
+    const endedAt = timeOr(period.endedAt, now);
+    span(period.driver, period.accountKey, timeOr(period.startedAt, Number.NEGATIVE_INFINITY), endedAt);
+    lastClosed.set(period.accountKey, Math.max(lastClosed.get(period.accountKey) ?? 0, endedAt));
+  }
+  // The running period: from the last one that closed, when there is one, to the newest read.
+  const running = (driver: string, key: string, lastReadAt: number) =>
+    span(driver, key, lastClosed.get(key) ?? Number.NEGATIVE_INFINITY, lastReadAt);
   for (const account of accounts) {
-    seen(
+    running(
       account.driver,
       limitAccountKey(account.driver, account.email, account.limits) ?? account.key,
       timeOr(account.limits.checkedAt, now),
     );
   }
-  for (const period of periods) seen(period.driver, period.accountKey, timeOr(period.endedAt, now));
   // An account read without closing a period still shared the provider's token counts. A
   // server too old to say when it was last read counts as read now.
   for (const open of ledger?.openAccounts ?? []) {
-    seen(open.driver, open.accountKey, timeOr(open.lastReadAt, now));
+    running(open.driver, open.accountKey, timeOr(open.lastReadAt, now));
   }
   const tokensSpent = (
     { accountKey, driver }: { readonly accountKey: string; readonly driver: UsageResetPeriod["driver"] },
@@ -113,8 +121,8 @@ export function SubscriptionsView({
   ) => {
     const kind = USAGE_KIND[driver];
     if (kind === undefined) return null;
-    for (const [other, lastSeen] of lastSeenOfDriver.get(driver) ?? []) {
-      if (other !== accountKey && lastSeen > from) return null;
+    for (const [other, spans] of spansOfDriver.get(driver) ?? []) {
+      if (other !== accountKey && spans.some((used) => used.from < to && used.to > from)) return null;
     }
     if (usage.isPending || usage.isPartial) return null;
     let tokens = 0;
@@ -166,6 +174,7 @@ export function SubscriptionsView({
         history={history}
         now={now}
         targets={targets ?? {}}
+        renewalDays={renewalDays ?? {}}
         prices={prices ?? {}}
         labelOf={labelOf}
         colorOf={colorOf}

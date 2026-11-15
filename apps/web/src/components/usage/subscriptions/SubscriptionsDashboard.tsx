@@ -21,7 +21,7 @@ import {
   rangeTokensLost,
   targetOf,
 } from "./efficiency";
-import type { SubscriptionRow } from "./subscriptionRows";
+import { type SubscriptionRenewal, type SubscriptionRow, nextRenewalOn } from "./subscriptionRows";
 
 const GROUPS: ReadonlyArray<{ readonly value: DashboardGroupBy; readonly label: string }> = [
   { value: "provider", label: "Provider" },
@@ -195,6 +195,8 @@ export interface SubscriptionsDashboardProps {
   readonly history: LimitHistoryIndex | null;
   readonly now: number;
   readonly targets: Readonly<Record<string, number>>;
+  /** Renewal days the person set, for an account that is signed out and has no row. */
+  readonly renewalDays?: Readonly<Record<string, number>>;
   readonly prices: Readonly<Record<string, number>>;
   readonly labelOf: (accountKey: string) => string;
   readonly colorOf: (accountKey: string) => string;
@@ -262,10 +264,18 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
     .toSorted((left, right) => left - right)[0];
   // From the same resets as the percent beside it, so the two cover one span.
   const tokens = rangeTokensLost(dashboard.periods, props.tokensLostOf);
-  const renewalOf = (accountKey: string) =>
-    rows.find((row) => row.accountKey === accountKey)?.renewal ?? null;
+  const renewalOf = (accountKey: string): SubscriptionRenewal | null => {
+    const row = rows.find((entry) => entry.accountKey === accountKey);
+    if (row) return row.renewal;
+    const day = props.renewalDays?.[accountKey];
+    return day === undefined ? null : { at: nextRenewalOn(day, now), source: "set", day };
+  };
+  // A floor on either side cannot be subtracted into an exact change.
   const delta =
-    dashboard.score === null || dashboard.previousScore === null
+    dashboard.score === null ||
+    dashboard.previousScore === null ||
+    dashboard.upperBound ||
+    dashboard.previousUpperBound
       ? null
       : Math.round(dashboard.score - dashboard.previousScore);
   const colorOfGroup = (group: DashboardGroup) => {
@@ -319,7 +329,7 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[1.5fr_1fr_1fr_1fr]">
         <Tile name="efficiency" className="flex-row items-center gap-4">
-          <ScoreRing score={dashboard.score} />
+          <ScoreRing score={dashboard.score} floor={dashboard.upperBound} />
           <div className="flex min-w-0 flex-col gap-1">
             <span className="text-xs text-muted-foreground">Efficiency</span>
             {dashboard.score === null ? (
