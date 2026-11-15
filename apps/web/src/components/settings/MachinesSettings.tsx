@@ -1,5 +1,6 @@
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
+import { CommandLineCard } from "./CommandLineCard";
 import { ConnectionsSettings } from "./ConnectionsSettings";
 import type { FleetMachineCardExtras } from "./StudioFleetConnections";
 import { MachineRemoteControl } from "./MachineRemoteControl";
@@ -363,6 +364,7 @@ export function MachinesSettingsPanel() {
               <HandoffModeSettings environmentId={fleet.primaryEnvironmentId} />
             ) : null}
             {parts.routing}
+            <CommandLineCard />
             <ThisMachineAdvanced>
               {parts.thisMachine}
               {parts.savedConnections}
@@ -590,13 +592,7 @@ function MachineChip({
  * folder with the home folder as "~" and the end kept. Pressing it lists every
  * copy with its machine, status, role and full folder.
  */
-function ProjectWhere({
-  project,
-  here,
-}: {
-  project: MachineProject;
-  here: MachineHere;
-}) {
+function ProjectWhere({ project, here }: { project: MachineProject; here: MachineHere }) {
   const tx = useTx();
   const identities = useMachineIdentities();
   const shown = project.elsewhere.slice(0, MAX_MACHINE_CHIPS);

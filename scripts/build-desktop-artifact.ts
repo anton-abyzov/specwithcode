@@ -1039,6 +1039,9 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // The voice helper is an executable; it ships once at resources/voice.
   "!apps/desktop/prod-resources/voice",
   "!apps/desktop/prod-resources/voice/**/*",
+  // The specwithcode command shim is run by the shell; it ships once at resources/cli.
+  "!apps/desktop/prod-resources/cli",
+  "!apps/desktop/prod-resources/cli/**/*",
   "!apps/desktop/gnome-extension",
   "!apps/desktop/gnome-extension/**/*",
 ] as const;
@@ -1154,6 +1157,14 @@ export const DESKTOP_EXTRA_RESOURCES = [
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
   },
+] as const;
+// The specwithcode command inside the bundle (apps/desktop/resources/cli). Settings > Machines >
+// Command line puts it on PATH; it runs this bundle's own CLI, so updates keep it current.
+export const POSIX_CLI_SHIM_EXTRA_RESOURCES = [
+  { from: "apps/desktop/prod-resources/cli", to: "cli", filter: ["specwithcode"] },
+] as const;
+export const WINDOWS_CLI_SHIM_EXTRA_RESOURCES = [
+  { from: "apps/desktop/prod-resources/cli", to: "cli", filter: ["specwithcode.cmd"] },
 ] as const;
 // On-device speech for voice calls (native/voice/main.swift), macOS only.
 export const MAC_VOICE_EXTRA_RESOURCES = [
@@ -3012,6 +3023,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       : {}),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "win" ? WINDOWS_CLI_SHIM_EXTRA_RESOURCES : POSIX_CLI_SHIM_EXTRA_RESOURCES),
       ...(platform === "mac" ? MAC_SERVICE_UPDATER_EXTRA_RESOURCES : []),
       ...(platform === "mac" ? MAC_VOICE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),

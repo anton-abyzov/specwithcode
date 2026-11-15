@@ -5019,4 +5019,46 @@ export const ja: PhraseCatalog = {
   "Sheet tabs": "シートのタブ",
   "This sheet is too large to open here.": "このシートは大きすぎてここでは開けません。",
   Sheet: "シート",
+  "Installed, matches this app ({version}).":
+    "インストール済み。このアプリと同じバージョンです（{version}）。",
+  "Installed, version {version}; this app is {appVersion}.":
+    "インストール済み（{version}）。このアプリは {appVersion} です。",
+  "Installed.": "インストール済み。",
+  "Installed, but it runs another copy of the app at {path}.":
+    "インストール済みですが、{path} にある別のアプリを実行します。",
+  "The command points at a copy of the app that is gone ({path}). Repair points it at this app.":
+    "コマンドは、もう存在しないアプリ（{path}）を指しています。修復するとこのアプリを指すようになります。",
+  "{path} comes from the command-line install of SpecWithCode, which keeps it up to date. The app leaves it as it is.":
+    "{path} は SpecWithCode のコマンドラインインストールによるもので、そちらが最新に保ちます。アプリは変更しません。",
+  "Something else is already at {path}. The app will not replace it; move it away to install the app's command there.":
+    "{path} には別のものがあります。アプリは置き換えません。そこにアプリのコマンドを入れるには、移動してください。",
+  "Not installed.": "未インストール。",
+  "Open a new terminal window to use it.": "使うには新しいターミナルウィンドウを開いてください。",
+  "{folder} is not on your terminal's PATH yet, so a new terminal will not find the command.":
+    "{folder} はまだターミナルの PATH に入っていないため、新しいターミナルではコマンドが見つかりません。",
+  "The app could not read your terminal's PATH. If a new terminal says command not found, add this line.":
+    "アプリはターミナルの PATH を読み取れませんでした。新しいターミナルで command not found と出たら、この行を追加してください。",
+  "Add it to {file}": "{file} に追加",
+  "Adds only this line, marked as added by SpecWithCode. Remove takes it out again.":
+    "この1行だけを SpecWithCode が追加した印付きで追加します。削除で元に戻ります。",
+  "Added to {file}. Open a new terminal window to use it.":
+    "{file} に追加しました。新しいターミナルウィンドウを開いてください。",
+  "The specwithcode command is this app driven from a terminal: the same version as the app, talking to the app that is already running. It is not a second copy and needs no separate sign-in. Use it over SSH, on a machine with no screen, or in scripts and agents.":
+    "specwithcode コマンドは、このアプリをターミナルから操作するものです。アプリと同じバージョンで、起動中のアプリと通信します。別のコピーではなく、別途サインインも不要です。SSH 経由、画面のないマシン、スクリプトやエージェントで使えます。",
+  "What is this?": "これは何？",
+  "Installing writes {path}, which runs the command inside the app, and adds {folder} to your user PATH. No administrator password.":
+    "インストールすると、アプリ内のコマンドを実行する {path} を作成し、{folder} をユーザーの PATH に追加します。管理者パスワードは不要です。",
+  "Installing adds {path}, a link to the command inside the app. Nothing else changes, and no administrator password is needed.":
+    "インストールすると、アプリ内のコマンドへのリンク {path} を追加します。ほかは何も変わらず、管理者パスワードも不要です。",
+  "Install command-line tool": "コマンドラインツールをインストール",
+  "Use this copy": "このアプリを使う",
+  "A different specwithcode at {path} comes first on your PATH, so a terminal runs that one instead. The app did not change it.":
+    "{path} にある別の specwithcode が PATH の先にあるため、ターミナルではそちらが実行されます。アプリは変更していません。",
+  "Command line": "コマンドライン",
+  "A development build has no command to install.":
+    "開発ビルドにはインストールできるコマンドがありません。",
+  "This copy of the app runs from a disk image or a temporary folder. Move SpecWithCode to Applications and open it from there first.":
+    "このアプリはディスクイメージか一時フォルダから実行されています。先に SpecWithCode をアプリケーションに移動し、そこから開いてください。",
+  "This copy of the app has no specwithcode command inside it. Reinstall the app.":
+    "このアプリには specwithcode コマンドが入っていません。アプリを再インストールしてください。",
 };

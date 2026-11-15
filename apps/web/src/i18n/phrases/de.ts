@@ -5051,4 +5051,46 @@ export const de: PhraseCatalog = {
   "Sheet tabs": "Tabellenblätter",
   "This sheet is too large to open here.": "Diese Tabelle ist zu groß, um sie hier zu öffnen.",
   Sheet: "Tabelle",
+  "Installed, matches this app ({version}).": "Installiert, passt zu dieser App ({version}).",
+  "Installed, version {version}; this app is {appVersion}.":
+    "Installiert, Version {version}; diese App ist {appVersion}.",
+  "Installed.": "Installiert.",
+  "Installed, but it runs another copy of the app at {path}.":
+    "Installiert, startet aber eine andere Kopie der App unter {path}.",
+  "The command points at a copy of the app that is gone ({path}). Repair points it at this app.":
+    "Der Befehl zeigt auf eine Kopie der App, die es nicht mehr gibt ({path}). Reparieren lässt ihn auf diese App zeigen.",
+  "{path} comes from the command-line install of SpecWithCode, which keeps it up to date. The app leaves it as it is.":
+    "{path} stammt aus der Befehlszeilen-Installation von SpecWithCode, die ihn aktuell hält. Die App lässt ihn, wie er ist.",
+  "Something else is already at {path}. The app will not replace it; move it away to install the app's command there.":
+    "Unter {path} liegt bereits etwas anderes. Die App ersetzt es nicht; verschieben Sie es, um dort den Befehl der App zu installieren.",
+  "Not installed.": "Nicht installiert.",
+  "Open a new terminal window to use it.":
+    "Öffnen Sie ein neues Terminalfenster, um ihn zu nutzen.",
+  "{folder} is not on your terminal's PATH yet, so a new terminal will not find the command.":
+    "{folder} ist noch nicht im PATH Ihres Terminals, ein neues Terminal findet den Befehl also nicht.",
+  "The app could not read your terminal's PATH. If a new terminal says command not found, add this line.":
+    "Die App konnte den PATH Ihres Terminals nicht lesen. Meldet ein neues Terminal command not found, fügen Sie diese Zeile hinzu.",
+  "Add it to {file}": "Zu {file} hinzufügen",
+  "Adds only this line, marked as added by SpecWithCode. Remove takes it out again.":
+    "Fügt nur diese Zeile hinzu, markiert als von SpecWithCode. Entfernen nimmt sie wieder heraus.",
+  "Added to {file}. Open a new terminal window to use it.":
+    "Zu {file} hinzugefügt. Öffnen Sie ein neues Terminalfenster.",
+  "The specwithcode command is this app driven from a terminal: the same version as the app, talking to the app that is already running. It is not a second copy and needs no separate sign-in. Use it over SSH, on a machine with no screen, or in scripts and agents.":
+    "Der Befehl specwithcode ist diese App, bedient aus einem Terminal: dieselbe Version, im Gespräch mit der bereits laufenden App. Er ist keine zweite Kopie und braucht keine eigene Anmeldung. Nutzen Sie ihn über SSH, auf einem Rechner ohne Bildschirm oder in Skripten und Agenten.",
+  "What is this?": "Was ist das?",
+  "Installing writes {path}, which runs the command inside the app, and adds {folder} to your user PATH. No administrator password.":
+    "Die Installation schreibt {path}, das den Befehl in der App startet, und fügt {folder} Ihrem Benutzer-PATH hinzu. Kein Administratorkennwort.",
+  "Installing adds {path}, a link to the command inside the app. Nothing else changes, and no administrator password is needed.":
+    "Die Installation legt {path} an, einen Link auf den Befehl in der App. Sonst ändert sich nichts, ein Administratorkennwort ist nicht nötig.",
+  "Install command-line tool": "Befehlszeilen-Tool installieren",
+  "Use this copy": "Diese Kopie verwenden",
+  "A different specwithcode at {path} comes first on your PATH, so a terminal runs that one instead. The app did not change it.":
+    "Ein anderes specwithcode unter {path} steht in Ihrem PATH weiter vorn, ein Terminal startet also dieses. Die App hat es nicht geändert.",
+  "Command line": "Befehlszeile",
+  "A development build has no command to install.":
+    "Ein Entwicklungs-Build hat keinen Befehl zum Installieren.",
+  "This copy of the app runs from a disk image or a temporary folder. Move SpecWithCode to Applications and open it from there first.":
+    "Diese Kopie der App läuft von einem Disk-Image oder aus einem temporären Ordner. Verschieben Sie SpecWithCode zuerst in Programme und öffnen Sie es dort.",
+  "This copy of the app has no specwithcode command inside it. Reinstall the app.":
+    "In dieser Kopie der App fehlt der Befehl specwithcode. Installieren Sie die App neu.",
 };

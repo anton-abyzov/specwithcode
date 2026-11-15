@@ -1234,6 +1234,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "command-line-tool",
+    title: "Command line",
+    to: "/settings/machines",
+    desktopOnly: true,
+    searchTerms: [
+      "specwithcode command terminal cli install command-line tool path shell zsh bash fish powershell local bin remove repair",
+    ],
+  },
+  {
     id: "handoff-mode",
     title: "Moving work between machines",
     to: "/settings/machines",

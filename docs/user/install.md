@@ -174,8 +174,9 @@ Terminal or restart, run `specwithcode service install` (1.0.46 and later): the 
 copy of the installed package under `~/.specwithcode/runtime/versions/<version>` and runs it with
 the Node.js that ran the install.
 
-Once `specwithcode` is on your `PATH` (from the installer, npm, or built from source; the desktop
-app does not add it), these commands cover the basics.
+Once `specwithcode` is on your `PATH` (from the installer, npm, built from source, or the desktop
+app's **Settings > Machines > Command line > Install command-line tool**; see
+[The command line](./command-line.md)), these commands cover the basics.
 The same tool is also installed under its original name, `specweave-studio`, so older scripts keep working.
 
 | Task                                                      | Command                                                             |

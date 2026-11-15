@@ -5016,4 +5016,45 @@ export const ru: PhraseCatalog = {
   "Sheet tabs": "Листы таблицы",
   "This sheet is too large to open here.": "Эта таблица слишком велика, чтобы открыть её здесь.",
   Sheet: "Таблица",
+  "Installed, matches this app ({version}).": "Установлена, совпадает с приложением ({version}).",
+  "Installed, version {version}; this app is {appVersion}.":
+    "Установлена версия {version}; у приложения {appVersion}.",
+  "Installed.": "Установлена.",
+  "Installed, but it runs another copy of the app at {path}.":
+    "Установлена, но запускает другую копию приложения: {path}.",
+  "The command points at a copy of the app that is gone ({path}). Repair points it at this app.":
+    "Команда указывает на копию приложения, которой больше нет ({path}). «Исправить» направит её на это приложение.",
+  "{path} comes from the command-line install of SpecWithCode, which keeps it up to date. The app leaves it as it is.":
+    "{path} установлена консольной установкой SpecWithCode, которая сама её обновляет. Приложение её не трогает.",
+  "Something else is already at {path}. The app will not replace it; move it away to install the app's command there.":
+    "По пути {path} уже есть другой файл. Приложение его не заменит; уберите его, чтобы установить туда команду приложения.",
+  "Not installed.": "Не установлена.",
+  "Open a new terminal window to use it.": "Откройте новое окно терминала, чтобы ею пользоваться.",
+  "{folder} is not on your terminal's PATH yet, so a new terminal will not find the command.":
+    "Папки {folder} пока нет в PATH терминала, поэтому новый терминал не найдёт команду.",
+  "The app could not read your terminal's PATH. If a new terminal says command not found, add this line.":
+    "Приложению не удалось прочитать PATH терминала. Если новый терминал пишет command not found, добавьте эту строку.",
+  "Add it to {file}": "Добавить в {file}",
+  "Adds only this line, marked as added by SpecWithCode. Remove takes it out again.":
+    "Добавляет только эту строку с пометкой SpecWithCode. «Удалить» уберёт её.",
+  "Added to {file}. Open a new terminal window to use it.":
+    "Добавлено в {file}. Откройте новое окно терминала.",
+  "The specwithcode command is this app driven from a terminal: the same version as the app, talking to the app that is already running. It is not a second copy and needs no separate sign-in. Use it over SSH, on a machine with no screen, or in scripts and agents.":
+    "Команда specwithcode это то же приложение, но из терминала: та же версия, и она общается с уже запущенным приложением. Это не вторая копия, отдельный вход не нужен. Пригодится по SSH, на машине без экрана, в скриптах и агентах.",
+  "What is this?": "Что это?",
+  "Installing writes {path}, which runs the command inside the app, and adds {folder} to your user PATH. No administrator password.":
+    "Установка создаёт {path}, который запускает команду внутри приложения, и добавляет {folder} в PATH пользователя. Пароль администратора не нужен.",
+  "Installing adds {path}, a link to the command inside the app. Nothing else changes, and no administrator password is needed.":
+    "Установка добавляет {path}, ссылку на команду внутри приложения. Больше ничего не меняется, пароль администратора не нужен.",
+  "Install command-line tool": "Установить консольную команду",
+  "Use this copy": "Использовать эту копию",
+  "A different specwithcode at {path} comes first on your PATH, so a terminal runs that one instead. The app did not change it.":
+    "Другая команда specwithcode ({path}) стоит в PATH раньше, поэтому терминал запустит её. Приложение её не меняло.",
+  "Command line": "Командная строка",
+  "A development build has no command to install.":
+    "В сборке для разработки нет команды для установки.",
+  "This copy of the app runs from a disk image or a temporary folder. Move SpecWithCode to Applications and open it from there first.":
+    "Эта копия приложения запущена с образа диска или из временной папки. Сначала перенесите SpecWithCode в «Программы» и откройте оттуда.",
+  "This copy of the app has no specwithcode command inside it. Reinstall the app.":
+    "В этой копии приложения нет команды specwithcode. Переустановите приложение.",
 };

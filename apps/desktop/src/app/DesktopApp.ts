@@ -18,6 +18,7 @@ import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
+import { repairCommandLineToolAtLaunch } from "../ipc/methods/commandLineTool.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
@@ -621,6 +622,14 @@ const startup = Effect.gen(function* () {
       ),
       Effect.catchCause((cause) =>
         logStartupError("could not remove an earlier app copy", { cause: Cause.pretty(cause) }),
+      ),
+      // After the earlier copies are gone: a specwithcode command that pointed into one of them
+      // (or into a copy the person moved or deleted) is pointed at this app again.
+      Effect.andThen(repairCommandLineToolAtLaunch()),
+      Effect.catchCause((cause) =>
+        logStartupError("could not repair the specwithcode command", {
+          cause: Cause.pretty(cause),
+        }),
       ),
     ),
   );

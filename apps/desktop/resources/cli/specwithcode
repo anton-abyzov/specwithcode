@@ -1,0 +1,39 @@
+#!/bin/sh
+# specwithcode-desktop-shim 1
+# The specwithcode command inside the SpecWithCode app. It runs this app's own
+# command-line tool, so the command and the app are always the same version.
+# Settings > Machines > Command line links it into ~/.local/bin.
+set -eu
+self=$0
+hops=0
+while [ -L "$self" ]; do
+  hops=$((hops + 1))
+  if [ "$hops" -gt 40 ]; then
+    echo "specwithcode: too many links at $0" >&2
+    exit 127
+  fi
+  target=$(readlink "$self")
+  case $target in
+    /*) self=$target ;;
+    *) self=$(dirname "$self")/$target ;;
+  esac
+done
+resources=$(cd "$(dirname "$self")/.." && pwd -P)
+root=$(dirname "$resources")
+exe=''
+for candidate in "$root/MacOS/SpecWithCode" "$root/MacOS/SpecWithCode (Nightly)" "$root/specweave-studio-desktop"; do
+  if [ -f "$candidate" ] && [ -x "$candidate" ]; then
+    exe=$candidate
+    break
+  fi
+done
+if [ -z "$exe" ]; then
+  echo "specwithcode: the SpecWithCode app at $root is incomplete; reinstall it, then open it once." >&2
+  exit 127
+fi
+# An AppImage carries some libraries in usr/lib, which its AppRun would put on the path.
+if [ -d "$root/usr/lib" ]; then
+  LD_LIBRARY_PATH="$root/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export LD_LIBRARY_PATH
+fi
+ELECTRON_RUN_AS_NODE=1 STUDIO_CLI_NAME=specwithcode exec "$exe" "$resources/app.asar/apps/server/dist/bin.mjs" "$@"
