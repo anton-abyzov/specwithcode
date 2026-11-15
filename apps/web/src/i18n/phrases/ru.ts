@@ -288,7 +288,7 @@ export const ru: PhraseCatalog = {
   "This machine": "Эта машина",
   "Thread notifications": "Уведомления тредов",
   "Time format": "Формат времени",
-  "Timeline detail": "Детализация хронологии",
+  "What threads show": "Что показывают треды",
   "Top Span Names": "Частые имена спанов",
   "Trace Diagnostics": "Диагностика трассировки",
   "Try first": "Пробовать сначала",
@@ -1026,8 +1026,8 @@ export const ru: PhraseCatalog = {
     "Для всего приложения на этой машине; проект может задать свой в своих настройках.",
   "fallback order": "порядка резервирования",
   "response style": "стиль ответов",
-  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. Timeline detail only changes how much of their work is shown. New turns use the saved style.":
-    "Меняет то, что пишут координаторы, исполнители и треды, для всех провайдеров. Кнопка ответа в заголовке треда или проекта задаёт его для этого проекта. Детализация ленты меняет только то, сколько их работы показывается. Новые ходы используют сохранённый стиль.",
+  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. The Show setting only changes how much of their work is shown. New turns use the saved style.":
+    "Меняет то, что пишут координаторы, исполнители и треды, для всех провайдеров. Кнопка ответа в заголовке треда или проекта задаёт его для этого проекта. Настройка «Что показывают треды» меняет только то, сколько их работы показывается. Новые ходы используют сохранённый стиль.",
   "Applies to Claude Code providers with native workflow support. Workers already running keep their launch settings.":
     "Применяется к провайдерам Claude Code с поддержкой нативных воркфлоу. Уже запущенные исполнители сохраняют свои параметры запуска.",
   "agent instructions": "инструкции агентам",
@@ -2577,7 +2577,7 @@ export const ru: PhraseCatalog = {
   "Comfortable (default)": "Удобная (по умолчанию)",
   Wide: "Широкая",
   Full: "Во всю ширину",
-  "timeline detail": "детализация ленты",
+  "what threads show": "что показывают треды",
   "{panelAnimationDurationMs} ms": "{panelAnimationDurationMs} мс",
   "Panel animation duration": "Длительность анимации панелей",
   "panel animations": "анимации панелей",
@@ -3502,10 +3502,12 @@ export const ru: PhraseCatalog = {
   "Agent replies in this project": "Ответы агентов в этом проекте",
   "This connection cannot change project settings.":
     "Это подключение не может менять настройки проекта.",
-  "Show in this thread": "Показывать в этом треде",
-  "Use default ({value})": "По умолчанию ({value})",
-  "Show in every thread": "Показывать во всех тредах",
-  "Cycle what every thread shows": "Переключить, что показывают все треды",
+  "Conversation shows": "В разговоре показывать",
+  "Applies to": "Применяется к",
+  "This thread": "Этот тред",
+  "Every thread": "Все треды",
+  "Other threads show {value}.": "Остальные треды показывают: {value}.",
+  "Next level": "Следующий уровень",
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     "В тексте промпта есть «ultrathink». Удалите его, чтобы изменить этот параметр.",
   "Not set: follows the Claude workflow mode": "Не задано: следует режиму работы Claude",

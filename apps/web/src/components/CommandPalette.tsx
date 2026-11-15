@@ -2805,21 +2805,32 @@ function OpenCommandPaletteDialog(props: {
   actionItems.push({
     kind: "submenu",
     value: "action:timeline-detail",
-    searchTerms: ["timeline detail", "verbose", "concise", "compact", "thinking", "tool calls"],
-    title: "Change timeline detail",
+    searchTerms: [
+      "show",
+      "results only",
+      "folded steps",
+      "everything",
+      "timeline detail",
+      "verbose",
+      "concise",
+      "compact",
+      "thinking",
+      "tool calls",
+    ],
+    title: "Change what threads show",
     icon: <ListCollapseIcon className={ITEM_ICON_CLASS} />,
     addonIcon: <ListCollapseIcon className={ADDON_ICON_CLASS} />,
     shortcutCommand: "timeline.cycleDetail",
     groups: [
       {
         value: "timeline-detail",
-        label: "Timeline detail",
+        label: "What threads show",
         items: TIMELINE_DETAIL_LEVELS.map((level) => ({
           kind: "action",
           value: `timeline-detail:${level}`,
           title: TIMELINE_DETAIL_LABELS[level],
           description: TIMELINE_DETAIL_DESCRIPTIONS[level],
-          searchTerms: [TIMELINE_DETAIL_LABELS[level], "timeline", "detail"],
+          searchTerms: [TIMELINE_DETAIL_LABELS[level], "show", "timeline", "detail"],
           icon: <ListCollapseIcon className={ITEM_ICON_CLASS} />,
           titleTrailingContent:
             clientSettings.timelineDetail === level ? (

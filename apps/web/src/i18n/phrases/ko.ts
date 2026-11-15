@@ -286,7 +286,7 @@ export const ko: PhraseCatalog = {
   "This machine": "이 컴퓨터",
   "Thread notifications": "스레드 알림",
   "Time format": "시간 형식",
-  "Timeline detail": "타임라인 세부 정보",
+  "What threads show": "스레드에 표시할 내용",
   "Top Span Names": "상위 스팬 이름",
   "Trace Diagnostics": "추적 진단",
   "Try first": "먼저 시도",
@@ -1019,8 +1019,8 @@ export const ko: PhraseCatalog = {
     "이 컴퓨터의 앱 전체에 적용됩니다. 프로젝트는 자체 설정에서 따로 정할 수 있습니다.",
   "fallback order": "대체 순서",
   "response style": "응답 스타일",
-  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. Timeline detail only changes how much of their work is shown. New turns use the saved style.":
-    "모든 제공업체에서 코디네이터, 워커, 스레드가 쓰는 내용을 바꿉니다. 스레드나 프로젝트 헤더의 답장 버튼으로 해당 프로젝트에만 설정할 수 있습니다. 타임라인 세부 수준은 작업이 얼마나 표시되는지만 바꿉니다. 새 턴은 저장된 스타일을 사용합니다.",
+  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. The Show setting only changes how much of their work is shown. New turns use the saved style.":
+    "모든 제공업체에서 코디네이터, 워커, 스레드가 쓰는 내용을 바꿉니다. 스레드나 프로젝트 헤더의 답장 버튼으로 해당 프로젝트에만 설정할 수 있습니다. ‘스레드에 표시할 내용’은 작업이 얼마나 표시되는지만 바꿉니다. 새 턴은 저장된 스타일을 사용합니다.",
   "Applies to Claude Code providers with native workflow support. Workers already running keep their launch settings.":
     "네이티브 워크플로를 지원하는 Claude Code 제공업체에 적용됩니다. 이미 실행 중인 워커는 시작 설정을 유지합니다.",
   "agent instructions": "에이전트 지침",
@@ -2558,7 +2558,7 @@ export const ko: PhraseCatalog = {
   "Comfortable (default)": "편안함(기본값)",
   Wide: "넓게",
   Full: "전체",
-  "timeline detail": "타임라인 세부 정보",
+  "what threads show": "스레드에 표시할 내용",
   "{panelAnimationDurationMs} ms": "{panelAnimationDurationMs}ms",
   "Panel animation duration": "패널 애니메이션 시간",
   "panel animations": "패널 애니메이션",
@@ -3477,10 +3477,12 @@ export const ko: PhraseCatalog = {
   "Agent replies in this project": "이 프로젝트의 에이전트 답장",
   "This connection cannot change project settings.":
     "이 연결로는 프로젝트 설정을 변경할 수 없습니다.",
-  "Show in this thread": "이 스레드에 표시",
-  "Use default ({value})": "기본값 사용({value})",
-  "Show in every thread": "모든 스레드에 표시",
-  "Cycle what every thread shows": "모든 스레드에 표시할 내용 순환",
+  "Conversation shows": "대화에 표시",
+  "Applies to": "적용 대상",
+  "This thread": "이 스레드",
+  "Every thread": "모든 스레드",
+  "Other threads show {value}.": "다른 스레드 표시: {value}.",
+  "Next level": "다음 단계",
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     '프롬프트 텍스트에 "ultrathink"가 포함되어 있습니다. 이 옵션을 바꾸려면 제거하세요.',
   "Not set: follows the Claude workflow mode": "설정 안 됨: Claude 워크플로 모드를 따름",

@@ -1262,7 +1262,12 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 /* The coordinator column narrows when a thread panel opens beside it, whatever the
    window width: its labels fold by the column, not the viewport. */
-@container sws-topbar (max-width: 620px) {
+@container sws-topbar (max-width: 760px) {
+  .sws-top-actions [data-timeline-detail-replies] {
+    display: none;
+  }
+}
+@container sws-topbar (max-width: 560px) {
   .sws-top-actions [data-timeline-detail-label] {
     display: none;
   }
@@ -3410,11 +3415,17 @@ html.dark[data-theme-id]:not([data-theme-id=""])
     display: none;
   }
 }
-/* The replies menu keeps only its icon before anything else gives way: its label costs
-   more than the thread name can spare at the panel's usual width, and its name and
-   tooltip still say what it shows. On Linux and Windows the native window buttons take
-   the right end of this row, so the container is already that much narrower. */
+/* The replies menu gives way before anything else: its label costs more than the
+   thread name can spare at the panel's usual width. First the reply style goes, so
+   the row still says what this conversation shows; then the level too, and the
+   button's name and tooltip say both. On Linux and Windows the native window buttons
+   take the right end of this row, so the container is already that much narrower. */
 @container (max-width: 1040px) {
+  .sws-thread-head [data-timeline-detail-replies] {
+    display: none;
+  }
+}
+@container (max-width: 680px) {
   .sws-thread-head [data-timeline-detail-label] {
     display: none;
   }

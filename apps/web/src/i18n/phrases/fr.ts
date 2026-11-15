@@ -288,7 +288,7 @@ export const fr: PhraseCatalog = {
   "This machine": "Cette machine",
   "Thread notifications": "Notifications des fils",
   "Time format": "Format de l’heure",
-  "Timeline detail": "Niveau de détail de la chronologie",
+  "What threads show": "Ce qu’affichent les fils",
   "Top Span Names": "Noms de spans les plus fréquents",
   "Trace Diagnostics": "Diagnostic des traces",
   "Try first": "Essayer d’abord",
@@ -1030,8 +1030,8 @@ export const fr: PhraseCatalog = {
     "Pour toute l'app sur cette machine ; un projet peut définir le sien dans ses paramètres.",
   "fallback order": "ordre de repli",
   "response style": "style de réponse",
-  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. Timeline detail only changes how much of their work is shown. New turns use the saved style.":
-    "Change ce qu'écrivent les coordinateurs, workers et fils, pour tous les fournisseurs. Le bouton de réponse dans l'en-tête d'un fil ou d'un projet le définit pour ce projet. Le niveau de détail de la chronologie ne change que la part de leur travail affichée. Les nouveaux tours utilisent le style enregistré.",
+  "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. The Show setting only changes how much of their work is shown. New turns use the saved style.":
+    "Change ce qu'écrivent les coordinateurs, workers et fils, pour tous les fournisseurs. Le bouton de réponse dans l'en-tête d'un fil ou d'un projet le définit pour ce projet. « Ce qu’affichent les fils » ne change que la part de leur travail affichée. Les nouveaux tours utilisent le style enregistré.",
   "Applies to Claude Code providers with native workflow support. Workers already running keep their launch settings.":
     "S'applique aux fournisseurs Claude Code avec prise en charge native des workflows. Les workers déjà en cours gardent leurs paramètres de lancement.",
   "agent instructions": "instructions de l'agent",
@@ -2602,7 +2602,7 @@ export const fr: PhraseCatalog = {
   "Comfortable (default)": "Confortable (par défaut)",
   Wide: "Large",
   Full: "Pleine largeur",
-  "timeline detail": "détail de la chronologie",
+  "what threads show": "ce qu’affichent les fils",
   "{panelAnimationDurationMs} ms": "{panelAnimationDurationMs} ms",
   "Panel animation duration": "Durée de l’animation des panneaux",
   "panel animations": "animations des panneaux",
@@ -3533,10 +3533,12 @@ export const fr: PhraseCatalog = {
   "Agent replies in this project": "Réponses des agents dans ce projet",
   "This connection cannot change project settings.":
     "Cette connexion ne peut pas modifier les paramètres du projet.",
-  "Show in this thread": "Afficher dans ce fil",
-  "Use default ({value})": "Utiliser la valeur par défaut ({value})",
-  "Show in every thread": "Afficher dans tous les fils",
-  "Cycle what every thread shows": "Faire défiler ce qu’affichent tous les fils",
+  "Conversation shows": "La conversation affiche",
+  "Applies to": "S’applique à",
+  "This thread": "Ce fil",
+  "Every thread": "Tous les fils",
+  "Other threads show {value}.": "Les autres fils affichent {value}.",
+  "Next level": "Niveau suivant",
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     'Votre prompt contient "ultrathink" dans le texte. Retirez-le pour modifier cette option.',
   "Not set: follows the Claude workflow mode": "Non défini : suit le mode de travail Claude",
