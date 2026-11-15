@@ -799,6 +799,7 @@ function pendingThreadTitleGenerationEffect(
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
 /** Why a turn stopped when the user switched its provider or model mid-turn. */
 export const MODEL_SWITCH_STOP_MESSAGE = "Switched to another model";
+export const WORKSPACE_MOVE_STOP_MESSAGE = "Moved to another workspace";
 
 /** A reopened preparation item drops the output and exit code of the attempt it replaces. */
 function withoutPreparationResult(
@@ -4292,17 +4293,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? runtimeModeSessionsToDetach(command, providerContext?.providerSessions ?? [])
             : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
     );
-    // A switch releases the session a turn is still running on. Record who
-    // stopped it first, so the turn ends as stopped when its stream breaks
-    // instead of as a provider error (October 31, 2026: Gemini to Claude).
+    // A switch or a workspace move releases the session a turn is still
+    // running on. Record who stopped it first, so the turn ends as stopped
+    // when its stream breaks instead of as a provider error (October 31,
+    // 2026: Gemini to Claude; November 14, 2026: studio_worktree_handoff).
     // The server's own moves wait for an idle thread and record nothing; an
     // agent's switch (MCP) is an agent's Stop, so it never reads as final.
+    const workspaceMove = command.type === "thread.metadata.update";
     if (
       detachSessionIds.size > 0 &&
-      (command.type === "thread.model-selection.set" || command.type === "provider.switch") &&
+      (workspaceMove ||
+        command.type === "thread.model-selection.set" ||
+        command.type === "provider.switch") &&
       !isServerSelectionMove(command.commandId)
     ) {
-      const switchCause = command.commandId.startsWith("mcp:") ? "agent" : "user";
+      const switchCause =
+        command.commandId.startsWith("mcp:") || command.commandId.startsWith("command:mcp:")
+          ? "agent"
+          : "user";
       const releasedProviderThreadIds = new Set(
         (providerContext?.providerThreads ?? [])
           .filter(
@@ -4364,7 +4372,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             completedAt: now,
             updatedAt: now,
             type: "run_interrupt_request",
-            message: MODEL_SWITCH_STOP_MESSAGE,
+            message: workspaceMove ? WORKSPACE_MOVE_STOP_MESSAGE : MODEL_SWITCH_STOP_MESSAGE,
             cause: switchCause,
           },
         });
