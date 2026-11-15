@@ -12,6 +12,7 @@ import { useCallback, useMemo } from "react";
 import { useServerConfigs } from "../state/entities";
 import { useEnvironments } from "../state/environments";
 import { useEnvironmentsScopeAccess } from "../state/session";
+import { useHostReachStates } from "./unreachableHosts";
 import { threadResolveAction, threadResolveBlockedReason } from "./threadResolveAccess";
 
 export type ThreadResolveTarget = Pick<
@@ -34,6 +35,7 @@ export function useThreadResolveBlockedReason(
   // Every row of every machine reads the same grants, which the sidebar's rows already hold.
   const access = useEnvironmentsScopeAccess(environmentIds, AuthOrchestrationOperateScope);
   const configs = useServerConfigs();
+  const reach = useHostReachStates();
   return useCallback(
     (thread) => {
       const environment = environments.find(
@@ -55,9 +57,10 @@ export function useThreadResolveBlockedReason(
           memberLabel === undefined || memberLabel === thread.environmentId
             ? (environment?.label ?? memberLabel)
             : memberLabel,
+        reach: reach.get(thread.environmentId),
         ...threadResolveAction(thread),
       });
     },
-    [environments, isReady, access, configs, machineLabels],
+    [environments, isReady, access, configs, machineLabels, reach],
   );
 }

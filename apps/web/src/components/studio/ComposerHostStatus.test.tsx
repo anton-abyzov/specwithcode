@@ -200,9 +200,9 @@ describe("ComposerHostStatus", () => {
   });
   it("speaks the interface language", async () => {
     setLocalePreference("de");
-    await show("reconnecting", remote, NOW - 3 * 3_600_000);
+    await show("reconnecting", { ...remote, reach: "offline" }, NOW - 3 * 3_600_000);
     expect(container.querySelector("[role=status]")?.textContent).toContain(
-      "linux-mini ist offline · Verbinde neu…",
+      "linux-mini ist offline",
     );
     await act(async () => toggle()!.click());
     expect(container.querySelector("[data-host-status-detail]")?.textContent).toContain(

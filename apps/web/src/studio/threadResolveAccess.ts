@@ -35,6 +35,12 @@ export interface ThreadResolveAccessInput {
    * support, so a machine known to predate Resolve can still reopen it.
    */
   readonly needsSettlement: boolean;
+  /**
+   * What the machine reads as now (`machineReach`). Inside its reconnect grace
+   * it is still not connected, so the thread cannot settle, but the reason says
+   * it is reconnecting rather than calling it disconnected.
+   */
+  readonly reach?: string | undefined;
 }
 
 /** What the Resolve button of a thread would do. */
@@ -66,6 +72,8 @@ export function threadResolveBlockedReason(input: ThreadResolveAccessInput): str
   }
   if (connection.blockedReason === "authentication") return signedOut;
   if (connection.phase !== "connected") {
+    if (input.reach === "reconnecting" || input.reach === "connecting")
+      return `Reconnecting to ${label ?? "that machine"}. Try again in a moment.`;
     return `${label ?? "That machine"} isn't connected right now, so this thread can't be ${done}.`;
   }
   if (access === "signed-out") return signedOut;

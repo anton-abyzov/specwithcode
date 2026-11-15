@@ -446,7 +446,7 @@ export function StudioOverview() {
     const config = environment.serverConfig ?? null;
     const mismatch = resolveServerConfigVersionMismatch(config, newestRelease);
     const reach = overviewMachineState({
-      reach: hostReachOr(reachStates.get(environmentId), environment.connection.phase),
+      reach: hostReachOr(reachStates.get(environmentId), environment.connection),
       // Something of it is listed: it answers now, or it did and its projects are still here.
       reported:
         environment.connection.phase === "connected" ||

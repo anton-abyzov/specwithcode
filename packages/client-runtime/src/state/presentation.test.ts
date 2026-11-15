@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off -- The reconnect grace is display timing read by UI atoms with fake timers.
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import { EnvironmentId, type ServerConfig } from "@specweave-studio/contracts";
 import * as Option from "effect/Option";

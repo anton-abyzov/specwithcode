@@ -147,4 +147,18 @@ describe("threadResolveBlockedReason", () => {
       threadResolveBlockedReason({ ...base, supportsSettlement: false, machineLabel: "dd2fc230" }),
     ).toBe("That machine runs an older version that can't resolve threads. Update it first.");
   });
+
+  it("stays blocked while a machine reconnects, and says so instead of disconnected", () => {
+    const reconnecting = {
+      ...base,
+      connection: { phase: "reconnecting" },
+      reach: "reconnecting",
+    } as const;
+    expect(threadResolveBlockedReason(reconnecting)).toBe(
+      "Reconnecting to Ministorm. Try again in a moment.",
+    );
+    expect(
+      threadResolveBlockedReason({ ...reconnecting, reach: "not-answering" }),
+    ).toBe("Ministorm isn't connected right now, so this thread can't be resolved.");
+  });
 });

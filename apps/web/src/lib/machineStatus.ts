@@ -95,8 +95,10 @@ export function reachFromPhase(
     case "error":
     case "unsupported":
       return "stopped";
-    default:
+    case "available":
       return "not-connected";
+    default:
+      return "offline";
   }
 }
 

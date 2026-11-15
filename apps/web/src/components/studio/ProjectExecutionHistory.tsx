@@ -210,7 +210,7 @@ export function ProjectThreadAvailability({
           environment?.label ??
           (known === environmentId && RAW_ID.test(known) ? "another machine" : known);
         const state = environment
-          ? hostReachOr(reach.get(environmentId), environment.connection.phase)
+          ? hostReachOr(reach.get(environmentId), environment.connection)
           : undefined;
         if (state === "connected") return null;
         // While the page is still finding out, it says so instead of "not connected".

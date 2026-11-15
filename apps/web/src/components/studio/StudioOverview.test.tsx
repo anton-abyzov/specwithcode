@@ -1082,14 +1082,14 @@ describe("machines, status chips and rail order", () => {
       const row = [...container.querySelectorAll(".studio-machine")].find((machine) =>
         machine.textContent?.includes("Worker Mac"),
       )!;
-      expect(row.textContent).toContain("Can’t reach it · retrying");
+      expect(row.textContent).toContain("Not answering");
       expect(row.textContent).toContain("Chats and projects not counted");
       expect(row.textContent).not.toContain("0 projects");
       expect(row.querySelector(".studio-machine-state")?.getAttribute("data-hint")).toBe(
         "Timed out",
       );
       expect(container.querySelector(".studio-stale-notice")?.textContent).toContain(
-        "Worker Mac is not reachable",
+        "Worker Mac is not answering",
       );
     } finally {
       state.environments = environments;
