@@ -3,7 +3,7 @@ import { useState } from "react";
 import { formatBytes } from "../../studio/folderCopy";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
-import { isHomeSecretRow, receivableSecretFiles } from "./handoffCopySecrets";
+import { isHomeSecretRow, receivableSecretFiles, secretsReason } from "./handoffCopySecrets";
 
 export interface SecretFileRow {
   readonly path: string;
@@ -97,8 +97,8 @@ export function HandoffSecretsStep({
                     : included
                       ? `Copied to ${targetLabel}, where only your user can read them.`
                       : `They stay on ${sourceLabel}.`}{" "}
-                  Sign-ins to Claude, Codex and GitHub are never copied; sign in on {targetLabel}{" "}
-                  instead.
+                  {secretsReason(targetLabel)} Sign-ins to Claude, Codex and GitHub are never
+                  copied; sign in on {targetLabel} instead.
                 </span>
               </span>
             </label>

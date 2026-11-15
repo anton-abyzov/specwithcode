@@ -503,15 +503,16 @@ function RepositoryControls({
       {cloneable.length > 0 && (
         <div className="space-y-1 text-muted-foreground" data-slot="copy-clone-explained">
           <p>
-            <span className="font-medium text-foreground">Copy from {source}</span>: every file,
-            commit, branch and stash comes from {source}. The default.
-          </p>
-          <p>
             <span className="font-medium text-foreground">Download from GitHub</span>: {target}{" "}
             downloads the committed files from the repository&rsquo;s remote (GitHub or another Git
             host), and {source} sends only uncommitted and untracked files. Less crosses between the
-            machines, so large repositories arrive sooner. Unpushed commits, local-only branches and
-            stashes stay on {source}.
+            machines, so large repositories arrive sooner. Recommended for a machine that does not
+            have the project yet.
+          </p>
+          <p>
+            <span className="font-medium text-foreground">Copy from {source}</span>: every file,
+            commit, branch and stash comes from {source}. Use it to bring unpushed commits,
+            local-only branches and stashes, which Download from GitHub leaves on {source}.
           </p>
         </div>
       )}

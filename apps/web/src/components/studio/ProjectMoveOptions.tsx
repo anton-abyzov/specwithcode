@@ -189,14 +189,16 @@ const METHODS: ReadonlyArray<{
   readonly detail: string;
 }> = [
   {
-    value: "copy",
-    label: "Copy everything",
-    detail: "Includes uncommitted and ignored files, and secrets unless you leave them out.",
+    value: "clone",
+    label: "Download from GitHub (recommended)",
+    detail:
+      "Repositories download from GitHub or their Git host; uncommitted and ignored files and secrets come from this machine.",
   },
   {
-    value: "clone",
-    label: "Clone clean repositories from Git",
-    detail: "Repositories with nothing uncommitted come from their remotes; the rest is copied.",
+    value: "copy",
+    label: "Copy everything",
+    detail:
+      "Also brings unpushed commits, local branches and stashes. Slower for large repositories.",
   },
   {
     value: "folder",
