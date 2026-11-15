@@ -27,6 +27,7 @@ import {
   type ConnectionLossCause,
   type EnvironmentConnectionPhase,
 } from "@specweave-studio/client-runtime/connection";
+import { isLoopbackHttpBaseUrl } from "@specweave-studio/client-runtime/connection";
 import { hostReachOr, machineReachWords } from "../lib/machineStatus";
 import { planLabel } from "./accountSwitches";
 import { usageToneOfUsed } from "./usageIndicatorModel";
@@ -303,6 +304,12 @@ function providerRows(
     );
 }
 
+function reachedOnLoopback(target: object): boolean {
+  return "httpBaseUrl" in target && typeof target.httpBaseUrl === "string"
+    ? isLoopbackHttpBaseUrl(target.httpBaseUrl)
+    : false;
+}
+
 /**
  * One block per host: the project's host first, then the app's own machine,
  * then online hosts, then offline hosts with their last saved reading.
@@ -322,9 +329,11 @@ export function collectHostLimitBlocks(
   const blocks: HostLimitBlock[] = [];
   for (const [environmentId, presentation] of presentations) {
     const isThisMachine = presentation.entry.target._tag === "PrimaryConnectionTarget";
+    // Only a primary reached on loopback is busy rather than down; over the
+    // relay it is a remote machine and names its cause like any other.
     const { status, word: statusWord } = hostReachStatus(
       presentation.connection,
-      isThisMachine,
+      isThisMachine && reachedOnLoopback(presentation.entry.target),
       options.now,
     );
     const live = providerRows(

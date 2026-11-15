@@ -5051,4 +5051,8 @@ export const ru: PhraseCatalog = {
   "Some machines can't be reached": "Некоторые машины недоступны",
   "not answering": "не отвечает",
   reconnecting: "переподключается",
+  "This host is connected": "Этот хост подключён",
+  "Catching up with this host…": "Синхронизация с этим хостом…",
+  "Connection to this host failed": "Не удалось подключиться к этому хосту",
+  "This host is not connected": "Этот хост не подключён",
 };

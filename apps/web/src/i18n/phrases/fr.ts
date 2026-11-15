@@ -5095,4 +5095,8 @@ export const fr: PhraseCatalog = {
   "Some machines can't be reached": "Certaines machines sont injoignables",
   "not answering": "ne répond pas",
   reconnecting: "en reconnexion",
+  "This host is connected": "Cet hôte est connecté",
+  "Catching up with this host…": "Synchronisation avec cet hôte…",
+  "Connection to this host failed": "La connexion à cet hôte a échoué",
+  "This host is not connected": "Cet hôte n'est pas connecté",
 };

@@ -296,17 +296,19 @@ export function savedMachineStatus(
     case "connected":
       return { text: "Connected", tone: "muted", ...quiet };
     case "connecting":
-      return { text: "Connecting", tone: "muted", ...quiet };
-    case "reconnecting": {
-      if (isThisMachine) return { text: "Reconnecting", tone: "error", reason, retryable: true };
-      // Inside its grace a machine is only reconnecting; after it, the row says why.
+    case "reconnecting":
+    case "offline": {
+      if (isThisMachine && connection.phase === "reconnecting")
+        return { text: "Reconnecting", tone: "error", reason, retryable: true };
+      // Inside its grace a machine is only reconnecting, a retry included; after
+      // it, the row says why. No network is this device's state, not a failure.
       const state = machineReach(connection, now).state;
-      const down = isMachineReachDown(state);
+      const down = isMachineReachDown(state) && state !== "no-network";
       return {
         text: machineReachWords(state, connection.phase).short.replace(/…$/, ""),
         tone: down ? "error" : "muted",
         reason: down ? reason : null,
-        retryable: true,
+        retryable: connection.phase !== "offline" && state !== "connecting",
       };
     }
     // Not a failure: the machine is fine, this build just cannot talk to it.
@@ -314,8 +316,6 @@ export function savedMachineStatus(
       return { text: "Client not supported", tone: "muted", reason, retryable: false };
     case "error":
       return { text: "Connection failed", tone: "error", reason, retryable: true };
-    case "offline":
-      return { text: "Offline", tone: "muted", ...quiet };
     case "available":
       return { text: "Not connected", tone: "muted", ...quiet };
   }
@@ -337,20 +337,33 @@ export function reasonNeedsPairing(reason: string | null): boolean {
 export function environmentConnectionStatusText(
   connection: EnvironmentConnectionPresentation,
   isThisMachine: boolean,
+  now = Date.now(),
 ): string {
-  return isThisMachine && isThisMachineCatchingUp(connection.phase)
-    ? THIS_MACHINE_CATCHING_UP
-    : connectionStatusText(connection);
+  if (isThisMachine && isThisMachineCatchingUp(connection.phase)) return THIS_MACHINE_CATCHING_UP;
+  return connectionStatusText(insideReconnectGrace(connection, now));
 }
 
 /** The short form of environmentConnectionStatusText, without the reason. */
 export function environmentConnectionStatusTitle(
   connection: EnvironmentConnectionPresentation,
   isThisMachine: boolean,
+  now = Date.now(),
 ): string {
-  return isThisMachine && isThisMachineCatchingUp(connection.phase)
-    ? THIS_MACHINE_CATCHING_UP
-    : connectionStatusTitle(connection);
+  if (isThisMachine && isThisMachineCatchingUp(connection.phase)) return THIS_MACHINE_CATCHING_UP;
+  return connectionStatusTitle(insideReconnectGrace(connection, now));
+}
+
+// Inside the grace a dropped connection is only reconnecting: its error is not news yet.
+function insideReconnectGrace(
+  connection: EnvironmentConnectionPresentation,
+  now: number,
+): EnvironmentConnectionPresentation {
+  if (connection.phase !== "reconnecting" && connection.phase !== "connecting") return connection;
+  if (connection.error === null || connection.error === undefined) return connection;
+  const state = machineReach(connection, now).state;
+  return state === "reconnecting" || state === "connecting"
+    ? { ...connection, error: null }
+    : connection;
 }
 
 /**

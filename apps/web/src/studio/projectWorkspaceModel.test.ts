@@ -529,6 +529,32 @@ describe("Project admission and retry", () => {
       /Reconnecting to this host/,
     );
     expect(projectAdmissionReason(settings, false, true, { phase: "offline" })).toMatch(/offline/);
+    // The refused-send reason follows the reach judgement the status line shows.
+    const grace = { isThisDevice: false, graceElapsed: true, machineLabel: "Build Mac" };
+    expect(
+      projectAdmissionReason(
+        settings,
+        false,
+        true,
+        { phase: "connecting" },
+        {
+          ...grace,
+          reach: "reconnecting",
+        },
+      ),
+    ).toBe("Reconnecting to Build Mac. Send once it is back; nothing is sent to another machine.");
+    expect(
+      projectAdmissionReason(
+        settings,
+        false,
+        true,
+        { phase: "offline" },
+        {
+          ...grace,
+          reach: "no-network",
+        },
+      ),
+    ).toBe("This device has no network.");
     expect(hostDisconnectedLabel({ phase: "error", blockedReason: "authentication" })).toBe(
       "Signed out",
     );

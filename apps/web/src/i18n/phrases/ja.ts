@@ -5054,4 +5054,8 @@ export const ja: PhraseCatalog = {
   "Some machines can't be reached": "一部のマシンに接続できません",
   "not answering": "応答なし",
   reconnecting: "再接続中",
+  "This host is connected": "このホストは接続済みです",
+  "Catching up with this host…": "このホストと同期中…",
+  "Connection to this host failed": "このホストへの接続に失敗しました",
+  "This host is not connected": "このホストは接続されていません",
 };

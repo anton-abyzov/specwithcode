@@ -163,6 +163,28 @@ describe("savedMachineStatus", () => {
     });
     expect(savedMachineStatus(connection, false, true).text).toBe("Off");
   });
+  it("judges a retry and a lost network by reach, not by the phase", () => {
+    const lost = { lostAt: 900_000, lastConnectedAt: 900_000 } as const;
+    // A retry inside the grace keeps reading Reconnecting.
+    expect(
+      savedMachineStatus({ phase: "connecting", error: null, ...lost }, true, false, 930_000).text,
+    ).toBe("Reconnecting");
+    // A retry on a machine already down keeps naming why, with no flicker.
+    expect(
+      savedMachineStatus(
+        { phase: "connecting", error: "timed out", cause: "not-answering", ...lost },
+        true,
+        false,
+        1_000_000,
+      ),
+    ).toMatchObject({ text: "Not answering", tone: "error" });
+    expect(
+      savedMachineStatus({ phase: "offline", error: null, ...lost }, true, false, 1_000_000),
+    ).toEqual({ text: "No network", tone: "muted", reason: null, retryable: false });
+    expect(savedMachineStatus({ phase: "connecting", error: null }, true, false).text).toBe(
+      "Connecting",
+    );
+  });
   it("keeps the status short and returns the reason apart", () => {
     const reason =
       "Approve this device again in SpecWithCode. Create a new pairing code on the receiving machine and sign in again.";
@@ -223,6 +245,13 @@ describe("this Mac in pickers and settings panels", () => {
     expect(environmentConnectionStatusTitle(reconnecting, false)).toBe(
       "Failed to connect. Reconnecting...",
     );
+  });
+
+  it("keeps the failure out of the sentence inside the reconnect grace", () => {
+    const fresh = { ...reconnecting, lostAt: 990_000, lastConnectedAt: 990_000 };
+    expect(environmentConnectionStatusText(fresh, false, 1_000_000)).toBe("Reconnecting...");
+    expect(environmentConnectionStatusTitle(fresh, false, 1_000_000)).toBe("Reconnecting...");
+    expect(environmentConnectionStatusText(fresh, false, 1_100_000)).toMatch(/^Failed to connect/);
   });
 });
 

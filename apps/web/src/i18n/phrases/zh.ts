@@ -4856,4 +4856,8 @@ export const zh: PhraseCatalog = {
   "Some machines can't be reached": "部分机器无法访问",
   "not answering": "无响应",
   reconnecting: "正在重新连接",
+  "This host is connected": "此主机已连接",
+  "Catching up with this host…": "正在与此主机同步…",
+  "Connection to this host failed": "连接此主机失败",
+  "This host is not connected": "此主机未连接",
 };

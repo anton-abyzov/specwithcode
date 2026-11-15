@@ -4996,4 +4996,8 @@ export const ko: PhraseCatalog = {
   "Some machines can't be reached": "일부 기기에 연결할 수 없습니다",
   "not answering": "응답 없음",
   reconnecting: "다시 연결 중",
+  "This host is connected": "이 호스트가 연결되었습니다",
+  "Catching up with this host…": "이 호스트와 동기화하는 중…",
+  "Connection to this host failed": "이 호스트 연결에 실패했습니다",
+  "This host is not connected": "이 호스트가 연결되어 있지 않습니다",
 };

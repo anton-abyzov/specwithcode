@@ -401,6 +401,14 @@ export function projectAdmissionReason(
     if (connection?.blockedReason === "authentication") {
       return "This browser is signed out of this host. Reload the page to sign in again.";
     }
+    // The reach judgement speaks for the line above the message box; say the same.
+    if (context.reach === "no-network") return "This device has no network.";
+    if (context.reach === "reconnecting") {
+      // Inside its grace the machine is not gone yet: do not call it unreachable.
+      return context.machineLabel
+        ? `Reconnecting to ${context.machineLabel}. Send once it is back; nothing is sent to another machine.`
+        : "Reconnecting to this host. If this does not clear, reload the page.";
+    }
     if (connection?.phase === "connecting") return "Connecting to this host.";
     if (connection?.phase === "reconnecting") {
       // A named machine that dropped is unreachable now; say the message stays here.

@@ -77,6 +77,7 @@ function sameStates(left: MachineReachStates, right: MachineReachStates): boolea
 
 // When each connected machine's thread list started resyncing. A resync that
 // ends within the warning grace (most do, in under a second) is never shown.
+// The app runs one atom registry, so this memo is per page.
 const syncingSince = new Map<EnvironmentId, number>();
 let previous: MachineReachStates = NONE;
 
@@ -104,6 +105,10 @@ export const machineReachStatesAtom = Atom.make((get) => {
       syncingSince.delete(environmentId);
     }
     next.set(environmentId, environmentReachState(presentation, now, listSyncing));
+  }
+  // A removed machine leaves no memo behind.
+  for (const environmentId of syncingSince.keys()) {
+    if (!next.has(environmentId)) syncingSince.delete(environmentId);
   }
   if (recheckIn !== null) {
     const timer = setTimeout(() => get.refreshSelf(), recheckIn);
