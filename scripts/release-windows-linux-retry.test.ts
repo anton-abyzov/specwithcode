@@ -39,7 +39,9 @@ describe("release-windows-linux.yml retry job", () => {
   it("runs last, only for a failed run that the published release started", () => {
     const names = Object.keys(workflow.jobs);
     expect(names.at(-1)).toBe("retry");
-    expect(retry?.needs).toEqual(names.filter((name) => name !== "retry"));
+    // Every build job, not the macOS checksums signature: a signature that failed is redone by the
+    // next daily run (mac-sums-signature), never by building the version again.
+    expect(retry?.needs).toEqual(names.filter((name) => name !== "retry" && name !== "mac-sums-signature"));
     // A job that ran into its timeout ends cancelled and failure() does not see it. cancelled()
     // is the run a person cancelled.
     expect(retry?.if).toBe(

@@ -45,3 +45,14 @@ Increment `1169` reviewed T3 Code changes through nightly `v0.1.7-nightly.202611
 - Data safety: `studio_thread_organize` refuses unknown arguments (`a773dc38ac`); selected-file commits stop on a failed reset and refuse during a merge, cherry-pick or revert (`cf5e6d3f0c`, `66eb776c9b`); forks and subagents drop pending title jobs and list placement (`8670378049`, `7f005d4d8d`, `ef4c658109`); truncated Markdown stays read-only (`12d1e4c23c`); a stored secret variable keeps its name and protection (`2a9335680e`); shared worktrees are compared through trailing separators (`f5bc64b7b7`).
 
 The managed policy (`d897d3f3f0`) is not applied. Team rules (increment `1170`, `docs/user/team-rules.md`) are a separate design of our own, with their own names, schema and code. These selected ports do not change the inherited baseline pin or grant a new license over original material. Required notices remain intact.
+
+## Selected ports, November 14, 2026
+
+Increment `1351` rewrites the cost and speed changes from the review of T3 Code through nightly tag `4709` by hand onto the independent implementation. The full triage is in increment `1346`'s report.
+
+- MCP results: `studio_thread_read` and `orchestrator_capabilities` fit a 40,000-byte result budget (`59e64eef88`, `6237824a2c`, `85b160658f`). The default read returns the newest items, with our own `beforePosition` paging and a compact capabilities view with per-instance detail.
+- Server reads: MCP tools read the caller's thread row and runs, and each tool loads the other record kinds it uses (`9b352a04de`); the turn-start attempt check reads one run (`b0f12e12e3`).
+- Streaming render: the chat view subscribes to the four git status fields it reads (`c1463af205`), work-row derivation is cached per entry (`ebfca09e91`), and the collapsed reasoning preview parses a bounded prefix (`e0379fbf5c`).
+- Logs and terminals: Cursor streaming updates stay out of provider logs (`c2b06f9df8`); a client that states its buffer size receives at most that much terminal history (`c9f0caca1b`), through an optional request field older peers ignore.
+
+Task status and task cancel keep their full thread read. These selected ports do not change the inherited baseline pin or grant a new license over original material. Required notices remain intact.

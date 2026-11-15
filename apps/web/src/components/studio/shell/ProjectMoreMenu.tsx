@@ -1,5 +1,5 @@
 /**
- * The project header's "More" menu: Plan, Design, Usage, Routines and Open in
+ * The project header's "More" menu: Plan, Board, Design, Usage, Routines and Open in
  * new window. Design opens the project's design board (`/design?project=<id>`),
  * which works before the project has any design. A machine's "No project"
  * folder has no board, and the board shows this machine's designs only, so
@@ -11,6 +11,7 @@ import {
   AppWindowIcon,
   EllipsisVerticalIcon,
   GaugeIcon,
+  KanbanIcon,
   ListChecksIcon,
   PaletteIcon,
   RepeatIcon,
@@ -28,6 +29,7 @@ export function ProjectMoreMenu({
   projectKey,
   projectTitle,
   onOpenPlan,
+  onOpenBoard,
   onOpenSettingsTab,
   designHere = true,
 }: {
@@ -35,6 +37,8 @@ export function ProjectMoreMenu({
   readonly projectKey: string;
   readonly projectTitle: string;
   readonly onOpenPlan: () => void;
+  /** Opens the panel on its Board tab; absent when the project does not use SpecWeave. */
+  readonly onOpenBoard?: (() => void) | undefined;
   readonly onOpenSettingsTab: (tab: "usage" | "routines") => void;
   /** False for a project running on another machine. */
   readonly designHere?: boolean;
@@ -70,6 +74,12 @@ export function ProjectMoreMenu({
           <ListChecksIcon aria-hidden />
           Plan
         </MenuItem>
+        {onOpenBoard ? (
+          <MenuItem data-testid="project-more-board" onClick={onOpenBoard}>
+            <KanbanIcon aria-hidden />
+            Board
+          </MenuItem>
+        ) : null}
         {scratch || !designHere ? null : (
           <MenuItem
             data-testid="project-more-design"

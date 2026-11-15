@@ -348,3 +348,17 @@ it("bounds snapshots and Unicode without silently retaining removed sections", (
   assert.isFalse(/[\uD800-\uDBFF]$/.test(snapshot.at(-1)!.value));
   assert.include(projectContextDelta("bounded", [], snapshot), "previous content removed");
 });
+
+it("never calls a section that was always empty removed", () => {
+  // Regression: a first snapshot printed "[goal] (empty; previous content removed)" for a
+  // goal nobody ever set, which read as data loss.
+  const first = projectContextDelta("p", projectContextSnapshot([["goal", ""]]), null);
+  assert.include(first, "[goal]\n(empty)");
+  assert.notInclude(first, "previous content removed");
+  const cleared = projectContextDelta(
+    "p",
+    projectContextSnapshot([["goal", ""]]),
+    projectContextSnapshot([["goal", "Ship it"]]),
+  );
+  assert.include(cleared, "[goal]\n(empty; previous content removed)");
+});

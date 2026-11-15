@@ -840,6 +840,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(linux.toolsets, { appimage: "1.0.3" });
       assert.notProperty(mac, "toolsets");
       assert.notProperty(win, "toolsets");
+      // Electron's Linux zips can carry group- and world-writable files; the hook
+      // strips those bits before the .deb and AppImage are built.
+      assert.match(String(linux.afterPack), /[\\/]scripts[\\/]linux-after-pack\.ts$/);
+      assert.notProperty(mac, "afterPack");
+      assert.notProperty(win, "afterPack");
       assert.deepStrictEqual(mac.files, [...DESKTOP_FILE_EXCLUSIONS, ...MAC_FILE_EXCLUSIONS]);
       assert.deepStrictEqual(linux.files, [...DESKTOP_FILE_EXCLUSIONS, ...LINUX_FILE_EXCLUSIONS]);
       assert.deepStrictEqual(win.files, DESKTOP_FILE_EXCLUSIONS);

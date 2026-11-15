@@ -1,3 +1,5 @@
+import { placeUserOpenedApp } from "../resourceTelemetry/agentWorkCgroup.ts";
+
 /**
  * Apps the user asked to open (an editor, a browser) stay the service's children
  * unless they daemonize. They are not agent work, and nothing else in a process
@@ -5,7 +7,10 @@
  */
 const opened = new Set<number>();
 
-export const recordUserOpenedApp = (pid: number) => void opened.add(pid);
+export const recordUserOpenedApp = (pid: number) => {
+  opened.add(pid);
+  placeUserOpenedApp(pid);
+};
 
 export const isUserOpenedApp = (pid: number) => opened.has(pid);
 
