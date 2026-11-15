@@ -18,6 +18,8 @@ export const QUOTA_ALERT_HORIZON_MS = 24 * HOUR;
  * The shortest window is hours long, so the next period is never this near.
  */
 export const QUOTA_ALERT_PERIOD_DRIFT_MS = 30 * 60_000;
+/** A window ends with a renewal when it resets this close to it; a day set by hand is a date, not an hour. */
+export const RENEWAL_WINDOW_APART_MS = 12 * HOUR;
 /** An early reset is news for this long. */
 export const EARLY_RESET_NOTICE_MS = 6 * HOUR;
 
@@ -31,6 +33,8 @@ export interface QuotaAlertWindow {
   readonly resetsAt: number | null;
   /** Resets soon with much of it unused, by the same rule routing uses. */
   readonly expiring: boolean;
+  /** A weekly or monthly window. A short one refills many times before a renewal, so it never ends with one. */
+  readonly long: boolean;
 }
 
 /** One subscription as the alert rule reads it. */
@@ -127,14 +131,16 @@ export function quotaAlerts(
     // One line per subscription: a window alert already says quota is about to go.
     const named = alerts.length > before;
     if (!named && renewsAt !== null && renewsAt > now && renewsAt - now <= QUOTA_ALERT_HORIZON_MS) {
-      // The quota a renewal ends is the window that resets with it: the one whose reset is
-      // nearest the renewal, within a day (a day set by hand is a date, not an hour). A
-      // window that resets well after it keeps its quota through the renewal.
+      // The quota a renewal ends is the weekly or monthly window that resets with it: the
+      // one whose reset is nearest the renewal. A window that resets well before or after
+      // it keeps its quota through the renewal, and a 5-hour one refills long before.
       const ending = account.windows
         .flatMap((window) =>
-          window.resetsAt === null ? [] : [{ window, apart: Math.abs(window.resetsAt - renewsAt) }],
+          window.resetsAt === null || !window.long
+            ? []
+            : [{ window, apart: Math.abs(window.resetsAt - renewsAt) }],
         )
-        .filter((entry) => entry.apart <= QUOTA_ALERT_HORIZON_MS)
+        .filter((entry) => entry.apart <= RENEWAL_WINDOW_APART_MS)
         .toSorted((left, right) => left.apart - right.apart)[0]?.window;
       if (ending !== undefined && ending.leftPercent >= EXPIRING_QUOTA_MIN_LEFT_PERCENT) {
         alerts.push({
@@ -166,6 +172,25 @@ export function quotaAlerts(
   // What is about to be lost first; an early reset is news, not a loss, so it follows.
   const rank = (alert: QuotaAlert) => (alert.kind === "earlyReset" ? Number.MAX_SAFE_INTEGER : alert.periodEnd);
   return alerts.toSorted((left, right) => rank(left) - rank(right) || left.key.localeCompare(right.key));
+}
+
+/**
+ * Recorded period ends that a re-read has moved forward within the same
+ * period: `{ key: newEnd }` to save, so the tolerance holds between reads and
+ * small drifts cannot add up past it.
+ */
+export function driftedQuotaAlertPeriods(
+  alerts: readonly QuotaAlert[],
+  recorded: Readonly<Record<string, number>>,
+): Record<string, number> {
+  const moved: Record<string, number> = {};
+  for (const alert of alerts) {
+    const end = recorded[alert.key];
+    if (end !== undefined && alert.periodEnd > end && coversQuotaAlertPeriod(end, alert.periodEnd)) {
+      moved[alert.key] = alert.periodEnd;
+    }
+  }
+  return moved;
 }
 
 /**

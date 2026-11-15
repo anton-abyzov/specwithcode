@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   type QuotaAlertAccount,
   coversQuotaAlertPeriod,
+  driftedQuotaAlertPeriods,
   describeQuotaAlert,
   quotaAlertId,
   quotaAlerts,
@@ -19,7 +20,7 @@ const account = (extra: Partial<QuotaAlertAccount> = {}): QuotaAlertAccount => (
   machines: ["m4"],
   offline: false,
   windows: [
-    { id: "secondary", title: "Weekly", leftPercent: 62, resetsAt: now + 9 * HOUR, expiring: true },
+    { id: "secondary", title: "Weekly", leftPercent: 62, resetsAt: now + 9 * HOUR, expiring: true, long: true },
   ],
   renewal: null,
   credits: null,
@@ -44,7 +45,7 @@ describe("quotaAlerts", () => {
   it("stays quiet for a window that is not expiring, an offline machine and an unnamed account", () => {
     const calm = account({
       windows: [
-        { id: "secondary", title: "Weekly", leftPercent: 62, resetsAt: now + 3 * DAY, expiring: false },
+        { id: "secondary", title: "Weekly", leftPercent: 62, resetsAt: now + 3 * DAY, expiring: false, long: true },
       ],
     });
     expect(quotaAlerts([calm], [], now)).toEqual([]);
@@ -68,7 +69,7 @@ describe("quotaAlerts", () => {
 
   it("warns of a renewal within a day with quota unused, once, not on top of the window", () => {
     const monthly = (leftPercent: number, expiring = false) => [
-      { id: "monthly", title: "Monthly", leftPercent, resetsAt: now + 20 * HOUR, expiring },
+      { id: "monthly", title: "Monthly", leftPercent, resetsAt: now + 20 * HOUR, expiring, long: true },
     ];
     const renewing = account({ windows: monthly(55), renewal: { at: now + 20 * HOUR } });
     const [alert, ...rest] = quotaAlerts([renewing], [], now);
@@ -93,7 +94,7 @@ describe("quotaAlerts", () => {
       [
         account({
           windows: [
-            { id: "primary", title: "5-hour", leftPercent: 70, resetsAt: now + HOUR, expiring: true },
+            { id: "primary", title: "5-hour", leftPercent: 70, resetsAt: now + HOUR, expiring: true, long: false },
             ...monthly(55),
           ],
           renewal: { at: now + 20 * HOUR },
@@ -107,11 +108,19 @@ describe("quotaAlerts", () => {
 
   it("names the window the renewal ends, and stays quiet when none resets with it", () => {
     const windows = [
-      { id: "monthly", title: "Monthly", leftPercent: 90, resetsAt: now + 29 * DAY, expiring: false },
-      { id: "weekly", title: "Weekly", leftPercent: 50, resetsAt: now + 18 * HOUR, expiring: false },
+      { id: "monthly", title: "Monthly", leftPercent: 90, resetsAt: now + 29 * DAY, expiring: false, long: true },
+      { id: "weekly", title: "Weekly", leftPercent: 50, resetsAt: now + 18 * HOUR, expiring: false, long: true },
     ];
     const [alert] = quotaAlerts([account({ windows, renewal: { at: now + 20 * HOUR } })], [], now);
     expect(alert).toMatchObject({ kind: "renewal", windowTitle: "Weekly", leftPercent: 50 });
+    // A 5-hour window refills long before the renewal, however near its next reset is.
+    const session = [
+      { id: "primary", title: "5-hour", leftPercent: 70, resetsAt: now + 18 * HOUR, expiring: false, long: false },
+    ];
+    expect(quotaAlerts([account({ windows: session, renewal: { at: now + 20 * HOUR } })], [], now)).toEqual([]);
+    // A weekly window that resets well before the renewal is not what the renewal ends.
+    const earlier = [{ ...windows[1]!, resetsAt: now + 3 * HOUR }];
+    expect(quotaAlerts([account({ windows: earlier, renewal: { at: now + 23 * HOUR } })], [], now)).toEqual([]);
     // The monthly window keeps its quota through this renewal.
     expect(
       quotaAlerts([account({ windows: windows.slice(0, 1), renewal: { at: now + 20 * HOUR } })], [], now),
@@ -157,7 +166,7 @@ describe("visibleQuotaAlerts", () => {
       [
         account({
           windows: [
-            { id: "secondary", title: "Weekly", leftPercent: 62, resetsAt: now + 9 * HOUR + 3000, expiring: true },
+            { id: "secondary", title: "Weekly", leftPercent: 62, resetsAt: now + 9 * HOUR + 3000, expiring: true, long: true },
           ],
         }),
       ],
@@ -167,5 +176,8 @@ describe("visibleQuotaAlerts", () => {
     expect(visibleQuotaAlerts(drifted, dismissed)).toEqual([]);
     expect(coversQuotaAlertPeriod(dismissed[key], now + 9 * HOUR + 5 * HOUR)).toBe(false);
     expect(coversQuotaAlertPeriod(undefined, now)).toBe(false);
+    // The record follows the re-read, so a second small drift is still the same period.
+    expect(driftedQuotaAlertPeriods(drifted, dismissed)).toEqual({ [key]: now + 9 * HOUR + 3000 });
+    expect(driftedQuotaAlertPeriods(alerts, dismissed)).toEqual({});
   });
 });

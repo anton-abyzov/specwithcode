@@ -25,6 +25,8 @@ export interface SubscriptionWindow {
   readonly resetsAt: number | null;
   /** Resets soon with much of it unused: the quota about to be lost. */
   readonly expiring: boolean;
+  /** A weekly or monthly window, not a short one that refills within hours. */
+  readonly long: boolean;
 }
 
 export interface SubscriptionRenewal {
@@ -99,6 +101,10 @@ function windowsOf(account: LimitAccount, now: number): SubscriptionWindow[] {
       leftPercent: remainingPercent(window),
       resetsAt: parseTime(window.resetsAt),
       expiring: expiring !== null && windowName(window) === expiring.window,
+      long:
+        window.kind === "weekly" ||
+        window.kind === "monthly" ||
+        (window.kind !== "session" && (window.windowDurationMins ?? 0) > 6 * 60),
     }));
 }
 

@@ -14,7 +14,7 @@ const account = (key: string, resetsIn: number, leftPercent: number) => ({
   machines: ["m4"],
   offline: false,
   windows: [
-    { id: "secondary", title: "Weekly", leftPercent, resetsAt: now + resetsIn, expiring: true },
+    { id: "secondary", title: "Weekly", leftPercent, resetsAt: now + resetsIn, expiring: true, long: true },
   ],
   renewal: null,
   credits: null,

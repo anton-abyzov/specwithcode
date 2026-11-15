@@ -56,7 +56,13 @@ export function notifyQuotaAlert(input: {
   const availability = notificationAvailability();
   if (typeof Notification === "undefined") return;
   if (availability !== "native" && availability !== "granted") return;
-  if (quotaAlertNotified(input.key, input.periodEnd)) return;
+  if (quotaAlertNotified(input.key, input.periodEnd)) {
+    // The same period, re-read with a later end: follow it, so small drifts cannot add up.
+    if ((readNotified()[input.key] ?? 0) < input.periodEnd) {
+      recordQuotaAlertNotification(input.key, input.periodEnd);
+    }
+    return;
+  }
   // Without storage it would notify on every pass; the banner is enough then.
   if (!recordQuotaAlertNotification(input.key, input.periodEnd)) return;
   try {

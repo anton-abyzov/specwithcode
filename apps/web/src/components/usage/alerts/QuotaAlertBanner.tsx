@@ -3,6 +3,7 @@ import {
   type QuotaAlert,
   type QuotaAlertEarlyReset,
   describeQuotaAlert,
+  driftedQuotaAlertPeriods,
   quotaAlertId,
   quotaAlerts,
   visibleQuotaAlerts,
@@ -179,10 +180,19 @@ function LiveQuotaAlerts({ onOpen }: { readonly onOpen?: (() => void) | undefine
         ]
       : [],
   );
-  const alerts = visibleQuotaAlerts(
-    quotaAlerts(subscriptionRows(accounts, periods, renewalDays ?? {}, now), early, now),
-    dismissed ?? {},
+  const allAlerts = quotaAlerts(
+    subscriptionRows(accounts, periods, renewalDays ?? {}, now),
+    early,
+    now,
   );
+  const alerts = visibleQuotaAlerts(allAlerts, dismissed ?? {});
+  // A dismissed period whose end a re-read moved a little: the dismissal follows it.
+  const driftedKey = JSON.stringify(driftedQuotaAlertPeriods(allAlerts, dismissed ?? {}));
+  useEffect(() => {
+    if (driftedKey !== "{}") {
+      updateSettings({ quotaAlertDismissals: JSON.parse(driftedKey) as Record<string, number> });
+    }
+  }, [driftedKey, updateSettings]);
   const labelOf = (alert: QuotaAlert) => planLabel(byKey.get(alert.accountKey), alert);
   const open = () => {
     try {
@@ -194,13 +204,16 @@ function LiveQuotaAlerts({ onOpen }: { readonly onOpen?: (() => void) | undefine
     void navigate({ to: "/usage" });
   };
 
-  // Every client shows the banner, but one machine speaks for an account: the first of
-  // the machines it is signed in on. Two desktops on one account notify once, not twice.
+  // Every client shows the banner, but one machine speaks for an account: the first
+  // connected machine it is signed in on, so two desktops on one account notify once and
+  // a sleeping machine never holds the turn. An account no connected machine runs (one a
+  // usage source reports) is spoken for by the first connected machine.
   const speaksFor = (alert: QuotaAlert) => {
     const holders = (byKey.get(alert.accountKey)?.environments ?? [])
       .map((environment) => String(environment.environmentId))
+      .filter((environmentId) => connected.some((id) => String(id) === environmentId))
       .toSorted();
-    return here !== null && holders[0] === String(here);
+    return here !== null && (holders[0] ?? connected[0]) === String(here);
   };
   const pending = alerts.filter(speaksFor).map((alert) => ({
     key: alert.key,
