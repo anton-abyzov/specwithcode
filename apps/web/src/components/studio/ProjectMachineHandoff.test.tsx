@@ -59,6 +59,8 @@ vi.mock("../../hooks/useScratchProject", () => ({
   useScratchProject: () => ({ scratchWorkspaceRootFor: () => null }),
 }));
 vi.mock("../settings/MachineReadinessChecklist", () => ({ MachineReadinessChecklist: () => null }));
+// The credentials list has its own test (CopyCredentialsChecklist.test.tsx).
+vi.mock("./CopyCredentialsChecklist", () => ({ CopyCredentialsChecklist: () => null }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (failure: { error: Error }) => failure.error,
 }));

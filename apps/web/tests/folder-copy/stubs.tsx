@@ -1,3 +1,4 @@
+import { Atom } from "effect/reactivity";
 const totals = Object.fromEntries(
   ["repository", "tracked", "untracked", "ignoredData", "rebuildable", "secret"].map((k) => [
     k,
@@ -26,6 +27,60 @@ const summary = {
 };
 export const machineHandoff = new Proxy({}, { get: (_, name) => name });
 export const projectLink = new Proxy({}, { get: (_, name) => name });
+// The credentials list (increment 1337): fictional rows from the source, status from the destination.
+export const projectCredentials = new Proxy(
+  {},
+  { get: (_, name) => `credentials:${String(name)}` },
+);
+const skips = Atom.make<ReadonlyArray<string> | null>(null).pipe(Atom.keepAlive);
+export const credentialSkipsAtom = () => skips;
+const CREDENTIAL_ROWS = [
+  { id: "github", sources: ["."], keptIn: [".config/gh/hosts.yml"] },
+  { id: "azure", sources: ["infra/main.tf"], keptIn: [".azure/msal_token_cache.json"] },
+  {
+    id: "kubernetes",
+    sources: ["scripts/deploy.sh", "k8s/kustomization.yaml"],
+    keptIn: [".kube/config"],
+  },
+  { id: "hetzner-cloud", sources: ["infra/hetzner.tf"], keptIn: [".config/hcloud/cli.toml"] },
+  {
+    id: "cloudflare",
+    sources: ["platform/wrangler.jsonc"],
+    keptIn: [".wrangler/config/default.toml"],
+  },
+  { id: "npm", sources: [".github/workflows/release.yml"], keptIn: [".npmrc"] },
+  { id: "ssh", sources: ["ops/hosts.sh"], keptIn: [".ssh/id_ed25519", ".ssh/config"] },
+].map((row) => ({
+  ...row,
+  kind: row.id === "ssh" ? "file" : "login",
+  listed: row.id === "npm",
+  skip: false,
+  note: row.id === "npm" ? "publish token" : null,
+}));
+const CREDENTIAL_PROBES = [
+  { id: "github", status: "ready", signIn: "gh auth login && gh auth setup-git", check: null },
+  { id: "azure", status: "not_signed_in", signIn: "az login", check: null },
+  {
+    id: "kubernetes",
+    status: "not_signed_in",
+    signIn: "az aks get-credentials --resource-group <group> --name <cluster>",
+    check: "kubectl get nodes",
+  },
+  {
+    id: "hetzner-cloud",
+    status: "tool_missing",
+    signIn: "hcloud context create <name>",
+    check: null,
+  },
+  { id: "cloudflare", status: "unknown", signIn: "wrangler login", check: "wrangler whoami" },
+  { id: "npm", status: "unknown", signIn: "npm login", check: "npm whoami" },
+  {
+    id: "ssh",
+    status: "unknown",
+    signIn: 'ssh-keygen -t ed25519 -C "$(hostname)"',
+    check: "ssh <host> true",
+  },
+];
 export const linkCopyAsWorkers = async () => ({ status: "linked" });
 export const filesystemEnvironment = { browse: (value: unknown) => value };
 export const useFilesystemReadAccess = () => ({ canReadFiles: true });
@@ -327,6 +382,11 @@ export const useAtomCommand =
     } else if (name === "copyRelease") value = { released: true };
     else if (name === "copySourceCancel") value = { state: "cancelled" };
     else if (name === "copyCancel") value = status("cancelled");
+    else if (name === "credentials:scan")
+      value = { rows: CREDENTIAL_ROWS, manifestProblem: null, truncated: false };
+    else if (name === "credentials:probe")
+      value = { results: CREDENTIAL_PROBES.filter((entry) => input.ids.includes(entry.id)) };
+    else if (name === "credentials:save") value = { path: ".specweave/project/credentials.json" };
     else value = {};
     return { _tag: "Success", value };
   };

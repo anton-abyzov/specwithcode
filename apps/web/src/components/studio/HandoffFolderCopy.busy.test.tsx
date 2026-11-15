@@ -45,6 +45,8 @@ vi.mock("../../studio/projectLink", () => ({
   linkCopyAsWorkers: async () => ({ status: "linked" }),
 }));
 vi.mock("./ProjectLinkDialog", () => ({ ProjectLinkDialog: () => null }));
+// The credentials list has its own test (CopyCredentialsChecklist.test.tsx).
+vi.mock("./CopyCredentialsChecklist", () => ({ CopyCredentialsChecklist: () => null }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (name: string) => async (request: unknown) => {
     state.calls.push([name, request]);

@@ -17,6 +17,7 @@ import {
   AuthRelayWriteScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
+  PROJECT_CREDENTIALS_RPC_METHODS,
   WS_METHODS,
   ProjectId,
   CommandId,
@@ -39,6 +40,19 @@ import * as RpcAuthorization from "./RpcAuthorization.ts";
 describe("RPC authorization scopes", () => {
   it("declares exactly one scope for every RPC in the server group", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
+  });
+
+  it("lets a read list a project's credentials, and asks for more to save or check them", () => {
+    expect(requiredScopeForRpcMethod(PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsScan)).toBe(
+      "filesystem:read",
+    );
+    expect(requiredScopeForRpcMethod(PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsSave)).toBe(
+      "filesystem:write",
+    );
+    // Sign-in state says which services a person uses: not for a read-only client.
+    expect(requiredScopeForRpcMethod(PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsProbe)).toBe(
+      "orchestration:operate",
+    );
   });
 
   it("authorizes background policy reporting and observation deliberately", () => {
