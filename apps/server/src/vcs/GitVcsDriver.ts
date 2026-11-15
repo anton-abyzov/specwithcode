@@ -1357,10 +1357,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       });
       const removedSomething = (stdout: string) => /^Removing /m.test(stdout);
       let cleaned = yield* clean;
-      // Removing a .gitignore the turn created exposes the files it hid; clean again.
+      // Removing a .gitignore the turn created exposes the files it hid; clean again until
+      // a pass removes nothing. The bound only stops a runaway loop. A .gitignore that was
+      // itself ignored at capture is not restored, so if the turn un-ignores it, a later
+      // pass can remove it and then the files it used to hide.
       for (
         let pass = 1;
-        pass < 4 && cleaned.exitCode === 0 && removedSomething(cleaned.stdout);
+        pass < 64 && cleaned.exitCode === 0 && removedSomething(cleaned.stdout);
         pass++
       ) {
         yield* recreateWorkspace("git clean");
@@ -1373,15 +1376,19 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           cwd: input.cwd,
           args: ["clean", "-dn", "--", "."],
           env: { LC_ALL: "C" },
+          allowNonZeroExit: true,
         });
-        if (/^Would remove /m.test(remaining.stdout)) {
+        if (remaining.exitCode !== 0 || /^Would remove /m.test(remaining.stdout)) {
           yield* resetIndex;
           return yield* new VcsProcessExitError({
             operation,
             command: "git clean",
             cwd: input.cwd,
-            exitCode: 0,
-            detail: "Could not clean the checkpoint workspace: untracked files remain.",
+            exitCode: remaining.exitCode,
+            detail:
+              remaining.exitCode !== 0
+                ? remaining.stderr.trim() || "Could not check the checkpoint workspace."
+                : "Could not clean the checkpoint workspace: untracked files remain.",
           });
         }
       }

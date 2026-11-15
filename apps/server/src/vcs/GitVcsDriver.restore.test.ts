@@ -116,3 +116,121 @@ it.effect("restoring a checkpoint before the first commit leaves nothing staged"
     }
   }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
 );
+
+it.effect("restoring a checkpoint removes a chain of .gitignore files the turn created", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    for (const depth of [2, 6]) {
+      const root = yield* makeRepository("studio-restore-chain-");
+      yield* fileSystem.writeFileString(path.join(root, "tracked.txt"), "original\n");
+      yield* runGit(root, ["add", "."]);
+      yield* runGit(root, ["commit", "-m", "initial"]);
+      const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/chain");
+      yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+
+      // Each level's .gitignore hides the next level, so every clean pass peels one level.
+      let level = root;
+      for (let index = 1; index <= depth; index++) {
+        level = path.join(level, `level${index}`);
+        yield* fileSystem.makeDirectory(level);
+        if (index < depth) {
+          yield* fileSystem.writeFileString(path.join(level, ".gitignore"), `level${index + 1}/\n`);
+        }
+      }
+      yield* fileSystem.writeFileString(path.join(level, "data.txt"), "remove\n");
+
+      assert.isTrue(
+        yield* driver.checkpoints.restoreCheckpoint({
+          cwd: root,
+          checkpointRef,
+          fallbackToHead: false,
+        }),
+      );
+
+      assert.isFalse(yield* fileSystem.exists(path.join(root, "level1")));
+      assert.strictEqual(
+        yield* fileSystem.readFileString(path.join(root, "tracked.txt")),
+        "original\n",
+      );
+      assert.strictEqual(yield* stagedPaths(root), "");
+    }
+  }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
+);
+
+it.effect("restoring a checkpoint keeps a nested repository the turn created", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const root = yield* makeRepository("studio-restore-nested-repo-");
+    yield* fileSystem.writeFileString(path.join(root, "tracked.txt"), "original\n");
+    yield* runGit(root, ["add", "."]);
+    yield* runGit(root, ["commit", "-m", "initial"]);
+    const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/nested-repo");
+    yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+
+    // A single -f never removes another repository, so its files stay and the restore succeeds.
+    const nestedRepository = path.join(root, "vendor");
+    yield* fileSystem.makeDirectory(nestedRepository);
+    yield* runGit(nestedRepository, ["init"]);
+    yield* fileSystem.writeFileString(path.join(nestedRepository, "work.txt"), "keep\n");
+    yield* fileSystem.writeFileString(path.join(root, "added.txt"), "remove\n");
+
+    assert.isTrue(
+      yield* driver.checkpoints.restoreCheckpoint({
+        cwd: root,
+        checkpointRef,
+        fallbackToHead: false,
+      }),
+    );
+
+    assert.strictEqual(
+      yield* fileSystem.readFileString(path.join(nestedRepository, "work.txt")),
+      "keep\n",
+    );
+    assert.isFalse(yield* fileSystem.exists(path.join(root, "added.txt")));
+    assert.strictEqual(yield* stagedPaths(root), "");
+  }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
+);
+
+it.effect("restoring a checkpoint leaves a directory whose .gitignore ignores itself", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const root = yield* makeRepository("studio-restore-self-ignored-");
+    yield* fileSystem.writeFileString(path.join(root, "tracked.txt"), "original\n");
+    yield* runGit(root, ["add", "."]);
+    yield* runGit(root, ["commit", "-m", "initial"]);
+    const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/self-ignored");
+    yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+
+    // Known limit: "*" hides the .gitignore too, and cleaning ignored files would also
+    // delete files that were ignored before the turn, so this directory stays.
+    const generated = path.join(root, "generated");
+    yield* fileSystem.makeDirectory(generated);
+    yield* fileSystem.writeFileString(path.join(generated, ".gitignore"), "*\n");
+    yield* fileSystem.writeFileString(path.join(generated, "data.txt"), "left\n");
+    yield* fileSystem.writeFileString(path.join(root, "tracked.txt"), "changed\n");
+
+    assert.isTrue(
+      yield* driver.checkpoints.restoreCheckpoint({
+        cwd: root,
+        checkpointRef,
+        fallbackToHead: false,
+      }),
+    );
+
+    assert.strictEqual(
+      yield* fileSystem.readFileString(path.join(root, "tracked.txt")),
+      "original\n",
+    );
+    assert.strictEqual(
+      yield* fileSystem.readFileString(path.join(generated, "data.txt")),
+      "left\n",
+    );
+    assert.strictEqual(yield* stagedPaths(root), "");
+  }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
+);
