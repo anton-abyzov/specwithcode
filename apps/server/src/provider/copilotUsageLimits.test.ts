@@ -13,6 +13,8 @@ import {
   type CopilotUserResponse,
   COPILOT_USAGE_CACHE_TTL_MS,
   COPILOT_USAGE_UNAVAILABLE_TTL_MS,
+  copilotPlanLabel,
+  parseCopilotAppsToken,
   copilotUserResponseToLimits,
   makeCachedCopilotUsageLimits,
   parseCopilotLastLoggedInUser,
@@ -123,6 +125,39 @@ describe("copilotUserResponseToLimits", () => {
     ]);
   });
 
+  it("reads a paid seat's percent when GitHub gives no allowance number", () => {
+    const limits = copilotUserResponseToLimits({
+      response: {
+        login: "octocat",
+        copilot_plan: "enterprise",
+        quota_reset_date_utc: "2026-12-01",
+        quota_snapshots: {
+          premium_interactions: quota({ entitlement: 0, percent_remaining: 64, has_quota: true }),
+        },
+      },
+      checkedAt,
+    });
+    expect(limits.windows[0]).toMatchObject({ id: "premium_interactions", usedPercent: 36 });
+    expect(limits.planLabel).toBe("Copilot Enterprise");
+  });
+
+  it("names the plan, and says unlimited when the quota is", () => {
+    expect(copilotUserResponseToLimits({ response: proResponse, checkedAt }).planLabel).toBe(
+      copilotPlanLabel(proResponse.copilot_plan ?? undefined),
+    );
+    const unlimited = copilotUserResponseToLimits({
+      response: {
+        login: "octocat",
+        copilot_plan: "business",
+        quota_snapshots: { premium_interactions: quota({ unlimited: true }) },
+      },
+      checkedAt,
+    });
+    expect(unlimited.planLabel).toBe("Copilot Business, unlimited");
+    expect(copilotPlanLabel("individual_pro")).toBe("Copilot Pro");
+    expect(copilotPlanLabel("max_team")).toBe("Copilot Max Team");
+  });
+
   it("publishes no spent window for an unlimited quota", () => {
     const limits = copilotUserResponseToLimits({
       response: {
@@ -221,6 +256,55 @@ describe("readCopilotUsageLimits", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("reads the Copilot sign-in file before gh, only for the CLI's own account", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "copilot-apps-" });
+      yield* fileSystem.makeDirectory(`${home}/.copilot`);
+      yield* fileSystem.writeFileString(
+        `${home}/.copilot/config.json`,
+        `{ "lastLoggedInUser": { "host": "https://github.com", "login": "OctoCat" } }`,
+      );
+      yield* fileSystem.makeDirectory(`${home}/.config/github-copilot`, { recursive: true });
+      const apps = (user: string) =>
+        fileSystem.writeFileString(
+          `${home}/.config/github-copilot/apps.json`,
+          JSON.stringify({
+            "ghe.example.com:Iv1.a": { user: "octocat", oauth_token: "wrong-host" },
+            "github.com:Iv1.b": { user, oauth_token: "apps-token" },
+          }),
+        );
+      const asked: string[] = [];
+      const sent: string[] = [];
+      const gh = (login: string | undefined) => {
+        asked.push(login ?? "(active)");
+        return Effect.succeed<CopilotGhTokenResult>({ _tag: "token", token: "gh-token" });
+      };
+      const client = HttpClient.make((request) => {
+        sent.push(request.headers.authorization ?? "");
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response(JSON.stringify(proResponse))),
+        );
+      });
+      const read = readCopilotUsageLimits(
+        { instanceEnvironment: {}, processEnvironment: { HOME: home } },
+        gh,
+      ).pipe(Effect.provideService(HttpClient.HttpClient, client));
+
+      yield* apps("octocat");
+      expect((yield* read).windows.map((window) => window.id)).toEqual(["premium_interactions"]);
+      expect(sent).toEqual(["token apps-token"]);
+      expect(asked).toEqual([]);
+
+      // Another account's entry is never used: gh is asked for the CLI's login.
+      yield* apps("someone-else");
+      yield* read;
+      expect(sent.at(-1)).toBe("token gh-token");
+      expect(asked).toEqual(["OctoCat"]);
+      expect(parseCopilotAppsToken("not json", "octocat")).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("explains when gh holds no login for the Copilot account", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -236,7 +320,8 @@ describe("readCopilotUsageLimits", () => {
       ).pipe(Effect.provideService(HttpClient.HttpClient, respond({}, 500)));
       expect(limits.unavailable).toEqual({
         reason: "unsupported",
-        message: "Sign in to the GitHub CLI as octocat to read Copilot usage (gh auth login).",
+        message:
+          "Sign in to the GitHub CLI as octocat to read Copilot usage (gh auth login). The app never reads the system keychain, where the Copilot CLI keeps this sign-in.",
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

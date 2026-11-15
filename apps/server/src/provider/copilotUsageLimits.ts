@@ -110,6 +110,51 @@ const hasEntitlement = (quota: CopilotQuotaSnapshot | null | undefined) =>
   Number.isFinite(quota.entitlement) &&
   quota.entitlement > 0;
 
+const hasPercent = (quota: CopilotQuotaSnapshot | null | undefined) =>
+  quota !== null &&
+  quota !== undefined &&
+  typeof quota.percent_remaining === "number" &&
+  Number.isFinite(quota.percent_remaining);
+
+/**
+ * A quota that says something: unlimited or a positive allowance. On a paid
+ * plan a bare percent left counts too; on Copilot Free an empty premium bucket
+ * reports 0% left and means "none included", so the chat allowance is read.
+ */
+const reportsQuota = (
+  quota: CopilotQuotaSnapshot | null | undefined,
+  paidPlan: boolean,
+): quota is CopilotQuotaSnapshot =>
+  quota !== null &&
+  quota !== undefined &&
+  (quota.unlimited === true || hasEntitlement(quota) || (paidPlan && hasPercent(quota)));
+
+const COPILOT_PLAN_LABELS: Readonly<Record<string, string>> = {
+  free: "Copilot Free",
+  individual: "Copilot Pro",
+  individual_pro: "Copilot Pro",
+  pro: "Copilot Pro",
+  pro_plus: "Copilot Pro+",
+  business: "Copilot Business",
+  enterprise: "Copilot Enterprise",
+};
+
+/** The plan as a person reads it: "Copilot Enterprise" for `enterprise`. */
+export function copilotPlanLabel(plan: string | undefined): string | undefined {
+  const key = plan
+    ?.trim()
+    .toLowerCase()
+    .replace(/[\s-]+/gu, "_");
+  if (!key) return undefined;
+  return (
+    COPILOT_PLAN_LABELS[key] ??
+    `Copilot ${key
+      .split("_")
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ")}`
+  );
+}
+
 function usedPercentOf(quota: CopilotQuotaSnapshot): number | undefined {
   if (typeof quota.percent_remaining === "number" && Number.isFinite(quota.percent_remaining)) {
     return clampPercent(100 - quota.percent_remaining);
@@ -153,18 +198,27 @@ export function copilotUserResponseToLimits(input: {
     login !== undefined
       ? `copilot:sha256:${sha256(JSON.stringify([login, plan?.toLowerCase() ?? null]))}`
       : undefined;
-  const keyed = (limits: ServerProviderUsageLimits): ServerProviderUsageLimits =>
-    subscriptionKey ? { ...limits, subscriptionKey } : limits;
+  const planLabel = copilotPlanLabel(plan);
+  const keyed = (
+    limits: ServerProviderUsageLimits,
+    label: string | undefined = planLabel,
+  ): ServerProviderUsageLimits => ({
+    ...limits,
+    ...(subscriptionKey ? { subscriptionKey } : {}),
+    ...(label ? { planLabel: label } : {}),
+  });
 
   const snapshots = response.quota_snapshots;
   const premium = snapshots?.premium_interactions;
   const chat = snapshots?.chat;
-  const chosen =
-    premium && (premium.unlimited === true || hasEntitlement(premium))
-      ? { id: "premium_interactions", label: "Premium requests", quota: premium }
-      : chat && (chat.unlimited === true || hasEntitlement(chat))
-        ? { id: "chat", label: "Chat", quota: chat }
-        : undefined;
+  // A paid seat can report a percent of premium requests left with no
+  // allowance number (an enterprise seat): the percent is still the reading.
+  const paidPlan = plan !== undefined && !/free/iu.test(plan);
+  const chosen = reportsQuota(premium, paidPlan)
+    ? { id: "premium_interactions", label: "Premium requests", quota: premium }
+    : reportsQuota(chat, paidPlan)
+      ? { id: "chat", label: "Chat", quota: chat }
+      : undefined;
   if (chosen === undefined) {
     return makeUnavailableUsageLimits({
       checkedAt,
@@ -173,7 +227,11 @@ export function copilotUserResponseToLimits(input: {
     });
   }
   if (chosen.quota.unlimited === true) {
-    return keyed(makeUsageLimits({ checkedAt, windows: [] }));
+    // No window: nothing can read as spent. The plan line says why.
+    return keyed(
+      makeUsageLimits({ checkedAt, windows: [] }),
+      planLabel ? `${planLabel}, unlimited` : "Unlimited",
+    );
   }
   const usedPercent = usedPercentOf(chosen.quota);
   if (usedPercent === undefined) {
@@ -389,6 +447,101 @@ export interface CopilotUsageReading {
   readonly login?: string | undefined;
 }
 
+/**
+ * One `copilot_internal/user` read with `token`, or null when GitHub refuses
+ * the token for Copilot (so the next token source can be tried).
+ */
+const requestCopilotUsage = Effect.fn("requestCopilotUsage")(function* (
+  token: string,
+  expectedLogin: string | undefined,
+  checkedAt: string,
+) {
+  const client = yield* HttpClient.HttpClient;
+  const response = yield* client
+    .execute(
+      HttpClientRequest.get(COPILOT_USER_URL).pipe(
+        HttpClientRequest.setHeaders({
+          authorization: `token ${token}`,
+          accept: "application/json",
+          "user-agent": "SpecWithCode",
+        }),
+      ),
+    )
+    .pipe(Effect.timeout(HTTP_TIMEOUT));
+  if (response.status === 401 || response.status === 403 || response.status === 404) return null;
+  const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(CopilotUserResponse)),
+    Effect.timeout(HTTP_TIMEOUT),
+  );
+  const limits = copilotUserResponseToLimits({ response: body, checkedAt, expectedLogin });
+  // A response for another account says nothing about the CLI's sign-in.
+  const responseLogin =
+    expectedLogin === undefined ? body.login?.trim() || undefined : expectedLogin;
+  return { limits, login: responseLogin } satisfies CopilotUsageReading;
+});
+
+/**
+ * The Copilot sign-in file other Copilot clients share (`apps.json`), for the
+ * environment the CLI runs with: XDG_CONFIG_HOME, then `~/.config`
+ * (`%LocalAppData%` on Windows), under `github-copilot`.
+ */
+export function resolveCopilotAppsFile(
+  environment: NodeJS.ProcessEnv,
+  path: { readonly join: (...segments: ReadonlyArray<string>) => string },
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const xdg = environment.XDG_CONFIG_HOME?.trim();
+  if (xdg) return path.join(xdg, "github-copilot", "apps.json");
+  const localAppData = environment.LocalAppData?.trim() || environment.LOCALAPPDATA?.trim();
+  if (platform === "win32" && localAppData)
+    return path.join(localAppData, "github-copilot", "apps.json");
+  return path.join(
+    environment.HOME?.trim() || NodeOS.homedir(),
+    ".config",
+    "github-copilot",
+    "apps.json",
+  );
+}
+
+/**
+ * The token `apps.json` holds for `login` on `host`, or undefined. Entries are
+ * keyed `<host>:<app id>`; one for another account or host is never used, so
+ * a reading can only belong to the account the Copilot CLI runs as.
+ */
+export function parseCopilotAppsToken(
+  text: string,
+  login: string,
+  host: string = GITHUB_HOST,
+): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  for (const [key, value] of Object.entries(parsed)) {
+    if (key.toLowerCase() !== host && !key.toLowerCase().startsWith(`${host}:`)) continue;
+    if (typeof value !== "object" || value === null) continue;
+    const entry = value as { readonly user?: unknown; readonly oauth_token?: unknown };
+    if (typeof entry.user !== "string" || typeof entry.oauth_token !== "string") continue;
+    if (normalizeLogin(entry.user) !== normalizeLogin(login)) continue;
+    const token = entry.oauth_token.trim();
+    if (token) return token;
+  }
+  return undefined;
+}
+
+const readCopilotAppsToken = (input: CopilotUsageInput, login: string, host: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const text = yield* fs
+      .readFileString(resolveCopilotAppsFile(input.processEnvironment, path))
+      .pipe(Effect.orElseSucceed(() => ""));
+    return text === "" ? undefined : parseCopilotAppsToken(text, login, host);
+  });
+
 export const readCopilotUsage = Effect.fn("readCopilotUsage")(function* (
   input: CopilotUsageInput,
   ghToken: typeof readGhToken = readGhToken,
@@ -424,6 +577,19 @@ export const readCopilotUsage = Effect.fn("readCopilotUsage")(function* (
         );
       }
       expectedLogin = user.login;
+      // The sign-in file Copilot clients share comes before `gh`: it holds the
+      // very account the CLI runs as. A sign-in kept only in the system
+      // keychain is never read; `gh` is the way to show that account's usage.
+      const appsToken =
+        user.login === undefined
+          ? undefined
+          : yield* readCopilotAppsToken(input, user.login, user.host);
+      if (appsToken !== undefined) {
+        const reading = yield* requestCopilotUsage(appsToken, expectedLogin, checkedAt).pipe(
+          Effect.orElseSucceed(() => null),
+        );
+        if (reading !== null && reading.limits.unavailable === undefined) return reading;
+      }
       const result = yield* ghToken(user.login, input.processEnvironment);
       switch (result._tag) {
         case "token":
@@ -442,7 +608,7 @@ export const readCopilotUsage = Effect.fn("readCopilotUsage")(function* (
             makeUnavailableUsageLimits({
               checkedAt,
               reason: "unsupported",
-              message: `Sign in to the GitHub CLI${user.login ? ` as ${user.login}` : ""} to read Copilot usage (gh auth login).`,
+              message: `Sign in to the GitHub CLI${user.login ? ` as ${user.login}` : ""} to read Copilot usage (gh auth login). The app never reads the system keychain, where the Copilot CLI keeps this sign-in.`,
             }),
           );
         case "failed":
@@ -456,37 +622,17 @@ export const readCopilotUsage = Effect.fn("readCopilotUsage")(function* (
       }
     }
 
-    const client = yield* HttpClient.HttpClient;
-    const response = yield* client
-      .execute(
-        HttpClientRequest.get(COPILOT_USER_URL).pipe(
-          HttpClientRequest.setHeaders({
-            authorization: `token ${token}`,
-            accept: "application/json",
-            "user-agent": "SpecWithCode",
-          }),
-        ),
-      )
-      .pipe(Effect.timeout(HTTP_TIMEOUT));
-    if (response.status === 401 || response.status === 403 || response.status === 404) {
-      return {
+    const reading = yield* requestCopilotUsage(token, expectedLogin, checkedAt);
+    return (
+      reading ?? {
         limits: makeUnavailableUsageLimits({
           checkedAt,
           reason: "unsupported",
           message: "GitHub did not report Copilot usage for this account.",
         }),
         login: expectedLogin,
-      } satisfies CopilotUsageReading;
-    }
-    const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(CopilotUserResponse)),
-      Effect.timeout(HTTP_TIMEOUT),
+      }
     );
-    const limits = copilotUserResponseToLimits({ response: body, checkedAt, expectedLogin });
-    // A response for another account says nothing about the CLI's sign-in.
-    const responseLogin =
-      expectedLogin === undefined ? body.login?.trim() || undefined : expectedLogin;
-    return { limits, login: responseLogin } satisfies CopilotUsageReading;
   }).pipe(
     Effect.orElseSucceed((): CopilotUsageReading => ({
       limits: makeUnavailableUsageLimits({
