@@ -396,8 +396,11 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
     for (let resends = 0; ; resends += 1) {
       const attemptSession = yield* SubscriptionRef.get(supervisor.session);
       // A child fiber: interrupting this send stops the wait here and is never
-      // mistaken for a dropped socket.
-      const exit = yield* Fiber.await(yield* Effect.forkChild(attempt(command)));
+      // mistaken for a dropped socket. It starts at once, so a command sent
+      // after this message cannot reach the socket before it.
+      const exit = yield* Fiber.await(
+        yield* Effect.forkChild(attempt(command), { startImmediately: true }),
+      );
       if (Exit.isSuccess(exit)) return exit.value;
       // Only the session closing interrupts the request on its own, and that
       // can beat the protocol error.
