@@ -84,6 +84,24 @@ it("contains a memory overrun inside the service's cgroup", () => {
   expect(unit).toContain("MemorySwapMax=1G");
 });
 
+it("lets the server divide its cgroup, and adds that to a unit installed before it", () => {
+  const unit = BootService.renderBootServiceUnit(linuxPlan);
+  expect(unit).toContain("MemorySwapMax=1G\nDelegate=yes\nRestart=always");
+  expect(BootService.withUnitDelegation(unit)).toBeUndefined();
+
+  // What an earlier version wrote: the same unit without the line.
+  const installed = unit.replace("Delegate=yes\n", "");
+  expect(BootService.withUnitDelegation(installed)).toBe(unit);
+
+  // A unit from before the memory limits still gets it, inside [Service].
+  const older = installed.replace(/^Memory.*\n/gm, "");
+  expect(BootService.withUnitDelegation(older)).toContain("[Service]\nDelegate=yes\nType=simple");
+  expect(BootService.withUnitDelegation("[Unit]\nDescription=x\n")).toBeUndefined();
+  expect(
+    BootService.withUnitDelegation("[Service]\nDelegate=memory\nExecStart=/x\n"),
+  ).toBeUndefined();
+});
+
 const macRuntime = "/Users/dev/.specweave-studio/runtime/versions/1.2.3/specweave-studio";
 const macPlan = {
   program: [macRuntime, "__service-launcher"],
