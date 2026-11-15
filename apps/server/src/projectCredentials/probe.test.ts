@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - temp folders holding stand-in tools.
-// @effect-diagnostics globalTimers:off - a stand-in tool that takes a moment.
+// @effect-diagnostics globalTimers:off globalDate:off - a stand-in tool that takes a moment, timed by the wall clock.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
