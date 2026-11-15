@@ -152,9 +152,60 @@ try {
           rows.filter((r) => r.hasPlan).every((r) => r.planShown),
           "320: a count is hidden in a wide sidebar",
         );
+      // The actions button pads the row. A count that fit at rest stays on hover.
+      if (sidebar === 256 || sidebar === 240) {
+        const counted = rows.find((r) => r.planShown);
+        assert.ok(counted, `${sidebar}: expected a visible count`);
+        const row = page.locator(".sws-chat-row", { hasText: counted.title });
+        await row.hover();
+        const hovered = await row.evaluate((item) => {
+          const box = item.querySelector(".sws-side-row").getBoundingClientRect();
+          const plan = item.querySelector(".sws-thread-plan").getBoundingClientRect();
+          const label = item.querySelector(".sws-side-row-label").getBoundingClientRect();
+          return {
+            planShown: plan.width > 0 && plan.top < box.bottom - 1,
+            labelWidth: Math.round(label.width),
+          };
+        });
+        assert.ok(hovered.planShown, `${sidebar}: hover hid the count on ${counted.title}`);
+        assert.ok(
+          hovered.labelWidth <= counted.labelWidth,
+          `${sidebar}: hover grew the name (${counted.labelWidth} -> ${hovered.labelWidth})`,
+        );
+      }
     }
     await page.close();
   }
+  // A touch screen keeps the actions button out, so the row is padded at rest.
+  // The count that fits at 256px with a pointer still fits there.
+  const touch = await browser.newContext({
+    viewport: { width: 1000, height: 760 },
+    hasTouch: true,
+    isMobile: true,
+  });
+  const touchPage = await touch.newPage();
+  await touchPage.goto(`${url}&width=256`);
+  await touchPage.locator(".sws-chat-row").first().waitFor();
+  const touchRows = await touchPage.locator(".sws-chat-row").evaluateAll((items) =>
+    items.map((item) => {
+      const row = item.querySelector(".sws-side-row").getBoundingClientRect();
+      const plan = item.querySelector(".sws-thread-plan")?.getBoundingClientRect();
+      return {
+        title: item.querySelector(".sws-side-row-label").textContent,
+        hasPlan: plan !== undefined,
+        planShown: plan !== undefined && plan.width > 0 && plan.top < row.bottom - 1,
+      };
+    }),
+  );
+  receipt.cases.push({ sidebar: 256, touch: true, rows: touchRows });
+  if (!captureOnly) {
+    assert.equal(await touchPage.evaluate(() => matchMedia("(hover: none)").matches), true);
+    assert.ok(
+      touchRows.filter((r) => r.hasPlan).every((r) => r.planShown),
+      "touch 256: a count is hidden beside the actions button",
+    );
+  }
+  await touch.close();
 } finally {
   await browser.close();
   server.close();

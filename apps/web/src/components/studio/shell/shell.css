@@ -758,7 +758,7 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 /* A chat's name and its plan count share the room before the marks. The name comes
    first: a count that does not fit beside the name's floor wraps whole onto the hidden
-   line and the name takes its room; the hover keeps the count. */
+   line and the name takes its room. */
 .sws-side-row-main {
   flex: 1 1 0;
   min-width: 0;
@@ -777,6 +777,21 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 .sws-side-row-main > .sws-side-row-label {
   flex: 1 1 min(12ch, 55cqi);
+}
+/* The actions button pads the row by 22px (8px to 30px). Drop the name's floor by
+   that much while the button has the room, or the count wraps off at the default
+   sidebar width. A touch screen shows the button on every row. */
+@media (hover: hover) {
+  .sws-chat-row:is(:hover, :has(.sws-chat-menu:is(:focus-visible, [data-popup-open])))
+    .sws-side-row-main
+    > .sws-side-row-label {
+    flex-basis: max(0px, calc(min(12ch, 55cqi) - 22px));
+  }
+}
+@media (hover: none) {
+  .sws-chat-row .sws-side-row-main > .sws-side-row-label {
+    flex-basis: max(0px, calc(min(12ch, 55cqi) - 22px));
+  }
 }
 .sws-side-row-main > .sws-thread-plan {
   margin-inline-start: 8px;
