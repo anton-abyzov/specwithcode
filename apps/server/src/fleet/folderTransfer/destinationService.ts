@@ -595,7 +595,10 @@ export class DestinationCopies {
           "The copy changed while checking its preview. Review it again.",
         );
     };
-    if (JSON.stringify(currentPlan) !== JSON.stringify(plan)) {
+    // A preview saved before plans kept their origin answers is compared without them.
+    const { cloneOrigins: _answers, ...withoutAnswers } = currentPlan;
+    const comparable = plan.cloneOrigins === undefined ? withoutAnswers : currentPlan;
+    if (JSON.stringify(comparable) !== JSON.stringify(plan)) {
       await this.locked(operationId, async () => {
         await assertSamePreview();
         await writeJson(this.paths(operationId).plan, currentPlan);

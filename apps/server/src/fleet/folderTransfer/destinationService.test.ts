@@ -476,6 +476,19 @@ describe("Clone from origin on a machine without access", () => {
     expect(applied.error).toBeNull();
   }, 120_000);
 
+  it("approves a preview saved before plans kept their origin answers", async () => {
+    const state = NodePath.join(base, "dest-state-old-preview");
+    const copies = new DestinationCopies(state, { ...fast, reachableOrigin: async () => null });
+    const target = NodePath.join(base, "targets", "old-preview");
+    const operationId = await previewWithClone(copies, target);
+    const file = NodePath.join(state, "folder-copies", operationId, "plan.json");
+    const { cloneOrigins: _answers, ...older } = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+    NodeFS.writeFileSync(file, JSON.stringify(older));
+    await copies.approve(operationId);
+    const applied = await settle(copies, operationId, ["applied", "failed"]);
+    expect(applied.error).toBeNull();
+  }, 120_000);
+
   it("names the repository when a clone still fails, and Retry tries it again", async () => {
     const copies = new DestinationCopies(NodePath.join(base, "dest-state-clone-fails"), {
       ...fast,

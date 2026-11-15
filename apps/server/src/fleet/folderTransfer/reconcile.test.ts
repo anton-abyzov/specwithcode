@@ -584,3 +584,26 @@ it("zero actions for an occupied nested path mean an unanswered repository choic
   expect(keep.actions).toEqual([]);
   expect(row(keep, repoRowId("repos/app")).decision).toBe("keep-mine");
 });
+
+it("never clones over files already at the path: taking theirs replaces it whole, identical files included", () => {
+  const input = {
+    repositories: [sourceRepo("."), sourceRepo("repos/app")],
+    entries: [
+      file("repos/app/.git/HEAD", "h", { class: "repository", repo: "repos/app" }),
+      file("repos/app/scratch.txt", "same", { repo: "repos/app", class: "untracked" }),
+    ],
+    destination: {
+      files: [here("repos/app/scratch.txt", "same", { repo: null, class: "untracked" })],
+      repositories: [destinationRepo(".")],
+    },
+    clone: [repoRowId("repos/app")],
+    cloneOrigins: { [repoRowId("repos/app")]: "https://github.com/acme/app.git" },
+  };
+  const take = plan({ ...input, decisions: { [repoRowId("repos/app")]: "take-theirs" } });
+  expect(row(take, repoRowId("repos/app"))).toMatchObject({ cloneAvailable: false, clone: false });
+  expect(step(take, "repos/app").kind).toBe("replace");
+  expect(take.actions.map((action) => action.path).sort()).toEqual([
+    "repos/app/.git/HEAD",
+    "repos/app/scratch.txt",
+  ]);
+});

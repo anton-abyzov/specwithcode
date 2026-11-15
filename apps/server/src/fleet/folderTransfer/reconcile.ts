@@ -321,11 +321,14 @@ export function planReconcile(input: PlanInput): Plan {
       const cloneOrigin = input.cloneOrigins?.[id];
       // Chosen, but this machine cannot read the origin: copied whole instead of failing late.
       const unreachable = clone.has(id) && cloneOrigin === null;
+      // Files that were here before the copy are never cloned over: taking theirs
+      // replaces the folder whole (see the blocked row below), so Undo puts them back.
       const cloneAvailable =
         source.kind === "main" &&
         source.identity !== null &&
         !source.identity.startsWith("file://") &&
-        !unreachable;
+        !unreachable &&
+        !blocked;
       const cloned = cloneAvailable && clone.has(id);
       const cloneStep = () =>
         step({ kind: "clone", ...(cloneOrigin ? { origin: cloneOrigin } : {}) });
@@ -341,18 +344,17 @@ export function planReconcile(input: PlanInput): Plan {
             choices,
             decision,
             needsDecision: decision === null,
-            cloneAvailable,
-            clone: cloned,
+            cloneAvailable: false,
+            clone: false,
           },
-          step:
-            decision === "take-theirs" ? (cloned ? cloneStep() : step({ kind: "replace" })) : null,
+          step: decision === "take-theirs" ? step({ kind: "replace" }) : null,
           copyWhole: decision === "take-theirs",
           headMoves: false,
           sameHead: false,
           sourceDirty,
           destinationDirty,
-          skipGitData: cloned,
-          cloned,
+          skipGitData: false,
+          cloned: false,
         });
         continue;
       }
