@@ -18,7 +18,7 @@ import {
   type RoutingDecision,
 } from "@specweave-studio/shared/decisionModel";
 import { classifyLane, resolveLaneRouting } from "@specweave-studio/shared/modelLanes";
-import { effectiveModelLanes } from "@specweave-studio/shared/modelTracks";
+import { isHeldSource, launchTrackLanes } from "@specweave-studio/shared/modelTracks";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
   classifyTask,
@@ -102,23 +102,41 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
     : DEFAULT_SERVER_SETTINGS;
   const resolved = resolveProjectSettings(preferences, input.project.id, input.project).settings;
   // A project on Tracks routes by its tracks even when nobody saved one: the
-  // built-in order, fitted to what is installed here, stands in for an empty track.
-  const rule =
-    resolved.threadModelMode === "tracks"
-      ? {
-          ...resolved,
-          modelLanes: effectiveModelLanes(
-            resolved.modelLanes,
-            input.providers,
-            resolved.defaultModelProviders,
-          ).lanes,
-        }
-      : resolved;
+  // built-in order, fitted to what is installed here, stands in for an empty
+  // track, and each model is tried on every account that runs it, in Sources order.
+  const tracks = resolved.threadModelMode === "tracks";
+  const rule = tracks
+    ? {
+        ...resolved,
+        modelLanes: launchTrackLanes(
+          resolved.modelLanes,
+          input.providers,
+          resolved.defaultModelProviders,
+        ),
+      }
+    : resolved;
+  // On Tracks nobody named the worker's starting model, so a model billed per
+  // token or with unknown billing is never what it falls back to.
+  const baselineProvider = input.providers.find(
+    (provider) => provider.instanceId === input.baseline.instanceId,
+  );
+  const heldBaseline =
+    tracks &&
+    baselineProvider !== undefined &&
+    isHeldSource(baselineProvider, input.baseline.model);
+  const refuseHeldBaseline = () =>
+    new OrchestratorMcpFailure({
+      code: "model_unavailable",
+      message: `No model on this project's tracks can run now, and ${input.baseline.model} here is billed per use, so it is never started automatically. Name a model, or sign in to a plan in Settings > Models.`,
+    });
   const lanesSet =
     rule.modelLanes.complex.length > 0 ||
     rule.modelLanes.routine.length > 0 ||
     rule.learnedModelPreferences.length > 0;
-  if (rule.taskRouting.mode !== "auto" && !lanesSet) return null;
+  if (rule.taskRouting.mode !== "auto" && !lanesSet) {
+    if (heldBaseline) return yield* refuseHeldBaseline();
+    return null;
+  }
   const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
   const limited = new Set<string>(simulatedUsageLimitInstances(yield* ProviderFallbackEnv));
   // A provider that reports no usage but stopped a thread on its limit
@@ -198,10 +216,14 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
         code: "model_unavailable",
         message: `No permitted ${lane.decision.lane} model can run now. Baseline ${input.baseline.model}: ${lane.baselineUnavailable}. Update the model lane or learned preference before retrying.`,
       });
+    if (!lane.found && heldBaseline) return yield* refuseHeldBaseline();
     yield* logDecision(input.project, lane.decision);
     return lane.decision;
   }
-  if (rule.taskRouting.mode !== "auto") return null;
+  if (rule.taskRouting.mode !== "auto") {
+    if (heldBaseline) return yield* refuseHeldBaseline();
+    return null;
+  }
   const tiered = resolveTaskRouting({
     policy: rule.taskRouting,
     classification,

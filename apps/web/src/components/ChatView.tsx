@@ -13830,6 +13830,11 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
     const title = truncate(titleSeed);
+    // Read before the send clears the draft: whether anyone picked this model.
+    const sendModelUnnamed =
+      isLocalDraftThread &&
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+        ?.modelSelectionExplicit !== true;
     const threadCreateModelSelection = createModelSelection(
       ctxSelectedModelSelection.instanceId,
       ctxSelectedModel || activeProjectDefaultModelSelection?.model || DEFAULT_MODEL,
@@ -13919,6 +13924,8 @@ export default function ChatView(props: ChatViewProps) {
                 input: {
                   commandId: commandIdForSend,
                   threadId: threadIdForSend,
+                  // No pick in this composer: a project on Tracks chooses the model.
+                  ...(sendModelUnnamed ? { modelUnnamed: true } : {}),
                   message: {
                     messageId: messageIdForSend,
                     role: "user",

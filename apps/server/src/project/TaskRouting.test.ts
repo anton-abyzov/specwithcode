@@ -307,3 +307,100 @@ it.effect("leaves a One model project's worker alone while no track is saved", (
     assert.isNull(yield* routeFromSol("model"));
   }),
 );
+
+const copilotAgent = ProviderInstanceId.make("copilot");
+const opusModel = {
+  slug: "claude-opus-5.5",
+  name: "Claude Opus 5.5",
+  isCustom: false,
+  capabilities: null,
+};
+const copilotWithOpus = instance(copilotAgent, { status: "authenticated" }, {
+  driver: ProviderDriverKind.make("acpRegistry"),
+  iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+  models: [opusModel],
+} as Partial<ServerProvider>);
+const signedOut = (provider: ServerProvider): ServerProvider => ({
+  ...provider,
+  auth: { status: "unauthenticated" },
+});
+
+it.effect("runs a Daily model on its next account when the first one cannot take it", () =>
+  Effect.gen(function* () {
+    const decision = yield* routeWorkerTask({
+      project: projectFixture(projectId),
+      baseline: { instanceId: codexSub, model: "gpt-6.1-sol" },
+      providers: [signedOut(trackProviders[0]!), trackProviders[1]!, copilotWithOpus],
+      task: { title: "Fix typo", text: "Fix the typo in README" },
+      laneHint: "routine",
+      settings: settingsWithMode("tracks"),
+    });
+    // Opus stays the Daily pick: Copilot runs it while Claude is signed out.
+    assert.strictEqual(decision?.selection.instanceId, copilotAgent);
+    assert.strictEqual(decision?.selection.model, "claude-opus-5.5");
+  }),
+);
+
+it.effect("starts hard work in a Tracks project on the Complex track", () =>
+  Effect.gen(function* () {
+    const fable = {
+      slug: "claude-fable-5-2",
+      name: "Claude Fable 5.2",
+      isCustom: false,
+      capabilities: null,
+    };
+    const decision = yield* routeWorkerTask({
+      project: projectFixture(projectId),
+      baseline: { instanceId: codexSub, model: "gpt-6.1-sol" },
+      providers: [
+        instance(
+          claudeMax,
+          { status: "authenticated", type: "max" },
+          {
+            models: [...trackProviders[0]!.models, fable],
+          },
+        ),
+        trackProviders[1]!,
+      ],
+      task: { title: "Design the sync protocol", text: "Design the sync protocol" },
+      laneHint: "complex",
+      settings: settingsWithMode("tracks"),
+    });
+    assert.strictEqual(decision?.lane, "complex");
+    assert.strictEqual(decision?.selection.model, "claude-fable-5-2");
+  }),
+);
+
+it.effect("refuses a Tracks worker a per-token model nobody named for it", () =>
+  Effect.gen(function* () {
+    // Every plan account is signed out; the parent thread runs on an API key.
+    const failure = yield* routeWorkerTask({
+      project: projectFixture(projectId),
+      baseline: { instanceId: claudeApi, model: "claude-opus-5-5" },
+      providers: [
+        signedOut(trackProviders[0]!),
+        signedOut(trackProviders[1]!),
+        instance(claudeApi, { status: "authenticated", type: "apiKey", apiKeyBilling: true }),
+      ],
+      task: { title: "Fix typo", text: "Fix the typo in README" },
+      laneHint: "routine",
+      settings: settingsWithMode("tracks"),
+    }).pipe(Effect.flip);
+    assert.strictEqual(failure.code, "model_unavailable");
+    assert.include(failure.message, "billed per use");
+  }),
+);
+
+it.effect("keeps a per-token model for a One model project's worker", () =>
+  Effect.gen(function* () {
+    const decision = yield* routeWorkerTask({
+      project: projectFixture(projectId),
+      baseline: { instanceId: claudeApi, model: "claude-opus-5-5" },
+      providers,
+      task: { title: "Fix typo", text: "Fix the typo in README" },
+      laneHint: "routine",
+      settings: settingsWithMode("model"),
+    });
+    assert.isNull(decision);
+  }),
+);

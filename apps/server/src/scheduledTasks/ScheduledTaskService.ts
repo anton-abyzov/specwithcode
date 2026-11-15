@@ -51,6 +51,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { ProjectCoordinatorService } from "../project/ProjectCoordinatorService.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { routeUnnamedLaunch } from "../project/TracksLaunch.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { checkedPrompt, isModelPinned, runScheduledTaskCheck } from "./ScheduledTaskCheck.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -1027,12 +1028,46 @@ export const layer = Layer.effect(
             : coordinators === undefined
               ? Effect.succeed(undefined)
               : coordinators.nextTurnModel(active.projectId, threadId);
+        // An unpinned routine's stored model is only a snapshot: in a project
+        // on Tracks a thread of its own starts on the track instead. A grant's
+        // routine stays on a sign-in its grant allows.
+        const tracked =
+          pinned || active.threadId !== null || providerRegistry === undefined
+            ? null
+            : yield* Effect.all([
+                projects.get(active.projectId).pipe(
+                  Effect.map(Option.getOrUndefined),
+                  Effect.orElseSucceed(() => undefined),
+                ),
+                providerRegistry.getProviders,
+              ]).pipe(
+                Effect.flatMap(([project, providers]) =>
+                  routeUnnamedLaunch({
+                    project,
+                    providers,
+                    modelSelection: active.modelSelection,
+                    title: active.title,
+                    text: prompt,
+                    settings: Option.fromNullishOr(serverSettings),
+                  }),
+                ),
+                Effect.map((launch) =>
+                  launch.routing !== null &&
+                  (runsUnder === null ||
+                    accountInGrant(runsUnder.accounts, launch.modelSelection.instanceId))
+                    ? launch
+                    : null,
+                ),
+              );
         const providerDestination =
           active.threadId !== null
             ? sendModel(ThreadId.make(active.threadId)).pipe(
                 Effect.map((modelSelection) => ({ threadId: active.threadId, modelSelection })),
               )
-            : Effect.succeed({ threadId: null, modelSelection: active.modelSelection });
+            : Effect.succeed({
+                threadId: null,
+                modelSelection: tracked?.modelSelection ?? active.modelSelection,
+              });
         const fallbackRule =
           serverSettings === undefined
             ? Effect.succeed(null)
@@ -1194,7 +1229,8 @@ export const layer = Layer.effect(
               commandId: ownThreadLaunchCommandId(active, replacing),
               projectId: active.projectId,
               title: active.title,
-              modelSelection: routedModel ?? active.modelSelection,
+              modelSelection: routedModel ?? tracked?.modelSelection ?? active.modelSelection,
+              ...(tracked === null || tracked.routing === null ? {} : { routing: tracked.routing }),
               runtimeMode: active.runtimeMode,
               interactionMode: active.interactionMode,
               workspaceStrategy: active.workspaceStrategy,

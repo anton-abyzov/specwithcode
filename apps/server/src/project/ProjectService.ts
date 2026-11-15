@@ -734,7 +734,8 @@ export const make = Effect.gen(function* () {
         input.projectId,
         input.kind,
         input.initialLogicalProject !== undefined,
-        input.initialWorkerModelSelection !== undefined,
+        // Only a model someone named: an explicit null just turns the default off.
+        input.initialWorkerModelSelection != null,
       );
       const created = yield* readCommitted(input.projectId);
       if (input.initialWorkerModelSelection !== undefined || created.defaultModelSelection !== null)
