@@ -65,9 +65,9 @@ try {
       ["View this project on", "This project", "On Build machine"],
     );
     assert.deepEqual(await page.getByRole("menuitemradio").allTextContents(), [
-      "Build machine",
-      "Laptopworkers only",
-      "Linux mini",
+      "Build machinecoordinator",
+      "Laptopcoordinator paused",
+      "Linux minicoordinator",
     ]);
     assert.ok(
       await page.evaluate(() => {

@@ -1202,6 +1202,8 @@ describe("orchestrator MCP toolkit", () => {
 
             const childPromptReadCall = yield* invoke("studio_thread_read", {
               threadId: directChildThreadId,
+              // From the oldest item: a read without a cursor ends at the newest.
+              afterPosition: -1,
               limit: 1,
             });
             const childPromptRead = yield* decodeThreadReadResult(
@@ -2857,6 +2859,8 @@ describe("orchestrator MCP toolkit", () => {
 
             const promptedReadCall = yield* invoke("studio_thread_read", {
               threadId: promptedThread.threadId,
+              // From the oldest item: a read without a cursor ends at the newest.
+              afterPosition: -1,
               limit: 1,
             });
             const promptedRead = yield* decodeThreadReadResult(

@@ -445,6 +445,14 @@ button.sws-chip:hover {
 .sws-thread-resolve[data-state="open"] {
   color: var(--shell-done);
 }
+/* Blocked reads as off: no green, no hover fill. It stays focusable so its tip says why. */
+.sws-icon-button.sws-thread-resolve[aria-disabled="true"],
+.sws-icon-button.sws-thread-resolve[aria-disabled="true"]:hover {
+  background: transparent;
+  color: var(--muted-foreground);
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
 .sws-pane-head .sws-thread-resolve svg {
   width: 17px;
   height: 17px;

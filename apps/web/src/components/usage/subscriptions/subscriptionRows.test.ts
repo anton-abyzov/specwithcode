@@ -60,6 +60,31 @@ const period = (accountKey: string, endedAt: number, lostPercent: number): Usage
 });
 
 describe("subscriptionRows", () => {
+  it("gives each window its length and marks one that caps a single model", () => {
+    const { windowDurationMins: _reported, ...unsized } = weekly(10, 2 * DAY);
+    const [row] = subscriptionRows(
+      [
+        account("a", claude, "a@x.dev", "m4", {
+          windows: [
+            unsized,
+            { ...unsized, id: "monthly", kind: "monthly", label: "Monthly" },
+            { ...weekly(10, 2 * DAY), id: "seven_day_fable", label: "Weekly", modelScope: "Fable" },
+            { ...unsized, id: "primary", kind: "session", label: "5-hour" },
+          ],
+        }),
+      ],
+      [],
+      {},
+      now,
+    );
+    expect(row?.windows.map((window) => [window.id, window.durationMs, window.scoped])).toEqual([
+      ["secondary", 7 * DAY, false],
+      ["monthly", 30 * DAY, false],
+      ["seven_day_fable", 10_080 * 60_000, true],
+      ["primary", null, false],
+    ]);
+  });
+
   it("puts the account about to lose quota first and marks its window", () => {
     const rows = subscriptionRows(
       [
@@ -72,8 +97,16 @@ describe("subscriptionRows", () => {
     );
     expect(rows.map((row) => row.key)).toEqual(["b", "a"]);
     expect(rows[0]?.windows).toEqual([
-      { id: "secondary", title: "Weekly", leftPercent: 62, resetsAt: now + 9 * HOUR, expiring: true, long: true },
+      expect.objectContaining({
+        id: "secondary",
+        title: "Weekly",
+        leftPercent: 62,
+        resetsAt: now + 9 * HOUR,
+        expiring: true,
+        long: true,
+      }),
     ]);
+    expect(rows[0]?.windows[0]).toMatchObject({ durationMs: 10_080 * 60_000, scoped: false });
     expect(rows[1]?.windows[0]?.expiring).toBe(false);
     expect(rows[0]?.machines).toEqual(["m1"]);
   });

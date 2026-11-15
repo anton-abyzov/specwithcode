@@ -44,7 +44,7 @@ describe("the project panel's header row", () => {
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
     expect([...row.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent?.trim())).toEqual(
-      ["Threads2 need you", "Designs1 designs", "Library", "PRs", "Routines"],
+      ["Threads2 need you", "Designs1 designs", "Board", "Library", "PRs", "Routines"],
     );
     for (const label of [
       "Ask the coordinator for a thread",
@@ -54,6 +54,22 @@ describe("the project panel's header row", () => {
     ])
       expect(row.querySelector(`[aria-label="${label}"]`)).not.toBeNull();
     expect(row.classList.contains("drag-region")).toBe(false);
+  });
+  it("leaves out the Board tab for a project without SpecWeave, also from the arrow keys", async () => {
+    const bar = props({ hiddenTabs: ["board"] });
+    await render(bar);
+    const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    expect(tabs.map((tab) => tab.dataset.tab)).toEqual([
+      "threads",
+      "designs",
+      "library",
+      "prs",
+      "scheduled",
+    ]);
+    await act(async () => {
+      tabs[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    });
+    expect(bar.onTabChange).toHaveBeenCalledWith("designs");
   });
   it("asks the coordinator in one click and offers no Plan or Usage items", async () => {
     const bar = props();

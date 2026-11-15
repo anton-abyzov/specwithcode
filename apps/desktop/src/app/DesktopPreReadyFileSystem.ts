@@ -35,7 +35,7 @@ const syncFs = <A>(method: string, path: string, run: () => A) =>
 /**
  * A synchronous FileSystem for startup work that runs before Electron's ready.
  * Electron emits ready as soon as startup yields to the event loop. Only the
- * operations userData resolution needs are implemented.
+ * operations userData resolution and the GPU cache clear need are implemented.
  *
  * @public Service construction is part of the canonical Effect module API.
  */
@@ -55,6 +55,13 @@ export const make = FileSystem.makeNoop({
   makeDirectory: (path, options) =>
     syncFs("makeDirectory", path, () => {
       NodeFS.mkdirSync(path, { recursive: options?.recursive ?? false });
+    }),
+  remove: (path, options) =>
+    syncFs("remove", path, () => {
+      NodeFS.rmSync(path, {
+        recursive: options?.recursive ?? false,
+        force: options?.force ?? false,
+      });
     }),
   writeFileString: (path, data, options) =>
     syncFs("writeFileString", path, () =>

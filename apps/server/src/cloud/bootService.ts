@@ -49,7 +49,8 @@ const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 // (com.specweave.studio), so launchd and TCC records never collide.
 const BOOT_SERVICE_LAUNCHD_LABEL = "com.specweave.studio.service";
 const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
-const BOOT_SERVICE_UNIT_ENV = "STUDIO_BOOT_SERVICE_UNIT";
+/** Set in the service's environment to the unit it runs as. */
+export const BOOT_SERVICE_UNIT_ENV = "STUDIO_BOOT_SERVICE_UNIT";
 const BOOT_SERVICE_TASK_FILE = "studio-service.xml";
 const BOOT_SERVICE_TASK_SCRIPT_FILE = "studio-service.cmd";
 const BOOT_SERVICE_TASK_NAME = "SpecWithCode Service";
@@ -111,6 +112,21 @@ export interface BootServicePlan {
 const SERVICE_MEMORY_MAX = "75%";
 const SERVICE_MEMORY_SWAP_MAX = "1G";
 
+const UNIT_DELEGATION = "Delegate=yes";
+
+/**
+ * An installed unit with `Delegate=yes` added where the renderer puts it;
+ * undefined when it already sets Delegate or is not a service unit. In-app
+ * updates never rewrite the unit, so the server adds the line itself.
+ */
+export function withUnitDelegation(unit: string): string | undefined {
+  if (/^Delegate=/m.test(unit)) return undefined;
+  const anchor = /^MemorySwapMax=.*$/m.exec(unit) ?? /^\[Service\]$/m.exec(unit);
+  if (anchor === null) return undefined;
+  const end = anchor.index + anchor[0].length;
+  return `${unit.slice(0, end)}\n${UNIT_DELEGATION}${unit.slice(end)}`;
+}
+
 /** Pure renderer: service units cannot rely on the user's shell or PATH. */
 export function renderBootServiceUnit(plan: BootServicePlan): string {
   // The user manager has no reliable network-online target; server networking retries itself.
@@ -140,6 +156,10 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     // first (MemoryGuard). Swap is capped too, or the overrun would thrash first.
     `MemoryMax=${SERVICE_MEMORY_MAX}`,
     `MemorySwapMax=${SERVICE_MEMORY_SWAP_MAX}`,
+    // The server divides this cgroup itself (AgentMemoryLimit): a reserved group
+    // for itself and the tunnel, a limited one for agent work. Without Delegate,
+    // systemd takes the memory controller back from those groups on a daemon-reload.
+    UNIT_DELEGATION,
     "Restart=always",
     "RestartSec=5",
     `StandardOutput=append:${escapeSystemdSpecifiers(plan.logPath)}`,

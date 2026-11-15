@@ -15,7 +15,12 @@ import {
   remainingPercent,
 } from "@specweave-studio/shared/usageLimits";
 import { lossIsUpperBound } from "@specweave-studio/shared/usageResetLedger";
-import { isLiveWindow, windowName, windowTitle } from "@specweave-studio/shared/usageWindows";
+import {
+  isLiveWindow,
+  windowModelScope,
+  windowName,
+  windowTitle,
+} from "@specweave-studio/shared/usageWindows";
 
 export interface SubscriptionWindow {
   readonly id: string;
@@ -27,6 +32,10 @@ export interface SubscriptionWindow {
   readonly expiring: boolean;
   /** A weekly or monthly window, not a short one that refills within hours. */
   readonly long: boolean;
+  /** Caps one model only, not the whole subscription. */
+  readonly scoped: boolean;
+  /** How long one period lasts, for reading the pace; null when the provider does not say. */
+  readonly durationMs: number | null;
 }
 
 export interface SubscriptionRenewal {
@@ -91,6 +100,8 @@ export function nextRenewalOn(dayOfMonth: number, now: number): number {
     : inMonth(today.getFullYear(), today.getMonth() + 1);
 }
 
+const DAY_MS = 24 * 60 * 60_000;
+
 function windowsOf(account: LimitAccount, now: number): SubscriptionWindow[] {
   const expiring = expiringQuota({ usageLimits: account.limits } as ServerProvider, "", now);
   return account.limits.windows
@@ -105,6 +116,15 @@ function windowsOf(account: LimitAccount, now: number): SubscriptionWindow[] {
         window.kind === "weekly" ||
         window.kind === "monthly" ||
         (window.kind !== "session" && (window.windowDurationMins ?? 0) > 6 * 60),
+      scoped: windowModelScope(window) !== null,
+      durationMs:
+        window.windowDurationMins !== undefined && window.windowDurationMins > 0
+          ? window.windowDurationMins * 60_000
+          : window.kind === "weekly"
+            ? 7 * DAY_MS
+            : window.kind === "monthly"
+              ? 30 * DAY_MS
+              : null,
     }));
 }
 

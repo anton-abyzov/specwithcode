@@ -32,6 +32,7 @@ import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 
 import { signalProcessGroup } from "../../process/processGroup.ts";
 import { ProviderProcessSupervisor } from "../../process/ProviderProcessSupervisor.ts";
+import { agentWorkCgroup } from "../../resourceTelemetry/agentWorkCgroup.ts";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./AcpStderr.ts";
 import { normalizeAcpTerminalAuthMethod } from "./AcpTerminalAuthentication.ts";
 import { headlessChildProcessEnvironment } from "../RuntimeInstructions.ts";
@@ -467,7 +468,11 @@ export function makeLinuxCgroupController(): AcpLinuxCgroupController {
       let currentRelative: string | undefined;
       let mounts: ReadonlyArray<{ readonly mountPoint: string; readonly root: string }> = [];
       try {
-        currentRelative = parseUnifiedCgroupPath(NodeFS.readFileSync("/proc/self/cgroup", "utf8"));
+        // Where the service divided its cgroup, a session group belongs with the
+        // rest of agent work, under its memory limit, not beside the server.
+        currentRelative =
+          agentWorkCgroup()?.relativePath ??
+          parseUnifiedCgroupPath(NodeFS.readFileSync("/proc/self/cgroup", "utf8"));
         mounts = parseCgroup2Mounts(NodeFS.readFileSync("/proc/self/mountinfo", "utf8"));
       } catch {
         return undefined;

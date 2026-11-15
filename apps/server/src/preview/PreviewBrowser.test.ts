@@ -285,9 +285,65 @@ it("pins one Chrome for Testing build per host", () => {
     undefined,
   ]);
   expect(PreviewBrowser.previewBrowserRelease("linux", "x64")).toMatchObject({
-    url: "https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.80/linux64/chrome-headless-shell-linux64.zip",
-    bytes: 126_922_702,
+    url: "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.78/linux64/chrome-headless-shell-linux64.zip",
+    bytes: 127_965_683,
   });
+});
+
+// Chrome 157.0.8103.78 carries security fixes the 156 builds lack. Each archive's
+// size and SHA-256 come from the file the official endpoint serves.
+it("pins Chrome for Testing 157.0.8103.78 for every platform", () => {
+  const hosts = [
+    ["linux", "x64"],
+    ["linux", "arm64"],
+    ["darwin", "arm64"],
+    ["darwin", "x64"],
+    ["win32", "ia32"],
+    ["win32", "x64"],
+  ] as const;
+  expect(
+    hosts.map(([platform, arch]) => {
+      const release = PreviewBrowser.previewBrowserRelease(platform, arch);
+      return release && [release.version, release.platform, release.bytes, release.sha256];
+    }),
+  ).toEqual([
+    [
+      "157.0.8103.78",
+      "linux64",
+      127_965_683,
+      "f90329720fb61e5a76da9b6b509b6ad12a484c9c5df0359403e935177c6d153a",
+    ],
+    [
+      "157.0.8103.78",
+      "linux-arm64",
+      128_047_138,
+      "912fbf877e53de34d7b3cca5104f3b95607d41bd35412ccc6cd2a599ff0c0dbf",
+    ],
+    [
+      "157.0.8103.78",
+      "mac-arm64",
+      104_822_985,
+      "17bf66d53c1b1104dcb641c5b331cd4ac5d200c778f5feed0934a0b92deaf8d6",
+    ],
+    [
+      "157.0.8103.78",
+      "mac-x64",
+      110_132_547,
+      "f1a6a9561eaf1f409849538de663695d36d72fbf1ebca4d42e47c7b5f2a157f3",
+    ],
+    [
+      "157.0.8103.78",
+      "win32",
+      120_403_126,
+      "d9829c59dcc79d9e6e920f8ab841f2a9a055dcf54229d756ac0b42dfec303910",
+    ],
+    [
+      "157.0.8103.78",
+      "win64",
+      126_047_001,
+      "2138c1583d25d6f3abec5269943b2f430207d87a539895aa9e90cc4697ec0e1f",
+    ],
+  ]);
 });
 
 it("tells the agent how far the install has come", () => {

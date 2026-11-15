@@ -262,3 +262,172 @@ it.effect("never asks the decision model when the coordinator named the lane", (
     assert.strictEqual(jev.calls.length, 0);
   }),
 );
+
+const codexSub = ProviderInstanceId.make("codex");
+const trackProviders = [
+  instance(claudeMax, { status: "authenticated", type: "max" }),
+  instance(
+    codexSub,
+    { status: "authenticated", type: "chatgpt" },
+    {
+      driver: ProviderDriverKind.make("codex"),
+      models: [{ slug: "gpt-6.1-sol", name: "GPT-6.1 Sol", isCustom: false, capabilities: null }],
+    },
+  ),
+];
+const settingsWithMode = (mode: "tracks" | "model") =>
+  Option.some({
+    getSettings: Effect.succeed({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [projectId]: { threadModelMode: mode } },
+    }),
+  } as unknown as ServerSettings.ServerSettingsService["Service"]);
+const routeFromSol = (mode: "tracks" | "model") =>
+  routeWorkerTask({
+    project: projectFixture(projectId),
+    baseline: { instanceId: codexSub, model: "gpt-6.1-sol" },
+    providers: trackProviders,
+    task: { title: "Fix typo", text: "Fix the typo in README" },
+    laneHint: "routine",
+    settings: settingsWithMode(mode),
+  });
+
+it.effect("starts a Tracks project's worker on the first available Daily entry", () =>
+  Effect.gen(function* () {
+    // Nobody saved a track: the built-in Daily order (Opus 5.5 first) decides.
+    const decision = yield* routeFromSol("tracks");
+    assert.isTrue(decision?.moved);
+    assert.strictEqual(decision?.selection.instanceId, claudeMax);
+    assert.strictEqual(decision?.selection.model, "claude-opus-5-5");
+  }),
+);
+
+it.effect("leaves a One model project's worker alone while no track is saved", () =>
+  Effect.gen(function* () {
+    assert.isNull(yield* routeFromSol("model"));
+  }),
+);
+
+const copilotAgent = ProviderInstanceId.make("copilot");
+const opusModel = {
+  slug: "claude-opus-5.5",
+  name: "Claude Opus 5.5",
+  isCustom: false,
+  capabilities: null,
+};
+const copilotWithOpus = instance(copilotAgent, { status: "authenticated" }, {
+  driver: ProviderDriverKind.make("acpRegistry"),
+  iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+  models: [opusModel],
+} as Partial<ServerProvider>);
+const signedOut = (provider: ServerProvider): ServerProvider => ({
+  ...provider,
+  auth: { status: "unauthenticated" },
+});
+
+it.effect("runs a Daily model on its next account when the first one cannot take it", () =>
+  Effect.gen(function* () {
+    const decision = yield* routeWorkerTask({
+      project: projectFixture(projectId),
+      baseline: { instanceId: codexSub, model: "gpt-6.1-sol" },
+      providers: [signedOut(trackProviders[0]!), trackProviders[1]!, copilotWithOpus],
+      task: { title: "Fix typo", text: "Fix the typo in README" },
+      laneHint: "routine",
+      settings: settingsWithMode("tracks"),
+    });
+    // Opus stays the Daily pick: Copilot runs it while Claude is signed out.
+    assert.strictEqual(decision?.selection.instanceId, copilotAgent);
+    assert.strictEqual(decision?.selection.model, "claude-opus-5.5");
+  }),
+);
+
+it.effect("starts hard work in a Tracks project on the Complex track", () =>
+  Effect.gen(function* () {
+    const fable = {
+      slug: "claude-fable-5-2",
+      name: "Claude Fable 5.2",
+      isCustom: false,
+      capabilities: null,
+    };
+    const decision = yield* routeWorkerTask({
+      project: projectFixture(projectId),
+      baseline: { instanceId: codexSub, model: "gpt-6.1-sol" },
+      providers: [
+        instance(
+          claudeMax,
+          { status: "authenticated", type: "max" },
+          {
+            models: [...trackProviders[0]!.models, fable],
+          },
+        ),
+        trackProviders[1]!,
+      ],
+      task: { title: "Design the sync protocol", text: "Design the sync protocol" },
+      laneHint: "complex",
+      settings: settingsWithMode("tracks"),
+    });
+    assert.strictEqual(decision?.lane, "complex");
+    assert.strictEqual(decision?.selection.model, "claude-fable-5-2");
+  }),
+);
+
+it.effect("refuses a Tracks worker a per-token model nobody named for it", () =>
+  Effect.gen(function* () {
+    // Every plan account is signed out; the parent thread runs on an API key.
+    const failure = yield* routeWorkerTask({
+      project: projectFixture(projectId),
+      baseline: { instanceId: claudeApi, model: "claude-opus-5-5" },
+      providers: [
+        signedOut(trackProviders[0]!),
+        signedOut(trackProviders[1]!),
+        instance(claudeApi, { status: "authenticated", type: "apiKey", apiKeyBilling: true }),
+      ],
+      task: { title: "Fix typo", text: "Fix the typo in README" },
+      laneHint: "routine",
+      settings: settingsWithMode("tracks"),
+    }).pipe(Effect.flip);
+    assert.strictEqual(failure.code, "model_unavailable");
+    assert.include(failure.message, "billed per use");
+  }),
+);
+
+it.effect("keeps a per-token model for a One model project's worker", () =>
+  Effect.gen(function* () {
+    const decision = yield* routeWorkerTask({
+      project: projectFixture(projectId),
+      baseline: { instanceId: claudeApi, model: "claude-opus-5-5" },
+      providers,
+      task: { title: "Fix typo", text: "Fix the typo in README" },
+      laneHint: "routine",
+      settings: settingsWithMode("model"),
+    });
+    assert.isNull(decision);
+  }),
+);
+
+it.effect("refuses a per-token baseline on Tracks with Auto routing on too", () =>
+  Effect.gen(function* () {
+    // Only an API key lists a track model, so no track entry fits this machine.
+    const failure = yield* routeWorkerTask({
+      project: projectFixture(projectId),
+      baseline: { instanceId: claudeApi, model: "claude-opus-5-5" },
+      providers: [
+        instance(claudeApi, { status: "authenticated", type: "apiKey", apiKeyBilling: true }),
+      ],
+      task: { title: "Fix typo", text: "Fix the typo in README" },
+      laneHint: "routine",
+      settings: Option.some({
+        getSettings: Effect.succeed({
+          ...DEFAULT_SERVER_SETTINGS,
+          projectSettingsOverrides: {
+            [projectId]: {
+              threadModelMode: "tracks",
+              taskRouting: { ...DEFAULT_TASK_ROUTING_SETTINGS, mode: "auto" },
+            },
+          },
+        }),
+      } as unknown as ServerSettings.ServerSettingsService["Service"]),
+    }).pipe(Effect.flip);
+    assert.strictEqual(failure.code, "model_unavailable");
+  }),
+);

@@ -24,6 +24,7 @@ import {
   isGeminiSpendProvider,
   isPerTokenProvider,
   isUnknownBillingAgent,
+  providerUsedPercent,
 } from "./providerFallback.ts";
 import { type ModelFamily, modelFamily } from "./modelVendor.ts";
 
@@ -226,4 +227,73 @@ export function defaultLaneOfModel(
     if (DEFAULT_MODEL_TRACKS[track].some((entry) => covers(entry.model, model.slug))) return lane;
   }
   return null;
+}
+
+/**
+ * The tracks a new thread or worker walks: every entry followed by the other
+ * accounts that run the same model, in the saved Sources order, so a model is
+ * passed over only when no account can run it. An added account is never one
+ * billed per token or with unknown billing; an entry the person saved keeps
+ * its own account first, whatever it bills.
+ */
+export function launchTrackLanes(
+  lanes: ModelLanes | null | undefined,
+  providers: ReadonlyArray<ServerProvider>,
+  order?: ReadonlyArray<ProviderInstanceId> | null,
+  /** With a time, accounts nobody ranked go by room, as the Models page lists them. */
+  nowMs?: number,
+): ModelLanes {
+  const fitted = effectiveModelLanes(lanes, providers, order).lanes;
+  const expand = (entries: ReadonlyArray<ModelSelection>): ReadonlyArray<ModelSelection> => {
+    const seen = new Set<string>();
+    const out: ModelSelection[] = [];
+    const push = (selection: ModelSelection) => {
+      const key = `${selection.instanceId}\u0000${selection.model}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(selection);
+    };
+    for (const entry of entries) {
+      push(entry);
+      for (const { provider, slug } of providersForModel({
+        providers,
+        model: { slug: entry.model },
+        order: order ?? undefined,
+        preferFree: isFreeTrackModel({ slug: entry.model }),
+        ...(nowMs === undefined
+          ? {}
+          : {
+              usedPercent: (source: TrackProvider, served: string) =>
+                providerUsedPercent(source as ServerProvider, nowMs, served),
+            }),
+      })) {
+        if (provider.instanceId === entry.instanceId) continue;
+        if (isHeldSource(provider as ServerProvider, slug)) continue;
+        push({ instanceId: provider.instanceId, model: slug });
+      }
+    }
+    return out;
+  };
+  return { routine: expand(fitted.routine), complex: expand(fitted.complex) };
+}
+
+/**
+ * The model a new draft shows before anyone picks one: in a project on Tracks
+ * the first Daily entry this machine can name, else the project's one model.
+ * Sending the draft unpicked lets the server choose from the tracks.
+ */
+export function projectDraftModelSelection(
+  settings: {
+    readonly threadModelMode?: "tracks" | "model" | undefined;
+    readonly defaultModelSelection: ModelSelection | null;
+    readonly modelLanes?: ModelLanes | null | undefined;
+    readonly defaultModelProviders?: ReadonlyArray<ProviderInstanceId> | null | undefined;
+  },
+  providers: ReadonlyArray<TrackProvider>,
+): ModelSelection | null {
+  if (settings.threadModelMode !== "tracks") return settings.defaultModelSelection;
+  return (
+    effectiveModelLanes(settings.modelLanes, providers, settings.defaultModelProviders).lanes
+      .routine[0] ?? settings.defaultModelSelection
+  );
 }

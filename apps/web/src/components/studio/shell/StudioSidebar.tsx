@@ -906,6 +906,11 @@ export default function StudioSidebar() {
   );
   const arranged = { pinned: ordered.pinned, unpinned: localCopiesFirst(ordered.unpinned) };
   const codeProjects = [...arranged.pinned, ...arranged.unpinned];
+  // What "use it until it resets" can cover: each listed project, on every machine.
+  const boostProjects = codeProjects.map((group) => ({
+    name: displayNameOf(group, displayedCheckouts.get(group.projectKey)),
+    ids: [...new Set([group.id, ...(group.memberProjectRefs ?? []).map((ref) => ref.projectId)])],
+  }));
   const nameHints = sameNameHints(codeProjects, (group) =>
     displayNameOf(group, displayedCheckouts.get(group.projectKey)),
   );
@@ -1065,7 +1070,7 @@ export default function StudioSidebar() {
             </Link>
           </div>
 
-          <QuotaAlerts onOpen={closeMobile} />
+          <QuotaAlerts onOpen={closeMobile} projects={boostProjects} />
 
           <div className="sws-side-section" role="group" aria-labelledby="sws-side-projects">
             <div className="sws-side-heading">

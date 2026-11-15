@@ -19,6 +19,8 @@ import {
   effectiveModelLanes,
   isFreeTrackModel,
   isMakerOf,
+  launchTrackLanes,
+  projectDraftModelSelection,
   providerHomeFamily,
   providersForModel,
 } from "./modelTracks.ts";
@@ -451,5 +453,58 @@ describe("review round fixes", () => {
     expect(followNewestReleases([sel("codex", "gpt-6.1-sol")], [unknownBoth])).toEqual([
       sel("codex", "gpt-6.1-sol"),
     ]);
+  });
+});
+
+describe("tracks at launch", () => {
+  const copilotIcon = {
+    iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+  };
+  const claude = provider("claudeAgent", "claudeAgent", ["claude-opus-5-5"], 100);
+  const copilot = provider("copilot", "acpRegistry", ["claude-opus-5.5"], null, copilotIcon);
+  const apiKey = provider("claude-api", "claudeAgent", ["claude-opus-5-5"], null, {
+    auth: { status: "authenticated", type: "apiKey" },
+  });
+  const codex = provider("codex", "codex", ["gpt-6.1-sol"], 10);
+  const all = [claude, copilot, apiKey, codex];
+
+  it("follows each model with its other plan accounts before the next model", () => {
+    expect(launchTrackLanes(null, all).routine).toEqual([
+      sel("claudeAgent", "claude-opus-5-5"),
+      sel("copilot", "claude-opus-5.5"),
+      sel("codex", "gpt-6.1-sol"),
+    ]);
+  });
+
+  it("puts the saved Sources order first and never adds a per-token account", () => {
+    const lanes = launchTrackLanes(null, all, [copilot.instanceId]);
+    expect(lanes.routine.slice(0, 2)).toEqual([
+      sel("copilot", "claude-opus-5.5"),
+      sel("claudeAgent", "claude-opus-5-5"),
+    ]);
+    expect(lanes.routine.some((entry) => entry.instanceId === "claude-api")).toBe(false);
+  });
+
+  it("keeps a saved per-token entry first: the person named that account", () => {
+    const saved = { routine: [sel("claude-api", "claude-opus-5-5")], complex: [] };
+    expect(launchTrackLanes(saved, all).routine).toEqual([
+      sel("claude-api", "claude-opus-5-5"),
+      sel("claudeAgent", "claude-opus-5-5"),
+      sel("copilot", "claude-opus-5.5"),
+    ]);
+  });
+
+  it("shows a Tracks draft the first Daily model, and a One model draft the project's", () => {
+    const one = sel("codex", "gpt-6.1-sol");
+    expect(
+      projectDraftModelSelection({ threadModelMode: "tracks", defaultModelSelection: one }, all),
+    ).toEqual(sel("claudeAgent", "claude-opus-5-5"));
+    expect(
+      projectDraftModelSelection({ threadModelMode: "model", defaultModelSelection: one }, all),
+    ).toEqual(one);
+    // Nothing installed names a track model: the draft keeps the project's model.
+    expect(
+      projectDraftModelSelection({ threadModelMode: "tracks", defaultModelSelection: one }, []),
+    ).toEqual(one);
   });
 });

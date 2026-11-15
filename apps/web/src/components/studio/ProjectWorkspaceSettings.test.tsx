@@ -3,7 +3,11 @@ import { act, createContext, useContext } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
-import { ProviderInstanceId, type ProjectWorkspaceReadResult } from "@specweave-studio/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
+  type ProjectWorkspaceReadResult,
+} from "@specweave-studio/contracts";
 import {
   findProjectSettingsAnchor,
   PROJECT_SETTINGS_SEARCH_ROWS,
@@ -30,8 +34,10 @@ const state = vi.hoisted(() => ({
   connectionCheck: vi.fn(),
   connectionRevoke: vi.fn(),
   providers: [] as unknown[],
+  hostSettings: undefined as Record<string, unknown> | undefined,
   initialFocus: null as React.RefObject<HTMLElement | null> | null,
   fleet: null as Record<string, unknown> | null,
+  worktreesOn: true as boolean | null,
   environment: {
     revision: 7,
     workspaceRoot: "/scratch/atlas",
@@ -102,7 +108,7 @@ vi.mock("../../studio/fleet", () => ({
 vi.mock("../../state/environments", () => ({
   useEnvironment: () => ({
     connection: { phase: "connected" },
-    serverConfig: { providers: state.providers },
+    serverConfig: { providers: state.providers, settings: state.hostSettings },
   }),
 }));
 vi.mock("../../state/projects", () => ({
@@ -194,6 +200,9 @@ vi.mock("../settings/ProviderLimitSettings", () => ({
 vi.mock("../settings/AdversarialReviewSettings", () => ({
   AdversarialReviewSettings: () => null,
 }));
+vi.mock("../settings/ThreadModelModeSetting", () => ({
+  ThreadModelModeSetting: () => <p data-thread-model-mode="">New threads use</p>,
+}));
 vi.mock("../settings/RecommendedModelProviders", () => ({
   RecommendedModelProviders: () => <h3>Also served by</h3>,
 }));
@@ -210,7 +219,7 @@ vi.mock("../settings/ProjectDefaultsSettings", () => ({
     children,
   }: {
     children: (state: { on: boolean | null; set: (on: boolean) => void }) => React.ReactNode;
-  }) => children({ on: true, set: () => {} }),
+  }) => children({ on: state.worktreesOn, set: () => {} }),
 }));
 vi.mock("./ProjectRoutines", () => ({ ProjectRoutines: () => <p>Project routines</p> }));
 vi.mock("./ProjectFolderChange", () => ({
@@ -304,6 +313,8 @@ beforeEach(() => {
   for (const value of Object.values(state)) if (typeof value === "function") value.mockReset();
   state.update.mockResolvedValue({ _tag: "Success", value: {} });
   state.fleet = null;
+  state.worktreesOn = true;
+  state.hostSettings = undefined;
   state.threadCount = 3;
   // A dry run lists the threads a delete would remove.
   state.threadsDelete.mockImplementation(async ({ input }: { input: { dryRun?: boolean } }) => ({
@@ -625,6 +636,26 @@ describe("project settings and memory", () => {
   it("falls back to the worker default, then the host default, with no coordinator thread", async () => {
     await render("general", true, { kind: "code", coordinatorModelSelection: null });
     expect(container.textContent).toContain("Coordinator model: codex-worker");
+  });
+  it("shows the model a saved override really starts threads on", async () => {
+    state.hostSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        project: { defaultModelSelection: { instanceId: "codex", model: "codex-override" } },
+      },
+    };
+    await render();
+    expect(container.textContent).toContain(": codex-override");
+  });
+  it("replaces the one-model picker with the track note on a Tracks project", async () => {
+    state.hostSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { project: { threadModelMode: "tracks" } },
+    };
+    await render();
+    expect(container.querySelector("[data-thread-model-mode]")).not.toBeNull();
+    expect(container.textContent).not.toContain(": codex-worker");
+    expect(container.textContent).toContain("first available model of their track");
   });
   it("saves the displayed revision and preserves edits after a conflict", async () => {
     state.update.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Revision changed") });
@@ -992,6 +1023,21 @@ describe("project settings and memory", () => {
         }),
       }),
     );
+  });
+  // linux-mini's specweave project: the old project column is unset while the scoped
+  // setting that General shows and launches read decides Use worktrees.
+  const worktreesOff =
+    "Use worktrees is off for this project, so threads work in the project folder.";
+  it("keeps Environment quiet about worktrees when the scoped setting is on and the old column is unset", async () => {
+    expect(project.defaultThreadEnvMode).toBeUndefined();
+    await render("environment", true, { kind: "code" });
+    expect(container.textContent).toContain("code · example/atlas");
+    expect(container.textContent).not.toContain(worktreesOff);
+  });
+  it("says Use worktrees is off in Environment when the scoped setting is off", async () => {
+    state.worktreesOn = false;
+    await render("environment", true, { kind: "code" });
+    expect(container.textContent).toContain(worktreesOff);
   });
   it("preserves environment edits on conflict and keeps unsaved preparation disabled", async () => {
     state.update.mockResolvedValueOnce({

@@ -21,7 +21,12 @@ name: Release Windows and Linux
 #   SpecWithCode-X.Y.Z-x86_64.AppImage, -amd64.deb, latest-linux.yml   Linux x64 app, .deb and feed
 #   SpecWithCode-X.Y.Z-arm64.AppImage, -arm64.deb, latest-linux-arm64.yml   the same for arm64
 #   studio-X.Y.Z-win32-x64.zip, studio-X.Y.Z-win32-arm64.zip     CLI archives scripts/install.ps1 installs
+#   SpecWithCode-x64.exe, SpecWithCode-arm64.exe                 the installers again, without the
+#   SpecWithCode-x86_64.AppImage, SpecWithCode-arm64.AppImage    version, for releases/latest/download
+#   SpecWithCode-amd64.deb, SpecWithCode-arm64.deb               links (no feed names them)
+#   install.ps1                                                  the Windows CLI installer, from the commit
 #   SHA256SUMS-windows-linux                                     sha256 of the above; install.ps1 reads it
+#   SHA256SUMS.asc                                               detached signature of release.sh's SHA256SUMS
 #
 # Each platform builds on hardware of each arch (windows-11-arm, ubuntu-22.04-arm): node-pty and
 # the Rust helpers are native, and the smoke tests run the real binaries. Every leg is required: a
@@ -218,7 +223,9 @@ jobs:
               case "$status" in 0 | 3) states="$states$status" ;; *) exit "$status" ;; esac
             done
             if [ -z "${states//0/}" ]; then
-              echo "skip=true" >> "$GITHUB_OUTPUT"
+              # The version and dry_run still go out: the macOS checksums signature job runs on a
+              # skipped catch-up too, so a signature that failed to upload or went stale is redone.
+              { echo "skip=true"; echo "version=$version"; echo "dry_run=false"; } >> "$GITHUB_OUTPUT"
               echo "### $tag already has its Windows and Linux apps; nothing to build." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
@@ -958,6 +965,20 @@ jobs:
         shell: bash
         run: node "$TOOL" merge-feeds --dir "$ASSETS"
 
+      # The Windows CLI installer from the commit this release was built from, so
+      # `irm .../releases/latest/download/install.ps1 | iex` installs from the release it came with.
+      - name: Add install.ps1
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT: ${{ needs.plan.outputs.commit }}
+        run: |
+          set -euo pipefail
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/$GITHUB_REPOSITORY/contents/scripts/install.ps1?ref=$COMMIT" > "$ASSETS/install.ps1"
+          head -1 "$ASSETS/install.ps1" | grep -q '^# Installs the SpecWithCode CLI' ||
+            { echo "::error::scripts/install.ps1 at $COMMIT is not the CLI installer"; exit 1; }
+
       # Detached signatures of the Linux packages first, so the checksum file lists them and the
       # public key; then the checksum file's own. Every signature is checked against the published
       # key before anything is uploaded. Plan refuses a real run without the key.
@@ -1222,6 +1243,60 @@ jobs:
                 sort -u
             } >> "$body"
             gh release edit "v$VERSION" -R "$repo" --notes-file "$body"
+          done
+
+  # release.sh's SHA256SUMS (macOS app, CLI and service archives) gets a detached signature with
+  # the key that signs SHA256SUMS-windows-linux. SHA256SUMS itself is never changed: each release's
+  # own copy is downloaded, signed and checked with gpgv, and only SHA256SUMS.asc is uploaded. A
+  # signature already there that still verifies is kept; a missing one or one that no longer
+  # verifies (SHA256SUMS replaced by a resumed release) is redone. Its own job, so it runs after an
+  # attach and also on a catch-up run that skips because the attach is complete: a failed upload
+  # or a stale signature heals on the next scheduled run.
+  mac-sums-signature:
+    name: Sign the macOS checksums
+    needs: [plan, publish]
+    if: >-
+      always() && needs.plan.result == 'success' && needs.plan.outputs.dry_run != 'true' &&
+      (needs.publish.result == 'success' || needs.plan.outputs.skip == 'true')
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - name: Sign the macOS checksums
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
+          LINUX_UPDATE_SIGNING_KEY: ${{ secrets.LINUX_UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "$LINUX_UPDATE_SIGNING_KEY" ] || { echo "::error::LINUX_UPDATE_SIGNING_KEY is not set."; exit 1; }
+          GNUPGHOME="$(mktemp -d)"
+          export GNUPGHOME
+          chmod 700 "$GNUPGHOME"
+          trap 'gpgconf --kill gpg-agent; rm -rf "$GNUPGHOME"' EXIT
+          gpg --batch --quiet --import <<< "$LINUX_UPDATE_SIGNING_KEY"
+          # The public half of the signing key, as published in specwithcode-release-key.asc.
+          keyring="$RUNNER_TEMP/mac-sums-key.gpg"
+          gpg --batch --export > "$keyring"
+          for repo in $RELEASE_REPOSITORIES; do
+            dir="$RUNNER_TEMP/mac-sums-${repo//\//-}"
+            mkdir -p "$dir"
+            gh release download "v$VERSION" -R "$repo" -D "$dir" --clobber -p SHA256SUMS
+            if gh release download "v$VERSION" -R "$repo" -D "$dir" --clobber -p SHA256SUMS.asc 2> /dev/null &&
+              gpgv --keyring "$keyring" "$dir/SHA256SUMS.asc" "$dir/SHA256SUMS" 2> /dev/null; then
+              echo "SHA256SUMS.asc on $repo already verifies."
+              continue
+            fi
+            rm -f "$dir/SHA256SUMS.asc"
+            gpg --batch --yes --pinentry-mode error --armor --detach-sign --digest-algo SHA512 \
+              -o "$dir/SHA256SUMS.asc" "$dir/SHA256SUMS"
+            gpgv --keyring "$keyring" "$dir/SHA256SUMS.asc" "$dir/SHA256SUMS"
+            gh release upload "v$VERSION" -R "$repo" --clobber "$dir/SHA256SUMS.asc"
+            echo "Signed SHA256SUMS on $repo." >> "$GITHUB_STEP_SUMMARY"
           done
 
   # A failed run that the published release started left its version without Windows and Linux

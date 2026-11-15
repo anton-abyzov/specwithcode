@@ -83,6 +83,11 @@ const dependencies = Layer.mergeAll(
       }),
     getTurnStartHistory: () => Effect.sync(() => current.turnItems),
     getRuntimeRecoveryProjection: () => Effect.sync(() => current),
+    getThreadRecords: (_threadId, _fields, filter) =>
+      Effect.sync(() => ({
+        thread: current.thread,
+        runs: current.runs.filter((run) => filter?.runIds?.includes(run.id) ?? true),
+      })),
   }),
   Layer.mock(Sessions.ProviderSessionManagerV2)({ open: () => Effect.succeed(session) }),
   Layer.mock(Policy.RuntimePolicyV2)({

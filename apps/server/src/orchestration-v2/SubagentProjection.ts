@@ -223,8 +223,18 @@ export function subagentResultForRun(
           .filter((item) => item.runId === run.id && item.type === "error")
           .toSorted((left, right) => right.ordinal - left.ordinal)[0]
       : undefined;
+  // A run can fail after its last assistant message, for example on a
+  // connection or limit error once the report is written; keep that report.
+  const reportBeforeFailure =
+    failure !== undefined && turnItem !== null && turnItem.ordinal < failure.ordinal
+      ? (message?.text ?? turnItem.text)
+      : undefined;
   const text =
-    (failure?.type === "error" ? failure.failure.message : undefined) ??
+    (failure?.type === "error"
+      ? reportBeforeFailure === undefined
+        ? failure.failure.message
+        : `${failure.failure.message}\n\nLast assistant message before the run failed:\n\n${reportBeforeFailure}`
+      : undefined) ??
     message?.text ??
     turnItem?.text ??
     (run.status === "completed"
