@@ -85,6 +85,8 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
   public var executionLastSeenAt: Date?
   /// Set on a copy that continued elsewhere (handoff) or moved to another project.
   public var movedTo: ThreadMoveLink?
+  /// "advisor" on a child that exists only to advise its parent. Kept raw.
+  public var purpose: String?
 
   enum CodingKeys: String, CodingKey {
     case createdBy, creationSource, id, projectId, title, providerInstanceId, modelSelection, modelIdentity, runtimeMode, interactionMode
@@ -97,6 +99,7 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
     case snoozedUntil, snoozedAt, limitRecovery, pinnedAt, autoSettleDisabledAt, pinOrderKey, activeOrderKey
     case lastVisitedAt, titleRegeneration, deletedAt
     case ownerMachineId, executionMachineId, executionMachineLabel, executionState, executionLastSeenAt, movedTo
+    case purpose
   }
 
   public init(from decoder: Decoder) throws {
@@ -169,6 +172,7 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
     executionState = try? c.decodeIfPresent(ExecutionState.self, forKey: .executionState)
     executionLastSeenAt = (try? c.decodeIfPresent(Date.self, forKey: .executionLastSeenAt)) ?? nil
     movedTo = (try? c.decodeIfPresent(ThreadMoveLink.self, forKey: .movedTo)) ?? nil
+    purpose = (try? c.decodeIfPresent(String.self, forKey: .purpose)) ?? nil
   }
 
   public var isPinned: Bool { pinnedAt != nil }
@@ -192,6 +196,8 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
 
   /// A spawned subagent's thread rather than one the user started.
   public var isSubagent: Bool { lineage.relationshipToParent == .subagent }
+  /// A child that only advises its parent; never listed as a thread.
+  public var isAdvisorThread: Bool { purpose == "advisor" }
 
   /// True for a coordinator thread with the default `project-coordinator:` id.
   public var isCoordinatorThread: Bool { id.hasPrefix("project-coordinator:") }

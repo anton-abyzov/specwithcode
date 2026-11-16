@@ -535,6 +535,7 @@ public enum ShellSummaries {
   /// subagent. A coordinator's workers are listed, as on the desktop.
   public static func isTopLevel(_ thread: ThreadShell, coordinatorIds: Set<String>) -> Bool {
     if thread.isCoordinatorThread || coordinatorIds.contains(thread.id) { return false }
+    if thread.isAdvisorThread { return false }
     if thread.isSubagent, !isCoordinatorWorker(thread, coordinatorIds: coordinatorIds) { return false }
     if thread.isArchived || thread.deletedAt != nil { return false }
     return true
