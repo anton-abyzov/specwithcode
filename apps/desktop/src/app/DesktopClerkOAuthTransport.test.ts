@@ -624,6 +624,62 @@ describe("the desktop's Clerk OAuth open handler", () => {
     expect(ipcMain.handlers.size).toBe(0);
     expect([app.count("open-url"), app.count("second-instance")]).toEqual([0, 0]);
   });
+
+  it("a logger that throws changes nothing: the wait, the callback and cleanup all still work", async () => {
+    const ipcMain = new FakeIpcMain();
+    const app = new FakeApp();
+    const opened: string[] = [];
+    let logCalls = 0;
+    const cleanup = installClerkOAuthTransport({
+      ipcMain,
+      app,
+      openExternal: async (url) => {
+        opened.push(url);
+      },
+      focusWindow: () => undefined,
+      redirectUrl: REDIRECT_URL,
+      stateChannel: STATE_CHANNEL,
+      log: () => {
+        logCalls += 1;
+        throw new Error("the journal is gone");
+      },
+    });
+    const handler = ipcMain.handlers.get(
+      CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL,
+    ) as ClerkOAuthOpenHandler;
+    const window = makeSender();
+
+    // Waiting and completing: the browser opens and the callback resolves.
+    const first = track(handler(mainFrameEvent(window), SIGN_IN_URL));
+    await flush();
+    expect(opened).toEqual([SIGN_IN_URL]);
+    app.listeners.get("open-url")![0]!({ preventDefault: vi.fn() }, CALLBACK_URL);
+    await flush();
+    expect(first.current).toEqual({ status: "resolved", value: { callbackUrl: CALLBACK_URL } });
+
+    // Refusing, timing out and cancelling at cleanup.
+    const refused = track(handler(mainFrameEvent(window), "file:///etc/passwd"));
+    const timedOut = track(handler(mainFrameEvent(window), SIGN_IN_URL));
+    await vi.advanceTimersByTimeAsync(CLERK_OAUTH_CALLBACK_TIMEOUT_MS);
+    expect(refused.current.status).toBe("rejected");
+    expect(rejectionMessage(timedOut)).toBe("Clerk: OAuth callback timed out.");
+    const cancelled = track(handler(mainFrameEvent(window), SIGN_IN_URL));
+    await flush();
+
+    expect(() => cleanup()).not.toThrow();
+    await flush();
+    expect(rejectionMessage(cancelled)).toBe("Clerk: OAuth flow was cancelled.");
+    expect(ipcMain.handlers.size).toBe(0);
+    expect([app.count("open-url"), app.count("second-instance")]).toEqual([0, 0]);
+    expect(statesSentTo(window)).toEqual([
+      "waiting",
+      "completed",
+      "waiting",
+      "timed-out",
+      "waiting",
+    ]);
+    expect(logCalls).toBeGreaterThanOrEqual(7);
+  });
 });
 
 /*

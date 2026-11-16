@@ -162,7 +162,7 @@ export const make = Effect.gen(function* () {
       // The SDK refuses a second sign-in while one waits for the browser and
       // tells the window nothing. Take over that one request; the redirect
       // URL, token storage, passkeys and the instance lock stay the SDK's.
-      // Its own callback listeners stay registered and never fire, because
+      // Its own callback listeners stay registered and do nothing, because
       // its waiting slot stays empty. Released before the bridge, and safe
       // in either order: both remove the same handler, which cannot throw.
       yield* Effect.acquireRelease(

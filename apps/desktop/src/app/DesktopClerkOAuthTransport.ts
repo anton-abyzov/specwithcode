@@ -169,7 +169,15 @@ interface WaitingRequest {
 export function installClerkOAuthTransport(
   dependencies: ClerkOAuthTransportDependencies,
 ): () => void {
-  const { ipcMain, app, redirectUrl, stateChannel, log } = dependencies;
+  const { ipcMain, app, redirectUrl, stateChannel } = dependencies;
+  // A logger that throws must not leave a request waiting or a listener behind.
+  const log = (entry: ClerkOAuthLogEntry) => {
+    try {
+      dependencies.log(entry);
+    } catch {
+      // The journal line is lost; the sign-in carries on.
+    }
+  };
   const timers = dependencies.timers ?? {
     set: (callback: () => void, delayMs: number) => setTimeout(callback, delayMs),
     clear: (timer: unknown) => clearTimeout(timer as ReturnType<typeof setTimeout>),
