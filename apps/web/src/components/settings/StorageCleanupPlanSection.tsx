@@ -175,7 +175,10 @@ function StorageCleanupPlanRow({ item }: { item: StorageCleanupPlanItem }) {
       ? item.detail
       : describeStorageCleanupReason(item, tx);
   return (
-    <li className="flex min-w-0 items-start justify-between gap-3 px-2.5 py-1.5" title={item.path}>
+    <li
+      className="flex min-w-0 items-start justify-between gap-3 px-2.5 py-1.5"
+      data-path={item.path}
+    >
       <div className="min-w-0 space-y-0.5">
         <p className="min-w-0 truncate text-foreground">
           {name}

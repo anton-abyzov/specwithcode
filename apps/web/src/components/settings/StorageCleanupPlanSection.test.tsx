@@ -162,7 +162,7 @@ const press = async (target: ReactTestInstance) => {
 };
 const reasonOf = (path: string) =>
   renderer.root
-    .find((node) => node.type === "li" && node.props.title === path)
+    .find((node) => node.type === "li" && node.props["data-path"] === path)
     .find((node) => node.type === "p" && node.props["data-reason"] !== undefined).children;
 
 describe("StorageCleanupPlanSection", () => {
