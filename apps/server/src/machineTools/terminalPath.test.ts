@@ -344,7 +344,7 @@ describe("syncTerminalPath", () => {
     expect(await sync()).toBe("opted-out");
     expect(await sync({ shell: "/bin/bash", enabled: false })).toBe("unchanged");
     expect(NodeFS.existsSync(NodePath.join(home, ".bash_profile"))).toBe(false);
-    expect(await sync({ enabled: false })).toBe("unchanged");
+    expect(await sync({ enabled: false })).toBe("opted-out");
     expect(read()).toBe("# mine\n");
   });
 
