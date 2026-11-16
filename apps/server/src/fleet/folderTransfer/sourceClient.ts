@@ -2,7 +2,13 @@
 import { parseFleetOrigin } from "../fleetOrigin.ts";
 import type { ManifestEntry, ManifestHeader } from "./manifest.ts";
 import { readManifestBytes } from "./manifest.ts";
-import { decodeFrames, FOLDER_TRANSFER_PREFIX, zstdAvailable, type ChunkFrame } from "./wire.ts";
+import {
+  decodeFrames,
+  FOLDER_TRANSFER_PREFIX,
+  SEALED_SECRET_CONTENT_TYPE,
+  zstdAvailable,
+  type ChunkFrame,
+} from "./wire.ts";
 
 export type SourceClientErrorCode =
   | "unsupported_url"
@@ -333,10 +339,16 @@ export class SourceClient {
     return (await this.json<{ files: Array<{ path: string; size: number }> }>(response)).files;
   }
 
-  async secretFile(path: string): Promise<Uint8Array> {
+  /** One approved secret file as the source served it: plain, or sealed to this machine's key. */
+  async secretFile(
+    path: string,
+  ): Promise<{ readonly bytes: Uint8Array; readonly sealed: boolean }> {
     const response = await this.request("POST", "secret", { path });
     if (!response.ok) await this.json(response);
-    return new Uint8Array(await response.arrayBuffer());
+    const sealed = (response.headers.get("content-type") ?? "")
+      .toLowerCase()
+      .startsWith(SEALED_SECRET_CONTENT_TYPE);
+    return { bytes: new Uint8Array(await response.arrayBuffer()), sealed };
   }
 
   async commit() {

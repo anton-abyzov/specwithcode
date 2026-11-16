@@ -85,6 +85,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.machineHandoffCopyUndo]: AuthFilesystemWriteScope,
   [WS_METHODS.machineHandoffCopyCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.machineHandoffCopySecrets]: AuthAccessWriteScope,
+  [WS_METHODS.machineHandoffCopySecretsRoute]: AuthOrchestrationOperateScope,
+  [WS_METHODS.machineHandoffCopySealedSecrets]: AuthOrchestrationOperateScope,
   [WS_METHODS.machineHandoffSentSecrets]: AuthFilesystemReadScope,
   [WS_METHODS.machineHandoffReadiness]: AuthFilesystemReadScope,
   // Handoff mode: settings, per-thread checkpoints (a Git ref, maybe pushed) and moving work.
@@ -283,6 +285,12 @@ function folderCopyScopes(method: string, input: unknown): readonly AuthEnvironm
         ? [...read, AuthOrchestrationOperateScope]
         : [...read, AuthOrchestrationOperateScope, AuthAccessWriteScope];
     }
+    // Secrets sealed to a key the copy's own destination machine made, after that machine
+    // accepted this one as the owner's own with full access. The transfer token alone opens
+    // nothing, so this needs no more than running the copy does. Asking whether that route
+    // exists calls that machine, so it is not a plain read.
+    case WS_METHODS.machineHandoffCopySealedSecrets:
+    case WS_METHODS.machineHandoffCopySecretsRoute:
     case WS_METHODS.machineHandoffCopyOffer:
     case WS_METHODS.machineHandoffCopySourceCancel:
     case WS_METHODS.machineHandoffCopyStart:

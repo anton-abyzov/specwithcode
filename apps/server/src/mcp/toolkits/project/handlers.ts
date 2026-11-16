@@ -67,6 +67,7 @@ import {
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { launchOriginOf } from "../../threadOrigin.ts";
 import { projectInGrant } from "../../../fleet/workGrantPolicy.ts";
@@ -1185,7 +1186,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     Effect.gen(function* () {
       // Only the machine copying its project folder here, under a grant covering
       // every project here (as for a clone), drives this side; its agents may not.
-      const work = yield* workGrantOf(yield* readCaller());
+      const caller = yield* readCaller();
+      const work = yield* workGrantOf(caller);
       if (work === undefined || work.origin !== undefined)
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
@@ -1199,6 +1201,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         });
       return yield* receiveAgentCopy(input, {
         environmentId: work.grant.coordinatorEnvironmentId,
+        label: work.coordinatorLabel,
+        // Sealed secrets of a copy: the bar a secret sent with studio_file_transfer meets.
+        mayCarrySecrets:
+          work.grant.owner === "self" &&
+          McpInvocationContext.clientRuntimeModeCeiling(caller.scope.client) === "full-access",
       });
     }),
   ),

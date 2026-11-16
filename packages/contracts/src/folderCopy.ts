@@ -207,6 +207,8 @@ export const FolderCopySourceStatus = Schema.Struct({
         files: Schema.Array(Schema.Struct({ path: bounded(4096), size: count })),
         approvedAt: count,
         destinationLabel: bounded(200),
+        /** Served only as ciphertext sealed to the destination machine's receiving key. */
+        sealed: Schema.optional(Schema.Boolean),
       }),
     ),
   ),
@@ -245,6 +247,26 @@ export const FolderCopySecretsInput = Schema.Struct({
   destinationLabel: bounded(200),
 });
 export type FolderCopySecretsInput = typeof FolderCopySecretsInput.Type;
+
+/**
+ * Asks the source whether a copy to this machine can carry secrets sealed: the source
+ * reaches that machine over its fleet link, and that machine accepts the source as the
+ * owner's own machine with full access. Asked before the copy starts, by a window that
+ * may not send secrets the plain way.
+ */
+export const FolderCopySecretsRouteInput = Schema.Struct({
+  destinationEnvironmentId: EnvironmentId,
+});
+export type FolderCopySecretsRouteInput = typeof FolderCopySecretsRouteInput.Type;
+export const FolderCopySecretsRoute = Schema.Struct({
+  sealed: Schema.Boolean,
+  /** Why not: no fleet link to that machine, it refuses, it is older, or it did not answer. */
+  reason: Schema.optional(
+    Schema.Literals(["not_linked", "not_allowed", "update_needed", "unreachable"]),
+  ),
+  detail: Schema.optional(bounded(1000)),
+});
+export type FolderCopySecretsRoute = typeof FolderCopySecretsRoute.Type;
 
 export const FolderCopySentSecretsInput = Schema.Struct({
   destinationEnvironmentId: Schema.optional(EnvironmentId),

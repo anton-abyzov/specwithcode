@@ -5,6 +5,7 @@ import {
   FOLDER_TRANSFER_PREFIX,
   MAX_BATCH_CHUNKS_LARGE,
   MAX_REQUEST_BYTES,
+  SEALED_SECRET_CONTENT_TYPE,
   SHA256,
   zstdAvailable,
 } from "./wire.ts";
@@ -137,10 +138,11 @@ export async function handleSourceRequest(
       case "POST secret": {
         const input = await body();
         if (typeof input.path !== "string") throw new SourceTransferError(400, "invalid_request");
+        const served = await transfers.secretFile(loaded, input.path);
         return {
           status: 200,
-          contentType: "application/octet-stream",
-          body: await transfers.secretFile(loaded, input.path),
+          contentType: served.sealed ? SEALED_SECRET_CONTENT_TYPE : "application/octet-stream",
+          body: served.bytes,
         };
       }
       case "POST commit":
