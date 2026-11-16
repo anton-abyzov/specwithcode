@@ -39,5 +39,5 @@ export function staleOfferMessage(record: DestinationRecord) {
 /** Secret files the window sent before approving that the source no longer offers. */
 export function secretsNotOfferedMessage(record: DestinationRecord, missing: number) {
   const one = missing === 1;
-  return `${missing.toLocaleString("en-US")} secret ${one ? "file" : "files"} approved for this copy ${one ? "was" : "were"} no longer offered by ${sourceName(record)}. The other files are in place here. Copy again to send ${one ? "it" : "them"}.`;
+  return `${missing.toLocaleString("en-US")} secret ${one ? "file" : "files"} approved for this copy ${one ? "was" : "were"} no longer offered by ${sourceName(record)}. The other files are in place here. Retry to send ${one ? "it" : "them"} again.`;
 }

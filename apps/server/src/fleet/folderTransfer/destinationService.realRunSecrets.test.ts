@@ -163,7 +163,7 @@ describe("the secret files of a real copy", () => {
     expect(failed.failedStep).toBe("applied");
     expect(failed.committed).toBe(false);
     expect(failed.error?.message).toBe(
-      "1 secret file approved for this copy was no longer offered by M4MAX. The other files are in place here. Copy again to send it.",
+      "1 secret file approved for this copy was no longer offered by M4MAX. The other files are in place here. Retry to send it again.",
     );
     // Everything still offered arrived; nothing was reported as complete.
     expect(arrived(target)).toEqual(kept);

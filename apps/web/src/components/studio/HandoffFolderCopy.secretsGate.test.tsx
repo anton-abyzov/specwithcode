@@ -301,7 +301,7 @@ it("offers the secret files again when Retry follows a copy the destination stop
     error: {
       code: "refused",
       message:
-        "10 secret files approved for this copy were no longer offered by M4. The other files are in place here. Copy again to send them.",
+        "10 secret files approved for this copy were no longer offered by M4. The other files are in place here. Retry to send them again.",
     },
   });
   statuses = [copyStatus("previewed"), stopped];
