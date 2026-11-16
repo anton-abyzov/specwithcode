@@ -64,3 +64,16 @@ date,platform,total,delta
 2026-11-15,installers,7082,514
 2026-11-15,mac-updates,1496,187
 2026-11-15,all,47517,3970
+2026-11-16,mac-dmg,3603,166
+2026-11-16,mac-zip,1633,137
+2026-11-16,windows-exe,1772,107
+2026-11-16,linux-deb,1145,60
+2026-11-16,linux-appimage,815,34
+2026-11-16,install-script,126,12
+2026-11-16,server-archive,2711,164
+2026-11-16,update-metadata,38650,2756
+2026-11-16,signature,591,93
+2026-11-16,other,0,0
+2026-11-16,installers,7461,379
+2026-11-16,mac-updates,1633,137
+2026-11-16,all,51046,3529
