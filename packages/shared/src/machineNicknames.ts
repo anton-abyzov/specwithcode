@@ -84,7 +84,8 @@ const computerNameShown = (label: string) => {
  * knows (`others`, id to computer name, such as its fleet list). A machine
  * clashes when a person named it that, kept a computer name that reads that,
  * or it has no name of its own choosing and its computer name holds the same
- * chip (it would name itself the same, so both keep their computer names). A
+ * chip (it would name itself the same, so both keep their computer names). Two
+ * that already named themselves the same settle on the lower id keeping it. A
  * name left by a machine that is not in `others` (an old registration) does
  * not count.
  */
@@ -101,6 +102,10 @@ function freeChipName(
     if (id === environmentId) continue;
     const entry = nicknames[id];
     if (entry === undefined || isAutomaticMachineNickname(entry)) {
+      // Both named themselves the same: the lower id keeps it, so the pair
+      // settles even when neither list shows the other's chip (a fleet alias).
+      const claimed = entry === undefined ? "" : normalizeMachineNickname(entry.name);
+      if (claimed !== "" && foldShown(claimed) === wanted && id < environmentId) return null;
       if (suggestMachineNickname(label) === name) return null;
       continue;
     }

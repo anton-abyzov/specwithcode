@@ -145,6 +145,34 @@ describe("machine nicknames", () => {
     expect(defaultMachineNickname(settled, "env-b", "Office M5 Pro", new Map([["env-a", "Anton M5MAX PROLED"]]))).toBeNull();
   });
 
+  it("settles two machines a fleet list knows only by aliases on one name", () => {
+    const hosts = { "env-a": "Anton M5MAX PROLED", "env-b": "Office M5 Pro" } as const;
+    const aliases = { "env-a": "Laptop", "env-b": "Office" } as const;
+    let nicknames: Record<string, { name: string; updatedAt: string }> = {
+      "env-a": at("M5", "1970-01-01T00:00:00.000Z"),
+      "env-b": at("M5", "1970-01-01T00:00:00.000Z"),
+    };
+    const round = () => {
+      let changed = false;
+      for (const id of ["env-a", "env-b"] as const) {
+        const other = id === "env-a" ? "env-b" : "env-a";
+        const next = defaultMachineNickname(nicknames, id, hosts[id], new Map([[other, aliases[other]]]));
+        if (next !== null) {
+          nicknames = { ...nicknames, [id]: next };
+          changed = true;
+        }
+      }
+      return changed;
+    };
+    let rounds = 0;
+    while (round()) rounds += 1;
+    expect(rounds).toBeLessThan(5);
+    // One keeps the name, the other shows its computer name, and it stays that way.
+    expect(nicknames["env-a"]?.name).toBe("M5");
+    expect(nicknames["env-b"]?.name).toBe("");
+    expect(round()).toBe(false);
+  });
+
   it("finds another machine already shown under a name, ignoring case", () => {
     const names = new Map([
       ["stale", "m5"],
