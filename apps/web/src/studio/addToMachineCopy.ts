@@ -262,7 +262,7 @@ export async function applyCopy(
     const approved = unwrap(
       await commands.approve({
         environmentId: input.destinationEnvironmentId,
-        input: approveInput(operationId, input.sourceEnvironmentId, secrets.length > 0),
+        input: approveInput(operationId, input.sourceEnvironmentId, secrets.length > 0, secrets),
       }),
     );
     input.onStatus?.(approved);

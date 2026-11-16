@@ -108,6 +108,7 @@ function Fixture() {
   const [locked, setLocked] = useState(false);
   const [intent, setIntent] = useState<"move" | "copy">("copy");
   const [doneOn, setDoneOn] = useState<string | null>(null);
+  const [doneAt, setDoneAt] = useState<string | null>(null);
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
       {/* Reopening remounts the copy flow, as closing and reopening the real dialog does. */}
@@ -130,6 +131,7 @@ function Fixture() {
         copyBusy={busy}
         copyLocked={locked}
         copyDoneOn={doneOn}
+        copyDoneAt={doneAt}
         copyTargetLabel={target}
         send={
           HOLDING && target
@@ -170,7 +172,8 @@ function Fixture() {
             canMove
             uncommittedFiles={params.has("uncommitted") ? Number(params.get("uncommitted")) : null}
             defaultMode="copy-only"
-            onChoicesChange={({ mode, machine, done }) => {
+            onChoicesChange={({ mode, machine, done, doneAt }) => {
+              setDoneAt(doneAt ?? null);
               setIntent(mode === "copy-and-move" ? "move" : "copy");
               setTarget(MACHINES.find((item) => item.id === machine)?.label ?? null);
               // As the real dialog does: the title says where a finished copy is.

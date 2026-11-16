@@ -123,6 +123,7 @@ const umbrella = "/Users/you/Projects/github/specweave-umb";
 const child = "repositories/anton-abyzov/specweave";
 let copyRoot = umbrella;
 let projectRelativePath = child;
+const FINISHED_AT = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
 const status = (state: string) => ({
   operationId: op,
   sourceEnvironmentId: "m4",
@@ -180,6 +181,8 @@ const status = (state: string) => ({
   unstable: [],
   committed: incompleteUndo ? undoCommitted : state === "applied",
   projectId: state === "applied" ? "copied" : null,
+  // Two hours before the page loaded, so the Done title reads "(copied 2h ago)".
+  ...(state === "applied" ? { finishedAt: FINISHED_AT } : {}),
   createdAt: "2026-10-21T00:00:00Z",
   updatedAt: "2026-10-21T00:00:00Z",
 });

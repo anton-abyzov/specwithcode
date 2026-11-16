@@ -157,6 +157,7 @@ export function HandoffFolderCopy({
     readonly machine: EnvironmentId | null;
     readonly done: boolean;
     readonly review?: boolean;
+    readonly doneAt?: string | null;
   }) => void;
   readonly canMove: boolean;
   /** Uncommitted files in the source, named in What comes along; null when unknown. */
@@ -700,6 +701,7 @@ export function HandoffFolderCopy({
     machines,
     canMove,
     explicit: { mode: defaultMode !== undefined, machine: machineRequested },
+    showFinished: !machineRequested && defaultMode !== "copy-and-move",
     form: { machine, folderDraft, mode, chooseFirst, secrets: secrets.chosen },
     latestPending,
     setForm: {
@@ -903,13 +905,15 @@ export function HandoffFolderCopy({
       withoutReplaceAll(saved);
       throw new Error(secretsSourceOnlyText(sourceLabel));
     }
-    if (!secretsSent || secrets.gate.blocked) await secrets.sendTicked(operationId);
+    if (!secretsSent || secretsBlockedNow(project.environmentId))
+      await secrets.sendTicked(operationId);
     setStage("copying");
     try {
       const input = approveInput(
         operationId,
         project.environmentId,
         pendingSecrets(saved).included,
+        secrets.sentFor(operationId),
       );
       setCopy(unwrap(await approve({ environmentId, input })));
     } catch (cause) {
@@ -1004,6 +1008,9 @@ export function HandoffFolderCopy({
         await moveCoordinator(operationId, machine, copy.projectId, copy, anyway);
         return;
       }
+      // Stopped for secret files the source no longer offered: this window offers them again.
+      if (copy?.failedStep === "applied" && copy.error?.code === "refused" && !secrets.gate.blocked)
+        await secrets.sendTicked(operationId).catch(() => undefined);
       setStage("copying");
       try {
         setCopy(unwrap(await retry({ environmentId: machine, input: { operationId } })));
@@ -1289,6 +1296,7 @@ export function HandoffFolderCopy({
           folder={pending?.targetFolder ?? folder}
           targetLabel={targetLabel}
           error={error}
+          finished={pending?.reopened === true}
           onCheckAgain={() => pending && resume(pending)}
           onStartNew={
             pending?.reopened

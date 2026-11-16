@@ -40,7 +40,8 @@ import {
   withdrawStagedSecrets,
   withoutSecrets,
 } from "./useSecretsGate";
-import { sendableSecrets } from "./handoffCopySecrets";
+import { isHomeSecretRow, sendableSecrets } from "./handoffCopySecrets";
+import type { CopyMachine } from "./HandoffCopySetup";
 import {
   copyStartInput,
   replaceAllReady,
@@ -59,6 +60,8 @@ const WATCH_MS = 2000;
 const START_ATTEMPTS = 3;
 /** Checks a restored copy still to be linked waits for its machine to connect: one minute. */
 const RESTORED_LINK_WAITS = 30;
+/** Without a machines list (a test, an early mount) nothing is known about `~/` files. */
+const homeSecretsUnknown = (): boolean | null => null;
 /** The toast's way back: the project's Move dialog resumes the copy. */
 const reopenText = (projectName: string | undefined) =>
   `Open Move ${projectName?.trim() || "project"}`;
@@ -256,6 +259,7 @@ export function HandoffFolderCopyWatcher({
   onOpenDialog,
   restored = false,
   reviewOnly = false,
+  homeSecrets = homeSecretsUnknown,
   onDone,
 }: {
   readonly environmentId: EnvironmentId;
@@ -274,6 +278,11 @@ export function HandoffFolderCopyWatcher({
    * approval, until a dialog takes it back or it changes on the machines.
    */
   readonly reviewOnly?: boolean;
+  /**
+   * Whether a machine writes `~/` secret files into its home folder; null while that is not
+   * known, and then a copy with such files is left to the person instead of leaving them out.
+   */
+  readonly homeSecrets?: (environmentId: string) => boolean | null;
   /** Called once the watcher stops watching. */
   readonly onDone?: () => void;
 }) {
@@ -321,6 +330,7 @@ export function HandoffFolderCopyWatcher({
     sourceLabel,
     projectName,
     onOpenDialog,
+    homeSecrets,
     onDone,
   });
   latest.current = {
@@ -330,6 +340,7 @@ export function HandoffFolderCopyWatcher({
     sourceLabel,
     projectName,
     onOpenDialog,
+    homeSecrets,
     onDone,
   };
 
@@ -388,25 +399,44 @@ export function HandoffFolderCopyWatcher({
       }
     };
 
+    /** The destination as the dialog knows it, for which secret files it can receive. */
+    const destinationOf = (saved: PendingCopy): CopyMachine => ({
+      id: saved.environmentId as EnvironmentId,
+      label: latest.current.machineLabel(saved.environmentId),
+      unavailable: null,
+      homeSecretFiles: latest.current.homeSecrets(saved.environmentId) === true,
+    });
+
     /**
-     * Sends the copy's saved secrets choice (What comes along showed it) before a one-click
-     * approval here. Whether that machine takes `~/` files is unknown here, so they stay on
-     * the source. False when the source's list cannot be read or the send failed.
+     * Sends the copy's saved secrets choice (What comes along showed it) before an approval
+     * here: every file the dialog would send, `~/` files included when that machine takes
+     * them. Returns the list sent; false when the source's list cannot be read, the send
+     * failed, or whether that machine takes `~/` files is not known yet.
      */
-    const stageSecrets = async (previewed: FolderCopyStatus) => {
+    const stageSecrets = async (
+      previewed: FolderCopyStatus,
+    ): Promise<ReadonlyArray<string> | false> => {
       const summary = await readSummary();
       // Read the pointer again: a reopened dialog owns the choice and the approval from here.
       const saved = readPendingCopy(key);
       if (stopped || !summary || saved?.operationId !== operationId) return false;
       const blocked = secretsBlockedNow(environmentId);
+      const choice = blocked ? withoutSecrets(pendingSecrets(saved)) : pendingSecrets(saved);
+      // Never leave `~/` files out on a guess: the person decides at the review.
+      if (
+        choice.included &&
+        summary.secretFiles.some((file) => isHomeSecretRow(file.path)) &&
+        latest.current.homeSecrets(saved.environmentId) === null
+      )
+        return false;
       const paths = sendableSecrets({
         summary,
         plan: previewed,
         repositories: null,
-        machine: undefined,
-        choice: blocked ? withoutSecrets(pendingSecrets(saved)) : pendingSecrets(saved),
+        machine: destinationOf(saved),
+        choice,
       });
-      if (!paths) return true;
+      if (!paths) return [];
       // Only the source's own window may send secrets: from here staged ones come off.
       if (blocked && paths.length === 0)
         return withdrawStagedSecrets({
@@ -430,7 +460,7 @@ export function HandoffFolderCopyWatcher({
             )._tag === "Success",
           sourceLabel: latest.current.machineLabel(environmentId),
         }).then(
-          () => !stopped,
+          () => (stopped ? false : paths),
           () => false,
         );
       const send = (choice: PendingCopy, list: ReadonlyArray<string>) =>
@@ -453,13 +483,13 @@ export function HandoffFolderCopyWatcher({
             summary,
             plan: previewed,
             repositories: null,
-            machine: undefined,
+            machine: destinationOf(now),
             choice: pendingSecrets(now),
           });
         if (now && current) await send(now, current);
         return false;
       }
-      return !stopped && sent._tag === "Success";
+      return !stopped && sent._tag === "Success" ? paths : false;
     };
     /** The pointer still says what this run acted on: same copy, Replace all and secrets. */
     const unchanged = (acted: PendingCopy) => {
@@ -511,20 +541,32 @@ export function HandoffFolderCopyWatcher({
       }
       // The form said secrets are included, and this window turned out unable to send them:
       // nothing is approved without them unseen. The review says why; the person decides there.
-      if (secretsBlockedNow(environmentId) && secretsPromised(saved)) {
+      // The same for a pointer that carries no secrets choice at all (an older version's).
+      if (
+        saved.secrets === undefined ||
+        (secretsBlockedNow(environmentId) && secretsPromised(saved))
+      ) {
         if (saved.replaceAll) {
           const { replaceAll: _dropped, ...rest } = saved;
           writePointer(key, rest);
         }
         return "ask" as const;
       }
-      // Replace all sent its secrets when clicked; a blocked window still takes staged ones
-      // off, since an older destination ignores the approval's withoutSecrets.
-      const stage = !saved.replaceAll || secretsBlockedNow(environmentId);
-      if (stage && !(await stageSecrets(previewed))) return "ask" as const;
+      // The choice goes to the source again even after a Replace all that sent it when
+      // clicked: the approval then names every file, and the destination requires them. A
+      // blocked window takes staged ones off, since an older destination ignores the
+      // approval's withoutSecrets.
+      const staged = await stageSecrets(previewed);
+      if (staged === false) return "ask" as const;
       if (stopped || !unchanged(saved)) return "ask" as const;
-      // Approved without secrets when this window may not send them or the choice leaves them.
-      const input = approveInput(operationId, environmentId, pendingSecrets(saved).included);
+      // Approved without secrets when this window may not send them or the choice leaves
+      // them; otherwise with the list just sent, which the destination then requires.
+      const input = approveInput(
+        operationId,
+        environmentId,
+        pendingSecrets(saved).included,
+        staged,
+      );
       const approved = await approve({ environmentId: destination, input });
       if (approved._tag === "Success") return "again" as const;
       // The approval may have landed although its answer was lost.

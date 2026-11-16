@@ -145,6 +145,7 @@ export function ProjectMachineHandoff({
   onOpenChange,
   requestedTarget = null,
   openRequest = null,
+  onRequestHandled,
   showTrigger = true,
 }: {
   readonly project: EnvironmentProject;
@@ -153,6 +154,11 @@ export function ProjectMachineHandoff({
   readonly requestedTarget?: string | null;
   /** Set by the project's machine menu: "Send to another machine…". */
   readonly openRequest?: MachineHandoffOpenRequest | null;
+  /**
+   * Told once the request was acted on, so the parent drops it: this component is mounted
+   * again when the window switches machine, and a request still held would open the dialog.
+   */
+  readonly onRequestHandled?: (request: MachineHandoffOpenRequest) => void;
   /** Off where the machine menu opens the dialog instead of its own button. */
   readonly showTrigger?: boolean;
 }) {
@@ -231,6 +237,7 @@ export function ProjectMachineHandoff({
   // The copy the person picked on a machine that holds several, by machine.
   const [pickedCopies, setPickedCopies] = useState<Readonly<Record<string, string>>>({});
   const [copyDone, setCopyDone] = useState(false);
+  const [copyDoneAt, setCopyDoneAt] = useState<string | null>(null);
   const [copyBusy, setCopyBusyState] = useState(false);
   const [copyLocked, setCopyLocked] = useState(false);
   // Sharing is what the dialog opens on; moving and copying files start from it.
@@ -464,8 +471,16 @@ export function ProjectMachineHandoff({
       }),
     [project.environmentId, project.id],
   );
+  // A request opens the dialog once. A page kept mounted but hidden runs its effects again
+  // when it is shown, and must not replay a request the person already closed.
+  const handledTarget = useRef<string | null>(null);
   useEffect(() => {
-    if (!requestedTarget) return;
+    if (!requestedTarget) {
+      handledTarget.current = null;
+      return;
+    }
+    if (handledTarget.current === requestedTarget) return;
+    handledTarget.current = requestedTarget;
     // "Move coordinator to X": move, with X chosen whichever way the files travel. When X
     // already has its own checkout, nothing needs copying: the Git handoff points the
     // coordinator at that folder.
@@ -905,12 +920,18 @@ export function ProjectMachineHandoff({
   latestOpenDialog.current = openDialog;
   const latestBlockedReason = useRef(blockedReason);
   latestBlockedReason.current = blockedReason;
+  const handledRequest = useRef<MachineHandoffOpenRequest | null>(null);
+  const latestRequestHandled = useRef(onRequestHandled);
+  latestRequestHandled.current = onRequestHandled;
   useEffect(() => {
-    if (!openRequest) return;
+    // Each menu pick is a new request object; the same one never opens the dialog twice.
+    if (!openRequest || handledRequest.current === openRequest) return;
+    handledRequest.current = openRequest;
     // The menu has no tooltip to explain a refusal, so it says why here.
     const reason = latestBlockedReason.current;
     if (reason) toastManager.add({ type: "warning", title: reason });
     else latestOpenDialog.current(openRequest.mode, openRequest.machine, openRequest.target);
+    latestRequestHandled.current?.(openRequest);
   }, [openRequest]);
 
   return (
@@ -994,6 +1015,7 @@ export function ProjectMachineHandoff({
         copyDoneOn={
           copyDone ? (machines.find((item) => item.id === copyMachine)?.label ?? null) : null
         }
+        copyDoneAt={copyDone ? copyDoneAt : null}
         copyTargetLabel={machines.find((item) => item.id === copyMachine)?.label ?? null}
         send={send}
         copyFlow={
@@ -1034,11 +1056,12 @@ export function ProjectMachineHandoff({
               // Requested, so a saved draft or last copy cannot swap the machine or its folder.
               machineRequested={requestedMachine !== null || syncCopy !== undefined}
               defaultMode={intent === "move" ? "copy-and-move" : "copy-only"}
-              onChoicesChange={({ mode, machine, done, review }) => {
+              onChoicesChange={({ mode, machine, done, review, doneAt }) => {
                 copyAtReview.current = review === true;
                 setIntent(mode === "copy-and-move" ? "move" : "copy");
                 setCopyMachine(machine);
                 setCopyDone(done);
+                setCopyDoneAt(doneAt ?? null);
                 if (done && machine) rememberMachine(machine);
               }}
               savedProject={(environmentId, folder) =>

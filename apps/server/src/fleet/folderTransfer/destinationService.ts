@@ -140,6 +140,8 @@ export interface DestinationRecord {
   readonly secretsDone?: boolean;
   /** Approved without secrets: none are pulled, whatever the source has staged. */
   readonly withoutSecrets?: boolean;
+  /** The secret files the approving window sent: the copy finishes only with all of them. */
+  readonly secretsExpected?: ReadonlyArray<string>;
   /** Chunks per batch the source offered in its hello; older sources and records omit it. */
   readonly sourceBatchChunks?: number;
   /** When the person approved the copy; the copy's clock starts here. */
@@ -554,7 +556,10 @@ export class DestinationCopies {
    */
   async approve(
     operationId: string,
-    options: { readonly withoutSecrets?: boolean } = {},
+    options: {
+      readonly withoutSecrets?: boolean;
+      readonly expectedSecrets?: ReadonlyArray<string>;
+    } = {},
   ): Promise<DestinationRecord> {
     const record = await this.require(operationId);
     if (record.state !== "previewed")
@@ -630,6 +635,10 @@ export class DestinationCopies {
         ...(sourceMoved ? { warnings: [...record.warnings, SOURCE_MOVED] } : {}),
         error: null,
         ...(options.withoutSecrets ? { withoutSecrets: true } : {}),
+        // An empty list is an expectation too: the window sent none, so none are pulled.
+        ...(!options.withoutSecrets && options.expectedSecrets
+          ? { secretsExpected: [...new Set(options.expectedSecrets)] }
+          : {}),
         startedAt: this.now(),
         updatedAt: this.now(),
       };
@@ -1304,7 +1313,10 @@ export class DestinationCopies {
     if (record.withoutSecrets === true)
       return this.update(record.operationId, { secretsDone: true });
     const client = this.client(record);
-    const offered = await client.secrets();
+    // The approval named the files the window sent: only those are pulled, so a list another
+    // window staged meanwhile neither adds a file nor brings back one the person unticked.
+    const named = record.secretsExpected ? new Set(record.secretsExpected) : null;
+    const offered = (await client.secrets()).filter((file) => !named || named.has(file.path));
     let current = record;
     const machine = machineSlug(record.sourceMachine);
     for (const file of offered) {
@@ -1334,6 +1346,14 @@ export class DestinationCopies {
         secrets: [...(current.secrets ?? []), received],
       });
     }
+    // The window sent these before approving: a source that no longer offers one (its list
+    // was withdrawn or lost, or it answers as if it had none) must not read as a full copy.
+    const arrived = new Set((current.secrets ?? []).map((item) => item.path));
+    const missing = (current.secretsExpected ?? []).filter((path) => !arrived.has(path));
+    if (missing.length > 0)
+      throw new CopyError("refused", Messages.secretsNotOfferedMessage(current, missing.length), {
+        missingSecrets: missing.length,
+      });
     return this.update(current.operationId, { secretsDone: true });
   }
 

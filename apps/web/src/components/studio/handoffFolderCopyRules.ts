@@ -132,6 +132,8 @@ export function useCopyReporting({
         readonly done: boolean;
         /** The copy waits at its review: measured, nothing approved yet. */
         readonly review?: boolean;
+        /** When the finished copy's files were in place on the machine; null when unknown. */
+        readonly doneAt?: string | null;
       }) => void)
     | undefined;
   readonly onCloseLockChange?: ((locked: boolean) => void) | undefined;
@@ -145,9 +147,10 @@ export function useCopyReporting({
   useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
   const done = stage === "done";
   const review = stage === "preview";
+  const doneAt = done ? (copy?.finishedAt ?? null) : null;
   useEffect(
-    () => onChoicesChange?.({ mode, machine, done, review }),
-    [mode, machine, done, review],
+    () => onChoicesChange?.({ mode, machine, done, review, doneAt }),
+    [mode, machine, done, review, doneAt],
   );
   // Measuring, comparing and copying run on the machines; only the short context
   // transfer and the steps that release a fence keep the dialog open.

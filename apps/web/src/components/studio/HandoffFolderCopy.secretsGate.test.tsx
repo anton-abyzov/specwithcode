@@ -7,6 +7,7 @@ import {
   CopyFixture,
   copyStatus,
   findButton,
+  summary,
   type FixtureOptions,
 } from "./HandoffFolderCopy.testkit";
 
@@ -226,7 +227,7 @@ it("approves without secrets from a window that may not send them, so nothing st
   expect(approval.input).toEqual({ operationId: expect.any(String), withoutSecrets: true });
 });
 
-it("approves with the secrets choice from a window that may send them", async () => {
+it("approves with the list it sent from a window that may send secrets", async () => {
   state.sourceAccess = "granted";
   statuses = [copyStatus("previewed"), copyStatus("applied")];
   await mount();
@@ -235,7 +236,91 @@ it("approves with the secrets choice from a window that may send them", async ()
   const approval = state.calls.find(([name]) => name === "copyApprove")![1] as {
     input: Record<string, unknown>;
   };
-  expect(approval.input).toEqual({ operationId: expect.any(String) });
+  // The destination then finishes only with every one of them.
+  expect(approval.input).toEqual({ operationId: expect.any(String), expectedSecrets: [".env"] });
+});
+
+// The secret files a real copy detected and left behind (an umbrella with nested repositories).
+const REAL_RUN = [
+  ".env",
+  ".env.bak-20260715",
+  ".env.cloudflare",
+  "repositories/anton-abyzov/specwithcode/.env",
+  "repositories/anton-abyzov/vskill-platform/.dev.vars",
+  "repositories/anton-abyzov/vskill-platform/.env",
+  "repositories/anton-abyzov/vskill-platform/.env.local",
+  "repositories/anton-abyzov/vskill-platform/crawl-worker/.env",
+  "repositories/anton-abyzov/vskill-platform/scanner-worker/.env",
+  "scripts/.cf-monitor.env",
+];
+const detected = {
+  ...summary,
+  totals: { ...summary.totals, secret: { files: REAL_RUN.length, bytes: 100 } },
+  secretFiles: REAL_RUN.map((path) => ({ path, size: 10 })),
+};
+const measureRealRun = () => {
+  const offer = state.handlers.copyOffer!;
+  state.handlers.copyOffer = (request) => ({
+    ...(offer(request) as object),
+    status: { state: "scanned", summary: detected, error: null },
+  });
+  state.handlers.copySourceStatus = () => ({ state: "scanned", summary: detected, error: null });
+};
+
+it("sends every detected secret file with the default choice, then approves with all of them", async () => {
+  state.sourceAccess = "granted";
+  measureRealRun();
+  statuses = [
+    copyStatus("previewed"),
+    copyStatus("applied", {
+      secrets: REAL_RUN.map((path) => ({ path, writtenAs: path, size: 10, state: "written" })),
+    }),
+  ];
+  await mount();
+  // Nothing was ticked or unticked: this is the default "Copy everything".
+  await click("Copy to M3");
+  expect(container.textContent).toContain("Secrets (.env, keys): 10 files, included");
+  await click("Copy to M3");
+  expect(sentSecrets()).toEqual([REAL_RUN]);
+  expect(names().indexOf("copySecrets")).toBeLessThan(names().indexOf("copyApprove"));
+  const approval = state.calls.find(([name]) => name === "copyApprove")![1] as {
+    input: Record<string, unknown>;
+  };
+  expect(approval.input).toEqual({ operationId: expect.any(String), expectedSecrets: REAL_RUN });
+  expect(left()).toBeNull();
+  expect(container.textContent).not.toContain("stayed on M4");
+});
+
+it("offers the secret files again when Retry follows a copy the destination stopped for them", async () => {
+  state.sourceAccess = "granted";
+  measureRealRun();
+  const stopped = copyStatus("failed", {
+    failedStep: "applied",
+    committed: false,
+    projectId: null,
+    error: {
+      code: "refused",
+      message:
+        "10 secret files approved for this copy were no longer offered by M4. The other files are in place here. Retry to send them again.",
+    },
+  });
+  statuses = [copyStatus("previewed"), stopped];
+  await mount();
+  await click("Copy to M3");
+  await click("Copy to M3");
+  expect(container.textContent).toContain("were no longer offered by M4");
+  expect(sentSecrets()).toEqual([REAL_RUN]);
+  // Another window withdrew the list meanwhile: Retry sends it again, then retries.
+  statuses = [
+    copyStatus("applied", {
+      secrets: REAL_RUN.map((path) => ({ path, writtenAs: path, size: 10, state: "written" })),
+    }),
+  ];
+  state.handlers.copyRetry = () => copyStatus("applying");
+  await click("Retry");
+  expect(sentSecrets()).toEqual([REAL_RUN, REAL_RUN]);
+  expect(names().lastIndexOf("copySecrets")).toBeLessThan(names().indexOf("copyRetry"));
+  expect(left()).toBeNull();
 });
 
 const left = () => container.querySelector('[data-slot="copy-secrets-left"]');

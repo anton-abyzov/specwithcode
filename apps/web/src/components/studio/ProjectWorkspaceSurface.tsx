@@ -31,7 +31,8 @@ import {
 } from "../../lib/durableComposerDraftBindings";
 import { retryTransientSend } from "../../lib/transientSendRetry";
 import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
-import { type MachineHandoffOpenRequest, ProjectMachineHandoff } from "./ProjectMachineHandoff";
+import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
+import { useMachineHandoffRequest } from "./useMachineHandoffRequest";
 import { FolderCopyBanner } from "./FolderCopyBanner";
 import { OtherMachineAssistantNotice } from "./OtherMachineAssistantNotice";
 import { ProjectPlan } from "./ProjectPlan";
@@ -411,17 +412,9 @@ export function ProjectWorkspaceSurface({
   const [coordinatorDetailsOpen, setCoordinatorDetailsOpen] = useState(false);
   const [machineHandoffOpen, setMachineHandoffOpen] = useState(false);
   const [handoffTarget, setHandoffTarget] = useState<string | null>(null);
-  // The machine menu's "Send to another machine…": the dialog opens on the copy.
-  const [handoffRequest, setHandoffRequest] = useState<MachineHandoffOpenRequest | null>(null);
-  const requestHandoff = useCallback(
-    (mode: MachineHandoffOpenRequest["mode"], target?: string) =>
-      setHandoffRequest((previous) => ({
-        mode,
-        seq: (previous?.seq ?? 0) + 1,
-        ...(target ? { target } : {}),
-      })),
-    [],
-  );
+  // The machine menu's "Send to another machine…": the dialog opens on the copy, once.
+  const handoff = useMachineHandoffRequest();
+  const requestHandoff = handoff.ask;
   const handoffOpenChange = useCallback((open: boolean) => {
     setMachineHandoffOpen(open);
     if (!open) setHandoffTarget(null);
@@ -2173,7 +2166,8 @@ export function ProjectWorkspaceSurface({
                         project={project}
                         coordinatorId={mainCoordinatorId}
                         requestedTarget={handoffTarget}
-                        openRequest={handoffRequest}
+                        openRequest={handoff.request}
+                        onRequestHandled={handoff.handled}
                         // The machine menu above opens it: one control for Add, Move and Leave.
                         showTrigger={false}
                         onOpenChange={handoffOpenChange}

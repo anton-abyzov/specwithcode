@@ -973,7 +973,8 @@ it("keeps live actions in the real dialog footer through measurement, preview, a
       ?.closest('[data-slot="dialog-footer"]'),
   ).not.toBeNull();
   await openMore();
-  expect(moreItems()).toContain("Start a new copy");
+  expect(moreItems()).toEqual(["Copy again"]);
+  expect(dialogButton("Copy changes again")).toBeTruthy();
   expect(
     document.querySelector('[data-slot="dialog-panel"] [data-slot="copy-actions"]'),
   ).toBeNull();

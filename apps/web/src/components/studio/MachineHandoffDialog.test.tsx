@@ -620,10 +620,27 @@ describe("handoff file method and intent", () => {
     expect(document.querySelector("h2")?.textContent).toBe("Move Product to MacBook Pro");
   });
 
-  it("titles a finished copy of files only as copied, and a finished move as on", async () => {
+  it("titles a finished copy with where the project is and when it got there", async () => {
     await handoff({ method: "copy", intent: "copy", copyFlow, copyDoneOn: "ministorm" });
-    expect(document.querySelector("h2")?.textContent).toBe("Product is copied to ministorm");
-    await handoff({ method: "copy", intent: "move", copyFlow, copyDoneOn: "ministorm" });
+    expect(document.querySelector("h2")?.textContent).toBe("Product is on ministorm");
+    const copyDoneAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    await handoff({
+      method: "copy",
+      intent: "copy",
+      copyFlow,
+      copyDoneOn: "ministorm",
+      copyDoneAt,
+    });
+    expect(document.querySelector("h2")?.textContent).toBe(
+      "Product is on ministorm (copied 2h ago)",
+    );
+    await handoff({
+      method: "copy",
+      intent: "move",
+      copyFlow,
+      copyDoneOn: "ministorm",
+      copyDoneAt,
+    });
     expect(document.querySelector("h2")?.textContent).toBe("Product is on ministorm");
   });
 

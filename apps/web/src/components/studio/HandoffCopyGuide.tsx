@@ -205,10 +205,13 @@ export function CopyCheckingStep({
   folder,
   targetLabel,
   error,
+  finished = false,
   onCheckAgain,
   onStartNew,
 }: {
   readonly checking: "checking" | "unreachable";
+  /** The copy finished before: an unreachable machine does not make it unfinished. */
+  readonly finished?: boolean;
   readonly folder: string;
   readonly targetLabel: string;
   readonly error: string | null;
@@ -226,7 +229,9 @@ export function CopyCheckingStep({
       >
         {checking === "checking"
           ? `Checking the copy to ${folder} on ${targetLabel}…`
-          : `A copy to ${folder} on ${targetLabel} is unfinished. Check it again once ${targetLabel} is reachable.`}
+          : finished
+            ? `The copy to ${folder} on ${targetLabel} finished. ${targetLabel} is not reachable now. Check again to view or undo it.`
+            : `A copy to ${folder} on ${targetLabel} is unfinished. Check it again once ${targetLabel} is reachable.`}
       </p>
       <HandoffCopyActions>
         {error && (

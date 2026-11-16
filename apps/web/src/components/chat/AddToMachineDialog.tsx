@@ -457,8 +457,13 @@ function AddToMachineBody({
       </Button>
     ) : (
       <Button
+        // Started before the scan answers, the clone would carry none of the secret files.
         disabled={
-          locked || !ready || plan?.kind !== "clone" || capabilities?.projectCloneTracking !== true
+          locked ||
+          !ready ||
+          plan?.kind !== "clone" ||
+          capabilities?.projectCloneTracking !== true ||
+          scan.state === "scanning"
         }
         onClick={() => void clone()}
       >
