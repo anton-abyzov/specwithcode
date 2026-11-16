@@ -134,7 +134,6 @@ interface FilePreviewPanelProps {
 
 const FILE_EXPLORER_STORAGE_KEY = "studio.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "studio.renderMarkdown";
-const RENDER_BROWSER_FILE_STORAGE_KEY = "studio.renderBrowserFile";
 const RENDER_TABLE_STORAGE_KEY = "studio.renderTable";
 function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
@@ -144,13 +143,15 @@ function WorkspaceImagePreview(props: {
   readonly alt: string;
   readonly workspaceMutationId: string | null;
 }) {
+  const insideWorkspace =
+    mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined;
   const resource = useMemo(
     () => ({
-      _tag: "workspace-file" as const,
+      _tag: insideWorkspace ? ("workspace-file" as const) : ("media-file" as const),
       threadId: props.threadRef.threadId,
       path: props.absolutePath,
     }),
-    [props.threadRef.threadId, props.absolutePath],
+    [insideWorkspace, props.threadRef.threadId, props.absolutePath],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
@@ -765,7 +766,7 @@ function RenderedMarkdownSurface({
 function renderedToggleLabel(mode: "markdown" | "html" | "table", rendered: boolean): string {
   if (mode === "markdown") return rendered ? "Show markdown source" : "Show rendered markdown";
   if (mode === "table") return rendered ? "Show source" : "Show table";
-  return rendered ? "Show HTML source" : "Show rendered page";
+  return rendered ? "View source" : "Preview";
 }
 
 function initialExplorerOpen(): boolean {
@@ -854,14 +855,11 @@ export default function FilePreviewPanel({
   // it on the panel meant a thread switch dropped it and forced source back.
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
     RENDER_MARKDOWN_STORAGE_KEY,
-    false,
-    Schema.Boolean,
-  );
-  const [renderBrowserFilePreferred, setRenderBrowserFilePreferred] = useLocalStorage(
-    RENDER_BROWSER_FILE_STORAGE_KEY,
     true,
     Schema.Boolean,
   );
+  // HTML source is for the open file only. A later file opens rendered.
+  const [htmlSourcePath, setHtmlSourcePath] = useState<string | null>(null);
   const [renderTablePreferred, setRenderTablePreferred] = useLocalStorage(
     RENDER_TABLE_STORAGE_KEY,
     true,
@@ -882,7 +880,7 @@ export default function FilePreviewPanel({
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
   const renderMarkdown = isMarkdown && renderMarkdownPreferred && revealHandled;
-  const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
+  const renderBrowserFile = isPdf || (isHtml && htmlSourcePath !== relativePath && revealHandled);
   const renderTable = tableDelimiter !== null && renderTablePreferred && revealHandled;
   const renderedMode = isMarkdown
     ? ("markdown" as const)
@@ -906,7 +904,7 @@ export default function FilePreviewPanel({
     ? setRenderMarkdownPreferred
     : tableDelimiter
       ? setRenderTablePreferred
-      : setRenderBrowserFilePreferred;
+      : null;
   const canOpenInBrowser =
     canOperatePreview &&
     previewPath !== null &&
@@ -1039,7 +1037,11 @@ export default function FilePreviewPanel({
               pressed={rendered}
               onPress={() => {
                 const pressed = !rendered;
-                setRenderedPreferred(pressed);
+                if (renderedMode === "html") {
+                  setHtmlSourcePath(pressed || relativePath === null ? null : relativePath);
+                } else if (setRenderedPreferred) {
+                  setRenderedPreferred(pressed);
+                }
                 setHandledReveal(
                   pressed && relativePath !== null
                     ? { path: relativePath, requestId: revealRequestId }

@@ -30,6 +30,18 @@ const PDF_VIEWER_FRAGMENT = "#toolbar=0&view=FitH";
 export const isPdfPreviewFile = (path: string): boolean =>
   /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 
+/** Asks the server for the wrapper. Keeps a query and a hash the URL already has. */
+function fileFrameSrc(src: string): string {
+  const hashIndex = src.indexOf("#");
+  const hash = hashIndex >= 0 ? src.slice(hashIndex) : "";
+  const before = hashIndex >= 0 ? src.slice(0, hashIndex) : src;
+  const queryIndex = before.indexOf("?");
+  const path = queryIndex >= 0 ? before.slice(0, queryIndex) : before;
+  const params = new URLSearchParams(queryIndex >= 0 ? before.slice(queryIndex + 1) : "");
+  params.set("studio-frame", "1");
+  return `${path}?${params.toString()}${hash}`;
+}
+
 /**
  * Renders an HTML or PDF document from its URL. HTML runs in a sandboxed frame
  * with an opaque origin, so a page cannot reach the app's session or storage.
@@ -54,12 +66,41 @@ export function BrowserDocumentFrame(props: {
   ) : props.htmlRender ? (
     <HtmlRenderPage key={props.src} src={props.src} title={props.title} />
   ) : (
+    <HtmlFileFrame src={props.src} title={props.title} className={className} />
+  );
+}
+
+/**
+ * A file's HTML page. No popups. The server wraps it. A link to another site
+ * opens through the app only while the reader is using this frame.
+ */
+function HtmlFileFrame(props: {
+  readonly src: string;
+  readonly title: string;
+  readonly className: string;
+}) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const src = fileFrameSrc(props.src);
+  useEffect(() => {
+    const openLink = (event: MessageEvent) => {
+      const frame = frameRef.current;
+      const request = readHtmlRenderLinkRequest(event.data);
+      if (request === undefined || !trustedFrameMessage(event, frame) || !readerIsUsing(frame!)) {
+        return;
+      }
+      window.open(request.url, "_blank", "noopener,noreferrer");
+    };
+    window.addEventListener("message", openLink);
+    return () => window.removeEventListener("message", openLink);
+  }, []);
+  return (
     <iframe
-      key={props.src}
-      src={props.src}
+      ref={frameRef}
+      key={src}
+      src={src}
       title={props.title}
-      className={className}
-      sandbox="allow-scripts allow-forms allow-popups"
+      className={props.className}
+      sandbox="allow-scripts allow-forms"
     />
   );
 }

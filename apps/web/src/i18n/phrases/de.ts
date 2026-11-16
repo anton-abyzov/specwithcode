@@ -3420,6 +3420,8 @@ export const de: PhraseCatalog = {
   "Previous artifact": "Vorheriges Artefakt",
   "Next artifact": "Nächstes Artefakt",
   "Open in panel": "Im Bereich öffnen",
+  "Open this file from a thread to preview it.":
+    "Öffne diese Datei aus einem Thread, um sie in der Vorschau zu sehen.",
   "Open in browser": "Im Browser öffnen",
   "{name} could not be loaded from the host.": "{name} konnte nicht vom Host geladen werden.",
   Attachments: "Anhänge",

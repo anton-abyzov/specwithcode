@@ -3375,6 +3375,7 @@ export const ko: PhraseCatalog = {
   "Previous artifact": "이전 아티팩트",
   "Next artifact": "다음 아티팩트",
   "Open in panel": "패널에서 열기",
+  "Open this file from a thread to preview it.": "미리 보려면 스레드에서 이 파일을 여세요.",
   "Open in browser": "브라우저에서 열기",
   "{name} could not be loaded from the host.": "호스트에서 {name}을(를) 불러올 수 없습니다.",
   Attachments: "첨부 파일",

@@ -3420,6 +3420,8 @@ export const es: PhraseCatalog = {
   "{value} of {count}": "{value} de {count}",
   "Previous artifact": "Artefacto anterior",
   "Next artifact": "Artefacto siguiente",
+  "Open this file from a thread to preview it.":
+    "Abre este archivo desde un hilo para ver la vista previa.",
   "Open in panel": "Abrir en el panel",
   "Open in browser": "Abrir en el navegador",
   "{name} could not be loaded from the host.": "No se pudo cargar {name} desde el host.",

@@ -43,7 +43,7 @@ vi.mock("~/rightPanelStore", () => ({
   useRightPanelStore: { getState: () => ({ openFile: state.openFile }) },
 }));
 
-import { ViewerLinkedPane } from "./ViewerLinkedPane";
+import { ViewerLinkedPane, viewerLinkHeader } from "./ViewerLinkedPane";
 
 const environmentId = "library-host" as EnvironmentId;
 // A link in a Library document: the Library's server reads it, and no thread owns it.
@@ -97,6 +97,13 @@ it("keeps Open in panel for a file opened from a thread", async () => {
   );
   await act(() => open!.click());
   expect(state.openFile).toHaveBeenCalledWith(threadRef, "src/permissionWatcher.ts", undefined);
+});
+
+it("names an html file a page", () => {
+  expect(
+    viewerLinkHeader({ kind: "file", file: { ...libraryFile, path: "draft/page.html" } }).kind,
+  ).toBe("Page");
+  expect(viewerLinkHeader({ kind: "file", file: libraryFile }).kind).toBe("File");
 });
 
 it("gives a markdown file no thread owns its server, so its own links open in the pane", async () => {

@@ -33,7 +33,9 @@ describe("BrowserDocumentFrame", () => {
       <BrowserDocumentFrame src="https://x.test/page.html" title="Page" pdf={false} />,
     );
     expect(html).not.toContain("report-document-page");
-    expect(html).toContain('sandbox="allow-scripts allow-forms allow-popups"');
+    expect(html).toContain('sandbox="allow-scripts allow-forms"');
+    expect(html).not.toContain("allow-popups");
+    expect(html).toContain("studio-frame=1");
   });
 });
 
