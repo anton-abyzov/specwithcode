@@ -237,7 +237,7 @@ export function AdvisorSettings(props: {
               {advisor.model !== null ? (
                 <Button
                   size="sm"
-                  variant="ghost"
+                  variant="outline"
                   disabled={off}
                   aria-label={tx("Use the default advisor order")}
                   onClick={() => save({ model: null })}

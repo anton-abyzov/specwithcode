@@ -78,7 +78,7 @@ function AdvisorChip(props: { readonly children: ReactNode; readonly tone?: "fai
   return (
     <span
       className={cn(
-        "shrink-0 whitespace-nowrap rounded-full border px-1.5 text-[11px] leading-4",
+        "shrink-0 whitespace-nowrap rounded-full border px-1.5 text-2xs/4",
         props.tone === "failed"
           ? "border-destructive/40 text-destructive-foreground"
           : "border-border text-muted-foreground",
