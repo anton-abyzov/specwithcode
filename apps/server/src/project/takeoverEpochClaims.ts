@@ -1,4 +1,8 @@
-import type { ProjectTakeoverEpochClaim, ProjectTakeoverResult } from "@specweave-studio/contracts";
+import type {
+  EnvironmentId,
+  ProjectTakeoverEpochClaim,
+  ProjectTakeoverResult,
+} from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -53,6 +57,17 @@ const outcome = (kind: ProjectTakeoverEpochClaim["outcome"], detail?: string): O
     ? { outcome: kind }
     : { outcome: kind, detail: detail.slice(0, DETAIL_MAX) };
 
+/** A claim row. `machine` stays the branded member id the project already stored. */
+const claimEntry = (
+  machine: EnvironmentId,
+  result: Outcome,
+  label?: string,
+): ProjectTakeoverEpochClaim => ({
+  machine,
+  ...(label === undefined ? {} : { label }),
+  ...result,
+});
+
 /** What a machine's answer to the claim means; anything unexpected is no answer. */
 export function readTakeoverClaim(value: unknown, epoch: number): Outcome {
   if (!isRecord(value) || typeof value.accepted !== "boolean")
@@ -90,7 +105,7 @@ export const makeTakeoverEpochClaims = (deps: TakeoverEpochClaimDeps) => {
   const claim = (input: {
     readonly logicalProjectId: string;
     readonly epoch: number;
-    readonly members: ReadonlyArray<{ readonly environmentId: string }>;
+    readonly members: ReadonlyArray<{ readonly environmentId: EnvironmentId }>;
   }): Effect.Effect<ReadonlyArray<ProjectTakeoverEpochClaim>> =>
     Effect.gen(function* () {
       const self = yield* deps.selfEnvironmentId;
@@ -111,20 +126,19 @@ export const makeTakeoverEpochClaims = (deps: TakeoverEpochClaimDeps) => {
         (environmentId) => {
           const machine = machines.find((candidate) => candidate.environmentId === environmentId);
           if (machine === undefined)
-            return Effect.succeed({
-              machine: environmentId,
-              ...outcome(
-                "unreachable",
-                Option.isNone(loaded)
-                  ? "This machine could not read its list of machines."
-                  : "This machine has no link to that machine.",
+            return Effect.succeed(
+              claimEntry(
+                environmentId,
+                outcome(
+                  "unreachable",
+                  Option.isNone(loaded)
+                    ? "This machine could not read its list of machines."
+                    : "This machine has no link to that machine.",
+                ),
               ),
-            });
-          const named = (result: Outcome) => ({
-            machine: environmentId,
-            label: machine.label.slice(0, LABEL_MAX),
-            ...result,
-          });
+            );
+          const named = (result: Outcome) =>
+            claimEntry(environmentId, result, machine.label.slice(0, LABEL_MAX));
           return Effect.gen(function* () {
             const left = deadline - (yield* Clock.currentTimeMillis);
             if (left <= 0) return outcome("unreachable", "The machine was not asked in time.");
@@ -153,8 +167,7 @@ export const makeTakeoverEpochClaims = (deps: TakeoverEpochClaimDeps) => {
         },
         { concurrency: TAKEOVER_CLAIM_CONCURRENCY },
       );
-      // The contract brands the machine id; these are member and fleet ids as stored.
-      return claims as ReadonlyArray<ProjectTakeoverEpochClaim>;
+      return claims;
     });
 
   /** The takeover's answer with what each other member machine said to the claim. */
