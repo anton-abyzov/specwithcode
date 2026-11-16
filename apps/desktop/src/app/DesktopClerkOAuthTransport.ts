@@ -12,6 +12,12 @@ import type { DesktopConnectSignInState } from "@specweave-studio/contracts";
  * request replaces the waiting one and opens the browser again, and every
  * change of state is reported to the window that asked.
  *
+ * A request that is replaced, fails or times out ends by rejecting, as in the
+ * SDK: resolving would hand clerk-js a callback it then acts on. Electron
+ * prints its own "Error occurred in handler" line for every rejected handler,
+ * so each of those shows twice in the journal: our line with the state, and
+ * Electron's with the fixed message below. Neither carries the URL.
+ *
  * Electron is passed in, so this module is tested without it. The test also
  * loads the installed SDK and fails when its channel names or rules drift.
  */

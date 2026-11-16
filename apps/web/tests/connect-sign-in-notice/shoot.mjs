@@ -109,7 +109,8 @@ for (const theme of ["light", "dark"]) {
     await emit(state);
     const want = notices[state];
     try {
-      await page.getByText(want.title, { exact: true }).waitFor({ timeout: 1000 });
+      // The notice it replaces is still sliding out for a moment, hence first().
+      await page.getByText(want.title, { exact: true }).first().waitFor({ timeout: 1000 });
     } catch {
       fail(`${state}: "${want.title}" did not show within one second`);
       continue;
@@ -134,6 +135,31 @@ for (const theme of ["light", "dark"]) {
     await page.screenshot({ path: NodePath.join(output, `${state}-${theme}.png`) });
   }
 
+  // Other toasts arrive while the sign-in waits (the limit is three). The
+  // next state still shows in front of them, not buried or hidden.
+  for (const title of ["Other one", "Other two", "Other three"]) {
+    await page.evaluate((value) => window.addOtherToast(value), title);
+  }
+  await settle();
+  await emit("timed-out");
+  await settle();
+  const front = await page.evaluate(() => {
+    const viewport = document.querySelector('[data-slot="toast-viewport"]');
+    const box = viewport.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + 24);
+    return (
+      hit?.closest("[data-base-ui-toast], [data-slot='toast-viewport'] > *")?.textContent ?? ""
+    );
+  });
+  if (!front.includes(notices["timed-out"].title)) {
+    fail(`timed-out after other toasts: the front toast reads "${front.slice(0, 60)}"`);
+  }
+  await page.screenshot({
+    path: NodePath.join(output, `timed-out-over-other-toasts-${theme}.png`),
+  });
+  await page.reload();
+  await page.getByTestId("sign-in-dialog-stand-in").waitFor();
+
   // The notice stays while the sign-in waits: no auto-dismiss.
   await emit("waiting");
   await page.waitForTimeout(11_000);
@@ -141,13 +167,10 @@ for (const theme of ["light", "dark"]) {
 
   for (const state of ["completed", "replaced"]) {
     await emit("waiting");
-    await page.getByText(notices.waiting.title, { exact: true }).waitFor({ timeout: 1000 });
+    await page.getByText(notices.waiting.title, { exact: true }).first().waitFor({ timeout: 1000 });
     await emit(state);
-    try {
-      await page.locator(TOAST).first().waitFor({ state: "detached", timeout: 3000 });
-    } catch {
-      fail(`${state}: the notice stayed`);
-    }
+    await page.waitForTimeout(1500);
+    if ((await titles()).length !== 0) fail(`${state}: the notice stayed`);
   }
   await page.screenshot({ path: NodePath.join(output, `completed-${theme}.png`) });
   await page.close();

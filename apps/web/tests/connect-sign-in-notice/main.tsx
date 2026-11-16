@@ -7,14 +7,16 @@ import {
 } from "@tanstack/react-router";
 import { createRoot } from "react-dom/client";
 import { useConnectSignInNotice } from "../../src/components/clerk/useConnectSignInNotice";
-import { ToastProvider } from "../../src/components/ui/toast";
+import { ToastProvider, toastManager } from "../../src/components/ui/toast";
 import { applyThemePalette } from "../../src/themePalette";
 import "./fixture.css";
 
 /*
  * The real notice hook and the real toasts, fed by a stand-in desktop bridge.
  * `window.emitConnectSignInState(state)` plays the desktop app: waiting,
- * replaced, open-failed, timed-out or completed. `?theme=dark` the theme.
+ * replaced, open-failed, timed-out or completed. `window.addOtherToast(title)`
+ * adds an unrelated toast, as the app can while a sign-in waits.
+ * `?theme=dark` the theme.
  *
  * The sign-in dialog here is a stand-in for the hosted one, which needs a live
  * account service. It copies what matters for the notice: a fixed backdrop
@@ -29,12 +31,16 @@ applyThemePalette("studio-chat", dark ? "dark" : "light");
 declare global {
   interface Window {
     emitConnectSignInState?: (state: DesktopConnectSignInState) => void;
+    addOtherToast?: (title: string) => void;
   }
 }
 
 const listeners = new Set<(state: DesktopConnectSignInState) => void>();
 window.emitConnectSignInState = (state) => {
   for (const listener of listeners) listener(state);
+};
+window.addOtherToast = (title) => {
+  toastManager.add({ type: "info", title, timeout: 0 });
 };
 const bridge: Pick<DesktopBridge, "onConnectSignInState"> = {
   onConnectSignInState: (listener) => {
@@ -74,7 +80,7 @@ function SignInDialogStandIn() {
 }
 
 function Harness() {
-  useConnectSignInNotice(bridge);
+  useConnectSignInNotice(false, bridge);
   return (
     <div className="min-h-screen bg-background p-8 text-foreground">
       <p className="text-sm text-muted-foreground">The app window behind the sign-in dialog.</p>
