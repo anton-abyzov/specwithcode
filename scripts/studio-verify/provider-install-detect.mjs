@@ -303,6 +303,9 @@ try {
     cli: provider?.cli,
     version: provider?.version,
     models: provider?.models?.map((model) => model.slug),
+    limits: provider?.usageLimits?.windows?.map(
+      (window) => `${window.kind} ${window.usedPercent}%`,
+    ),
     message: provider?.message,
   });
   /** Reads the row until `done` says so; the time is counted from `since`. */
@@ -325,8 +328,11 @@ try {
   };
 
   if (realMuse) {
+    // Signed in, with models, and with the limits that let it be offered as a fallback.
     const signedIn = (provider) =>
-      provider.auth?.status === "authenticated" && (provider.models?.length ?? 0) > 0;
+      provider.auth?.status === "authenticated" &&
+      (provider.models?.length ?? 0) > 0 &&
+      (provider.usageLimits?.windows?.length ?? 0) > 0;
     const first = await until("muse", signedIn, Date.now(), 90_000);
     expect(
       "signed in with its plan and models on an empty Muse data folder",
