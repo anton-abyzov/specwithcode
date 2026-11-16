@@ -9,6 +9,7 @@ import test from "node:test";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const hook = join(root, "scripts/studio-toolchain/bootstrap-pnpmfile.cjs");
 const wrapper = { name: "vp-global", version: "1.0.0", dependencies: { "vite-plus": "1.0.0" } };
+const currentWrapper = { name: "vp-global", version: "1.6.0", dependencies: { "vite-plus": "1.6.0" } };
 const edge = {
   name: "estree-walker",
   version: "3.0.3",
@@ -27,7 +28,7 @@ function readPackage(manifest, pkg = edge) {
         process.execPath,
         [
           "-e",
-          'const load = require("node:module").createRequire(process.argv[1]); process.chdir(process.argv[3]); const hook = load(process.argv[1]); console.log(JSON.stringify(hook.hooks.readPackage(JSON.parse(process.argv[2]))));',
+          'const load = require("node:module").createRequire(process.argv[1]); process.chdir(process.argv[3]); const hook = load(process.argv[1]); const pkg = JSON.parse(process.argv[2]); const read = hook.hooks && hook.hooks.readPackage; console.log(JSON.stringify(read ? read(pkg) : pkg));',
           hook,
           JSON.stringify(pkg),
           dir,
@@ -46,6 +47,29 @@ test("pins only the unavailable bootstrap edge to the repository-reviewed versio
     dependencies: { ...edge.dependencies, "@types/estree": "1.0.9" },
   });
   assert.match(readFileSync(join(root, "pnpm-lock.yaml"), "utf8"), /'@types\/estree@1\.0\.9':/);
+});
+
+test("vite-plus 1.6.0 exports no hooks so its frozen install lock stays valid", () => {
+  assert.deepEqual(readPackage(currentWrapper), edge);
+  const dir = mkdtempSync(join(tmpdir(), "vp-bootstrap-test-"));
+  try {
+    writeFileSync(join(dir, "package.json"), JSON.stringify(currentWrapper));
+    const loaded = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          "-e",
+          'const load = require("node:module").createRequire(process.argv[1]); process.chdir(process.argv[2]); const hook = load(process.argv[1]); console.log(JSON.stringify({ hooks: hook.hooks ?? null }));',
+          hook,
+          dir,
+        ],
+        { cwd: root, encoding: "utf8" },
+      ),
+    );
+    assert.equal(loaded.hooks, null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("product installs and other bootstrap versions keep original package requirements", () => {
