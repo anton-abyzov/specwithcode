@@ -26,6 +26,8 @@ export interface CopyAlong {
   readonly onIncludeSecretsChange: (include: boolean) => void;
   /** Why this window cannot send secrets, and where to start the copy instead. */
   readonly secretsLocked?: string | null;
+  /** How included secrets travel when not through this window; null for the plain way. */
+  readonly secretsVia?: string | null;
   /** The Workspace locations rows, shown under Details. */
   readonly details?: ReactNode;
 }
@@ -196,7 +198,8 @@ export function HandoffCopySetup({
                   {along.secretsLocked ? (
                     <SecretsLockedNote>{along.secretsLocked}</SecretsLockedNote>
                   ) : along.includeSecrets ? (
-                    `Sent only to ${targetLabel}, readable only by your user there.`
+                    (along.secretsVia ??
+                    `Sent only to ${targetLabel}, readable only by your user there.`)
                   ) : (
                     `They stay on ${sourceLabel}.`
                   )}{" "}

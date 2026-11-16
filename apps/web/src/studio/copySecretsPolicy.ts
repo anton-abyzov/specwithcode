@@ -2,18 +2,18 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@specweave-studio/client-runtime/state/runtime";
-import {
-  AuthAccessWriteScope,
-  type EnvironmentId,
-  type FolderCopyApproveInput,
-  type FolderCopySourceStatus,
+import type {
+  EnvironmentId,
+  FolderCopyApproveInput,
+  FolderCopySourceStatus,
 } from "@specweave-studio/contracts";
-import { readEnvironmentScopeAccess } from "../state/session";
+import { secretsBlocked, sourceDeniesSecrets } from "./copySecretsRoute";
 
 /**
  * Which secrets a folder copy may carry, shared by the copy dialog, its background watcher
- * and Add to another machine. Sending secrets needs access:write on the source; a window
- * without it approves with `withoutSecrets`, which the destination enforces.
+ * and Add to another machine. Sending secrets the plain way needs access:write on the
+ * source; a window without it sends them sealed where the source can (see copySecretsRoute)
+ * and otherwise approves with `withoutSecrets`, which the destination enforces.
  */
 
 /** What a window that may not send secrets says when it cannot take staged ones off. */
@@ -71,24 +71,24 @@ export async function sendSecretsOrWithdraw(
   });
 }
 
-/** True when this window's grant on the source lacks access:write. */
-export const sourceDeniesSecrets = (source: EnvironmentId): boolean =>
-  readEnvironmentScopeAccess(source, AuthAccessWriteScope) === "denied";
+export { sourceDeniesSecrets };
 
 /**
- * The approval for a copy: without secrets when this window may not send them or the
- * choice leaves them on the source. The destination then pulls none, whatever is staged.
- * Otherwise it names the secret files this window sent (`sent`, empty when it sent none), so
- * the destination pulls exactly those, finishes only with every one of them, and never reads
- * a lost list as a full copy. Null when this window sent no list: the staged one is pulled.
+ * The approval for a copy: without secrets when this window can send them in no way (to
+ * `destination`, when the copy names one) or the choice leaves them on the source. The
+ * destination then pulls none, whatever is staged. Otherwise it names the secret files this
+ * window sent (`sent`, empty when it sent none), so the destination pulls exactly those,
+ * finishes only with every one of them, and never reads a lost list as a full copy. Null
+ * when this window sent no list: the staged one is pulled.
  */
 export const approveInput = (
   operationId: string,
   source: EnvironmentId,
   included: boolean,
   sent: ReadonlyArray<string> | null = null,
+  destination: EnvironmentId | string | null = null,
 ): FolderCopyApproveInput =>
-  (sourceDeniesSecrets(source) || !included
+  (secretsBlocked(source, destination) || !included
     ? { operationId, withoutSecrets: true }
     : sent
       ? { operationId, expectedSecrets: [...sent] }

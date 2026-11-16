@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { currentCopyActivities, resetCopyActivityForTests } from "../../studio/folderCopyActivity";
+import { resetSealedRoutes } from "../../studio/copySecretsRoute";
 import { HandoffFolderCopyWatcher } from "./HandoffFolderCopyWatcher";
 
 const state = vi.hoisted(() => ({
@@ -750,6 +751,83 @@ it("waits for the person when the secrets choice cannot be sent", async () => {
     state.handlers.copySecrets = () => {
       throw new Error("The source is offline.");
     };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(approvals).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("sends the secrets sealed before a one-click approval from a window without access:write", async () => {
+  vi.useFakeTimers();
+  try {
+    resetSealedRoutes();
+    state.sourceAccess = "denied";
+    pointer({ auto: true, secrets: { included: true, out: [] } });
+    let destination: "previewed" | "approved" = "previewed";
+    state.handlers.copyStatus = () =>
+      destination === "previewed" ? previewed([row()]) : copyStatus(destination);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: REAL_RUN.map((path) => ({ path, size: 1 })) },
+      progress: null,
+      error: null,
+    });
+    const asked: unknown[] = [];
+    state.handlers.copySecretsRoute = (request) => {
+      asked.push(request);
+      return { sealed: true };
+    };
+    const plain: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      plain.push(request);
+      throw new Error("This connection requires access:write.");
+    };
+    const sealed: unknown[] = [];
+    state.handlers.copySealedSecrets = (request) => {
+      sealed.push((request as { input: { paths: string[] } }).input.paths);
+      expect(approved).toEqual([]);
+      return { state: "ready" };
+    };
+    const approved: unknown[] = [];
+    state.handlers.copyApprove = (request) => {
+      approved.push((request as { input: unknown }).input);
+      destination = "approved";
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    // The source was asked about this copy's machine, sealed every file, and nothing went plain.
+    expect(asked[0]).toEqual({ environmentId: "m4", input: { destinationEnvironmentId: "m3" } });
+    expect(sealed).toEqual([REAL_RUN]);
+    expect(plain).toEqual([]);
+    expect(approved).toEqual([{ operationId: expect.any(String), expectedSecrets: REAL_RUN }]);
+    expect(state.toasts).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("stops at the review when a one-click copy promised secrets and the source has no sealed way", async () => {
+  vi.useFakeTimers();
+  try {
+    resetSealedRoutes();
+    state.sourceAccess = "denied";
+    pointer({ auto: true, secrets: { included: true, out: [] } });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+    });
+    state.handlers.copySecretsRoute = () => ({ sealed: false, reason: "not_allowed" });
     let approvals = 0;
     state.handlers.copyApprove = () => {
       approvals += 1;

@@ -899,13 +899,14 @@ export function HandoffFolderCopy({
     const operationId = saved.operationId;
     if (sourceChanged)
       throw new Error("The source changed. Measure and compare again before copying.");
-    if (secretsBlockedNow(project.environmentId) && secretsPromised(saved)) {
+    await secrets.refreshRoute(saved);
+    if (secretsBlockedNow(project.environmentId, environmentId) && secretsPromised(saved)) {
       // The form said included: the review says why not, and the person approves it there.
       setStage("preview");
       withoutReplaceAll(saved);
-      throw new Error(secretsSourceOnlyText(sourceLabel));
+      throw new Error(secrets.gate.note ?? secretsSourceOnlyText(sourceLabel));
     }
-    if (!secretsSent || secretsBlockedNow(project.environmentId))
+    if (!secretsSent || secretsBlockedNow(project.environmentId, environmentId))
       await secrets.sendTicked(operationId);
     setStage("copying");
     try {
@@ -914,6 +915,7 @@ export function HandoffFolderCopy({
         project.environmentId,
         pendingSecrets(saved).included,
         secrets.sentFor(operationId),
+        environmentId,
       );
       setCopy(unwrap(await approve({ environmentId, input })));
     } catch (cause) {
@@ -1397,6 +1399,7 @@ export function HandoffFolderCopy({
                 : null
             }
             secretsLocked={secrets.gate.note}
+            secretsVia={secrets.gate.via}
             link={link}
             linkDialog={linkDialog}
             onLinkDialogClose={() => setLinkDialog(false)}

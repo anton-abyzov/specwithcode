@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { AuthAccessWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
 import {
   readEnvironmentScopeAccess,
@@ -70,10 +70,14 @@ export function useSecretsGate(
 ) {
   const access = useEnvironmentScopeAccess(source, AuthAccessWriteScope);
   const ask = useAtomCommand(machineHandoff.copySecretsRoute, { reportFailure: false });
+  const asker = useRef(ask);
+  asker.current = ask;
   const denied = access === "denied";
+  // Asked once per source, destination and denial, not per render.
   useEffect(() => {
-    if (denied && destination !== null) void askSealedRoute(source, destination, ask);
-  }, [ask, denied, destination, source]);
+    if (denied && destination !== null)
+      void askSealedRoute(source, destination, (value) => asker.current(value));
+  }, [denied, destination, source]);
   const route = useSyncExternalStore(onSealedRoute, () => sealedRouteNow(source, destination));
   const asking = denied && destination !== null && route === null;
   const sealed = denied && route?.sealed === true;
@@ -85,6 +89,8 @@ export function useSecretsGate(
     /** Who the finish text names as able to send what stayed. */
     sender: senderFor(access, sealed),
     note: blocked ? secretsBlockedText(sourceLabel, destinationLabel, route) : null,
+    /** How included secrets travel from this window, said under the ticked line. */
+    via: sealed ? `Sent sealed by ${sourceLabel} straight to ${destinationLabel}.` : null,
     clamp: (choice: SecretsChoice) => (blocked ? withoutSecrets(choice) : choice),
   };
 }

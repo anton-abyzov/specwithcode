@@ -10,6 +10,7 @@ import {
   summary,
   type FixtureOptions,
 } from "./HandoffFolderCopy.testkit";
+import { resetSealedRoutes } from "../../studio/copySecretsRoute";
 
 // Secrets from a window that may not send them (signed in to the source through Connect).
 
@@ -107,6 +108,7 @@ const dialogClick = async (label: string) => {
 
 beforeEach(() => {
   state.sourceAccess = "unknown";
+  resetSealedRoutes();
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.clearAllMocks();
   localStorage.clear();
@@ -537,4 +539,127 @@ it("stops a Replace all left running at the review when this window turned out u
   };
   expect(approval.input).toEqual({ operationId: expect.any(String), withoutSecrets: true });
   expect(JSON.parse(localStorage.getItem(KEY)!).secretsStay).toBe(true);
+});
+
+// A window signed in to the source through Connect, where the source can send secrets
+// sealed to the destination machine: the ticked line is the one approval.
+const sealedWindow = (route: () => unknown = () => ({ sealed: true })) => {
+  state.sourceAccess = "denied";
+  state.handlers.copySecretsRoute = route;
+  state.handlers.copySealedSecrets = state.handlers.copySecrets!;
+  state.handlers.copySecrets = ({ input }: any) => {
+    if (input.paths.length > 0) throw new Error("This connection requires access:write.");
+    return { state: "scanned", summary, error: null, secrets: null };
+  };
+};
+const sealedSecrets = () =>
+  state.calls
+    .filter(([name]) => name === "copySealedSecrets")
+    .map(([, request]) => (request as { input: { paths: string[] } }).input.paths);
+
+it("sends every detected secret sealed after the one ticked line, from a window without access:write", async () => {
+  sealedWindow();
+  measureRealRun();
+  statuses = [
+    copyStatus("previewed"),
+    copyStatus("applied", {
+      secrets: REAL_RUN.map((path) => ({ path, writtenAs: path, size: 10, state: "written" })),
+    }),
+  ];
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  // The source was asked about this destination, and the line reads as in its own window.
+  expect(state.calls.find(([name]) => name === "copySecretsRoute")![1]).toEqual({
+    environmentId: "m4",
+    input: { destinationEnvironmentId: "m3" },
+  });
+  const along = container.querySelector('[data-slot="copy-along-secrets"]')!;
+  expect(along.textContent).toContain("Secrets (.env, keys): included");
+  expect(along.textContent).toContain("Sent sealed by M4 straight to M3.");
+  expect(along.querySelector('[data-slot="checkbox"]')!.hasAttribute("data-disabled")).toBe(false);
+  expect(container.querySelector('[data-slot="copy-secrets-locked"]')).toBeNull();
+  // Nothing was ticked or unticked: this is the default "Copy everything".
+  await click("Copy to M3");
+  expect(container.textContent).toContain("Secrets (.env, keys): 10 files, included");
+  expect(container.textContent).toContain("Sent sealed by M4 straight to M3.");
+  expect(JSON.parse(localStorage.getItem(KEY)!).secretsStay).toBeUndefined();
+  await click("Copy to M3");
+  // One sealed send with every file, no plain send, and no further prompt.
+  expect(sealedSecrets()).toEqual([REAL_RUN]);
+  expect(sentSecrets()).toEqual([]);
+  expect(names().indexOf("copySealedSecrets")).toBeLessThan(names().indexOf("copyApprove"));
+  const approval = state.calls.find(([name]) => name === "copyApprove")![1] as {
+    input: Record<string, unknown>;
+  };
+  expect(approval.input).toEqual({ operationId: expect.any(String), expectedSecrets: REAL_RUN });
+  expect(left()).toBeNull();
+  expect(container.textContent).not.toContain("stayed on M4");
+});
+
+it("leaves secrets on the source, unticked, when the person unticks the line in that window", async () => {
+  sealedWindow();
+  statuses = [copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  const box = container.querySelector<HTMLElement>(
+    '[data-slot="copy-along-secrets"] [data-slot="checkbox"]',
+  )!;
+  await act(async () => box.click());
+  await click("Copy to M3");
+  await click("Copy to M3");
+  expect(sealedSecrets()).toEqual([]);
+  const approval = state.calls.find(([name]) => name === "copyApprove")![1] as {
+    input: Record<string, unknown>;
+  };
+  expect(approval.input).toEqual({ operationId: expect.any(String), withoutSecrets: true });
+});
+
+it("says why when the destination does not take the source's secrets", async () => {
+  sealedWindow(() => ({ sealed: false, reason: "not_allowed" }));
+  statuses = [copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  const locked = container.querySelector('[data-slot="copy-secrets-locked"]')!;
+  expect(locked.textContent).toContain(
+    "M3 takes secrets from M4 only while M4 has full access there as your own machine. Allow that on M3, or start this copy in the SpecWithCode window on M4.",
+  );
+  expect(container.querySelector('[data-slot="copy-along-secrets"]')!.textContent).toContain(
+    "Secrets (.env, keys): left on M4",
+  );
+  await click("Copy to M3");
+  await click("Copy to M3");
+  expect(sealedSecrets()).toEqual([]);
+  const approval = state.calls.find(([name]) => name === "copyApprove")![1] as {
+    input: Record<string, unknown>;
+  };
+  expect(approval.input).toEqual({ operationId: expect.any(String), withoutSecrets: true });
+});
+
+it("stops at the review when the sealed way is gone by the time of the approval", async () => {
+  let reachable = true;
+  sealedWindow(() => (reachable ? { sealed: true } : { sealed: false, reason: "unreachable" }));
+  statuses = [copyStatus("previewed"), copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  await click("Copy to M3");
+  reachable = false;
+  await click("Copy to M3");
+  // The form said included, so nothing is approved without them unseen.
+  expect(names()).not.toContain("copyApprove");
+  expect(sealedSecrets()).toEqual([]);
+  expect(container.textContent).toContain("M4 can't reach M3 right now");
+});
+
+it("does not approve when the source refuses to seal the secrets", async () => {
+  sealedWindow();
+  state.handlers.copySealedSecrets = () => {
+    throw new Error("M3 did not give a key for the secret files.");
+  };
+  statuses = [copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  await click("Copy to M3");
+  await click("Copy to M3");
+  expect(names()).not.toContain("copyApprove");
+  expect(container.textContent).toContain("M3 did not give a key for the secret files.");
 });

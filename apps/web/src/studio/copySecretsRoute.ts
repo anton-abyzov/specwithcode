@@ -61,7 +61,11 @@ export async function askSealedRoute(
   } catch {
     route = NO_ROUTE;
   }
-  routes.set(keyOf(source, destination), route);
+  const key = keyOf(source, destination);
+  const known = routes.get(key);
+  // The same answer keeps its object, so a reader that compares by identity sees no change.
+  if (known && known.sealed === route.sealed && known.reason === route.reason) return known;
+  routes.set(key, route);
   for (const listener of listeners) listener();
   return route;
 }
