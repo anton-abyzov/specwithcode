@@ -4444,8 +4444,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
     // Git drops the registration even when it could not delete every file (one
     // was still being written), which leaves a folder nothing points to and no
-    // later removal can reach. The removal was asked for, so finish it.
+    // later removal can reach. The removal was asked for, so finish it, unless
+    // the caller is unattended cleanup: what Git left was never checked.
     if (
+      input.keepLeftBehind !== true &&
       wasRegistered &&
       !isSameOrInside(input.cwd, input.path, platform) &&
       (yield* registered) === "no" &&

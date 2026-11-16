@@ -240,7 +240,7 @@ describe("specweave-studio worktree owners", () => {
               id,
               payload(NodePath.join(folders, folder), {
                 title: id,
-                lineage: { parentThreadId: parent },
+                lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
               }),
             );
           child("review", "settled", "settled");

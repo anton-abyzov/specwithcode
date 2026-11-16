@@ -75,7 +75,10 @@ const decodeThread = Schema.decodeUnknownEffect(
       archivedAt: Schema.optional(Schema.NullOr(Schema.String)),
       settledOverride: Schema.optional(Schema.NullOr(Schema.String)),
       lineage: Schema.optional(
-        Schema.Struct({ parentThreadId: Schema.optional(Schema.NullOr(Schema.String)) }),
+        Schema.Struct({
+          parentThreadId: Schema.optional(Schema.NullOr(Schema.String)),
+          relationshipToParent: Schema.optional(Schema.NullOr(Schema.String)),
+        }),
       ),
     }),
   ),
@@ -103,8 +106,13 @@ export interface WorktreeThreadOwner {
   readonly cleanupPending: boolean;
   /** Deleted, and a cleanup effect failed or has an unknown status. */
   readonly cleanupFailed: boolean;
-  /** The chat that started this one, when it is a sub-chat. */
+  /** The chat this one came from: the one that started it, or the one it was forked from. */
   readonly parentThreadId?: string | null;
+  /**
+   * Its parent started it as a sub-chat (`relationshipToParent === "subagent"`).
+   * A fork is a chat of its own: a person works in it, so it keeps its own state.
+   */
+  readonly subChat?: boolean;
   /** A run of it is preparing, queued, starting, running or waiting. Unknown counts as busy. */
   readonly busy?: boolean;
   /**
@@ -166,9 +174,9 @@ export const isOpenThreadOwner = (owner: WorktreeThreadOwner): boolean =>
   worktreeThreadState(owner) === "open";
 
 /**
- * Each thread's effective state. A thread whose parent is listed, is not
+ * Each thread's effective state. A sub-chat whose parent is listed, is not
  * deleted and shares one of its folder spellings follows that parent along the
- * chain; a busy one is open. A deleted thread stays deleted, a chat whose
+ * chain; a busy one is open. A fork is not a sub-chat and keeps its own state. A deleted thread stays deleted, a chat whose
  * parent is deleted or elsewhere keeps its own state, and a cycle stops at the
  * thread it would revisit.
  */
@@ -185,6 +193,7 @@ function withEffectiveStates(
     let state = own;
     if (
       !owner.deleted &&
+      owner.subChat === true &&
       parent !== undefined &&
       parent !== owner &&
       !parent.deleted &&
@@ -303,6 +312,7 @@ export const decodeWorktreeBindings = Effect.fn("WorktreeOwnership.decodeBinding
       cleanupPending: deleted,
       cleanupFailed: deleted && Number(row.cleanup_failed) !== 0,
       parentThreadId: thread.lineage?.parentThreadId ?? null,
+      subChat: thread.lineage?.relationshipToParent === "subagent",
       busy: row.busy === undefined || Number(row.busy) !== 0,
     });
   }

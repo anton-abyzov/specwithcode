@@ -182,7 +182,8 @@ interface RemovedItem {
  */
 type SweepRequest =
   | { readonly kind: "scheduled" }
-  | { readonly kind: "now"; readonly done: Deferred.Deferred<ReadonlyArray<RemovedItem>> };
+  | { readonly kind: "now"; readonly done: Deferred.Deferred<ReadonlyArray<RemovedItem>> }
+  | { readonly kind: "plan"; readonly done: Deferred.Deferred<StorageCleanupPlan> };
 
 function sameProjectWorktreePolicies(left: ServerSettings, right: ServerSettings): boolean {
   return [
@@ -710,7 +711,12 @@ export const make = Effect.gen(function* () {
             });
           return;
         }
-        yield* git.removeWorktree({ cwd: mainCheckout, path: worktreePath, force: false });
+        yield* git.removeWorktree({
+          cwd: mainCheckout,
+          path: worktreePath,
+          force: false,
+          keepLeftBehind: true,
+        });
         yield* gitManager.invalidateStatus(mainCheckout);
         // The branch ref stays, so the work can be checked out again.
         yield* Effect.logInfo("storage cleanup removed orphan worktree", {
@@ -896,7 +902,7 @@ export const make = Effect.gen(function* () {
   /** A scheduled sweep is queued and has not started; later requests join it. */
   let sweepWaiting = false;
   const sweep = Effect.fn("StorageCleanup.sweep")(function* (
-    request: SweepRequest,
+    request: Exclude<SweepRequest, { readonly kind: "plan" }>,
     removed: Array<RemovedItem>,
   ) {
     if (request.kind === "scheduled") sweepWaiting = false;
@@ -948,7 +954,56 @@ export const make = Effect.gen(function* () {
       .run(serverSettings, now)
       .pipe(Effect.catch((error) => Effect.logWarning("app folder check failed", { error })));
   });
+  const emptyPlan = (now: number): StorageCleanupPlan => ({
+    checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+    items: [],
+    removableBytes: 0,
+    complete: false,
+  });
+  /** What a sweep would do with each chat worktree and leftover download right now. */
+  const makePlan = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const serverSettings = yield* settingsService.getSettings;
+    const worktrees = yield* worktreeSweep("plan", serverSettings, now);
+    const items = [...worktrees.items, ...(yield* interruptedDownloads(now))];
+    return {
+      checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+      items,
+      removableBytes: items.reduce(
+        (total, item) => total + (item.action === "remove" ? (item.bytes ?? 0) : 0),
+        0,
+      ),
+      complete: worktrees.complete,
+    } satisfies StorageCleanupPlan;
+  }).pipe(
+    // A plan that could not be made is empty and incomplete, never an error page.
+    Effect.catchCause((cause) =>
+      Effect.logWarning("storage cleanup plan failed", { cause }).pipe(
+        Effect.andThen(Clock.currentTimeMillis),
+        Effect.map(emptyPlan),
+      ),
+    ),
+  );
+  // Requests still waiting for an answer; the service closing answers them.
+  const waitingPlans = new Set<Deferred.Deferred<StorageCleanupPlan>>();
+  const waitingRuns = new Set<Deferred.Deferred<ReadonlyArray<RemovedItem>>>();
+  let closed = false;
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      closed = true;
+      const now = yield* Clock.currentTimeMillis;
+      for (const done of waitingPlans) yield* Deferred.succeed(done, emptyPlan(now));
+      for (const done of waitingRuns) yield* Deferred.succeed(done, []);
+    }),
+  );
+  // One worker runs sweeps and plans in turn: a plan fetches default branches
+  // and asks hosts, and beside a sweep the two would fetch the same refs.
   const worker = yield* makeDrainableWorker((request: SweepRequest) => {
+    if (request.kind === "plan")
+      return makePlan.pipe(
+        Effect.flatMap((made) => Deferred.succeed(request.done, made)),
+        Effect.asVoid,
+      );
     const removed: Array<RemovedItem> = [];
     return sweep(request, removed).pipe(
       Effect.catchCauseIf(
@@ -1052,40 +1107,26 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const emptyPlan = (now: number): StorageCleanupPlan => ({
-    checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
-    items: [],
-    removableBytes: 0,
-    complete: false,
-  });
-  /** What a sweep would do with each chat worktree and leftover download right now. */
+  /** The plan, made by the worker after whatever sweep is running. */
   const plan = Effect.gen(function* () {
-    const now = yield* Clock.currentTimeMillis;
-    const serverSettings = yield* settingsService.getSettings;
-    const worktrees = yield* worktreeSweep("plan", serverSettings, now);
-    const items = [...worktrees.items, ...(yield* interruptedDownloads(now))];
-    return {
-      checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
-      items,
-      removableBytes: items.reduce(
-        (total, item) => total + (item.action === "remove" ? (item.bytes ?? 0) : 0),
-        0,
-      ),
-      complete: worktrees.complete,
-    } satisfies StorageCleanupPlan;
-  }).pipe(
-    // A plan that could not be made is empty and incomplete, never an error page.
-    Effect.catchCause((cause) =>
-      Effect.logWarning("storage cleanup plan failed", { cause }).pipe(
-        Effect.andThen(Clock.currentTimeMillis),
-        Effect.map(emptyPlan),
-      ),
-    ),
-  );
+    if (closed) return emptyPlan(yield* Clock.currentTimeMillis);
+    const done = yield* Deferred.make<StorageCleanupPlan>();
+    waitingPlans.add(done);
+    yield* worker.enqueue({ kind: "plan", done });
+    return yield* Deferred.await(done).pipe(
+      Effect.ensuring(Effect.sync(() => waitingPlans.delete(done))),
+    );
+  });
   const cleanNow = Effect.gen(function* () {
     const done = yield* Deferred.make<ReadonlyArray<RemovedItem>>();
-    yield* worker.enqueue({ kind: "now", done });
-    const removed = yield* Deferred.await(done);
+    if (closed) yield* Deferred.succeed(done, []);
+    else {
+      waitingRuns.add(done);
+      yield* worker.enqueue({ kind: "now", done });
+    }
+    const removed = yield* Deferred.await(done).pipe(
+      Effect.ensuring(Effect.sync(() => waitingRuns.delete(done))),
+    );
     return {
       removed: removed.map((item) => item.path),
       removedBytes: removed.reduce((total, item) => total + (item.bytes ?? 0), 0),

@@ -266,6 +266,8 @@ const sweepFixture = Effect.gen(function* () {
     readonly branch: string | null;
     readonly state: ChatState;
     readonly parent?: string;
+    /** The parent is the chat it was forked from, not the one that started it. */
+    readonly fork?: boolean;
     readonly projectId?: ProjectId;
     /** A row in the runs table, as the projection keeps a run in progress. */
     readonly run?: string;
@@ -281,7 +283,8 @@ const sweepFixture = Effect.gen(function* () {
       lineage: {
         rootThreadId: ThreadId.make(input.parent ?? input.id),
         parentThreadId: input.parent === undefined ? null : ThreadId.make(input.parent),
-        relationshipToParent: null,
+        relationshipToParent:
+          input.parent === undefined ? null : input.fork === true ? "fork" : "subagent",
       },
       ...(input.state === "settled" ? { settledOverride: "settled", settledAt: at(-DAY_MS) } : {}),
       ...(input.state === "archived" ? { archivedAt: at(-DAY_MS) } : {}),
@@ -296,7 +299,11 @@ const sweepFixture = Effect.gen(function* () {
         title: input.id,
         settledOverride: thread.settledOverride,
         archivedAt,
-        lineage: { parentThreadId: input.parent ?? null },
+        lineage: {
+          parentThreadId: input.parent ?? null,
+          relationshipToParent:
+            input.parent === undefined ? null : input.fork === true ? "fork" : "subagent",
+        },
       },
     )}, NULL, ${archivedAt})`;
     if (input.run !== undefined)
@@ -361,10 +368,12 @@ const sweepFixture = Effect.gen(function* () {
               Effect.succeed({
                 schemaVersion: 1,
                 snapshotSequence: 0,
-                threads: threads.filter(
-                  (thread) => (thread.archivedAt !== null) === (options?.location === "archive"),
-                ),
-                archivedThreads: [],
+                // As the store answers: archived chats come under `archivedThreads`.
+                threads:
+                  options?.location === "archive"
+                    ? []
+                    : threads.filter((thread) => thread.archivedAt === null),
+                archivedThreads: threads.filter((thread) => thread.archivedAt !== null),
               }),
           }),
           Layer.mock(GitManager.GitManager)({

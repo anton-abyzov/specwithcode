@@ -288,10 +288,12 @@ const cleanupFixture = Effect.gen(function* () {
               Effect.succeed({
                 schemaVersion: 1,
                 snapshotSequence: 0,
-                threads: threads.filter(
-                  (thread) => (thread.archivedAt !== null) === (options?.location === "archive"),
-                ),
-                archivedThreads: [],
+                // As the store answers: archived chats come under `archivedThreads`.
+                threads:
+                  options?.location === "archive"
+                    ? []
+                    : threads.filter((thread) => thread.archivedAt === null),
+                archivedThreads: threads.filter((thread) => thread.archivedAt !== null),
               }),
           }),
           Layer.mock(GitManager.GitManager)({

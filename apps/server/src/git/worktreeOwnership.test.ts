@@ -86,6 +86,8 @@ describe("worktree ownership", () => {
           worktreePath: string,
           options: {
             readonly parent?: string;
+            /** The parent is the chat it was forked from, not the one that started it. */
+            readonly fork?: boolean;
             readonly settled?: boolean;
             readonly archived?: boolean;
             readonly deleted?: boolean;
@@ -98,7 +100,13 @@ describe("worktree ownership", () => {
             ...(options.settled ? { settledOverride: "settled" } : {}),
             ...(options.parent === undefined
               ? {}
-              : { lineage: { parentThreadId: options.parent, rootThreadId: "worker" } }),
+              : {
+                  lineage: {
+                    parentThreadId: options.parent,
+                    relationshipToParent: options.fork === true ? "fork" : "subagent",
+                    rootThreadId: "worker",
+                  },
+                }),
           }),
           deleted_at: options.deleted ? "2026-11-01T00:00:00.000Z" : null,
           archived_at: options.archived ? "2026-11-01T00:00:00.000Z" : null,
@@ -116,6 +124,8 @@ describe("worktree ownership", () => {
             row("busy-archived-review", folder, { parent: "worker", archived: true, busy: true }),
             row("moved-review", elsewhere, { parent: "worker" }),
             row("orphan-review", folder, { parent: "gone" }),
+            // Forked from the worker: a chat of its own in the same folder.
+            row("fork", folder, { parent: "worker", fork: true }),
             row("cycle-a", elsewhere, { parent: "cycle-b" }),
             row("cycle-b", elsewhere, { parent: "cycle-a", settled: true }),
             row("deleted-parent", elsewhere, { deleted: true }),
@@ -133,6 +143,8 @@ describe("worktree ownership", () => {
         expect(state("moved-review")).toBe("open");
         expect(state("orphan-review")).toBe("open");
         expect(state("child-of-deleted")).toBe("settled");
+        // A fork never follows the chat it came from.
+        expect(state("fork")).toBe("open");
         // A cycle ends; neither thread loops or loses its record.
         expect(["open", "settled"]).toContain(state("cycle-a"));
         expect(state("cycle-b")).toBe("settled");
@@ -146,6 +158,7 @@ describe("worktree ownership", () => {
           "busy-review",
           "busy-archived-review",
           "orphan-review",
+          "fork",
         ]);
       }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -166,7 +179,7 @@ describe("worktree ownership", () => {
             ...threadRow("review", folder),
             payload_json: JSON.stringify({
               worktreePath: folder,
-              lineage: { parentThreadId: "worker" },
+              lineage: { parentThreadId: "worker", relationshipToParent: "subagent" },
             }),
           },
         ],
@@ -186,7 +199,7 @@ describe("worktree ownership", () => {
               ...threadRow("review", folder),
               payload_json: JSON.stringify({
                 worktreePath: folder,
-                lineage: { parentThreadId: "worker" },
+                lineage: { parentThreadId: "worker", relationshipToParent: "subagent" },
               }),
             },
           ],
