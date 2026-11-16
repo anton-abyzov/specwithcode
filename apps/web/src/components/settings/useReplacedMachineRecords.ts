@@ -1,5 +1,5 @@
 import type { StudioFleetSnapshot } from "@specweave-studio/contracts/studioFleet";
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import {
@@ -36,7 +36,11 @@ export function useRejoinedMachine(
   primaryEnvironmentId: string | null,
 ): (record: { readonly environmentId: string; readonly label: string }) => string | null {
   const input = useOldRecordInput(fleet, primaryEnvironmentId);
-  return useCallback((record) => rejoinedMachineOf(input, record), [input]);
+  return useMemo(
+    () => (record: { readonly environmentId: string; readonly label: string }) =>
+      rejoinedMachineOf(input, record),
+    [input],
+  );
 }
 
 function useOldRecordInput(
