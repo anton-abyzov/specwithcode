@@ -24,7 +24,7 @@ export const CONNECT_SIGN_IN_NOTICES = {
     type: "loading",
     title: "Finish signing in in your browser",
     description:
-      "The sign-in page opened in your browser. If you don't see it, look for a new browser tab or window. Click the button again to open it again.",
+      "The sign-in page opened in your browser. If you don't see it, look for a new browser tab or window. To open it again, close this window and sign in again.",
   },
   "open-failed": {
     type: "error",
