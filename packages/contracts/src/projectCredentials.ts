@@ -9,7 +9,12 @@ import { ProjectId } from "./baseSchemas.ts";
  * to another machine never carries them. The source lists which ones the
  * project uses, by file names and tool markers only; the destination says
  * whether it already has each one. No value, account name or command output
- * ever crosses the wire.
+ * ever crosses the wire, and no key, public or private.
+ *
+ * One kind of name does cross, from the source to the dialog: where the
+ * project's scripts and Git remotes connect over SSH (user and host names, or
+ * the name of the shell variable that holds the host). A caller that may read
+ * the project folder could read the same scripts.
  *
  * The list of credentials is closed: a project's manifest can name an entry
  * and add a short note, and nothing in it can change a command.
@@ -176,6 +181,8 @@ const SSH_HOST_LABEL = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
 const SSH_HOST = new RegExp(`^${SSH_HOST_LABEL}(?:\\.${SSH_HOST_LABEL})*$`, "u");
 const SSH_USER = /^[A-Za-z_][A-Za-z0-9_.-]{0,31}$/u;
 const SHELL_VARIABLE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u;
+const PRIVATE_IPV4 =
+  /^(?:10|127)\.|^192\.168\.|^169\.254\.|^172\.(?:1[6-9]|2\d|3[01])\.|^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|^0\./u;
 export const MAX_SSH_TARGETS = 12;
 
 /**
@@ -188,18 +195,24 @@ export const isSafeSshHost = (value: string) =>
   value.length <= 253 && SSH_HOST.test(value) && !looksLikeToken(value);
 export const isSafeSshUser = (value: string) => SSH_USER.test(value);
 export const isShellVariableName = (value: string) => SHELL_VARIABLE.test(value);
+/** Text free of control, bidirectional and other format characters. */
+export const isPlainText = (value: string) => !UNSAFE_TEXT.test(value);
+/** This machine itself or an address inside a private network: worth a second look in a cloned project. */
+export const isPrivateSshHost = (host: string) =>
+  host.toLowerCase() === "localhost" || (/^[0-9.]+$/u.test(host) && PRIVATE_IPV4.test(host));
 
 /**
  * Where a project's scripts or Git remotes connect over SSH. `server` and
  * `git` carry a host; `variable` names the shell variable a script takes its
- * host from when the script does not say. Names only, each checked by the
- * functions above on the machine that reads them and again where they are shown.
+ * host from when the script does not say; on a `server` it names the variable
+ * whose written value the host is. Names only: the patterns are part of the
+ * schema, applied by the machine that reads them and again where they are shown.
  */
 export const ProjectSshTarget = Schema.Struct({
   kind: Schema.Literals(["server", "git", "variable"]),
-  user: Schema.NullOr(bounded(32)),
-  host: Schema.NullOr(bounded(253)),
-  variable: Schema.NullOr(bounded(64)),
+  user: Schema.NullOr(bounded(32).check(Schema.isPattern(SSH_USER))),
+  host: Schema.NullOr(bounded(253).check(Schema.isPattern(SSH_HOST))),
+  variable: Schema.NullOr(bounded(64).check(Schema.isPattern(SHELL_VARIABLE))),
   /** Project-relative file that showed it. */
   source: bounded(4096),
 });
@@ -208,9 +221,11 @@ export type ProjectSshTarget = typeof ProjectSshTarget.Type;
 /** A target as it may be shown: the right fields for its kind, every one of them safe. */
 export function isSafeSshTarget(target: ProjectSshTarget): boolean {
   if (target.user !== null && !isSafeSshUser(target.user)) return false;
-  if (target.kind === "variable")
-    return target.host === null && target.variable !== null && isShellVariableName(target.variable);
-  return target.variable === null && target.host !== null && isSafeSshHost(target.host);
+  if (target.variable !== null && !isShellVariableName(target.variable)) return false;
+  if (!isPlainText(target.source)) return false;
+  if (target.kind === "variable") return target.host === null && target.variable !== null;
+  if (target.kind === "git" && target.variable !== null) return false;
+  return target.host !== null && isSafeSshHost(target.host);
 }
 
 /** One credential the project uses, and what in the folder shows it. */
@@ -229,6 +244,8 @@ export const ProjectCredentialRow = Schema.Struct({
   sshTargets: Schema.optional(
     Schema.Array(ProjectSshTarget).check(Schema.isMaxLength(MAX_SSH_TARGETS)),
   ),
+  /** SSH only: the project connects to more places than `sshTargets` lists. */
+  sshTargetsMore: Schema.optional(Schema.Boolean),
 });
 export type ProjectCredentialRow = typeof ProjectCredentialRow.Type;
 

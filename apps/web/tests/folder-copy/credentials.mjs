@@ -103,7 +103,20 @@ try {
       // A key file: set up a new one there, never sent.
       const ssh = section.locator('[data-credential="ssh"]');
       await ssh.locator('[data-slot="copy-credential-sign-in"]').click();
-      NodeAssert.match(await ssh.textContent(), /key files are never copied/);
+      NodeAssert.match(await ssh.textContent(), /Private keys stay on m4 and are never copied/);
+      // The places the project connects to, each with a check that runs as written.
+      NodeAssert.deepEqual(
+        await ssh
+          .locator('[data-slot="copy-ssh-target"] [data-slot="copy-credential-command"] code')
+          .allTextContents(),
+        [
+          'gh ssh-key add ~/.ssh/id_ed25519.pub --title "m5"',
+          "ssh -o BatchMode=yes -T -- git@github.com",
+          "ssh -o BatchMode=yes -- root@203.0.113.10 true",
+        ],
+      );
+      NodeAssert.doesNotMatch(await ssh.textContent(), /<host>/);
+      NodeAssert.match(await ssh.textContent(), /not verified/);
       // Skip moves a row out of the list; Save says where the names went.
       await section.locator('[data-credential="npm"] [data-slot="copy-credential-skip"]').click();
       NodeAssert.match(await section.textContent(), /Skipped \(1\)/);

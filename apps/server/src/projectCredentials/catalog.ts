@@ -3,7 +3,9 @@
  * uses one, how a machine checks it has one, and the command a person runs to
  * get one. A project's manifest names entries from this list and can add
  * nothing to it, so opening a cloned project never makes a machine run a
- * command the project chose.
+ * command the project chose. The SSH row also shows where the project's
+ * scripts connect (sshTargets.ts): user and host names held to strict
+ * patterns, shown as unverified, inside commands only a person runs.
  *
  * Checks are local reads of each tool's own state, with one stated exception
  * (GitHub asks github.com). Tools whose state sits in the Keychain, or whose

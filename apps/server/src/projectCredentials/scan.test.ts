@@ -110,6 +110,49 @@ describe("scanProjectCredentials", () => {
   });
 });
 
+describe("SSH targets", () => {
+  it("lists where scripts and SSH remotes connect, on the ssh row only", async () => {
+    await put(
+      "ops/deploy.sh",
+      'HOSTS=(203.0.113.10)\nfor H in "${HOSTS[@]}"; do\n  ssh "root@${H}" true\ndone\n',
+    );
+    await put(".git/config", `[remote "origin"]\n\turl = git@github.com:acme/app.git\n`);
+    await put("fleet/add-peer.sh", '/usr/bin/ssh "${ssh_opts[@]}" "$target" true\n');
+    const scan = await scanProjectCredentials(root);
+    expect(scan.found.get("ssh")).toEqual([".", "ops/deploy.sh"]);
+    const rows = credentialRows(scan, null);
+    expect(rows.find((row) => row.id === "ssh")).toMatchObject({
+      sshTargetsMore: false,
+      sshTargets: [
+        { kind: "git", user: "git", host: "github.com", variable: null, source: "." },
+        {
+          kind: "server",
+          user: "root",
+          host: "203.0.113.10",
+          variable: "H",
+          source: "ops/deploy.sh",
+        },
+      ],
+    });
+    expect(rows.find((row) => row.id === "github")).not.toHaveProperty("sshTargets");
+  });
+
+  it("has no ssh row for a project whose only match was an array expansion", async () => {
+    await put("fleet/add-peer.sh", '/usr/bin/ssh "${ssh_opts[@]}" "$target" true\n');
+    await put(".git/config", `[remote "origin"]\n\turl = https://github.com/acme/app.git\n`);
+    const scan = await scanProjectCredentials(root);
+    expect(scan.found.has("ssh")).toBe(false);
+    expect(scan.sshTargets).toEqual([]);
+  });
+
+  it("drops a target whose file name carries direction marks", async () => {
+    await put("ops/\u202Edeploy.sh", "ssh root@203.0.113.10 true\n");
+    const scan = await scanProjectCredentials(root);
+    expect(scan.sshTargets).toEqual([]);
+    expect(scan.found.has("ssh")).toBe(false);
+  });
+});
+
 describe("remoteHost", () => {
   it("keeps the host and drops everything else", () => {
     expect(remoteHost("https://user:secret@github.com/acme/app.git")).toBe("github.com");

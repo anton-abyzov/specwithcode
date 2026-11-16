@@ -11,6 +11,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import {
+  isPlainText,
   MAX_SSH_TARGETS,
   type ProjectCredentialId,
   type ProjectCredentialRow,
@@ -127,6 +128,8 @@ export interface CredentialScan {
   readonly truncated: boolean;
   /** Where the project connects over SSH: script destinations and SSH Git remotes. */
   readonly sshTargets: ReadonlyArray<ProjectSshTarget>;
+  /** The project connects to more places than `sshTargets` holds. */
+  readonly sshTargetsMore: boolean;
 }
 
 /** Walks the project folder once and collects what shows each credential. */
@@ -138,11 +141,15 @@ export async function scanProjectCredentials(root: string): Promise<CredentialSc
     if (sources.length < MAX_SOURCES && !sources.includes(source)) sources.push(source);
   };
   const sshTargets = new Map<string, ProjectSshTarget>();
+  let sshTargetsMore = false;
   const connects = (target: SshTarget, source: string) => {
+    // A file name can carry direction marks that would disguise the line it is shown on.
+    if (!isPlainText(source)) return;
     note("ssh", source);
     const key = `${target.kind} ${target.user ?? ""} ${target.host ?? ""} ${target.variable ?? ""}`;
-    if (!sshTargets.has(key) && sshTargets.size < MAX_SSH_TARGETS)
-      sshTargets.set(key, { ...target, source });
+    if (sshTargets.has(key)) return;
+    if (sshTargets.size < MAX_SSH_TARGETS) sshTargets.set(key, { ...target, source });
+    else sshTargetsMore = true;
   };
   const shortProviders = new Map<string, ProjectCredentialId>();
   const fullProviders = new Map<string, ProjectCredentialId>();
@@ -225,10 +232,12 @@ export async function scanProjectCredentials(root: string): Promise<CredentialSc
       }
       for (const entry of CREDENTIAL_CATALOG)
         if (entry.scriptUse?.test(text)) note(entry.id, relative);
-      for (const target of sshTargetsInScript(text)) connects(target, relative);
+      const ssh = sshTargetsInScript(text);
+      for (const target of ssh.targets) connects(target, relative);
+      if (ssh.more) sshTargetsMore = true;
     }
   }
-  return { found, truncated, sshTargets: [...sshTargets.values()] };
+  return { found, truncated, sshTargets: [...sshTargets.values()], sshTargetsMore };
 }
 
 /**
@@ -253,7 +262,9 @@ export function credentialRows(
       skip: listed?.skip === true,
       note: listed?.note ?? null,
       keptIn: [...CREDENTIAL_HOME_FILES[entry.id]],
-      ...(entry.id === "ssh" ? { sshTargets: [...scan.sshTargets] } : {}),
+      ...(entry.id === "ssh"
+        ? { sshTargets: [...scan.sshTargets], sshTargetsMore: scan.sshTargetsMore }
+        : {}),
     });
   }
   return rows;

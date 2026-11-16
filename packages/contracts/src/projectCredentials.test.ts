@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { CLIENT_GUARDED_RPC_SCOPES } from "./clientRpcPermissions.ts";
+import * as Schema from "effect/Schema";
+
 import {
   formatProjectCredentialsManifest,
+  isPrivateSshHost,
+  isSafeSshHost,
+  isSafeSshTarget,
   parseProjectCredentialsManifest,
   PROJECT_CREDENTIALS_RPC_METHODS,
+  ProjectSshTarget,
 } from "./projectCredentials.ts";
 
 const parse = (credentials: unknown, extra: Record<string, unknown> = {}) =>
@@ -108,5 +114,94 @@ describe("project credentials RPC scopes", () => {
     expect(scopes[PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsProbe]).toBe(
       "orchestration:operate",
     );
+  });
+});
+
+const decodeSshTarget = Schema.decodeUnknownSync(ProjectSshTarget);
+
+describe("SSH targets on the wire", () => {
+  const target = (over: Partial<ProjectSshTarget> = {}): ProjectSshTarget => ({
+    kind: "server",
+    user: "root",
+    host: "build.example.com",
+    variable: null,
+    source: "ops/deploy.sh",
+    ...over,
+  });
+  const decodes = (value: unknown) => {
+    try {
+      decodeSshTarget(value);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it("accepts plain hosts and refuses anything that could bend a command", () => {
+    for (const host of ["build.example.com", "203.0.113.7", "a", "xn--bcher-kva.example"])
+      expect(isSafeSshHost(host), host).toBe(true);
+    for (const host of [
+      "-oProxyCommand=x",
+      "a b",
+      "a;b",
+      "a$(b)",
+      "a`b`",
+      "a'b",
+      'a"b',
+      "a..b",
+      "a.",
+      ".a",
+      "a-",
+      "[::1]",
+      "::1",
+      "a:22",
+      "fe80::1%en0",
+      "h\u043Est",
+      "host\u202E",
+      "a\nb",
+      "",
+      "a".repeat(64),
+    ])
+      expect(isSafeSshHost(host), JSON.stringify(host)).toBe(false);
+  });
+
+  it("holds the same patterns in the schema, so a sender cannot skip them", () => {
+    expect(decodes(target())).toBe(true);
+    expect(decodes(target({ host: "-oProxyCommand=x" }))).toBe(false);
+    expect(decodes(target({ user: "a b" }))).toBe(false);
+    expect(decodes(target({ variable: "A;B" }))).toBe(false);
+    expect(decodes(target({ kind: "other" as never }))).toBe(false);
+  });
+
+  it("wants the fields that fit the kind, and a plain source", () => {
+    expect(isSafeSshTarget(target())).toBe(true);
+    expect(isSafeSshTarget(target({ variable: "WORKER_IP" }))).toBe(true);
+    expect(isSafeSshTarget(target({ kind: "variable", host: null, variable: "HOST" }))).toBe(true);
+    expect(isSafeSshTarget(target({ kind: "variable", host: null }))).toBe(false);
+    expect(isSafeSshTarget(target({ kind: "variable", variable: "HOST" }))).toBe(false);
+    expect(isSafeSshTarget(target({ host: null }))).toBe(false);
+    expect(isSafeSshTarget(target({ kind: "git", variable: "H" }))).toBe(false);
+    expect(isSafeSshTarget(target({ source: "ops/\u202Edeploy.sh" }))).toBe(false);
+  });
+
+  it("knows this machine and private networks", () => {
+    for (const host of [
+      "localhost",
+      "127.0.0.1",
+      "10.0.0.5",
+      "192.168.1.9",
+      "172.16.0.1",
+      "100.64.0.1",
+      "169.254.1.1",
+    ])
+      expect(isPrivateSshHost(host), host).toBe(true);
+    for (const host of [
+      "203.0.113.7",
+      "172.32.0.1",
+      "100.128.0.1",
+      "build.example.com",
+      "10.example.com",
+    ])
+      expect(isPrivateSshHost(host), host).toBe(false);
   });
 });
