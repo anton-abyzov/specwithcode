@@ -226,15 +226,16 @@ describe("removing a machine", () => {
     expect(notice).toMatch(/^Removed m5 here\. m5 could not be reached/u);
     expect(notice).not.toContain("Anton M5MAX PROLED");
   });
-  it("asks for nothing on an install that joined again as a new machine", () => {
+  it("asks for nothing on the new install of a machine that joined again", () => {
     const notice = fleetRemoveNotice(
       { ...removed, label: "Anton M5MAX PROLED", managementToken: "kept", workerAccess: "kept" },
       { name: "m5", rejoinedAs: "M5" },
     );
     expect(notice).toBe(
-      "Removed the old record of m5. That install is gone (it joined again as M5), so nothing is left there to revoke.",
+      "Removed the old record of m5 (it joined again as M5). If its old install was wiped, nothing is left there to revoke; if not, this machine's worker access and management token there stays valid until it expires.",
     );
-    expect(notice).not.toContain("revoke it");
+    // Never sends the person to the new install to revoke what it never held.
+    expect(notice).not.toContain("on M5");
   });
 });
 

@@ -272,8 +272,9 @@ export function workerMachinesPatch(list: ReadonlyArray<ProjectWorkerMachine>): 
  * What removing a machine left valid there, for the notice after Remove. `name`
  * is the name the removed record shows (its nickname, "m5"), never the computer
  * name another record of the same machine may share. `rejoinedAs` names the
- * machine it joined again as: its old install is gone, so nothing is left there
- * to revoke and none of it is asked for.
+ * machine that looks like it joined again: a matching computer name cannot
+ * prove the old install is gone, so the notice says nothing is left only if it
+ * was wiped, and what stays valid if it was not.
  */
 export function fleetRemoveNotice(
   removed: StudioFleetRemoveResult,
@@ -286,7 +287,7 @@ export function fleetRemoveNotice(
   ].filter((part) => part !== null);
   if (kept.length === 0) return `Removed ${name} and revoked what this machine held there.`;
   if (shown.rejoinedAs)
-    return `Removed the old record of ${name}. That install is gone (it joined again as ${shown.rejoinedAs}), so nothing is left there to revoke.`;
+    return `Removed the old record of ${name} (it joined again as ${shown.rejoinedAs}). If its old install was wiped, nothing is left there to revoke; if not, this machine's ${kept.join(" and ")} there stays valid until it expires.`;
   return `Removed ${name} here. ${name} could not be reached, so this machine's ${kept.join(" and ")} there stays valid until it expires. To end it sooner, remove this machine in Settings > Machines on ${name}.`;
 }
 
