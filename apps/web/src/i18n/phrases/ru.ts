@@ -2301,7 +2301,7 @@ export const ru: PhraseCatalog = {
   "Rename machine": "Переименовать машину",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "Это имя показывают «Запуск на», строки тредов, боковая панель и другие ваши устройства.",
-  "Machine name": "Имя машины",
+  "Short name": "Короткое имя",
   "Computer name: {hostLabel}, unchanged.": "Имя компьютера: {hostLabel}, не меняется.",
   "Call it {name}": "Назвать {name}",
   "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":

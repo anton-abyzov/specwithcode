@@ -2319,7 +2319,7 @@ export const es: PhraseCatalog = {
   "Rename machine": "Cambiar nombre del equipo",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "Ejecutar en, las filas de hilos, la barra lateral y tus otros dispositivos muestran este nombre.",
-  "Machine name": "Nombre del equipo",
+  "Short name": "Nombre corto",
   "Computer name: {hostLabel}, unchanged.": "Nombre del ordenador: {hostLabel}, sin cambios.",
   "Call it {name}": "Llamarlo {name}",
   "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":

@@ -2285,7 +2285,7 @@ export const ko: PhraseCatalog = {
   "Rename machine": "컴퓨터 이름 변경",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "실행 위치, 스레드 행, 사이드바, 다른 기기에 이 이름이 표시됩니다.",
-  "Machine name": "컴퓨터 이름",
+  "Short name": "짧은 이름",
   "Computer name: {hostLabel}, unchanged.": "시스템 이름: {hostLabel}, 바뀌지 않습니다.",
   "Call it {name}": "{name}(으)로 부르기",
   "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":

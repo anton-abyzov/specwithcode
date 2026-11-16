@@ -2307,7 +2307,7 @@ export const ja: PhraseCatalog = {
   "Rename machine": "マシン名を変更",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "実行先、スレッドの行、サイドバー、ほかのデバイスにこの名前が表示されます。",
-  "Machine name": "マシン名",
+  "Short name": "短い名前",
   "Computer name: {hostLabel}, unchanged.": "コンピュータ名: {hostLabel}（変更されません）",
   "Call it {name}": "{name} と呼ぶ",
   "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":

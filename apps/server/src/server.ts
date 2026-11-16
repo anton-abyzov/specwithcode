@@ -170,6 +170,7 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as FolderTransferRoute from "./fleet/folderTransferRoute.ts";
 import * as FleetTargets from "./fleet/FleetTargets.ts";
+import * as MachineDefaultName from "./fleet/MachineDefaultName.ts";
 import * as MachineNicknameSync from "./fleet/MachineNicknameSync.ts";
 import * as GitHubCredentialRoute from "./sourceControl/gitHubCredentialRoute.ts";
 import * as GitHubSpawnEnvironmentSync from "./sourceControl/gitHubSpawnEnvironmentSync.ts";
@@ -718,6 +719,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   WorkGrantRevokeSweeper.layer,
   // Keeps machine nicknames the same on every paired machine.
   MachineNicknameSync.layer.pipe(Layer.provide(FleetTargets.layer)),
+  // A machine nobody named yet takes the chip in its computer name ("M5").
+  MachineDefaultName.layer.pipe(Layer.provide(FleetTargets.layer)),
   // Asks Studio Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
   InactiveThreadArchive.layerStart.pipe(

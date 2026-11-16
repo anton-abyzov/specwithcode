@@ -2224,7 +2224,7 @@ export const zh: PhraseCatalog = {
   "Rename machine": "重命名电脑",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "“运行于”、线程行、侧边栏和你的其他设备都会显示这个名称。",
-  "Machine name": "机器名称",
+  "Short name": "简称",
   "Computer name: {hostLabel}, unchanged.": "电脑名称：{hostLabel}，保持不变。",
   "Call it {name}": "命名为 {name}",
   "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":
