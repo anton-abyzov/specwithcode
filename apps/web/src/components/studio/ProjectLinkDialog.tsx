@@ -11,6 +11,7 @@ import {
   type ProjectLinkPreview,
   type RepositoryFingerprint,
 } from "@specweave-studio/contracts";
+import { useTx } from "../../i18n";
 import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
@@ -85,6 +86,7 @@ export function ProjectLinkDialog({
   initialCandidate = null,
   initialKept,
   autoReview = false,
+  joining = false,
   onLinked,
 }: {
   readonly open: boolean;
@@ -95,8 +97,15 @@ export function ProjectLinkDialog({
   readonly initialKept?: "here" | "there";
   /** Starts at the review, for finishing a link that stopped after its second step. */
   readonly autoReview?: boolean;
+  /**
+   * "Link X to this project…": the other copy joins this one. This copy keeps main, the
+   * choice of side is not offered, and the review opens at once on what the other machine
+   * gives up. Linking never changes main.
+   */
+  readonly joining?: boolean;
   readonly onLinked?: () => void;
 }) {
+  const tx = useTx();
   const projects = useProjects();
   const machines = useLinkMachines();
   const { scratchWorkspaceRootFor } = useScratchProject();
@@ -259,13 +268,17 @@ export function ProjectLinkDialog({
       if (other._tag === "Failure") throw squashAtomCommandFailure(other);
       const next = { here: own.value, there: other.value };
       setPreviews(next);
+      // A link that stopped with the other copy kept finishes that way; nothing else
+      // moves main away from a project the other copy joins.
       setKept(
-        initialKept ??
-          (linkIsResuming(next.here, next.there)
-            ? "here"
-            : linkIsResuming(next.there, next.here)
-              ? "there"
-              : defaultKeptSide(next.here, next.there)),
+        joining && !linkIsResuming(next.there, next.here)
+          ? "here"
+          : (initialKept ??
+              (linkIsResuming(next.here, next.there)
+                ? "here"
+                : linkIsResuming(next.there, next.here)
+                  ? "there"
+                  : defaultKeptSide(next.here, next.there))),
       );
       setChoices({});
       setPhase("review");
@@ -280,7 +293,7 @@ export function ProjectLinkDialog({
   useEffect(() => {
     if (
       open &&
-      autoReview &&
+      (autoReview || joining) &&
       target &&
       phase === "choose" &&
       !previews &&
@@ -289,7 +302,7 @@ export function ProjectLinkDialog({
     )
       void review();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, autoReview, target?.id, machineProblem]);
+  }, [open, autoReview, joining, target?.id, machineProblem]);
 
   const link = async () => {
     if (running.current || !sides || !ready) return;
@@ -367,17 +380,28 @@ export function ProjectLinkDialog({
 
   const busy = phase === "checking" || phase === "linking";
   const complete = phase === "complete";
+  // The other copy joins and this one keeps main, unless an earlier link has to finish the other way.
+  const joins = joining && target !== undefined && (sides === null || kept === "here");
   return (
     <Dialog open={open} onOpenChange={(value) => !busy && onOpenChange(value)}>
       <DialogPopup showCloseButton={!busy} className="w-full sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>
-            {complete ? "Projects linked" : "Link with a project on another machine"}
+            {complete
+              ? "Projects linked"
+              : joins
+                ? tx("Link {machine} to this project", { machine: thereLabel })
+                : "Link with a project on another machine"}
           </DialogTitle>
           <DialogDescription className="wrap-anywhere">
             {complete && sides
               ? `${logicalProjectTitle(project)} is one project on ${sides.keptLabel} and ${sides.joiningLabel}. The coordinator on ${sides.keptLabel} can send work to both copies.`
-              : `Pick the copy of ${logicalProjectTitle(project)} on another machine. One coordinator stays; the other copy runs workers.`}
+              : joins
+                ? tx(
+                    "{machine} joins {project} as a copy. Main stays on {main}: linking does not change it.",
+                    { machine: thereLabel, project: logicalProjectTitle(project), main: hereLabel },
+                  )
+                : `Pick the copy of ${logicalProjectTitle(project)} on another machine. One coordinator stays; the other copy runs workers.`}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -394,6 +418,7 @@ export function ProjectLinkDialog({
             <LinkReview
               sides={sides}
               resuming={resuming}
+              joins={joins}
               kept={kept}
               onKept={setKept}
               hereLabel={hereLabel}
@@ -504,7 +529,9 @@ export function ProjectLinkDialog({
                     ? "Finish linking"
                     : error
                       ? "Retry link"
-                      : `Link, keep coordinator on ${sides.keptLabel}`}
+                      : joins
+                        ? tx("Link {machine}", { machine: sides.joiningLabel })
+                        : `Link, keep coordinator on ${sides.keptLabel}`}
               </Button>
             ) : (
               <Button
@@ -529,6 +556,7 @@ export function ProjectLinkDialog({
 function LinkReview({
   sides,
   resuming,
+  joins,
   kept,
   onKept,
   hereLabel,
@@ -551,6 +579,8 @@ function LinkReview({
     readonly joiningLabel: string;
   };
   readonly resuming: boolean;
+  /** The other copy joins this project: no choice of side, and the consent names what it gives up. */
+  readonly joins: boolean;
   readonly kept: "here" | "there";
   readonly onKept: (value: "here" | "there") => void;
   readonly hereLabel: string;
@@ -571,9 +601,18 @@ function LinkReview({
       ? `Coordinator last active ${new Date(value).toLocaleString()}`
       : "No coordinator activity";
   const { keptLabel, joiningLabel } = sides;
+  const tx = useTx();
   return (
     <div className="space-y-4 text-sm">
-      <fieldset disabled={disabled || resuming} className="min-w-0 space-y-2">
+      {joins ? (
+        <p data-link-main-stays="">
+          {tx(
+            "Main stays on {main}. To have main on {machine}, make {machine} main after linking.",
+            { main: keptLabel, machine: joiningLabel },
+          )}
+        </p>
+      ) : null}
+      <fieldset hidden={joins} disabled={disabled || resuming} className="min-w-0 space-y-2">
         <legend className="mb-2 font-medium">Coordinator stays on</legend>
         <RadioGroup
           value={kept}
@@ -731,10 +770,19 @@ function LinkReview({
             onCheckedChange={(value) => onConsent(value === true)}
           />
         </span>
-        <span className="min-w-0 wrap-anywhere leading-5">
-          Make these one project. The coordinator on {joiningLabel} becomes read-only history and
-          its workers keep running; the coordinator on {keptLabel} can send work to both copies.
-          Files are not copied.
+        <span className="min-w-0 wrap-anywhere leading-5" data-link-consent="">
+          {joins ? (
+            tx(
+              "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.",
+              { machine: joiningLabel, main: keptLabel },
+            )
+          ) : (
+            <>
+              Make these one project. The coordinator on {joiningLabel} becomes read-only history
+              and its workers keep running; the coordinator on {keptLabel} can send work to both
+              copies. Files are not copied.
+            </>
+          )}
         </span>
       </label>
     </div>

@@ -9,21 +9,40 @@ import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/
 import type { LogicalProjectMember } from "@specweave-studio/contracts";
 
 /**
- * The notice on a copy whose main is on `machine` (internally a workers-only copy): it
- * cannot start work itself. The history wording is added for a copy that ran a
- * coordinator before; a copy that never did has no conversation to keep.
+ * What a copy whose main is on `machine` says when a message cannot be sent from it
+ * (internally a workers-only copy): it cannot start work itself. `project` names the
+ * project. The history wording is added for a copy that ran a coordinator before; a copy
+ * that never did has no conversation to keep. The message box says the same through
+ * `CoordinatorBlockedNotice`, translated, with the two ways out.
  */
-export function workersOnlyProblem(machine: string | null, hadConversation: boolean): string {
-  const takesWork = machine
-    ? `Work starts on ${machine}. This copy takes work from there.`
-    : "Work starts on another machine. This copy takes work from there.";
+export function workersOnlyProblem(
+  machine: string | null,
+  hadConversation: boolean,
+  project: string | null = null,
+): string {
+  const where = machine ? `is ${machine}` : "is on another machine";
+  const takesWork = `Main for ${project ?? "this project"} ${where}. This copy takes work from there.`;
   return hadConversation ? `${takesWork} The conversation here is kept as history.` : takesWork;
 }
 
-/** A copy's role in words: an English phrase and its `{machine}` value, translated where shown. */
+/**
+ * The copy this one took over from by a person's offline switch, or null. Read from the
+ * new main's own binding, which keeps it until main moves again: the old main's state is
+ * not reliably in sight. Its conversation stayed on its machine, and the page says so.
+ */
+export function offlineSwitchPredecessor(
+  member: Pick<EnvironmentProject, "environmentId" | "workspaceSettings">,
+): LogicalProjectMember | null {
+  const binding = member.workspaceSettings?.coordinatorBinding;
+  if (binding?.state !== "active" || binding.takenOverBy !== "person" || !binding.predecessor)
+    return null;
+  return binding.predecessor.environmentId === member.environmentId ? null : binding.predecessor;
+}
+
+/** Words about a copy: an English phrase and its `{slot}` values, translated where shown. */
 export interface CopyRoleText {
   readonly text: string;
-  readonly values?: { readonly machine: string };
+  readonly values?: Readonly<Record<string, string>>;
 }
 
 /**

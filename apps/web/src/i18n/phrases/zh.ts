@@ -3043,9 +3043,6 @@ export const zh: PhraseCatalog = {
   "Add to another machine…": "添加到另一台电脑…",
   "Send to another machine…": "发送到另一台电脑…",
   Link: "关联",
-  "Link with the project on {machine}…": "与 {machine} 上的项目关联…",
-  "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
-    "让此项目与 {machine} 上的项目成为同一个项目，只有一个协调者。会话和文件保持原位。",
   "Leave this machine…": "离开这台电脑…",
   "Another project or no project": "其他项目或不使用项目",
   "Rename a machine": "重命名电脑",
@@ -4395,10 +4392,7 @@ export const zh: PhraseCatalog = {
   "Installs from npm could not be read.": "无法读取 npm 安装量。",
   "Installs from npm": "npm 安装量",
   "View this project on": "查看此项目的电脑",
-  "Move coordinator to {machine}…": "将协调器移到 {machine}…",
   "coordinator paused": "协调器已暂停",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
-    "{machine} 保留了之前的协调器，现在只运行 worker。查看它以阅读那段对话或重新运行。",
   "Machine access settings": "电脑访问设置",
   "{machine} offline": "{machine} 离线",
   "workers only": "仅工作节点",
@@ -4988,4 +4982,65 @@ export const zh: PhraseCatalog = {
   "Run in terminal": "在终端中运行",
   "Waiting for the install. This page updates by itself.": "正在等待安装。此页面会自动更新。",
   "After it installs, choose Check again.": "安装完成后，选择“重新检查”。",
+  "{main} must be unreachable for 10 minutes before {machine} can become main. That unlocks in {minutes} min.":
+    "{main} 需连续 10 分钟无法连接，{machine} 才能成为主副本。还需 {minutes} 分钟。",
+  "in {minutes} min": "{minutes} 分钟后",
+  "This window can only read {main}, so it cannot move main from there. Open SpecWithCode on {main}, or connect to it with full access, to make {machine} main.":
+    "此窗口只能读取 {main}，因此无法从那里移动主副本。要将 {machine} 设为主副本，请在 {main} 上打开 SpecWithCode，或以完全访问权限连接它。",
+  "read-only on {main}": "{main} 为只读",
+  "Connect {machine} first to make it main.": "请先连接 {machine}，才能将其设为主副本。",
+  "{machine} cannot take over yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
+    "{machine} 暂时无法接管。请在那里更新 SpecWithCode，或以可更改设置并运行工作的权限连接它。",
+  "not ready": "未就绪",
+  "Main cannot move from this machine yet.": "暂时无法从这台机器移动主副本。",
+  "Send this project its first message here, then try again.": "请先在这里向此项目发送第一条消息，然后重试。",
+  "{machine} cannot become main yet.": "{machine} 暂时无法成为主副本。",
+  "{machine} is main now": "{machine} 现在是主副本",
+  "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
+    "它从共享的目标、记忆和计划开始。{main} 上的对话作为历史留在那里，{main} 恢复后会让出主副本。",
+  "{machine} did not become main": "{machine} 未能成为主副本",
+  "Retry it.": "请重试。",
+  "the old main": "原主副本",
+  "Make {machine} main?": "将 {machine} 设为主副本？",
+  "{main} has been unreachable for 10 minutes or more. {machine} becomes main and starts from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
+    "{main} 已有 10 分钟或更久无法连接。{machine} 将成为主副本，并从共享的目标、记忆和计划开始。{main} 上的对话作为历史留在那里。在 {main} 恢复之前，它仍可在自己的机器上开始工作；恢复后它会让出主副本，并列出期间运行的内容。",
+  "Switching…": "正在切换…",
+  "Make {machine} main": "将 {machine} 设为主副本",
+  "Main for {project} is {machine}. This copy takes work from there.":
+    "{project} 的主副本是 {machine}。此副本从那里接收工作。",
+  "Main for {project} is on another machine. This copy takes work from there.":
+    "{project} 的主副本在另一台机器上。此副本从那里接收工作。",
+  "The conversation here is kept as history.": "这里的对话作为历史保留。",
+  "Write to {machine}'s coordinator": "写给 {machine} 的协调器",
+  "Write to main's coordinator": "写给主副本的协调器",
+  "Write opens {machine}'s page for this project, where its coordinator answers. Nothing is sent from here.":
+    "“写给”会打开此项目在 {machine} 上的页面，由那里的协调器回答。这里不会发送任何内容。",
+  "Write opens main's page for this project, where its coordinator answers. Nothing is sent from here.":
+    "“写给”会打开此项目在主副本机器上的页面，由那里的协调器回答。这里不会发送任何内容。",
+  "{main} has been unreachable for 10 minutes or more. Making {machine} main starts from the shared goal, memory and plan; the conversation on {main} stays there as history.":
+    "{main} 已有 10 分钟或更久无法连接。将 {machine} 设为主副本后，它会从共享的目标、记忆和计划开始；{main} 上的对话作为历史留在那里。",
+  "Making {machine} main moves the coordinator and its conversation here from {main}, which becomes a copy.":
+    "将 {machine} 设为主副本后，协调器及其对话会从 {main} 移到这里，{main} 变为副本。",
+  "{machine} became main while {main} was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
+    "在 {main} 无法连接期间，{machine} 成为了主副本。它从共享的目标、记忆和计划开始；之前的对话作为历史留在 {main} 上。",
+  "{machine} became main while the old main was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
+    "在原主副本无法连接期间，{machine} 成为了主副本。它从共享的目标、记忆和计划开始；之前的对话作为历史留在原来的机器上。",
+  "Got it": "知道了",
+  "{machine} kept its coordinator conversation from before as history. View it to read that conversation.":
+    "{machine} 保留了之前的协调器对话作为历史。查看它以阅读那段对话。",
+  "Makes the project on {machine} part of this one. Main does not change, and threads and files stay where they are. You confirm what {machine} gives up first.":
+    "让 {machine} 上的项目成为此项目的一部分。主副本不变，会话和文件保持原位。你会先确认 {machine} 放弃的内容。",
+  "Link {machine} to this project…": "将 {machine} 关联到此项目…",
+  "{main} is unreachable: {machine} takes over and starts from the shared goal, memory and plan. You confirm first.":
+    "{main} 无法连接：{machine} 将接管，并从共享的目标、记忆和计划开始。你会先确认。",
+  "Moves the coordinator and its conversation from {main} to {machine}. {main} becomes a copy. You confirm first.":
+    "将协调器及其对话从 {main} 移到 {machine}。{main} 变为副本。你会先确认。",
+  "Link {machine} to this project": "将 {machine} 关联到此项目",
+  "{machine} joins {project} as a copy. Main stays on {main}: linking does not change it.":
+    "{machine} 作为副本加入 {project}。主副本仍在 {main}：关联不会改变它。",
+  "Link {machine}": "关联 {machine}",
+  "Main stays on {main}. To have main on {machine}, make {machine} main after linking.":
+    "主副本仍在 {main}。若要让主副本在 {machine} 上，请在关联后将 {machine} 设为主副本。",
+  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
+    "将 {machine} 关联到此项目。{machine} 放弃自己的目标和指令：今后遵循此项目的目标和指令，如果它成为主副本，自己的会被替换。它自己的协调器会停止，那段对话作为历史留在 {machine} 上。它的 worker 继续运行。主副本仍在 {main}。不会复制文件。",
 };

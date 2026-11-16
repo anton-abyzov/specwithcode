@@ -260,7 +260,7 @@ export function orchestratorCopies<T extends EnvironmentProject>(
  * to another machine. A transferred binding alone does not say so: a copy that
  * joined as workers only is transferred too, and a move into a separate worktree
  * leaves the registered copy transferred with a successor on its own machine. Those
- * copies get "Move coordinator to" instead of the "coordinator paused" note.
+ * copies get the plain "Copy" badge instead of the "coordinator paused" note.
  */
 export function keptCoordinatorCopies<T extends EnvironmentProject>(
   copies: readonly OrchestratorCopy[],

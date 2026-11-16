@@ -3148,9 +3148,6 @@ export const ru: PhraseCatalog = {
   "Add to another machine…": "Добавить на другую машину…",
   "Send to another machine…": "Отправить на другую машину…",
   Link: "Связать",
-  "Link with the project on {machine}…": "Связать с проектом на {machine}…",
-  "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
-    "Этот проект и проект на {machine} станут одним проектом с одним координатором. Треды и файлы останутся на своих местах.",
   "Leave this machine…": "Уйти с этой машины…",
   "Another project or no project": "Другой проект или без проекта",
   "Rename a machine": "Переименовать машину",
@@ -4570,10 +4567,7 @@ export const ru: PhraseCatalog = {
   "Installs from npm could not be read.": "Не удалось прочитать установки из npm.",
   "Installs from npm": "Установки из npm",
   "View this project on": "Смотреть проект на",
-  "Move coordinator to {machine}…": "Перенести координатора на {machine}…",
   "coordinator paused": "координатор на паузе",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
-    "{machine} сохранил прежний координатор и сейчас выполняет только воркеры. Откройте его, чтобы прочитать тот разговор или запустить его снова.",
   "Machine access settings": "Настройки доступа между машинами",
   "{machine} offline": "{machine} не в сети",
   "workers only": "только исполнители",
@@ -5187,4 +5181,67 @@ export const ru: PhraseCatalog = {
   "Waiting for the install. This page updates by itself.":
     "Ждём установку. Эта страница обновится сама.",
   "After it installs, choose Check again.": "После установки выберите «Проверить снова».",
+  "{main} must be unreachable for 10 minutes before {machine} can become main. That unlocks in {minutes} min.":
+    "{main} должен быть недоступен 10 минут, прежде чем {machine} сможет стать основной. Это откроется через {minutes} мин.",
+  "in {minutes} min": "через {minutes} мин",
+  "This window can only read {main}, so it cannot move main from there. Open SpecWithCode on {main}, or connect to it with full access, to make {machine} main.":
+    "Это окно может только читать {main}, поэтому не может перенести основную оттуда. Откройте SpecWithCode на {main} или подключитесь к нему с полным доступом, чтобы сделать {machine} основной.",
+  "read-only on {main}": "только чтение на {main}",
+  "Connect {machine} first to make it main.":
+    "Сначала подключите {machine}, чтобы сделать эту машину основной.",
+  "{machine} cannot take over yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
+    "{machine} пока не может принять управление. Обновите там SpecWithCode или подключитесь к нему с правом менять настройки и запускать работу.",
+  "not ready": "не готов",
+  "Main cannot move from this machine yet.": "Основную пока нельзя перенести с этой машины.",
+  "Send this project its first message here, then try again.":
+    "Отправьте здесь первое сообщение этому проекту и попробуйте снова.",
+  "{machine} cannot become main yet.": "{machine} пока не может стать основной.",
+  "{machine} is main now": "{machine} теперь основная",
+  "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
+    "Она начинает с общих цели, памяти и плана. Разговор на {main} остаётся там как история, а {main} уступит, когда вернётся.",
+  "{machine} did not become main": "{machine} не стала основной",
+  "Retry it.": "Повторите попытку.",
+  "the old main": "прежняя основная",
+  "Make {machine} main?": "Сделать {machine} основной?",
+  "{main} has been unreachable for 10 minutes or more. {machine} becomes main and starts from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
+    "{main} недоступен 10 минут или дольше. {machine} станет основной и начнёт с общих цели, памяти и плана. Разговор на {main} останется там как история. Пока {main} не вернётся, он ещё может запускать работу на своей машине; затем он уступит и покажет, что запускал за это время.",
+  "Switching…": "Переключаем…",
+  "Make {machine} main": "Сделать {machine} основной",
+  "Main for {project} is {machine}. This copy takes work from there.":
+    "Основная для {project} — {machine}. Эта копия получает работу оттуда.",
+  "Main for {project} is on another machine. This copy takes work from there.":
+    "Основная для {project} — на другой машине. Эта копия получает работу оттуда.",
+  "The conversation here is kept as history.": "Разговор здесь сохранён как история.",
+  "Write to {machine}'s coordinator": "Написать координатору на {machine}",
+  "Write to main's coordinator": "Написать координатору основной",
+  "Write opens {machine}'s page for this project, where its coordinator answers. Nothing is sent from here.":
+    "«Написать» открывает страницу этого проекта на {machine}, где отвечает его координатор. Отсюда ничего не отправляется.",
+  "Write opens main's page for this project, where its coordinator answers. Nothing is sent from here.":
+    "«Написать» открывает страницу этого проекта на основной машине, где отвечает её координатор. Отсюда ничего не отправляется.",
+  "{main} has been unreachable for 10 minutes or more. Making {machine} main starts from the shared goal, memory and plan; the conversation on {main} stays there as history.":
+    "{main} недоступен 10 минут или дольше. Если сделать {machine} основной, она начнёт с общих цели, памяти и плана; разговор на {main} останется там как история.",
+  "Making {machine} main moves the coordinator and its conversation here from {main}, which becomes a copy.":
+    "Если сделать {machine} основной, координатор и его разговор переедут сюда с {main}, а {main} станет копией.",
+  "{machine} became main while {main} was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
+    "{machine} стала основной, пока {main} был недоступен. Она начала с общих цели, памяти и плана; прежний разговор остаётся на {main} как история.",
+  "{machine} became main while the old main was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
+    "{machine} стала основной, пока прежняя основная была недоступна. Она начала с общих цели, памяти и плана; прежний разговор остаётся на старой машине как история.",
+  "Got it": "Понятно",
+  "{machine} kept its coordinator conversation from before as history. View it to read that conversation.":
+    "{machine} сохранил прежний разговор координатора как историю. Откройте его, чтобы прочитать тот разговор.",
+  "Makes the project on {machine} part of this one. Main does not change, and threads and files stay where they are. You confirm what {machine} gives up first.":
+    "Проект на {machine} станет частью этого. Основная не меняется, треды и файлы останутся на своих местах. Сначала вы подтвердите, от чего откажется {machine}.",
+  "Link {machine} to this project…": "Связать {machine} с этим проектом…",
+  "{main} is unreachable: {machine} takes over and starts from the shared goal, memory and plan. You confirm first.":
+    "{main} недоступен: {machine} примет управление и начнёт с общих цели, памяти и плана. Сначала вы подтвердите.",
+  "Moves the coordinator and its conversation from {main} to {machine}. {main} becomes a copy. You confirm first.":
+    "Переносит координатора и его разговор с {main} на {machine}. {main} станет копией. Сначала вы подтвердите.",
+  "Link {machine} to this project": "Связать {machine} с этим проектом",
+  "{machine} joins {project} as a copy. Main stays on {main}: linking does not change it.":
+    "{machine} присоединяется к {project} как копия. Основная остаётся на {main}: связывание её не меняет.",
+  "Link {machine}": "Связать {machine}",
+  "Main stays on {main}. To have main on {machine}, make {machine} main after linking.":
+    "Основная остаётся на {main}. Чтобы основная была на {machine}, сделайте {machine} основной после связывания.",
+  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
+    "Связать {machine} с этим проектом. {machine} отказывается от собственных цели и инструкций: с этого момента он следует цели и инструкциям этого проекта, а его собственные будут заменены, если он станет основной. Его собственный координатор останавливается, а тот разговор остаётся на {machine} как история. Его воркеры продолжают работать. Основная остаётся на {main}. Файлы не копируются.",
 };

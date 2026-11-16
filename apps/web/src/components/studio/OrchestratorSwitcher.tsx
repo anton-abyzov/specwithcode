@@ -7,12 +7,12 @@ import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { useNavigate } from "@tanstack/react-router";
 import {
+  ArrowRightLeftIcon,
   ChevronDownIcon,
   CopyPlusIcon,
   DoorOpenIcon,
   Link2Icon,
   MessageSquareShareIcon,
-  MoveRightIcon,
   Settings2Icon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -21,6 +21,7 @@ import { randomUUID } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useProjects } from "../../state/entities";
 import { highestEpoch, projectLink, sameRepositoryLinkOffers } from "../../studio/projectLink";
+import type { MainOffer } from "../../studio/makeMain";
 import {
   checkoutKeyEnvironmentId,
   type OrchestratorCopy,
@@ -66,10 +67,10 @@ function AfterUnmount({ pending }: { pending: { current: (() => void) | null } }
  *
  * Each machine appears once, in the view list, with a note naming its state:
  * the badge Settings > Machines shows for it (Main, Copy · main on X, Moving
- * main), coordinator paused (it kept its coordinator from before; its own page
- * offers to run it again), or not linked. The only
- * coordinator item below is "Move coordinator to X…", for a machine whose copy
- * runs workers only and kept nothing.
+ * main), coordinator paused (it kept its conversation from before, as history),
+ * or not linked. The only coordinator item below is "Make X main", one per
+ * linked machine that is not main, off with its reason while it cannot run.
+ * A machine that is not linked gets "Link X to this project…" instead.
  */
 export function OrchestratorSwitcher({
   label,
@@ -81,7 +82,8 @@ export function OrchestratorSwitcher({
   unknown,
   savedMachineMissing,
   onView,
-  onMove,
+  mainOffers = [],
+  onMakeMain = null,
   onAllowWorkers,
   onMigrate = null,
   onCopy = null,
@@ -104,8 +106,13 @@ export function OrchestratorSwitcher({
   unknown: ReadonlyArray<{ key: string; machine: string }>;
   savedMachineMissing: boolean;
   onView: ((key: string) => void) | null;
-  /** Opens the confirmed coordinator move; null when it cannot be offered. */
-  onMove: ((key: string) => void) | null;
+  /**
+   * "Make X main" for each linked copy that is not main (`useMakeMain`): pressable, or off
+   * with its reason. Main itself and copies that are not linked have none.
+   */
+  mainOffers?: readonly MainOffer[];
+  /** Runs that switch behind its own confirmation; null when it cannot be offered. */
+  onMakeMain?: ((key: string) => void) | null;
   onAllowWorkers: (() => void) | null;
   /** Opens "Move running threads" for the viewed machine's threads; null while it is offline. */
   onMigrate?: (() => void) | null;
@@ -116,7 +123,7 @@ export function OrchestratorSwitcher({
   onCopy?: (() => void) | null;
   /**
    * Projects on other machines that track the same repository and are not part of this
-   * one, at most one per machine: each gets "Link with the project on X…".
+   * one, at most one per machine: each gets "Link X to this project…".
    */
   links?: ReadonlyArray<{ key: string; machine: string }>;
   /** Opens the link dialog on that project; null when linking cannot be offered. */
@@ -170,21 +177,21 @@ export function OrchestratorSwitcher({
   const nameOf = (copy: OrchestratorCopy) =>
     ambiguous(copy.machine) ? `${copy.machine} · ${copy.folder}` : copy.machine;
   const others = listed.filter((copy) => copy.key !== current);
-  // One coordinator item per machine at most. A machine where any copy runs its own
-  // coordinator, or kept one (paused), gets none: viewing it opens it, and a paused one
-  // offers to run again on its own page. Moving this one there would leave two
-  // conversations for one place.
+  // One "Make X main" per machine at most, the viewed machine included. A machine where a
+  // copy runs a coordinator gets none: main is already there, or that copy would have to
+  // give its own up first. A copy that is not linked has no main to become: it gets Link.
   const hostOf = (copy: OrchestratorCopy) => checkoutKeyEnvironmentId(copy.key);
-  const coordinating = new Set(
-    copies.filter((copy) => copy.role === "coordinator" || copy.canStart).map(hostOf),
-  );
-  const coordinatorActions: OrchestratorCopy[] = [];
-  for (const host of new Set(others.map(hostOf))) {
-    if (coordinating.has(host) || !onMove) continue;
-    const move = others.find(
-      (copy) => hostOf(copy) === host && (copy.role === "workers" || copy.role === "independent"),
-    );
-    if (move) coordinatorActions.push(move);
+  const coordinating = new Set(copies.filter((copy) => copy.role === "coordinator").map(hostOf));
+  const mainActions: Array<{ copy: OrchestratorCopy; offer: MainOffer }> = [];
+  for (const host of new Set(listed.map(hostOf))) {
+    if (coordinating.has(host) || !onMakeMain) continue;
+    for (const copy of listed) {
+      if (hostOf(copy) !== host || copy.role !== "workers") continue;
+      const offer = mainOffers.find((item) => item.key === copy.key);
+      if (!offer) continue;
+      mainActions.push({ copy, offer });
+      break;
+    }
   }
   // Linking is what makes two projects for one repository one project; nothing is copied.
   const linkActions = onLink ? links : [];
@@ -204,7 +211,7 @@ export function OrchestratorSwitcher({
     others.length > 0 &&
     others.every((copy) => linkActions.some((link) => link.key === copy.key));
   // Copy, link and the coordinator actions act on this project; threads and Leave on the machine.
-  const projectActions = onCopy !== null || coordinatorActions.length > 0 || linkActions.length > 0;
+  const projectActions = onCopy !== null || mainActions.length > 0 || linkActions.length > 0;
   return (
     <Menu>
       <span className="project-muted sws-host sws-execution-control">
@@ -271,7 +278,7 @@ export function OrchestratorSwitcher({
                       : "",
                   hint: copy.canStart
                     ? tx(
-                        "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.",
+                        "{machine} kept its coordinator conversation from before as history. View it to read that conversation.",
                         { machine: nameOf(copy) },
                       )
                     : copy.role === "independent"
@@ -332,7 +339,7 @@ export function OrchestratorSwitcher({
                   key={link.key}
                   data-orchestrator-link={link.key}
                   title={tx(
-                    "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.",
+                    "Makes the project on {machine} part of this one. Main does not change, and threads and files stay where they are. You confirm what {machine} gives up first.",
                     { machine: link.machine },
                   )}
                   onClick={() => {
@@ -340,17 +347,40 @@ export function OrchestratorSwitcher({
                   }}
                 >
                   <Link2Icon aria-hidden />
-                  {tx("Link with the project on {machine}…", { machine: link.machine })}
+                  {tx("Link {machine} to this project…", { machine: link.machine })}
                 </MenuItem>
               ))}
-              {coordinatorActions.map((copy) => (
+              {mainActions.map(({ copy, offer }) => (
                 <MenuItem
                   key={copy.key}
-                  data-orchestrator-move={copy.key}
-                  onClick={() => onMove?.(copy.key)}
+                  data-orchestrator-make-main={copy.key}
+                  disabled={offer.kind === "blocked"}
+                  title={
+                    offer.reason
+                      ? tx(offer.reason.text, offer.reason.values)
+                      : offer.kind === "takeover"
+                        ? tx(
+                            "{main} is unreachable: {machine} takes over and starts from the shared goal, memory and plan. You confirm first.",
+                            { machine: nameOf(copy), main: offer.main },
+                          )
+                        : tx(
+                            "Moves the coordinator and its conversation from {main} to {machine}. {main} becomes a copy. You confirm first.",
+                            { machine: nameOf(copy), main: offer.main },
+                          )
+                  }
+                  onClick={() => {
+                    // After the menu has left: the switch may show main's page or open a dialog.
+                    if (offer.kind !== "blocked")
+                      pendingView.current = () => onMakeMain?.(copy.key);
+                  }}
                 >
-                  <MoveRightIcon aria-hidden />
-                  {tx("Move coordinator to {machine}…", { machine: nameOf(copy) })}
+                  <ArrowRightLeftIcon aria-hidden />
+                  {tx("Make {machine} main", { machine: nameOf(copy) })}
+                  {offer.note ? (
+                    <span className="ms-auto ps-4 text-muted-foreground text-xs">
+                      {tx(offer.note.text, offer.note.values)}
+                    </span>
+                  ) : null}
                 </MenuItem>
               ))}
             </MenuGroup>
@@ -402,9 +432,9 @@ export function OrchestratorSwitcher({
 
 /**
  * The switcher on a project page, with its actions wired: viewing changes only
- * what this page shows, starting runs another coordinator next to this one,
- * moving opens the confirmed handoff. A machine that is not connected shows a
- * red dot; the status line above the message box says what that means.
+ * what this page shows, "Make X main" runs the page's confirmed switch, linking
+ * opens its confirmation. A machine that is not connected shows a red dot; the
+ * status line above the message box says what that means.
  */
 export function ProjectOrchestratorSwitcher({
   project,
@@ -417,7 +447,8 @@ export function ProjectOrchestratorSwitcher({
   unknown,
   savedMachineMissing,
   onView,
-  onMove,
+  mainOffers = [],
+  onMakeMain = null,
   onCopy = null,
 }: {
   project: EnvironmentProject;
@@ -430,7 +461,8 @@ export function ProjectOrchestratorSwitcher({
   unknown: ReadonlyArray<{ key: string; machine: string }>;
   savedMachineMissing: boolean;
   onView: ((key: string) => void) | null;
-  onMove: ((key: string) => void) | null;
+  mainOffers?: readonly MainOffer[];
+  onMakeMain?: ((key: string) => void) | null;
   onCopy?: (() => void) | null;
 }) {
   const navigate = useNavigate();
@@ -446,6 +478,13 @@ export function ProjectOrchestratorSwitcher({
     () => (onCopy ? sameRepositoryLinkOffers(projects, project, () => null) : []),
     [onCopy, projects, project],
   );
+  // "This project" is the one that keeps main: the viewed copy, or main when it is elsewhere.
+  // Linking never changes main, so the dialog opens on that copy and it stays main.
+  const mainKey = copies.find((copy) => copy.main)?.key;
+  const linkProject =
+    (project.workspaceSettings?.logicalProject && mainKey !== undefined
+      ? projects.find((item) => `${item.environmentId}:${item.id}` === mainKey)
+      : undefined) ?? project;
   return (
     <>
       <OrchestratorSwitcher
@@ -460,7 +499,8 @@ export function ProjectOrchestratorSwitcher({
         unknown={unknown}
         savedMachineMissing={savedMachineMissing}
         onView={onView}
-        onMove={onMove}
+        mainOffers={mainOffers}
+        onMakeMain={onMakeMain}
         onCopy={onCopy}
         links={offers.map((offer) => ({
           key: `${offer.environmentId}:${offer.id}`,
@@ -489,8 +529,11 @@ export function ProjectOrchestratorSwitcher({
           onOpenChange={(open) => {
             if (!open) setLinkTarget(null);
           }}
-          project={project}
+          project={linkProject}
           initialCandidate={linkTarget}
+          // "Link X to this project…": X joins, this project keeps main, and the dialog
+          // opens on what X gives up.
+          joining
         />
       )}
     </>

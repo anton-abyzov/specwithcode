@@ -200,7 +200,8 @@ import { randomUUID } from "../../lib/utils";
 
 import { CoordinatorConversation } from "./CoordinatorConversation";
 import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
-import { CoordinatorBlockedNotice } from "./CoordinatorBlockedNotice";
+import { CoordinatorBlockedNotice, OfflineSwitchNotice } from "./CoordinatorBlockedNotice";
+import { useMakeMain } from "./useMakeMain";
 import { ProjectComposerHostStatus } from "./ComposerHostStatus";
 import { useTx } from "../../i18n";
 import {
@@ -208,6 +209,7 @@ import {
   type OrchestratorCopy,
   workersOnlyProblem,
 } from "../../studio/projectCoordinatorMachine";
+import { offlineSwitchPredecessor } from "../../studio/workersOnlyCopy";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -416,10 +418,27 @@ export function ProjectWorkspaceSurface({
   // The machine menu's "Send to another machine…": the dialog opens on the copy, once.
   const handoff = useMachineHandoffRequest();
   const requestHandoff = handoff.ask;
-  const handoffOpenChange = useCallback((open: boolean) => {
-    setMachineHandoffOpen(open);
-    if (!open) setHandoffTarget(null);
-  }, []);
+  // "Make X main": this page's confirmed move, main's page for a move asked from a copy, or
+  // the copy's takeover once the old main has been unreachable long enough.
+  const mainSwitch = useMakeMain({
+    project,
+    members: iconCheckouts,
+    copies: checkouts,
+    // A personal assistant is private to its machine: it never moves.
+    enabled: !machinePrivate,
+    // Moving needs a coordinator to move.
+    openMove: mainCoordinatorId && canOperate && !machinePrivate ? setHandoffTarget : null,
+    onCheckout,
+  });
+  const moveOpenChange = mainSwitch.moveOpenChange;
+  const handoffOpenChange = useCallback(
+    (open: boolean) => {
+      setMachineHandoffOpen(open);
+      if (!open) setHandoffTarget(null);
+      moveOpenChange(open);
+    },
+    [moveOpenChange],
+  );
   const [retryingCoordinator, setRetryingCoordinator] = useState(false);
   const [coordinatorActivityRunId, setCoordinatorActivityRunId] = useState<string | null>(null);
   const [coordinatorReviewView, setCoordinatorReviewView] = useState<"requests" | "activity">(
@@ -635,12 +654,14 @@ export function ProjectWorkspaceSurface({
     ? null
     : composerHostStatus(environment?.connection, admissionContext);
   // A workers-only copy names where its work starts; only one that ran a coordinator keeps history.
+  const keptConversation = shells.some(
+    (t) => t.id === mainCoordinatorId && t.environmentId === project.environmentId,
+  );
   const workersOnly = coordinatorElsewhere
-    ? workersOnlyProblem(
-        coordinatorElsewhere.machine,
-        shells.some((t) => t.id === mainCoordinatorId && t.environmentId === project.environmentId),
-      )
+    ? workersOnlyProblem(coordinatorElsewhere.machine, keptConversation, projectTitle)
     : null;
+  // This copy became main while the old main was unreachable: its conversation stayed there.
+  const switchedFrom = offlineSwitchPredecessor(project);
   // An unreachable machine refuses first: a typed message is never sent elsewhere.
   const blocked = (connected ? null : admission) ?? workersOnly ?? ownershipProblem ?? admission;
   // Memoized, not just computed: these feed memoized callbacks below, and the
@@ -2040,12 +2061,33 @@ export function ProjectWorkspaceSurface({
                       <CoordinatorBlockedNotice
                         text={blocked}
                         coordinator={blocked === workersOnly ? coordinatorElsewhere : null}
+                        projectTitle={projectTitle}
+                        hadConversation={keptConversation}
                         current={`${project.environmentId}:${project.id}`}
-                        members={iconCheckouts}
                         copies={checkouts}
                         onOpen={onCheckout}
+                        mainOffer={
+                          mainSwitch.offers.find(
+                            (offer) => offer.key === `${project.environmentId}:${project.id}`,
+                          ) ?? null
+                        }
+                        onMakeMain={mainSwitch.run}
                       />
                     )}
+                    {switchedFrom && !blocked && !hostStatus ? (
+                      <OfflineSwitchNotice
+                        key={`${project.environmentId}:${project.id}:${project.workspaceSettings?.coordinatorBinding?.operationId ?? ""}`}
+                        id={`${project.environmentId}:${project.id}:${project.workspaceSettings?.coordinatorBinding?.operationId ?? ""}`}
+                        machine={machineName}
+                        previous={
+                          checkouts.find(
+                            (copy) =>
+                              copy.key ===
+                              `${switchedFrom.environmentId}:${switchedFrom.projectId}`,
+                          )?.machine ?? null
+                        }
+                      />
+                    ) : null}
                     {/* A send refused for the host the line names would only repeat it. */}
                     {error && !(hostStatus && error === blocked) && (
                       <p role="alert">
@@ -2100,11 +2142,9 @@ export function ProjectWorkspaceSurface({
                             }
                           : null
                       }
-                      // Moving is its own confirmed dialog, and needs a coordinator to move.
-                      // A personal assistant is private to its machine: it never moves.
-                      onMove={
-                        mainCoordinatorId && canOperate && !machinePrivate ? setHandoffTarget : null
-                      }
+                      // Making a copy main is its own confirmed action.
+                      mainOffers={mainSwitch.offers}
+                      onMakeMain={mainSwitch.run}
                       // One Send to another machine: its dialog offers Copy or Move.
                       onCopy={canOperate && !machinePrivate ? () => requestHandoff("copy") : null}
                     />
@@ -2168,6 +2208,7 @@ export function ProjectWorkspaceSurface({
                         </Tip>
                       ) : null}
                     </span>
+                    {mainSwitch.element}
                     {machinePrivate ? null : (
                       <ProjectMachineHandoff
                         key={`${project.environmentId}:${project.id}`}

@@ -254,6 +254,64 @@ it("ranks copies by fingerprint, keeps the most recent coordinator and merges no
   expect(localStorage.length).toBe(0);
 });
 
+it("links another machine's copy into this project without changing main", async () => {
+  const kept = { ...logicalProject, members: [member("m4", "here")] };
+  state.handlers["projectLink.prepare"] = ({ input }) => ({
+    operationId: input.operationId,
+    kept: member("m4", "here"),
+    logicalProject: kept,
+    coordinatorBinding: { epoch: 0, state: "active" },
+    fingerprint: umbrella,
+    adopted: true,
+  });
+  state.handlers["projectLink.accept"] = ({ input }) => ({
+    operationId: input.operationId,
+    member: member("m3", "there"),
+    logicalProject: { ...kept, members: [...kept.members, member("m3", "there")] },
+    coordinatorBinding: { epoch: 0, state: "transferred" },
+    replayed: false,
+  });
+  await render({
+    joining: true,
+    initialCandidate: { environmentId: "m3", projectId: "there" } as never,
+  });
+  await settle();
+  await settle();
+  // It opens on what M3 gives up, with no choice of side: M3's coordinator was the more
+  // recent one, and main still stays here.
+  expect(text()).toContain("Link M3 to this project");
+  expect(text()).toContain(
+    "M3 joins EasyChamp as a copy. Main stays on M4: linking does not change it.",
+  );
+  expect(document.querySelector("[data-link-main-stays]")?.textContent).toBe(
+    "Main stays on M4. To have main on M3, make M3 main after linking.",
+  );
+  expect(document.querySelector<HTMLElement>("fieldset[hidden]")?.textContent).toContain(
+    "Coordinator stays on",
+  );
+  expect(document.querySelector("[data-link-consent]")?.textContent).toBe(
+    "Link M3 to this project. M3 gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on M3 as history. Its workers keep running. Main stays on M4. Files are not copied.",
+  );
+  // Nothing links before the person agrees to that.
+  expect(button("Link M3").disabled).toBe(true);
+  expect(state.calls.some((call) => call.tag === "projectLink.prepare")).toBe(false);
+  const consent = [...document.querySelectorAll<HTMLElement>('[role="checkbox"]')].at(-1)!;
+  await click(consent);
+  const conflict = document.querySelector('[data-slot="note-conflict"]');
+  if (conflict) await click(radioIn(conflict, "Keep both"));
+  await click(button("Link M3"));
+  const steps = state.calls.filter((call) =>
+    /^projectLink\.(prepare|accept|commit)$/.test(call.tag),
+  );
+  expect(steps.map((call) => [call.tag, call.environmentId])).toEqual([
+    ["projectLink.prepare", "m4"],
+    ["projectLink.accept", "m3"],
+    ["projectLink.commit", "m4"],
+  ]);
+  expect(steps[0]?.input).toMatchObject({ projectId: "here", joining: member("m3", "there") });
+  expect(text()).toContain("Projects linked");
+});
+
 it("does not offer another machine's No project folder or an archived project", async () => {
   state.projects.push(
     { ...unrelated, id: "scratch", title: "Scratch", workspaceRoot: "/Users/b/.scratch" },

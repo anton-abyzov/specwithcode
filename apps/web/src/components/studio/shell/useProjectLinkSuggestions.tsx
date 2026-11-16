@@ -52,8 +52,15 @@ export function useProjectLinkSuggestions(
     const machine = nickname(
       suggestion.sameRow ? suggestion.candidate.environmentId : suggestion.anchor.environmentId,
     );
+    // Every copy that waits is named; the action links one, and the next is offered after it.
+    const waiting = [
+      machine,
+      ...(suggestion.more ?? []).map((copy) => nickname(copy.environmentId)),
+    ];
+    const machines =
+      waiting.length === 1 ? machine : `${waiting.slice(0, -1).join(", ")} and ${waiting.at(-1)!}`;
     const label = suggestion.sameRow
-      ? `Same repository${repository} also added on ${machine}, not linked`
+      ? `Same repository${repository} also added on ${machines}, not linked`
       : `Same repository${repository} as ${suggestion.anchorTitle} on ${machine}`;
     return {
       label,
