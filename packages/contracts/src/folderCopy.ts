@@ -303,9 +303,7 @@ export type FolderCopyOperationInput = typeof FolderCopyOperationInput.Type;
 export const FolderCopyApproveInput = Schema.Struct({
   operationId: MachineHandoffOperationId,
   withoutSecrets: Schema.optional(Schema.Boolean),
-  expectedSecrets: Schema.optional(
-    Schema.Array(bounded(4096)).check(Schema.isMaxLength(500)),
-  ),
+  expectedSecrets: Schema.optional(Schema.Array(bounded(4096)).check(Schema.isMaxLength(500))),
 });
 export type FolderCopyApproveInput = typeof FolderCopyApproveInput.Type;
 export const FolderCopyCancelInput = Schema.Struct({

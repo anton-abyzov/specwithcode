@@ -145,6 +145,7 @@ export function ProjectMachineHandoff({
   onOpenChange,
   requestedTarget = null,
   openRequest = null,
+  onRequestHandled,
   showTrigger = true,
 }: {
   readonly project: EnvironmentProject;
@@ -153,6 +154,11 @@ export function ProjectMachineHandoff({
   readonly requestedTarget?: string | null;
   /** Set by the project's machine menu: "Send to another machine…". */
   readonly openRequest?: MachineHandoffOpenRequest | null;
+  /**
+   * Told once the request was acted on, so the parent drops it: this component is mounted
+   * again when the window switches machine, and a request still held would open the dialog.
+   */
+  readonly onRequestHandled?: (request: MachineHandoffOpenRequest) => void;
   /** Off where the machine menu opens the dialog instead of its own button. */
   readonly showTrigger?: boolean;
 }) {
@@ -915,6 +921,8 @@ export function ProjectMachineHandoff({
   const latestBlockedReason = useRef(blockedReason);
   latestBlockedReason.current = blockedReason;
   const handledRequest = useRef<MachineHandoffOpenRequest | null>(null);
+  const latestRequestHandled = useRef(onRequestHandled);
+  latestRequestHandled.current = onRequestHandled;
   useEffect(() => {
     // Each menu pick is a new request object; the same one never opens the dialog twice.
     if (!openRequest || handledRequest.current === openRequest) return;
@@ -923,6 +931,7 @@ export function ProjectMachineHandoff({
     const reason = latestBlockedReason.current;
     if (reason) toastManager.add({ type: "warning", title: reason });
     else latestOpenDialog.current(openRequest.mode, openRequest.machine, openRequest.target);
+    latestRequestHandled.current?.(openRequest);
   }, [openRequest]);
 
   return (

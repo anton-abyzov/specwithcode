@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { KeptProjectPages } from "./KeptProjectPages";
 import type { MachineHandoffDialog } from "./MachineHandoffDialog";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
+import { useMachineHandoffRequest } from "./useMachineHandoffRequest";
 
 // A project page left for another machine stays mounted, hidden, and runs its effects again
 // when it is shown. A copy dialog the person closed must not come back with it.
@@ -206,4 +207,53 @@ it("opens for a requested machine once, and again only after the request was cle
   await render("visible", null);
   await render("visible", "m1:target");
   expect(props().open).toBe(true);
+});
+
+/** The workspace's wiring: one request holder, and a dialog keyed by the machine's copy. */
+let ask: ReturnType<typeof useMachineHandoffRequest>["ask"];
+function Workspace({ project }: { readonly project: typeof source }) {
+  const handoff = useMachineHandoffRequest();
+  ask = handoff.ask;
+  return (
+    <ProjectMachineHandoff
+      key={`${project.environmentId}:${project.id}`}
+      project={project as never}
+      coordinatorId={"coordinator" as never}
+      openRequest={handoff.request}
+      onRequestHandled={handoff.handled}
+      showTrigger={false}
+    />
+  );
+}
+const workspace = (project: typeof source) =>
+  act(async () => root.render(<Workspace project={project} />));
+
+it("does not reopen the dialog when the window switches machine and back", async () => {
+  await workspace(source);
+  expect(props().open).toBe(false);
+  // The menu's "Copy to another machine…" on m4, then the dialog is closed.
+  await act(async () => ask("copy"));
+  expect(props().open).toBe(true);
+  await act(async () => props().onOpenChange(false));
+  expect(props().open).toBe(false);
+  // The window switches to the other machine's copy and back: the dialog is mounted anew
+  // each time, and the request it already took is gone.
+  await workspace(target);
+  expect(props().open).toBe(false);
+  await workspace(source);
+  expect(props().open).toBe(false);
+  // A new click still opens it.
+  await act(async () => ask("copy"));
+  expect(props().open).toBe(true);
+});
+
+it("does not carry an open dialog's request to the other machine's page", async () => {
+  await workspace(source);
+  await act(async () => ask("copy"));
+  expect(props().open).toBe(true);
+  // Switched while the dialog was open: the other machine's page starts closed.
+  await workspace(target);
+  expect(props().open).toBe(false);
+  await workspace(source);
+  expect(props().open).toBe(false);
 });
