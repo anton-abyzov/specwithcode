@@ -317,9 +317,14 @@ export function ProjectWorkspace({
                   <Button
                     key={coordinatorMachineKey(checkout)}
                     variant="outline"
+                    size="sm-multiline"
+                    className="max-w-full"
                     onClick={() => chooseMachine(coordinatorMachineKey(checkout))}
                   >
-                    Use {checkoutName(checkout)} · {checkout.workspaceRoot}
+                    {/* A full folder path wraps inside the button instead of widening the page. */}
+                    <span className="min-w-0 wrap-anywhere">
+                      Use {checkoutName(checkout)} · {checkout.workspaceRoot}
+                    </span>
                   </Button>
                 ))
               : null}
