@@ -429,6 +429,19 @@ describe("merged clone sweep", () => {
     assert.include(registered.checkouts, inner);
   });
 
+  it("does not register clones under other names inside a project folder", async () => {
+    // A project at a scratch root must not make its clones registered checkouts.
+    const scratchProject = NodePath.join(root, "scratch-project");
+    const clone = NodePath.join(scratchProject, "2026-11-01-task", "repo");
+    NodeFS.mkdirSync(NodePath.dirname(clone), { recursive: true });
+    NodeChildProcess.execFileSync("git", ["clone", "--quiet", origin, clone]);
+    const registered = await registeredRepositories([
+      { workspace_root: scratchProject, workspace_settings_json: null },
+    ]);
+    assert.isFalse(registered.remotes.has(normalizeRemoteUrl(origin)));
+    assert.deepStrictEqual(registered.checkouts, []);
+  });
+
   it("reads registered repositories from projects and compares remotes by one spelling", async () => {
     const checkout = NodePath.join(root, "seed");
     const registered = await registeredRepositories([
