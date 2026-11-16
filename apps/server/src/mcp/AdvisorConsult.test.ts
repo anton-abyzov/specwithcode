@@ -18,6 +18,7 @@ import * as Semaphore from "effect/Semaphore";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { AdvisorBrief } from "../orchestration-v2/AdvisorBrief.ts";
+import { SUBAGENT_NO_RESULT_TEXT } from "../orchestration-v2/SubagentProjection.ts";
 import {
   ADVISOR_CLAUDE_WAIT_MS,
   ADVISOR_DEFAULT_WAIT_MS,
@@ -31,7 +32,6 @@ import {
   advisorWaitMs,
   consultAdvisor,
   inFlightAdvisorTask,
-  queuedAdvisorDeliveries,
   settledAdvisorChildren,
 } from "./AdvisorConsult.ts";
 
@@ -199,44 +199,29 @@ describe("advisorConsultGate", () => {
   });
 });
 
-describe("a consult whose advice is queued behind the caller's turn", () => {
+describe("a consult whose advice went out in a wake-up", () => {
   const claimed = task("a1", {
     status: "completed",
     result: "Advice",
     completionDelivery: { state: "claimed", observedByRunId: null },
   });
+  const gate = (subagents: ReadonlyArray<OrchestrationV2Subagent>) =>
+    advisorConsultGate({ thread: { id: callerId }, settings: on, subagents, runId });
 
-  it("is picked up while its wake-up message is still queued, not started again", () => {
-    const gate = (queued: ReadonlySet<string>) =>
-      advisorConsultGate({
-        thread: { id: callerId },
-        settings: on,
-        subagents: [claimed],
-        runId,
-        queuedDeliveries: queued,
-      });
-    expect(gate(new Set(["a1"]))).toEqual({ kind: "pick-up", task: claimed, consultsRemaining: 2 });
-    // Once the wake-up's turn started, that turn carries the advice.
-    expect(gate(new Set())).toEqual({ kind: "start", ordinal: 2, consultsRemaining: 1 });
+  it("is picked up, not started again, until the wake-up settles", () => {
+    // Queued behind the caller's turn, being steered in, or in the turn it
+    // started: the wake-up has not settled, so a call is for the same consult.
+    expect(gate([claimed])).toEqual({ kind: "pick-up", task: claimed, consultsRemaining: 2 });
   });
 
-  it("finds queued deliveries from the caller's runs", () => {
-    const runs = [
-      {
-        status: "running",
-        userMessageId: "message:1",
-        delegatedCompletion: { delivery: { messageId: "message:wake", taskIds: ["a1", "a2"] } },
-      },
-      { status: "queued", userMessageId: "message:wake" },
-      {
-        status: "completed",
-        userMessageId: "message:0",
-        delegatedCompletion: { delivery: { messageId: "message:started", taskIds: ["a0"] } },
-      },
-      { status: "running", userMessageId: "message:started" },
-      { status: "completed", userMessageId: "message:x", delegatedCompletion: { delivery: null } },
-    ];
-    expect([...queuedAdvisorDeliveries(runs)]).toEqual(["a1", "a2"]);
+  it("is settled once the caller took the wake-up in, so a later call starts a new consult", () => {
+    const settled = {
+      ...claimed,
+      completionDelivery: { state: "acknowledged" as const, observedByRunId: runId },
+    };
+    expect(inFlightAdvisorTask([settled], callerId)).toBeUndefined();
+    expect(gate([settled])).toEqual({ kind: "start", ordinal: 2, consultsRemaining: 1 });
+    expect(settledAdvisorChildren([settled], callerId)).toEqual([ThreadId.make("thread:child:a1")]);
   });
 });
 
@@ -301,6 +286,8 @@ describe("advisorConsultResult", () => {
         taskId: "a1",
       });
     expect(shape(taskResult("a1", "completed", "   ")).status).toBe("failed");
+    // The app's own words for a completed child that said nothing are no advice.
+    expect(shape(taskResult("a1", "completed", SUBAGENT_NO_RESULT_TEXT)).status).toBe("failed");
   });
 });
 
@@ -385,7 +372,6 @@ function fake(input: {
   readonly subagents?: () => ReadonlyArray<OrchestrationV2Subagent>;
   readonly noRun?: boolean;
   readonly noAdvisor?: boolean;
-  readonly queuedDeliveries?: ReadonlySet<string>;
   /** Child threads waiting on an approval or a question. */
   readonly blocked?: ReadonlySet<string>;
   readonly results: Array<OrchestratorMcpDelegateTaskResult>;
@@ -406,7 +392,6 @@ function fake(input: {
               runId,
               driver: input.driver,
               subagents: input.subagents?.() ?? [],
-              queuedDeliveries: input.queuedDeliveries,
               context: null,
             },
           },
@@ -662,6 +647,32 @@ describe("consultAdvisor", () => {
     expect(calls.waits.map((wait) => wait.taskId)).toEqual(["a1"]);
     expect(calls.abandoned).toEqual([{ taskId: "a1", childThreadId: "thread:child:a1" }]);
   });
+  it("returns a woken consult's advice once more to a call made before the wake-up settled", async () => {
+    // The first call said working; the advice then went out in a wake-up the
+    // caller's turn has not finished reading.
+    const woken = task("a1", {
+      status: "completed",
+      result: "Use the cache.",
+      completionDelivery: { state: "claimed", observedByRunId: null },
+    });
+    const { calls, ports } = fake({
+      driver: "codex",
+      subagents: () => [woken],
+      results: [taskResult("a1", "completed", "Use the cache.")],
+    });
+    const result = await Effect.runPromise(consultAdvisor(ports, {}));
+    expect(result).toMatchObject({
+      status: "advice",
+      advice: "Use the cache.",
+      consultsRemaining: 2,
+      message:
+        "claude-fable-5-2 label answered the consult your earlier call left working; no new consult was started.",
+    });
+    expect(calls.starts).toBe(0);
+    expect(calls.briefs).toEqual([]);
+    expect(calls.archived).toEqual([["thread:child:a1"]]);
+  });
+
   it("starts one child for two calls made at once, the second picking it up", async () => {
     const subagents: Array<OrchestrationV2Subagent> = [];
     const { calls, ports } = fake({

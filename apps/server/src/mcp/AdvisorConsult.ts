@@ -35,6 +35,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import type { AdvisorBrief } from "../orchestration-v2/AdvisorBrief.ts";
+import { SUBAGENT_NO_RESULT_TEXT } from "../orchestration-v2/SubagentProjection.ts";
 
 // ── How long a call waits ────────────────────────────────────────────
 
@@ -111,52 +112,24 @@ export function isTerminalAdvisorTask(task: Pick<SubagentRecord, "status">): boo
 /**
  * The newest consult of this thread a new call should pick up instead of
  * starting another, from any run: one still running, or one that finished
- * after its call returned "working" whose advice has not reached the caller
- * yet. That is a wake-up not sent (`pending`), or one written into a message
- * still queued behind the caller's live turn (`claimed`, its task id in
- * `queuedDeliveries`); a wake-up whose turn started already carries the advice.
+ * after its call returned "working" whose wake-up has not settled yet. That
+ * is a wake-up not sent (`pending`), or one sent that the caller's turn has
+ * not finished reading (`claimed`: queued, being steered in, or in the turn
+ * it started). The wake-up settles the consult (`acknowledged`) once that
+ * turn ends or the provider takes the steer; a call after that is a new consult.
  */
 export function inFlightAdvisorTask<T extends SubagentRecord>(
   subagents: ReadonlyArray<T>,
   callerThreadId: ThreadId,
-  queuedDeliveries: ReadonlySet<string> = new Set(),
 ): T | undefined {
   return advisorTasks(subagents, callerThreadId)
     .filter(
       (task) =>
         !TERMINAL_TASK_STATUSES.has(task.status) ||
         task.completionDelivery?.state === "pending" ||
-        (task.completionDelivery?.state === "claimed" && queuedDeliveries.has(task.id)),
+        task.completionDelivery?.state === "claimed",
     )
     .at(-1);
-}
-
-/**
- * Tasks whose result sits in a wake-up message that is still queued: the
- * delivery a run of the caller holds, whose own run has not started.
- */
-export function queuedAdvisorDeliveries(
-  runs: ReadonlyArray<{
-    readonly status: string;
-    readonly userMessageId?: string | null | undefined;
-    readonly delegatedCompletion?:
-      | {
-          readonly delivery: {
-            readonly messageId: string;
-            readonly taskIds: ReadonlyArray<string>;
-          } | null;
-        }
-      | undefined;
-  }>,
-): ReadonlySet<string> {
-  const queued = new Set<string>();
-  for (const run of runs) {
-    const delivery = run.delegatedCompletion?.delivery;
-    if (delivery == null) continue;
-    const deliveryRun = runs.find((candidate) => candidate.userMessageId === delivery.messageId);
-    if (deliveryRun?.status === "queued") for (const id of delivery.taskIds) queued.add(id);
-  }
-  return queued;
 }
 
 /**
@@ -252,8 +225,6 @@ export function advisorConsultGate<T extends SubagentRecord>(input: {
   readonly settings: Pick<AdvisorSettings, "enabled" | "maxConsultsPerRun">;
   readonly subagents: ReadonlyArray<T>;
   readonly runId: RunId;
-  /** See `queuedAdvisorDeliveries`. */
-  readonly queuedDeliveries?: ReadonlySet<string> | undefined;
 }): AdvisorGate<T> {
   if (input.thread.purpose === "advisor")
     return { kind: "refused", result: advisorRefusal("advisor-thread", ADVISOR_THREAD_REFUSAL) };
@@ -262,7 +233,7 @@ export function advisorConsultGate<T extends SubagentRecord>(input: {
     return { kind: "refused", result: advisorRefusal("off", advisorOffMessage(state.source)) };
   const max = input.settings.maxConsultsPerRun;
   const used = advisorConsultsUsed(input.subagents, input.thread.id, input.runId);
-  const running = inFlightAdvisorTask(input.subagents, input.thread.id, input.queuedDeliveries);
+  const running = inFlightAdvisorTask(input.subagents, input.thread.id);
   if (running !== undefined)
     return { kind: "pick-up", task: running, consultsRemaining: Math.max(0, max - used) };
   if (used >= max)
@@ -276,7 +247,7 @@ export function advisorConsultGate<T extends SubagentRecord>(input: {
 // ── The result ───────────────────────────────────────────────────────
 
 const ADVISOR_WORKING_MESSAGE =
-  "The advisor is still working; do what does not depend on its answer and end your turn, and the advice arrives as your next message (or call advisor again to pick it up).";
+  "The advisor is still working; do what does not depend on its answer and end your turn, and the advice arrives as your next message. A call to advisor before it arrives picks up this consult instead of starting another.";
 
 /**
  * What the caller hears about a consult's task: the advice when the child
@@ -298,7 +269,9 @@ export function advisorConsultResult(input: {
     ...(input.briefTokens === undefined ? {} : { briefTokens: input.briefTokens }),
     ...(input.leftOut === undefined ? {} : { leftOut: input.leftOut }),
   };
-  const advice = input.task.summary?.trim() ?? "";
+  // A child that said nothing gets the app's own placeholder as its result.
+  const summary = input.task.summary?.trim() ?? "";
+  const advice = summary === SUBAGENT_NO_RESULT_TEXT ? "" : summary;
   switch (input.task.status) {
     case "completed":
       return advice === ""
@@ -374,8 +347,6 @@ export interface AdvisorCaller<C> {
   /** The driver of the provider the caller runs on, for the wait budget. */
   readonly driver: string | null | undefined;
   readonly subagents: ReadonlyArray<SubagentRecord>;
-  /** See `queuedAdvisorDeliveries`; none when absent. */
-  readonly queuedDeliveries?: ReadonlySet<string> | undefined;
   readonly context: C;
 }
 
@@ -489,7 +460,6 @@ export const consultAdvisor = <C, S extends { readonly advisor: AdvisorSettings 
           settings: settings.advisor,
           subagents: caller.subagents,
           runId: caller.runId,
-          queuedDeliveries: caller.queuedDeliveries,
         });
         const waitMs = advisorWaitMs(caller.driver);
         if (gate.kind === "refused") return { kind: "done", result: gate.result } as const;
@@ -565,12 +535,20 @@ export const consultAdvisor = <C, S extends { readonly advisor: AdvisorSettings 
       if (result.status === "working") return (yield* endIfBlocked(about)) ?? result;
       if (result.status === "advice" && picked.childThreadId !== null)
         yield* ports.archive([picked.childThreadId]);
+      if (result.status !== "advice") return result;
       // Its record turns final a moment after the child's answer: a call in
       // between sees it running and gets the advice it was already given.
-      return result.status === "advice" && picked.completionDelivery?.state === "acknowledged"
+      if (picked.completionDelivery?.state === "acknowledged")
+        return {
+          ...result,
+          message: `${advisor} gave this advice to your previous call; no new consult was started.`,
+        };
+      // A consult that finished after its call said working: its wake-up may
+      // be sent already, so the message holds whether or not it was.
+      return isTerminalAdvisorTask(picked)
         ? {
             ...result,
-            message: `${advisor} gave this advice to your previous call; no new consult was started.`,
+            message: `${advisor} answered the consult your earlier call left working; no new consult was started.`,
           }
         : result;
     }

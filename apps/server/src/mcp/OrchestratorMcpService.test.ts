@@ -1312,7 +1312,11 @@ describe("OrchestratorMcpService provider resolution", () => {
     };
     const advisorLayer = (
       dispatched: Ref.Ref<ReadonlyArray<{ readonly type: string }>>,
-      options: { readonly childAsksApproval?: boolean } = {},
+      options: {
+        readonly childAsksApproval?: boolean;
+        /** A consult an earlier call already started and left as this row. */
+        readonly existing?: Record<string, unknown>;
+      } = {},
     ) => {
       let started = false;
       return OrchestratorMcpService.layer.pipe(
@@ -1323,7 +1327,13 @@ describe("OrchestratorMcpService provider resolution", () => {
               getThreadRecords: (threadId) =>
                 Effect.succeed(
                   threadId === parentThreadId
-                    ? advisedParent(started ? [advisorTask] : [])
+                    ? advisedParent(
+                        options.existing !== undefined
+                          ? [options.existing]
+                          : started
+                            ? [advisorTask]
+                            : [],
+                      )
                     : childProjection,
                 ),
               dispatch: (command) =>
@@ -1427,6 +1437,29 @@ describe("OrchestratorMcpService provider resolution", () => {
           });
           assert.deepInclude(commands[1], { taskId, completionWake: "always" });
         }).pipe(Effect.provide(advisorLayer(dispatched)));
+      }),
+    );
+
+    it.effect("picks up a consult already set to wake the caller without asking again", () =>
+      Effect.gen(function* () {
+        const dispatched = yield* Ref.make<ReadonlyArray<{ readonly type: string }>>([]);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const fiber = yield* Effect.forkChild(service.consultAdvisor(scope, {}));
+          yield* TestClock.adjust("45 seconds");
+          const result = yield* Fiber.join(fiber);
+          assert.equal(result.status, "working");
+          assert.equal(result.taskId, taskId);
+          // No second child, and no second wake-policy command for a task
+          // that already wakes the caller.
+          assert.deepEqual(yield* Ref.get(dispatched), []);
+        }).pipe(
+          Effect.provide(
+            advisorLayer(dispatched, {
+              existing: { ...advisorTask, completionWake: "always" },
+            }),
+          ),
+        );
       }),
     );
 

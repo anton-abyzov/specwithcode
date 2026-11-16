@@ -1225,7 +1225,6 @@ import {
   advisorRefusal,
   advisorTaskTitle,
   consultAdvisor,
-  queuedAdvisorDeliveries,
   type Refusable,
 } from "./AdvisorConsult.ts";
 
@@ -2688,7 +2687,6 @@ const make = Effect.gen(function* () {
             (provider) => provider.instanceId === scope.thread.providerInstanceId,
           )?.driver,
           subagents: parent.subagents,
-          queuedDeliveries: queuedAdvisorDeliveries(parent.runs),
           context: { scope, parent, rootNodeId: run.value.rootNodeId, project, providers },
         },
       } as const;
@@ -2853,26 +2851,46 @@ const make = Effect.gen(function* () {
         // As for a delegate_task wait: a wait that ends without the result
         // (timeout, or a cancelled tools/call) hands delivery to a wake-up.
         const key = yield* requestKey(undefined);
-        const upgradeWake = threadManagement
-          .dispatch({
-            type: "delegated_task.wake-policy",
-            commandId: stableCommandId({
-              scope,
-              requestKey: key,
-              operation: "advisor-wake-policy",
-            }),
-            parentThreadId: scope.thread.threadId,
-            taskId,
-            completionWake: "always",
-          })
-          .pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("orchestrator-mcp.advisor.wake-policy-failed", { taskId, error }),
-            ),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("orchestrator-mcp.advisor.wake-policy-failed", { taskId, cause }),
-            ),
-          );
+        // A consult an earlier call left working is already set to wake the
+        // caller; asking again would be refused, so it is read first. A
+        // concurrent call can still set it in between: that refusal is expected.
+        const wakesAlready = loadThreadKinds(scope.thread.threadId, ["subagents"]).pipe(
+          Effect.map(
+            ({ subagents }) =>
+              subagents.find((task) => task.id === taskId)?.completionWake === "always",
+          ),
+          Effect.orElseSucceed(() => false),
+        );
+        const upgradeWake = Effect.gen(function* () {
+          if (yield* wakesAlready) return;
+          yield* threadManagement
+            .dispatch({
+              type: "delegated_task.wake-policy",
+              commandId: stableCommandId({
+                scope,
+                requestKey: key,
+                operation: "advisor-wake-policy",
+              }),
+              parentThreadId: scope.thread.threadId,
+              taskId,
+              completionWake: "always",
+            })
+            .pipe(
+              Effect.asVoid,
+              Effect.catchCause((cause) =>
+                wakesAlready.pipe(
+                  Effect.flatMap((already) =>
+                    already
+                      ? Effect.void
+                      : Effect.logWarning("orchestrator-mcp.advisor.wake-policy-failed", {
+                          taskId,
+                          cause,
+                        }),
+                  ),
+                ),
+              ),
+            );
+        });
         const waited = yield* waitForTask(scope, taskId, timeoutMs).pipe(
           Effect.onExit((exit) =>
             Exit.isSuccess(exit) && Option.isSome(exit.value) ? Effect.void : upgradeWake,
@@ -2883,10 +2901,31 @@ const make = Effect.gen(function* () {
     const archive = (scope: McpThreadInvocationScope, childThreadIds: ReadonlyArray<ThreadId>) =>
       Effect.forEach(
         childThreadIds,
-        (threadId) =>
-          threadManagement.getThreadShell(threadId).pipe(
-            Effect.flatMap((shell) =>
-              shell === null || shell.archivedAt !== null || shell.deletedAt !== null
+        (threadId) => {
+          const archived = threadManagement
+            .getThreadShell(threadId)
+            .pipe(
+              Effect.map(
+                (shell) => shell === null || shell.archivedAt !== null || shell.deletedAt !== null,
+              ),
+            );
+          // The orchestrator archives a consult's child once its wake-up
+          // settles, so a refusal for a child archived meanwhile is no failure.
+          const warn = (detail: { readonly error: unknown } | { readonly cause: unknown }) =>
+            archived.pipe(
+              Effect.orElseSucceed(() => false),
+              Effect.flatMap((done) =>
+                done
+                  ? Effect.void
+                  : Effect.logWarning("orchestrator-mcp.advisor.archive-failed", {
+                      threadId,
+                      ...detail,
+                    }),
+              ),
+            );
+          return archived.pipe(
+            Effect.flatMap((done) =>
+              done
                 ? Effect.void
                 : requestKey(undefined).pipe(
                     Effect.flatMap((key) =>
@@ -2903,13 +2942,10 @@ const make = Effect.gen(function* () {
                   ),
             ),
             Effect.asVoid,
-            Effect.catch((error) =>
-              Effect.logWarning("orchestrator-mcp.advisor.archive-failed", { threadId, error }),
-            ),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("orchestrator-mcp.advisor.archive-failed", { threadId, cause }),
-            ),
-          ),
+            Effect.catch((error) => warn({ error })),
+            Effect.catchCause((cause) => warn({ cause })),
+          );
+        },
         { discard: true },
       );
     const blocked = (childThreadId: ThreadId) =>

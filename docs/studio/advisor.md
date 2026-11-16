@@ -77,8 +77,9 @@ not instructions.
 **How long it waits:** up to 4 minutes on a Claude thread and 45 seconds on any other provider.
 Other agents end a tool call sooner than Claude Code does (Codex stops one at 60 seconds by
 default). When the advisor needs longer, the call answers "still working", and the advice arrives
-as the thread's next message. Calling `advisor` again picks up the same consult instead of
-starting another.
+as the thread's next message, written into that message as a review to weigh. Calling `advisor`
+again before then picks up the same consult instead of starting another. Once the thread has taken
+that message in, the app archives the advisor's child thread; nobody has to acknowledge it.
 
 ## Who advises
 

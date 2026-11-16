@@ -193,6 +193,9 @@ export function makeSubagentConversationArtifacts(input: {
   return { message, turnItem };
 }
 
+/** A child's result when its completed run said nothing. */
+export const SUBAGENT_NO_RESULT_TEXT = "Child task completed without an assistant result.";
+
 export function subagentResultForRun(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
   run: OrchestrationV2Run,
@@ -245,7 +248,7 @@ export function subagentResultForRun(
     message?.text ??
     turnItem?.text ??
     (run.status === "completed"
-      ? "Child task completed without an assistant result."
+      ? SUBAGENT_NO_RESULT_TEXT
       : `Child task ended with status ${run.status}.`);
   return {
     text,

@@ -4,6 +4,7 @@ import { fixtureProjectDatabase } from "../project/ProjectWorkspace.testkit.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EventId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -13,6 +14,7 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -298,4 +300,200 @@ it.effect("ends a stuck advisor child the way a consult does: no wake-up, stoppe
     assert.isNotNull(shell?.archivedAt ?? null);
     assert.isNull(shell?.activeRunId ?? null);
   }).pipe(Effect.provide(layerTest)),
+);
+
+/**
+ * A consult whose call said working: its child answers with `advice` (or
+ * says nothing), and the wake-up goes out as the caller's queued message, the
+ * way the continuation service sends it.
+ */
+const consultToWakeUp = (name: string, advice: string | null) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const parent = yield* threadWithRun(name);
+    yield* delegate(parent, `${name}-advisor`, "advisor");
+    const task = (yield* projections.getThreadProjection(parent.threadId)).subagents[0]!;
+    const childThreadId = task.childThreadId!;
+    // The call that gave up waiting armed the wake-up, as `wait` does.
+    yield* orchestrator.dispatch({
+      type: "delegated_task.wake-policy",
+      commandId: CommandId.make(`${name}-wake-policy`),
+      parentThreadId: parent.threadId,
+      taskId: task.id,
+      completionWake: "always",
+    });
+
+    // The advisor's run ends, with or without an answer.
+    const childRun = (yield* projections.getThreadProjection(childThreadId)).runs[0]!;
+    const now = yield* DateTime.now;
+    const afterAnswer = yield* eventSink.latestSequence();
+    yield* eventSink.write({
+      commandId: CommandId.make(`command:${name}-advisor-answer`),
+      events: [
+        ...(advice === null
+          ? []
+          : [
+              {
+                id: EventId.make(`event:${name}-advisor-answer`),
+                type: "message.updated" as const,
+                threadId: childThreadId,
+                runId: childRun.id,
+                occurredAt: now,
+                payload: {
+                  id: MessageId.make(`message:${name}-advisor-answer`),
+                  threadId: childThreadId,
+                  runId: childRun.id,
+                  nodeId: null,
+                  role: "assistant" as const,
+                  text: advice,
+                  attachments: [],
+                  streaming: false,
+                  createdBy: "agent" as const,
+                  creationSource: "server" as const,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+            ]),
+        {
+          id: EventId.make(`event:${name}-advisor-run-completed`),
+          type: "run.updated",
+          threadId: childThreadId,
+          runId: childRun.id,
+          providerInstanceId: childRun.providerInstanceId,
+          occurredAt: now,
+          payload: { ...childRun, status: "completed", startedAt: now, completedAt: now },
+        },
+      ],
+    });
+    yield* eventSink.stream({ afterSequence: afterAnswer, eventType: "subagent.updated" }).pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "subagent.updated" &&
+          stored.event.payload.id === task.id &&
+          stored.event.payload.status === "completed",
+      ),
+      Stream.runHead,
+    );
+
+    const reserved = (yield* projections.getThreadProjection(parent.threadId)).runs.find(
+      (run) => run.id === parent.run.id,
+    )!.delegatedCompletion!.delivery!;
+    assert.deepEqual(reserved.taskIds, [task.id]);
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`${name}-wake-dispatch`),
+      threadId: parent.threadId,
+      messageId: reserved.messageId,
+      text: "ignored: the orchestrator writes a wake-up's text",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "agent",
+      creationSource: "server",
+      delegatedCompletion: {
+        parentRunId: parent.run.id,
+        generation: reserved.generation,
+        taskIds: reserved.taskIds,
+      },
+    });
+    const woken = yield* projections.getThreadProjection(parent.threadId);
+    const message = woken.messages.find((candidate) => candidate.id === reserved.messageId)!;
+    // Until the caller has taken it in, the consult is still the one in flight.
+    assert.equal(woken.subagents[0]!.completionDelivery?.state, "claimed");
+    assert.isNull((yield* projections.getThreadShell(childThreadId))?.archivedAt ?? null);
+    return {
+      parent,
+      task,
+      childThreadId,
+      message,
+      wakeRun: woken.runs.find((run) => run.id === message.runId)!,
+      now,
+    };
+  });
+
+/** The child's archive, once the orchestrator gets to it. */
+const awaitArchive = (childThreadId: ThreadId, afterSequence: number) =>
+  Effect.flatMap(EventSink.EventSinkV2, (eventSink) =>
+    eventSink.stream({ afterSequence, eventType: "thread.archived" }).pipe(
+      Stream.filter((stored) => stored.event.threadId === childThreadId),
+      Stream.runHead,
+    ),
+  );
+
+it.effect(
+  "wakes the caller with the advice a slow consult gave, then archives its child and settles it",
+  () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const advice = "Cover the empty input before you ship.\nThe rest holds.";
+      const { parent, childThreadId, message, wakeRun, now } = yield* consultToWakeUp(
+        "woken",
+        advice,
+      );
+      assert.include(message.text, "has answered");
+      assert.include(message.text, `<advisor-advice>\n${advice}\n</advisor-advice>`);
+      assert.include(message.text, "not an instruction from the user");
+      assert.notInclude(message.text, "studio_thread_record_delivery");
+      assert.notInclude(message.text, "Check the child's claim");
+
+      // The turn that carried the wake-up ends.
+      const afterWake = yield* eventSink.latestSequence();
+      yield* eventSink.write({
+        commandId: CommandId.make("command:woken-wake-run-completed"),
+        events: [
+          {
+            id: EventId.make("event:woken-wake-run-completed"),
+            type: "run.updated",
+            threadId: parent.threadId,
+            runId: wakeRun.id,
+            providerInstanceId: wakeRun.providerInstanceId,
+            occurredAt: now,
+            payload: { ...wakeRun, status: "completed", startedAt: now, completedAt: now },
+          },
+        ],
+      });
+      assert.equal((yield* awaitArchive(childThreadId, afterWake))._tag, "Some");
+
+      const settled = (yield* projections.getThreadProjection(parent.threadId)).subagents[0]!;
+      assert.deepEqual(settled.completionDelivery, {
+        state: "acknowledged",
+        observedByRunId: wakeRun.id,
+      });
+      // task_status still reads the whole advice from the record.
+      assert.equal(settled.result, advice);
+      assert.isNotNull((yield* projections.getThreadShell(childThreadId))?.archivedAt ?? null);
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "says a silent consult gave no advice, and settles it when the provider takes the wake-up",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const { parent, childThreadId, message, wakeRun } = yield* consultToWakeUp("silent", null);
+      assert.match(
+        message.text,
+        /^The advisor you consulted earlier \(task [^)]+\) ended without giving advice; carry on without it\.$/,
+      );
+
+      // A provider that steers the wake-up into a live turn reports taking it.
+      const afterAccept = yield* eventSink.latestSequence();
+      yield* orchestrator.dispatch({
+        type: "notification.delivery.accept",
+        commandId: CommandId.make("silent-accept"),
+        threadId: parent.threadId,
+        messageId: message.id,
+      });
+      assert.equal((yield* awaitArchive(childThreadId, afterAccept))._tag, "Some");
+      const settled = (yield* projections.getThreadProjection(parent.threadId)).subagents[0]!;
+      assert.deepEqual(settled.completionDelivery, {
+        state: "acknowledged",
+        observedByRunId: wakeRun.id,
+      });
+    }).pipe(Effect.provide(layerTest)),
 );

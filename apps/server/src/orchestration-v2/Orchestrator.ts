@@ -1452,6 +1452,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* eventSink.writeWithEffects({ events: withIds, effects });
     });
 
+  /**
+   * A task's state once the wake-up carrying its result reached the parent.
+   * An advisor consult's wake-up holds the advice itself, so reading it is
+   * the acknowledgment; other results wait for task_status to be read.
+   */
+  const handedOverDelivery = (
+    task: Pick<OrchestrationV2Subagent, "purpose">,
+    observedByRunId: RunId | null,
+  ): NonNullable<OrchestrationV2Subagent["completionDelivery"]> =>
+    task.purpose === "advisor"
+      ? { state: "acknowledged", observedByRunId }
+      : { state: "delivered", observedByRunId: null };
+
   const completionDeliveryRun = (
     projection: Pick<OrchestrationV2ThreadProjection, "messages" | "runs">,
     delivery: OrchestrationV2DelegatedCompletionDelivery | null | undefined,
@@ -2881,7 +2894,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             occurredAt: now,
             payload: {
               ...message,
-              text: delegatedCompletionWakeText(remainingTaskIds),
+              text: delegatedCompletionWakeText(remainingTaskIds, projection.subagents),
               delegatedCompletion: {
                 parentRunId: parentRun.id,
                 generation: delivery.generation,
@@ -6209,7 +6222,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const dispatchText =
         delegatedCompletion === undefined
           ? `${handoffContext === null ? "" : `${handoffContext}\n\n---\n\n`}${commandText}${questionReminder}`
-          : delegatedCompletionWakeText(delegatedCompletion.taskIds);
+          : delegatedCompletionWakeText(delegatedCompletion.taskIds, projection.subagents);
       const sourcePlanProjection =
         command.sourcePlanRef === undefined
           ? null
@@ -11879,7 +11892,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ? undefined
               : {
                   ...message,
-                  text: delegatedCompletionWakeText(taskIds),
+                  // The parent's rows still hold this task as it was before it finished.
+                  text: delegatedCompletionWakeText(taskIds, [
+                    input.updatedTask,
+                    ...input.parentProjection.subagents.filter(
+                      (candidate) => candidate.id !== input.updatedTask.id,
+                    ),
+                  ]),
                   delegatedCompletion: {
                     parentRunId: input.parentRun.id,
                     generation: delivery.generation,
@@ -12384,10 +12403,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ) {
           continue;
         }
-        nextTaskStates.set(task.id, {
-          state: deliveryRun.status === "cancelled" ? "pending" : "delivered",
-          observedByRunId: null,
-        });
+        nextTaskStates.set(
+          task.id,
+          deliveryRun.status === "cancelled"
+            ? { state: "pending", observedByRunId: null }
+            : handedOverDelivery(task, deliveryRun.id),
+        );
       }
       const pendingTaskIds = projection.subagents
         .filter(
@@ -12539,12 +12560,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const acceptedIds = new Set(delivery.taskIds);
     const pendingIds = new Set(pendingTaskIds);
     for (const task of projection.subagents) {
-      const state = pendingIds.has(task.id)
-        ? "claimed"
+      const completionDelivery = pendingIds.has(task.id)
+        ? { state: "claimed" as const, observedByRunId: null }
         : acceptedIds.has(task.id) && task.completionDelivery?.state === "claimed"
-          ? "delivered"
+          ? handedOverDelivery(task, message?.runId ?? null)
           : undefined;
-      if (state === undefined) continue;
+      if (completionDelivery === undefined) continue;
       yield* emitEvent({
         type: "subagent.updated",
         threadId: command.threadId,
@@ -12553,7 +12574,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         driver: task.driver,
         providerInstanceId: task.providerInstanceId,
         occurredAt: now,
-        payload: { ...task, completionDelivery: { state, observedByRunId: null }, updatedAt: now },
+        payload: { ...task, completionDelivery, updatedAt: now },
       });
     }
     // Provider acceptance drains this batch but does not acknowledge its results.
@@ -13618,6 +13639,80 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             stored.event.payload.status === "rolled_back"),
       ),
       runTerminalRunReactor(handleTerminalRun),
+      Effect.forkDetach,
+    );
+
+  // An advisor consult whose advice reached its caller in a wake-up leaves
+  // the project's thread lists: its child is archived once that delivery
+  // settles. This runs apart from the wake-up, so a failed archive never
+  // holds it back. A restart in between leaves the child for the caller's
+  // next consult, which archives settled consults (AdvisorConsult.ts).
+  const advisorChildArchived = (childThreadId: ThreadId) =>
+    projectionStore
+      .getThreadShell(childThreadId)
+      .pipe(
+        Effect.map(
+          (shell) => shell === null || shell.archivedAt !== null || shell.deletedAt !== null,
+        ),
+      );
+  const archiveSettledAdvisorChild = (stored: OrchestrationV2StoredEvent) =>
+    Effect.gen(function* () {
+      if (stored.event.type !== "subagent.updated") return;
+      const task = stored.event.payload;
+      const childThreadId = task.childThreadId;
+      const state = task.completionDelivery?.state;
+      if (
+        task.purpose !== "advisor" ||
+        childThreadId === null ||
+        (state !== "acknowledged" && state !== "delivered") ||
+        (yield* advisorChildArchived(childThreadId))
+      ) {
+        return;
+      }
+      yield* dispatchWithReceipt({
+        type: "thread.archive",
+        commandId: CommandId.make(
+          `command:advisor-settled-archive:${childThreadId}:${stored.sequence}`,
+        ),
+        threadId: childThreadId,
+      }).pipe(
+        // The advisor call that returned the advice inline archives it too.
+        Effect.catchCause((cause) =>
+          advisorChildArchived(childThreadId).pipe(
+            Effect.orElseSucceed(() => false),
+            Effect.flatMap((archived) =>
+              archived
+                ? Effect.void
+                : Effect.logWarning("orchestration-v2.advisor.settled-archive-failed", {
+                    threadId: childThreadId,
+                    cause,
+                  }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("orchestration-v2.advisor.settled-archive-failed", {
+          sequence: stored.sequence,
+          cause,
+        }),
+      ),
+    );
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "subagent.updated" })
+    .pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "subagent.updated" && stored.event.payload.purpose === "advisor",
+      ),
+      // Each archive runs on its own, so one slow child never holds the next.
+      Stream.runForEach((stored) =>
+        archiveSettledAdvisorChild(stored).pipe(Effect.forkDetach, Effect.asVoid),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("orchestration-v2.advisor.settled-archive-stream-failed", { cause }),
+      ),
       Effect.forkDetach,
     );
 
