@@ -170,87 +170,105 @@ describe("specweave-studio worktree owners", () => {
     ),
   );
 
-  it.effect(
-    "shows a finished sub-chat in its parent's folder as the parent's state, and a running one as open",
-    () =>
-      withHeldHome(
-        ({ home, folders }) =>
-          Effect.gen(function* () {
-            // The worker is resolved and its reviews finished: nothing keeps the folder.
-            assert.equal(
-              yield* runCli([
-                "worktree",
-                "owners",
-                "--base-dir",
-                home,
-                "--json",
-                "--path",
-                NodePath.join(folders, "settled"),
-              ]),
-              1,
-            );
-            const lines = (yield* TestConsole.logLines).map((line) => JSON.parse(String(line)));
-            assert.deepEqual(
-              lines.map(({ threadId, state, ownState, parentThreadId }) => ({
-                threadId,
-                state,
-                ownState,
-                parentThreadId,
-              })),
-              [
-                {
-                  threadId: "settled",
-                  state: "settled",
-                  ownState: "settled",
-                  parentThreadId: null,
-                },
-                {
-                  threadId: "review",
-                  state: "settled",
-                  ownState: "open",
-                  parentThreadId: "settled",
-                },
-                {
-                  threadId: "review-of-review",
-                  state: "settled",
-                  ownState: "open",
-                  parentThreadId: "review",
-                },
-              ],
-            );
-            // A review with a run in progress keeps its parent's folder.
-            assert.equal(
-              yield* runCli([
-                "worktree",
-                "owners",
-                "--base-dir",
-                home,
-                "--path",
-                NodePath.join(folders, "archived"),
-              ]),
-              0,
-            );
-          }),
-        (holder, folders) => {
-          const insert = holder.prepare(
-            "INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, NULL, NULL)",
+  it.effect("keeps a parent's folder in use while a sub-chat in it is open by its own state", () =>
+    withHeldHome(
+      ({ home, folders }) =>
+        Effect.gen(function* () {
+          // The worker is resolved, but its reviews are open by their own state.
+          // Cleanup may still keep the folder for a live terminal or a queued
+          // turn this command cannot see, so it never says "not in use".
+          assert.equal(
+            yield* runCli([
+              "worktree",
+              "owners",
+              "--base-dir",
+              home,
+              "--json",
+              "--path",
+              NodePath.join(folders, "settled"),
+            ]),
+            0,
           );
-          const child = (id: string, folder: string, parent: string) =>
-            insert.run(
-              id,
-              payload(NodePath.join(folders, folder), {
-                title: id,
-                lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
-              }),
-            );
-          child("review", "settled", "settled");
-          child("review-of-review", "settled", "review");
-          child("running-review", "archived", "archived");
-          holder
-            .prepare("INSERT INTO orchestration_v2_projection_runs VALUES (?, ?)")
-            .run("running-review", "waiting");
-        },
-      ),
+          const lines = (yield* TestConsole.logLines).map((line) => JSON.parse(String(line)));
+          assert.deepEqual(
+            lines.map(({ threadId, state, ownState, parentThreadId }) => ({
+              threadId,
+              state,
+              ownState,
+              parentThreadId,
+            })),
+            [
+              {
+                threadId: "settled",
+                state: "settled",
+                ownState: "settled",
+                parentThreadId: null,
+              },
+              {
+                threadId: "review",
+                state: "settled",
+                ownState: "open",
+                parentThreadId: "settled",
+              },
+              {
+                threadId: "review-of-review",
+                state: "settled",
+                ownState: "open",
+                parentThreadId: "review",
+              },
+            ],
+          );
+          // The text line shows the sub-chat as open, not as its parent's state.
+          assert.equal(
+            yield* runCli([
+              "worktree",
+              "owners",
+              "--base-dir",
+              home,
+              "--path",
+              NodePath.join(folders, "settled"),
+            ]),
+            0,
+          );
+          const text = (yield* TestConsole.logLines).slice(lines.length).map(String);
+          assert.deepEqual(
+            text.map((line) => line.split(/\s+/)[0]),
+            ["settled", "open", "open"],
+          );
+          assert.notMatch(text.join("\n"), /No open thread/);
+          // A review with a run in progress keeps its parent's folder.
+          assert.equal(
+            yield* runCli([
+              "worktree",
+              "owners",
+              "--base-dir",
+              home,
+              "--path",
+              NodePath.join(folders, "archived"),
+            ]),
+            0,
+          );
+        }),
+      (holder, folders) => {
+        const insert = holder.prepare(
+          "INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, NULL, NULL)",
+        );
+        const child = (id: string, folder: string, parent: string) =>
+          insert.run(
+            id,
+            payload(NodePath.join(folders, folder), {
+              title: id,
+              lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
+            }),
+          );
+        child("review", "settled", "settled");
+        child("review-of-review", "settled", "review");
+        child("running-review", "archived", "archived");
+        holder
+          .prepare("INSERT INTO orchestration_v2_projection_runs VALUES (?, ?)")
+          .run("running-review", "waiting");
+      },
+    ),
   );
 
   it.effect("exits 0 for a folder reached through a symlinked parent", () =>

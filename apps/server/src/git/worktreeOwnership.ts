@@ -23,6 +23,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+
 export const WORKTREE_OWNER_PROJECTS_SQL = `
   SELECT workspace_root FROM projection_projects WHERE deleted_at IS NULL
 `;
@@ -229,6 +231,24 @@ export const canonicalPath = Effect.fn("WorktreeOwnership.canonicalPath")(functi
   const real = yield* fs.realPath(existing);
   return existing === resolved ? real : path.join(real, path.relative(existing, resolved));
 });
+
+/**
+ * Runs `effect` under the lease a removal of this folder holds: its resolved
+ * and its real path, in a stable order. A start or restore in the folder waits
+ * for a removal in progress instead of working in a folder about to vanish.
+ */
+export const withWorktreeFolderLease = <A, E, R>(
+  folder: string,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R | FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const resolved = path.resolve(folder);
+    const real = yield* canonicalPath(folder).pipe(Effect.orElseSucceed(() => resolved));
+    return yield* [...new Set([resolved, real])]
+      .sort()
+      .reduceRight((inner, leasePath) => withWorkspaceLease(leasePath, inner), effect);
+  });
 
 /**
  * The canonical spelling first, then the resolved one when it differs. An
