@@ -54,6 +54,7 @@ import {
   type FinishedChatState,
   type FinishedFolderFacts,
   type FinishedMemberGit,
+  type FinishedPullRequest,
   type FinishedWorktreeDecision,
   type FinishedWorktreeNeed,
   type FinishedWorktreeRules,
@@ -103,6 +104,14 @@ const SIZE_WALK_TIMEOUT = "5 seconds";
 const IGNORED_WALK_MAX_ENTRIES = 20_000;
 const NESTED_WALK_MAX_ENTRIES = 2_000_000;
 const NESTED_WALK_TIMEOUT = "30 seconds";
+/**
+ * A pull request's state is asked of its host once per branch head in this
+ * long, however often sweeps and plans run: event sweeps can follow each other
+ * every two minutes, and a lookup per folder on each would exhaust the host's
+ * rate limit. The hourly sweep still reads every state again.
+ */
+const PULL_REQUEST_REUSE_MS = 50 * 60_000;
+const PULL_REQUEST_CACHE_ENTRIES = 2_000;
 
 /**
  * Finished and waiting for nothing: no run in progress, no background task,
@@ -717,6 +726,12 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     ]);
   });
 
+  /** Host answers kept between sweeps, by repository, branch and head commit. */
+  const pullRequestStates = new Map<
+    string,
+    { readonly state: FinishedPullRequest["state"]; readonly at: number }
+  >();
+
   /** The repository's default branch on its primary remote, fetched once per sweep. */
   const defaultRef = Effect.fn("WorktreeCleanupSweep.defaultRef")(function* (
     repository: string,
@@ -776,6 +791,9 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
   const readPullRequest = Effect.fn("WorktreeCleanupSweep.readPullRequest")(function* (
     state: MemberState,
     previous: MemberState | undefined,
+    ctx: SweepContext,
+    /** A chat's own synced pull request says merged or closed. */
+    finishedHint: boolean,
   ) {
     const facts = state.git;
     if (facts === undefined) return;
@@ -792,15 +810,30 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
       return;
     }
     const branch = facts.branch;
-    const pullRequest = yield* gitManager
-      .branchPullRequest({ cwd: state.path, branch }, { refresh: true })
-      .pipe(
-        Effect.map((found) => found?.state ?? ("none" as const)),
-        Effect.orElseSucceed(() => null),
-      );
+    const cacheKey = encodeJson([state.repository, branch, state.head]);
+    const cached = pullRequestStates.get(cacheKey);
+    // Merged is final for this head. Other answers are reused for a while,
+    // except an open or missing one the chat's own record already contradicts.
+    const reusable =
+      cached !== undefined &&
+      (cached.state === "merged" ||
+        (cached.at <= ctx.now &&
+          ctx.now - cached.at < PULL_REQUEST_REUSE_MS &&
+          !(finishedHint && cached.state !== "closed")));
+    const pullRequest = reusable
+      ? cached.state
+      : yield* gitManager.branchPullRequest({ cwd: state.path, branch }, { refresh: true }).pipe(
+          Effect.map((found) => found?.state ?? ("none" as const)),
+          Effect.orElseSucceed(() => null),
+        );
     if (pullRequest === null) {
+      // A host that gave no answer is never remembered; the folder stays.
       state.git = { ...facts, pullRequest: null };
       return;
+    }
+    if (!reusable) {
+      if (pullRequestStates.size >= PULL_REQUEST_CACHE_ENTRIES) pullRequestStates.clear();
+      pullRequestStates.set(cacheKey, { state: pullRequest, at: ctx.now });
     }
     const contentIntegrated =
       pullRequest === "merged" &&
@@ -1041,7 +1074,12 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
             : needs === "default-branch"
               ? readHeadInDefault(state, ctx, before(state))
               : needs === "pull-request"
-                ? readPullRequest(state, before(state))
+                ? readPullRequest(
+                    state,
+                    before(state),
+                    ctx,
+                    chatFacts?.pullRequestFinished ?? false,
+                  )
                 : readNested(state, before(state)),
         { discard: true },
       );

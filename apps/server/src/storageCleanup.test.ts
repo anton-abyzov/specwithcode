@@ -233,6 +233,9 @@ const cleanupFixture = Effect.gen(function* () {
     pullRequestState: (_branch: string): "open" | "closed" | "merged" => "merged",
     /** The branch of every pull request lookup, in order. */
     lookups: [] as Array<string>,
+    /** Times the worktree pass read the folder named by `watched`: once per sweep. */
+    watched: null as string | null,
+    watchedReads: 0,
     settings: {
       ...DEFAULT_SERVER_SETTINGS,
       storageCleanup: {
@@ -307,6 +310,10 @@ const cleanupFixture = Effect.gen(function* () {
       ),
       Effect.provideService(GitVcsDriver.GitVcsDriver, {
         ...git,
+        statusDetailsLocal: (cwd) =>
+          Effect.sync(() => {
+            if (cwd === hooks.watched) hooks.watchedReads += 1;
+          }).pipe(Effect.andThen(git.statusDetailsLocal(cwd))),
         removeWorktree: (input) =>
           Effect.sync(() => removed.push(input.path)).pipe(
             Effect.andThen(git.removeWorktree(input)),
@@ -436,6 +443,11 @@ describe("storage cleanup keeps folders of open threads", () => {
       const f = yield* cleanupFixture;
       const settled = yield* f.addWorktree("reopened");
       yield* f.addThread("reopened", "reopened", settled, "settled");
+      // The merged rule asks the host, which is when the chat is reopened here.
+      f.hooks.settings = {
+        ...f.hooks.settings,
+        storageCleanup: { ...f.hooks.settings.storageCleanup, removeResolvedWorktrees: false },
+      };
       f.hooks.onPullRequest = f.sql`
         UPDATE orchestration_v2_projection_threads
         SET payload_json = json_set(payload_json, '$.settledOverride', 'active')
@@ -971,7 +983,7 @@ describe("storage cleanup plan, Clean up now and the sweeps events ask for", () 
         expect(yield* f.fs.exists(pack)).toBe(true);
         expect(plan.items.map((item) => [item.kind, item.path, item.action, item.reason])).toEqual([
           ["worktree", edited, "keep", "changes"],
-          ["worktree", finished, "remove", "merged"],
+          ["worktree", finished, "remove", "resolved"],
           ["interrupted-downloads", copy, "remove", "interrupted-downloads"],
         ]);
         const finishedBytes = plan.items.find((item) => item.path === finished)?.bytes ?? 0;
@@ -1001,13 +1013,14 @@ describe("storage cleanup plan, Clean up now and the sweeps events ask for", () 
     () =>
       Effect.gen(function* () {
         const f = yield* cleanupFixture;
-        // Kept on every sweep after one pull request lookup, so lookups count sweeps.
+        // Kept on every sweep, and read once by each.
         const counter = yield* f.addWorktree("counter");
+        f.hooks.watched = counter;
         yield* f.fs.writeFileString(f.path.join(counter, "file.txt"), "local only\n");
         yield* f.run(counter, ["commit", "-am", "local"]);
         yield* f.addThread("counter", "counter", counter, "settled");
         f.hooks.pullRequestState = () => "open";
-        const sweeps = () => f.hooks.lookups.filter((branch) => branch === "counter").length;
+        const sweeps = () => f.hooks.watchedReads;
         const event = (type: string, state?: string) =>
           ({
             type,

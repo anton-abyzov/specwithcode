@@ -11,7 +11,10 @@
  * guessing, and only while a rule that is switched on could still remove the
  * folder. `null` is a fact that could not be read, and it keeps the folder.
  *
- * Rules, preferred in this order when several hold:
+ * Rules, preferred in this order when several hold.
+ * Under every rule a member with commits on no remote keeps the folder, unless
+ * that content is on the default branch.
+ *
  * - deleted: every chat using it was deleted ("Delete worktrees with deleted threads").
  * - inactive: its chats are closed and nothing happened for the configured days.
  * - unchanged: its chats are closed and no member has commits of its own.
@@ -338,8 +341,17 @@ export function decideFinishedWorktree(
     if (gits.every(({ git }) => git.headInDefault === true))
       applied = { reason: "unchanged", detail: "No commits of its own." };
   }
+  // Resolved chats with everything pushed go under the resolved rule, which
+  // asks the host nothing: one lookup per finished folder on every sweep is
+  // what exhausts a host's rate limit.
+  const resolvedAndPushed =
+    facts.deleted === null &&
+    headsClosed &&
+    rules.removeResolvedWorktrees &&
+    gits.every(({ git }) => git.unpushedCommits === 0);
   if (
     applied === null &&
+    !resolvedAndPushed &&
     facts.deleted === null &&
     rules.worktreeOnMerge &&
     gits.length > 0 &&
@@ -396,6 +408,21 @@ export function decideFinishedWorktree(
   }
 
   if (applied !== null) {
+    // The branch stays, so removal deletes no commit; but commits on no remote
+    // exist on this machine only, and every rule keeps the folder for them.
+    for (const { member, git } of gits) {
+      if (git.unpushedCommits === null)
+        return keep("unknown", `${label(member)}: its unpushed commits could not be counted.`);
+      if (git.unpushedCommits === 0) continue;
+      if (git.headInDefault === undefined) return notChecked("default-branch");
+      if (git.headInDefault !== true && git.branch !== null && git.pullRequest === undefined)
+        return notChecked("pull-request");
+      if (!integrated(git))
+        return keep(
+          "unpushed",
+          `${label(member)}: ${plural(git.unpushedCommits, "commit")} on no remote.`,
+        );
+    }
     // Walked last: a walk through every untracked and ignored folder is slow.
     for (const { member, git } of gits) {
       if (git.nestedRepository === undefined) return notChecked("nested-repositories");

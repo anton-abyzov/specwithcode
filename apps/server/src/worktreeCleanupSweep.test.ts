@@ -303,12 +303,19 @@ const sweepFixture = Effect.gen(function* () {
       yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES (${input.id}, ${input.run})`;
   });
 
+  /** Replaces fields of a chat's shell, as a later projection would. */
+  const setShell = (id: string, overrides: Partial<OrchestrationV2ThreadShell>) => {
+    const index = threads.findIndex((thread) => thread.id === id);
+    if (index >= 0) threads[index] = { ...threads[index]!, ...overrides };
+  };
+
   const removed: Array<string> = [];
   /** The folder of every Git call the sweep made. */
   const touched: Array<string> = [];
   const hooks = {
     settings: baseSettings,
-    pullRequest: (_branch: string): "open" | "closed" | "merged" | null => "merged",
+    /** null is "no pull request"; "error" is a host that gave no answer. */
+    pullRequest: (_branch: string): "open" | "closed" | "merged" | "error" | null => "merged",
     /** "system" reads this machine's processes, as the service does. */
     processCwds: [] as ReadonlyArray<string> | null | "system",
     terminals: [] as ReadonlyArray<TerminalSummary>,
@@ -334,11 +341,8 @@ const sweepFixture = Effect.gen(function* () {
     ]),
   ) as unknown as GitVcsDriver.GitVcsDriver["Service"];
 
-  const sweep = (mode: WorktreeSweepMode) =>
-    Effect.gen(function* () {
-      const run = yield* makeWorktreeCleanupSweep({ liveTerminals: () => hooks.terminals });
-      return yield* run(mode, hooks.settings, yield* Clock.currentTimeMillis);
-    }).pipe(
+  const withSweepServices = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
       Effect.provide(
         Layer.mergeAll(
           Layer.mock(Settings.ServerSettingsService)({
@@ -365,22 +369,42 @@ const sweepFixture = Effect.gen(function* () {
           }),
           Layer.mock(GitManager.GitManager)({
             branchPullRequest: (input) =>
-              Effect.sync(() => {
+              Effect.suspend(() => {
                 const state = hooks.pullRequest(input.branch);
-                return (state === null ? null : { state }) as never;
+                return state === "error"
+                  ? Effect.fail(new Error("The host gave no answer.") as never)
+                  : Effect.succeed((state === null ? null : { state }) as never);
               }),
             invalidateStatus: () => Effect.void,
           }),
         ),
       ),
       Effect.provideService(GitVcsDriver.GitVcsDriver, recordingGit),
-      (effect) => {
+      (provided) => {
         const cwds = hooks.processCwds;
         return cwds === "system"
-          ? effect
-          : effect.pipe(Effect.provideService(WorktreeSweepProcessCwds, Effect.succeed(cwds)));
+          ? provided
+          : provided.pipe(Effect.provideService(WorktreeSweepProcessCwds, Effect.succeed(cwds)));
       },
     );
+  /** One sweep from a new instance, as each test needs it. */
+  const sweep = (mode: WorktreeSweepMode) =>
+    withSweepServices(
+      Effect.gen(function* () {
+        const run = yield* makeWorktreeCleanupSweep({ liveTerminals: () => hooks.terminals });
+        return yield* run(mode, hooks.settings, yield* Clock.currentTimeMillis);
+      }),
+    );
+  /** One instance for several sweeps, as the service keeps it. */
+  const sweeper = withSweepServices(
+    Effect.gen(function* () {
+      const run = yield* makeWorktreeCleanupSweep({ liveTerminals: () => hooks.terminals });
+      return (mode: WorktreeSweepMode) =>
+        Effect.gen(function* () {
+          return yield* run(mode, hooks.settings, yield* Clock.currentTimeMillis);
+        });
+    }),
+  );
   const itemOf = (items: ReadonlyArray<StorageCleanupPlanItem>, folder: string) =>
     items.find((item) => item.path === folder);
   const reasons = (items: ReadonlyArray<StorageCleanupPlanItem>, folders: ReadonlyArray<string>) =>
@@ -401,10 +425,12 @@ const sweepFixture = Effect.gen(function* () {
     addWorktree,
     commit,
     addChat,
+    setShell,
     removed,
     touched,
     hooks,
     sweep,
+    sweeper,
     itemOf,
     reasons,
   };
@@ -482,7 +508,7 @@ describe("the worktree sweep", () => {
 
           const result = yield* f.sweep("apply");
           expect(f.reasons(result.items, [done, busy, waiting])).toEqual([
-            "remove:merged",
+            "remove:resolved",
             "keep:running",
             "keep:running",
           ]);
@@ -532,6 +558,110 @@ describe("the worktree sweep", () => {
         yield* TestClock.adjust("61 minutes");
         yield* f.sweep("apply");
         expect(f.removed).toEqual([sevenHours, fiveHours]);
+      }),
+    );
+
+    sweepTest("asks the host once per branch head, however often sweeps and plans run", () =>
+      Effect.gen(function* () {
+        const f = yield* sweepFixture;
+        yield* TestClock.setTime(NOW_MS);
+        const folder = yield* f.addWorktree("open-quiet");
+        yield* f.addChat({
+          id: "open-quiet",
+          folder,
+          branch: "open-quiet",
+          state: "open",
+          shell: { latestRunCompletedAt: at(-7 * HOUR_MS) },
+        });
+        let asked = 0;
+        let answer: "open" | "merged" = "open";
+        f.hooks.pullRequest = () => {
+          asked += 1;
+          return answer;
+        };
+        const run = yield* f.sweeper;
+        expect(f.reasons((yield* run("plan")).items, [folder])).toEqual(["keep:open"]);
+        expect(asked).toBe(1);
+
+        // Event sweeps and plans two minutes apart reuse the answer.
+        for (let round = 0; round < 5; round += 1) {
+          yield* TestClock.adjust("2 minutes");
+          yield* run(round % 2 === 0 ? "apply" : "plan");
+        }
+        expect(asked).toBe(1);
+
+        // The hourly sweep asks again and sees the merge.
+        answer = "merged";
+        yield* TestClock.adjust("50 minutes");
+        expect(f.reasons((yield* run("apply")).items, [folder])).toEqual(["remove:merged"]);
+        // Once for the first look, once for the look under the lease is not needed: the head is the same.
+        expect(asked).toBe(2);
+      }),
+    );
+
+    sweepTest(
+      "asks the host again at once when the chat's own record says its pull request finished",
+      () =>
+        Effect.gen(function* () {
+          const f = yield* sweepFixture;
+          yield* TestClock.setTime(NOW_MS);
+          const folder = yield* f.addWorktree("open-synced");
+          const chat = {
+            id: "open-synced",
+            folder,
+            branch: "open-synced",
+            state: "open" as const,
+            shell: { latestRunCompletedAt: at(-7 * HOUR_MS) },
+          };
+          yield* f.addChat(chat);
+          let asked = 0;
+          let answer: "open" | "merged" = "open";
+          f.hooks.pullRequest = () => {
+            asked += 1;
+            return answer;
+          };
+          const run = yield* f.sweeper;
+          yield* run("plan");
+          expect(asked).toBe(1);
+
+          // The pull request sync saw the merge two minutes later.
+          answer = "merged";
+          f.setShell("open-synced", {
+            pullRequests: [
+              { snapshot: { state: "merged" } },
+            ] as unknown as OrchestrationV2ThreadShell["pullRequests"],
+          });
+          yield* TestClock.adjust("2 minutes");
+          expect(f.reasons((yield* run("plan")).items, [folder])).toEqual(["remove:merged"]);
+          expect(asked).toBe(2);
+        }),
+    );
+
+    sweepTest("never remembers a host that gave no answer, and keeps the folder", () =>
+      Effect.gen(function* () {
+        const f = yield* sweepFixture;
+        yield* TestClock.setTime(NOW_MS);
+        const folder = yield* f.addWorktree("open-offline");
+        yield* f.addChat({
+          id: "open-offline",
+          folder,
+          branch: "open-offline",
+          state: "open",
+          shell: { latestRunCompletedAt: at(-7 * HOUR_MS) },
+        });
+        let asked = 0;
+        f.hooks.pullRequest = () => {
+          asked += 1;
+          return "error";
+        };
+        const run = yield* f.sweeper;
+        const first = yield* run("apply");
+        expect(f.itemOf(first.items, folder)?.action).toBe("keep");
+        yield* TestClock.adjust("2 minutes");
+        const second = yield* run("apply");
+        expect(f.itemOf(second.items, folder)?.action).toBe("keep");
+        expect(asked).toBe(2);
+        expect(yield* f.fs.exists(folder)).toBe(true);
       }),
     );
 
@@ -628,7 +758,7 @@ describe("the worktree sweep", () => {
           expect(f.reasons(result.items, [stashed, reflog, plain])).toEqual([
             "keep:stash",
             "keep:unpushed",
-            "remove:merged",
+            "remove:resolved",
           ]);
           expect(f.removed).toEqual([plain]);
         }),
@@ -682,7 +812,7 @@ describe("the worktree sweep", () => {
           yield* TestClock.setTime(NOW_MS);
           const result = yield* f.sweep("apply");
           expect(f.reasons(result.items, [media, secret])).toEqual([
-            "remove:merged",
+            "remove:resolved",
             "keep:ignored-files",
           ]);
           expect(yield* f.fs.exists(media)).toBe(false);
@@ -855,7 +985,7 @@ describe("the worktree sweep", () => {
           yield* f.addChat({ id: "set", folder, branch: "feature/set", state: "settled" });
 
           const result = yield* f.sweep("apply");
-          expect(f.reasons(result.items, [folder])).toEqual(["remove:merged"]);
+          expect(f.reasons(result.items, [folder])).toEqual(["remove:resolved"]);
           expect(f.removed).toEqual([nested, folder]);
           expect(yield* f.fs.exists(folder)).toBe(false);
           // Branches and the manifest stay.
@@ -931,7 +1061,7 @@ describe("the worktree sweep", () => {
             state: "settled",
           });
           const result = yield* f.sweep("apply");
-          expect(f.reasons(result.items, [finished])).toEqual(["remove:merged"]);
+          expect(f.reasons(result.items, [finished])).toEqual(["remove:resolved"]);
           expect(yield* f.fs.exists(finished)).toBe(false);
         }).pipe(Effect.provide(testLayer)),
     );

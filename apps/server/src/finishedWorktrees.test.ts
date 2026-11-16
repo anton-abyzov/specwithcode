@@ -88,15 +88,20 @@ describe("finished worktree decision", () => {
       folder({
         chats: null,
         deleted: { cleanupPending: false },
-        members: [member({ unpushedCommits: 3 })],
       }),
       rules({ worktreeOnDelete: true }),
       "deleted",
     ],
     [
-      "inactive: closed chats quiet for the configured days, commits unpushed",
-      folder({ members: [member({ unpushedCommits: 2 })] }),
+      "inactive: closed chats quiet for the configured days",
+      folder(),
       rules({ worktreeAfterDays: 1, removeResolvedWorktrees: false }),
+      "inactive",
+    ],
+    [
+      "inactive: unpushed commits whose content is on the default branch",
+      folder({ members: [member({ unpushedCommits: 2, pullRequest: merged })] }),
+      rules({ worktreeAfterDays: 1, removeResolvedWorktrees: false, worktreeOnMerge: false }),
       "inactive",
     ],
     [
@@ -325,6 +330,68 @@ describe("finished worktree decision", () => {
     ).toMatchObject({ action: "remove", reason: "resolved" });
   });
 
+  it.each([
+    [
+      "a deleted chat's folder",
+      folder({
+        chats: null,
+        deleted: { cleanupPending: false },
+        members: [member({ unpushedCommits: 3 })],
+      }),
+      rules({ worktreeOnDelete: true }),
+    ],
+    [
+      "a folder nothing happened in for the configured days",
+      folder({ members: [member({ unpushedCommits: 2 })] }),
+      rules({ worktreeAfterDays: 1, removeResolvedWorktrees: false }),
+    ],
+    [
+      "a merged folder with a later commit",
+      folder({
+        members: [
+          member({
+            unpushedCommits: 1,
+            pullRequest: { state: "merged", contentIntegrated: false },
+          }),
+        ],
+      }),
+      rules({ worktreeAfterDays: 1 }),
+    ],
+  ] as const)(
+    "keeps %s for commits that are on no remote, under every rule",
+    (_name, facts, rulesInForce) => {
+      expect(decideFinishedWorktree(facts, rulesInForce, NOW)).toMatchObject({
+        action: "keep",
+        reason: "unpushed",
+      });
+    },
+  );
+
+  it("keeps a folder whose unpushed commits could not be counted, under every rule", () => {
+    expect(
+      decideFinishedWorktree(
+        folder({
+          chats: null,
+          deleted: { cleanupPending: false },
+          members: [member({ unpushedCommits: null })],
+        }),
+        rules({ worktreeOnDelete: true }),
+        NOW,
+      ),
+    ).toMatchObject({ action: "keep", reason: "unknown" });
+  });
+
+  it("asks the host nothing for a resolved chat with everything pushed", () => {
+    // The resolved rule covers it, so no pull request lookup is needed.
+    expect(
+      decideFinishedWorktree(
+        folder({ members: [member({ pullRequest: undefined, headInDefault: undefined })] }),
+        rules(),
+        NOW,
+      ),
+    ).toMatchObject({ action: "remove", reason: "resolved" });
+  });
+
   it("prefers deleted, then inactive, then unchanged, then merged, then resolved", () => {
     const everything = folder({ members: [member({ headInDefault: true, pullRequest: merged })] });
     const all = rules({ worktreeAfterDays: 1, worktreeUnchanged: true });
@@ -332,13 +399,23 @@ describe("finished worktree decision", () => {
     expect(
       decideFinishedWorktree(everything, { ...all, worktreeAfterDays: null }, NOW),
     ).toMatchObject({ reason: "unchanged" });
+    // Unpushed commits whose content merged: the resolved rule alone cannot tell, the host can.
+    const squashed = folder({ members: [member({ unpushedCommits: 2, pullRequest: merged })] });
+    expect(
+      decideFinishedWorktree(
+        squashed,
+        { ...all, worktreeAfterDays: null, worktreeUnchanged: false },
+        NOW,
+      ),
+    ).toMatchObject({ reason: "merged" });
+    // Everything pushed: resolved, without asking the host.
     expect(
       decideFinishedWorktree(
         everything,
         { ...all, worktreeAfterDays: null, worktreeUnchanged: false },
         NOW,
       ),
-    ).toMatchObject({ reason: "merged" });
+    ).toMatchObject({ reason: "resolved" });
   });
 
   it("never reads an unknown activity time as old, and a future one neither", () => {
