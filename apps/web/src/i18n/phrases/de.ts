@@ -5213,4 +5213,15 @@ export const de: PhraseCatalog = {
     "Diese Maschine einrichten, um auf {there} Arbeit zu starten",
   "Change what this machine may do on {there}":
     "Ändern, was diese Maschine auf {there} darf",
+  "Installed, but it does not start": "Installiert, startet aber nicht",
+  "Install {agent} on {machine} with this command:":
+    "Installiere {agent} auf {machine} mit diesem Befehl:",
+  "Run its installer again:": "Führe sein Installationsprogramm erneut aus:",
+  "Install {agent} on {machine} from its own site.":
+    "Installiere {agent} auf {machine} von seiner eigenen Website.",
+  "Open its install guide": "Installationsanleitung öffnen",
+  "Run in terminal": "Im Terminal ausführen",
+  "Waiting for the install. This page updates by itself.":
+    "Warte auf die Installation. Diese Seite aktualisiert sich von selbst.",
+  "After it installs, choose Check again.": "Wähle nach der Installation Erneut prüfen.",
 };

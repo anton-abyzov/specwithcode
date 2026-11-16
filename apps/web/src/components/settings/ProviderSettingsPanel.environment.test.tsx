@@ -68,6 +68,8 @@ vi.mock("./settingsLayout", async (importOriginal) => {
 });
 
 vi.mock("./SettingsScopeSentence", () => ({ SettingsScopeSentence: () => null }));
+// The focus re-check has its own tests; this harness runs no real React.
+vi.mock("./useProviderRecheck", () => ({ useProviderRecheck: () => undefined }));
 vi.mock("react/compiler-runtime", async () => {
   const { reactHookHarness } = await import("../../test/reactHookHarness");
   return { c: reactHookHarness.useMemoCache };

@@ -4980,4 +4980,12 @@ export const zh: PhraseCatalog = {
     "设置本机在 {there} 上开始工作",
   "Change what this machine may do on {there}":
     "更改本机在 {there} 上可以做的事",
+  "Installed, but it does not start": "已安装，但无法启动",
+  "Install {agent} on {machine} with this command:": "用这条命令在 {machine} 上安装 {agent}：",
+  "Run its installer again:": "重新运行它的安装程序：",
+  "Install {agent} on {machine} from its own site.": "从 {agent} 的官网在 {machine} 上安装它。",
+  "Open its install guide": "打开安装指南",
+  "Run in terminal": "在终端中运行",
+  "Waiting for the install. This page updates by itself.": "正在等待安装。此页面会自动更新。",
+  "After it installs, choose Check again.": "安装完成后，选择“重新检查”。",
 };

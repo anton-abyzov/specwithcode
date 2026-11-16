@@ -309,6 +309,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           ),
           beforeCheck: Cache.invalidateAll(capabilitiesProbeCache),
         },
+        // The command the version check runs, with the environment it runs in, so
+        // an install or repair in a terminal shows without a click.
+        installProbe: { command: effectiveConfig.binaryPath, environment: processEnv },
         subscriptionMemory: makeSubscriptionMemory({
           cacheDir: providerStatusCacheDir,
           instanceId,

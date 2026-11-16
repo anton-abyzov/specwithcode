@@ -5177,4 +5177,14 @@ export const ru: PhraseCatalog = {
     "Настроить эту машину для запуска работы на {there}",
   "Change what this machine may do on {there}":
     "Изменить, что этой машине можно на {there}",
+  "Installed, but it does not start": "Установлен, но не запускается",
+  "Install {agent} on {machine} with this command:":
+    "Установите {agent} на {machine} этой командой:",
+  "Run its installer again:": "Запустите его установщик ещё раз:",
+  "Install {agent} on {machine} from its own site.": "Установите {agent} на {machine} с его сайта.",
+  "Open its install guide": "Открыть руководство по установке",
+  "Run in terminal": "Запустить в терминале",
+  "Waiting for the install. This page updates by itself.":
+    "Ждём установку. Эта страница обновится сама.",
+  "After it installs, choose Check again.": "После установки выберите «Проверить снова».",
 };

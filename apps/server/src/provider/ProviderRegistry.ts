@@ -58,6 +58,7 @@ import { AgentSearch } from "./agentSearch.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
+import { refreshServerPath } from "../serverPath.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import {
   hydrateCachedProvider,
@@ -161,6 +162,13 @@ export class ProviderRegistry extends Context.Service<
      * change. The array contains the full current state.
      */
     readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
+
+    /**
+     * Brings the server's PATH up to date before agents are looked for:
+     * `force` asks the login shell again (a person chose Check again),
+     * otherwise only a changed shell startup file does (`serverPath.ts`).
+     */
+    readonly rereadPath: (options: { readonly force: boolean }) => Effect.Effect<void>;
 
     /**
      * What the search for installed agents has found so far, with the current
@@ -1278,6 +1286,8 @@ export const layer = Layer.effect(
         ),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
+      rereadPath: (options: { readonly force: boolean }) =>
+        refreshServerPath(options).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem)),
       ...(Option.isSome(agentSearch)
         ? {
             findAgents: (options: { readonly fresh: boolean }) =>

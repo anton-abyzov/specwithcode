@@ -19,6 +19,7 @@ import type * as EffectAcpErrors from "@specweave-studio/effect-acp/errors";
 import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
 
 import type { AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
+import type { CommandProbe } from "./commandWatch.ts";
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
@@ -126,6 +127,8 @@ interface AntigravityProviderOptions {
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   /** Auth type and label published once a session authenticates. */
   readonly auth?: { readonly type: string; readonly label: string };
+  /** The executable looked for on this machine, so one installed later shows without a click. */
+  readonly installProbe?: CommandProbe;
 }
 
 /** Health uses initialize only. Session callbacks supply account-specific metadata. */
@@ -247,6 +250,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     haveSettingsChanged: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
+    ...(options.installProbe ? { installProbe: options.installProbe } : {}),
     enrichSnapshot: ({ publishSnapshot }) =>
       SubscriptionRef.changes(metadata).pipe(
         Stream.runForEach((state) =>

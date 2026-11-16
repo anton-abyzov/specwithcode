@@ -13,6 +13,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as AcpRegistrySupport from "../acp/AcpRegistrySupport.ts";
 import {
+  acpRegistryInstalledCommand,
   acpRegistrySnapshotReadiness,
   applyAcpRegistryAvailableCommands,
   applyAcpRegistryLiveConfiguration,
@@ -944,5 +945,36 @@ describe("readsCopilotUsage", () => {
     const userInstalled = { agentId: "github-copilot-cli", source: "local" };
     expect(readsCopilotUsage(userInstalled)).toBe(true);
     expect(readsCopilotUsage({ agentId: "gemini" })).toBe(false);
+  });
+});
+
+describe("acpRegistryInstalledCommand", () => {
+  it("looks for a command the person installed and named", () => {
+    expect(
+      acpRegistryInstalledCommand(decodeSettings({ source: "local", commandPath: " my-agent " })),
+    ).toBe("my-agent");
+    // An executable override on a registry agent is looked up on PATH the same way.
+    expect(
+      acpRegistryInstalledCommand(
+        decodeSettings({ agentId: "gemini", commandPath: "/opt/gemini/bin/gemini" }),
+      ),
+    ).toBe("/opt/gemini/bin/gemini");
+  });
+
+  it("looks for nothing the app installs or runs through a package runner", () => {
+    expect(acpRegistryInstalledCommand(decodeSettings({ agentId: "gemini" }))).toBeUndefined();
+    expect(acpRegistryInstalledCommand(decodeSettings({ source: "local" }))).toBeUndefined();
+  });
+});
+
+describe("acpRegistrySnapshotReadiness for a missing command", () => {
+  it("answers a local command that is not found as not installed and failed", () => {
+    expect(
+      acpRegistrySnapshotReadiness({
+        status: "missing_runner",
+        version: null,
+        distribution: "local",
+      }),
+    ).toMatchObject({ installed: false, status: "error" });
   });
 });

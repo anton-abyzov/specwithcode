@@ -5181,4 +5181,16 @@ export const ja: PhraseCatalog = {
     "このマシンが {there} で作業を開始できるよう設定",
   "Change what this machine may do on {there}":
     "このマシンが {there} でできることを変更",
+  "Installed, but it does not start": "インストール済みですが起動しません",
+  "Install {agent} on {machine} with this command:":
+    "このコマンドで {machine} に {agent} をインストールします:",
+  "Run its installer again:": "インストーラーをもう一度実行してください:",
+  "Install {agent} on {machine} from its own site.":
+    "{agent} の公式サイトから {machine} にインストールしてください。",
+  "Open its install guide": "インストールガイドを開く",
+  "Run in terminal": "ターミナルで実行",
+  "Waiting for the install. This page updates by itself.":
+    "インストールを待っています。このページは自動で更新されます。",
+  "After it installs, choose Check again.":
+    "インストールが終わったら「もう一度確認」を選んでください。",
 };
