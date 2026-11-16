@@ -1,4 +1,4 @@
-import { ProjectTakeoverResult } from "@specweave-studio/contracts";
+import { EnvironmentId, ProjectTakeoverResult } from "@specweave-studio/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -24,6 +24,7 @@ afterEach(removeCheckouts);
 
 const encodeTakeoverResult = Schema.encodeSync(ProjectTakeoverResult);
 const decodeTakeoverResult = Schema.decodeUnknownSync(ProjectTakeoverResult);
+const asEnvironmentId = Schema.decodeUnknownSync(EnvironmentId);
 const takeoverId = "44444444-4444-4444-8444-444444444444";
 type Call = Parameters<TakeoverEpochClaimDeps["client"]["call"]>[0];
 type Answer = (call: Call) => Effect.Effect<unknown, RemoteMcpError>;
@@ -332,7 +333,7 @@ describe("takeover epoch claims", () => {
         .claim({
           logicalProjectId: "logical:one",
           epoch: 4,
-          members: silent.map((environmentId) => ({ environmentId })),
+          members: silent.map((id) => ({ environmentId: asEnvironmentId(id) })),
         })
         .pipe(Effect.forkChild);
       yield* TestClock.adjust(Duration.millis(TAKEOVER_CLAIM_BUDGET_MS));
@@ -373,10 +374,10 @@ describe("takeover epoch claims", () => {
           epoch: 4,
           // Two copies on one machine are one claim; this machine is never asked.
           members: [
-            { environmentId: "m4" },
-            { environmentId: "m4" },
-            { environmentId: "m3" },
-            { environmentId: "m1" },
+            { environmentId: asEnvironmentId("m4") },
+            { environmentId: asEnvironmentId("m4") },
+            { environmentId: asEnvironmentId("m3") },
+            { environmentId: asEnvironmentId("m1") },
           ],
         })
         .pipe(Effect.forkChild);
@@ -408,7 +409,7 @@ describe("takeover epoch claims", () => {
       const alone = yield* claims.claim({
         logicalProjectId: "logical:one",
         epoch: 2,
-        members: [{ environmentId: "m1" }],
+        members: [{ environmentId: asEnvironmentId("m1") }],
       });
       expect(alone).toEqual([]);
       expect(calls).toEqual([]);
