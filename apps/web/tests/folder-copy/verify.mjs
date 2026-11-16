@@ -294,8 +294,8 @@ const MOVE_TITLE = COPY_TITLE;
 /** The setup screen shows no step line. */
 const NO_STEPS = "none";
 const DONE_TITLE = "SpecWeave is on ministorm";
-// A copy of files only leaves the project here: its Done says copied, not on.
-const COPIED_TITLE = "SpecWeave is copied to ministorm";
+// A finished copy of files only also says when its files got there.
+const COPIED_TITLE = "SpecWeave is on ministorm (copied 2h ago)";
 const COPY_ONLY = ["where", "what", "review", "copy", "done"];
 const ONE_CLICK = ["where", "copy", "done"];
 const MOVE = ["where", "what", "review", "copy", "transfer", "done"];
@@ -458,10 +458,23 @@ const choosing = async (page, w) => {
   });
   NodeAssert.match(await body(), /ministorm has a copy\. The coordinator stays here\./);
 
-  // Done was seen: the reopen archives the copy and starts at Where with a last-copy strip.
+  // Done was seen: the reopen shows the finished copy again, never a form that reads as
+  // "copy it again". The form is one click away, behind a secondary Copy changes again.
   await close();
-  const statuses = await calls("copyStatus");
   await reopen();
+  await check("done-on-reopen", {
+    primary: "Open on ministorm",
+    steps: bar(["done", "done", "done", "done", "current"]),
+    leading: "Undo…",
+    title: COPIED_TITLE,
+  });
+  NodeAssert.equal(await action("Copy to ministorm").count(), 0, "no Copy button on reopen");
+  NodeAssert.doesNotMatch(
+    await action("Copy changes again").getAttribute("class"),
+    /bg-primary/,
+    "Copy changes again is a secondary action",
+  );
+  await action("Copy changes again").click();
   await page.locator('[data-slot="copy-last"]').waitFor();
   // The reopen shows the last copy without scrolling.
   NodeAssert.ok(
@@ -478,7 +491,6 @@ const choosing = async (page, w) => {
     leading: null,
     title: COPY_TITLE,
   });
-  NodeAssert.equal(await calls("copyStatus"), statuses, "an archived copy is not checked");
   await page.locator('[data-slot="copy-last"]').getByRole("button", { name: "View" }).click();
   await check("last-copy-view", {
     primary: "Open on ministorm",
@@ -506,7 +518,7 @@ const oneClick = async (page, w) => {
   NodeAssert.equal(await step("what").count(), 0, "a step this run skipped is not listed");
 
   // A second copy closed while copying: the reopen checks it, then says it finished.
-  await menu("Start a new copy");
+  await action("Copy changes again").click();
   await check("where-new", { primary: "Copy to ministorm", leading: null, title: COPY_TITLE });
   await pause("copyApprove");
   await action("Copy to ministorm").click();
