@@ -20,15 +20,15 @@ import {
   type ProjectCredentialRow,
   type ProjectId,
 } from "@specweave-studio/contracts";
-import { CheckIcon, CopyIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { useTx } from "../../i18n";
 import { renderRich } from "../../i18n/rich";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { credentialSkipsAtom, projectCredentials } from "../../studio/projectCredentials";
 import { Button } from "../ui/button";
+import { CopyCredentialCommand as Command } from "./CopyCredentialCommand";
+import { CopySshKeySteps } from "./CopySshKeySteps";
 
 export type CredentialProbeState =
   | "checking"
@@ -66,35 +66,6 @@ function statusLine(
     case "ready":
       return { text: on(tx("Ready on {targetLabel}")), tone: "muted" };
   }
-}
-
-function Command({ label, command }: { readonly label: string; readonly command: string }) {
-  const tx = useTx();
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="space-y-1" data-slot="copy-credential-command">
-      {/* Label and command are separate plain text: neither is built from the other. */}
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
-        <code className="min-w-0 flex-1 overflow-x-auto font-mono text-xs whitespace-nowrap">
-          {command}
-        </code>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label={copied ? tx("Copied") : tx("Copy command")}
-          onClick={() =>
-            void writeTextToClipboard(command).then(
-              () => setCopied(true),
-              () => {},
-            )
-          }
-        >
-          {copied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
-        </Button>
-      </div>
-    </div>
-  );
 }
 
 function Row({
@@ -167,7 +138,16 @@ function Row({
           </Button>
         </div>
       </div>
-      {open && probe !== undefined && (
+      {open && probe !== undefined && row.id === "ssh" && (
+        <CopySshKeySteps
+          row={row}
+          keygen={probe.signIn}
+          fallbackCheck={probe.check}
+          sourceLabel={sourceLabel}
+          targetLabel={targetLabel}
+        />
+      )}
+      {open && probe !== undefined && row.id !== "ssh" && (
         <div className="space-y-2" data-slot="copy-credential-steps">
           <p className="text-xs text-muted-foreground">
             {row.kind === "file"

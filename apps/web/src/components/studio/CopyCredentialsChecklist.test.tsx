@@ -3,6 +3,7 @@ import type {
   ProjectCredentialId,
   ProjectCredentialProbe,
   ProjectCredentialRow,
+  ProjectSshTarget,
 } from "@specweave-studio/contracts";
 import { act } from "react";
 import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
@@ -66,7 +67,7 @@ const list = (over: Partial<Parameters<typeof CopyCredentialsList>[0]> = {}) => 
           new Map([
             ["azure", probe("azure", "not_signed_in")],
             ["kubernetes", probe("kubernetes", "ready", "az aks get-credentials")],
-            ["ssh", probe("ssh", "unknown", "ssh-keygen -t ed25519", "ssh <host> true")],
+            ["ssh", probe("ssh", "unknown", "ssh-keygen -t ed25519")],
           ])
         }
         state="ready"
@@ -106,17 +107,93 @@ describe("CopyCredentialsList", () => {
     expect(text()).toContain("~/.kube/config");
   });
 
-  it("says a key file stays on the source and offers no way to send it", async () => {
-    const handlers = list();
-    const ssh = host(slot("copy-credential-row"))[1]!;
-    const signIn = ssh.findAll((node) => node.props["data-slot"] === "copy-credential-sign-in");
-    expect(JSON.stringify(host(signIn)[0]!.props.children)).toContain("Set up there");
-    await click(host(signIn)[0]!);
-    expect(text()).toContain("key files are never copied");
-    expect(text()).toContain("ssh <host> true");
-    expect(text()).not.toMatch(/Send file|Send key/u);
-    await click(host(slot("copy-credential-check"))[0]!);
-    expect(handlers.onCheck).toHaveBeenCalledWith("ssh");
+  const openSsh = async (extra: Partial<ProjectCredentialRow> = {}, targetLabel = "m5") => {
+    list({ rows: [row("ssh", extra)], targetLabel });
+    const signIn = host(slot("copy-credential-sign-in"))[0]!;
+    expect(JSON.stringify(signIn.props.children)).toContain("Set up there");
+    await click(signIn);
+    return host(slot("copy-credential-command")).map((node) => node.findByType("code").children[0]);
+  };
+  const target = (over: Partial<ProjectSshTarget> = {}): ProjectSshTarget => ({
+    kind: "server",
+    user: "root",
+    host: "203.0.113.10",
+    variable: null,
+    source: "ops/deploy.sh",
+    ...over,
+  });
+
+  it("says a key stays on the source and offers no way to send it", async () => {
+    const commands = await openSsh();
+    expect(text()).toContain("Private keys stay on ");
+    expect(text()).toContain("never copied");
+    expect(text()).not.toMatch(/Send file|Send key|Not copied:/u);
+    // A project whose places are not known gets no command with a placeholder in it.
+    expect(commands).toEqual(["ssh-keygen -t ed25519", "cat ~/.ssh/id_ed25519.pub"]);
+    expect(text()).not.toContain("<host>");
+    expect(text()).toContain("~/.ssh/authorized_keys");
+    expect(slot("copy-ssh-targets")).toHaveLength(0);
+  });
+
+  it("names each place the project connects to, with a check that runs as written", async () => {
+    const commands = await openSsh(
+      {
+        sshTargets: [
+          target({ variable: "WORKER_IP" }),
+          target({ kind: "git", user: "git", host: "github.com", source: "." }),
+          target({ kind: "variable", user: "deploy", host: null, variable: "TARGET_HOST" }),
+          target({ host: "10.0.0.5" }),
+        ],
+      },
+      'Anton\'s "M5" $(id)',
+    );
+    expect(commands).toEqual([
+      "ssh-keygen -t ed25519",
+      "cat ~/.ssh/id_ed25519.pub",
+      "ssh -o BatchMode=yes -- root@203.0.113.10 true",
+      // The machine's name goes in as a title with nothing a shell reads left in it.
+      'gh ssh-key add ~/.ssh/id_ed25519.pub --title "Antons M5 id"',
+      "ssh -o BatchMode=yes -T -- git@github.com",
+      "ssh -o BatchMode=yes -- root@10.0.0.5 true",
+    ]);
+    expect(text()).not.toContain("<host>");
+    expect(text()).not.toMatch(/\{\w+\}/u);
+    expect(text()).toContain("the project's own repository");
+    expect(text()).toContain("WORKER_IP in ops/deploy.sh");
+    expect(text()).toContain("TARGET_HOST");
+    expect(host(slot("copy-ssh-key-page"))[0]!.props.href).toBe(
+      "https://github.com/settings/ssh/new",
+    );
+    expect(host(slot("copy-ssh-private"))).toHaveLength(1);
+    expect(host(slot("copy-ssh-unverified"))).toHaveLength(1);
+    expect(host(slot("copy-ssh-more"))).toHaveLength(0);
+  });
+
+  it("leaves out a place that could bend a command, and says the list is short", async () => {
+    const commands = await openSsh({
+      sshTargets: [
+        target({ host: "-oProxyCommand=evil" }),
+        target({ host: "a;rm -rf ~" }),
+        target({ user: "$(id)" }),
+        target({ source: "ops/\u202Edeploy.sh" }),
+        target({ kind: "variable", host: null, variable: "A;B" }),
+        target({ host: "ok.example.com" }),
+      ],
+    });
+    expect(commands).toEqual([
+      "ssh-keygen -t ed25519",
+      "cat ~/.ssh/id_ed25519.pub",
+      "ssh -o BatchMode=yes -- root@ok.example.com true",
+    ]);
+    expect(host(slot("copy-ssh-target"))).toHaveLength(1);
+    expect(host(slot("copy-ssh-more"))).toHaveLength(1);
+  });
+
+  it("wraps a long command instead of clipping it", async () => {
+    await openSsh();
+    const code = host(slot("copy-credential-command"))[0]!.findByType("code");
+    expect(code.props.className).toContain("whitespace-pre-wrap");
+    expect(code.props.className).not.toContain("whitespace-nowrap");
   });
 
   it("moves a skipped row out of the list, with a way back", async () => {

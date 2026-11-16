@@ -49,7 +49,29 @@ const CREDENTIAL_ROWS = [
     keptIn: [".wrangler/config/default.toml"],
   },
   { id: "npm", sources: [".github/workflows/release.yml"], keptIn: [".npmrc"] },
-  { id: "ssh", sources: ["ops/hosts.sh"], keptIn: [".ssh/id_ed25519", ".ssh/config"] },
+  {
+    id: "ssh",
+    sources: [".", "ops/deploy.sh"],
+    keptIn: [".ssh/id_ed25519", ".ssh/config"],
+    sshTargets: [
+      { kind: "git", user: "git", host: "github.com", variable: null, source: "." },
+      {
+        kind: "server",
+        user: "root",
+        host: "203.0.113.10",
+        variable: "WORKER_IP",
+        source: "ops/deploy.sh",
+      },
+      {
+        kind: "variable",
+        user: "deploy",
+        host: null,
+        variable: "STAGING_HOST",
+        source: "ops/stage.sh",
+      },
+    ],
+    sshTargetsMore: false,
+  },
 ].map((row) => ({
   ...row,
   kind: row.id === "ssh" ? "file" : "login",
@@ -77,8 +99,8 @@ const CREDENTIAL_PROBES = [
   {
     id: "ssh",
     status: "unknown",
-    signIn: 'ssh-keygen -t ed25519 -C "$(hostname)"',
-    check: "ssh <host> true",
+    signIn: "ssh-keygen -t ed25519",
+    check: null,
   },
 ];
 export const linkCopyAsWorkers = async () => ({ status: "linked" });
