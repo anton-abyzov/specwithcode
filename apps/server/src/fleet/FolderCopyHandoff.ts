@@ -227,6 +227,7 @@ export function sourceStatus(record: SourceOperationRecord): FolderCopySourceSta
                 })),
                 approvedAt: record.secrets.approvedAt,
                 destinationLabel: text(record.secrets.destinationLabel, 200),
+                ...(record.secrets.sealTo !== undefined ? { sealed: true } : {}),
               }
             : null,
         }

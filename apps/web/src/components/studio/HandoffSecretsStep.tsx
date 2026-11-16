@@ -89,6 +89,7 @@ export function HandoffSecretsStep({
   homeSupported,
   disabled,
   locked = null,
+  via = null,
   onChange,
 }: {
   readonly files: ReadonlyArray<SecretFileRow>;
@@ -104,6 +105,8 @@ export function HandoffSecretsStep({
   readonly disabled: boolean;
   /** Why this window cannot send secrets, and where to start the copy instead. */
   readonly locked?: string | null;
+  /** How included secrets travel when not through this window; null for the plain way. */
+  readonly via?: string | null;
   /** One choice: whether secrets travel, and which of the shown files. */
   readonly onChange: (included: boolean, selected: ReadonlyArray<string>) => void;
 }) {
@@ -149,7 +152,7 @@ export function HandoffSecretsStep({
                   {locked ? (
                     <SecretsLockedNote>{locked}</SecretsLockedNote>
                   ) : included ? (
-                    `Copied to ${targetLabel}, where only your user can read them.`
+                    (via ?? `Copied to ${targetLabel}, where only your user can read them.`)
                   ) : (
                     `They stay on ${sourceLabel}.`
                   )}{" "}

@@ -28,6 +28,12 @@ export interface SecretApproval {
   readonly approvedAt: number;
   /** The destination's name as the person saw it when confirming. */
   readonly destinationLabel: string;
+  /**
+   * The destination machine's receiving key (base64 SPKI), set when the window that staged
+   * these files may not send secrets the plain way. Every file is then served only as
+   * ciphertext sealed to this key, so the transfer token alone opens none of them.
+   */
+  readonly sealTo?: string;
 }
 
 export class SecretStepError extends Error {

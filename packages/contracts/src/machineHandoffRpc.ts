@@ -25,6 +25,8 @@ import {
   FolderCopyReleaseInput,
   FolderCopyReleaseResult,
   FolderCopySecretsInput,
+  FolderCopySecretsRoute,
+  FolderCopySecretsRouteInput,
   FolderCopySentSecrets,
   FolderCopySentSecretsInput,
   FolderCopySourceStatus,
@@ -54,6 +56,8 @@ export const MACHINE_HANDOFF_RPC_METHODS = {
   machineHandoffCopyUndo: "machineHandoff.copyUndo",
   machineHandoffCopyCancel: "machineHandoff.copyCancel",
   machineHandoffCopySecrets: "machineHandoff.copySecrets",
+  machineHandoffCopySecretsRoute: "machineHandoff.copySecretsRoute",
+  machineHandoffCopySealedSecrets: "machineHandoff.copySealedSecrets",
   machineHandoffSentSecrets: "machineHandoff.sentSecrets",
   machineHandoffReadiness: "machineHandoff.readiness",
 } as const;
@@ -151,6 +155,16 @@ export const folderCopyRpcs = [
     error: copyError,
   }),
   Rpc.make(M.machineHandoffCopySecrets, {
+    payload: FolderCopySecretsInput,
+    success: FolderCopySourceStatus,
+    error: copyError,
+  }),
+  Rpc.make(M.machineHandoffCopySecretsRoute, {
+    payload: FolderCopySecretsRouteInput,
+    success: FolderCopySecretsRoute,
+    error: copyError,
+  }),
+  Rpc.make(M.machineHandoffCopySealedSecrets, {
     payload: FolderCopySecretsInput,
     success: FolderCopySourceStatus,
     error: copyError,

@@ -384,15 +384,20 @@ const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([
   WS_METHODS.awayUpdateConfig,
   // Run here anyway may let two machines run one coordinator: the owner's call alone.
   WS_METHODS.awayForceLocal,
+  // Sends this machine's secret files, sealed, to one of the owner's machines: a person
+  // running the copy decides that, never another machine's key that reached this socket.
+  WS_METHODS.machineHandoffCopySealedSecrets,
   ...PERSONAL_DATA_RPC_METHODS,
 ]);
 
 const ownerOnlyRpcMessage = (method: string) =>
   method === WS_METHODS.awayDecideAccess
     ? "Only this machine's owner can approve access here."
-    : PERSONAL_DATA_RPC_METHODS.includes(method)
-      ? "Only this machine's owner can see or change personal data access here."
-      : "Only this machine's owner can start, stop or change Away here.";
+    : method === WS_METHODS.machineHandoffCopySealedSecrets
+      ? "Only a person running the copy can send this machine's secret files."
+      : PERSONAL_DATA_RPC_METHODS.includes(method)
+        ? "Only this machine's owner can see or change personal data access here."
+        : "Only this machine's owner can start, stop or change Away here.";
 
 export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | undefined) =>
   principal?.kind === "coordinator" && OWNER_ONLY_RPC_METHODS.has(method);

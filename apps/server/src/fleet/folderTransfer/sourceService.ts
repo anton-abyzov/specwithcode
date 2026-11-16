@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 
 import { isSecretLikeProjectPath } from "../../workspace/WorkspaceSensitivePaths.ts";
 import { FILE_CLASSES, type FileClass } from "./classify.ts";
+import { seal } from "../fileTransfer/seal.ts";
 import { privateDirectory, readJson, writeJson } from "./durable.ts";
 import { runGit } from "./git.ts";
 import {
@@ -152,6 +153,22 @@ export interface SourceOperationRecord {
     readonly recordedAt: number;
   };
 }
+
+/** What the secret route sends for one file: plain bytes, or text sealed to the destination's key. */
+export interface ServedSecret {
+  readonly bytes: Uint8Array;
+  readonly sealed: boolean;
+}
+
+/** Whether `publicKey` is a receiving key this machine can seal to. */
+const sealsTo = (publicKey: string): boolean => {
+  try {
+    seal(new Uint8Array(0), publicKey);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 export class SourceTransferError extends Error {
   readonly status: number;
@@ -1279,11 +1296,14 @@ export class SourceTransfers {
   /**
    * Records the secret files the person ticked for this destination. Only files
    * the scan classified as secret can be listed; an empty list withdraws them.
+   * With `sealTo` (the destination machine's receiving key) the files are served
+   * only sealed to it; without it they are served as they are.
    */
   async approveSecrets(input: {
     readonly operationId: string;
     readonly paths: ReadonlyArray<string>;
     readonly destinationLabel: string;
+    readonly sealTo?: string;
   }): Promise<SourceOperationRecord> {
     // A list accepted while the service stops is never written: refuse it instead.
     this.assertOpen();
@@ -1291,6 +1311,9 @@ export class SourceTransfers {
     if (!loaded) throw new SourceTransferError(404, "not_found");
     if (TERMINAL.has(loaded.record.state)) throw new SourceTransferError(409, loaded.record.state);
     if (!loaded.record.summary) throw new SourceTransferError(409, "scanning");
+    // A key that cannot seal is refused here, not when the first file is pulled.
+    if (input.sealTo !== undefined && !sealsTo(input.sealTo))
+      throw new SourceTransferError(400, "invalid_request");
     let files;
     try {
       const offered = await liveSecretFiles(
@@ -1313,6 +1336,7 @@ export class SourceTransfers {
               files,
               approvedAt: this.now(),
               destinationLabel: input.destinationLabel.slice(0, 200),
+              ...(input.sealTo !== undefined ? { sealTo: input.sealTo } : {}),
             },
     });
     return loaded.record;
@@ -1338,14 +1362,18 @@ export class SourceTransfers {
 
   /** The secret files the destination may pull: paths and sizes only. */
   secretList(loaded: Loaded) {
-    return { files: loaded.record.secrets?.files ?? [] };
+    return {
+      files: loaded.record.secrets?.files ?? [],
+      ...(loaded.record.secrets?.sealTo !== undefined ? { sealed: true } : {}),
+    };
   }
 
   /**
-   * Bytes of one approved secret file, read without following links. Each file
+   * One approved secret file, read without following links: its bytes, or ciphertext
+   * sealed to the destination's receiving key when the approval names one. Each file
    * served is recorded in the sent-secrets ledger (path and size, never content).
    */
-  async secretFile(loaded: Loaded, path: string): Promise<Uint8Array> {
+  async secretFile(loaded: Loaded, path: string): Promise<ServedSecret> {
     if (TERMINAL.has(loaded.record.state)) throw new SourceTransferError(409, loaded.record.state);
     const approved = loaded.record.secrets?.files.find((file) => file.path === path);
     if (!approved) throw new SourceTransferError(403, "not_approved");
@@ -1366,7 +1394,10 @@ export class SourceTransfers {
       size: bytes.byteLength,
       sentAt: new Date(this.now()).toISOString(),
     });
-    return bytes;
+    const sealTo = loaded.record.secrets?.sealTo;
+    return sealTo === undefined
+      ? { bytes, sealed: false }
+      : { bytes: new Uint8Array(Buffer.from(seal(bytes, sealTo), "utf8")), sealed: true };
   }
 
   /** The destination failed before Apply: unfence a moving coordinator and end the grant. */

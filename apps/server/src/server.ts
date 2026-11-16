@@ -127,6 +127,7 @@ import * as StudioFleetHttp from "./studioFleetHttp.ts";
 import * as FleetSkills from "./fleet/fleetSkills.ts";
 import * as FleetWorkers from "./fleet/fleetDiskRoom.ts";
 import * as RemoteWorkers from "./fleet/RemoteWorkers.ts";
+import * as SealedSecretsPeer from "./fleet/folderTransfer/sealedSecretsPeer.ts";
 import * as MachineLimitHandoff from "./orchestration-v2/MachineLimitHandoff.ts";
 import * as DeviceSignInHttp from "./auth/deviceSignInHttp.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
@@ -773,6 +774,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provideMerge(HandoffReceiver.layer),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
   ),
+  // Folder copy: the source's line to a copy's destination machine, for secrets sent sealed.
+  SealedSecretsPeer.layer.pipe(Layer.provide(RemoteWorkers.layerFleetWorkers)),
   // Away mode: the read-only preflight, and access requests between machines.
   // Its RPC handlers live here for the reason the computer-use ones do (see below).
   AwayRpc.layerRpcHandlers.pipe(

@@ -32,6 +32,7 @@ import {
 } from "./sourceClient.ts";
 import { previewUndo, undoApply, type UndoPreview, type UndoResult } from "./undo.ts";
 import { type ReceivedSecret, removeReceivedSecrets, writeSecretFile } from "./secrets.ts";
+import { dropReceivingKey, openSealedSecret, receivingKeyFor } from "./secretsKey.ts";
 import {
   homeSecretRelative,
   isDotnetUserSecretsFile,
@@ -668,6 +669,7 @@ export class DestinationCopies {
       .release(reason)
       .catch(() => undefined);
     await NodeFSP.rm(this.paths(operationId).staging, { recursive: true, force: true });
+    await dropReceivingKey(this.directory(operationId));
     return this.update(operationId, { state: "cancelled", progress: null });
   }
 
@@ -1310,13 +1312,16 @@ export class DestinationCopies {
    */
   private async receiveSecrets(record: DestinationRecord): Promise<DestinationRecord> {
     // Approved without secrets: the source's staged list is never read.
-    if (record.withoutSecrets === true)
+    if (record.withoutSecrets === true) {
+      await dropReceivingKey(this.directory(record.operationId));
       return this.update(record.operationId, { secretsDone: true });
+    }
     const client = this.client(record);
     // The approval named the files the window sent: only those are pulled, so a list another
     // window staged meanwhile neither adds a file nor brings back one the person unticked.
     const named = record.secretsExpected ? new Set(record.secretsExpected) : null;
-    const offered = (await client.secrets()).filter((file) => !named || named.has(file.path));
+    const offer = await client.secretsOffer();
+    const offered = offer.files.filter((file) => !named || named.has(file.path));
     let current = record;
     const machine = machineSlug(record.sourceMachine);
     for (const file of offered) {
@@ -1330,7 +1335,8 @@ export class DestinationCopies {
           : !isSafeRelativePath(file.path)
       )
         throw new CopyError("refused", "The source offered a secret file outside the folder.");
-      const bytes = await client.secretFile(file.path);
+      const served = await client.secretFile(file.path);
+      const bytes = await this.secretBytes(current, served, offer.sealed);
       const written = await writeSecretFile({
         targetRoot:
           home === null ? current.targetFolder : (this.hooks.home?.() ?? NodeOS.homedir()),
@@ -1354,7 +1360,52 @@ export class DestinationCopies {
       throw new CopyError("refused", Messages.secretsNotOfferedMessage(current, missing.length), {
         missingSecrets: missing.length,
       });
+    await dropReceivingKey(this.directory(current.operationId));
     return this.update(current.operationId, { secretsDone: true });
+  }
+
+  /** A served secret's plain bytes: as sent, or opened with this copy's receiving key. */
+  private async secretBytes(
+    record: DestinationRecord,
+    served: { readonly bytes: Uint8Array; readonly sealed: boolean },
+    /** The source's list said these files come sealed: a plain body is not what it staged. */
+    listedSealed: boolean,
+  ): Promise<Uint8Array> {
+    if (!served.sealed && listedSealed)
+      throw new CopyError(
+        "refused",
+        `${record.sourceMachine} listed its secret files as sealed and sent one that is not, so it was not written. The other files are in place. Copy again to send the secret files.`,
+      );
+    if (!served.sealed) return served.bytes;
+    const opened = await openSealedSecret(this.directory(record.operationId), served.bytes);
+    if (opened === null)
+      throw new CopyError(
+        "refused",
+        `${record.sourceMachine} sent a secret file sealed to a key this machine does not hold, so it was not written. The other files are in place. Copy again to send the secret files.`,
+      );
+    return opened;
+  }
+
+  /**
+   * This copy's receiving key (public half), for the machine that offered the copy and
+   * for no one else. The source seals each secret file to it, so the files open only
+   * here. Refused once the secrets are in or the copy has ended.
+   */
+  async secretsKey(operationId: string, sourceEnvironmentId: string): Promise<string> {
+    return this.locked(operationId, async () => {
+      const record = await this.read(operationId);
+      // The same answer for an unknown copy and for another machine's: neither learns more.
+      if (!record || record.sourceEnvironmentId !== sourceEnvironmentId)
+        throw new CopyError("refused", "That copy came from another machine.");
+      if (
+        record.committed ||
+        record.secretsDone === true ||
+        record.state === "undone" ||
+        record.state === "cancelled"
+      )
+        throw new CopyError("refused", "This copy no longer takes secret files.");
+      return receivingKeyFor(this.directory(operationId), this.now());
+    });
   }
 
   /** Tells the source the copy is complete, then registers the folder here. */

@@ -119,6 +119,7 @@ import {
   previousApprovalLaunchPrompt,
 } from "./handoffLaunchPrompt.ts";
 import { copiedContextPaths } from "./folderCopyContextPaths.ts";
+import { SecretsPeer, stageSealedSecrets } from "./folderTransfer/sealedSecrets.ts";
 import { makeCopyRegistration } from "./folderCopyRegistration.ts";
 import { makeExistingCopyLocks } from "./existingCopyLocks.ts";
 import { existingCopyUpdate, gitGuarded } from "./machineHandoffGitGuard.ts";
@@ -236,6 +237,18 @@ export class MachineHandoff extends Context.Service<
     readonly copySecrets: (
       input: FolderCopySecretsInput,
     ) => Effect.Effect<FolderCopySourceStatus, FolderCopyError>;
+    /** Source: the same, served only sealed to the destination machine's receiving key. */
+    readonly copySecretsSealedTo: (
+      input: FolderCopySecretsInput,
+      sealTo: string,
+    ) => Effect.Effect<FolderCopySourceStatus, FolderCopyError>;
+    /** Source: the environment id of the machine this copy was offered to. */
+    readonly copyDestination: (operationId: string) => Effect.Effect<string, FolderCopyError>;
+    /** Destination: this copy's receiving key, for the machine that offered it. */
+    readonly copySecretsKey: (input: {
+      readonly operationId: string;
+      readonly sourceEnvironmentId: string;
+    }) => Effect.Effect<string, FolderCopyError>;
     /** Which secret files this machine sent to other machines: paths and times only. */
     readonly sentSecrets: (
       input: FolderCopySentSecretsInput,
@@ -701,6 +714,25 @@ const make = Effect.gen(function* () {
         destinationLabel: input.destinationLabel,
       }),
     ).pipe(Effect.map(sourceStatus));
+  const copySecretsSealedTo: MachineHandoff["Service"]["copySecretsSealedTo"] = (input, sealTo) =>
+    attempt(() =>
+      sources.approveSecrets({
+        operationId: input.operationId,
+        paths: input.paths,
+        destinationLabel: input.destinationLabel,
+        sealTo,
+      }),
+    ).pipe(Effect.map(sourceStatus));
+  const copyDestination: MachineHandoff["Service"]["copyDestination"] = (operationId) =>
+    attempt(() => sources.read(operationId)).pipe(
+      Effect.flatMap((record) =>
+        record === null
+          ? Effect.fail(new FolderCopyError({ code: "not_found" }))
+          : Effect.succeed(record.destinationEnvironmentId),
+      ),
+    );
+  const copySecretsKey: MachineHandoff["Service"]["copySecretsKey"] = (input) =>
+    attempt(() => copies.secretsKey(input.operationId, input.sourceEnvironmentId));
   const sentSecrets: MachineHandoff["Service"]["sentSecrets"] = (input) =>
     attempt(() => sources.sentSecrets.list(input.destinationEnvironmentId)).pipe(
       Effect.map((entries) => sentSecretsResult(entries)),
@@ -1612,6 +1644,9 @@ const make = Effect.gen(function* () {
     copyUndo,
     copyCancel,
     copySecrets,
+    copySecretsSealedTo,
+    copyDestination,
+    copySecretsKey,
     sentSecrets,
     readiness,
     serveFolderTransfer,
@@ -1620,9 +1655,12 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effect(MachineHandoff, make).pipe(Layer.provide(ProjectAdmission.layer));
 
 /** The folder copy handlers, registered apart from the rest of the WebSocket API (see `WsFolderCopyRpcGroup`). */
-const layerFolderCopyRpcHandlers = WsFolderCopyRpcGroup.middleware(RpcInstrumentation).toLayer(
+export const layerFolderCopyRpcHandlers = WsFolderCopyRpcGroup.middleware(
+  RpcInstrumentation,
+).toLayer(
   Effect.gen(function* () {
     const handoff = yield* MachineHandoff;
+    const secretsPeer = yield* SecretsPeer;
     return {
       [WS_METHODS.machineHandoffCopyScopes]: handoff.copyScopes,
       [WS_METHODS.machineHandoffCopyLeftBehind]: handoff.copyLeftBehind,
@@ -1645,6 +1683,10 @@ const layerFolderCopyRpcHandlers = WsFolderCopyRpcGroup.middleware(RpcInstrument
       [WS_METHODS.machineHandoffCopyUndo]: handoff.copyUndo,
       [WS_METHODS.machineHandoffCopyCancel]: handoff.copyCancel,
       [WS_METHODS.machineHandoffCopySecrets]: handoff.copySecrets,
+      [WS_METHODS.machineHandoffCopySecretsRoute]: (input) =>
+        secretsPeer.route(input.destinationEnvironmentId),
+      [WS_METHODS.machineHandoffCopySealedSecrets]: (input) =>
+        unlessUpdating(stageSealedSecrets(handoff, secretsPeer, input)),
       [WS_METHODS.machineHandoffSentSecrets]: handoff.sentSecrets,
       [WS_METHODS.machineHandoffReadiness]: handoff.readiness,
     };

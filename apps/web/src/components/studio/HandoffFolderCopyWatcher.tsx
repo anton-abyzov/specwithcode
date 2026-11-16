@@ -8,6 +8,7 @@ import {
   type FolderCopyStatus,
 } from "@specweave-studio/contracts";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { refreshSealedRoute, secretsSealed } from "../../studio/copySecretsRoute";
 import { machineHandoff } from "../../studio/machineHandoff";
 import { linkCopyAsWorkers, projectLink } from "../../studio/projectLink";
 import { randomUUID } from "../../lib/utils";
@@ -308,6 +309,12 @@ export function HandoffFolderCopyWatcher({
   const sendSecrets = useAtomCommand(machineHandoff.copySecrets, {
     reportFailure: false,
   });
+  const sendSealedSecrets = useAtomCommand(machineHandoff.copySealedSecrets, {
+    reportFailure: false,
+  });
+  const secretsRoute = useAtomCommand(machineHandoff.copySecretsRoute, {
+    reportFailure: false,
+  });
   const commands = {
     status,
     sourceStatus,
@@ -316,6 +323,8 @@ export function HandoffFolderCopyWatcher({
     decide,
     approve,
     sendSecrets,
+    sendSealedSecrets,
+    secretsRoute,
   };
   const links = {
     preview: useAtomCommand(projectLink.preview, { reportFailure: false }),
@@ -420,7 +429,7 @@ export function HandoffFolderCopyWatcher({
       // Read the pointer again: a reopened dialog owns the choice and the approval from here.
       const saved = readPendingCopy(key);
       if (stopped || !summary || saved?.operationId !== operationId) return false;
-      const blocked = secretsBlockedNow(environmentId);
+      const blocked = secretsBlockedNow(environmentId, saved.environmentId);
       const choice = blocked ? withoutSecrets(pendingSecrets(saved)) : pendingSecrets(saved);
       // Never leave `~/` files out on a guess: the person decides at the review.
       if (
@@ -463,8 +472,11 @@ export function HandoffFolderCopyWatcher({
           () => (stopped ? false : paths),
           () => false,
         );
+      // Without access:write the source seals the files to that machine (copySecretsRoute).
       const send = (choice: PendingCopy, list: ReadonlyArray<string>) =>
-        latest.current.commands.sendSecrets({
+        (list.length > 0 && secretsSealed(environmentId, choice.environmentId)
+          ? latest.current.commands.sendSealedSecrets
+          : latest.current.commands.sendSecrets)({
           environmentId,
           input: {
             operationId,
@@ -542,9 +554,14 @@ export function HandoffFolderCopyWatcher({
       // The form said secrets are included, and this window turned out unable to send them:
       // nothing is approved without them unseen. The review says why; the person decides there.
       // The same for a pointer that carries no secrets choice at all (an older version's).
+      await refreshSealedRoute(
+        environmentId,
+        saved.environmentId,
+        latest.current.commands.secretsRoute,
+      );
       if (
         saved.secrets === undefined ||
-        (secretsBlockedNow(environmentId) && secretsPromised(saved))
+        (secretsBlockedNow(environmentId, saved.environmentId) && secretsPromised(saved))
       ) {
         if (saved.replaceAll) {
           const { replaceAll: _dropped, ...rest } = saved;
@@ -566,6 +583,7 @@ export function HandoffFolderCopyWatcher({
         environmentId,
         pendingSecrets(saved).included,
         staged,
+        saved.environmentId,
       );
       const approved = await approve({ environmentId: destination, input });
       if (approved._tag === "Success") return "again" as const;
@@ -705,7 +723,7 @@ export function HandoffFolderCopyWatcher({
           summary,
           sourceLabel,
           open ? () => open() : null,
-          secretsSenderNow(environmentId),
+          secretsSenderNow(environmentId, saved.environmentId),
         );
         if (destination.value.state === "previewed" && activity)
           notifyCopyReview({

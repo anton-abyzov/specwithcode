@@ -2,7 +2,13 @@
 import { parseFleetOrigin } from "../fleetOrigin.ts";
 import type { ManifestEntry, ManifestHeader } from "./manifest.ts";
 import { readManifestBytes } from "./manifest.ts";
-import { decodeFrames, FOLDER_TRANSFER_PREFIX, zstdAvailable, type ChunkFrame } from "./wire.ts";
+import {
+  decodeFrames,
+  FOLDER_TRANSFER_PREFIX,
+  SEALED_SECRET_CONTENT_TYPE,
+  zstdAvailable,
+  type ChunkFrame,
+} from "./wire.ts";
 
 export type SourceClientErrorCode =
   | "unsupported_url"
@@ -328,15 +334,33 @@ export class SourceClient {
 
   /** Approved secret files; an older source without the secret step has none. */
   async secrets(): Promise<Array<{ path: string; size: number }>> {
-    const response = await this.request("GET", "secrets");
-    if (response.status === 404) return [];
-    return (await this.json<{ files: Array<{ path: string; size: number }> }>(response)).files;
+    return (await this.secretsOffer()).files;
   }
 
-  async secretFile(path: string): Promise<Uint8Array> {
+  /** The staged list, and whether the source says it serves these files only sealed. */
+  async secretsOffer(): Promise<{
+    readonly files: Array<{ path: string; size: number }>;
+    readonly sealed: boolean;
+  }> {
+    const response = await this.request("GET", "secrets");
+    if (response.status === 404) return { files: [], sealed: false };
+    const offer = await this.json<{
+      files: Array<{ path: string; size: number }>;
+      sealed?: boolean;
+    }>(response);
+    return { files: offer.files, sealed: offer.sealed === true };
+  }
+
+  /** One approved secret file as the source served it: plain, or sealed to this machine's key. */
+  async secretFile(
+    path: string,
+  ): Promise<{ readonly bytes: Uint8Array; readonly sealed: boolean }> {
     const response = await this.request("POST", "secret", { path });
     if (!response.ok) await this.json(response);
-    return new Uint8Array(await response.arrayBuffer());
+    const sealed = (response.headers.get("content-type") ?? "")
+      .toLowerCase()
+      .startsWith(SEALED_SECRET_CONTENT_TYPE);
+    return { bytes: new Uint8Array(await response.arrayBuffer()), sealed };
   }
 
   async commit() {

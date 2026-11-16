@@ -39,6 +39,13 @@ import { DEFAULT_SELECTION, isRebuildableDirectoryName } from "./classify.ts";
  * review: every class except secrets and rebuildable folders, conflicts refused.
  * Secrets never travel here; the result lists them for studio_file_transfer,
  * which keeps its owner approval card.
+ *
+ * The same tool carries one more exchange, for a copy a person runs from a
+ * window that may not send secrets the plain way: the source asks whether this
+ * machine takes its secrets (`secretsCheck`) and for the copy's receiving key
+ * (`secretsKey`), then seals each secret file to it. Both are refused unless the
+ * source is the owner's own machine with full access here, the bar a secret
+ * sent with studio_file_transfer meets.
  */
 
 /** Every class the person's default copy takes; rebuildable folders and secrets stay behind. */
@@ -48,12 +55,12 @@ const bounded = (max: number) => Schema.String.check(Schema.isMaxLength(max));
 
 /** Internal, between SpecWithCode machines: the destination half, one step per call. */
 export const AgentCopyReceiveInput = Schema.Struct({
-  action: Schema.Literals(["check", "start", "status", "link"]),
+  action: Schema.Literals(["check", "start", "status", "link", "secretsCheck", "secretsKey"]),
   /** check: the folder the copy will land in, `~` meaning that machine's home. */
   targetFolder: Schema.optional(bounded(4096)),
   /** start: the source's offer, with the absolute folder check returned. */
   start: Schema.optional(FolderCopyStartInput),
-  /** status and link: the copy to read or link. */
+  /** status, link and secretsKey: the copy to read, link or seal secrets for. */
   operationId: Schema.optional(MachineHandoffOperationId),
   /** link: the source's prepared link, accepted for the project the copy registered. */
   link: Schema.optional(ProjectLinkAcceptInput),
@@ -68,6 +75,10 @@ export const AgentCopyReceiveResult = Schema.Struct({
   filesDone: Schema.optional(Schema.Number),
   filesTotal: Schema.optional(Schema.Number),
   link: Schema.optional(ProjectLinkAcceptResult),
+  /** secretsCheck: this machine takes sealed secrets from the calling machine. */
+  sealedSecrets: Schema.optional(Schema.Boolean),
+  /** secretsKey: the copy's receiving key, base64 SPKI. Only the public half. */
+  secretsKey: Schema.optional(bounded(512)),
 });
 export type AgentCopyReceiveResult = typeof AgentCopyReceiveResult.Type;
 
@@ -172,10 +183,32 @@ const previewIsClean = (status: FolderCopyStatus) =>
  */
 export const receiveAgentCopy = Effect.fn("fleet.agentCopy.receive")(function* (
   input: AgentCopyReceiveInput,
-  caller: { readonly environmentId: string },
+  caller: {
+    readonly environmentId: string;
+    /** The calling machine's name, for refusals. */
+    readonly label?: string;
+    /** Its grant here is the owner's own machine with full access (as for a secret file transfer). */
+    readonly mayCarrySecrets?: boolean;
+  },
 ) {
   yield* refuseByTeamRules;
   const handoff = yield* handoffService;
+  if (input.action === "secretsCheck" || input.action === "secretsKey") {
+    if (caller.mayCarrySecrets !== true)
+      return yield* new OrchestratorMcpFailure({
+        code: "capability_denied",
+        message: `This machine lets ${caller.label ?? "that machine"} send secrets only under a full-access grant of the owner's own machine.`,
+      });
+    if (input.action === "secretsCheck") return { sealedSecrets: true } as AgentCopyReceiveResult;
+    if (input.operationId === undefined) return yield* invalid("Pass operationId.");
+    const secretsKey = yield* handoff
+      .copySecretsKey({
+        operationId: input.operationId,
+        sourceEnvironmentId: caller.environmentId,
+      })
+      .pipe(Effect.mapError(copyFailure));
+    return { secretsKey } as AgentCopyReceiveResult;
+  }
   if (input.action === "check") {
     if (input.targetFolder === undefined) return yield* invalid("Pass targetFolder.");
     return { targetFolder: yield* emptyTarget(input.targetFolder) } as AgentCopyReceiveResult;

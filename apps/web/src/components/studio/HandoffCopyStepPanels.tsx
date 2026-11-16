@@ -93,6 +93,7 @@ export function HandoffCopyStepPanels({
   secretsNote,
   onSendSecrets = null,
   secretsLocked = null,
+  secretsVia = null,
   link,
   linkDialog,
   onLinkDialogClose,
@@ -172,6 +173,8 @@ export function HandoffCopyStepPanels({
   readonly onSendSecrets?: (() => void) | null;
   /** Why this window cannot send secrets and where to send them from; null when it can. */
   readonly secretsLocked?: string | null;
+  /** How included secrets travel when not through this window. */
+  readonly secretsVia?: string | null;
   readonly link: CopyLinkOutcome | { readonly status: "linking" } | null;
   readonly linkDialog: boolean;
   readonly onLinkDialogClose: () => void;
@@ -226,6 +229,7 @@ export function HandoffCopyStepPanels({
               includeSecrets,
               onIncludeSecretsChange,
               secretsLocked,
+              secretsVia,
               details,
             }}
             folder={folder}
@@ -354,6 +358,7 @@ export function HandoffCopyStepPanels({
               }
               disabled={busy}
               locked={secretsLocked}
+              via={secretsVia}
               onChange={onSecretsChange}
             />
           )}

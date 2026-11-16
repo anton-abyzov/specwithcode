@@ -83,6 +83,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.machineHandoffCopyUndo]: "projects",
   [WS_METHODS.machineHandoffCopyCancel]: "projects",
   [WS_METHODS.machineHandoffCopySecrets]: "projects",
+  [WS_METHODS.machineHandoffCopySecretsRoute]: "projects",
+  [WS_METHODS.machineHandoffCopySealedSecrets]: "projects",
   [WS_METHODS.machineHandoffSentSecrets]: "projects",
   [WS_METHODS.machineHandoffReadiness]: "projects",
   [PROVISION_RPC_METHODS.provisionPreview]: "server",

@@ -5,7 +5,9 @@ import {
   AuthFilesystemWriteScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
+  AuthStandardClientScopes,
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
@@ -105,6 +107,33 @@ describe("RPC authorization scopes", () => {
     expect(clientRpcRequiredScopes(WS_METHODS.machineHandoffCopySecrets, undefined)).toContain(
       "access:write",
     );
+  });
+
+  it("lets a session without access:write send secrets only sealed, and never an agent", () => {
+    const input = { operationId: "op", paths: [".env"], destinationLabel: "m5" };
+    const sealed = clientRpcRequiredScopes(WS_METHODS.machineHandoffCopySealedSecrets, input);
+    expect(sealed).not.toContain("access:write");
+    expect(sealed).toContain(AuthOrchestrationOperateScope);
+    for (const scope of sealed) expect(AuthStandardClientScopes).toContain(scope);
+    // The plain route keeps its bar, so the two never trade places.
+    expect(clientRpcRequiredScopes(WS_METHODS.machineHandoffCopySecrets, input)).toContain(
+      "access:write",
+    );
+    expect(
+      clientRpcRequiredScopes(WS_METHODS.machineHandoffCopySecretsRoute, {
+        destinationEnvironmentId: "env-m5",
+      }),
+    ).toContain(AuthOrchestrationOperateScope);
+    const agent = { kind: "coordinator", environmentId: EnvironmentId.make("env-m4") } as const;
+    expect(
+      RpcAuthorization.refusesOwnerOnlyRpc(WS_METHODS.machineHandoffCopySealedSecrets, agent),
+    ).toBe(true);
+    expect(
+      RpcAuthorization.refusesOwnerOnlyRpc(WS_METHODS.machineHandoffCopySealedSecrets, {
+        kind: "device",
+        id: "device-m5",
+      }),
+    ).toBe(false);
   });
 
   it("requires permission to operate on a thread before uploading feedback", () => {
