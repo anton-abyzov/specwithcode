@@ -1,4 +1,5 @@
 import { sha256 } from "../../nodeCrypto.ts";
+import { ADVISOR_GUIDANCE } from "@specweave-studio/shared/advisor";
 import { seedReplayProject } from "../../project/ProjectContextTestkit.ts";
 import * as NodeOS from "node:os";
 
@@ -523,6 +524,37 @@ describe("CodexAdapterV2 runtime policy", () => {
       const detailed = yield* runtimeContext("detailed");
       assert.include(detailed, '<response_style mode="detailed">');
       assert.notInclude(detailed, '<response_style mode="concise">');
+    }),
+  );
+
+  it.effect("sends the advisor guidance only with the studio-code tools and the advisor on", () =>
+    Effect.gen(function* () {
+      const advisorContext = (input: { advisorGuidance?: string; hasStudioMcp: boolean }) =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-advisor-guidance",
+          codexInput: [{ type: "text", text: "explain the change" }],
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: null,
+            ...(input.advisorGuidance === undefined
+              ? {}
+              : { advisorGuidance: input.advisorGuidance }),
+          },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+          },
+          hasStudioMcp: input.hasStudioMcp,
+        }).pipe(Effect.map((params) => params.additionalContext?.studio_code_advisor?.value));
+      assert.equal(
+        yield* advisorContext({ advisorGuidance: ADVISOR_GUIDANCE, hasStudioMcp: true }),
+        ADVISOR_GUIDANCE,
+      );
+      assert.isUndefined(
+        yield* advisorContext({ advisorGuidance: ADVISOR_GUIDANCE, hasStudioMcp: false }),
+      );
+      assert.isUndefined(yield* advisorContext({ hasStudioMcp: true }));
     }),
   );
 

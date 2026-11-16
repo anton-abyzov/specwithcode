@@ -10,6 +10,7 @@ import {
   PI_STUDIO_MCP_EXTENSION_SOURCE,
   STUDIO_MCP_BEARER_ENV,
   STUDIO_MCP_URL_ENV,
+  STUDIO_PI_ADVISOR_GUIDANCE_ENV,
   STUDIO_PI_RESPONSE_STYLE_ENV,
   STUDIO_PI_RUNTIME_MODE_ENV,
 } from "./piStudioMcpExtensionSource.ts";
@@ -156,7 +157,10 @@ export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution 
       continue;
     }
     if (arg.startsWith("-")) {
-      return { ok: false, message: `Pi launch argument '${arg}' is not supported by SpecWithCode.` };
+      return {
+        ok: false,
+        message: `Pi launch argument '${arg}' is not supported by SpecWithCode.`,
+      };
     }
     return {
       ok: false,
@@ -237,18 +241,18 @@ function piStudioMcpExtensionDestPath(cacheDir: string): string {
   return `${cacheDir.replace(/\\/g, "/")}/${PI_STUDIO_MCP_EXTENSION_FILENAME}`;
 }
 
-export const materializePiStudioMcpExtension = Effect.fn("materializePiStudioMcpExtension")(function* (
-  cacheDir: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  yield* fs.makeDirectory(cacheDir, { recursive: true });
-  const dest = piStudioMcpExtensionDestPath(cacheDir);
-  const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
-  if (existing !== PI_STUDIO_MCP_EXTENSION_SOURCE) {
-    yield* fs.writeFileString(dest, PI_STUDIO_MCP_EXTENSION_SOURCE);
-  }
-  return dest;
-});
+export const materializePiStudioMcpExtension = Effect.fn("materializePiStudioMcpExtension")(
+  function* (cacheDir: string) {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(cacheDir, { recursive: true });
+    const dest = piStudioMcpExtensionDestPath(cacheDir);
+    const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
+    if (existing !== PI_STUDIO_MCP_EXTENSION_SOURCE) {
+      yield* fs.writeFileString(dest, PI_STUDIO_MCP_EXTENSION_SOURCE);
+    }
+    return dest;
+  },
+);
 
 export function buildPiRpcLaunch(input: {
   readonly launchArgs: ReadonlyArray<string>;
@@ -260,6 +264,8 @@ export function buildPiRpcLaunch(input: {
   readonly disableTools?: boolean;
   readonly runtimeMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
   readonly responseStyle?: ResponseStyle | undefined;
+  /** `runtimePolicy.advisorGuidance`; reaches Pi only with the studio-code server. */
+  readonly advisorGuidance?: string | undefined;
 }): {
   readonly args: ReadonlyArray<string>;
   readonly env: NodeJS.ProcessEnv;
@@ -295,6 +301,9 @@ export function buildPiRpcLaunch(input: {
   // credentials inherited from the server or a parent provider process.
   delete environment[STUDIO_MCP_URL_ENV];
   delete environment[STUDIO_MCP_BEARER_ENV];
+  // An inherited value would tell an advisor-off thread or an advisor child to consult.
+  delete environment[STUDIO_PI_ADVISOR_GUIDANCE_ENV];
+  const advisorGuidance = input.advisorGuidance?.trim() ?? "";
 
   return {
     args,
@@ -316,6 +325,9 @@ export function buildPiRpcLaunch(input: {
               input.mcpSession.authorizationHeader,
             ),
           }
+        : {}),
+      ...(hasStudioMcp && advisorGuidance.length > 0
+        ? { [STUDIO_PI_ADVISOR_GUIDANCE_ENV]: advisorGuidance }
         : {}),
     },
     hasStudioMcp,

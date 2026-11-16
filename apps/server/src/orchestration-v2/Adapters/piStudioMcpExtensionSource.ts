@@ -23,6 +23,12 @@ export const STUDIO_MCP_BEARER_ENV = "STUDIO_MCP_BEARER_TOKEN";
 export const STUDIO_PI_RUNTIME_MODE_ENV = "STUDIO_PI_RUNTIME_MODE";
 /** The response style chosen for this session: "concise" (default) or "detailed". */
 export const STUDIO_PI_RESPONSE_STYLE_ENV = "STUDIO_PI_RESPONSE_STYLE";
+/**
+ * When to consult the advisor (`runtimePolicy.advisorGuidance`). Set only while
+ * the thread's advisor is on and the studio-code server is wired; the
+ * extension adds it to the system prompt only when the endpoint is present.
+ */
+export const STUDIO_PI_ADVISOR_GUIDANCE_ENV = "STUDIO_PI_ADVISOR_GUIDANCE";
 
 /**
  * Pi tools whose confirmations the bridge raises as file-change approvals.
@@ -40,6 +46,7 @@ const TOKEN_ENV = ${JSON.stringify(STUDIO_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(STUDIO_PI_RUNTIME_MODE_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const RESPONSE_STYLE_ENV = ${JSON.stringify(STUDIO_PI_RESPONSE_STYLE_ENV)};
+const ADVISOR_GUIDANCE_ENV = ${JSON.stringify(STUDIO_PI_ADVISOR_GUIDANCE_ENV)};
 const CONCISE_RESPONSE_STYLE = ${JSON.stringify(STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS)};
 const DETAILED_RESPONSE_STYLE = ${JSON.stringify(STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS)};
 const HEADLESS_INSTRUCTIONS = ${JSON.stringify(STUDIO_HEADLESS_INSTRUCTIONS)};
@@ -75,6 +82,11 @@ function runtimeMode(): RuntimeMode {
     value === "full-access"
     ? value
     : "full-access";
+}
+
+function advisorInstructions(): Array<string> {
+  const guidance = env(ADVISOR_GUIDANCE_ENV)?.trim() ?? "";
+  return guidance.length === 0 ? [] : ["<advisor>\\n" + guidance + "\\n</advisor>"];
 }
 
 function responseStyleInstructions(): string {
@@ -288,7 +300,7 @@ export default async function studioMcpExtension(pi: ExtensionAPI) {
       responseStyleInstructions(),
       MEDIA_INSTRUCTIONS,
       HEADLESS_INSTRUCTIONS,
-      ...(hasStudioMcp ? [ORCHESTRATION_INSTRUCTIONS] : []),
+      ...(hasStudioMcp ? [ORCHESTRATION_INSTRUCTIONS, ...advisorInstructions()] : []),
     ].join("\\n\\n"),
   }));
 

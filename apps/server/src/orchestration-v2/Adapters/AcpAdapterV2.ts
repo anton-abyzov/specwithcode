@@ -7246,6 +7246,11 @@ export function makeAcpAdapterV2(
               model: turnInput.modelSelection.model,
               responseStyle: turnInput.runtimePolicy.responseStyle,
               agentInstructions: turnInput.runtimePolicy.agentInstructions,
+              // The guidance names the studio-code `advisor` tool, so only a
+              // session that has those tools is told to consult.
+              advisorGuidance: instructionState.hasStudioMcp
+                ? turnInput.runtimePolicy.advisorGuidance
+                : undefined,
             }),
           });
           return { prompt, instructionState: text === messageText ? undefined : instructionState };
