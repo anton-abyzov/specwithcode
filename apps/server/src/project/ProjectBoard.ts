@@ -6,17 +6,20 @@
  * Files only: no CLI, no Git, no network. Folder names come from one readdir.
  * Each `metadata.json` is parsed once until its mtime or size changes. The
  * spec and ledger are read only for increments that are still open and for
- * the Done cards actually returned, and folded once until one of them changes,
- * so a board of a thousand closed increments costs one stat each.
+ * the Done cards actually returned, and folded once until one of them changes
+ * or a running two-hour lease ends, so a board of a thousand closed increments costs one stat each.
  */
 import * as NodeFSP from "node:fs/promises";
 
 import {
+  PROJECT_BOARD_CARD_BLOCKERS,
   PROJECT_BOARD_DONE_DEFAULT,
   PROJECT_BOARD_DONE_MAX,
   PROJECT_BOARD_PULL_REQUESTS,
+  type ProjectBoardBlocker,
   type ProjectBoardCard,
   type ProjectBoardColumn,
+  type ProjectBoardColumnReason,
   type ProjectBoardResult,
 } from "@specweave-studio/contracts";
 
@@ -24,6 +27,7 @@ import {
   foldSpecweaveLedger,
   parseIncrementMetadata,
   parseSpecweaveSpec,
+  type SpecweaveTaskHolder,
 } from "../mods/SpecweaveProgress.ts";
 import { nodePath as NodePath } from "../nodePath.ts";
 import { incrementIds, incrementRootFor, readBounded } from "./ThreadIncrementProgress.ts";
@@ -32,24 +36,41 @@ import { INCREMENTS_DIR } from "./ThreadReports.ts";
 const SPEC_BYTES = 262_144;
 const LEDGER_BYTES = 1_048_576;
 const SMALL_BYTES = 524_288;
+const PAUSED_REASON_CHARS = 300;
 const READ_BATCH = 64;
 const CACHE_ENTRIES = 20_000;
 const CLOSED_TASK_STATES = new Set(["done", "skipped"]);
+/** The folder names incrementIds lists, so a single read answers for the same set. */
+const INCREMENT_FOLDER = /^\d{4,}[A-Z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
 const PULL_REQUEST = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/gu;
 
 interface Meta {
   readonly title: string | null;
   readonly status: string;
   readonly updatedAt: string | null;
+  readonly pausedReason: string | null;
 }
 interface Detail {
   readonly total: number;
+  /** Done or skipped. */
   readonly done: number;
-  readonly blocked: boolean;
+  /** Done only: a skip is not evidence that work started. */
+  readonly finished: number;
+  /** Claimed inside the two-hour lease. */
+  readonly active: number;
+  readonly blockedTasks: number;
+  /** The first blocked tasks in spec order. */
+  readonly blockers: ReadonlyArray<ProjectBoardBlocker>;
   readonly pullRequests: ReadonlyArray<string>;
   readonly hasSpec: boolean;
   /** The ledger's last write, which is newer than metadata.json while work runs. */
   readonly ledgerAt: string | null;
+  /**
+   * When the first running lease ends, in epoch milliseconds. A claim turns
+   * stale and a block loses its owner then without any file changing, so the
+   * cached fold is only good until that moment.
+   */
+  readonly leaseEndsAt: number | null;
 }
 
 /** Parsed files by path, valid while the signature (mtime and size of what they read) holds. */
@@ -99,6 +120,10 @@ async function readMeta(root: string, folder: string): Promise<Meta> {
       isoOrNull(metadata.lastActivity) ??
       isoOrNull(metadata.updated) ??
       isoOrNull(metadata.created),
+    pausedReason:
+      typeof metadata.pausedReason === "string" && metadata.pausedReason.trim()
+        ? metadata.pausedReason.trim().slice(0, PAUSED_REASON_CHARS)
+        : null,
   });
 }
 
@@ -123,7 +148,13 @@ async function readDetail(root: string, folder: string, now: number): Promise<De
   ]);
   const signature = `${spec.signature}|${tasks.signature}|${ledger.signature}`;
   const cached = detailCache.get(folder);
-  if (cached?.signature === signature) return cached.value;
+  // The fold calls a lease running up to and including its end, so the entry holds until then.
+  if (
+    cached?.signature === signature &&
+    (cached.value.leaseEndsAt === null || now <= cached.value.leaseEndsAt)
+  ) {
+    return cached.value;
+  }
   const [specText, tasksText, ledgerText] = await Promise.all([
     spec.mtimeMs === null ? null : readBounded(root, specPath, SPEC_BYTES),
     tasks.mtimeMs === null ? null : readBounded(root, tasksPath, SPEC_BYTES),
@@ -137,19 +168,42 @@ async function readDetail(root: string, folder: string, now: number): Promise<De
         ? parseSpecweaveSpec(specText).tasks
         : [];
   // A ledger that exists but cannot be read must not fold as "nothing done".
-  const folded =
+  const fold =
     ledgerText === null || source.length === 0
-      ? []
-      : foldSpecweaveLedger(source, ledgerText, now).tasks.filter((task) =>
-          source.some((planned) => planned.id === task.id),
-        );
+      ? null
+      : foldSpecweaveLedger(source, ledgerText, now);
+  const folded = (fold?.tasks ?? []).filter((task) =>
+    source.some((planned) => planned.id === task.id),
+  );
+  const holders: ReadonlyMap<string, SpecweaveTaskHolder> = fold?.holders ?? new Map();
+  const blocked = folded.filter((task) => task.status === "blocked");
+  let leaseEndsAt: number | null = null;
+  for (const holder of holders.values()) {
+    if (holder.leased && (leaseEndsAt === null || holder.leaseEndsAt < leaseEndsAt)) {
+      leaseEndsAt = holder.leaseEndsAt;
+    }
+  }
   return remember(detailCache, folder, signature, {
     total: source.length,
     done: folded.filter((task) => CLOSED_TASK_STATES.has(task.status)).length,
-    blocked: folded.some((task) => task.status === "blocked"),
+    finished: folded.filter((task) => task.status === "done").length,
+    active: folded.filter((task) => task.status === "claimed").length,
+    blockedTasks: blocked.length,
+    blockers: blocked.slice(0, PROJECT_BOARD_CARD_BLOCKERS).map((task) => {
+      const holder = holders.get(task.id);
+      return {
+        taskId: task.id,
+        title: task.title,
+        note: task.note,
+        by: holder?.owner ?? null,
+        at: holder?.at ?? task.changedAt ?? null,
+        leased: holder?.leased ?? false,
+      } satisfies ProjectBoardBlocker;
+    }),
     pullRequests: ledgerText === null ? [] : ledgerPullRequests(ledgerText),
     hasSpec: specText !== null,
     ledgerAt: ledger.mtimeMs === null ? null : new Date(ledger.mtimeMs).toISOString(),
+    leaseEndsAt,
   });
 }
 
@@ -186,18 +240,125 @@ const STATUS_MEANINGS: Readonly<Record<string, BoardStatus>> = {
   archived: "dropped",
 };
 export function boardStatus(status: string): BoardStatus {
-  return STATUS_MEANINGS[status.trim().toLowerCase().replaceAll(/[_\s]+/gu, "-")] ?? "planned";
+  return (
+    STATUS_MEANINGS[
+      status
+        .trim()
+        .toLowerCase()
+        .replaceAll(/[_\s]+/gu, "-")
+    ] ?? "planned"
+  );
 }
 
-/** The column an increment sits in, from its metadata status and its task counts. */
+/** What the ledger shows for an increment: tasks done (not skipped), blocked, and claimed inside the lease. */
+export interface BoardEvidence {
+  readonly finished: number;
+  readonly blocked: number;
+  readonly active: number;
+}
+
+/**
+ * The column an increment sits in and why. The status file wins when it says
+ * where the work is; when it still says planned, the ledger does, because
+ * agents often start tasks without moving the status. A paused increment stays
+ * in Active even with every task closed: it was stopped, not handed to review.
+ */
+export function boardPlacement(
+  status: string,
+  tasks: { readonly total: number; readonly done: number },
+  evidence?: BoardEvidence,
+): { column: ProjectBoardColumn; reason: ProjectBoardColumnReason } {
+  const meaning = boardStatus(status);
+  // A dropped increment is off the board; read alone it shows as closed.
+  if (meaning === "completed" || meaning === "dropped") return { column: "done", reason: "status" };
+  if (meaning === "paused") return { column: "active", reason: "status" };
+  if (meaning === "review") return { column: "review", reason: "status" };
+  if (tasks.total > 0 && tasks.done === tasks.total) return { column: "review", reason: "tasks" };
+  if (meaning === "active") return { column: "active", reason: "status" };
+  if (
+    evidence !== undefined &&
+    (evidence.finished > 0 || evidence.blocked > 0 || evidence.active > 0)
+  ) {
+    return { column: "active", reason: "ledger" };
+  }
+  return { column: "planned", reason: "status" };
+}
+
+/** The column an increment sits in, from its metadata status, task counts and ledger evidence. */
 export function boardColumn(
   status: string,
   tasks: { readonly total: number; readonly done: number },
+  evidence?: BoardEvidence,
 ): ProjectBoardColumn {
-  const meaning = boardStatus(status);
-  if (meaning === "completed") return "done";
-  if (meaning === "review" || (tasks.total > 0 && tasks.done === tasks.total)) return "review";
-  return meaning === "active" || meaning === "paused" ? "active" : "planned";
+  return boardPlacement(status, tasks, evidence).column;
+}
+
+/**
+ * One increment's card. The board list and the increment view both build
+ * cards here, so the same increment never shows two different cards.
+ */
+async function buildCard(
+  root: string,
+  id: string,
+  meta: Meta,
+  now: number,
+): Promise<ProjectBoardCard> {
+  const folder = NodePath.join(root, INCREMENTS_DIR, id);
+  const detail = await readDetail(root, folder, now);
+  const meaning = boardStatus(meta.status);
+  const closed = meaning === "completed" || meaning === "dropped";
+  const paused = !closed && meaning === "paused";
+  const { column, reason } = boardPlacement(
+    meta.status,
+    { total: detail.total, done: detail.done },
+    { finished: detail.finished, blocked: detail.blockedTasks, active: detail.active },
+  );
+  const blockedTasks = closed ? 0 : detail.blockedTasks;
+  const updatedAt =
+    !closed && detail.ledgerAt !== null && detail.ledgerAt > (meta.updatedAt ?? "")
+      ? detail.ledgerAt
+      : meta.updatedAt;
+  return {
+    incrementId: id,
+    title: meta.title,
+    status: meta.status,
+    column,
+    tasks: {
+      total: detail.total,
+      done: detail.done,
+      active: closed ? 0 : detail.active,
+      finished: detail.finished,
+    },
+    blocked: blockedTasks > 0 || paused,
+    paused,
+    pausedReason: paused ? meta.pausedReason : null,
+    blockedTasks,
+    blockers: closed ? [] : [...detail.blockers],
+    columnReason: reason,
+    updatedAt,
+    pullRequests: [...detail.pullRequests],
+    specPath: detail.hasSpec ? NodePath.join(folder, "spec.md") : null,
+  };
+}
+
+/**
+ * One increment's card, exactly as the board shows it, for the increment
+ * view. `root` is the resolved planning root. Unlike the board it also
+ * answers for a dropped increment, in the Done column. Null when the folder
+ * is not there.
+ */
+export async function readBoardCard(
+  root: string,
+  incrementId: string,
+  now: number,
+): Promise<ProjectBoardCard | null> {
+  // Only what the board lists: an increment folder name (never "", ".." or a
+  // path) naming a real folder, not a link that may lead out of the root.
+  if (!INCREMENT_FOLDER.test(incrementId)) return null;
+  const folder = NodePath.join(root, INCREMENTS_DIR, incrementId);
+  const stat = await NodeFSP.lstat(folder).catch(() => null);
+  if (stat === null || !stat.isDirectory()) return null;
+  return buildCard(root, incrementId, await readMeta(root, folder), now);
 }
 
 const newestFirst = (left: ProjectBoardCard, right: ProjectBoardCard) =>
@@ -234,29 +395,10 @@ export async function readProjectBoard(
         right.id.localeCompare(left.id, undefined, { numeric: true }),
     )
     .slice(0, doneLimit);
-  const cards = await inBatches([...open, ...shownClosed], async ({ id, meta }) => {
-    const folder = folderOf(id);
-    const detail = await readDetail(root, folder, input.now);
-    const tasks = { total: detail.total, done: detail.done };
-    const meaning = boardStatus(meta.status);
-    const completed = meaning === "completed";
-    const updatedAt =
-      !completed && detail.ledgerAt !== null && detail.ledgerAt > (meta.updatedAt ?? "")
-        ? detail.ledgerAt
-        : meta.updatedAt;
-    return {
-      incrementId: id,
-      title: meta.title,
-      status: meta.status,
-      column: boardColumn(meta.status, tasks),
-      tasks,
-      blocked: !completed && (detail.blocked || meaning === "paused"),
-      updatedAt,
-      pullRequests: [...detail.pullRequests],
-      specPath: detail.hasSpec ? NodePath.join(folder, "spec.md") : null,
-    } satisfies ProjectBoardCard;
-  });
+  const cards = await inBatches([...open, ...shownClosed], ({ id, meta }) =>
+    buildCard(root, id, meta, input.now),
+  );
   const counts = { planned: 0, active: 0, review: 0, done: closed.length };
   for (const card of cards) if (card.column !== "done") counts[card.column] += 1;
-  return { cards: cards.toSorted(newestFirst), counts };
+  return { cards: cards.toSorted(newestFirst), counts, detail: true };
 }

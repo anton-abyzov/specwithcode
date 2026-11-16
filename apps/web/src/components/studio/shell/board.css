@@ -26,6 +26,16 @@
 .sws-board-card[data-blocked] {
   border-color: color-mix(in srgb, var(--shell-waiting) 45%, var(--border));
 }
+/* The card whose view is open. */
+.sws-board-card[data-open] {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+.sws-board-card[data-open][data-machine-color] {
+  box-shadow:
+    inset 3px 0 0 var(--machine),
+    0 0 0 1px var(--primary);
+}
 .sws-board-card-open {
   width: 100%;
   padding: 8px 10px 6px;
@@ -101,6 +111,139 @@ button.sws-board-card-open {
 .sws-board-more:disabled {
   cursor: default;
   opacity: 0.6;
+}
+/* Search and the Blocked only switch share one row; the switch drops under a narrow search. */
+.sws-board-tools {
+  margin: 0 0 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sws-board-tools > .sws-find {
+  flex: 1 1 200px;
+  min-width: 0;
+  margin: 0;
+}
+.sws-board-filter {
+  flex: none;
+  height: 34px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--shell-waiting) 45%, var(--border));
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  font-size: var(--text-compact);
+  font-weight: 500;
+  color: var(--foreground);
+  cursor: pointer;
+}
+.sws-board-filter svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--shell-waiting);
+}
+.sws-board-filter:hover {
+  background: color-mix(in srgb, var(--shell-waiting) 10%, var(--card));
+}
+/* On: filled, so the narrowed board is never mistaken for the whole one. */
+.sws-board-filter[aria-pressed="true"] {
+  border-color: var(--shell-waiting);
+  background: color-mix(in srgb, var(--shell-waiting) 22%, var(--card));
+  box-shadow: inset 0 0 0 1px var(--shell-waiting);
+  font-weight: 600;
+}
+.sws-board-filter-note {
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--shell-waiting) 12%, transparent);
+  font-size: var(--text-xs);
+  color: var(--foreground);
+}
+.sws-board-filter-note button {
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.sws-board-column-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sws-board-column-head > h3 {
+  flex: 1;
+  min-width: 0;
+}
+.sws-board-column-blocked {
+  flex: none;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 9999px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--shell-waiting);
+  cursor: pointer;
+}
+.sws-board-column-blocked:hover,
+.sws-board-column-blocked[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--shell-waiting) 16%, transparent);
+}
+/* What is stuck and why: two lines at most on the card, all of it in the view. */
+.sws-board-reasons {
+  margin: 0 10px 6px;
+  padding: 5px 8px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--shell-waiting) 12%, transparent);
+  font-size: var(--text-xs);
+  color: var(--foreground);
+}
+.sws-board-reason {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+.sws-board-reason svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+  color: var(--shell-waiting);
+}
+.sws-board-reason-text {
+  min-width: 0;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.sws-board-reason-text strong {
+  font-weight: 600;
+  color: var(--shell-waiting);
+}
+.sws-board-reason-more {
+  padding-left: 18px;
+  color: var(--muted-foreground);
+}
+.sws-board-rest {
+  align-self: center;
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
 }
 /* The machine the card's work runs on colors its leading edge. */
 .sws-board-card[data-machine-color] {
@@ -210,21 +353,22 @@ button.sws-board-card-open {
   color: var(--muted-foreground);
   font-size: var(--text-sm);
 }
-/* Wide enough for four columns: the expanded panel, or a wide window. */
+/* Wide enough for four columns: the expanded panel, or a wide window. With the
+   increment view open the board stays a stacked list beside it. */
 @container sws-board (min-width: 720px) {
-  .sws-board-columns {
+  .sws-board:not([data-view]) .sws-board-columns {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     align-items: start;
     gap: 10px;
   }
-  .sws-board-column {
+  .sws-board:not([data-view]) .sws-board-column {
     order: 0 !important;
     padding: 2px 8px 8px;
     border-radius: var(--radius-lg);
     background: color-mix(in srgb, var(--muted) 55%, transparent);
   }
-  .sws-board-card {
+  .sws-board:not([data-view]) .sws-board-card {
     background: var(--background);
   }
 }

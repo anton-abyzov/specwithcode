@@ -4586,6 +4586,9 @@ export const ja: PhraseCatalog = {
   "not linked": "未リンク",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
     "未リンク: {machine} はこのリポジトリ用に独自のコーディネーター、スレッド、メモリを持っています。",
+  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.":
+    "未リンク: これらはこのリポジトリ用の別々のプロジェクトで、それぞれ独自のコーディネーター、スレッド、メモリを持っています。それでも、どのプロジェクトも表示でき、メッセージも送れます。",
+  "Link them below to make one project.": "下でリンクすると 1 つのプロジェクトになります。",
   "{value}Messages go to Percy. {value2}": "{value}メッセージは Percy に届きます。{value2}",
   "Show only topics that need you in {project}": "{project} で対応が必要なトピックのみ表示",
   "New topic in {title}": "{title} で新しいトピック",
@@ -5218,4 +5221,16 @@ export const ja: PhraseCatalog = {
   "Follow project (on)": "プロジェクトに従う (オン)",
   "Follow project (off)": "プロジェクトに従う (オフ)",
   "Lets this thread ask a stronger model to check its work.": "このスレッドが、より強力なモデルに作業の確認を頼めるようにします。",
+  "Installed, but it does not start": "インストール済みですが起動しません",
+  "Install {agent} on {machine} with this command:":
+    "このコマンドで {machine} に {agent} をインストールします:",
+  "Run its installer again:": "インストーラーをもう一度実行してください:",
+  "Install {agent} on {machine} from its own site.":
+    "{agent} の公式サイトから {machine} にインストールしてください。",
+  "Open its install guide": "インストールガイドを開く",
+  "Run in terminal": "ターミナルで実行",
+  "Waiting for the install. This page updates by itself.":
+    "インストールを待っています。このページは自動で更新されます。",
+  "After it installs, choose Check again.":
+    "インストールが終わったら「もう一度確認」を選んでください。",
 };

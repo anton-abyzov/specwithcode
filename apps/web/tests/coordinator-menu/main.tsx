@@ -22,15 +22,33 @@ document.documentElement.classList.toggle("dark", dark);
 applyThemePalette("studio-chat", dark ? "dark" : "light");
 
 const linkedCopies: OrchestratorCopy[] = [
-  { key: "m1:p", machine: "m1", folder: "/w/specweave", role: "workers", canStart: true },
+  {
+    key: "m1:p",
+    machine: "m1",
+    folder: "/w/specweave",
+    role: "workers",
+    main: false,
+    label: { text: "Copy · main on {machine}", values: { machine: "m4" } },
+    canStart: true,
+  },
   {
     key: "mini:p",
     machine: "linux-mini",
     folder: "/w/specweave",
     role: "coordinator",
+    main: false,
+    label: { text: "Copy · main on {machine}", values: { machine: "m4" } },
     canStart: false,
   },
-  { key: "m4:p", machine: "m4", folder: "/w/specweave", role: "coordinator", canStart: false },
+  {
+    key: "m4:p",
+    machine: "m4",
+    folder: "/w/specweave",
+    role: "coordinator",
+    main: true,
+    label: { text: "Main" },
+    canStart: false,
+  },
 ];
 // `?case=unlinked`: the same repository registered on three machines, never linked.
 const unlinkedCopies: OrchestratorCopy[] = ["m1", "m3", "m4"].map((machine) => ({
@@ -38,9 +56,14 @@ const unlinkedCopies: OrchestratorCopy[] = ["m1", "m3", "m4"].map((machine) => (
   machine,
   folder: "/w/easychamp",
   role: "independent",
+  main: false,
+  label: { text: "not linked" },
   canStart: false,
 }));
-const copies = params.get("case") === "unlinked" ? unlinkedCopies : linkedCopies;
+// Link offers for the other machines, as the page passes them for unlinked copies.
+const unlinkedLinks = unlinkedCopies.map(({ key, machine }) => ({ key, machine }));
+const unlinked = params.get("case") === "unlinked";
+const copies = unlinked ? unlinkedCopies : linkedCopies;
 
 function Page() {
   const [current, setCurrent] = useState("m4:p");
@@ -62,6 +85,8 @@ function Page() {
         onMigrate={() => {}}
         onCopy={() => {}}
         onLeave={() => {}}
+        links={unlinked ? unlinkedLinks.filter((link) => link.key !== current) : []}
+        onLink={unlinked ? () => {} : null}
       />
     </div>
   );

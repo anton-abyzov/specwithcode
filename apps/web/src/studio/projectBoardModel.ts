@@ -126,32 +126,200 @@ export function boardThreadOrder<T extends { readonly tone: string; readonly upd
   );
 }
 
-/**
- * What a click on the card itself opens. One thread works on it: that thread.
- * Several, or none: the spec, and each thread has its own line to click.
- */
-export function boardCardTarget(input: {
-  readonly threads: number;
-  readonly specPath: string | null;
-}): "thread" | "spec" | "none" {
-  if (input.threads === 1) return "thread";
-  return input.specPath === null ? "none" : "spec";
+/** Thread states that show work on an increment; idle, offline and resolved ones do not. */
+const WORK_TONES: ReadonlySet<string> = new Set(["working", "background", "waiting", "failed"]);
+export function threadShowsWork(tone: string): boolean {
+  return WORK_TONES.has(tone);
+}
+
+/** A thread that can still be opened and asked: not resolved and not on an unreachable machine. */
+export function threadIsLive(tone: string): boolean {
+  return tone !== "resolved" && tone !== "unknown";
+}
+
+/* Blocked state ------------------------------------------------------------ */
+
+type BlockedFields = Pick<
+  ProjectBoardCard,
+  "blocked" | "status" | "column" | "tasks" | "paused" | "blockedTasks"
+>;
+
+/** An older server sends no `paused`; its status still says so. */
+export function boardCardPaused(card: {
+  readonly paused?: boolean | undefined;
+  readonly status?: string | undefined;
+}): boolean {
+  return card.paused ?? card.status === "paused";
 }
 
 /**
+ * Whether the Blocked only filter keeps the card: it is paused or has a
+ * blocked task. A card that is both counts once; finished work never counts.
+ */
+export function boardCardBlocked(card: BlockedFields): boolean {
+  if (card.column === "done") return false;
+  return card.blocked || boardCardPaused(card) || (card.blockedTasks ?? 0) > 0;
+}
+
+const tasksBlocked = (count: number) => `${count} ${count === 1 ? "task" : "tasks"} blocked`;
+
+/**
+ * The chip that says what is stuck: the whole increment (Paused), some tasks,
+ * or both. A bare "Blocked" is left only for a server too old to count them.
+ */
+export function boardBlockedChip(card: BlockedFields): string | null {
+  if (!boardCardBlocked(card)) return null;
+  const paused = boardCardPaused(card);
+  const blocked = card.blockedTasks ?? 0;
+  if (paused) return blocked > 0 ? `Paused + ${tasksBlocked(blocked)}` : "Paused";
+  return blocked > 0 ? tasksBlocked(blocked) : "Blocked";
+}
+
+/** Some tasks are stuck but others are still open, so work can go on. */
+export function boardRestCanContinue(card: BlockedFields): boolean {
+  const blocked = card.blockedTasks ?? 0;
+  if (card.column === "done" || blocked === 0 || boardCardPaused(card)) return false;
+  return card.tasks.total - card.tasks.done > blocked;
+}
+
+/** Reason lines a card shows; the increment view lists every blocker. */
+export const BOARD_CARD_REASONS = 2;
+
+export interface BoardReason {
+  /** The blocked task, or null for the pause of the whole increment. */
+  readonly taskId: string | null;
+  readonly text: string;
+}
+
+/** Why the card is stuck, the pause first, then the blocked tasks in spec order. */
+export function boardReasons(
+  card: Pick<ProjectBoardCard, "column" | "status" | "paused" | "pausedReason" | "blockers">,
+): BoardReason[] {
+  if (card.column === "done") return [];
+  const reasons: BoardReason[] = [];
+  if (boardCardPaused(card) && card.paused !== undefined)
+    reasons.push({ taskId: null, text: card.pausedReason?.trim() || "no reason given" });
+  for (const blocker of card.blockers ?? [])
+    reasons.push({
+      taskId: blocker.taskId,
+      text: blocker.note?.trim() || "blocked, no reason given",
+    });
+  return reasons;
+}
+
+/** How many cards of each column the Blocked only filter keeps, and the cards themselves. */
+export function boardBlockedCounts(
+  columns: Record<ProjectBoardColumn, ReadonlyArray<ProjectBoardCard>>,
+): Record<ProjectBoardColumn, number> & { readonly all: number } {
+  const counts = { planned: 0, active: 0, review: 0, done: 0, all: 0 };
+  for (const column of PROJECT_BOARD_COLUMNS) {
+    counts[column] = columns[column].filter(boardCardBlocked).length;
+    counts.all += counts[column];
+  }
+  return counts;
+}
+
+export function boardFilterLabel(blocked: number): string {
+  return `Blocked only · ${blocked} ${blocked === 1 ? "card" : "cards"}`;
+}
+
+/* Column by evidence -------------------------------------------------------- */
+
+/**
+ * The planned cards a thread is at work on. The server already moved the ones
+ * whose ledger shows work; the thread list is only known here.
+ */
+export function boardThreadEvidence(
+  cards: ReadonlyArray<Pick<ProjectBoardCard, "incrementId" | "column">>,
+  threads: ReadonlyMap<string, ReadonlyArray<{ readonly tone: string }>>,
+): string[] {
+  return cards
+    .filter(
+      (card) =>
+        card.column === "planned" &&
+        (threads.get(card.incrementId) ?? []).some((thread) => threadShowsWork(thread.tone)),
+    )
+    .map((card) => card.incrementId);
+}
+
+/** The cards threads moved into Active, and the board refresh they were last settled at. */
+export interface BoardPromotions {
+  readonly revision: number;
+  readonly ids: ReadonlySet<string>;
+}
+export const NO_BOARD_PROMOTIONS: BoardPromotions = { revision: 0, ids: new Set() };
+
+/**
+ * A thread flips between working and idle many times a minute, and a card
+ * must not jump columns with it. Within one board refresh a card only ever
+ * moves into Active; the next refresh settles on what the threads say then.
+ */
+export function nextBoardPromotions(
+  previous: BoardPromotions,
+  revision: number,
+  evidence: ReadonlyArray<string>,
+): BoardPromotions {
+  if (revision !== previous.revision) {
+    const same =
+      evidence.length === previous.ids.size && evidence.every((id) => previous.ids.has(id));
+    return { revision, ids: same ? previous.ids : new Set(evidence) };
+  }
+  if (evidence.every((id) => previous.ids.has(id))) return previous;
+  return { revision, ids: new Set([...previous.ids, ...evidence]) };
+}
+
+/**
+ * The board with those cards in Active. Planned is never cut by the server,
+ * so moving a card and its count is exact, and every heading counts what its
+ * column shows.
+ */
+export function boardWithPromotions<R extends Pick<ProjectBoardResult, "cards" | "counts">>(
+  result: R,
+  promoted: ReadonlySet<string>,
+): R {
+  let moved = 0;
+  const cards = result.cards.map((card) => {
+    if (card.column !== "planned" || !promoted.has(card.incrementId)) return card;
+    moved += 1;
+    return { ...card, column: "active" as const };
+  });
+  if (moved === 0) return result;
+  return {
+    ...result,
+    cards,
+    counts: {
+      ...result.counts,
+      planned: result.counts.planned - moved,
+      active: result.counts.active + moved,
+    },
+  };
+}
+
+/* Requests for the coordinator ---------------------------------------------- */
+
+/**
  * The request an open card with no thread hands the coordinator, and the word
- * on its button; null for finished work.
+ * on its button; null for finished work. Paused work is resumed, not continued.
  */
 export function boardAsk(
-  card: Pick<ProjectBoardCard, "incrementId" | "column" | "tasks">,
+  card: Pick<ProjectBoardCard, "incrementId" | "column" | "tasks"> &
+    Partial<Pick<ProjectBoardCard, "status" | "paused" | "pausedReason" | "blockedTasks">>,
 ): { readonly label: string; readonly prompt: string } | null {
   if (card.column === "done") return null;
+  if (boardCardPaused(card)) {
+    const reason = card.pausedReason?.trim();
+    return {
+      label: "Resume",
+      prompt: `Resume increment ${card.incrementId}: it is paused${reason ? ` ("${reason}")` : ""}. Check whether that still holds, then pick up its next open task.`,
+    };
+  }
   if (card.column === "review")
     return {
       label: "Review and close",
       prompt: `Verify, review and close increment ${card.incrementId}.`,
     };
-  const started = card.column === "active" && card.tasks.done > 0;
+  const started =
+    card.tasks.done > 0 || (card.tasks.active ?? 0) > 0 || (card.blockedTasks ?? 0) > 0;
   return {
     label: started ? "Continue" : "Start",
     prompt: started

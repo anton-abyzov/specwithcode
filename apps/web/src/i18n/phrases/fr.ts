@@ -4623,6 +4623,9 @@ export const fr: PhraseCatalog = {
   "not linked": "non lié",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
     "Non lié : {machine} a son propre coordinateur, ses fils et sa mémoire pour ce dépôt.",
+  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.":
+    "Non lié : ce sont des projets distincts pour ce dépôt, chacun avec son propre coordinateur, ses fils et sa mémoire. Cela n'empêche pas de consulter chacun d'eux ni de lui envoyer des messages.",
+  "Link them below to make one project.": "Liez-les ci-dessous pour n'en faire qu'un seul projet.",
   "{value}Messages go to Percy. {value2}": "{value}Les messages vont à Percy. {value2}",
   "Show only topics that need you in {project}":
     "Afficher seulement les sujets qui ont besoin de vous dans {project}",
@@ -5260,4 +5263,15 @@ export const fr: PhraseCatalog = {
   "Follow project (on)": "Comme le projet (activé)",
   "Follow project (off)": "Comme le projet (désactivé)",
   "Lets this thread ask a stronger model to check its work.": "Permet à ce fil de demander à un modèle plus puissant de vérifier son travail.",
+  "Installed, but it does not start": "Installé, mais ne démarre pas",
+  "Install {agent} on {machine} with this command:":
+    "Installez {agent} sur {machine} avec cette commande :",
+  "Run its installer again:": "Relancez son programme d’installation :",
+  "Install {agent} on {machine} from its own site.":
+    "Installez {agent} sur {machine} depuis son propre site.",
+  "Open its install guide": "Ouvrir son guide d’installation",
+  "Run in terminal": "Exécuter dans le terminal",
+  "Waiting for the install. This page updates by itself.":
+    "En attente de l’installation. Cette page se met à jour toute seule.",
+  "After it installs, choose Check again.": "Une fois installé, choisissez Vérifier à nouveau.",
 };

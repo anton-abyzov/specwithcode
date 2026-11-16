@@ -8,6 +8,7 @@ import {
   isProjectOwnedChat,
   paneSelectionCorrection,
   parseProjectWorkspaceSearch,
+  projectKeyMoveSearch,
   projectPaneTargetForChat,
   projectPaneThread,
   threadBelongsToProject,
@@ -194,6 +195,54 @@ describe("parseProjectWorkspaceSearch", () => {
     });
     expect(parseProjectWorkspaceSearch({ pane: "gallery" })).toEqual({});
     expect(parseProjectWorkspaceSearch({ pane: 3 })).toEqual({});
+  });
+  it("keeps an increment folder name", () => {
+    expect(parseProjectWorkspaceSearch({ increment: "0040-search" })).toEqual({
+      increment: "0040-search",
+    });
+    expect(parseProjectWorkspaceSearch({ increment: " 1338-project-board-view " })).toEqual({
+      increment: "1338-project-board-view",
+    });
+    expect(parseProjectWorkspaceSearch({ increment: "0412B-follow-up-2" })).toEqual({
+      increment: "0412B-follow-up-2",
+    });
+    const longest = `0040-${"a".repeat(155)}`;
+    expect(longest).toHaveLength(160);
+    expect(parseProjectWorkspaceSearch({ increment: longest })).toEqual({ increment: longest });
+  });
+  it("drops an increment that is not a folder name", () => {
+    for (const increment of [
+      "",
+      "   ",
+      "0040",
+      "search",
+      "040-search",
+      "0040-",
+      "0040--search",
+      "0040-search-",
+      "0040-search/spec.md",
+      "../0040-search",
+      "0040-search\\..",
+      "0040-..",
+      "..",
+      "0040-search two",
+      "0040-sea\nrch",
+      "0040-sea\u0000rch",
+      `0040-${"a".repeat(156)}`,
+      42,
+      null,
+      ["0040-search"],
+      { id: "0040-search" },
+    ])
+      expect(parseProjectWorkspaceSearch({ increment })).toEqual({});
+  });
+  it("leaves the other parameters alone whatever the increment", () => {
+    expect(
+      parseProjectWorkspaceSearch({ thread: "t1", pane: "board", increment: "0040-search" }),
+    ).toEqual({ thread: "t1", pane: "board", increment: "0040-search" });
+    expect(
+      parseProjectWorkspaceSearch({ thread: "t1", pane: "board", increment: "../etc" }),
+    ).toEqual({ thread: "t1", pane: "board" });
   });
 });
 
@@ -591,5 +640,35 @@ describe("standalone chat descendants", () => {
   it("retains exact coordinator ancestry even when the coordinator shell has not loaded", () => {
     const child = shell("native-child", { createdBy: "user", lineage: subagentOf("coord") });
     expect(chatNavigationTarget(child, group).to).toBe("/projects/$projectKey");
+  });
+});
+
+describe("projectKeyMoveSearch", () => {
+  it("keeps the thread, checkout and open increment when the project key is replaced", () => {
+    const thread = "thread:mcp:a:b:0" as EnvironmentThreadShell["id"];
+    expect(
+      projectKeyMoveSearch({
+        thread,
+        threadEnvironment: "host",
+        checkout: "atlas",
+        restoreThread: true,
+        increment: "0040-search",
+      }),
+    ).toEqual({
+      thread,
+      threadEnvironment: "host",
+      checkout: "atlas",
+      restoreThread: true,
+      increment: "0040-search",
+    });
+    expect(projectKeyMoveSearch({ increment: "0040-search" })).toEqual({
+      increment: "0040-search",
+    });
+    expect(projectKeyMoveSearch({})).toEqual({});
+  });
+  it("drops the one-shot pane parameter", () => {
+    expect(projectKeyMoveSearch({ pane: "designs", increment: "0040-search" })).toEqual({
+      increment: "0040-search",
+    });
   });
 });

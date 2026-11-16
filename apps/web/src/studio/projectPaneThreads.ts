@@ -188,7 +188,16 @@ export interface ProjectWorkspaceSearch {
    * owner chip asks for `designs`. The page takes it once and drops it.
    */
   readonly pane?: ProjectPaneTab;
+  /**
+   * The increment whose view is open on the Board tab, by folder name. It
+   * stays in the URL, so back closes the view and a link can open it.
+   */
+  readonly increment?: string;
 }
+
+/** An increment folder name: its number, then words joined by hyphens. Nothing else reaches the server. */
+const INCREMENT_FOLDER = /^\d{4,}[A-Za-z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
+const MAX_INCREMENT_ID_LENGTH = 160;
 
 const MAX_THREAD_ID_LENGTH = 512;
 
@@ -206,6 +215,8 @@ export function parseProjectWorkspaceSearch(raw: Record<string, unknown>): Proje
   const checkout = valid(raw.checkout, 1024);
   const threadEnvironment = valid(raw.threadEnvironment, 512);
   const pane = PROJECT_PANE_TABS.find((tab) => tab === raw.pane);
+  const named = valid(raw.increment, MAX_INCREMENT_ID_LENGTH);
+  const increment = named && INCREMENT_FOLDER.test(named) ? named : null;
   return {
     ...(thread && raw.restoreThread === true ? { restoreThread: true } : {}),
     ...(thread
@@ -213,6 +224,7 @@ export function parseProjectWorkspaceSearch(raw: Record<string, unknown>): Proje
       : {}),
     ...(checkout && checkout.includes(":") ? { checkout } : {}),
     ...(pane ? { pane } : {}),
+    ...(increment ? { increment } : {}),
   };
 }
 
@@ -225,6 +237,21 @@ export function projectWorkspaceSearch(
   return {
     ...(thread === null ? {} : { thread, ...(threadEnvironment ? { threadEnvironment } : {}) }),
     ...(checkout ? { checkout } : {}),
+  };
+}
+
+/**
+ * The search a project page keeps when its key is replaced by the project's
+ * current one: the same thread, checkout and open increment, so a link made
+ * under the old key still lands where it pointed.
+ */
+export function projectKeyMoveSearch(search: {
+  readonly [Key in keyof ProjectWorkspaceSearch]?: ProjectWorkspaceSearch[Key] | undefined;
+}): ProjectWorkspaceSearch {
+  return {
+    ...projectWorkspaceSearch(search.thread ?? null, search.checkout, search.threadEnvironment),
+    ...(search.restoreThread ? { restoreThread: true } : {}),
+    ...(search.increment ? { increment: search.increment } : {}),
   };
 }
 

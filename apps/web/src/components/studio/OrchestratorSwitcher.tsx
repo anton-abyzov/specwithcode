@@ -188,6 +188,21 @@ export function OrchestratorSwitcher({
   }
   // Linking is what makes two projects for one repository one project; nothing is copied.
   const linkActions = onLink ? links : [];
+  // Every copy registered on its own: "not linked" is about the projects, and reads like a broken
+  // connection unless the menu says what it leaves alone. With a linked copy in the group (listed,
+  // or known only as a machine this app never loaded) an unlinked one can be held back, so the
+  // sentence is for the all-unlinked case only. It promises viewing and messaging, nothing about
+  // agents: a machine may let another one's agents work only in linked projects.
+  const allUnlinked =
+    listed.length > 1 &&
+    unknown.length === 0 &&
+    copies.every((copy) => copy.role === "independent");
+  // "Link them below" only when every other row has its link item: a second checkout on the
+  // viewed machine, or one at another place in the repository, is listed but gets no offer.
+  const linkCoversRows =
+    allUnlinked &&
+    others.length > 0 &&
+    others.every((copy) => linkActions.some((link) => link.key === copy.key));
   // Copy, link and the coordinator actions act on this project; threads and Leave on the machine.
   const projectActions = onCopy !== null || coordinatorActions.length > 0 || linkActions.length > 0;
   return (
@@ -225,6 +240,17 @@ export function OrchestratorSwitcher({
                 "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.",
               )}
             </p>
+            {allUnlinked ? (
+              <p
+                className="px-2 pb-1 text-muted-foreground text-xs"
+                data-orchestrator-unlinked-note=""
+              >
+                {tx(
+                  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.",
+                )}
+                {linkCoversRows ? ` ${tx("Link them below to make one project.")}` : null}
+              </p>
+            ) : null}
             <MenuRadioGroup
               value={current}
               onValueChange={(value) => {

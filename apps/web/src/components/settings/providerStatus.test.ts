@@ -74,6 +74,29 @@ describe("getProviderSummary", () => {
     });
   });
 
+  it("names the plan of a signed-in agent", () => {
+    expect(
+      getProviderSummary({
+        ...provider,
+        driver: ProviderDriverKind.make("muse"),
+        auth: { status: "authenticated", type: "subscription", label: "Muse Code Max Usage" },
+      }),
+    ).toEqual({ headline: "Authenticated · Muse Code Max Usage", detail: null });
+  });
+
+  it("gives a signed-out agent's own words once, under its plan kind", () => {
+    const message = "Muse Code is not signed in. Run `muse login` in a terminal on this machine.";
+    expect(
+      getProviderSummary({
+        ...provider,
+        driver: ProviderDriverKind.make("muse"),
+        status: "error",
+        auth: { status: "unauthenticated", type: "subscription" },
+        message,
+      }),
+    ).toEqual({ headline: "Not authenticated · subscription", detail: message });
+  });
+
   it("treats a disabled provider status as disabled even before its enabled flag updates", () => {
     expect(getProviderSummary({ ...provider, status: "disabled" }).headline).toBe("Disabled");
   });
@@ -258,6 +281,59 @@ describe("the selected agent's status", () => {
         message: "CLI not detected on PATH.",
       }).detail,
     ).toBe("CLI not detected on PATH.");
+  });
+
+  it("keeps the machine's words when it found no command, for a row without an install step", () => {
+    expect(
+      view({
+        installed: false,
+        status: "error",
+        auth: { status: "unknown" },
+        message: "Grok CLI not found.",
+        cli: { state: "missing", command: "grok" },
+      }),
+    ).toMatchObject({
+      state: "notInstalled",
+      headline: "Not installed",
+      detail: "Grok CLI not found.",
+      action: "install",
+      cli: "missing",
+    });
+  });
+
+  it("says an installed command that does not start, with the machine's one reason", () => {
+    expect(
+      view({
+        installed: false,
+        status: "error",
+        auth: { status: "unknown" },
+        message: "Muse Code could not start: its installed binary is missing.",
+        cli: { state: "broken", command: "muse", path: "/home/dev/.local/bin/muse" },
+      }),
+    ).toMatchObject({
+      state: "notInstalled",
+      headline: "Installed, but it does not start",
+      detail: "Muse Code could not start: its installed binary is missing.",
+      action: "install",
+      cli: "broken",
+    });
+  });
+
+  it("reads an older machine that does not report its command as before", () => {
+    expect(
+      view({
+        installed: false,
+        status: "error",
+        auth: { status: "unknown" },
+        message: "CLI not detected on PATH.",
+      }),
+    ).toMatchObject({
+      state: "notInstalled",
+      headline: "Not installed",
+      detail: "CLI not detected on PATH.",
+      action: "install",
+      cli: null,
+    });
   });
 
   it("offers Check again to a ready agent that has listed no models", () => {

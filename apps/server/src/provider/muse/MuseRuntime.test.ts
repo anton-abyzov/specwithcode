@@ -9,7 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import { EXPECTED_SCHEMA_FINGERPRINT } from "@muse-code/sdk";
 import { makeMuseRuntime } from "./MuseRuntime.ts";
-import { connectMuse, museCheckFailure } from "./MuseConnection.ts";
+import { connectMuse, museCheckFailure, museFailure } from "./MuseConnection.ts";
 import type { AcpSessionRuntimeEvent } from "../acp/AcpSessionRuntime.ts";
 import type * as Acp from "@specweave-studio/effect-acp/compat";
 import { museRequireHumanReviewer } from "./MuseRequests.ts";
@@ -299,8 +299,9 @@ describe("Muse native MSP runtime", () => {
       (error: unknown) => error,
     );
     expect(museCheckFailure(failure)).toBe(
-      "Muse Code 1.0.0 speaks a protocol this SpecWithCode build does not support. Update SpecWithCode, then refresh Providers.",
+      "Muse Code 1.0.0 speaks a protocol this SpecWithCode build does not support. Update SpecWithCode.",
     );
+    expect(museFailure(failure).kind).toBe("protocol");
   });
   it("says the CLI is missing when the binary is not on this machine", async () => {
     const input = await fixture();
@@ -314,18 +315,20 @@ describe("Muse native MSP runtime", () => {
       (error: unknown) => error,
     );
     expect(museCheckFailure(missing, binaryPath)).toBe(
-      `${binaryPath} does not exist on this machine. Install the official muse CLI here, sign in, then refresh Providers.`,
+      `${binaryPath} does not exist on this machine. Install Muse Code, or correct the binary path in its settings.`,
     );
+    expect(museFailure(missing, binaryPath).kind).toBe("missing");
     const bare = Object.assign(new Error("spawn muse ENOENT"), { code: "ENOENT" });
     expect(museCheckFailure(bare)).toBe(
-      "The muse CLI is not installed on this machine, or not on SpecWithCode's PATH. Install the official muse CLI here, sign in, then refresh Providers.",
+      "Muse Code is not installed on this machine. Install it with its installer.",
     );
   });
   it("says the binary is not executable", () => {
     const denied = Object.assign(new Error("spawn /opt/muse EACCES"), { code: "EACCES" });
     expect(museCheckFailure(denied, "/opt/muse")).toBe(
-      "/opt/muse is not executable on this machine. Install the official muse CLI here, sign in, then refresh Providers.",
+      "/opt/muse is there, but this machine may not run it. Run the Muse Code installer again.",
     );
+    expect(museFailure(denied, "/opt/muse").kind).toBe("broken");
   });
   it("shows the host's last stderr line when muse exits during the handshake", async () => {
     const input = await fixture({
@@ -336,12 +339,45 @@ describe("Muse native MSP runtime", () => {
       () => undefined,
       (error: unknown) => error,
     );
-    expect(museCheckFailure(failure)).toBe(
-      "Muse Code did not start on this machine. muse: the download was rejected (HTTP 401); rerun the installer to sign in again. Sign in with muse here, then refresh Providers.",
-    );
-    expect(museCheckFailure(undefined)).toBe(
-      "Muse Code did not start on this machine. Sign in with muse here, then refresh Providers.",
-    );
+    // One cause and one step: the launcher's own "rerun the installer" is not said twice.
+    expect(museFailure(failure)).toEqual({
+      kind: "broken",
+      message:
+        "Muse Code could not start: the download was rejected (HTTP 401). Run the Muse Code installer again.",
+    });
+    expect(museFailure(undefined)).toEqual({
+      kind: "unknown",
+      message:
+        "Muse Code could not start and gave no reason. Run `muse` in a terminal on this machine to see why.",
+    });
+  });
+  it("gives each failure one cause and at most one next step", () => {
+    const said = (line: string) => museFailure(new Error(line));
+    // The launcher is there and its program is not: what the row showed as four instructions.
+    expect(said("muse: installed binary is missing; rerun the installer")).toEqual({
+      kind: "broken",
+      message:
+        "Muse Code could not start: its installed binary is missing. Run the Muse Code installer again.",
+    });
+    expect(said("muse usage: not logged in: run `muse login` first")).toEqual({
+      kind: "signedOut",
+      message: "Muse Code is not signed in. Run `muse login` in a terminal on this machine.",
+    });
+    expect(said("muse: unsupported macOS version")).toEqual({
+      kind: "unknown",
+      message: "Muse Code could not start: unsupported macOS version.",
+    });
+    for (const line of [
+      "muse: installed binary is missing; rerun the installer",
+      "muse usage: not logged in: run `muse login` first",
+      "muse: unsupported macOS version",
+      "spawn muse ENOENT",
+    ]) {
+      const { message } = said(line);
+      expect(message).not.toMatch(/refresh/i);
+      // At most two sentences: the cause, then the step.
+      expect(message.split(/(?<=[.!?])\s+/).length).toBeLessThanOrEqual(2);
+    }
   });
 });
 

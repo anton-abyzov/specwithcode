@@ -375,7 +375,77 @@ it("says not linked, with what that means, for checkouts registered on their own
   expect(rows[1]?.title).toBe(
     "Not linked: M1 runs its own coordinator, threads and memory for this repository.",
   );
-  expect(document.querySelector('[role="menu"]')?.textContent).not.toContain("separate project");
+  // The old row note is gone; the sentence above the rows may still call the projects separate.
+  expect(rows.map((row) => row.textContent).join(" ")).not.toContain("separate project");
+});
+
+const unlinkedNote = () =>
+  document.querySelector("[data-orchestrator-unlinked-note]")?.textContent ?? null;
+
+it("says once that not linked projects can still be viewed and messaged", async () => {
+  await renderSwitcher({
+    ...handlers(),
+    copies: [copy("m4:p", "M4", "independent"), copy("m1:p", "M1", "independent")],
+  });
+  expect(unlinkedNote()).toBe(
+    "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.",
+  );
+});
+
+it("points at the link items when linking is offered", async () => {
+  await renderSwitcher({
+    ...handlers(),
+    copies: [copy("m4:p", "M4", "independent"), copy("m1:p", "M1", "independent")],
+    onLink: vi.fn<(key: string) => void>(),
+    links: [{ key: "m1:p", machine: "M1" }],
+  });
+  expect(unlinkedNote()).toMatch(
+    /That does not stop you viewing or messaging any of them\. Link them below to make one project\.$/,
+  );
+});
+
+it("does not point at link items a listed copy does not have", async () => {
+  // M3 is listed, but only M1 can be linked (M3 sits at another place in the repository).
+  await renderSwitcher({
+    ...handlers(),
+    copies: [
+      copy("m4:p", "M4", "independent"),
+      copy("m1:p", "M1", "independent"),
+      copy("m3:p", "M3", "independent"),
+    ],
+    onLink: vi.fn<(key: string) => void>(),
+    links: [{ key: "m1:p", machine: "M1" }],
+  });
+  expect(unlinkedNote()).toMatch(/That does not stop you viewing or messaging any of them\.$/);
+  expect(document.querySelectorAll("[data-orchestrator-link]")).toHaveLength(1);
+});
+
+it("keeps that note off a group with a linked machine this app never loaded", async () => {
+  await renderSwitcher({
+    ...handlers(),
+    copies: [copy("m4:p", "M4", "independent"), copy("m1:p", "M1", "independent")],
+    unknown: [{ key: "m5:p", machine: "M5" }],
+  });
+  expect(unlinkedNote()).toBeNull();
+});
+
+it("keeps that note off linked projects and off a group with a linked copy", async () => {
+  await renderSwitcher(handlers());
+  expect(unlinkedNote()).toBeNull();
+  await act(async () => root.unmount());
+  document.body.innerHTML = "";
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  // A linked copy in the group can hold an unlinked one back, so nothing promises otherwise.
+  await renderSwitcher({
+    ...handlers(),
+    copies: [copy("m4:p", "M4"), copy("m1:p", "M1", "independent")],
+  });
+  expect(
+    [...document.querySelectorAll('[role="menuitemradio"]')].map((row) => row.textContent),
+  ).toEqual(["M4Main", "M1not linked"]);
+  expect(unlinkedNote()).toBeNull();
 });
 
 it("offers to link each same-repository project on another machine, from its own item", async () => {

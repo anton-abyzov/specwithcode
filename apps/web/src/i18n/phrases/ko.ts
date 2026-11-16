@@ -4532,6 +4532,9 @@ export const ko: PhraseCatalog = {
   "not linked": "따로 등록됨",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
     "따로 등록됨: {machine}은(는) 이 저장소에 대해 자체 코디네이터, 스레드, 메모리를 사용합니다.",
+  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.":
+    "따로 등록됨: 이 저장소에 대한 별개의 프로젝트들이며, 각각 자체 코디네이터, 스레드, 메모리를 사용합니다. 그래도 각 프로젝트를 보고 메시지를 보낼 수 있습니다.",
+  "Link them below to make one project.": "아래에서 연결하면 하나의 프로젝트가 됩니다.",
   "{value}Messages go to Percy. {value2}": "{value}메시지는 Percy에게 전달됩니다. {value2}",
   "Show only topics that need you in {project}": "{project}에서 응답이 필요한 주제만 보기",
   "New topic in {title}": "{title}에서 새 주제",
@@ -5157,4 +5160,15 @@ export const ko: PhraseCatalog = {
   "Follow project (on)": "프로젝트 설정 따름 (켬)",
   "Follow project (off)": "프로젝트 설정 따름 (끔)",
   "Lets this thread ask a stronger model to check its work.": "이 스레드가 더 강한 모델에게 작업 검토를 요청할 수 있게 합니다.",
+  "Installed, but it does not start": "설치되었지만 시작되지 않음",
+  "Install {agent} on {machine} with this command:":
+    "이 명령으로 {machine}에 {agent}을(를) 설치하세요:",
+  "Run its installer again:": "설치 프로그램을 다시 실행하세요:",
+  "Install {agent} on {machine} from its own site.":
+    "{agent}의 공식 사이트에서 {machine}에 설치하세요.",
+  "Open its install guide": "설치 가이드 열기",
+  "Run in terminal": "터미널에서 실행",
+  "Waiting for the install. This page updates by itself.":
+    "설치를 기다리는 중입니다. 이 페이지는 자동으로 업데이트됩니다.",
+  "After it installs, choose Check again.": "설치가 끝나면 다시 확인을 선택하세요.",
 };
