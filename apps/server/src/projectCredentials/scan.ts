@@ -12,9 +12,12 @@ import * as NodePath from "node:path";
 
 import {
   isPlainText,
+  MAX_CREDENTIAL_PACKAGES,
   MAX_SSH_TARGETS,
+  PROJECT_CREDENTIAL_SSH_HOSTS,
   type ProjectCredentialId,
   type ProjectCredentialRow,
+  type ProjectCredentialSshHost,
   type ProjectCredentialsManifest,
   type ProjectSshTarget,
 } from "@specweave-studio/contracts";
@@ -25,6 +28,7 @@ import {
 } from "../workspace/WorkspaceSensitivePaths.ts";
 import { CREDENTIAL_CATALOG, CREDENTIAL_HOME_FILES } from "./catalog.ts";
 import { type SshTarget, sshRemoteTarget, sshTargetsInScript } from "./sshTargets.ts";
+import { declaresPackage } from "./tool.ts";
 
 const MAX_ENTRIES = 60_000;
 const MAX_DEPTH = 12;
@@ -117,6 +121,15 @@ export function remoteHost(url: string): string | null {
   return null;
 }
 
+/** Whether a Git remote is reached over SSH: `ssh://…` or `git@host:path`, not `https://`. */
+export function remoteUsesSsh(url: string): boolean {
+  const value = url.trim();
+  if (/^(?:git\+)?ssh:\/\//iu.test(value)) return true;
+  return !/^[a-z][a-z0-9+.-]*:\/\//iu.test(value) && remoteHost(value) !== null;
+}
+
+const SSH_HOSTS: ReadonlySet<string> = new Set(PROJECT_CREDENTIAL_SSH_HOSTS);
+
 const TERRAFORM_SOURCE =
   /\bsource\s*=\s*"((?:registry\.terraform\.io\/)?[a-z0-9-]+\/[a-z0-9-]+)"/giu;
 const TERRAFORM_PROVIDER = /^\s*provider\s+"([a-z0-9_-]+)"/gimu;
@@ -125,6 +138,12 @@ const GIT_URL = /^\s*url\s*=\s*(\S+)/gimu;
 export interface CredentialScan {
   /** Catalog id to the project-relative files that showed it. */
   readonly found: ReadonlyMap<ProjectCredentialId, ReadonlyArray<string>>;
+  /** Catalog id to the folders (`.` for the top) whose `package.json` lists its tool as a dependency. */
+  readonly packages: ReadonlyMap<ProjectCredentialId, ReadonlyArray<string>>;
+  /** Known Git hosts a repository here reaches over SSH. */
+  readonly sshHosts: ReadonlyArray<ProjectCredentialSshHost>;
+  /** A file named `.npmrc` is in the project. Seen by name; it is never opened. */
+  readonly registryFile: boolean;
   readonly truncated: boolean;
   /** Where the project connects over SSH: script destinations and SSH Git remotes. */
   readonly sshTargets: ReadonlyArray<ProjectSshTarget>;
@@ -151,6 +170,9 @@ export async function scanProjectCredentials(root: string): Promise<CredentialSc
     if (sshTargets.size < MAX_SSH_TARGETS) sshTargets.set(key, { ...target, source });
     else sshTargetsMore = true;
   };
+  const packages = new Map<ProjectCredentialId, Array<string>>();
+  const sshHosts = new Set<ProjectCredentialSshHost>();
+  let registryFile = false;
   const shortProviders = new Map<string, ProjectCredentialId>();
   const fullProviders = new Map<string, ProjectCredentialId>();
   for (const entry of CREDENTIAL_CATALOG)
@@ -191,6 +213,9 @@ export async function scanProjectCredentials(root: string): Promise<CredentialSc
               if (remote !== null) connects(remote, folder === "" ? "." : folder);
               const host = remoteHost(match[1]!);
               if (host === null) continue;
+              // A known Git host fetched over SSH is one the other machine can ask about its key.
+              if (SSH_HOSTS.has(host) && remoteUsesSsh(match[1]!))
+                sshHosts.add(host as ProjectCredentialSshHost);
               for (const entry of CREDENTIAL_CATALOG)
                 if (entry.remoteHosts.includes(host)) note(entry.id, folder === "" ? "." : folder);
             }
@@ -206,6 +231,7 @@ export async function scanProjectCredentials(root: string): Promise<CredentialSc
       }
       // Links are someone else's file, or a way out of the folder.
       if (!child.isFile()) continue;
+      if (child.name === ".npmrc") registryFile = true;
       for (const entry of CREDENTIAL_CATALOG)
         if (entry.fileNames.some((pattern) => pattern.test(child.name))) note(entry.id, relative);
       const kind = markerKind(relative, child.name);
@@ -237,9 +263,26 @@ export async function scanProjectCredentials(root: string): Promise<CredentialSc
       if (ssh.more) sshTargetsMore = true;
       // A place that could not be read still needs a key: the row stays, without it.
       if (ssh.used && isPlainText(relative)) note("ssh", relative);
+      if (child.name !== "package.json") continue;
+      // A project that lists a tool as a dependency brings it: nothing global is needed for it.
+      for (const entry of CREDENTIAL_CATALOG) {
+        const npmPackage = entry.tool?.npmPackage;
+        if (npmPackage == null || !declaresPackage(text, npmPackage)) continue;
+        const folders = packages.get(entry.id) ?? [];
+        if (!packages.has(entry.id)) packages.set(entry.id, folders);
+        if (folders.length < MAX_CREDENTIAL_PACKAGES) folders.push(folder === "" ? "." : folder);
+      }
     }
   }
-  return { found, truncated, sshTargets: [...sshTargets.values()], sshTargetsMore };
+  return {
+    found,
+    packages,
+    sshHosts: [...sshHosts].sort(),
+    registryFile,
+    truncated,
+    sshTargets: [...sshTargets.values()],
+    sshTargetsMore,
+  };
 }
 
 /**
@@ -256,6 +299,7 @@ export function credentialRows(
     const sources = scan.found.get(entry.id);
     const listed = saved.get(entry.id);
     if (sources === undefined && listed === undefined) continue;
+    const folders = scan.packages.get(entry.id) ?? [];
     rows.push({
       id: entry.id,
       kind: entry.kind,
@@ -267,6 +311,9 @@ export function credentialRows(
       ...(entry.id === "ssh"
         ? { sshTargets: [...scan.sshTargets], sshTargetsMore: scan.sshTargetsMore }
         : {}),
+      ...(folders.length > 0 ? { packages: [...folders] } : {}),
+      ...(entry.id === "ssh" && scan.sshHosts.length > 0 ? { sshHosts: [...scan.sshHosts] } : {}),
+      ...(entry.id === "npm" && scan.registryFile ? { registryFile: true } : {}),
     });
   }
   return rows;

@@ -167,7 +167,7 @@ describe("catalog", () => {
     expect(signInCommand(github, "darwin")).toBe("gh auth login && gh auth setup-git");
   });
 
-  it("has one entry per id, each with a command, and no probe that reads project config", () => {
+  it("has one entry per id, each with a command, and no probe of a registry or the keychain", () => {
     const ids = CREDENTIAL_CATALOG.map((entry) => entry.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const entry of CREDENTIAL_CATALOG) {
@@ -177,8 +177,10 @@ describe("catalog", () => {
     const probed = CREDENTIAL_CATALOG.filter((entry) => entry.probe !== null).map(
       (entry) => entry.probe!.binary,
     );
-    expect(probed).not.toContain("npm");
-    expect(probed).not.toContain("wrangler");
+    // npm and Wrangler are asked who is signed in from the home folder, so a project's own
+    // .npmrc or wrangler file never answers for the person.
+    expect(probed).toContain("npm");
+    expect(probed).toContain("wrangler");
     expect(probed).not.toContain("docker");
     expect(probed).not.toContain("security");
   });
