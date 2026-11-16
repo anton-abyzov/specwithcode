@@ -19,6 +19,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { CircleAlertIcon, Undo2Icon } from "lucide-react";
 import type { ModelLabel } from "../../studio/shellModel";
+import { InlineButton } from "../ui/button";
 import { Tip } from "./shell/Tip";
 
 /**
@@ -111,15 +112,15 @@ export function CoordinatorAccessPicker({
         </Tip>
       </span>
       {error ? (
-        <button
-          type="button"
-          className="text-destructive-foreground"
+        <InlineButton
+          tone="destructive"
+          className="[--inline-button-text-align:start] [--inline-button-white-space:normal]"
           role="alert"
           onClick={() => void change(attemptedMode.current)}
           disabled={pending || writeMode === null}
         >
           {error}
-        </button>
+        </InlineButton>
       ) : null}
     </span>
   );

@@ -3181,7 +3181,7 @@ function useChatViewState(props: ChatViewProps) {
         actions: (
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             onClick={() =>
               void (addJob
                 ? cancelAddToMachine(environmentId, projectId, true)
@@ -3207,7 +3207,7 @@ function useChatViewState(props: ChatViewProps) {
         <>
           <Button
             size="xs"
-            variant="ghost"
+            variant="destructive-outline"
             onClick={() =>
               void (addJob
                 ? cancelAddToMachine(environmentId, projectId, false)
@@ -3218,7 +3218,7 @@ function useChatViewState(props: ChatViewProps) {
           </Button>
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             onClick={() =>
               void runProjectCloneAction("Failed to retry clone", () =>
                 retryProjectClone({ environmentId, input: { projectId } }),
@@ -3802,7 +3802,7 @@ function useChatViewState(props: ChatViewProps) {
       canDisconnectActiveEnvironment && activeEnvironmentUnavailableState ? (
         <Button
           size="xs"
-          variant="ghost"
+          variant="destructive-outline"
           disabled={disconnectingEnvironment}
           title="Hide this server's threads. Switch it on again in Connections."
           onClick={() =>
@@ -3905,7 +3905,7 @@ function useChatViewState(props: ChatViewProps) {
             {unavailableStatus?.retryable ? (
               <Button
                 size="xs"
-                variant="ghost"
+                variant="outline"
                 onClick={() =>
                   void handleReconnectActiveEnvironment(
                     activeEnvironmentUnavailableState.environmentId,
@@ -3932,7 +3932,7 @@ function useChatViewState(props: ChatViewProps) {
         actions: (
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             onClick={() =>
               void openThreadRoute(
                 scopeThreadRef(
@@ -9197,7 +9197,7 @@ function useChatViewActions(
           {presentation.canResume ? (
             <Button
               size="xs"
-              variant="ghost"
+              variant="outline"
               onClick={() => void sendStandaloneCommand("/goal resume", "Failed to resume goal.")}
             >
               Resume
@@ -9205,7 +9205,7 @@ function useChatViewActions(
           ) : null}
           <Button
             size="xs"
-            variant="ghost"
+            variant="destructive-outline"
             onClick={() => void sendStandaloneCommand("/goal clear", "Failed to clear goal.")}
           >
             Clear
@@ -9328,7 +9328,7 @@ function useChatViewActions(
         actions: (
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             onClick={() =>
               void navigate({
                 to: "/$environmentId/$threadId",
@@ -9357,7 +9357,7 @@ function useChatViewActions(
       title: banner.title,
       description: banner.description,
       actions: (
-        <Button size="xs" variant="ghost" onClick={open}>
+        <Button size="xs" variant="outline" onClick={open}>
           {banner.actionLabel}
         </Button>
       ),
@@ -9396,7 +9396,7 @@ function useChatViewActions(
       actions: (
         <Button
           size="xs"
-          variant="ghost"
+          variant="outline"
           disabled={!canOperateThread || (isSnoozed ? isUnsnoozing : isUnsettling)}
           onClick={() =>
             void (isSnoozed ? handleUnsnoozeActiveThread() : handleUnsettleActiveThread())
@@ -9490,7 +9490,7 @@ function useChatViewActions(
     const compactAction = (
       <Button
         size="xs"
-        variant="ghost"
+        variant="outline"
         disabled={compactDisabled}
         onClick={() => {
           if (compactDisabled) return;
@@ -11309,7 +11309,7 @@ export default function ChatView(props: ChatViewProps) {
         actions: (
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             disabled={!canWriteSourceControl || isRestoringThreadBranch}
             onClick={handleRestoreThreadBranch}
           >

@@ -379,7 +379,7 @@ export function ImportStep({
           </span>
           <div className="flex items-center gap-1">
             <Button
-              variant="ghost"
+              variant="outline"
               size="xs"
               disabled={isImporting || found.length === candidates.length}
               onClick={() => setSelectedPaths(new Set(candidates.map((item) => item.key)))}
@@ -387,7 +387,7 @@ export function ImportStep({
               {t("wizard.import.selectAll")}
             </Button>
             <Button
-              variant="ghost"
+              variant="outline"
               size="xs"
               disabled={isImporting || found.length === 0}
               onClick={() => setSelectedPaths(new Set())}
@@ -428,7 +428,7 @@ export function ImportStep({
                     className="flex items-center justify-between gap-3 text-sm text-muted-foreground"
                   >
                     <span>{t("wizard.import.checkFailed", { error: scan.error })}</span>
-                    <Button variant="ghost" size="sm" onClick={scan.refresh}>
+                    <Button variant="outline" size="sm" onClick={scan.refresh}>
                       {t("wizard.retry")}
                     </Button>
                   </div>

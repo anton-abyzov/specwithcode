@@ -92,7 +92,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
     <SettingsSection
       {...searchableSetting("handoff-mode")}
       headerAction={
-        <Button size="xs" variant="ghost-muted" onClick={props.onHandOffMachine}>
+        <Button size="xs" variant="outline" onClick={props.onHandOffMachine}>
           {tx("Move running threads…")}
         </Button>
       }
@@ -123,7 +123,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
                 </span>
                 <Button
                   size="xs"
-                  variant="ghost-muted"
+                  variant="outline"
                   disabled={props.pending}
                   onClick={() => props.onProjectMode(override.id, null)}
                   aria-label={`Use the default for ${override.title ?? "the removed project"}`}
@@ -151,11 +151,13 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
           >
             <SelectTrigger size="sm" aria-label={tx("Away target")}>
               <SelectValue>
-                {sleepTarget
-                  ? <HandoffDestinationName destination={sleepTarget} />
-                  : config.sleepTarget
-                    ? tx("A removed machine")
-                    : tx("Off")}
+                {sleepTarget ? (
+                  <HandoffDestinationName destination={sleepTarget} />
+                ) : config.sleepTarget ? (
+                  tx("A removed machine")
+                ) : (
+                  tx("Off")
+                )}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>

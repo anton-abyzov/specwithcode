@@ -9,7 +9,7 @@ export function ChatGptUsageButton(props: Omit<ComponentProps<typeof Button>, "o
   const tx = useTx();
   return (
     <Button
-      variant="ghost-muted"
+      variant="outline"
       size="sm"
       {...props}
       onClick={() => void ensureLocalApi().shell.openExternal(CHATGPT_USAGE_URL)}

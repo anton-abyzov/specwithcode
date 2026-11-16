@@ -16,7 +16,7 @@ import { useRef, useState } from "react";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { cn } from "~/lib/utils";
 
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Textarea } from "../ui/textarea";
@@ -219,20 +219,19 @@ export function ReviewThreadCard({
           className={cn("size-3.5", thread.isResolved && "text-success-foreground")}
           icon={thread.isResolved ? CircleCheck : Circle}
         />
-        <button
-          type="button"
-          className="hover:text-foreground"
+        <InlineButton
+          tone="muted"
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
           {thread.isResolved ? "Resolved" : "Open"} · {commentCount}{" "}
           {commentCount === 1 ? "comment" : "comments"}
-        </button>
+        </InlineButton>
         {thread.isOutdated ? <span>outdated</span> : null}
         {onFix ? (
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             className="ml-auto"
             disabled={pending || fixPending}
             onClick={onFix}
@@ -244,7 +243,7 @@ export function ReviewThreadCard({
         {canResolve ? (
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             className={onFix ? undefined : "ml-auto"}
             disabled={pending}
             onClick={onToggleResolved}
@@ -306,7 +305,7 @@ export function ReviewThreadCard({
             <div className="mt-2">
               <Button
                 size="xs"
-                variant="ghost"
+                variant="outline"
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
               >
@@ -333,7 +332,7 @@ export function ReviewThreadCard({
                   })}
                 />
                 <div className="mt-2 flex justify-end gap-2">
-                  <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
+                  <Button size="xs" variant="outline" onClick={() => setReplying(false)}>
                     Cancel
                   </Button>
                   <Button
@@ -346,7 +345,12 @@ export function ReviewThreadCard({
                 </div>
               </div>
             ) : (
-              <Button size="xs" variant="ghost" className="mt-2" onClick={() => setReplying(true)}>
+              <Button
+                size="xs"
+                variant="outline"
+                className="mt-2"
+                onClick={() => setReplying(true)}
+              >
                 Reply
               </Button>
             )

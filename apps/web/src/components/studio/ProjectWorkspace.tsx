@@ -235,7 +235,9 @@ export function ProjectWorkspace({
           <WorkspacePageHeader electron={isElectron}>Project workspace</WorkspacePageHeader>
           <div className="project-empty">
             <p>Loading project...</p>
-            <Link to="/settings/projects">Manage projects</Link>
+            <Button variant="outline" render={<Link to="/settings/projects" />}>
+              Manage projects
+            </Button>
           </div>
         </div>
       </SidebarInset>
@@ -312,17 +314,23 @@ export function ProjectWorkspace({
             ) : null}
             {checkoutKey && onSelectCheckout && machinesLoaded
               ? members.map((checkout) => (
-                  <button
+                  <Button
                     key={coordinatorMachineKey(checkout)}
-                    type="button"
-                    className="project-control"
+                    variant="outline"
+                    size="sm-multiline"
+                    className="max-w-full"
                     onClick={() => chooseMachine(coordinatorMachineKey(checkout))}
                   >
-                    Use {checkoutName(checkout)} · {checkout.workspaceRoot}
-                  </button>
+                    {/* A full folder path wraps inside the button instead of widening the page. */}
+                    <span className="min-w-0 wrap-anywhere">
+                      Use {checkoutName(checkout)} · {checkout.workspaceRoot}
+                    </span>
+                  </Button>
                 ))
               : null}
-            <Link to="/settings/projects">Manage projects</Link>
+            <Button variant="outline" render={<Link to="/settings/projects" />}>
+              Manage projects
+            </Button>
           </div>
         </div>
       </SidebarInset>

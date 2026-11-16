@@ -133,16 +133,17 @@ function LinkedFile(props: {
     ),
     [baseDir, target.cwd, target.environmentId, target.threadRef],
   );
-  const actions = (
+  // Quiet in the viewer header's strip of icon actions, bordered where they stand alone.
+  const actions = (variant: "ghost" | "outline") => (
     <>
       {target.openInEditor ? (
-        <Button type="button" size="xs" variant="ghost" onClick={target.openInEditor}>
+        <Button type="button" size="xs" variant={variant} onClick={target.openInEditor}>
           <SquarePenIcon aria-hidden />
           {tx("Open in editor")}
         </Button>
       ) : null}
       {target.reveal ? (
-        <Button type="button" size="xs" variant="ghost" onClick={target.reveal}>
+        <Button type="button" size="xs" variant={variant} onClick={target.reveal}>
           <FolderOpenIcon aria-hidden />
           {target.revealLabel ?? tx("Reveal")}
         </Button>
@@ -157,7 +158,7 @@ function LinkedFile(props: {
   const headerActions =
     unresolved || missing ? null : (
       <>
-        {actions}
+        {actions("ghost")}
         {threadRef ? (
           <Button
             type="button"
@@ -183,7 +184,7 @@ function LinkedFile(props: {
             environmentId={target.environmentId}
             path={missingPath}
             error={file.error}
-            actions={actions}
+            actions={actions("outline")}
             onOpen={(path) =>
               openFileInFront({
                 environmentId: target.environmentId,
@@ -219,7 +220,7 @@ function LinkedFile(props: {
               {tx("Ask the worker for its full path, or look in its worktree.")}
             </p>
             {target.openInEditor || target.reveal ? (
-              <div className="flex gap-1">{actions}</div>
+              <div className="flex gap-1">{actions("outline")}</div>
             ) : null}
           </div>
         ) : file.isNotFile ? (
@@ -231,7 +232,7 @@ function LinkedFile(props: {
         ) : file.error !== null && contents === null ? (
           <div className="flex flex-col items-start gap-2 p-4 text-sm" role="alert">
             <p className="text-destructive-foreground">{file.error}</p>
-            <div className="flex gap-1">{actions}</div>
+            <div className="flex gap-1">{actions("outline")}</div>
           </div>
         ) : contents === null ? (
           <p className="p-4 text-muted-foreground text-sm">{tx("Loading…")}</p>

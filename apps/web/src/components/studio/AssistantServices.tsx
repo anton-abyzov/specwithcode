@@ -18,6 +18,7 @@ import { projectWorkspace } from "../../studio/projectWorkspace";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { InlineButton } from "../ui/button";
 import { Switch } from "../ui/switch";
 
 const GOOGLE_ROWS: ReadonlyArray<{ service: GoogleService; name: string; summary: string }> = [
@@ -273,9 +274,9 @@ function PresetRow({
           />
           <small className="project-muted">
             {preset.tokenHelp}{" "}
-            <a href={preset.tokenUrl} target="_blank" rel="noreferrer">
+            <InlineButton render={<a href={preset.tokenUrl} target="_blank" rel="noreferrer" />}>
               Open {preset.name}
-            </a>
+            </InlineButton>
             . It stays on this machine and is never shown again.
           </small>
           <button

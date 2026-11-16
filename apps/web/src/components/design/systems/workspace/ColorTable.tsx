@@ -420,7 +420,7 @@ export function ColorField({
           <div className="flex items-center justify-between gap-2">
             {!isBase ? (
               <Button
-                variant="ghost"
+                variant="outline"
                 size="xs"
                 disabled={raw.trim() === ""}
                 onClick={() => {

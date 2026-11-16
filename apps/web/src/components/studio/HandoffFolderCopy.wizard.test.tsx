@@ -293,7 +293,7 @@ it("waits visibly for a machine, then picks the first that becomes ready", async
   expect(folderInput().value).not.toBe("");
 });
 
-it("puts Stop copy first in the dialog footer as a ghost while choosing", async () => {
+it("puts Stop copy first in the dialog footer as a bordered button while choosing", async () => {
   await mount({ dialog: true });
   await chooseFirst();
   await click("Copy to M3");

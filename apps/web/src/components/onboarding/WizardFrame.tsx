@@ -171,7 +171,7 @@ export function WizardStepFooter({
         leading={
           <div className="flex flex-wrap items-center gap-2" data-slot="wizard-footer-leading">
             {back ? (
-              <Button variant="ghost" disabled={back.disabled} onClick={back.onClick}>
+              <Button variant="outline" disabled={back.disabled} onClick={back.onClick}>
                 {t("wizard.back")}
               </Button>
             ) : null}

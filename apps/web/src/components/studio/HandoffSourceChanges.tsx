@@ -225,7 +225,7 @@ export function HandoffSourceChangesActions({
           {moveWithoutLabel(changes.total)}
         </Button>
       )}
-      <Button variant="ghost" data-leading disabled={busy} onClick={onKeepHere}>
+      <Button variant="outline" data-leading disabled={busy} onClick={onKeepHere}>
         Keep the coordinator on {sourceLabel}
       </Button>
     </>

@@ -16,6 +16,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../../pendingUserInput";
 import { ArrowRightIcon, CheckIcon, ChevronLeftIcon, CornerDownLeftIcon } from "lucide-react";
+import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
@@ -584,16 +585,16 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               ) : null}
             </p>
             {progress.questionIndex > 0 && onPrevious ? (
-              <button
-                type="button"
+              <Button
+                variant="outline"
+                size="xs"
                 data-question-step-back
                 disabled={responseDisabled}
                 onClick={onPrevious}
-                className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-full px-2.5 text-xs font-medium text-muted-foreground outline-none transition-colors hover:bg-muted/55 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
               >
                 <ChevronLeftIcon aria-hidden className="size-3.5" />
                 {tx("Back")}
-              </button>
+              </Button>
             ) : null}
             <button
               type="button"

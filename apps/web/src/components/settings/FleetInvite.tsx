@@ -294,7 +294,7 @@ function MainMachinePicker({
         ))}
         <Button
           size="xs"
-          variant={other ? "secondary" : "ghost-muted"}
+          variant={other ? "secondary" : "outline"}
           aria-pressed={other}
           disabled={disabled}
           onClick={() => {
@@ -792,7 +792,7 @@ export function TailscaleReadinessNotice({
             {readiness.loginUrl ? (
               <Button
                 size="xs"
-                variant="link"
+                variant="outline"
                 onClick={() => readiness.openUrl(readiness.loginUrl!)}
               >
                 {tx("Open the sign-in page again")}

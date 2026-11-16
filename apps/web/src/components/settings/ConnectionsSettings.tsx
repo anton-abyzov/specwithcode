@@ -951,14 +951,14 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               </Tooltip>
               <Button
                 size="xs"
-                variant="ghost"
+                variant="secondary"
                 className="shrink-0"
                 onClick={() => copyPairingValue(qrPairingUrl, copyKindForUrl(qrPairingUrl))}
               >
                 {tx("Copy link")}
               </Button>
             </div>
-            <Button size="xs" variant="ghost" onClick={handleCopyCode}>
+            <Button size="xs" variant="outline" onClick={handleCopyCode}>
               {tx("Copy code only")}
             </Button>
           </div>
@@ -4141,11 +4141,7 @@ export function ConnectionsSettings({
                         render={
                           <DialogTrigger
                             render={
-                              <Button
-                                size="xs"
-                                variant="ghost-muted"
-                                aria-label={tx("Add connection")}
-                              >
+                              <Button size="xs" variant="outline" aria-label={tx("Add connection")}>
                                 <PlusIcon className="size-3" />
                                 <span>{tx("Add connection")}</span>
                               </Button>

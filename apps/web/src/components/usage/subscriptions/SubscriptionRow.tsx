@@ -97,7 +97,7 @@ function RenewalDay({
         <Button type="submit" size="xs" variant="outline" disabled={!valid}>
           Save
         </Button>
-        <Button type="button" size="xs" variant="ghost" onClick={() => setEditing(false)}>
+        <Button type="button" size="xs" variant="outline" onClick={() => setEditing(false)}>
           Cancel
         </Button>
       </form>
@@ -137,8 +137,7 @@ export function SubscriptionRow({
   readonly now: number;
   readonly onSetDay: (accountKey: string, day: number) => void;
 }) {
-  const label =
-    row.displayName ?? getDriverOption(row.driver)?.label ?? String(row.driver);
+  const label = row.displayName ?? getDriverOption(row.driver)?.label ?? String(row.driver);
   const loss = row.lastLoss;
   return (
     <div

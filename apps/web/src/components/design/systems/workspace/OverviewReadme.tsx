@@ -141,7 +141,7 @@ function GuidanceCard({
           </div>
           {long ? (
             <Button
-              variant="ghost"
+              variant="outline"
               size="xs"
               className="self-start"
               onClick={() => setOpen((value) => !value)}
@@ -323,7 +323,7 @@ export function OverviewReadmeView({
       <div className="relative" data-testid="readme">
         {canEdit ? (
           <Button
-            variant="ghost"
+            variant="outline"
             size="xs"
             className="absolute top-0 right-0 z-10"
             onClick={() => setEditing(text)}

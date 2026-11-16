@@ -32,6 +32,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../../state/sessio
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { useMachineNickname } from "../../../studio/machineNickname";
 import { modelLabel } from "../../../studio/shellModel";
+import { Button } from "../../ui/button";
 import { fallbackModelState, modelStateText, type ModelState } from "../../chat/ModelStateTag";
 import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
 import { MachineLimitsButton, MachineLimitsPanel } from "./ProjectUsageIndicator";
@@ -84,15 +85,15 @@ function CoordinatorProviderRecovery(props: {
   if (!canRefresh) return null;
   return (
     <span className="inline-flex min-w-0 items-center gap-1">
-      <button
-        type="button"
-        className="sws-model-trigger"
+      <Button
+        variant="outline"
+        size="xs"
         disabled={props.saving || pending}
         aria-busy={pending}
         onClick={() => void checkAgain()}
       >
         {pending ? "Checking…" : "Check again"}
-      </button>
+      </Button>
       {failed ? (
         <span
           role="alert"
@@ -388,14 +389,14 @@ export function CoordinatorModelPicker(props: {
             />
           </span>
           {!props.disabled ? (
-            <button
-              type="button"
-              className="sws-model-trigger"
+            <Button
+              variant="outline"
+              size="xs"
               disabled={props.saving}
               onClick={() => openProviderSetup(active?.instanceId)}
             >
               Add or manage providers
-            </button>
+            </Button>
           ) : null}
           {!props.disabled ? (
             <MachineLimitsButton

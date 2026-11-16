@@ -390,7 +390,7 @@ function ConnectedAgentsStep({
         <Button
           className="shrink-0"
           size="xs"
-          variant="ghost-muted"
+          variant="outline"
           disabled={rechecking}
           onClick={() => {
             setRechecking(true);

@@ -666,7 +666,7 @@ export function PullRequestSummaryTab({
           {onFixFinding && finding ? (
             <Button
               size="xs"
-              variant="ghost"
+              variant="outline"
               className="-mt-1 shrink-0"
               disabled={pendingFinding !== null && pendingFinding !== undefined}
               onClick={() => onFixFinding(finding)}
@@ -924,7 +924,7 @@ export function PullRequestSummaryTab({
                     {shownComments > COMMENT_PAGE ? (
                       <Button
                         size="sm"
-                        variant="ghost"
+                        variant="outline"
                         className="w-full"
                         onClick={() => setShown({ url: detail.url, count: COMMENT_PAGE })}
                       >
@@ -967,7 +967,7 @@ export function PullRequestSummaryTab({
                           {shownBotComments > COMMENT_PAGE ? (
                             <Button
                               size="sm"
-                              variant="ghost"
+                              variant="outline"
                               className="w-full"
                               onClick={() => setShownBots({ url: detail.url, count: COMMENT_PAGE })}
                             >

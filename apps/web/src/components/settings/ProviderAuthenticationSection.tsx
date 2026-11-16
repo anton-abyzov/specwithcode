@@ -288,7 +288,7 @@ export function ProviderAuthenticationSection({
             ) : active && auth?.flowId ? (
               <Button
                 size="sm"
-                variant="ghost-muted"
+                variant="outline"
                 aria-label={tx("Cancel sign-in")}
                 disabled={disabled}
                 onClick={() => {
@@ -330,7 +330,7 @@ export function ProviderAuthenticationSection({
             {!active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
               <Button
                 size="sm"
-                variant="ghost"
+                variant="destructive-outline"
                 disabled={disabled || !auth}
                 onClick={() => {
                   void ensureLocalApi()

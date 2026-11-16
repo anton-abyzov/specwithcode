@@ -376,7 +376,7 @@ export function VoiceSettings({
           )}
           {hasApiKey && !clearKey ? (
             <Button
-              variant="ghost"
+              variant="destructive-outline"
               onClick={() => {
                 setClearKey(true);
                 setApiKey("");

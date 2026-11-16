@@ -460,7 +460,7 @@ function TrackCard(props: {
       <div className="flex flex-wrap items-center gap-2 border-t border-border/70 px-3 py-2">
         {props.picker(add, props.mixed || current.length >= MAX_LANE_MODELS)}
         {saved.length > 0 ? (
-          <Button type="button" size="xs" variant="ghost-muted" onClick={() => props.onSave([])}>
+          <Button type="button" size="xs" variant="outline" onClick={() => props.onSave([])}>
             {tx("Use the built-in order")}
           </Button>
         ) : (
@@ -549,7 +549,7 @@ function SourcesCard(props: {
       </SortableList>
       {props.saved ? (
         <div className="border-t border-border/70 px-3 py-2">
-          <Button type="button" size="xs" variant="ghost-muted" onClick={() => props.onSave([])}>
+          <Button type="button" size="xs" variant="outline" onClick={() => props.onSave([])}>
             {tx("Use the built-in order")}
           </Button>
         </div>

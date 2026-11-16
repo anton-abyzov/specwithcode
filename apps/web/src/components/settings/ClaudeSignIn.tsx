@@ -294,7 +294,7 @@ export function ClaudeSignIn({
           done || commandOnly ? null : flowId !== null && auth?.phase !== "verifying" ? (
             <Button
               size="sm"
-              variant="ghost-muted"
+              variant="outline"
               aria-label={tx("Cancel sign-in")}
               disabled={pending}
               onClick={() =>

@@ -305,7 +305,7 @@ function PreviewPane({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="files-preview">
       <div className="border-b border-border/60 px-2 py-1.5 @2xl/files:hidden">
-        <Button variant="ghost" size="sm" onClick={onBack}>
+        <Button variant="outline" size="sm" onClick={onBack}>
           <ArrowLeftIcon aria-hidden />
           All files
         </Button>
@@ -360,11 +360,11 @@ function PreviewPane({
             ) : null}
             {canEdit && file.origin === "stored" ? (
               <>
-                <Button variant="ghost" size="xs" onClick={onRename}>
+                <Button variant="outline" size="xs" onClick={onRename}>
                   <PencilIcon aria-hidden />
                   Rename
                 </Button>
-                <Button variant="ghost-destructive" size="xs" onClick={onDelete}>
+                <Button variant="destructive-outline" size="xs" onClick={onDelete}>
                   <Trash2Icon aria-hidden />
                   Delete
                 </Button>

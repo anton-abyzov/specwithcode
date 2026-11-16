@@ -2441,13 +2441,9 @@ export function ProjectWorkspaceSurface({
                       {archived.error ? (
                         <p className="project-notice" role="alert">
                           {say("Archived threads could not be loaded.")}{" "}
-                          <button
-                            type="button"
-                            className="project-control"
-                            onClick={archived.refresh}
-                          >
+                          <Button variant="outline" size="xs" onClick={archived.refresh}>
                             Retry resolved history
-                          </button>
+                          </Button>
                         </p>
                       ) : null}
                     </>

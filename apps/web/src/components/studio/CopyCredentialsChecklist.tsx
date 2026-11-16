@@ -157,7 +157,7 @@ function Row({
             </Button>
           )}
           <Button
-            variant="ghost"
+            variant="outline"
             size="xs"
             disabled={disabled}
             data-slot="copy-credential-skip"
@@ -271,7 +271,7 @@ export function CopyCredentialsList({
       <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-2">
         <h3 className="font-medium">{tx("Credentials this project uses")}</h3>
         <Button
-          variant="ghost"
+          variant="outline"
           size="xs"
           disabled={disabled || state === "checking"}
           data-slot="copy-credentials-check-all"
@@ -337,7 +337,7 @@ export function CopyCredentialsList({
               <li key={row.id} className="flex items-center gap-2">
                 <span>{PROJECT_CREDENTIAL_LABELS[row.id]}</span>
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   size="xs"
                   disabled={disabled}
                   data-slot="copy-credential-unskip"
