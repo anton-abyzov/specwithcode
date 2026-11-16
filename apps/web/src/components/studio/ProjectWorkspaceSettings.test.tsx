@@ -216,6 +216,13 @@ vi.mock("../settings/SettingsGroup", () => ({
 vi.mock("../settings/AdversarialReviewSettings", () => ({
   AdversarialReviewSettings: () => null,
 }));
+vi.mock("../settings/AdvisorSettings", () => ({
+  AdvisorSettings: (props: { id: string }) => (
+    <section data-advisor={props.id}>
+      <h3>Advisor</h3>
+    </section>
+  ),
+}));
 vi.mock("../settings/ThreadModelModeSetting", () => ({
   ThreadModelModeSetting: () => <p data-thread-model-mode="">New threads use</p>,
 }));
@@ -680,6 +687,10 @@ describe("project settings and memory", () => {
     expect(container.textContent).not.toContain("Also served by");
     expect(container.textContent).toContain("When a limit hits");
     expect(container.textContent).toContain("Advanced");
+    // The advisor rows follow the tracks, in the same project scope.
+    expect(container.querySelector("[data-advisor]")?.getAttribute("data-advisor")).toBe(
+      "project-advisor",
+    );
   });
   it("saves the displayed revision and preserves edits after a conflict", async () => {
     state.update.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Revision changed") });

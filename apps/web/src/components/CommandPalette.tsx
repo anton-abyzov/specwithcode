@@ -3099,7 +3099,14 @@ function OpenCommandPaletteDialog(props: {
     openProjectSettings(routeProjectKey, projectKey, row ? { tab, row } : { tab });
   };
   if (settingsProject) {
-    for (const result of searchProjectSettings(deferredQuery, PROJECT_SETTINGS_TABS)) {
+    const hasAdvisor = settingsProject.memberProjects.some(
+      (member) =>
+        environments.find((environment) => environment.environmentId === member.environmentId)
+          ?.serverConfig?.environment.capabilities.advisor === true,
+    );
+    for (const result of searchProjectSettings(deferredQuery, PROJECT_SETTINGS_TABS, {
+      hasAdvisor,
+    })) {
       if (result.kind === "section" && !result.matched) continue;
       const tabLabel = PROJECT_SETTINGS_TAB_LABELS[result.section];
       settingsSearchItems.push({

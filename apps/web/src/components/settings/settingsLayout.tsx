@@ -30,9 +30,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeSentence } from "./SettingsScopeSentence";
 import {
+  isProjectFieldSettingKey,
   isProjectScopedSettingKey,
   listProjectOverrides,
   type ProjectOverrideEntry,
+  scopedSettingFieldMixed,
+  scopedSettingFieldSource,
   scopedSettingsAreMixed,
   scopedSettingsSource,
 } from "./scopedSettings";
@@ -418,6 +421,7 @@ export function SettingsRow({
   control,
   serverScoped = false,
   settingKeys = EMPTY_SETTING_KEYS,
+  settingField,
   mixed: mixedOverride,
   children,
   className,
@@ -436,6 +440,12 @@ export function SettingsRow({
   control?: ReactNode;
   serverScoped?: boolean;
   settingKeys?: readonly (keyof ServerSettings)[];
+  /**
+   * One field of a key a project overrides field by field (the advisor): the
+   * row reads "Overridden for this project" only when the project's override
+   * holds this field. Pass `onResetOverride` that removes just the field.
+   */
+  settingField?: string;
   mixed?: boolean;
   children?: ReactNode;
 }) {
@@ -468,10 +478,24 @@ export function SettingsRow({
   // A project scope can only edit keys that support overrides; the rest stay
   // visible so the user sees the inherited value, but cannot change it here.
   const environmentWide = isProjectScope && serverScoped && scopedKeys.length === 0;
+  const fieldKey =
+    settingField !== undefined &&
+    scopedKeys.length === 1 &&
+    isProjectFieldSettingKey(scopedKeys[0]!)
+      ? scopedKeys[0]
+      : undefined;
   const mixed =
-    mixedOverride ?? (context !== null && scopedSettingsAreMixed(context.targets, settingKeys));
+    mixedOverride ??
+    (context !== null &&
+      (fieldKey !== undefined && settingField !== undefined
+        ? scopedSettingFieldMixed(context.targets, fieldKey, settingField)
+        : scopedSettingsAreMixed(context.targets, settingKeys)));
   const source =
-    context && isProjectScope ? scopedSettingsSource(context.targets, scopedKeys) : null;
+    context && isProjectScope
+      ? fieldKey !== undefined && settingField !== undefined
+        ? scopedSettingFieldSource(context.targets, fieldKey, settingField)
+        : scopedSettingsSource(context.targets, scopedKeys)
+      : null;
   const unavailable =
     serverScoped &&
     (!canWriteSettings ||
@@ -578,10 +602,16 @@ export function SettingsRow({
     settingKeys.some((key) =>
       context.targets.some((candidate) => {
         const environmentSettings = environmentSettingsById.get(candidate.environmentId);
-        return (
-          environmentSettings !== undefined &&
-          !Equal.equals(environmentSettings[key], DEFAULT_SERVER_SETTINGS[key])
-        );
+        if (environmentSettings === undefined) return false;
+        if (key === fieldKey && settingField !== undefined) {
+          const value: unknown = environmentSettings[key];
+          const builtIn: unknown = DEFAULT_SERVER_SETTINGS[key];
+          return !Equal.equals(
+            (value as Record<string, unknown> | null)?.[settingField],
+            (builtIn as Record<string, unknown> | null)?.[settingField],
+          );
+        }
+        return !Equal.equals(environmentSettings[key], DEFAULT_SERVER_SETTINGS[key]);
       }),
     );
   const inheritance: { state: SettingInheritanceState; summary: string } = mixed

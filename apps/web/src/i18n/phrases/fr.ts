@@ -5219,4 +5219,45 @@ export const fr: PhraseCatalog = {
     "Configurer cette machine pour lancer du travail sur {there}",
   "Change what this machine may do on {there}":
     "Modifier ce que cette machine peut faire sur {there}",
+  Advisor: "Conseiller",
+  "Let threads ask a stronger model": "Laisser les fils consulter un modèle plus puissant",
+  "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
+    "Un fil peut demander à un modèle plus puissant de relire son approche, puis continuer son travail. Chaque consultation consomme l'usage du modèle conseiller.",
+  advisor: "conseiller",
+  "Advisor model": "Modèle conseiller",
+  "A thread is never advised by its own model; the next model in the order answers instead.":
+    "Un fil n'est jamais conseillé par son propre modèle ; le modèle suivant dans l'ordre répond à sa place.",
+  "advisor model": "modèle conseiller",
+  "Use the default advisor order": "Utiliser l'ordre des conseillers par défaut",
+  "Fable 5.2, then the Review track": "Fable 5.2, puis la piste Review",
+  "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
+    "Dans les fils Claude, le conseiller intégré de Claude relit toute la conversation à chaque consultation. Un conseiller Fable est facturé sur les crédits d'usage Claude.",
+  "Claude's own advisor": "conseiller propre à Claude",
+  "Context limit for Claude's advisor": "Limite de contexte du conseiller Claude",
+  "Above this many tokens of context, a Claude thread sends the budgeted brief instead.":
+    "Au-delà de ce nombre de jetons de contexte, un fil Claude envoie plutôt le résumé limité.",
+  "context limit": "limite de contexte",
+  tokens: "jetons",
+  "Consults per run": "Consultations par exécution",
+  "Further consults in the same run are refused.":
+    "Les consultations suivantes dans la même exécution sont refusées.",
+  "consults per run": "consultations par exécution",
+  "Brief size": "Taille du résumé",
+  "The most a consult sends to the advisor. Older activity is left out first.":
+    "Le maximum qu'une consultation envoie au conseiller. L'activité la plus ancienne est omise en premier.",
+  "brief size": "taille du résumé",
+  "Asking the advisor": "Consultation du conseiller en cours",
+  "Asked the advisor": "Conseiller consulté",
+  "Did not ask the advisor": "Conseiller non consulté",
+  "The advisor gave no advice": "Le conseiller n'a donné aucun conseil",
+  "Advisor unavailable": "Conseiller indisponible",
+  "Claude built-in": "Intégré à Claude",
+  "The advisor is still working. Its advice arrives as a new message.": "Le conseiller travaille encore. Son conseil arrivera dans un nouveau message.",
+  "Still working": "Travaille encore",
+  "{count} left this run": "Encore {count} pour cette exécution",
+  "Advice applied (hidden by Claude)": "Conseil appliqué (masqué par Claude)",
+  "Advisor consult": "Consultation du conseiller",
+  "Follow project (on)": "Comme le projet (activé)",
+  "Follow project (off)": "Comme le projet (désactivé)",
+  "Lets this thread ask a stronger model to check its work.": "Permet à ce fil de demander à un modèle plus puissant de vérifier son travail.",
 };
