@@ -416,6 +416,8 @@ it("approves a Replace all left running once the re-compare has nothing open, an
       destination = "applied";
       return copyStatus("approved");
     };
+    // The choice left secrets on the source: the watcher says so to the source first.
+    state.handlers.copySecrets = () => ({ state: "ready" });
     await renderWatcherFrom("M4");
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(calls).toEqual([]);

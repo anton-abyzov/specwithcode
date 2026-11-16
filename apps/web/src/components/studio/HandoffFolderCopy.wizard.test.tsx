@@ -495,7 +495,9 @@ it("shows Checking while a reopened copy waits for the destination, with no form
 
 it("says a copy finished while closed, then keeps it as the last copy with View and Undo", async () => {
   await toPreview();
-  state.handlers.copyStatus = () => copyStatus("applied");
+  // The destination answers with the folder the copy went to.
+  state.handlers.copyStatus = () =>
+    copyStatus("applied", { targetFolder: "/home/anton/Projects/project" });
   await reopen();
   await settle();
   expect(stageNow()).toBe("done");
@@ -710,7 +712,7 @@ it("keeps the move and machine the dialog was opened with over the last copy-onl
   };
   localStorage.setItem(LAST_KEY, JSON.stringify(last));
   // Opened plainly, the last copy shows as done; the form starts from it one click later.
-  state.handlers.copyStatus = () => copyStatus("applied");
+  state.handlers.copyStatus = () => copyStatus("applied", { targetFolder: "/home/anton/last" });
   await mount();
   await settle();
   expect(stageNow()).toBe("done");
