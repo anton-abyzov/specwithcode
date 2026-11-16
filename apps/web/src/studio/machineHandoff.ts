@@ -75,6 +75,14 @@ export const machineHandoff = {
     label: "machine-handoff:copy-secrets",
     tag: WS_METHODS.machineHandoffCopySecrets,
   }),
+  copySecretsRoute: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "machine-handoff:copy-secrets-route",
+    tag: WS_METHODS.machineHandoffCopySecretsRoute,
+  }),
+  copySealedSecrets: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "machine-handoff:copy-sealed-secrets",
+    tag: WS_METHODS.machineHandoffCopySealedSecrets,
+  }),
   sentSecrets: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "machine-handoff:sent-secrets",
     tag: WS_METHODS.machineHandoffSentSecrets,
