@@ -10,18 +10,11 @@ import {
   type EnvironmentId,
   type ProjectId,
   type ThreadId,
+  type ThreadIncrementProgress,
 } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { LaptopIcon, WifiOffIcon } from "lucide-react";
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useEnvironments } from "../../../state/environments";
 import { useMachineIdentities } from "../../../studio/machineIdentity";
@@ -50,6 +43,11 @@ export interface BoardThread {
   readonly machine: ThreadLocation;
   /** The machine it runs on now, as that machine's color id. */
   readonly color: string;
+  /** How it is bound to the increment; only a `claim` names the task it wrote to. */
+  readonly binding: string | null;
+  readonly boundTaskId: string | null;
+  /** When it last wrote to that task in the ledger. */
+  readonly boundAt: string | null;
 }
 
 /**
@@ -139,6 +137,10 @@ export function boardThreadPages(threads: ReadonlyArray<EnvironmentThreadShell>)
   return { pages, cut };
 }
 
+/** What a thread's progress read says about its increment; a fixture may know only the id. */
+type BoardThreadLink = Pick<ThreadIncrementProgress, "incrementId"> &
+  Partial<Pick<ThreadIncrementProgress, "binding" | "boundTaskId" | "boundAt">>;
+
 interface BoardPageState {
   /** The ids the state answers for; a page whose ids changed is not answered yet. */
   readonly idsKey: string;
@@ -226,10 +228,10 @@ export function useBoardThreads(input: {
     });
   // A page being read again keeps its last answer for the threads it still holds.
   const links = useMemo(() => {
-    const result = new Map<string, string>();
+    const result = new Map<string, BoardThreadLink>();
     for (const page of pages)
       for (const [threadId, entry] of states.get(page.key)?.state.progress ?? [])
-        result.set(`${page.environmentId}\u0000${threadId}`, entry.incrementId);
+        result.set(`${page.environmentId}\u0000${threadId}`, entry);
     return result;
   }, [pages, states]);
   const unreachable = useUnreachableHosts();
@@ -261,8 +263,9 @@ export function useBoardThreads(input: {
         unreachable,
       });
       machines.add(machine.executionMachineId);
-      const incrementId = links.get(`${thread.environmentId}\u0000${thread.id}`);
-      if (!incrementId) continue;
+      const link = links.get(`${thread.environmentId}\u0000${thread.id}`);
+      if (!link) continue;
+      const incrementId = link.incrementId;
       const offline = machine.state === "unknown";
       const held = grouped.get(incrementId) ?? [];
       held.push({
@@ -272,6 +275,9 @@ export function useBoardThreads(input: {
         updatedAt: thread.updatedAt,
         machine,
         color: identity(machine.executionMachineId).color,
+        binding: link.binding ?? null,
+        boundTaskId: link.boundTaskId ?? null,
+        boundAt: link.boundAt ?? null,
       });
       grouped.set(incrementId, held);
     }
@@ -280,15 +286,7 @@ export function useBoardThreads(input: {
       byIncrement: grouped,
       multiMachine: machines.size > 1 || (machineLabels?.size ?? 0) > 1,
     };
-  }, [
-    environments,
-    identity,
-    links,
-    machineLabels,
-    nickname,
-    threads,
-    unreachable,
-  ]);
+  }, [environments, identity, links, machineLabels, nickname, threads, unreachable]);
   return { ...joined, answered, loaders };
 }
 
