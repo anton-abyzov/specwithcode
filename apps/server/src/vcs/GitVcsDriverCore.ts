@@ -4439,7 +4439,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       isMissingWorktreeStderr(result.stderr) &&
       !(yield* fileSystem.exists(input.path).pipe(Effect.orElseSucceed(() => false)));
     if (alreadyGone) {
-      yield* pruneWorktrees({ cwd: input.cwd });
+      // Unattended cleanup never prunes: that would also drop the registrations
+      // of worktrees on a drive that is not mounted right now.
+      if (input.keepLeftBehind !== true) yield* pruneWorktrees({ cwd: input.cwd });
       return;
     }
     // Git drops the registration even when it could not delete every file (one

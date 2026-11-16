@@ -1,7 +1,8 @@
 /**
  * The chat worktree pass of the storage sweep: one function with a mode.
  * "plan" lists every chat folder with what the sweep would do and why, and
- * changes nothing; "apply" gathers the same facts, asks the same decision
+ * changes nothing, not even a fetch: it compares with the default branch as
+ * last fetched; "apply" gathers the same facts, asks the same decision
  * (finishedWorktrees.ts) and removes what it allows. Settings > Storage shows
  * the plan, so what a person reads is what the sweep does.
  *
@@ -13,7 +14,7 @@
  *
  * Removal runs under the workspace lease, after every fact that can change
  * quickly is read again; any change keeps the folder. Ignored media is copied
- * to `<app folder>/evidence/removed-worktrees/` first. Members go deepest
+ * to `<baseDir>/evidence/removed-worktrees/` first. Members go deepest
  * first, never forced; branches and the worktree-set manifest stay, so a chat
  * that resumes gets its folder back.
  *
@@ -26,13 +27,9 @@ import {
   type ServerSettings,
   type StorageCleanupPlanItem,
   type TerminalSummary,
-  type WorktreeCleanupRules,
 } from "@specweave-studio/contracts";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
-import {
-  resolveProjectSettings,
-  resolveWorktreeCleanup,
-} from "@specweave-studio/shared/projectSettings";
+import { resolveWorktreeCleanup } from "@specweave-studio/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -53,8 +50,6 @@ import {
   type FinishedPullRequest,
   type FinishedWorktreeDecision,
   type FinishedWorktreeNeed,
-  type FinishedWorktreeRules,
-  isMediaFile,
 } from "./finishedWorktrees.ts";
 import * as GitManager from "./git/GitManager.ts";
 import { worktreeHasNoAdditionalChanges } from "./git/worktreeIntegration.ts";
@@ -73,8 +68,7 @@ import { checkWorktreeRegistration } from "./git/worktreeRegistration.ts";
 import { listProcessCwds } from "./homeUsage/processCwds.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
-import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementService.ts";
-import { onlyDependencyIgnores, onlyRebuildableUntracked } from "./orphanWorktrees.ts";
+import { onlyRebuildableUntracked } from "./orphanWorktrees.ts";
 import * as Settings from "./serverSettings.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
@@ -97,7 +91,6 @@ import {
   entriesOutsideMembers,
   findRepository,
   folderBytes,
-  IGNORED_WALK_MAX_ENTRIES,
   type MediaFile,
   NESTED_WALK_TIMEOUT,
   SIZE_WALK_TIMEOUT,
@@ -200,6 +193,38 @@ function chatState(thread: OrchestrationV2ThreadShell): FinishedChatState {
   if (thread.archivedAt !== null) return "archived";
   return thread.settledOverride === "settled" ? "resolved" : "open";
 }
+
+/**
+ * Commits the worktree's own HEAD reaches, through its reflog or directly,
+ * that no remote or local branch holds: removing the worktree deletes that
+ * reflog, and with it the only reference. HEAD itself is always counted, so a
+ * detached HEAD with an empty or expired reflog is not missed. Null when unreadable.
+ */
+export const reflogOnlyCommits = Effect.fn("WorktreeCleanupSweep.reflogOnly")(function* (
+  git: GitVcsDriver.GitVcsDriver["Service"],
+  cwd: string,
+) {
+  const reflog = yield* git.execute({
+    operation: "WorktreeCleanupSweep.reflog",
+    cwd,
+    args: ["log", "-g", "--format=%H", "HEAD"],
+    maxOutputBytes: 4 * 1024 * 1024,
+    allowNonZeroExit: true,
+  });
+  if (reflog.stdoutTruncated || reflog.exitCode !== 0) return null;
+  const commits = [
+    ...new Set([...reflog.stdout.split("\n").filter((line) => line !== ""), "HEAD"]),
+  ];
+  const unreached = yield* git.execute({
+    operation: "WorktreeCleanupSweep.reflogUnreached",
+    cwd,
+    args: ["rev-list", "--count", ...commits, "--not", "--remotes", "--branches"],
+    maxOutputBytes: 1024,
+    allowNonZeroExit: true,
+  });
+  const count = Number.parseInt(unreached.stdout.trim(), 10);
+  return unreached.exitCode === 0 && Number.isFinite(count) ? count : null;
+});
 
 /** `yyyyMMdd-HHmmss` in UTC, for an evidence folder name. */
 const evidenceStamp = (now: number) =>
@@ -396,28 +421,6 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
       Effect.orElseSucceed(() => null),
     );
 
-  // Commits the worktree's own HEAD reflog reaches that no remote or local branch
-  // holds: removing the worktree deletes that reflog, and with it the only reference.
-  const reflogOnlyCommits = Effect.fn("WorktreeCleanupSweep.reflogOnly")(function* (cwd: string) {
-    const reflog = yield* run(
-      cwd,
-      "WorktreeCleanupSweep.reflog",
-      ["log", "-g", "--format=%H", "HEAD"],
-      4 * 1024 * 1024,
-    );
-    if (reflog.stdoutTruncated || reflog.exitCode !== 0) return null;
-    const commits = [...new Set(reflog.stdout.split("\n").filter((line) => line !== ""))];
-    if (commits.length === 0) return 0;
-    return yield* commitCount(cwd, "WorktreeCleanupSweep.reflogUnreached", [
-      "rev-list",
-      "--count",
-      ...commits,
-      "--not",
-      "--remotes",
-      "--branches",
-    ]);
-  });
-
   /** A stash entry made on `branch` (stashes are shared by every worktree of a repository). */
   const stashOnBranch = (cwd: string, branch: string | null) =>
     branch === null
@@ -518,7 +521,7 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
             },
       hiddenTrackedChanges: hidden,
       stash: yield* stashOnBranch(state.path, branch),
-      reflogOnlyCommits: yield* reflogOnlyCommits(state.path).pipe(
+      reflogOnlyCommits: yield* reflogOnlyCommits(git, state.path).pipe(
         Effect.orElseSucceed(() => null),
       ),
       unpushedCommits: yield* commitCount(state.path, "WorktreeCleanupSweep.unpushed", [
@@ -556,7 +559,11 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     { readonly state: FinishedPullRequest["state"]; readonly at: number }
   >();
 
-  /** The repository's default branch on its primary remote, fetched once per sweep. */
+  /**
+   * The repository's default branch on its primary remote, fetched once per
+   * apply sweep. A plan changes nothing, so it reads the ref as the last fetch
+   * left it; a missing ref reads as unknown, and apply fetches before deciding.
+   */
   const defaultRef = Effect.fn("WorktreeCleanupSweep.defaultRef")(function* (
     repository: string,
     ctx: SweepContext,
@@ -566,11 +573,12 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
       const remote = yield* git.resolvePrimaryRemoteName(repository);
       const branch = yield* git.resolveDefaultBranchName(repository, remote);
       if (branch === null) return null;
-      yield* git.fetchRemoteTrackingBranch({
-        cwd: repository,
-        remoteName: remote,
-        remoteBranch: branch,
-      });
+      if (ctx.mode === "apply")
+        yield* git.fetchRemoteTrackingBranch({
+          cwd: repository,
+          remoteName: remote,
+          remoteBranch: branch,
+        });
       return `refs/remotes/${remote}/${branch}`;
     }).pipe(Effect.orElseSucceed(() => null));
     ctx.defaultRefs.set(repository, ref);

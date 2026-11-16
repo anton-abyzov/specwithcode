@@ -8,7 +8,6 @@ import type {
   OrchestrationV2ThreadShell,
   ProjectId,
   ServerSettings,
-  TerminalSummary,
   WorktreeCleanupRules,
 } from "@specweave-studio/contracts";
 import {
