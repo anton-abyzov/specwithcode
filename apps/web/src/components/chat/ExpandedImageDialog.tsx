@@ -369,7 +369,7 @@ function ExpandedMediaOverlay({
       {slots.actions ? createPortal(actions, slots.actions) : null}
       <div className="artifact-viewer-stage" data-artifact-stage="true">
         {item.type === "video" ? (
-          <div className="viewer-media-video [--media-height:calc(100%-2rem)] [--media-width:calc(100%-2rem)]">
+          <div className="viewer-media-video">
             <ExpandedVideo key={index} item={item} />
           </div>
         ) : showingAccessibilityDetails && accessibilityDetails ? (
