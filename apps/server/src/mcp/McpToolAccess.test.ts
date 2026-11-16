@@ -19,6 +19,17 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as HandoffMode from "../handoff/HandoffMode.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import * as ThreadMetadataMcpService from "./ThreadMetadataMcpService.ts";
+import * as OrchestratorHandlers from "./toolkits/orchestrator/handlers.ts";
+import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
+import * as ProjectHandlers from "./toolkits/project/handlers.ts";
+import { ProjectToolkit } from "./toolkits/project/tools.ts";
+import * as ProjectMemoryHandlers from "./toolkits/projectMemory/handlers.ts";
+import { ProjectMemoryToolkit } from "./toolkits/projectMemory/tools.ts";
 
 const supervisedThreadId = ThreadId.make("thread:supervised");
 const planThreadId = ThreadId.make("thread:plan");
@@ -379,4 +390,123 @@ it.effect("refuses a change when the calling thread cannot be read", () =>
       ),
     ),
   ),
+);
+
+// ── An advisor child only reads ──────────────────────────────────────
+
+const advisorThreadId = ThreadId.make("thread:advisor");
+const advisorShells = Layer.mock(ThreadManagement.ThreadManagementService)({
+  getThreadShell: (threadId) =>
+    Effect.succeed(
+      threadId === advisorThreadId
+        ? { ...liveThreadShell(threadId), purpose: "advisor" as const }
+        : liveThreadShell(threadId),
+    ),
+});
+// Only `advisor` reaches its handler for an advisor thread: the guard refuses the rest first.
+const advisorToolServices = Layer.mergeAll(
+  advisorShells,
+  Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
+    consultAdvisor: () =>
+      Effect.succeed({
+        status: "refused" as const,
+        refusal: "advisor-thread" as const,
+        message: "An advisor cannot consult.",
+      }),
+  }),
+  Layer.mock(ThreadMetadataMcpService.ThreadMetadataMcpService)({}),
+  Layer.mock(ProjectService.ProjectService)({}),
+  Layer.mock(HandoffMode.HandoffMode)({
+    environmentId: EnvironmentId.make("environment"),
+    machineLabel: "This Mac",
+  }),
+  NodeCrypto.layer,
+);
+const advisorServer = Layer.mergeAll(
+  McpHttpServer.toolkitRegistration(OrchestratorToolkit, OrchestratorHandlers.layer),
+  McpHttpServer.toolkitRegistration(ProjectToolkit, ProjectHandlers.layer),
+  McpHttpServer.toolkitRegistration(ProjectMemoryToolkit, ProjectMemoryHandlers.layer),
+).pipe(Layer.provideMerge(McpServer.McpServer.layer), Layer.provideMerge(advisorToolServices));
+
+/** A tool's result as an advisor thread sees it, as JSON. */
+const callAsAdvisor = (tool: string, args: Record<string, unknown>) =>
+  McpServer.McpServer.pipe(
+    Effect.flatMap((server) => server.callTool({ name: tool, arguments: args })),
+    Effect.map(({ content }) =>
+      content.map((part) => (part.type === "text" ? part.text : "")).join(""),
+    ),
+    Effect.provideService(McpInvocationContext.McpInvocationContext, threadCaller(advisorThreadId)),
+    Effect.provideService(McpSchema.McpServerClient, mcpClient),
+  );
+
+it.effect.each([
+  ["delegate_task", { task: "Do it" }],
+  ["create_threads", { threads: [{ prompt: "Go" }] }],
+  ["studio_thread_send", { threadId: "thread:other", message: "Hello" }],
+  ["studio_thread_launch", { title: "Start", message: "Start" }],
+  ["studio_project_memory_write", { name: "project_notes.md", content: "x" }],
+] as const)("refuses an advisor thread %s whatever its sandbox allows", ([tool, args]) =>
+  callAsAdvisor(tool, args).pipe(
+    Effect.map((text) =>
+      expect(JSON.parse(text)).toEqual({
+        _tag: "OrchestratorMcpFailure",
+        code: "capability_denied",
+        message: McpToolAccess.ADVISOR_CALLER_REFUSAL,
+      }),
+    ),
+    Effect.provide(advisorServer),
+  ),
+);
+
+it.effect("lets an advisor thread reach read-only tools, where advisor answers it itself", () =>
+  Effect.gen(function* () {
+    expect(McpToolAccess.isReadOnlyTool(OrchestratorToolkit, "advisor")).toBe(true);
+    expect(McpToolAccess.isReadOnlyTool(OrchestratorToolkit, "delegate_task")).toBe(false);
+    expect(McpToolAccess.isReadOnlyTool(OrchestratorToolkit, "no_such_tool")).toBe(false);
+    const text = yield* callAsAdvisor("advisor", {});
+    expect(JSON.parse(text)).toMatchObject({ status: "refused", refusal: "advisor-thread" });
+  }).pipe(Effect.provide(advisorServer)),
+);
+
+it.effect("fails closed without a thread service, and passes a caller outside a thread", () =>
+  Effect.gen(function* () {
+    const refused = yield* McpToolAccess.refuseAdvisorCaller().pipe(
+      Effect.provideService(
+        McpInvocationContext.McpInvocationContext,
+        threadCaller(advisorThreadId),
+      ),
+      Effect.flip,
+    );
+    expect(refused.code).toBe("capability_denied");
+    yield* McpToolAccess.refuseAdvisorCaller().pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, clientCaller("full-access")),
+    );
+    // An ordinary thread passes.
+    yield* McpToolAccess.refuseAdvisorCaller().pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, fullAccess),
+      Effect.provide(advisorShells),
+    );
+  }),
+);
+
+// A tool that does not list the thread service still gets the check, from
+// the service its handlers layer was built with.
+const UnlistedToolkit = Toolkit.make(
+  Tool.make("unlisted", {
+    success: Schema.Struct({ ran: Schema.String }),
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies: [McpInvocationContext.McpInvocationContext],
+  }),
+);
+const unlistedServer = McpHttpServer.toolkitRegistration(
+  UnlistedToolkit,
+  McpToolAccess.toLayer(UnlistedToolkit, { unlisted: McpToolAccess.reads(() => ran) }),
+).pipe(Layer.provideMerge(McpServer.McpServer.layer), Layer.provideMerge(advisorShells));
+
+it.effect("checks a tool that does not list the thread service", () =>
+  Effect.gen(function* () {
+    expect(yield* call("unlisted", fullAccess)).toBe("ran");
+    expect(yield* call("unlisted", threadCaller(advisorThreadId))).toBe("capability_denied");
+  }).pipe(Effect.provide(unlistedServer)),
 );

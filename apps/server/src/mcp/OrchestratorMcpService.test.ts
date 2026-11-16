@@ -23,7 +23,10 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   DispatchModeLimit,
@@ -1258,6 +1261,205 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
       }),
   );
+
+  describe("advisor consults", () => {
+    const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+    const advisorProviders: ReadonlyArray<ServerProvider> = [
+      providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: "gpt-5.4",
+      }),
+      {
+        ...providerSnapshot({
+          instanceId: claudeInstanceId,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          model: "claude-fable-5-2",
+        }),
+        auth: { status: "authenticated", type: "max" },
+      },
+    ];
+    const advisorTask = {
+      id: taskId,
+      threadId: parentThreadId,
+      runId: parentRunId,
+      parentNodeId,
+      origin: "app_owned",
+      createdBy: "agent",
+      driver: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: claudeInstanceId,
+      providerThreadId: null,
+      childThreadId,
+      nativeTaskRef: null,
+      prompt: "brief",
+      title: "Advisor: MCP parent",
+      model: "claude-fable-5-2",
+      purpose: "advisor",
+      status: "running",
+      result: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: DateTime.makeUnsafe("2026-11-16T08:00:00.000Z"),
+    };
+    const advisedParent = (subagents: ReadonlyArray<unknown>) => {
+      const projection = parentProjection(subagents);
+      return {
+        ...projection,
+        thread: { ...projection.thread, advisorMode: "on" },
+        messages: [],
+        turnItems: [],
+      } as unknown as OrchestrationV2ThreadProjection;
+    };
+    const advisorLayer = (
+      dispatched: Ref.Ref<ReadonlyArray<{ readonly type: string }>>,
+      options: { readonly childAsksApproval?: boolean } = {},
+    ) => {
+      let started = false;
+      return OrchestratorMcpService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadRecords: (threadId) =>
+                Effect.succeed(
+                  threadId === parentThreadId
+                    ? advisedParent(started ? [advisorTask] : [])
+                    : childProjection,
+                ),
+              dispatch: (command) =>
+                Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      if (command.type === "delegated_task.request") started = true;
+                    }),
+                  ),
+                  Effect.as({
+                    sequence: 1,
+                    storedEvents: [
+                      {
+                        sequence: 1,
+                        commandId: null,
+                        event: { type: "subagent.updated", payload: advisorTask },
+                      },
+                    ],
+                  } as never),
+                ),
+              getThreadEventSequence: () => Effect.succeed(0),
+              streamStoredEventsFrom: () => Stream.never,
+              delegatedTaskResultPending: () => Effect.succeed(false),
+              getThreadShell: (threadId) =>
+                Effect.succeed({
+                  ...liveThreadShell(threadId),
+                  purpose: threadId === childThreadId ? "advisor" : undefined,
+                  // An approval nobody gives an advisor.
+                  pendingRuntimeRequest:
+                    threadId === childThreadId && options.childAsksApproval === true
+                      ? ({
+                          id: "request:child-approval",
+                          kind: "approval",
+                          createdAt: DateTime.makeUnsafe("2026-11-16T08:00:10.000Z"),
+                        } as never)
+                      : null,
+                }),
+            }),
+            providerRegistryLayer(advisorProviders),
+            adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+            }),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          ),
+        ),
+      );
+    };
+
+    it.effect("refuses an outside client, read-only or not, without starting anything", () =>
+      Effect.gen(function* () {
+        const dispatched = yield* Ref.make<ReadonlyArray<{ readonly type: string }>>([]);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          for (const access of ["read-only", "full-access"] as const) {
+            const result = yield* service.consultAdvisor(
+              {
+                ...scope,
+                thread: undefined,
+                client: { sessionId: "client", label: "Outside agent", access },
+              },
+              {},
+            );
+            assert.equal(result.status, "refused");
+            assert.equal(result.refusal, "no-run");
+          }
+          assert.deepEqual(yield* Ref.get(dispatched), []);
+        }).pipe(Effect.provide(advisorLayer(dispatched)));
+      }),
+    );
+
+    it.effect("starts a read-only advisor child and hands a slow answer to a wake-up", () =>
+      Effect.gen(function* () {
+        const dispatched = yield* Ref.make<ReadonlyArray<{ readonly type: string }>>([]);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const fiber = yield* Effect.forkChild(service.consultAdvisor(scope, {}));
+          // A Codex caller waits 45 seconds, under Codex's own 60 second call limit.
+          yield* TestClock.adjust("45 seconds");
+          const result = yield* Fiber.join(fiber);
+          assert.equal(result.status, "working");
+          assert.equal(result.taskId, taskId);
+          assert.equal(result.consultsRemaining, 2);
+          const commands = (yield* Ref.get(dispatched)) as ReadonlyArray<Record<string, unknown>>;
+          assert.deepEqual(
+            commands.map((command) => command.type),
+            ["delegated_task.request", "delegated_task.wake-policy"],
+          );
+          assert.deepInclude(commands[0], {
+            purpose: "advisor",
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            completionWake: "settled_only",
+            title: "Advisor: MCP parent",
+            parentRunId,
+          });
+          assert.deepEqual(commands[0]!.modelSelection, {
+            instanceId: claudeInstanceId,
+            model: "claude-fable-5-2",
+          });
+          assert.deepInclude(commands[1], { taskId, completionWake: "always" });
+        }).pipe(Effect.provide(advisorLayer(dispatched)));
+      }),
+    );
+
+    it.effect("ends a child stuck on an approval instead of returning working", () =>
+      Effect.gen(function* () {
+        const dispatched = yield* Ref.make<ReadonlyArray<{ readonly type: string }>>([]);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const fiber = yield* Effect.forkChild(service.consultAdvisor(scope, {}));
+          yield* TestClock.adjust("45 seconds");
+          const result = yield* Fiber.join(fiber);
+          assert.equal(result.status, "failed");
+          assert.equal(result.taskId, taskId);
+          assert.include(result.message, "approval or an answer");
+          const commands = (yield* Ref.get(dispatched)) as ReadonlyArray<Record<string, unknown>>;
+          // The wake-up is dropped before the stop, so the caller hears once.
+          assert.deepEqual(
+            commands.map((command) => command.type),
+            [
+              "delegated_task.request",
+              "delegated_task.wake-policy",
+              "delegated_task.completion-delivery.dispose",
+              "thread.stop",
+              "thread.archive",
+            ],
+          );
+          assert.deepInclude(commands[2], { parentThreadId, taskId });
+          assert.deepInclude(commands[3], { threadId: childThreadId, cause: "delegated_cancel" });
+          assert.deepInclude(commands[4], { threadId: childThreadId });
+        }).pipe(Effect.provide(advisorLayer(dispatched, { childAsksApproval: true })));
+      }),
+    );
+  });
 
   it.effect("starts a coordinator's worker on its own model when the worker model is spent", () =>
     Effect.gen(function* () {

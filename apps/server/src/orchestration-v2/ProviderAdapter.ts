@@ -85,8 +85,11 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
    */
   manualWorktreesBlocked: Schema.optional(Schema.Union([Schema.Boolean, Schema.String])),
   /**
-   * When to consult the advisor, for a thread whose advisor is on. Already
-   * part of `agentInstructions`; adapters that do not send those read it here.
+   * When to consult the advisor, for a thread whose advisor is on; absent
+   * when it is off and in an advisor child. Not part of `agentInstructions`:
+   * each adapter adds it to the thread's instructions itself, and only when
+   * that thread has the studio-code tools, since the text names their
+   * `advisor` tool.
    */
   advisorGuidance: Schema.optional(Schema.String),
   /**
