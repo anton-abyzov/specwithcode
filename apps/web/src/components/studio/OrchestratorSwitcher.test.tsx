@@ -382,13 +382,13 @@ it("says not linked, with what that means, for checkouts registered on their own
 const unlinkedNote = () =>
   document.querySelector("[data-orchestrator-unlinked-note]")?.textContent ?? null;
 
-it("says once that not linked is about the projects, not the connection or access", async () => {
+it("says once that not linked projects can still be viewed and messaged", async () => {
   await renderSwitcher({
     ...handlers(),
     copies: [copy("m4:p", "M4", "independent"), copy("m1:p", "M1", "independent")],
   });
   expect(unlinkedNote()).toBe(
-    "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. It is not a connection or access problem.",
+    "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.",
   );
 });
 
@@ -400,7 +400,7 @@ it("points at the link items when linking is offered", async () => {
     links: [{ key: "m1:p", machine: "M1" }],
   });
   expect(unlinkedNote()).toMatch(
-    /It is not a connection or access problem\. Link them below to make one project\.$/,
+    /That does not stop you viewing or messaging any of them\. Link them below to make one project\.$/,
   );
 });
 
@@ -416,8 +416,17 @@ it("does not point at link items a listed copy does not have", async () => {
     onLink: vi.fn<(key: string) => void>(),
     links: [{ key: "m1:p", machine: "M1" }],
   });
-  expect(unlinkedNote()).toMatch(/It is not a connection or access problem\.$/);
+  expect(unlinkedNote()).toMatch(/That does not stop you viewing or messaging any of them\.$/);
   expect(document.querySelectorAll("[data-orchestrator-link]")).toHaveLength(1);
+});
+
+it("keeps that note off a group with a linked machine this app never loaded", async () => {
+  await renderSwitcher({
+    ...handlers(),
+    copies: [copy("m4:p", "M4", "independent"), copy("m1:p", "M1", "independent")],
+    unknown: [{ key: "m5:p", machine: "M5" }],
+  });
+  expect(unlinkedNote()).toBeNull();
 });
 
 it("keeps that note off linked projects and off a group with a linked copy", async () => {

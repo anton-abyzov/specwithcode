@@ -4623,8 +4623,8 @@ export const fr: PhraseCatalog = {
   "not linked": "non lié",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
     "Non lié : {machine} a son propre coordinateur, ses fils et sa mémoire pour ce dépôt.",
-  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. It is not a connection or access problem.":
-    "Non lié : ce sont des projets distincts pour ce dépôt, chacun avec son propre coordinateur, ses fils et sa mémoire. Ce n'est pas un problème de connexion ni d'accès.",
+  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.":
+    "Non lié : ce sont des projets distincts pour ce dépôt, chacun avec son propre coordinateur, ses fils et sa mémoire. Cela n'empêche pas de consulter chacun d'eux ni de lui envoyer des messages.",
   "Link them below to make one project.": "Liez-les ci-dessous pour n'en faire qu'un seul projet.",
   "{value}Messages go to Percy. {value2}": "{value}Les messages vont à Percy. {value2}",
   "Show only topics that need you in {project}":

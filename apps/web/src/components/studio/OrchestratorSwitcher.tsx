@@ -189,9 +189,14 @@ export function OrchestratorSwitcher({
   // Linking is what makes two projects for one repository one project; nothing is copied.
   const linkActions = onLink ? links : [];
   // Every copy registered on its own: "not linked" is about the projects, and reads like a broken
-  // connection or missing access unless the menu says so. With a linked copy in the group an
-  // unlinked one can be held back, so the reassurance is for the all-unlinked case only.
-  const allUnlinked = listed.length > 1 && copies.every((copy) => copy.role === "independent");
+  // connection unless the menu says what it leaves alone. With a linked copy in the group (listed,
+  // or known only as a machine this app never loaded) an unlinked one can be held back, so the
+  // sentence is for the all-unlinked case only. It promises viewing and messaging, nothing about
+  // agents: a machine may let another one's agents work only in linked projects.
+  const allUnlinked =
+    listed.length > 1 &&
+    unknown.length === 0 &&
+    copies.every((copy) => copy.role === "independent");
   // "Link them below" only when every other row has its link item: a second checkout on the
   // viewed machine, or one at another place in the repository, is listed but gets no offer.
   const linkCoversRows =
@@ -241,7 +246,7 @@ export function OrchestratorSwitcher({
                 data-orchestrator-unlinked-note=""
               >
                 {tx(
-                  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. It is not a connection or access problem.",
+                  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.",
                 )}
                 {linkCoversRows ? ` ${tx("Link them below to make one project.")}` : null}
               </p>

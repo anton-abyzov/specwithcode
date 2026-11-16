@@ -86,10 +86,10 @@ try {
     await page.waitForTimeout(250);
     const rows = await page.locator('[role="menuitemradio"]').allTextContents();
     assert.deepEqual(rows, ["m1not linked", "m3not linked", "m4not linked"]);
-    // Said once, in the open: it is about the projects, not the connection or access.
+    // Said once, in the open: separate projects, still viewable and reachable.
     assert.equal(
       await page.locator("[data-orchestrator-unlinked-note]").textContent(),
-      "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. It is not a connection or access problem. Link them below to make one project.",
+      "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them. Link them below to make one project.",
     );
     assert.deepEqual(await page.locator("[data-orchestrator-link]").allTextContents(), [
       "Link with the project on m1…",

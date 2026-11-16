@@ -4406,8 +4406,8 @@ export const zh: PhraseCatalog = {
   "not linked": "未关联",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
     "未关联：{machine} 为此仓库运行自己的协调者、线程和记忆。",
-  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. It is not a connection or access problem.":
-    "未关联：这些是此仓库的独立项目，各有自己的协调者、线程和记忆。这不是连接或访问权限问题。",
+  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.":
+    "未关联：这些是此仓库的独立项目，各有自己的协调者、线程和记忆。这不影响查看其中任何一个或向其发送消息。",
   "Link them below to make one project.": "在下方关联即可合并为一个项目。",
   "{value}Messages go to Percy. {value2}": "{value}消息会发送给 Percy。{value2}",
   "Show only topics that need you in {project}": "只显示 {project} 中需要你处理的主题",
