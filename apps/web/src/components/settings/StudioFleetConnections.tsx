@@ -41,6 +41,8 @@ import {
   setFleetEnvironmentSkipped,
 } from "../../studio/fleetAutoConnect";
 import { useEnvironments } from "../../state/environments";
+import { environmentCatalog } from "~/connection/catalog";
+import { noteMachineRemoved } from "../../studio/knownMachines";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
 import {
   isThisMachineCatchingUp,
@@ -63,7 +65,7 @@ import { useMachineNicknames } from "../../studio/machineNickname";
 import { MachineColorButton } from "./MachineColor";
 import { ConnectDeregisterHint, fleetRemoveConnectNote } from "./ConnectDeregisterHint";
 import { ConnectReachBanner } from "./ConnectReachBanner";
-import { useReplacedMachineRecords } from "./useReplacedMachineRecords";
+import { useRejoinedMachine, useReplacedMachineRecords } from "./useReplacedMachineRecords";
 import { FleetInviteArea, fleetInviteManagedMachines } from "./FleetInvite";
 import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
 import {
@@ -354,6 +356,8 @@ export function StudioFleetConnections({
   const canAddDeviceWithCode = useCanAddDeviceWithCode(environmentId);
   const connect = useAtomCommand(connectPairing, { reportFailure: false });
   const sentSecrets = useAtomCommand(machineHandoff.sentSecrets, { reportFailure: false });
+  const forgetSaved = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
+  const rejoinedMachine = useRejoinedMachine(rawSnapshot, environmentId);
   const autoConnect = useClientSettings((settings) => settings.autoConnectPrivateMachines);
   const updateClientSettings = useUpdateClientSettings();
   const [pending, setPending] = useState<string | null>(null);
@@ -485,6 +489,23 @@ export function StudioFleetConnections({
       { variant: "destructive" },
     );
     if (confirmed !== true) return;
+    // An old record of a machine that joined again: nothing is left on that
+    // install, and this app's saved connection to it goes too, or the card stays.
+    const raw = rawSnapshot?.machines.find((candidate) => candidate.id === machine.id);
+    const rejoinedId = raw
+      ? rejoinedMachine({
+          environmentId: raw.environmentId,
+          label: raw.machineName ?? raw.label,
+        })
+      : null;
+    const rejoinedAs =
+      rejoinedId === null
+        ? null
+        : nickname(
+            rejoinedId,
+            rawSnapshot?.machines.find((candidate) => candidate.environmentId === rejoinedId)
+              ?.label,
+          );
     setPending(`remove:${machine.id}`);
     setError(null);
     setNotice(null);
@@ -493,10 +514,21 @@ export function StudioFleetConnections({
     try {
       const removed = await removeStudioFleetMachine(environmentId, machine.id);
       setRemovedLabel(machine.label);
-      if (secretsWarning) setNotice(`${fleetRemoveNotice(removed)} ${secretsWarning}`);
-      else if (removed.workerAccess === "kept" || removed.managementToken === "kept")
-        setNotice(fleetRemoveNotice(removed));
-      else setAdded(fleetRemoveNotice(removed));
+      if (rejoinedAs !== null && saved.has(machine.environmentId)) {
+        // Recorded first, so automatic connection cannot add the record back in between.
+        setFleetEnvironmentSkipped(machine.environmentId, true);
+        const forgotten = await forgetSaved(machine.environmentId as EnvironmentId);
+        if (forgotten._tag === "Failure") setFleetEnvironmentSkipped(machine.environmentId, false);
+        else noteMachineRemoved(machine.environmentId, true);
+      }
+      const message = fleetRemoveNotice(removed, { name: machine.label, rejoinedAs });
+      if (secretsWarning) setNotice(`${message} ${secretsWarning}`);
+      else if (
+        rejoinedAs === null &&
+        (removed.workerAccess === "kept" || removed.managementToken === "kept")
+      )
+        setNotice(message);
+      else setAdded(message);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Could not remove this machine.");
     } finally {

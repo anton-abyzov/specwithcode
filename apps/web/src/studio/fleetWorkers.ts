@@ -268,15 +268,26 @@ export function workerMachinesPatch(list: ReadonlyArray<ProjectWorkerMachine>): 
   };
 }
 
-/** What removing a machine left valid there, for the notice after Remove. */
-export function fleetRemoveNotice(removed: StudioFleetRemoveResult): string {
+/**
+ * What removing a machine left valid there, for the notice after Remove. `name`
+ * is the name the removed record shows (its nickname, "m5"), never the computer
+ * name another record of the same machine may share. `rejoinedAs` names the
+ * machine it joined again as: its old install is gone, so nothing is left there
+ * to revoke and none of it is asked for.
+ */
+export function fleetRemoveNotice(
+  removed: StudioFleetRemoveResult,
+  shown: { readonly name: string; readonly rejoinedAs?: string | null } = { name: removed.label },
+): string {
+  const { name } = shown;
   const kept = [
     removed.workerAccess === "kept" ? "worker access" : null,
     removed.managementToken === "kept" ? "management token" : null,
   ].filter((part) => part !== null);
-  if (kept.length === 0)
-    return `Removed ${removed.label} and revoked what this machine held there.`;
-  return `Removed ${removed.label} here. ${removed.label} could not be reached, so this machine's ${kept.join(" and ")} there stays valid until it expires. On ${removed.label}, revoke it in Settings > Machines${removed.managementSessionId ? ` (session ${removed.managementSessionId})` : ""}.`;
+  if (kept.length === 0) return `Removed ${name} and revoked what this machine held there.`;
+  if (shown.rejoinedAs)
+    return `Removed the old record of ${name}. That install is gone (it joined again as ${shown.rejoinedAs}), so nothing is left there to revoke.`;
+  return `Removed ${name} here. ${name} could not be reached, so this machine's ${kept.join(" and ")} there stays valid until it expires. To end it sooner, remove this machine in Settings > Machines on ${name}.`;
 }
 
 /** Secret files a folder copy sent to a machine; names only, never contents. */

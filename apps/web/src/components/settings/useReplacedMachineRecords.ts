@@ -1,5 +1,5 @@
 import type { StudioFleetSnapshot } from "@specweave-studio/contracts/studioFleet";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import {
@@ -8,7 +8,11 @@ import {
   useRelayEnvironmentDiscovery,
 } from "../../state/environments";
 import { useStudioFleet } from "../../studio/fleet";
-import { type ConnectListedMachine, replacedMachineRecords } from "./machinesSettings.logic";
+import {
+  type ConnectListedMachine,
+  rejoinedMachineOf,
+  replacedMachineRecords,
+} from "./machinesSettings.logic";
 
 /**
  * Old records of machines that joined again, by id, mapped to the id each lives
@@ -19,6 +23,26 @@ export function useReplacedMachineRecords(
   fleet: StudioFleetSnapshot | null,
   primaryEnvironmentId: string | null,
 ): ReadonlyMap<string, string> {
+  const input = useOldRecordInput(fleet, primaryEnvironmentId);
+  return useMemo(() => replacedMachineRecords(input), [input]);
+}
+
+/**
+ * Asks whether a machine on this machine's list joined again under a new id
+ * (`rejoinedMachineOf`), for Remove; returns the id it lives on now, or null.
+ */
+export function useRejoinedMachine(
+  fleet: StudioFleetSnapshot | null,
+  primaryEnvironmentId: string | null,
+): (record: { readonly environmentId: string; readonly label: string }) => string | null {
+  const input = useOldRecordInput(fleet, primaryEnvironmentId);
+  return useCallback((record) => rejoinedMachineOf(input, record), [input]);
+}
+
+function useOldRecordInput(
+  fleet: StudioFleetSnapshot | null,
+  primaryEnvironmentId: string | null,
+): Parameters<typeof replacedMachineRecords>[0] {
   const { environments } = useEnvironments();
   const discovery = useRelayEnvironmentDiscovery();
   return useMemo(() => {
@@ -31,7 +55,7 @@ export function useReplacedMachineRecords(
           ]),
         )
       : null;
-    return replacedMachineRecords({
+    return {
       saved: environments.map((environment) => ({
         environmentId: environment.environmentId,
         label: environment.label,
@@ -40,7 +64,7 @@ export function useReplacedMachineRecords(
       fleet: fleet?.machines ?? null,
       connect,
       primaryEnvironmentId,
-    });
+    };
   }, [environments, discovery, fleet, primaryEnvironmentId]);
 }
 
