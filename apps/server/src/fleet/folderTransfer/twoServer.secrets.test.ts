@@ -304,7 +304,7 @@ describe("secrets of a copy run from another machine's window", () => {
   it("lists every secret file, at any depth and in the home folder", async () => {
     const copy = await begin("listed");
     expect(copy.listed).toEqual(expect.arrayContaining(Object.keys(ALL_SECRETS)));
-    await copy.copies.cancel(copy.operationId);
+    await copy.copies.cancel(copy.operationId, "Test done.");
     await copy.copies.close();
   }, 120_000);
 
@@ -411,7 +411,7 @@ describe("secrets of a copy run from another machine's window", () => {
     expect(failureText(exit)).toContain("Only a person running the copy");
     expect(link.asked).toEqual([]);
     expect(await stagedOn(copy.operationId)).toBeUndefined();
-    await copy.copies.cancel(copy.operationId);
+    await copy.copies.cancel(copy.operationId, "Test done.");
     await copy.copies.close();
   }, 120_000);
 
@@ -460,7 +460,7 @@ describe("secrets of a copy run from another machine's window", () => {
       .catch((cause: unknown) => cause);
     expect(String((other as Error).message)).toBe("That copy came from another machine.");
     expect(String((unknown as Error).message)).toBe(String((other as Error).message));
-    await copy.copies.cancel(copy.operationId);
+    await copy.copies.cancel(copy.operationId, "Test done.");
     expect(NodeFS.existsSync(keyFileOf(copy))).toBe(false);
     const ended = await copy.copies
       .secretsKey(copy.operationId, SOURCE)
@@ -502,7 +502,7 @@ describe("secrets of a copy run from another machine's window", () => {
       .catch((cause: unknown) => cause);
     expect(refused).toBeInstanceOf(Error);
     expect(await stagedOn(copy.operationId)).toBeUndefined();
-    await copy.copies.cancel(copy.operationId);
+    await copy.copies.cancel(copy.operationId, "Test done.");
     await copy.copies.close();
   }, 120_000);
 });
