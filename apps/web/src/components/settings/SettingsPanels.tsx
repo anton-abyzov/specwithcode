@@ -3469,6 +3469,9 @@ export function GeneralSettingsPanel() {
               />
             }
           />
+          {connectedEnvironments.some(
+            (target) => target.serverConfig?.environment.platform.os !== "windows",
+          ) ? (
           <SettingsRow
             serverScoped
             settingKeys={["terminalCommands"]}
@@ -3495,6 +3498,7 @@ export function GeneralSettingsPanel() {
               />
             }
           />
+          ) : null}
 
           <SettingsRow
             {...searchableSetting("continue-threads-after-server-update")}

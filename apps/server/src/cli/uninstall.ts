@@ -148,6 +148,8 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
         "  This specweave-studio runs from a Node script, so it was installed by npm or built from source. Remove it the same way (`npm uninstall -g specweave-studio`, or delete the checkout).",
       );
     }
+    // An earlier uninstall or a by-hand removal can leave the Terminal block behind.
+    if (platform !== "win32") yield* removeTerminalCommands(input.baseDir);
     return;
   }
 

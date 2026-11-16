@@ -12,7 +12,8 @@
  * to PATH, so the file changes only when the switch does. Appending keeps the
  * person's own installs first. The "Use these commands in Terminal" setting
  * (on by default) adds or removes the block; a block the person deletes turns
- * the setting off instead of coming back.
+ * the setting off instead of coming back: the record keeps naming the file, so
+ * every app home sees the opt-out, until the person turns the setting back on.
  *
  * The person's file is handled as bytes (latin1 maps each byte to one
  * character), never decoded, and replaced atomically only if nobody changed it
@@ -42,6 +43,9 @@ const COMMANDS = [
   "specwithcode",
   "specweave-studio",
 ] as const;
+
+/** The commands the commands folder links: the block's commands plus npx. */
+const LINKED = [...COMMANDS, "npx"] as const;
 
 export interface StartupFileInfo {
   /** `other` is a symlink, folder, FIFO or anything but a regular file. */
@@ -88,6 +92,11 @@ export interface TerminalPathInput {
   readonly shell: string | undefined;
   /** "Use these commands in Terminal": false removes this home's folders from the block. */
   readonly enabled: boolean;
+  /**
+   * The person just turned the setting on: a block they deleted before is added again. Without
+   * it a deleted block stays deleted for every app home.
+   */
+  readonly rearm?: boolean;
   readonly fs: TerminalPathFs;
 }
 
@@ -193,26 +202,30 @@ export async function syncTerminalCommandLinks(
   });
   const wanted = new Map<string, string>();
   for (const dir of [...managed, ...(codex ? [codex] : [])])
-    for (const name of (await fs.listDir(dir)).toSorted()) {
+    for (const name of LINKED) {
       const target = NodePath.posix.join(dir, name);
-      if (!wanted.has(name) && !name.startsWith(".") && (await fs.isFile(target)))
-        wanted.set(name, target);
+      if (!wanted.has(name) && (await fs.isFile(target))) wanted.set(name, target);
     }
   const folder = terminalCommandsDir(baseDir);
+  const roots = ownManagedRoots(baseDir);
+  // Only a link this app made (one into its own versioned tools) is ever replaced or removed.
+  const ours = (link: string | null) =>
+    link !== null && roots.some((root) => link.startsWith(root));
   let changed = false;
   for (const name of await fs.listDir(folder)) {
     const path = NodePath.posix.join(folder, name);
     const current = await fs.readLink(path);
-    if (current !== null && current !== wanted.get(name)) {
+    if (ours(current) && current !== wanted.get(name)) {
       await fs.removeLink(path);
       changed = true;
     }
   }
   for (const [name, target] of wanted) {
     const path = NodePath.posix.join(folder, name);
-    if ((await fs.readLink(path)) === target) continue;
-    // Something that is not a link (the person's own file) stays.
-    if ((await fs.inspect(path)).kind !== "missing" && (await fs.readLink(path)) === null) continue;
+    const current = await fs.readLink(path);
+    if (current === target) continue;
+    // The person's own file or link stays.
+    if (!ours(current) && (await fs.inspect(path)).kind !== "missing") continue;
     await fs.setLink(path, target);
     changed = true;
   }
@@ -455,20 +468,14 @@ export async function syncTerminalPath(input: TerminalPathInput): Promise<Termin
   // Switched off: only other app homes' folders stay, if any are listed.
   const dirs = [...new Set([...(input.enabled ? own : []), ...others])].toSorted(blockOrder(home));
   const block = terminalPathBlock(dirs, home);
-  const writtenBefore = state === "unknown" || state.includes(file);
+  const writtenBefore = !input.rearm && (state === "unknown" || state.includes(file));
   const { text: next, action } = applyTerminalPathBlock(
     text,
     block === null ? null : asByteString(block),
     writtenBefore,
   );
 
-  let forget = false;
-  if (action === "opted-out" && input.enabled) {
-    // The person deleted the block: the caller turns the setting off, and the record lets go of
-    // the file so turning the setting back on adds the block again.
-    recorded = recorded.filter((entry) => entry !== file);
-    forget = true;
-  } else if (next === null) {
+  if (next === null) {
     // A block written before a lost record still counts as written.
     if (blocks.length > 0 && !recorded.includes(file)) recorded.push(file);
   } else {
@@ -478,9 +485,7 @@ export async function syncTerminalPath(input: TerminalPathInput): Promise<Termin
     if (action !== "removed") recorded.push(file);
   }
   const changed =
-    persisted === "unknown"
-      ? forget || recorded.length > 0
-      : recorded.join("\n") !== persisted.join("\n");
+    persisted === "unknown" ? recorded.length > 0 : recorded.join("\n") !== persisted.join("\n");
   // Lost to another writer: a block found without a record is recorded on the next pass.
   if (changed) await writeState(home, recorded, fs);
   return action;
@@ -496,13 +501,18 @@ export async function removeTerminalPathBlocks(
 ): Promise<ReadonlyArray<string>> {
   const left: Array<string> = [];
   for (const file of knownStartupFiles(home)) {
-    const removal = await staleBlockRemoval(file, fs).catch(() => undefined);
-    if (removal === null) continue;
-    if (
-      removal === undefined ||
-      !(await fs.replace(file, toBytes(removal.next), removal.info.mode, removal.info.stamp))
-    )
+    try {
+      const info = await fs.inspect(file);
+      if (info.kind !== "file") continue;
+      const text = (await fs.readBytes(file)).toString("latin1");
+      if (!text.includes(TERMINAL_PATH_START) && !text.includes(TERMINAL_PATH_END)) continue;
+      const { text: next, action } = applyTerminalPathBlock(text, null, true);
+      if (action === "malformed" || !editable(info)) left.push(file);
+      else if (next !== null && !(await fs.replace(file, toBytes(next), info.mode, info.stamp)))
+        left.push(file);
+    } catch {
       left.push(file);
+    }
   }
   const state = await readState(home, fs);
   if (state !== "unknown" && state.length > 0) await writeState(home, [], fs);
