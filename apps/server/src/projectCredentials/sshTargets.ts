@@ -55,16 +55,16 @@ const RUNS_OTHER_CODE = new RegExp(
   [
     String.raw`(?:^|[\s;&|(\x60{"'\\])(?:eval|source)(?:["']|\s|$)`,
     String.raw`(?:^|[\s;&|({])\.[ \t]+\S`,
-    String.raw`(?:^|[\s;&|(])(?:export|declare|typeset|local|readonly|read|mapfile|readarray|unset)\b[^\n;|&]*?[ \t]["']?\$`,
+    String.raw`(?:^|[\s;&|(])(?:export|declare|typeset|local|readonly|read|mapfile|readarray|unset)\b[^\n;|&]{0,200}?[ \t]["']?\$`,
     String.raw`(?:^|[\s;&|(])printf[ \t]+-v[ \t]+["']?\$`,
-    String.raw`(?:^|[\s;&|(])(?:declare|local|typeset)[ \t]+-[A-Za-z]*n`,
+    String.raw`(?:^|[\s;&|(])(?:declare|local|typeset)(?:[ \t]+-[A-Za-z]{1,8}){0,6}[ \t]+-[A-Za-z]{0,8}n`,
   ].join("|"),
   "mu",
 );
-/** `set --` replaces what the caller passed, so a default no longer stands in for it. */
-const RESETS_ARGUMENTS = /(?:^|[\s;&|(])set[ \t]+--/mu;
+/** `set --` and `shift` change what `$1` is, so a default no longer stands in for it. */
+const RESETS_ARGUMENTS = /(?:^|[\s;&|(])(?:set[ \t]+--|shift(?:[\s;&|)]|$))/mu;
 /** The word that ends a here-document started on this line; `<<<` is not one. */
-const HEREDOC = /(?<!<)<<(?!<)-?[ \t]*(["'\\]?)([A-Za-z_][A-Za-z0-9_]*)/u;
+const HEREDOC = /(?<!<)<<(?!<)-?[ \t]*(["'\\]?)([A-Za-z_][A-Za-z0-9_]*)/gu;
 /** A destination-shaped word the patterns refuse: the script still uses SSH. */
 const LOOSE_DESTINATION = /^[^@\s[\]]+@\S|^ssh:\/\//u;
 
@@ -127,20 +127,21 @@ function assignments(text: string): Map<string, ReadonlyArray<string>> {
     else written.sets.push(values);
   };
   const loops: Array<{ readonly name: string; readonly from: string }> = [];
-  /** The closing word of the here-document whose body the lines are in. */
-  let heredoc: string | null = null;
+  /** The closing words of the here-documents still open, in the order their bodies come. */
+  const heredocs: Array<string> = [];
   for (const line of text.split("\n")) {
     // What is left of the line once its plain form, if it has one, is taken off the front.
     let rest = line;
     // A here-document's body is text for another program: nothing in it sets a variable
     // here, and every name in it counts as a mention. So does a very long line, unparsed.
-    const body = heredoc !== null;
-    if (body && line.trim() === heredoc) heredoc = null;
+    const body = heredocs.length > 0;
+    if (body && line.trim() === heredocs[0]) heredocs.shift();
     const plain = !body && line.length <= MAX_LINE;
     const array = plain ? ARRAY.exec(line) : null;
     const scalar = plain && !array ? SCALAR.exec(line) : null;
     const loop = plain && !array && !scalar ? LOOP.exec(line) : null;
-    if (!body) heredoc = HEREDOC.exec(line)?.[2] ?? null;
+    // One line can open several (`cat <<A <<B`); their bodies follow one after the other.
+    if (!body) for (const opened of line.matchAll(HEREDOC)) heredocs.push(opened[2]!);
     if (array) {
       write(arrays, array[1]!, words(array[2]!));
       rest = array[2]!;

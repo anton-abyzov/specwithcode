@@ -135,6 +135,8 @@ done
       'while read line; do export "$line"; done < hosts.env',
       "declare -n R=$TARGET",
       "local -n R=TARGET",
+      "declare -g -n R=$TARGET",
+      "typeset -g -n R=TARGET",
       "printf -v \"$ref\" '%s' evil.example.com",
       "H=$1",
       'H="${OTHER:-evil.example.com}"',
@@ -174,6 +176,10 @@ done
     expect(targets(`H=$1\nH=good.example.com${ssh}`)).toEqual(good);
     expect(targets(`H="\${DEPLOY_HOST:-good.example.com}"${ssh}`)).toEqual(named);
     expect(targets(`OTHER=evil.example.com\nH="\${OTHER:-good.example.com}"${ssh}`)).toEqual(named);
+    expect(targets(`shift\nH="\${1:-good.example.com}"${ssh}`)).toEqual(named);
+    expect(
+      targets(`while [ $# -gt 0 ]; do shift; done\nH="\${1:-good.example.com}"${ssh}`),
+    ).toEqual(named);
     // `set --` decides what `$1` is, so the written default no longer stands in for it.
     expect(targets(`set -- evil.example.com\nH="\${1:-good.example.com}"${ssh}`)).toEqual(named);
   });
@@ -186,6 +192,11 @@ done
     expect(
       targets("H=good.example.com\ncat <<-EOF\n\tH=evil.example.com\n\tEOF\nssh root@$H true\n"),
     ).toEqual(named);
+    // Two opened on one line: both bodies are text, in order.
+    for (const open of ["cat <<A <<B", "cat >a <<'A' >b <<'B'", "cat <<A && cat <<B"])
+      expect(targets(`${open}\nfirst\nA\nH=evil.example.com\nB\nssh root@$H true\n`), open).toEqual(
+        named,
+      );
     // After the closing word the script's own lines count again; `<<<` opens nothing.
     expect(
       targets("cat <<EOF\nhello\nEOF\nH=good.example.com\ngrep x <<< y\nssh root@$H true\n"),
@@ -250,6 +261,15 @@ done
     expect(targets("  # ssh root@old.example.com true\nssh root@new.example.com true\n")).toEqual([
       server("root", "new.example.com"),
     ]);
+  });
+
+  it("stays quick on a long line built to slow the patterns", () => {
+    for (const unit of ["export ", "declare -a ", "ssh a@b ", ". ", "<<A ", "${A:=", "read "]) {
+      const script = `H=good.example.com\n${unit.repeat(Math.ceil(250_000 / unit.length))}\nssh root@$H true\n`;
+      const started = performance.now();
+      sshTargetsInScript(script);
+      expect(performance.now() - started, unit).toBeLessThan(1500);
+    }
   });
 
   it("stops at twelve targets", () => {
