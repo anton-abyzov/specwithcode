@@ -1,7 +1,11 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect } from "react";
 import { ProjectWorkspace } from "../components/studio/ProjectWorkspace";
-import { parseProjectWorkspaceSearch, projectWorkspaceSearch } from "../studio/projectPaneThreads";
+import {
+  parseProjectWorkspaceSearch,
+  projectKeyMoveSearch,
+  projectWorkspaceSearch,
+} from "../studio/projectPaneThreads";
 import type { SelectProjectThread } from "../studio/useProjectPaneSelection";
 import { useHiddenAideRoute } from "../studio/hiddenAideRoute";
 export const Route = createFileRoute("/projects/$projectKey")({
@@ -20,7 +24,7 @@ export const Route = createFileRoute("/projects/$projectKey")({
 function ProjectWorkspaceRoute() {
   const { projectKey } = Route.useParams();
   const search = Route.useSearch();
-  const { thread, checkout, threadEnvironment, restoreThread } = search;
+  const { thread, checkout, threadEnvironment, restoreThread, increment } = search;
   const navigate = Route.useNavigate();
   // A hidden personal assistant (Settings → General) has no page: links, history
   // and reloads that name it land on Overview instead. Nothing is deleted.
@@ -57,13 +61,16 @@ function ProjectWorkspaceRoute() {
       void navigate({
         to: "/projects/$projectKey",
         params: { projectKey: next },
-        search: {
-          ...projectWorkspaceSearch(thread ?? null, checkout, threadEnvironment),
-          ...(restoreThread ? { restoreThread: true } : {}),
-        },
+        search: projectKeyMoveSearch({
+          thread,
+          checkout,
+          threadEnvironment,
+          restoreThread,
+          increment,
+        }),
         replace: true,
       }),
-    [navigate, thread, checkout, threadEnvironment, restoreThread],
+    [navigate, thread, checkout, threadEnvironment, restoreThread, increment],
   );
   const selectCheckout = useCallback(
     (key: string) => {

@@ -259,6 +259,12 @@ export function createProjectWorkspaceAtoms<R, E>(
       staleTimeMs: 5_000,
       idleTtlMs: 30_000,
     }),
+    boardIncrement: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "project-workspace:board-increment",
+      tag: WS_METHODS.projectsBoardIncrement,
+      staleTimeMs: 5_000,
+      idleTtlMs: 30_000,
+    }),
     threadIncrementLink: createEnvironmentRpcCommand(runtime, {
       label: "project-workspace:thread-increment-link",
       tag: WS_METHODS.projectsThreadIncrementLink,

@@ -50,6 +50,7 @@ import {
   parseSpecweaveSpec,
   parseVerifyReport,
   type SpecweaveAcceptedSkip,
+  type SpecweaveTaskHolder,
 } from "../mods/SpecweaveProgress.ts";
 import { nodePath as NodePath } from "../nodePath.ts";
 import { specweaveStudioCheckpointPath } from "../orchestration-v2/SpecweaveCheckpoint.ts";
@@ -105,7 +106,11 @@ async function isDirectory(path: string): Promise<boolean> {
 }
 
 /** A file inside `root` after resolving links, no bigger than `maximum`; null otherwise. */
-export async function readBounded(root: string, file: string, maximum: number): Promise<string | null> {
+export async function readBounded(
+  root: string,
+  file: string,
+  maximum: number,
+): Promise<string | null> {
   try {
     const real = await NodeFSP.realpath(file);
     if (!inside(await NodeFSP.realpath(root), real)) return null;
@@ -505,7 +510,13 @@ export async function evidencedRoots(
 async function claimedBinding(
   thread: ThreadIncrementSource,
   allowedRoots: ReadonlyArray<string>,
-): Promise<{ root: string; incrementId: string; taskId: string | null } | null> {
+): Promise<{
+  root: string;
+  incrementId: string;
+  taskId: string | null;
+  /** The time of the ledger event that bound the thread. */
+  at: string | null;
+} | null> {
   const binding = await readJson(specweaveStudioThreadBindingPath(thread.threadId, thread.home));
   if (
     binding === null ||
@@ -534,6 +545,8 @@ async function claimedBinding(
     root,
     incrementId: binding.incrementId,
     taskId: typeof binding.taskId === "string" ? binding.taskId : null,
+    at:
+      typeof binding.at === "string" && Number.isFinite(Date.parse(binding.at)) ? binding.at : null,
   };
 }
 
@@ -611,6 +624,13 @@ async function checkpointNames(thread: ThreadIncrementSource, incrementId: strin
   );
 }
 
+/** A held task's owner and lease, as `ThreadIncrementTask` carries them. */
+export function taskHolderFields(
+  holder: SpecweaveTaskHolder | undefined,
+): { owner: string; leased: boolean } | Record<string, never> {
+  return holder === undefined ? {} : { owner: holder.owner, leased: holder.leased };
+}
+
 /** Reads one increment folder the way the plan card shows it. */
 export async function readIncrementProgress(input: {
   readonly root: string;
@@ -657,6 +677,8 @@ export async function readIncrementProgress(input: {
         criteria: [...task.criteria],
         note: task.note,
         ...(task.status === "done" && task.changedAt !== null ? { doneAt: task.changedAt } : {}),
+        ...(task.changedAt === null ? {} : { changedAt: task.changedAt }),
+        ...taskHolderFields(folded?.holders.get(task.id)),
         ...(card === undefined ? {} : { line: card.line }),
         ...(await sanitizeCardLink(card?.link ?? null, folder)),
       };
@@ -706,6 +728,7 @@ export async function readThreadIncrementProgress(
       let incrementId: string;
       let binding: ThreadIncrementBinding;
       let boundTaskId = claimed?.taskId ?? null;
+      let boundAt = claimed?.at ?? null;
       if (thread.link !== undefined) {
         incrementId = thread.link.incrementId;
         binding = "manual";
@@ -718,6 +741,7 @@ export async function readThreadIncrementProgress(
               ...(await writtenSpecIncrements(workspaceRoot, thread)).map((spec) => spec.root),
             ])) ?? (await incrementRootFor(workspaceRoot, thread.worktreePath));
           boundTaskId = null;
+          boundAt = null;
         }
       } else if (claimed !== null) {
         ({ root, incrementId } = claimed);
@@ -764,6 +788,7 @@ export async function readThreadIncrementProgress(
             threadId: thread.threadId as ThreadIncrementProgress["threadId"],
             binding,
             boundTaskId,
+            boundAt: boundTaskId === null ? null : boundAt,
           };
     }),
   );
