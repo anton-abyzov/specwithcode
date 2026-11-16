@@ -66,15 +66,35 @@ export const DEFAULT_MACHINE_NICKNAME_STAMP = "1970-01-01T00:00:00.000Z";
  * computer name ("Anton M5MAX PROLED" becomes "M5"), stamped older than any
  * choice. Null when an entry already exists, even an empty one (a person chose
  * the computer name), or when the computer name holds no chip.
+ *
+ * Null too when the name would not tell it apart from another machine it
+ * knows (`others`, id to computer name, such as its fleet list): one that
+ * already shows the name, or one with no name yet whose computer name holds
+ * the same chip, which would name itself the same. Both then keep their
+ * computer names until a person renames one. A name left by a machine that is
+ * not in `others` (an old registration) does not count.
  */
 export function defaultMachineNickname(
   nicknames: MachineNicknames,
   environmentId: string,
   hostLabel: string,
+  others: ReadonlyMap<string, string> = new Map(),
 ): MachineNickname | null {
   if (nicknames[environmentId] !== undefined) return null;
   const name = suggestMachineNickname(hostLabel);
-  return name === null ? null : { name, updatedAt: DEFAULT_MACHINE_NICKNAME_STAMP };
+  if (name === null) return null;
+  const fold = (value: string) => normalizeMachineNickname(value).toLocaleLowerCase();
+  for (const [id, label] of others) {
+    if (id === environmentId) continue;
+    const entry = nicknames[id];
+    const shown = entry === undefined ? null : normalizeMachineNickname(entry.name);
+    const clashes =
+      shown !== null && shown !== ""
+        ? fold(shown) === fold(name)
+        : entry === undefined && suggestMachineNickname(label) === name;
+    if (clashes) return null;
+  }
+  return { name, updatedAt: DEFAULT_MACHINE_NICKNAME_STAMP };
 }
 
 /**

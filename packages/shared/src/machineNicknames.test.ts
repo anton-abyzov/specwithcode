@@ -58,6 +58,42 @@ describe("machine nicknames", () => {
     );
   });
 
+  it("names itself only when the name tells it apart from the machines it knows", () => {
+    const m4 = new Map([["env-m4", "Anton's MacBook M4MAX"]]);
+    expect(defaultMachineNickname({}, "env-m5", "Anton M5MAX PROLED", m4)?.name).toBe("M5");
+    // Another machine already shows the name, in any case.
+    expect(
+      defaultMachineNickname(
+        { "env-other": at("m5", "2026-11-13T00:00:00.000Z") },
+        "env-m5",
+        "Anton M5MAX PROLED",
+        new Map([["env-other", "Studio"]]),
+      ),
+    ).toBeNull();
+    // A second M5 nobody named would name itself the same: both keep their computer names.
+    expect(
+      defaultMachineNickname({}, "env-m5", "Anton M5MAX PROLED", new Map([["env-b", "Office M5 Pro"]])),
+    ).toBeNull();
+    // One that kept its computer name on purpose shows that, not "M5".
+    expect(
+      defaultMachineNickname(
+        { "env-b": at("", "2026-11-13T00:00:00.000Z") },
+        "env-m5",
+        "Anton M5MAX PROLED",
+        new Map([["env-b", "Office M5 Pro"]]),
+      )?.name,
+    ).toBe("M5");
+    // A name left by an old registration nobody lists any more does not count.
+    expect(
+      defaultMachineNickname(
+        { "env-old": at("m5", "2026-11-13T00:00:00.000Z") },
+        "env-m5",
+        "Anton M5MAX PROLED",
+        m4,
+      )?.name,
+    ).toBe("M5");
+  });
+
   it("finds another machine already shown under a name, ignoring case", () => {
     const names = new Map([
       ["stale", "m5"],

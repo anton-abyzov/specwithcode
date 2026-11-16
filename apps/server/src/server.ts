@@ -720,7 +720,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Keeps machine nicknames the same on every paired machine.
   MachineNicknameSync.layer.pipe(Layer.provide(FleetTargets.layer)),
   // A machine nobody named yet takes the chip in its computer name ("M5").
-  MachineDefaultName.layer,
+  MachineDefaultName.layer.pipe(Layer.provide(FleetTargets.layer)),
   // Asks Studio Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
   InactiveThreadArchive.layerStart.pipe(
