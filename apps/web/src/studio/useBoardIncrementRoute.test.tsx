@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, Activity, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -25,7 +25,10 @@ describe("useBoardIncrementRoute", () => {
 
   function Probe({ available, shown }: { available: boolean; shown: boolean }) {
     "use no memo";
-    route = useBoardIncrementRoute({ available, shown, show });
+    const current = useBoardIncrementRoute({ available, shown, show });
+    useEffect(() => {
+      route = current;
+    });
     return null;
   }
   const render = (search: Record<string, unknown>, pane: { available: boolean; shown: boolean }) =>
@@ -91,6 +94,25 @@ describe("useBoardIncrementRoute", () => {
     await render({ increment: "0040-search" }, { available: true, shown: false });
     await render({}, { available: true, shown: false });
     await render({ increment: "0040-search" }, { available: true, shown: false });
+    expect(show).toHaveBeenCalledTimes(2);
+  });
+
+  it("brings the board up again when a kept page is shown again", async () => {
+    const page = (mode: "visible" | "hidden", shown: boolean) =>
+      act(async () => {
+        router.search = { increment: "0040-search" };
+        root.render(
+          <Activity mode={mode}>
+            <Probe available shown={shown} />
+          </Activity>,
+        );
+      });
+    await page("visible", false);
+    expect(show).toHaveBeenCalledTimes(1);
+    await page("visible", true);
+    // Another project is opened and its panel is left on another tab; this page is kept, hidden.
+    await page("hidden", false);
+    await page("visible", false);
     expect(show).toHaveBeenCalledTimes(2);
   });
 

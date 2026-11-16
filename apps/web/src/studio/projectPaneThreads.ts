@@ -240,6 +240,21 @@ export function projectWorkspaceSearch(
   };
 }
 
+/**
+ * The search a project page keeps when its key is replaced by the project's
+ * current one: the same thread, checkout and open increment, so a link made
+ * under the old key still lands where it pointed.
+ */
+export function projectKeyMoveSearch(search: {
+  readonly [Key in keyof ProjectWorkspaceSearch]?: ProjectWorkspaceSearch[Key] | undefined;
+}): ProjectWorkspaceSearch {
+  return {
+    ...projectWorkspaceSearch(search.thread ?? null, search.checkout, search.threadEnvironment),
+    ...(search.restoreThread ? { restoreThread: true } : {}),
+    ...(search.increment ? { increment: search.increment } : {}),
+  };
+}
+
 type ChatShell = Pick<EnvironmentThreadShell, "id"> &
   Partial<Pick<EnvironmentThreadShell, "createdBy" | "lineage" | "forkedFrom">>;
 

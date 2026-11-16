@@ -8,6 +8,7 @@ import {
   isProjectOwnedChat,
   paneSelectionCorrection,
   parseProjectWorkspaceSearch,
+  projectKeyMoveSearch,
   projectPaneTargetForChat,
   projectPaneThread,
   threadBelongsToProject,
@@ -639,5 +640,35 @@ describe("standalone chat descendants", () => {
   it("retains exact coordinator ancestry even when the coordinator shell has not loaded", () => {
     const child = shell("native-child", { createdBy: "user", lineage: subagentOf("coord") });
     expect(chatNavigationTarget(child, group).to).toBe("/projects/$projectKey");
+  });
+});
+
+describe("projectKeyMoveSearch", () => {
+  it("keeps the thread, checkout and open increment when the project key is replaced", () => {
+    const thread = "thread:mcp:a:b:0" as EnvironmentThreadShell["id"];
+    expect(
+      projectKeyMoveSearch({
+        thread,
+        threadEnvironment: "host",
+        checkout: "atlas",
+        restoreThread: true,
+        increment: "0040-search",
+      }),
+    ).toEqual({
+      thread,
+      threadEnvironment: "host",
+      checkout: "atlas",
+      restoreThread: true,
+      increment: "0040-search",
+    });
+    expect(projectKeyMoveSearch({ increment: "0040-search" })).toEqual({
+      increment: "0040-search",
+    });
+    expect(projectKeyMoveSearch({})).toEqual({});
+  });
+  it("drops the one-shot pane parameter", () => {
+    expect(projectKeyMoveSearch({ pane: "designs", increment: "0040-search" })).toEqual({
+      increment: "0040-search",
+    });
   });
 });

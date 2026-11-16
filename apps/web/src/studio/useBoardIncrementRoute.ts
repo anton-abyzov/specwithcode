@@ -55,5 +55,14 @@ export function useBoardIncrementRoute(pane: BoardIncrementPane): {
     brought.current = incrementId;
     if (!shown) show();
   }, [available, incrementId, show, shown]);
+  // A kept project page is hidden, not unmounted, while another project is
+  // open, and the tab it left may have changed there. Coming back to a link
+  // that names an increment brings the board up again.
+  useEffect(
+    () => () => {
+      brought.current = null;
+    },
+    [],
+  );
   return { incrementId, open };
 }
