@@ -81,6 +81,8 @@ export function useProjectLinkSuggestions(
       onOpenChange={(next) => !next && setOpen(null)}
       project={target.project}
       initialCandidate={target.candidate}
+      // A copy that joins a project already shared never changes that project's main.
+      joining={(open?.anchor.workspaceSettings?.logicalProject?.members.length ?? 0) > 1}
     />
   ) : null;
   return { suggestionFor, dialog };

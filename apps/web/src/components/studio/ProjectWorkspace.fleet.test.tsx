@@ -262,6 +262,34 @@ describe("a workers-only copy whose coordinator runs on another machine", () => 
     }
   });
 
+  it("makes this copy main through main's own confirmed move, then returns here", async () => {
+    state.shells = [shell("worker")];
+    // This window may operate and write on m4, so the move can start from there.
+    state.recoveryHosts = ["m4"];
+    try {
+      await viewCopy();
+      const makeMain = notice()!.querySelector<HTMLButtonElement>("[data-make-main]")!;
+      expect(makeMain.disabled).toBe(false);
+      expect(notice()?.textContent).toContain(
+        "Making host main moves the coordinator and its conversation here from m4, which becomes a copy.",
+      );
+      await act(async () => makeMain.click());
+      // The conversation to move is on m4: its page is shown, and its move dialog opens.
+      expect(state.savedMachines.atlas).toBe("m4:main");
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      await render();
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+      expect(dialog).not.toBeNull();
+      // Closing the dialog without moving returns to the copy's page.
+      await act(async () =>
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+      );
+      expect(state.savedMachines.atlas).toBe("host:project");
+    } finally {
+      delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;
+    }
+  });
+
   it("keeps the history wording for a copy that ran a coordinator before", async () => {
     try {
       await viewCopy();
