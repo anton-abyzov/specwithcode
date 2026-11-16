@@ -3403,6 +3403,8 @@ export const ja: PhraseCatalog = {
   "Previous artifact": "前の成果物",
   "Next artifact": "次の成果物",
   "Open in panel": "パネルで開く",
+  "Open this file from a thread to preview it.":
+    "プレビューするには、スレッドからこのファイルを開いてください。",
   "Open in browser": "ブラウザーで開く",
   "{name} could not be loaded from the host.": "ホストから {name} を読み込めませんでした。",
   Attachments: "添付ファイル",

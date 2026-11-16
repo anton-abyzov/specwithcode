@@ -3410,6 +3410,8 @@ export const pt: PhraseCatalog = {
   "Previous artifact": "Artefato anterior",
   "Next artifact": "Próximo artefato",
   "Open in panel": "Abrir no painel",
+  "Open this file from a thread to preview it.":
+    "Abra este arquivo a partir de uma conversa para visualizá-lo.",
   "Open in browser": "Abrir no navegador",
   "{name} could not be loaded from the host.": "Não foi possível carregar {name} do host.",
   Attachments: "Anexos",

@@ -3291,6 +3291,7 @@ export const zh: PhraseCatalog = {
   "Previous artifact": "上一个产物",
   "Next artifact": "下一个产物",
   "Open in panel": "在面板中打开",
+  "Open this file from a thread to preview it.": "从对话中打开此文件即可预览。",
   "Open in browser": "在浏览器中打开",
   "{name} could not be loaded from the host.": "无法从主机加载 {name}。",
   Attachments: "附件",

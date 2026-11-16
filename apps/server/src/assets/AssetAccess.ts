@@ -33,6 +33,7 @@ import {
   type ImageDimensions,
 } from "@specweave-studio/shared/imageDimensions";
 import { githubMediaFetchUrl, githubMediaFileName } from "@specweave-studio/shared/githubMedia";
+import { VIDEO_FILE_EXTENSIONS } from "@specweave-studio/shared/video";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@specweave-studio/shared/projectFavicon";
 import { toolOutputImages } from "@specweave-studio/shared/toolOutput";
 import * as Clock from "effect/Clock";
@@ -79,9 +80,22 @@ const INLINE_PREVIEW_MIME_TYPES: Record<string, string> = {
 };
 const inlinePreviewMimeTypeForExtension = (extension: string) =>
   INLINE_PREVIEW_MIME_TYPES[extension] ?? audioMimeTypeFromExtension(`.${extension}`) ?? undefined;
+const WORKSPACE_MEDIA_PREVIEW_EXTENSIONS = [
+  ...VIDEO_FILE_EXTENSIONS.map((extension) => `.${extension}`),
+  ".aac",
+  ".aiff",
+  ".flac",
+  ".m4a",
+  ".mp3",
+  ".oga",
+  ".ogg",
+  ".opus",
+  ".wav",
+];
 const PREVIEW_ASSET_EXTENSIONS = new Set([
   ...WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   ...WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
+  ...WORKSPACE_MEDIA_PREVIEW_EXTENSIONS,
   ".css",
   ".js",
   ".mjs",
@@ -90,6 +104,8 @@ const PREVIEW_ASSET_EXTENSIONS = new Set([
   ".woff",
   ".woff2",
 ]);
+const htmlFilePreview = (filePath: string) =>
+  /\.html?$/i.test(filePath) ? ({ htmlPreview: "file" as const }) : {};
 
 const AssetClaimsSchema = Schema.Union([
   Schema.Struct({
@@ -191,6 +207,8 @@ export type ResolvedAsset =
       readonly immutable?: boolean;
       /** Host HTML whose local picture paths are swapped for signed URLs before serving. */
       readonly rewritesLocalReferences?: boolean;
+      /** File HTML (workspace or host), never an attachment. The route frames and locks it. */
+      readonly htmlPreview?: "file";
     }
   | {
       readonly kind: "bytes";
@@ -1095,7 +1113,9 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
           path: canonicalFile,
           mimeType,
           file,
-          ...(mimeType === "text/html" ? { rewritesLocalReferences: true } : {}),
+          ...(mimeType === "text/html"
+            ? { rewritesLocalReferences: true, htmlPreview: "file" as const }
+            : {}),
         } satisfies ResolvedAsset)
       : null;
   }
@@ -1110,7 +1130,11 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ),
     );
     return exactWorkspaceFile
-      ? ({ kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset)
+      ? ({
+          kind: "file",
+          path: exactWorkspaceFile,
+          ...htmlFilePreview(exactWorkspaceFile),
+        } satisfies ResolvedAsset)
       : null;
   }
   const segments = decodedPath.split(/[\\/]/);
@@ -1132,5 +1156,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       unlessProtected(path.resolve(claims.workspaceRoot, joinedRelativePath), file),
     ),
   );
-  return workspaceFile ? ({ kind: "file", path: workspaceFile } satisfies ResolvedAsset) : null;
+  return workspaceFile
+    ? ({ kind: "file", path: workspaceFile, ...htmlFilePreview(workspaceFile) } satisfies ResolvedAsset)
+    : null;
 });

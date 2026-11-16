@@ -3400,6 +3400,8 @@ export const ru: PhraseCatalog = {
   "Previous artifact": "Предыдущий артефакт",
   "Next artifact": "Следующий артефакт",
   "Open in panel": "Открыть в панели",
+  "Open this file from a thread to preview it.":
+    "Откройте этот файл из треда, чтобы посмотреть его.",
   "Open in browser": "Открыть в браузере",
   "{name} could not be loaded from the host.": "Не удалось загрузить {name} с хоста.",
   Attachments: "Вложения",
