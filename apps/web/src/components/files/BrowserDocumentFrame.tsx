@@ -30,6 +30,11 @@ const PDF_VIEWER_FRAGMENT = "#toolbar=0&view=FitH";
 export const isPdfPreviewFile = (path: string): boolean =>
   /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 
+/** The link script's id. A page's own message does not use it, and is ignored. */
+export function isStudioFileLinkId(id: string | number): boolean {
+  return typeof id === "string" && /^studio-file-link-[1-9]\d{0,5}$/.test(id);
+}
+
 /** Asks the server for the wrapper. Keeps a query and a hash the URL already has. */
 function fileFrameSrc(src: string): string {
   const hashIndex = src.indexOf("#");
@@ -85,7 +90,12 @@ function HtmlFileFrame(props: {
     const openLink = (event: MessageEvent) => {
       const frame = frameRef.current;
       const request = readHtmlRenderLinkRequest(event.data);
-      if (request === undefined || !trustedFrameMessage(event, frame) || !readerIsUsing(frame!)) {
+      if (
+        request === undefined ||
+        !isStudioFileLinkId(request.id) ||
+        !trustedFrameMessage(event, frame) ||
+        !readerIsUsing(frame!)
+      ) {
         return;
       }
       window.open(request.url, "_blank", "noopener,noreferrer");

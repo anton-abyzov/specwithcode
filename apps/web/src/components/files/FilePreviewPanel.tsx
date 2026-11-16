@@ -101,10 +101,12 @@ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey } from "./fileContentRevision";
 import {
   filePreviewReadErrorMessage,
+  htmlPanelSourcePath,
   isMarkdownPreviewFile,
   resolveFilePreviewPath,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
+  SIDE_PANEL_MARKDOWN_STARTS_RENDERED,
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
@@ -855,11 +857,14 @@ export default function FilePreviewPanel({
   // it on the panel meant a thread switch dropped it and forced source back.
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
     RENDER_MARKDOWN_STORAGE_KEY,
-    true,
+    SIDE_PANEL_MARKDOWN_STARTS_RENDERED,
     Schema.Boolean,
   );
-  // HTML source is for the open file only. A later file opens rendered.
+  // HTML source is for the open file only. Opening any file starts rendered.
   const [htmlSourcePath, setHtmlSourcePath] = useState<string | null>(null);
+  useEffect(() => {
+    setHtmlSourcePath((current) => htmlPanelSourcePath(current, { type: "open" }));
+  }, [relativePath]);
   const [renderTablePreferred, setRenderTablePreferred] = useLocalStorage(
     RENDER_TABLE_STORAGE_KEY,
     true,
@@ -1038,7 +1043,14 @@ export default function FilePreviewPanel({
               onPress={() => {
                 const pressed = !rendered;
                 if (renderedMode === "html") {
-                  setHtmlSourcePath(pressed || relativePath === null ? null : relativePath);
+                  setHtmlSourcePath((current) =>
+                    htmlPanelSourcePath(
+                      current,
+                      pressed || relativePath === null
+                        ? { type: "preview" }
+                        : { type: "source", path: relativePath },
+                    ),
+                  );
                 } else if (setRenderedPreferred) {
                   setRenderedPreferred(pressed);
                 }

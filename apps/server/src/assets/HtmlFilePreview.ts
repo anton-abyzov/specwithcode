@@ -7,23 +7,30 @@ import { createHash } from "node:crypto";
  * page itself gets the locked policy and a link script.
  */
 
-/** Locked policy for a framed file. `'self'` is the asset server. */
-export const HTML_FILE_LOCKED_POLICY =
-  "sandbox allow-scripts allow-forms; default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'";
-
 /**
- * Relays postMessage between the page and the app. Does nothing when this
- * document is the top window, so a tab opened on the wrapper cannot loop.
- * The bytes are hashed into the wrapper's script-src; keep them exact.
+ * Relays a link open from the page to the app, and nothing else. A page can
+ * post any object; forwarding it would let a script open a site the reader
+ * did not click. Does nothing when this document is the top window, so a tab
+ * opened on the wrapper cannot loop. The bytes are hashed into the wrapper's
+ * script-src; keep them exact.
  */
 export const HTML_FILE_RELAY_SCRIPT =
-  '(function(){var f=document.querySelector("iframe");addEventListener("message",function(e){if(!f||!f.contentWindow||!e.data||typeof e.data!=="object")return;if(e.source===f.contentWindow){if(parent!==window)parent.postMessage(e.data,"*");}else if(e.source===parent&&parent!==window)f.contentWindow.postMessage(e.data,"*");});})();';
+  '(function(){var f=document.querySelector("iframe");addEventListener("message",function(e){if(!f||!f.contentWindow||!e.data||typeof e.data!=="object")return;if(e.source===f.contentWindow){if(parent===window)return;var d=e.data,p=d.params,u=p&&typeof p.url==="string"?p.url:"";if(d.jsonrpc!=="2.0"||d.method!=="ui/open-link"||typeof d.id!=="string"||d.id.indexOf("studio-file-link-")!==0||(u.indexOf("https://")!==0&&u.indexOf("http://")!==0))return;parent.postMessage({jsonrpc:"2.0",id:d.id,method:"ui/open-link",params:{url:u}},"*");}else if(e.source===parent&&parent!==window)f.contentWindow.postMessage(e.data,"*");});})();';
 
 const HTML_FILE_RELAY_HASH = createHash("sha256").update(HTML_FILE_RELAY_SCRIPT).digest("base64");
 
 /** A trusted primary click on an http(s) link to another site asks the app to open it. */
 export const HTML_FILE_LINK_SCRIPT =
   '(function(){if(parent===window)return;var n=0;addEventListener("click",function(e){if(!e.isTrusted||e.button!==0||e.defaultPrevented||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;var l=e.target;while(l&&l.tagName!=="A")l=l.parentElement;if(!l)return;var u;try{u=new URL(l.href,location.href);}catch(x){return;}if(u.protocol!=="http:"&&u.protocol!=="https:")return;if(u.host===location.host)return;e.preventDefault();parent.postMessage({jsonrpc:"2.0",id:"studio-file-link-"+(++n),method:"ui/open-link",params:{url:u.href}},"*");},true);})();';
+
+const HTML_FILE_LINK_HASH = createHash("sha256").update(HTML_FILE_LINK_SCRIPT).digest("base64");
+
+/**
+ * Locked policy for a framed file. `'self'` is the asset server. script-src
+ * is only the link script: the page's own scripts do not run, so they cannot
+ * post an open for a URL the reader did not click.
+ */
+export const HTML_FILE_LOCKED_POLICY = `sandbox allow-scripts allow-forms; default-src 'none'; script-src 'sha256-${HTML_FILE_LINK_HASH}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'`;
 
 const LINK_SCRIPT_MARKUP = `<script data-studio-file-links>${HTML_FILE_LINK_SCRIPT}</script>`;
 
@@ -90,7 +97,7 @@ export function htmlPreviewWrapperDocument(pagePath: string): string {
 
 /** Adds the link script once, before the last body end, or at the end. */
 export function injectHtmlFileLinkScript(html: string): string {
-  if (html.includes("data-studio-file-links")) return html;
+  if (html.includes(LINK_SCRIPT_MARKUP)) return html;
   const close = html.toLowerCase().lastIndexOf("</body>");
   return close < 0
     ? `${html}${LINK_SCRIPT_MARKUP}`
