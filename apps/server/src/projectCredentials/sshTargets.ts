@@ -38,7 +38,7 @@ const POSITIONAL = /^\$(?:[@*]|\{?[0-9]+\}?)$/u;
 const DECLARED = String.raw`(?:(?:export|readonly|local|declare|typeset)\s+(?:-[A-Za-z]+\s+)*)?`;
 const ARRAY = new RegExp(String.raw`^\s*${DECLARED}(${NAME})=\(([^)]*)\)\s*(?:#.*)?$`, "u");
 const SCALAR = new RegExp(String.raw`^\s*${DECLARED}(${NAME})=(\S*)\s*(?:#.*)?$`, "u");
-const FALLBACK = new RegExp(String.raw`^\$\{(?:${NAME}|[0-9]+):-([^}]*)\}$`, "u");
+const FALLBACK = new RegExp(String.raw`^\$\{(${NAME}|[0-9]+):-([^}]*)\}$`, "u");
 const LOOP = new RegExp(String.raw`^(\s*for\s+(${NAME}))\s+in\s+(.+?)\s*(?:;|$)`, "u");
 const LOOP_OVER = new RegExp(String.raw`^"?\$\{(${NAME})\[[@*]\]\}"?$`, "u");
 /** `${A:=x}` and `${A=x}` read a variable and may write it. */
@@ -46,8 +46,25 @@ const EXPANSION_WRITE = new RegExp(String.raw`\$\{(${NAME}):?=`, "gu");
 /** A read of a variable: `$A`, `${A}`, `${A:-x}`, `${A[@]}`, `${#A}`, `${!A}`. */
 const EXPANSION = new RegExp(String.raw`\$\{?[#!]?${NAME}`, "gu");
 const WORD = new RegExp(NAME, "gu");
-/** Code this file does not hold can write any variable: `eval`, `source x`, `. x`. */
-const RUNS_OTHER_CODE = /(?:^|[\s;&|(`])(?:eval|source)(?:\s|$)|(?:^|[;&|(])[ \t]*\.[ \t]+\S/mu;
+/**
+ * Code this file does not hold can write any variable: `eval`, `source x`,
+ * `. x` wherever a command can start, and a builtin handed a computed name
+ * (`export "$kv"`, `read "$ref"`, `printf -v "$ref"`, a name reference).
+ */
+const RUNS_OTHER_CODE = new RegExp(
+  [
+    String.raw`(?:^|[\s;&|(\x60{"'\\])(?:eval|source)(?:["']|\s|$)`,
+    String.raw`(?:^|[\s;&|({])\.[ \t]+\S`,
+    String.raw`(?:^|[\s;&|(])(?:export|declare|typeset|local|readonly|read|mapfile|readarray|unset)\b[^\n;|&]*?[ \t]["']?\$`,
+    String.raw`(?:^|[\s;&|(])printf[ \t]+-v[ \t]+["']?\$`,
+    String.raw`(?:^|[\s;&|(])(?:declare|local|typeset)[ \t]+-[A-Za-z]*n`,
+  ].join("|"),
+  "mu",
+);
+/** `set --` replaces what the caller passed, so a default no longer stands in for it. */
+const RESETS_ARGUMENTS = /(?:^|[\s;&|(])set[ \t]+--/mu;
+/** The word that ends a here-document started on this line; `<<<` is not one. */
+const HEREDOC = /(?<!<)<<(?!<)-?[ \t]*(["'\\]?)([A-Za-z_][A-Za-z0-9_]*)/u;
 /** A destination-shaped word the patterns refuse: the script still uses SSH. */
 const LOOSE_DESTINATION = /^[^@\s[\]]+@\S|^ssh:\/\//u;
 
@@ -65,6 +82,8 @@ const unquote = (value: string) => value.replace(/^(["'])(.*)\1$/u, "$2");
 interface Written {
   readonly sets: Array<ReadonlyArray<string>>;
   opaque: boolean;
+  /** Given what the caller passed (`$1`, `"$@"`), for which a written default stands in. */
+  positional: boolean;
 }
 
 /**
@@ -86,32 +105,54 @@ function assignments(text: string): Map<string, ReadonlyArray<string>> {
   const arrays = new Map<string, Written>();
   /** Names the file mentions anywhere outside a plain form or a read. */
   const mentioned = new Set<string>();
-  const write = (into: Map<string, Written>, name: string, values: ReadonlyArray<string>) => {
-    const written = into.get(name) ?? { sets: [], opaque: false };
+  const resets = RESETS_ARGUMENTS.test(text);
+  const write = (
+    into: Map<string, Written>,
+    name: string,
+    values: ReadonlyArray<string>,
+    fromArgument = false,
+  ) => {
+    const written = into.get(name) ?? { sets: [], opaque: false, positional: false };
     into.set(name, written);
+    if (fromArgument) written.positional = true;
     const passed = values.length > 0 && values.every((value) => POSITIONAL.test(value));
-    if (passed) return;
+    if (passed) {
+      // After a plain value, the caller's argument replaces it: the plain value is not what runs.
+      if (written.sets.length > 0) written.opaque = true;
+      written.positional = true;
+      return;
+    }
     if (values.length === 0 || values.length > MAX_VALUES || !values.every((v) => LITERAL.test(v)))
       written.opaque = true;
     else written.sets.push(values);
   };
   const loops: Array<{ readonly name: string; readonly from: string }> = [];
+  /** The closing word of the here-document whose body the lines are in. */
+  let heredoc: string | null = null;
   for (const line of text.split("\n")) {
     // What is left of the line once its plain form, if it has one, is taken off the front.
     let rest = line;
-    // A very long line is not parsed, so every name on it counts as a mention.
-    const array = line.length > MAX_LINE ? null : ARRAY.exec(line);
-    const scalar = array || line.length > MAX_LINE ? null : SCALAR.exec(line);
-    const loop = array || scalar || line.length > MAX_LINE ? null : LOOP.exec(line);
+    // A here-document's body is text for another program: nothing in it sets a variable
+    // here, and every name in it counts as a mention. So does a very long line, unparsed.
+    const body = heredoc !== null;
+    if (body && line.trim() === heredoc) heredoc = null;
+    const plain = !body && line.length <= MAX_LINE;
+    const array = plain ? ARRAY.exec(line) : null;
+    const scalar = plain && !array ? SCALAR.exec(line) : null;
+    const loop = plain && !array && !scalar ? LOOP.exec(line) : null;
+    if (!body) heredoc = HEREDOC.exec(line)?.[2] ?? null;
     if (array) {
       write(arrays, array[1]!, words(array[2]!));
       rest = array[2]!;
     } else if (scalar) {
       const value = unquote(scalar[2]!);
       const fallback = FALLBACK.exec(value);
-      // `A=($(cmd))` fits the one-word form but is a list from a command.
+      // `A=($(cmd))` fits the one-word form but is a list from a command. A default
+      // taken from another variable (`A="${B:-x}"`) is that variable's value, not `x`.
+      const argument = fallback !== null && /^[0-9]+$/u.test(fallback[1]!);
       if (value.startsWith("(")) mentioned.add(scalar[1]!);
-      else write(scalars, scalar[1]!, [fallback ? fallback[1]! : value]);
+      else if (fallback && fallback[1] !== scalar[1] && !argument) mentioned.add(scalar[1]!);
+      else write(scalars, scalar[1]!, [fallback ? fallback[2]! : value], argument);
       rest = scalar[2]!;
     } else if (loop) {
       const over = LOOP_OVER.exec(loop[3]!.trim());
@@ -126,7 +167,7 @@ function assignments(text: string): Map<string, ReadonlyArray<string>> {
   const settled = (name: string, into: Map<string, Written>): ReadonlyArray<string> | null => {
     const written = into.get(name);
     if (written === undefined || written.opaque || written.sets.length === 0) return null;
-    if (mentioned.has(name)) return null;
+    if (mentioned.has(name) || (written.positional && resets)) return null;
     const first = written.sets[0]!.join(" ");
     return written.sets.every((set) => set.join(" ") === first) ? written.sets[0]! : null;
   };
@@ -181,7 +222,9 @@ export function sshTargetsInScript(script: string): {
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index]!;
       if (token.startsWith("-")) {
-        if (VALUE_OPTIONS.has(token)) index += 1;
+        // `-p 22`, and flags written together whose last one takes the value: `-vp 22`.
+        const bundled = /^-[A-Za-z]{2,}$/u.test(token) && VALUE_OPTIONS.has(`-${token.at(-1)}`);
+        if (VALUE_OPTIONS.has(token) || bundled) index += 1;
         continue;
       }
       // After ssh's destination come the words of the remote command, which may hold an `@`.
@@ -189,7 +232,8 @@ export function sshTargetsInScript(script: string): {
       if (LOOSE_DESTINATION.test(token)) used = true;
       const destination = DESTINATION.exec(token);
       if (!destination) {
-        if (last) break;
+        // Options kept in a variable come before the destination: `ssh $OPTS user@host`.
+        if (last && !token.startsWith("$")) break;
         continue;
       }
       if (last) index = tokens.length;

@@ -123,6 +123,21 @@ done
       "source ./hosts.env",
       ". ./hosts.env",
       "true && . ./hosts.env",
+      "if [ -f hosts.env ]; then . ./hosts.env; fi",
+      "for f in a; do . ./hosts.env; done",
+      "{ . ./hosts.env; }",
+      "command . ./hosts.env",
+      '\\eval "$CODE"',
+      '"eval" "$CODE"',
+      '"source" ./hosts.env',
+      'for kv in "$@"; do export "$kv"; done',
+      "export $(cat hosts.env)",
+      'while read line; do export "$line"; done < hosts.env',
+      "declare -n R=$TARGET",
+      "local -n R=TARGET",
+      "printf -v \"$ref\" '%s' evil.example.com",
+      "H=$1",
+      'H="${OTHER:-evil.example.com}"',
       "X=1; H=evil.example.com",
       "H=evil.example.com true",
       "H[0]=evil.example.com",
@@ -148,6 +163,45 @@ done
       server("root", "a.example.com", "H"),
       server("root", "b.example.com", "H"),
     ]);
+  });
+
+  it("takes a default only from the variable itself or the caller's argument", () => {
+    const named = [{ kind: "variable", user: "root", host: null, variable: "H" }];
+    const good = [server("root", "good.example.com", "H")];
+    const ssh = "\nssh root@$H true\n";
+    expect(targets(`H="\${H:-good.example.com}"${ssh}`)).toEqual(good);
+    expect(targets(`H="\${1:-good.example.com}"${ssh}`)).toEqual(good);
+    expect(targets(`H=$1\nH=good.example.com${ssh}`)).toEqual(good);
+    expect(targets(`H="\${DEPLOY_HOST:-good.example.com}"${ssh}`)).toEqual(named);
+    expect(targets(`OTHER=evil.example.com\nH="\${OTHER:-good.example.com}"${ssh}`)).toEqual(named);
+    // `set --` decides what `$1` is, so the written default no longer stands in for it.
+    expect(targets(`set -- evil.example.com\nH="\${1:-good.example.com}"${ssh}`)).toEqual(named);
+  });
+
+  it("does not take a here-document's body for the script's own assignments", () => {
+    const named = [{ kind: "variable", user: "root", host: null, variable: "H" }];
+    expect(targets("cat > remote.sh <<'EOF'\nH=good.example.com\nEOF\nssh root@$H true\n")).toEqual(
+      named,
+    );
+    expect(
+      targets("H=good.example.com\ncat <<-EOF\n\tH=evil.example.com\n\tEOF\nssh root@$H true\n"),
+    ).toEqual(named);
+    // After the closing word the script's own lines count again; `<<<` opens nothing.
+    expect(
+      targets("cat <<EOF\nhello\nEOF\nH=good.example.com\ngrep x <<< y\nssh root@$H true\n"),
+    ).toEqual([server("root", "good.example.com", "H")]);
+  });
+
+  it("finds the destination behind options kept in a variable or written together", () => {
+    const good = [server("root", "good.example.com")];
+    expect(targets("ssh $OPTS root@good.example.com true\n")).toEqual(good);
+    expect(targets('ssh "${OPTS[@]}" root@good.example.com true\n')).toEqual(good);
+    expect(targets("ssh -vp 2222 root@good.example.com true\n")).toEqual(good);
+    expect(sshTargetsInScript('ssh "$target" mail ops@old.example.com\n')).toEqual({
+      targets: [],
+      more: false,
+      used: false,
+    });
   });
 
   it("takes only ssh's first word as its destination", () => {
