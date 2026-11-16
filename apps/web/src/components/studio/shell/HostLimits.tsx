@@ -38,6 +38,7 @@ import { ProviderInstanceIcon } from "../../chat/ProviderInstanceIcon";
 import { AccountHeader, shortDuration } from "../../usage/AccountHeader";
 import { RunOutNotice } from "../../usage/RunOutNotice";
 import { getDriverOption } from "../../settings/providerDriverMeta";
+import { Button } from "../../ui/button";
 import {
   Select,
   SelectGroup,
@@ -292,9 +293,9 @@ export function HostLimits({
             ) : null}
           </SelectPopup>
         </Select>
-        <button type="button" className="sws-hl-link" onClick={() => setNow(Date.now())}>
+        <Button variant="outline" size="xs" onClick={() => setNow(Date.now())}>
           Update reset countdowns
-        </button>
+        </Button>
       </div>
       {view === "pooled" ? (
         pooled

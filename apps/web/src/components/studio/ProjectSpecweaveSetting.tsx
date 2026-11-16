@@ -4,6 +4,7 @@ import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state
 import { projectWorkspace } from "../../studio/projectWorkspace";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { requestMachineToolInstall } from "../machineTools/machineToolInstallRequest";
+import { Button } from "../ui/button";
 import { SPECWEAVE_SETUP_DESCRIPTION } from "./ProjectCreation";
 
 /**
@@ -77,9 +78,9 @@ export function ProjectSpecweaveSetting({
           </p>
         ) : null}
         {needsNode ? (
-          <button
-            type="button"
-            className="project-control"
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() =>
               requestMachineToolInstall({
                 environmentId: project.environmentId,
@@ -89,37 +90,22 @@ export function ProjectSpecweaveSetting({
             }
           >
             Install Node.js
-          </button>
+          </Button>
         ) : null}
       </div>
       {specweave ? null : confirming ? (
         <div className="project-actions">
-          <button
-            type="button"
-            className="project-control"
-            disabled={busy}
-            onClick={() => setConfirming(false)}
-          >
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => setConfirming(false)}>
             Cancel
-          </button>
-          <button
-            type="button"
-            className="project-control project-control-strong"
-            disabled={disabled || busy}
-            onClick={() => void run()}
-          >
+          </Button>
+          <Button size="sm" disabled={disabled || busy} onClick={() => void run()}>
             {busy ? "Setting up…" : "Run specweave init"}
-          </button>
+          </Button>
         </div>
       ) : (
-        <button
-          type="button"
-          className="project-control"
-          disabled={disabled}
-          onClick={() => setConfirming(true)}
-        >
+        <Button variant="outline" size="sm" disabled={disabled} onClick={() => setConfirming(true)}>
           Set up SpecWeave
-        </button>
+        </Button>
       )}
     </div>
   );

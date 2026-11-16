@@ -86,6 +86,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../../ui/menu";
+import { Button } from "../../ui/button";
 import { toastManager } from "../../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { ThreadModelBadge, useProviderEntriesByEnvironment } from "./ModelBadge";
@@ -1265,9 +1266,11 @@ export function ThreadsPane({
                 </div>
               )}
               {isFolded ? null : hidden > 0 ? (
-                <button
-                  type="button"
-                  className="sws-show-more"
+                <Button
+                  variant="outline"
+                  size="xs"
+                  className="mx-auto mt-0.5 mb-1 flex w-fit"
+                  data-thread-group-pager
                   onClick={() =>
                     setLimits((previous) => ({
                       ...previous,
@@ -1279,17 +1282,19 @@ export function ThreadsPane({
                   <span className="sr-only">
                     , {Math.min(hidden, THREAD_GROUP_PAGE_STEP)} of {hidden} hidden {group} threads
                   </span>
-                </button>
+                </Button>
               ) : !openEverything && threads.length > THREAD_GROUP_PAGE ? (
-                <button
-                  type="button"
-                  className="sws-show-more"
+                <Button
+                  variant="outline"
+                  size="xs"
+                  className="mx-auto mt-0.5 mb-1 flex w-fit"
+                  data-thread-group-pager
                   onClick={() =>
                     setLimits((previous) => ({ ...previous, [group]: THREAD_GROUP_PAGE }))
                   }
                 >
                   Show fewer
-                </button>
+                </Button>
               ) : null}
             </section>
           );

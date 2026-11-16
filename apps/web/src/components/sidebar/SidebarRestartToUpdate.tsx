@@ -40,6 +40,7 @@ import {
 } from "../serviceUpdateRunView";
 import { getDesktopUpdateReleaseUrl } from "../desktopUpdate.logic";
 import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
+import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -853,8 +854,6 @@ function SidebarRestartToUpdateButton() {
     // install waits on, lead; the pause time follows them.
     const questionLine = automaticWaitHint.pauseLine === undefined ? null : automaticWaitHint.line;
     const canPostpone = typeof window.desktopBridge?.postponeAutomaticServiceUpdate === "function";
-    const actionClass =
-      "cursor-pointer rounded px-1 text-2xs font-medium text-foreground outline-hidden ring-ring hover:bg-sidebar-row-hover focus-visible:ring-2 disabled:cursor-progress disabled:opacity-60";
     return (
       <div className="flex shrink-0 flex-col gap-1 self-start">
         {content}
@@ -884,25 +883,25 @@ function SidebarRestartToUpdateButton() {
           </TooltipPopup>
         </Tooltip>
         <div className="flex items-center gap-1">
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="micro"
             data-testid="sidebar-update-pause-install-now"
             disabled={busy}
-            className={actionClass}
             onClick={() => void restart({})}
           >
             Install now
-          </button>
+          </Button>
           {canPostpone ? (
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="micro"
               data-testid="sidebar-update-pause-later"
               disabled={busy || postponing}
-              className={actionClass}
               onClick={postpone}
             >
               Later
-            </button>
+            </Button>
           ) : null}
         </div>
       </div>

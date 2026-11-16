@@ -293,7 +293,7 @@ export function NewDesignDialog({
                   </span>
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
                     disabled={busy}
                     onClick={() => {

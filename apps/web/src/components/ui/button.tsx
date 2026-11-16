@@ -7,6 +7,19 @@ import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 
+/**
+ * Which variant an action takes, so nothing clickable looks like a caption:
+ * - An action that stands alone (a dialog, sheet or popover footer, a card, a settings row,
+ *   a banner, an empty state) rests on a border or a fill: `default`, `outline`, `secondary`,
+ *   `destructive`, `destructive-outline` or `warning-outline`. One that stops a running job,
+ *   removes, deletes, discards, disconnects or signs out, and is not the primary, is
+ *   `destructive-outline`. "Cancel" and "Close" stay neutral.
+ * - `ghost`, `ghost-muted` and `ghost-destructive` have no resting shape. They are for
+ *   icon-only buttons and for items whose container already shows they are pressed: a
+ *   toolbar strip, a list or menu row, a tab or toggle with a pressed state, a disclosure
+ *   with a chevron. `quietLabelledButtons.guard.test.ts` holds the labelled exceptions.
+ * - An action inside a sentence is an `InlineButton`, underlined at rest like `link`.
+ */
 const buttonVariants = cva(
   "[--control-icon-color:currentColor] [&_svg]:-mx-0.5 relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-[var(--control-radius)] border font-medium text-base outline-none transition-[box-shadow,scale] [&:active:not([aria-haspopup])]:scale-[0.97] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--control-radius)-1px)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-(--disabled-opacity) aria-disabled:cursor-not-allowed aria-disabled:opacity-(--disabled-opacity) sm:text-sm [&_svg:not([class*='text-'])]:text-[var(--control-icon-color)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
@@ -53,7 +66,7 @@ const buttonVariants = cva(
           "[--control-icon-color:currentColor] border-transparent text-muted-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent [:hover,[data-pressed]]:text-destructive-foreground",
         glass:
           "surface-glass [--control-icon-color:var(--contrast-muted-foreground)] rounded-full border-border/60 text-foreground shadow-sm before:rounded-full [:hover,[data-pressed]]:border-border",
-        link: "border-transparent underline-offset-4 [:hover,[data-pressed]]:underline",
+        link: "border-transparent underline decoration-current/40 underline-offset-4 [:hover,[data-pressed]]:decoration-current",
         "media-close":
           "[--control-icon-color:currentColor] border-transparent bg-black/65 text-white shadow-sm ring-1 ring-white/20 [:hover,[data-pressed]]:bg-black/80 focus-visible:ring-white",
         "media-navigation":
@@ -101,7 +114,7 @@ function Button({ className, variant, size, render, ...props }: ButtonProps) {
 export { Button, buttonVariants, type ButtonSize, type ButtonVariant };
 
 const inlineButtonVariants = cva(
-  "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 [text-align:var(--inline-button-text-align,center)] [white-space:var(--inline-button-white-space,nowrap)] hover:underline focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-(--disabled-opacity)",
+  "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline decoration-current/40 underline-offset-2 [text-align:var(--inline-button-text-align,center)] [white-space:var(--inline-button-white-space,nowrap)] hover:decoration-current focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-(--disabled-opacity)",
   {
     defaultVariants: { tone: "default" },
     variants: {
@@ -119,7 +132,10 @@ const inlineButtonVariants = cva(
   },
 );
 
-/** An inline text action. Set --inline-button-white-space to normal in wrapping prose containers. */
+/**
+ * An inline text action, underlined at rest so it reads as clickable inside a sentence.
+ * Set --inline-button-white-space to normal in wrapping prose containers.
+ */
 export function InlineButton({
   className,
   tone,

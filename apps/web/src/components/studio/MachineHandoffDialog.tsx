@@ -339,7 +339,7 @@ export function MachineHandoffDialog({
             ) : reviewing ? (
               <>
                 {onBack && (
-                  <Button variant="ghost" className="sm:mr-auto" disabled={busy} onClick={onBack}>
+                  <Button variant="outline" className="sm:mr-auto" disabled={busy} onClick={onBack}>
                     Back
                   </Button>
                 )}
@@ -451,7 +451,7 @@ function GitWhere({
           <div className="space-y-2" data-slot="handoff-folder">
             {folderPicker}
             {saved.length > 0 && (
-              <Button size="sm" variant="ghost" onClick={() => setChanging(null)}>
+              <Button size="sm" variant="outline" onClick={() => setChanging(null)}>
                 Keep the saved folder
               </Button>
             )}

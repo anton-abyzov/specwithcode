@@ -220,7 +220,7 @@ function DeleteFinishedButton({ entries }: { readonly entries: readonly RoutineL
   return (
     <Button
       size="xs"
-      variant="ghost-muted"
+      variant="destructive-outline"
       disabled={busy || permitted.length === 0}
       onClick={() => void run()}
       data-routine-delete-finished
@@ -456,11 +456,7 @@ export function RoutineList({
             </SelectPopup>
           </Select>
           {filtersActive ? (
-            <Button
-              size="xs"
-              variant="ghost-muted"
-              onClick={() => setFilters(DEFAULT_ROUTINE_FILTERS)}
-            >
+            <Button size="xs" variant="outline" onClick={() => setFilters(DEFAULT_ROUTINE_FILTERS)}>
               {tx("Clear filters")}
             </Button>
           ) : null}

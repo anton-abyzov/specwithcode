@@ -178,7 +178,7 @@ export function PairingRouteSurface({
               disabled={isSubmitting}
               onClick={() => window.location.reload()}
               size="sm"
-              variant="ghost"
+              variant="outline"
             >
               Reload
             </Button>

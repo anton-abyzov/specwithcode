@@ -68,7 +68,7 @@ function RunInBackgroundButton() {
   ) : null;
 }
 
-/** The leading ghost while a copy works or waits: stops it before anything is applied. */
+/** The leading button while a copy works or waits: stops it before anything is applied. */
 function StopCopyButton({
   disabled,
   move,
@@ -80,7 +80,7 @@ function StopCopyButton({
   readonly onStop: () => void;
 }) {
   return (
-    <Button variant="ghost" data-leading disabled={disabled} onClick={onStop}>
+    <Button variant="destructive-outline" data-leading disabled={disabled} onClick={onStop}>
       {move ? "Stop handoff" : "Stop copy"}
     </Button>
   );

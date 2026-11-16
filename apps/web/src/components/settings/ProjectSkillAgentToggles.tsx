@@ -81,7 +81,7 @@ export function ProjectSkillPluginToggle({ presence }: { presence: ProjectSkillP
     >
       <Button
         size="micro"
-        variant="ghost-muted"
+        variant="outline"
         type="button"
         disabled={!controls.canOperate || controls.pending !== null}
         onClick={() => controls.propose(action)}

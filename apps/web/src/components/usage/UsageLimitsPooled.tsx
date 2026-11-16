@@ -635,7 +635,7 @@ export function UsageLimitsPooled({
             </div>
           </div>
           <Button
-            variant="ghost-muted"
+            variant="outline"
             size="xs"
             onClick={() => void ensureLocalApi().shell.openExternal(link.url)}
           >

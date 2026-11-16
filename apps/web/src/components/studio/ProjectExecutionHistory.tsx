@@ -18,6 +18,7 @@ import { isMachineReachDown } from "@specweave-studio/client-runtime/connection"
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { routedThreadReplyDisplayText } from "@specweave-studio/shared/routedMessage";
 import { requestExecutionLabel, type ProjectExecutionScope } from "../../studio/projectDomain";
+import { Button } from "../ui/button";
 import { ProjectMessageBody } from "./ProjectMessageBody";
 import { useProviderEntries } from "./shell/ModelBadge";
 
@@ -113,7 +114,8 @@ function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; labe
   return (
     <div aria-label={`Retained coordinator messages on ${label}`}>
       {history.hasMoreHistory && (
-        <button
+        <Button
+          variant="outline"
           disabled={history.loading}
           onClick={() =>
             void load({
@@ -123,7 +125,7 @@ function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; labe
           }
         >
           Load earlier messages
-        </button>
+        </Button>
       )}
       {history.error && <p role="alert">{history.error}</p>}
       {thread.projection.messages.map((message) => {

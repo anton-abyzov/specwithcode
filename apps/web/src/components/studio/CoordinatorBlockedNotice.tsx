@@ -47,7 +47,7 @@ export function CoordinatorBlockedNotice({
           </Button>
         ) : null}
         {here?.canStart ? (
-          <Button variant="ghost" size="xs" onClick={() => void start(here.key)}>
+          <Button variant="outline" size="xs" onClick={() => void start(here.key)}>
             Run {here.machine}'s coordinator again
           </Button>
         ) : null}

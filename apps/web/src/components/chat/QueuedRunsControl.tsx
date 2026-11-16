@@ -572,7 +572,7 @@ export function QueuedRunsControl({
               </Button>
               <Button
                 size="xs"
-                variant="ghost-muted"
+                variant="destructive-outline"
                 aria-label={
                   discardArmed
                     ? `Confirm: discard ${heldLabel}`
@@ -849,7 +849,7 @@ export function QueuedRunsControl({
                     ) : isEditing ? (
                       <Button
                         size="xs"
-                        variant="ghost"
+                        variant="outline"
                         aria-label={tx("Cancel editing queued message")}
                         onClick={props.onCancelEdit}
                       >

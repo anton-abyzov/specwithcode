@@ -587,7 +587,7 @@ export function MachineWorkGrantsList({
       headerAction={
         <Button
           size="xs"
-          variant="ghost-muted"
+          variant="outline"
           onClick={onRefresh}
           disabled={loading || pending !== null}
         >

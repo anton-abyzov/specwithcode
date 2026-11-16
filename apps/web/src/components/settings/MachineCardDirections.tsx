@@ -306,7 +306,7 @@ export function OutgoingButton({
   return (
     <Button
       size="xs"
-      variant={line.action === "set-up" ? "outline" : "ghost-muted"}
+      variant="outline"
       className="shrink-0"
       aria-label={
         line.action === "set-up"

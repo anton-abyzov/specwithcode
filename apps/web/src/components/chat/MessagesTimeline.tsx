@@ -1896,15 +1896,16 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
     <div className="messages-timeline-row-frame">
       <div className="chat-content-lane flex flex-col gap-1.5 pb-2">
         {props.hasMoreHistory ? (
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="xs"
             disabled={props.loading}
             aria-label={tx("Load earlier turns")}
             onClick={props.onLoadEarlier}
-            className="w-full py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:cursor-default"
+            className="w-full"
           >
             {props.loading ? tx("Loading earlier turns…") : tx("Load earlier turns")}
-          </button>
+          </Button>
         ) : null}
         {props.error !== null ? (
           <p role="status" className="text-center text-muted-foreground text-xs">
@@ -3155,8 +3156,9 @@ function HistoryGapTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "his
 
   return (
     <div className="flex flex-col gap-1.5">
-      <button
-        type="button"
+      <Button
+        variant="outline"
+        size="xs"
         disabled={row.loading}
         aria-label={tx("Load earlier steps")}
         data-scroll-anchor-ignore
@@ -3165,10 +3167,10 @@ function HistoryGapTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "his
           if (row.expandsFoldRunId !== null) ctx.onToggleTurnFold(row.expandsFoldRunId);
           ctx.onLoadEarlierHistory();
         }}
-        className="w-full py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:cursor-default"
+        className="w-full"
       >
         {row.loading ? tx("Loading earlier steps…") : tx("Load earlier steps")}
-      </button>
+      </Button>
       {row.error !== null ? (
         <p role="status" className="text-center text-muted-foreground text-xs">
           {row.error}
@@ -4614,7 +4616,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
       <PopoverTrigger
         render={
           <Button
-            variant="ghost-muted"
+            variant="outline"
             size="micro"
             className="ml-auto min-w-0 shrink-0"
             aria-label={`${scriptName} is still running. Show setup progress.`}

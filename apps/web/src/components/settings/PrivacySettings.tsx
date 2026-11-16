@@ -242,7 +242,7 @@ export function PrivacySettingsPanel() {
                 : tx("Connect an environment to inspect its diagnostic export settings.")}
             </p>
             <Collapsible>
-              <CollapsibleTrigger render={<Button size="sm" variant="ghost" />}>
+              <CollapsibleTrigger render={<Button size="sm" variant="outline" />}>
                 {tx("Technical details")}
               </CollapsibleTrigger>
               <CollapsiblePanel className="pt-3">

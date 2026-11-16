@@ -405,7 +405,7 @@ function CopyUndoButton({
       {undoPreview.edited > 0 ? "Undo and keep edited files aside" : "Undo the copy"}
     </Button>
   ) : (
-    <Button variant="ghost" data-leading disabled={busy} onClick={() => onUndo(false, true)}>
+    <Button variant="outline" data-leading disabled={busy} onClick={() => onUndo(false, true)}>
       Undo…
     </Button>
   );
@@ -546,7 +546,7 @@ export function HandoffCopyFailedActions({
         Retry
       </Button>
       {failedBeforeApply && (
-        <Button variant="ghost" data-leading disabled={busy} onClick={onCancel}>
+        <Button variant="destructive-outline" data-leading disabled={busy} onClick={onCancel}>
           {copy.mode === "copy-and-move" ? "Stop handoff" : "Stop copy"}
         </Button>
       )}

@@ -43,12 +43,13 @@ function Tile({
 }) {
   return (
     <div
-      className={cn("flex min-w-0 flex-col gap-1 rounded-lg border border-border/60 p-3", className)}
+      className={cn(
+        "flex min-w-0 flex-col gap-1 rounded-lg border border-border/60 p-3",
+        className,
+      )}
       data-dashboard-tile={name}
     >
-      {title === undefined ? null : (
-        <span className="text-xs text-muted-foreground">{title}</span>
-      )}
+      {title === undefined ? null : <span className="text-xs text-muted-foreground">{title}</span>}
       {children}
     </div>
   );
@@ -120,7 +121,7 @@ function PlanEditor({
       <Button type="submit" size="xs" variant="outline" disabled={!valid}>
         Save
       </Button>
-      <Button type="button" size="xs" variant="ghost" onClick={onCancel}>
+      <Button type="button" size="xs" variant="outline" onClick={onCancel}>
         Cancel
       </Button>
     </form>
@@ -353,11 +354,10 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
                 "No change · "
               ) : (
                 <span
-                  className={
-                    delta >= 0 ? "text-success-foreground" : "text-destructive-foreground"
-                  }
+                  className={delta >= 0 ? "text-success-foreground" : "text-destructive-foreground"}
                 >
-                  {delta >= 0 ? "Up" : "Down"} {Math.abs(delta)} {Math.abs(delta) === 1 ? "point" : "points"}
+                  {delta >= 0 ? "Up" : "Down"} {Math.abs(delta)}{" "}
+                  {Math.abs(delta) === 1 ? "point" : "points"}
                   {" · "}
                 </span>
               )}
@@ -488,7 +488,7 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
               : "Resets in this range"}
           </h3>
           {column ? (
-            <Button size="xs" variant="ghost" onClick={() => setSelected(null)}>
+            <Button size="xs" variant="outline" onClick={() => setSelected(null)}>
               Show the whole range
             </Button>
           ) : null}

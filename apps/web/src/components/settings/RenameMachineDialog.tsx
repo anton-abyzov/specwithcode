@@ -458,7 +458,7 @@ export function RenameMachineDialog({
         <DialogFooter variant="bare">
           {custom !== null ? (
             <Button
-              variant="ghost"
+              variant="outline"
               className="me-auto"
               disabled={lock !== null || !shortValid}
               // The letters follow the computer name too, as they follow any new name.

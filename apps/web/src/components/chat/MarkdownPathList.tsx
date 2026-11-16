@@ -123,7 +123,7 @@ export function MarkdownPathList(props: {
         </span>
         <Button
           type="button"
-          variant="ghost-muted"
+          variant="outline"
           size="micro"
           disabled={allPaths.length === 0}
           onClick={() => copyToClipboard(allPaths, undefined)}

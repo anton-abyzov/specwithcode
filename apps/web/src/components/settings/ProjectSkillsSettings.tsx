@@ -921,7 +921,7 @@ function ScopedProjectSkillsView({
             </span>
             <Button
               size="micro"
-              variant="ghost-muted"
+              variant="outline"
               type="button"
               onClick={() => {
                 setLinkedName(null);
@@ -1000,7 +1000,7 @@ function ScopedProjectSkillsView({
             {filtered ? (
               <Button
                 size="xs"
-                variant="ghost-muted"
+                variant="outline"
                 type="button"
                 onClick={() => {
                   setSearch("");

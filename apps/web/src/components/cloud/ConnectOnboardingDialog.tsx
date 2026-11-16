@@ -434,7 +434,7 @@ function ConfiguredConnectOnboardingDialog() {
             <>
               {turnedOnForAccount !== null && turnedOnForAccount === openForAccount ? null : (
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   disabled={applying}
                   onClick={() => {
                     // Not now also holds back a turn-on that has not started yet.

@@ -201,7 +201,7 @@ export function FeaturedAcpProviderCards({
                       disabled={preparingId !== null}
                       onClick={catalog.refresh}
                       size="xs"
-                      variant="ghost-muted"
+                      variant="outline"
                     >
                       {tx("Retry")}
                     </Button>

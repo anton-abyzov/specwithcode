@@ -133,7 +133,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
           existingReady ? (
             <Button
               size="xs"
-              variant="ghost-muted"
+              variant="outline"
               disabled={props.readOnly}
               onClick={signInWithChatGpt}
             >
@@ -158,7 +158,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
             </Button>
           }
           secondaryControl={
-            <Button size="sm" variant="ghost-muted" disabled>
+            <Button size="sm" variant="outline" disabled>
               {tx("Cancel")}
             </Button>
           }
@@ -732,7 +732,7 @@ function ManagedCodexSetup({
           <div>
             <Button
               size="xs"
-              variant="ghost-muted"
+              variant="outline"
               onClick={() => void ensureLocalApi().shell.openExternal(url)}
             >
               {tx("Try sign-in in your browser")}
@@ -876,7 +876,7 @@ function ManagedCodexSetup({
             authenticated && !busy ? (
               <Button
                 size="xs"
-                variant="ghost-muted"
+                variant="outline"
                 disabled={unavailable}
                 onClick={() => setAccountPickerOpen(true)}
               >
@@ -885,7 +885,7 @@ function ManagedCodexSetup({
             ) : (authActive && !finishingSignIn) || installActive ? (
               <Button
                 size="sm"
-                variant="ghost-muted"
+                variant="outline"
                 disabled={pending || readOnly}
                 onClick={() => {
                   openRequested.current = false;
@@ -905,7 +905,7 @@ function ManagedCodexSetup({
             ) : !authActive && !authenticated && hasSavedAccount ? (
               <Button
                 size="sm"
-                variant="ghost-muted"
+                variant="outline"
                 disabled={unavailable || busy}
                 onClick={() => void setup("chatgpt-change-account")}
               >
@@ -914,7 +914,7 @@ function ManagedCodexSetup({
             ) : !authActive && !authenticated && allowExistingCli ? (
               <Button
                 size="sm"
-                variant="ghost-muted"
+                variant="outline"
                 disabled={readOnly || busy}
                 onClick={() => onModeChange("existing")}
               >
@@ -948,7 +948,7 @@ function ManagedCodexSetup({
                 {!finishingSignIn && (
                   <Button
                     size="sm"
-                    variant="ghost"
+                    variant="outline"
                     disabled={pending || readOnly}
                     onClick={() => {
                       if (!handoff && !auth?.flowId) return;
@@ -964,7 +964,7 @@ function ManagedCodexSetup({
             ) : installActive ? (
               <Button
                 size="sm"
-                variant="ghost"
+                variant="outline"
                 disabled={pending || readOnly}
                 onClick={() => {
                   if (!installation?.operationId) return;
@@ -991,7 +991,7 @@ function ManagedCodexSetup({
                 </Button>
                 <Button
                   size="sm"
-                  variant="ghost"
+                  variant="destructive-outline"
                   disabled={unavailable || busy}
                   onClick={() => void run(() => logoutAuth(target))}
                 >
@@ -1021,7 +1021,7 @@ function ManagedCodexSetup({
                 {hasSavedAccount ? (
                   <Button
                     size="sm"
-                    variant="ghost"
+                    variant="outline"
                     disabled={unavailable || busy}
                     onClick={() => void setup("chatgpt-change-account")}
                   >

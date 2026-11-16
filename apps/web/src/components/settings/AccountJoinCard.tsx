@@ -422,7 +422,7 @@ export function AccountJoinCardBody({
       ) : (
         // Nothing to choose: only the one next step above, and the way out.
         <div className="mt-3">
-          <Button size="sm" variant="ghost" onClick={leave}>
+          <Button size="sm" variant="outline" onClick={leave}>
             {firstRun ? tx("Skip") : tx("Not now")}
           </Button>
         </div>
@@ -698,7 +698,7 @@ function JoinCardAction({
               ? tx("Allow {coordinatorLabel}", { coordinatorLabel })
               : tx("Choose a machine")}
         </Button>
-        <Button size="sm" variant="ghost" disabled={pending} onClick={onLeave}>
+        <Button size="sm" variant="outline" disabled={pending} onClick={onLeave}>
           {leaveLabel}
         </Button>
       </div>

@@ -121,8 +121,8 @@ export function CopyStepLine({ steps }: { readonly steps: ReadonlyArray<CopyStep
 }
 
 /**
- * What this copy was started with, and the one way to change it: a link that says what
- * changing costs. Null `onChange` hides the link, after Apply or where the footer has it.
+ * What this copy was started with, and the one way to change it: a bordered button that says
+ * what changing costs. Null `onChange` hides it, after Apply or where the footer has it.
  */
 export function CopyChoicesSummary({
   pending,
@@ -153,7 +153,7 @@ export function CopyChoicesSummary({
         <p className="text-sm font-medium">Your choices</p>
         {onChange && (
           <Button
-            variant="link"
+            variant="outline"
             size="xs"
             data-slot="copy-change"
             disabled={changeDisabled}

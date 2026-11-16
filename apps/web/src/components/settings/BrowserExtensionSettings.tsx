@@ -312,7 +312,7 @@ export function BrowserExtensionCard({
               value={code}
             />
             <CopyButton value={code} label={tx("pairing code")} />
-            <Button size="sm" variant="ghost" onClick={() => setCode(null)}>
+            <Button size="sm" variant="outline" onClick={() => setCode(null)}>
               <EyeOffIcon />
               {tx("Hide")}
             </Button>

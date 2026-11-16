@@ -373,7 +373,7 @@ export function MachineListSection({
       id="machines"
       title="Machines"
       headerAction={
-        <Button size="xs" variant="ghost-muted" onClick={onRefresh} disabled={loading}>
+        <Button size="xs" variant="outline" onClick={onRefresh} disabled={loading}>
           <RefreshCwIcon className="size-3" />
           {loading ? tx("Checking…") : tx("Refresh")}
         </Button>
@@ -1045,8 +1045,7 @@ export function MachineRow({
             {row.projects.own.length > MAX_PROJECTS_SHOWN ? (
               <Button
                 size="xs"
-                variant="ghost-muted"
-                className="-ml-2"
+                variant="outline"
                 aria-expanded={allProjects}
                 aria-controls={projectsId}
                 data-projects-more=""

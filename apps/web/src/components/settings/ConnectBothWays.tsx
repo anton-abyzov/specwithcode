@@ -230,7 +230,7 @@ export function ConnectBothWaysView({
             >
               {tx("Copy")}
             </Button>
-            <Button size="xs" variant="ghost-muted" onClick={onDone}>
+            <Button size="xs" variant="outline" onClick={onDone}>
               {tx("Done")}
             </Button>
           </div>
