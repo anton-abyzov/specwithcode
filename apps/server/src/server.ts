@@ -848,9 +848,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(
     TemporaryProjects.make.pipe(Effect.flatMap((sweeper) => sweeper.start())),
   ).pipe(Layer.provide(Layer.merge(ProjectionStoreV2.layer, AuthSessions.layer))),
-  Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
-    Layer.provide(ProjectionStoreV2.layer),
-  ),
+  StorageCleanup.layerStart.pipe(Layer.provide(ProjectionStoreV2.layer)),
   // After an app update, installs missing machine tools once the machine is quiet.
   ReadinessSweep.layerStart,
   // Deletes superseded event history every six hours, never during an update.

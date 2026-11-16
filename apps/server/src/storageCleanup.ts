@@ -3,6 +3,8 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type {
   OrchestrationV2ThreadShell,
+  StorageCleanupPlan,
+  StorageCleanupRunResult,
   ProjectId,
   ServerSettings,
   ServerSettingsError,
@@ -13,17 +15,20 @@ import { resolveWorktreeCleanup } from "@specweave-studio/shared/projectSettings
 import { makeDrainableWorker } from "@specweave-studio/shared/DrainableWorker";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
@@ -1272,10 +1277,42 @@ export const make = Effect.gen(function* () {
       ),
     );
   });
+  const emptyPlan = Effect.gen(function* () {
+    const checkedAt = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
+    return { checkedAt, items: [], removableBytes: 0, complete: false } satisfies StorageCleanupPlan;
+  });
   return {
     start,
     drain: worker.drain,
     /** Runs one sweep now and waits for it to finish. */
     runOnce: worker.enqueue(undefined).pipe(Effect.andThen(worker.drain)),
+    /** What a sweep would do right now. Removes nothing. */
+    plan: emptyPlan,
+    /** Runs one sweep now, whatever the startup delay, and reports what it removed. */
+    cleanNow: emptyPlan.pipe(
+      Effect.map((plan) => ({ removed: [], removedBytes: 0, plan }) satisfies StorageCleanupRunResult),
+    ),
   };
 });
+
+/** The storage cleanup of this server: its sweeps, its dry-run plan and "Clean up now". */
+export class StorageCleanupService extends Context.Service<
+  StorageCleanupService,
+  {
+    readonly start: () => Effect.Effect<void, ServerSettingsError, Scope.Scope>;
+    readonly drain: Effect.Effect<void>;
+    readonly runOnce: Effect.Effect<void>;
+    readonly plan: Effect.Effect<StorageCleanupPlan>;
+    readonly cleanNow: Effect.Effect<StorageCleanupRunResult>;
+  }
+>()("specweave-studio/storageCleanup/StorageCleanupService") {}
+
+export const layer = Layer.effect(StorageCleanupService, make);
+
+/** Builds the service and starts its sweeps. */
+export const layerStart = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const service = yield* StorageCleanupService;
+    yield* service.start();
+  }),
+).pipe(Layer.provideMerge(layer));
