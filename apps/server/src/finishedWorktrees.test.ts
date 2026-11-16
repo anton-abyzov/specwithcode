@@ -174,7 +174,8 @@ describe("finished worktree decision", () => {
     ["open", folder({ chats: openChat(DAY, false) }), rules()],
     ["open", folder({ openNearby: "Another chat works in a folder inside it." }), rules()],
     ["recent", folder({ chats: openChat(5 * HOUR) }), rules()],
-    ["recent", folder({ chats: openChat(null) }), rules()],
+    // When it was last used could not be read.
+    ["unknown", folder({ chats: openChat(null) }), rules()],
     ["changes", folder({ members: [member({ changes: true })] }), rules()],
     ["untracked", folder({ members: [member({ untracked: ["notes.md"] })] }), rules()],
     ["untracked", folder({ members: [], looseFiles: 2 }), rules()],

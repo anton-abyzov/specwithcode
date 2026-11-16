@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- bounded lstat walks (folder sizes, ignored folders, nested repositories) that never follow symlinks.
 /**
  * The chat worktree pass of the storage sweep: one function with a mode.
  * "plan" lists every chat folder with what the sweep would do and why, and
@@ -20,9 +19,6 @@
  *
  * @module worktreeCleanupSweep
  */
-import * as NodeFSP from "node:fs/promises";
-import * as NodePath from "node:path";
-
 import {
   OrchestrationV2AppThreadJson,
   type OrchestrationV2ThreadShell,
@@ -90,6 +86,24 @@ import {
   type WorktreeSetMember,
 } from "./worktreeSet.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
+import {
+  anyWorktreePolicy,
+  folderRules,
+  storageCleanupActivityAt,
+  storageCleanupThreadIdle,
+} from "./worktreeCleanupRules.ts";
+import {
+  classifyIgnored,
+  entriesOutsideMembers,
+  findRepository,
+  folderBytes,
+  IGNORED_WALK_MAX_ENTRIES,
+  type MediaFile,
+  NESTED_WALK_TIMEOUT,
+  SIZE_WALK_TIMEOUT,
+} from "./worktreeCleanupWalks.ts";
+
+export { anyWorktreePolicy, storageCleanupActivityAt, storageCleanupThreadIdle };
 
 const decodeDeletedThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
@@ -97,13 +111,6 @@ const decodeDeletedThread = Schema.decodeUnknownEffect(
 /** Fingerprints and the evidence manifest; plain values only, so encoding cannot fail. */
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-/** The plan's size walk stops here and reports no size. */
-const SIZE_WALK_MAX_ENTRIES = 200_000;
-const SIZE_WALK_TIMEOUT = "5 seconds";
-/** Ignored folders are walked for media; one this large keeps the folder instead. */
-const IGNORED_WALK_MAX_ENTRIES = 20_000;
-const NESTED_WALK_MAX_ENTRIES = 2_000_000;
-const NESTED_WALK_TIMEOUT = "30 seconds";
 /**
  * A pull request's state is asked of its host once per branch head in this
  * long, however often sweeps and plans run: event sweeps can follow each other
@@ -112,82 +119,6 @@ const NESTED_WALK_TIMEOUT = "30 seconds";
  */
 const PULL_REQUEST_REUSE_MS = 50 * 60_000;
 const PULL_REQUEST_CACHE_ENTRIES = 2_000;
-
-/**
- * Finished and waiting for nothing: no run in progress, no background task,
- * no question or approval pending, no turn queued to start. A run that
- * completed, was cancelled, interrupted or rolled back counts; `waiting` does
- * not, and neither does a runless native sub-chat still at work.
- */
-export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now: number): boolean {
-  return (
-    thread.worktreePath !== null &&
-    thread.activeRunId === null &&
-    thread.activityRunStatus == null &&
-    (thread.status === "idle" ||
-      thread.status === "failed" ||
-      thread.status === "completed" ||
-      thread.status === "cancelled" ||
-      thread.status === "interrupted" ||
-      thread.status === "rolled_back") &&
-    (thread.pendingBackgroundTasks?.length ?? 0) === 0 &&
-    thread.pendingRuntimeRequest === null &&
-    !threadHasQueuedTurnStart(thread, now)
-  );
-}
-
-/**
- * PR metadata refreshes must not reset the inactivity clock. Null when no
- * reading is known, which never counts as inactive.
- */
-export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): number | null {
-  return newestFinite(
-    [
-      thread.createdAt,
-      thread.latestUserMessageAt,
-      thread.latestRunRequestedAt,
-      thread.latestRunStartedAt,
-      thread.latestRunCompletedAt,
-    ].map((value) => (value == null ? null : DateTime.toEpochMillis(value))),
-  );
-}
-
-/** Whether the global rules or any project's own rules satisfy `predicate`. */
-export function anyWorktreePolicy(
-  settings: ServerSettings,
-  predicate: (rules: WorktreeCleanupRules) => boolean,
-): boolean {
-  return (
-    predicate(resolveWorktreeCleanup(settings, null)) ||
-    Object.keys(settings.projectSettingsOverrides).some((projectId) =>
-      predicate(resolveWorktreeCleanup(settings, projectId as ProjectId)),
-    )
-  );
-}
-
-/** The rules of one project, the resolved-chats switch included. */
-function projectRules(settings: ServerSettings, projectId: ProjectId): FinishedWorktreeRules {
-  const rules = resolveWorktreeCleanup(settings, projectId);
-  // A project whose worktree cleanup is Off keeps its folders under every rule.
-  const off = resolveProjectSettings(settings, projectId).settings.worktreeCleanup?.mode === "off";
-  return {
-    ...rules,
-    removeResolvedWorktrees: settings.storageCleanup.removeResolvedWorktrees && !off,
-  };
-}
-
-/** Every project's rules must allow it: the strictest of them. */
-function folderRules(settings: ServerSettings, projectIds: ReadonlySet<ProjectId>) {
-  const all = [...projectIds].map((projectId) => projectRules(settings, projectId));
-  const days = all.map((rules) => rules.worktreeAfterDays);
-  return {
-    worktreeAfterDays: days.includes(null) ? null : Math.max(...(days as Array<number>)),
-    worktreeOnMerge: all.every((rules) => rules.worktreeOnMerge),
-    worktreeOnDelete: all.every((rules) => rules.worktreeOnDelete),
-    worktreeUnchanged: all.every((rules) => rules.worktreeUnchanged),
-    removeResolvedWorktrees: all.every((rules) => rules.removeResolvedWorktrees),
-  } satisfies FinishedWorktreeRules;
-}
 
 /**
  * Working directories of running processes for the sweep, or null to read
@@ -223,12 +154,6 @@ interface FolderGroup {
   readonly deleted: ReadonlyArray<DeletedChat>;
 }
 
-interface MediaFile {
-  /** Relative to its member's folder. */
-  readonly relative: string;
-  readonly bytes: number;
-}
-
 interface MemberState {
   readonly member: WorktreeSetMember;
   readonly path: string;
@@ -251,6 +176,8 @@ interface Assessment {
   readonly members: ReadonlyArray<MemberState>;
   /** The quickly changing facts; any difference at removal keeps the folder. */
   readonly fingerprint: string;
+  /** The part of it that says who uses the folder (`readLive`). */
+  readonly liveness: string;
   readonly head: { readonly id: string; readonly title: string } | null;
   readonly threadCount: number;
 }
@@ -267,151 +194,11 @@ interface SweepContext {
   readonly defaultRefs: Map<string, string | null>;
 }
 
-const toPosix = (value: string) => value.split(NodePath.sep).join("/");
+const toPosix = (value: string) => value.split("\\").join("/");
 
 function chatState(thread: OrchestrationV2ThreadShell): FinishedChatState {
   if (thread.archivedAt !== null) return "archived";
   return thread.settledOverride === "settled" ? "resolved" : "open";
-}
-
-/**
- * Untracked or ignored entries of a member (Git's `--directory` listing),
- * without the members nested in it: a folder on the way to one is opened and
- * its other entries listed instead. Directories keep their trailing slash.
- */
-async function entriesOutsideMembers(
-  root: string,
-  entries: ReadonlyArray<string>,
-  inside: ReadonlyArray<string>,
-): Promise<ReadonlyArray<string>> {
-  const kept: Array<string> = [];
-  const pending = [...entries];
-  while (pending.length > 0) {
-    const entry = pending.pop()!;
-    const relative = entry.replace(/\/$/, "");
-    if (relative === "") continue;
-    if (inside.some((member) => relative === member || relative.startsWith(`${member}/`))) continue;
-    if (!inside.some((member) => member.startsWith(`${relative}/`))) {
-      kept.push(entry);
-      continue;
-    }
-    for (const dirent of await NodeFSP.readdir(NodePath.join(root, relative), {
-      withFileTypes: true,
-    }))
-      pending.push(`${relative}/${dirent.name}${dirent.isDirectory() ? "/" : ""}`);
-  }
-  return kept.toSorted();
-}
-
-/**
- * Ignored entries that are neither rebuildable nor media, by name, and the
- * media to copy. An ignored folder is opened (without following links) so a
- * screenshot folder can go once its media is copied; a folder too large to
- * list counts as data.
- */
-async function classifyIgnored(
-  root: string,
-  entries: ReadonlyArray<string>,
-): Promise<{ readonly other: ReadonlyArray<string>; readonly media: ReadonlyArray<MediaFile> }> {
-  const other: Array<string> = [];
-  const media: Array<MediaFile> = [];
-  let seen = 0;
-  const file = async (relative: string) => {
-    if (onlyDependencyIgnores(relative)) return;
-    const target = NodePath.join(root, relative);
-    const stat = await NodeFSP.lstat(target);
-    if (stat.isFile() && isMediaFile(NodePath.basename(target)))
-      media.push({ relative: NodePath.normalize(relative), bytes: stat.size });
-    else other.push(NodePath.basename(target));
-  };
-  for (const entry of entries) {
-    if (onlyDependencyIgnores(entry)) continue;
-    if (!entry.endsWith("/")) {
-      await file(entry);
-      continue;
-    }
-    const pending = [entry.replace(/\/$/, "")];
-    while (pending.length > 0) {
-      const folder = pending.pop()!;
-      const dirents = await NodeFSP.readdir(NodePath.join(root, folder), { withFileTypes: true });
-      seen += dirents.length;
-      if (seen > IGNORED_WALK_MAX_ENTRIES) {
-        other.push(NodePath.basename(entry.replace(/\/$/, "")));
-        return { other, media };
-      }
-      for (const dirent of dirents) {
-        const relative = `${folder}/${dirent.name}`;
-        if (dirent.isDirectory()) {
-          if (dirent.name !== "node_modules") pending.push(relative);
-        } else await file(relative);
-      }
-    }
-  }
-  return { other, media };
-}
-
-/** A `.git` entry, or the HEAD, objects and refs of a bare repository. */
-function holdsRepository(names: ReadonlyArray<string>): boolean {
-  const markers = new Set(names.map((name) => name.toLowerCase()));
-  return (
-    markers.has(".git") || (markers.has("head") && markers.has("objects") && markers.has("refs"))
-  );
-}
-
-/** A repository in the given untracked or ignored entries; null when the walk ran out. */
-async function findRepository(
-  root: string,
-  entries: ReadonlyArray<string>,
-  signal: AbortSignal,
-): Promise<boolean | null> {
-  const pending: Array<string> = [];
-  for (const entry of entries) {
-    const relative = entry.replace(/\/$/, "");
-    if (NodePath.basename(relative).toLowerCase() === ".git") return true;
-    pending.push(NodePath.join(root, relative));
-  }
-  let seen = 0;
-  while (pending.length > 0) {
-    if (signal.aborted) return null;
-    const target = pending.pop()!;
-    const stat = await NodeFSP.lstat(target);
-    if (!stat.isDirectory()) continue;
-    const dirents = await NodeFSP.readdir(target, { withFileTypes: true });
-    seen += dirents.length;
-    if (seen > NESTED_WALK_MAX_ENTRIES) return null;
-    if (holdsRepository(dirents.map((dirent) => dirent.name))) return true;
-    for (const dirent of dirents)
-      if (dirent.isDirectory()) pending.push(NodePath.join(target, dirent.name));
-  }
-  return false;
-}
-
-/**
- * Bytes on disk outside dependency installs, without following links; null
- * when the walk passes its entry limit or is aborted.
- */
-async function folderBytes(root: string, signal: AbortSignal): Promise<number | null> {
-  const pending = [root];
-  let bytes = 0;
-  let seen = 0;
-  while (pending.length > 0) {
-    if (signal.aborted) return null;
-    const folder = pending.pop()!;
-    const dirents = await NodeFSP.readdir(folder, { withFileTypes: true });
-    for (const dirent of dirents) {
-      seen += 1;
-      if (seen > SIZE_WALK_MAX_ENTRIES) return null;
-      const target = NodePath.join(folder, dirent.name);
-      if (dirent.isDirectory()) {
-        if (dirent.name !== "node_modules") pending.push(target);
-        continue;
-      }
-      const stat = await NodeFSP.lstat(target).catch(() => null);
-      if (stat === null) continue;
-      bytes += stat.blocks > 0 ? stat.blocks * 512 : stat.size;
-    }
-  }
-  return bytes;
 }
 
 /** `yyyyMMdd-HHmmss` in UTC, for an evidence folder name. */
@@ -566,16 +353,24 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     const realFolder = yield* realOrNull(folder);
     const realParent = yield* realOrNull(path.dirname(folder));
     if (realFolder === null || realParent === null)
-      return { problem: "It could not be read.", localRepository: null };
+      return { problem: null, unreadable: "It could not be read.", localRepository: null };
     // Roots are canonical, so a symlinked parent (a linked drive) is fine; a
     // symlinked folder is not.
     if (realFolder !== path.join(realParent, path.basename(folder)))
-      return { problem: "It is reached through a symbolic link.", localRepository: null };
+      return {
+        problem: null,
+        unreadable: "It is reached through a symbolic link.",
+        localRepository: null,
+      };
     const localRepository = ctx.roots.some((root) => inside(root, realFolder))
       ? null
       : yield* projectLocalRepository(realFolder, ctx.projects);
     if (!ctx.roots.some((root) => inside(root, realFolder)) && localRepository === null)
-      return { problem: "It is outside the app's worktree folders.", localRepository };
+      return {
+        problem: "It is outside the app's worktree folders.",
+        unreadable: null,
+        localRepository,
+      };
     const spellings = [...new Set([folder, key, realFolder])];
     for (const project of ctx.projects) {
       const projectPath = path.resolve(project.workspaceRoot);
@@ -587,9 +382,9 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
           ),
         )
       )
-        return { problem: "A project's folder is inside it.", localRepository };
+        return { problem: "A project's folder is inside it.", unreadable: null, localRepository };
     }
-    return { problem: null, localRepository };
+    return { problem: null, unreadable: null, localRepository };
   });
 
   const commitCount = (cwd: string, operation: string, args: ReadonlyArray<string>) =>
@@ -712,7 +507,7 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
           ? null
           : untracked.entries
               .filter((entry) => !onlyRebuildableUntracked(entry))
-              .map((entry) => NodePath.basename(entry.replace(/\/$/, ""))),
+              .map((entry) => path.basename(entry.replace(/\/$/, ""))),
       ignoredOther: classified?.other ?? null,
       media:
         classified === null
@@ -830,7 +625,11 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
       state.git = { ...facts, pullRequest: { state: "none", contentIntegrated: false } };
       return;
     }
+    // A closed pull request can be reopened: before a removal that rests on
+    // "closed", the host is asked again instead of trusting an earlier answer.
+    const closedBefore = previous?.git?.pullRequest?.state === "closed";
     if (
+      !closedBefore &&
       previous?.git !== undefined &&
       previous.head === state.head &&
       previous.git.pullRequest !== undefined
@@ -844,6 +643,7 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     // Merged is final for this head. Other answers are reused for a while,
     // except an open or missing one the chat's own record already contradicts.
     const reusable =
+      !closedBefore &&
       cached !== undefined &&
       (cached.state === "merged" ||
         (cached.at <= ctx.now &&
@@ -880,20 +680,106 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
   const readNested = Effect.fn("WorktreeCleanupSweep.readNested")(function* (state: MemberState) {
     const facts = state.git;
     if (facts === undefined) return;
+    // Git refuses to remove a worktree with a checked-out submodule, and its
+    // commits may be nowhere else: it counts as a repository inside.
+    const submodule = !(yield* fs
+      .exists(path.join(state.path, ".gitmodules"))
+      .pipe(Effect.orElseSucceed(() => true)))
+      ? false
+      : yield* run(
+          state.path,
+          "WorktreeCleanupSweep.submodules",
+          ["submodule", "status"],
+          256 * 1024,
+        ).pipe(
+          Effect.map((result) =>
+            result.exitCode !== 0 || result.stdoutTruncated
+              ? null
+              : result.stdout.split("\n").some((line) => line !== "" && !line.startsWith("-")),
+          ),
+          Effect.orElseSucceed(() => null),
+        );
     // No exclude rules: every untracked path, ignored ones included.
-    const listing = yield* listOthers(state, [], 1024 * 1024);
+    const listing = submodule === false ? yield* listOthers(state, [], 1024 * 1024) : null;
     const nestedRepository =
-      listing === null
-        ? null
-        : yield* Effect.tryPromise({
-            try: (signal) => findRepository(state.path, listing.entries, signal),
-            catch: () => null,
-          }).pipe(
-            Effect.timeoutOption(NESTED_WALK_TIMEOUT),
-            Effect.map((found) => (Option.isSome(found) ? found.value : null)),
-            Effect.orElseSucceed(() => null),
-          );
+      submodule === true
+        ? true
+        : listing === null
+          ? null
+          : yield* Effect.tryPromise({
+              try: (signal) => findRepository(state.path, listing.entries, signal),
+              catch: () => null,
+            }).pipe(
+              Effect.timeoutOption(NESTED_WALK_TIMEOUT),
+              Effect.map((found) => (Option.isSome(found) ? found.value : null)),
+              Effect.orElseSucceed(() => null),
+            );
     state.git = { ...facts, nestedRepository };
+  });
+
+  /**
+   * Who uses the folder right now: its chats and their states, chats of
+   * folders around it, terminals, agent sessions and processes. Reads no Git,
+   * so it is cheap enough to read again before each removal. `key` is equal
+   * for two readings exactly when nothing about its use changed.
+   */
+  const readLive = Effect.fn("WorktreeCleanupSweep.readLive")(function* (
+    group: FolderGroup,
+    ctx: SweepContext,
+  ) {
+    const { folder, key } = group;
+    const spellings = [...new Set([...(yield* spellingsOf(folder)), key])];
+    const owners = new Map(ctx.bindings.threads.map((owner) => [owner.threadId, owner]));
+    // A chat is closed only when its shell and its stored row both say so.
+    const stateOf = (chat: OrchestrationV2ThreadShell): FinishedChatState => {
+      const owner = owners.get(chat.id);
+      return owner === undefined || ownWorktreeThreadState(owner) === "open"
+        ? "open"
+        : chatState(chat);
+    };
+    const {
+      threads: nearbyOwners,
+      sessions,
+      terminals,
+    } = yield* worktreeOwnersOf(ctx.bindings, spellings, {
+      match: "overlapping",
+      terminals: options.liveTerminals(),
+    }).pipe(Effect.provideContext(services));
+    const nearby = nearbyOwners.find(
+      (owner) =>
+        isOpenThreadOwner(owner) && !owner.paths.some((spelling) => spellings.includes(spelling)),
+    );
+    const realFolder = (yield* realOrNull(folder)) ?? folder;
+    const processInside =
+      ctx.processCwds?.some(
+        (cwd) => pathWithin(path, realFolder, cwd) || pathWithin(path, folder, cwd),
+      ) ?? false;
+    const inUse =
+      terminals.length > 0
+        ? "A terminal is open in it."
+        : sessions.length > 0
+          ? "An agent session works in it."
+          : processInside
+            ? "A process works in it."
+            : null;
+    return {
+      stateOf,
+      nearbyOwners,
+      nearby,
+      inUse,
+      key: encodeJson([
+        group.chats.map((chat) => [
+          chat.id,
+          stateOf(chat),
+          storageCleanupActivityAt(chat),
+          storageCleanupThreadIdle(chat, ctx.now),
+        ]),
+        group.deleted.map((chat) => chat.id),
+        nearbyOwners.map((entry) => [entry.threadId, worktreeThreadState(entry)]),
+        inUse,
+        ctx.processCwds === null,
+      ]),
+    };
   });
 
   /** Gathers what the decision asks for, stage by stage, and decides. */
@@ -904,7 +790,6 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
   ) {
     const { folder, key } = group;
     if (!(yield* fs.exists(folder).pipe(Effect.orElseSucceed(() => true)))) return null;
-    const spellings = [...new Set([...(yield* spellingsOf(folder)), key])];
     const ids = new Set(group.chats.map((chat) => chat.id));
     // Only a sub-chat its parent started follows that parent. A fork shares
     // the folder too, but a person works in it: it decides as a head.
@@ -914,14 +799,6 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
         chat.lineage.parentThreadId === null ||
         !ids.has(chat.lineage.parentThreadId),
     );
-    const owners = new Map(ctx.bindings.threads.map((owner) => [owner.threadId, owner]));
-    // A chat is closed only when its shell and its stored row both say so.
-    const stateOf = (chat: OrchestrationV2ThreadShell): FinishedChatState => {
-      const owner = owners.get(chat.id);
-      return owner === undefined || ownWorktreeThreadState(owner) === "open"
-        ? "open"
-        : chatState(chat);
-    };
     const activity = group.chats.map(storageCleanupActivityAt);
     const branches = new Set(
       [
@@ -938,9 +815,9 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
 
     const reach = yield* outOfReach(folder, key, ctx);
     const members: Array<MemberState> = [];
-    let unreadable: string | null = null;
+    let unreadable: string | null = reach.unreadable;
     let looseFiles = 0;
-    if (reach.problem === null) {
+    if (reach.problem === null && reach.unreadable === null) {
       const manifestFile = worktreeSetManifestPath(folder, path);
       const inSet = yield* fs.exists(manifestFile).pipe(Effect.orElseSucceed(() => true));
       const set = inSet
@@ -1036,31 +913,8 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
       }
     }
 
-    const {
-      threads: nearbyOwners,
-      sessions,
-      terminals,
-    } = yield* worktreeOwnersOf(ctx.bindings, spellings, {
-      match: "overlapping",
-      terminals: options.liveTerminals(),
-    }).pipe(Effect.provideContext(services));
-    const nearby = nearbyOwners.find(
-      (owner) =>
-        isOpenThreadOwner(owner) && !owner.paths.some((spelling) => spellings.includes(spelling)),
-    );
-    const realFolder = (yield* realOrNull(folder)) ?? folder;
-    const processInside =
-      ctx.processCwds?.some(
-        (cwd) => pathWithin(path, realFolder, cwd) || pathWithin(path, folder, cwd),
-      ) ?? false;
-    const inUse =
-      terminals.length > 0
-        ? "A terminal is open in it."
-        : sessions.length > 0
-          ? "An agent session works in it."
-          : processInside
-            ? "A process works in it."
-            : null;
+    const live = yield* readLive(group, ctx);
+    const { stateOf, nearby, inUse } = live;
 
     const deletedCleanupPending =
       group.chats.length > 0 || group.deleted.length === 0
@@ -1142,12 +996,10 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
       group,
       decision,
       members,
+      liveness: live.key,
       fingerprint: encodeJson([
-        group.chats.map((chat) => [chat.id, stateOf(chat), storageCleanupActivityAt(chat)]),
-        nearbyOwners.map((entry) => [entry.threadId, worktreeThreadState(entry)]),
+        live.key,
         rules,
-        inUse,
-        ctx.processCwds === null,
         looseFiles,
         unreadable,
         members.map((state) => [state.registration, state.locked, state.fingerprint]),
@@ -1162,7 +1014,11 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     } satisfies Assessment;
   });
 
-  /** Copies ignored media to evidence and checks each copy by size. False when any copy failed. */
+  /**
+   * Copies ignored media to a new evidence folder and checks each copy by
+   * size. Returns that folder, or null when a copy failed; what a failed run
+   * copied is removed again, so retries never pile up copies.
+   */
   const copyMedia = Effect.fn("WorktreeCleanupSweep.copyMedia")(function* (
     assessment: Assessment,
     now: number,
@@ -1170,16 +1026,21 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     const files = assessment.members.flatMap((state) =>
       state.media.map((file) => ({ state, file })),
     );
-    if (files.length === 0) return true;
     const base = path.join(
       config.baseDir,
       "evidence",
       "removed-worktrees",
       `${path.basename(assessment.group.folder)}-${evidenceStamp(now)}`,
     );
-    return yield* Effect.gen(function* () {
-      let target = base;
-      for (let index = 2; yield* fs.exists(target); index += 1) target = `${base}-${index}`;
+    let target = base;
+    for (let index = 2; ; index += 1) {
+      // An unreadable evidence folder is a failed copy, not a reason to keep looking.
+      const taken = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => null));
+      if (taken === false) break;
+      if (taken === null || index > 100) return null;
+      target = `${base}-${index}`;
+    }
+    const copied = yield* Effect.gen(function* () {
       for (const { state, file } of files) {
         const source = path.join(state.path, file.relative);
         const copy = path.join(target, state.member.relativePath, file.relative);
@@ -1216,7 +1077,14 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
         }).pipe(Effect.as(false)),
       ),
     );
+    if (copied) return target;
+    yield* discardEvidence(target);
+    return null;
   });
+
+  /** Removes an evidence folder this run made for a removal that then did not happen. */
+  const discardEvidence = (target: string) =>
+    fs.remove(target, { recursive: true, force: true }).pipe(Effect.ignore);
 
   /** Removes a folder that holds nothing, or only Finder's `.DS_Store`. */
   const removeIfEmpty = (folder: string) =>
@@ -1236,11 +1104,15 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
    */
   const removeMembers = Effect.fn("WorktreeCleanupSweep.removeMembers")(function* (
     assessment: Assessment,
+    /** Read right before each member goes: false when the folder's use changed. */
+    stillFree: Effect.Effect<boolean>,
   ) {
     const depth = (state: MemberState) =>
       state.member.relativePath === "" ? 0 : state.member.relativePath.split(path.sep).length;
     let gone = 0;
     for (const state of assessment.members.toSorted((left, right) => depth(right) - depth(left))) {
+      // Removing a member can take minutes: a chat may have been reopened meanwhile.
+      if (!(yield* stillFree)) return { stopped: "changed" as const, member: "", gone };
       // Files Git leaves behind were checked by nobody: they stay, and so does the rest.
       const removal = yield* git
         .removeWorktree({
@@ -1258,16 +1130,19 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
           error: removal.failure,
         });
         return {
-          refused: state.member.relativePath === "" ? "the folder" : state.member.relativePath,
+          stopped: "refused" as const,
+          member: state.member.relativePath === "" ? "the folder" : state.member.relativePath,
           gone,
         };
       }
       gone += 1;
     }
-    for (const repository of new Set(assessment.members.map((state) => state.repository))) {
-      yield* git.pruneWorktrees({ cwd: repository }).pipe(Effect.ignore);
+    // No `git worktree prune`: a removal that succeeded dropped its own
+    // registration, and a prune would also drop every other worktree of the
+    // repository whose folder is missing right now, such as one on a drive
+    // that is not mounted.
+    for (const repository of new Set(assessment.members.map((state) => state.repository)))
       yield* gitManager.invalidateStatus(repository);
-    }
     const folder = assessment.group.folder;
     for (const state of assessment.members) {
       let parent = path.dirname(state.path);
@@ -1278,7 +1153,7 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     }
     if (yield* fs.exists(folder).pipe(Effect.orElseSucceed(() => false)))
       yield* removeIfEmpty(folder);
-    return { refused: null, gone };
+    return { stopped: null, member: "", gone };
   });
 
   const measure = (folder: string) =>
@@ -1332,8 +1207,10 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     const again = yield* lookAgain(first);
     if (again === null) return changed("Something in it or about it changed while it was checked.");
     let last = again;
+    let evidence: string | null = null;
     if (again.members.some((state) => state.media.length > 0)) {
-      if (!(yield* copyMedia(again, ctx.now)))
+      evidence = yield* copyMedia(again, ctx.now);
+      if (evidence === null)
         return {
           action: "keep",
           reason: "media",
@@ -1341,17 +1218,41 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
         } as const;
       // Copying can take minutes, and Git deletes ignored files without asking.
       const afterCopy = yield* lookAgain(again);
-      if (afterCopy === null)
+      if (afterCopy === null) {
+        yield* discardEvidence(evidence);
         return changed("Something in it changed while its media was copied to evidence.");
+      }
       last = afterCopy;
     }
-    const removal = yield* removeMembers(last);
-    if (removal.refused !== null)
+    const liveness = last.liveness;
+    const stillFree = Effect.gen(function* () {
+      const snapshot = yield* readThreads();
+      const groups = yield* readGroups(snapshot.threads, yield* settingsService.getSettings);
+      const group = groups.find((entry) => entry.key === first.group.key);
+      if (group === undefined) return false;
+      const live = yield* readLive(group, {
+        ...ctx,
+        bindings: yield* readBindings,
+        projects: snapshot.projects,
+        processCwds: yield* readProcessCwds,
+      });
+      return live.key === liveness;
+      // Anything unreadable counts as changed.
+    }).pipe(Effect.orElseSucceed(() => false));
+    const removal = yield* removeMembers(last, stillFree);
+    if (removal.stopped !== null) {
+      // Nothing went, so the copies made for this removal are not needed.
+      if (removal.gone === 0 && evidence !== null) yield* discardEvidence(evidence);
+      const why =
+        removal.stopped === "changed"
+          ? "Its use changed right before removal"
+          : `Git refused to remove ${removal.member}`;
       return changed(
         removal.gone === 0
-          ? `Git refused to remove ${removal.refused}; nothing was removed.`
-          : `Git refused to remove ${removal.refused} after ${removal.gone} of its worktrees were removed; they come back when the chat resumes.`,
+          ? `${why}; nothing was removed.`
+          : `${why} after ${removal.gone} of its worktrees were removed; they come back when the chat resumes.`,
       );
+    }
     // Counted as removed only when the folder is gone.
     if (yield* fs.exists(first.group.folder).pipe(Effect.orElseSucceed(() => true)))
       return changed("Its worktrees were removed; what is left in the folder stays.");
@@ -1405,7 +1306,15 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
         if (assessment === null) return null;
         let decision = assessment.decision;
         let bytes: number | null = null;
-        if (mode === "plan" || decision.action === "remove") bytes = yield* measure(group.folder);
+        if (mode === "plan" || decision.action === "remove") {
+          // Media is copied to evidence first, so removing the folder does not free it.
+          const media = assessment.members.reduce(
+            (total, state) => total + state.media.reduce((sum, file) => sum + file.bytes, 0),
+            0,
+          );
+          const measured = yield* measure(group.folder);
+          bytes = measured === null ? null : Math.max(0, measured - media);
+        }
         if (mode === "apply" && decision.action === "remove") {
           const leasePaths = [...new Set([group.folder, group.key])].sort();
           decision = yield* leasePaths.reduceRight(

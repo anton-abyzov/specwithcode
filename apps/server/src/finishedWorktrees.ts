@@ -276,12 +276,12 @@ export function decideFinishedWorktree(
   if (openHead !== undefined && !(rules.worktreeOnMerge && quietLongEnough)) {
     if (rules.worktreeOnMerge && chats?.pullRequestFinished === true) {
       const quiet = elapsedMs(newestActivityAt, now);
-      return keep(
-        "recent",
-        quiet === null
-          ? "When it was last used is unknown, so it is kept."
-          : `Quiet for ${plural(Math.floor(quiet / HOUR_MS), "hour")}; it goes after 6.`,
-      );
+      return quiet === null
+        ? keep("unknown", "When it was last used is unknown, so it is kept.")
+        : keep(
+            "recent",
+            `Quiet for ${plural(Math.floor(quiet / HOUR_MS), "hour")}; it goes after 6.`,
+          );
     }
     return keep("open", `${openHead.title} is open.`);
   }
@@ -449,6 +449,13 @@ export function decideFinishedWorktree(
     return { action: "remove", reason: applied.reason, detail: applied.detail };
   }
 
+  // A host that gave no answer is why nothing applied: say so, not "open" or "unpushed".
+  const silentHost = gits.find(({ git }) => git.pullRequest === null);
+  if (silentHost !== undefined)
+    return keep(
+      "unknown",
+      `${label(silentHost.member)}: the Git host gave no answer about its pull request.`,
+    );
   if (openHead !== undefined) return keep("open", `${openHead.title} is open.`);
   if (unpushedBlocker !== null) return keep("unpushed", unpushedBlocker);
   if (unknownHistory !== null) return keep("unknown", unknownHistory);
