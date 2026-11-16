@@ -131,27 +131,30 @@ async function settle(
   throw new Error(`copy ${operationId} never reached ${until.join(", ")}`);
 }
 
-/** Records what the source answers on the secret routes, as anyone holding the token would see it. */
-function wire() {
+/**
+ * Records what the source answers on the secret routes, as anyone holding the token would
+ * see it. `swap` stands in for something on the way that replaces a secret's answer.
+ */
+function wire(swap?: () => Response) {
   const secrets: Array<{ contentType: string; body: Buffer }> = [];
   const wrapped: typeof fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const response = await fetch(input, init);
-    if (url.endsWith("/secret"))
-      secrets.push({
-        contentType: response.headers.get("content-type") ?? "",
-        body: Buffer.from(await response.clone().arrayBuffer()),
-      });
-    return response;
+    if (!url.endsWith("/secret")) return response;
+    secrets.push({
+      contentType: response.headers.get("content-type") ?? "",
+      body: Buffer.from(await response.clone().arrayBuffer()),
+    });
+    return swap ? swap() : response;
   };
   return { fetch: wrapped, secrets };
 }
 
 /** One destination machine with its own state, and one copy the source offered to it. */
-async function begin(name: string) {
+async function begin(name: string, swap?: () => Response) {
   const state = NodePath.join(base, "destination-machine", name);
   const folder = NodePath.join(base, "destination-machine", "targets", name);
-  const seen = wire();
+  const seen = wire(swap);
   const copies = new DestinationCopies(state, {
     ...fast,
     fetch: seen.fetch,
@@ -487,6 +490,30 @@ describe("secrets of a copy run from another machine's window", () => {
     expect(NodeFS.readFileSync(NodePath.join(copy.folder, "README.md"), "utf8")).toBe(
       "# Umbrella\n",
     );
+    await copy.copies.close();
+  }, 180_000);
+
+  it("writes nothing when the list says sealed and a secret arrives plain", async () => {
+    const copy = await begin(
+      "plain",
+      () =>
+        new Response("ROOT_TOKEN=swapped\n", {
+          status: 200,
+          headers: { "content-type": "application/octet-stream" },
+        }),
+    );
+    await transfers.approveSecrets({
+      operationId: copy.operationId,
+      paths: Object.keys(FOLDER_SECRETS),
+      destinationLabel: "M3",
+      sealTo: await copy.copies.secretsKey(copy.operationId, SOURCE),
+    });
+    await copy.copies.approve(copy.operationId);
+    const ended = await settle(copy.copies, copy.operationId, ["applied", "failed"]);
+    expect(ended.state).toBe("failed");
+    expect(JSON.stringify(ended.error)).toContain("listed its secret files as sealed");
+    for (const path of Object.keys(FOLDER_SECRETS))
+      expect(NodeFS.existsSync(NodePath.join(copy.folder, path)), path).toBe(false);
     await copy.copies.close();
   }, 180_000);
 

@@ -334,9 +334,21 @@ export class SourceClient {
 
   /** Approved secret files; an older source without the secret step has none. */
   async secrets(): Promise<Array<{ path: string; size: number }>> {
+    return (await this.secretsOffer()).files;
+  }
+
+  /** The staged list, and whether the source says it serves these files only sealed. */
+  async secretsOffer(): Promise<{
+    readonly files: Array<{ path: string; size: number }>;
+    readonly sealed: boolean;
+  }> {
     const response = await this.request("GET", "secrets");
-    if (response.status === 404) return [];
-    return (await this.json<{ files: Array<{ path: string; size: number }> }>(response)).files;
+    if (response.status === 404) return { files: [], sealed: false };
+    const offer = await this.json<{
+      files: Array<{ path: string; size: number }>;
+      sealed?: boolean;
+    }>(response);
+    return { files: offer.files, sealed: offer.sealed === true };
   }
 
   /** One approved secret file as the source served it: plain, or sealed to this machine's key. */

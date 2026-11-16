@@ -1320,7 +1320,8 @@ export class DestinationCopies {
     // The approval named the files the window sent: only those are pulled, so a list another
     // window staged meanwhile neither adds a file nor brings back one the person unticked.
     const named = record.secretsExpected ? new Set(record.secretsExpected) : null;
-    const offered = (await client.secrets()).filter((file) => !named || named.has(file.path));
+    const offer = await client.secretsOffer();
+    const offered = offer.files.filter((file) => !named || named.has(file.path));
     let current = record;
     const machine = machineSlug(record.sourceMachine);
     for (const file of offered) {
@@ -1334,7 +1335,8 @@ export class DestinationCopies {
           : !isSafeRelativePath(file.path)
       )
         throw new CopyError("refused", "The source offered a secret file outside the folder.");
-      const bytes = await this.secretBytes(current, await client.secretFile(file.path));
+      const served = await client.secretFile(file.path);
+      const bytes = await this.secretBytes(current, served, offer.sealed);
       const written = await writeSecretFile({
         targetRoot:
           home === null ? current.targetFolder : (this.hooks.home?.() ?? NodeOS.homedir()),
@@ -1366,7 +1368,14 @@ export class DestinationCopies {
   private async secretBytes(
     record: DestinationRecord,
     served: { readonly bytes: Uint8Array; readonly sealed: boolean },
+    /** The source's list said these files come sealed: a plain body is not what it staged. */
+    listedSealed: boolean,
   ): Promise<Uint8Array> {
+    if (!served.sealed && listedSealed)
+      throw new CopyError(
+        "refused",
+        `${record.sourceMachine} listed its secret files as sealed and sent one that is not, so it was not written. The other files are in place. Copy again to send the secret files.`,
+      );
     if (!served.sealed) return served.bytes;
     const opened = await openSealedSecret(this.directory(record.operationId), served.bytes);
     if (opened === null)
