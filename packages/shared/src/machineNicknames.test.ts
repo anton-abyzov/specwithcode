@@ -7,6 +7,7 @@ import {
   assignMachineColors,
   defaultMachineNickname,
   fitMachineNickname,
+  isAutomaticMachineNickname,
   machineNicknameHolder,
   mergeMachineNicknames,
   newerMachineNickname,
@@ -92,6 +93,56 @@ describe("machine nicknames", () => {
         m4,
       )?.name,
     ).toBe("M5");
+  });
+
+  it("counts a computer name kept on purpose as the name it shows", () => {
+    // That machine reads "M5" on screen; a second "M5" would not tell them apart.
+    expect(
+      defaultMachineNickname(
+        { "env-b": at("", "2026-11-13T00:00:00.000Z") },
+        "env-m5",
+        "Anton M5MAX PROLED",
+        new Map([["env-b", "Anton's M5"]]),
+      ),
+    ).toBeNull();
+  });
+
+  it("gives its own name back when another machine comes to show it, and takes it again once free", () => {
+    const fleet = new Map([["env-studio", "Mac Studio"]]);
+    const own = defaultMachineNickname({}, "env-m5", "Anton M5MAX PROLED", fleet)!;
+    expect(isAutomaticMachineNickname(own)).toBe(true);
+    // A rename to "m5" made on the studio arrives after this machine named itself.
+    const taken = { "env-m5": own, "env-studio": at("m5", "2026-11-16T08:00:00.000Z") };
+    const back = defaultMachineNickname(taken, "env-m5", "Anton M5MAX PROLED", fleet)!;
+    expect(back).toEqual({ name: "", updatedAt: "1970-01-01T00:00:00.001Z" });
+    expect(isAutomaticMachineNickname(back)).toBe(true);
+    // The newer automatic entry wins the sync over the older one on every machine.
+    expect(newerMachineNickname(own, back)).toBe(back);
+    expect(defaultMachineNickname({ ...taken, "env-m5": back }, "env-m5", "Anton M5MAX PROLED", fleet)).toBeNull();
+    // The studio is renamed again: the name is free, so the machine takes it back.
+    const free = { "env-m5": back, "env-studio": at("Studio", "2026-11-16T09:00:00.000Z") };
+    expect(defaultMachineNickname(free, "env-m5", "Anton M5MAX PROLED", fleet)).toEqual({
+      name: "M5",
+      updatedAt: "1970-01-01T00:00:00.002Z",
+    });
+    // A name a person chose for this machine is never touched, whatever it clashes with.
+    const chosen = { ...taken, "env-m5": at("m5", "2026-11-16T07:00:00.000Z") };
+    expect(defaultMachineNickname(chosen, "env-m5", "Anton M5MAX PROLED", fleet)).toBeNull();
+  });
+
+  it("keeps two machines that name themselves the same on their computer names", () => {
+    // Both named themselves "M5" before either knew the other.
+    const a = defaultMachineNickname({}, "env-a", "Anton M5MAX PROLED")!;
+    const b = defaultMachineNickname({}, "env-b", "Office M5 Pro")!;
+    const synced = { "env-a": a, "env-b": b };
+    const backA = defaultMachineNickname(synced, "env-a", "Anton M5MAX PROLED", new Map([["env-b", "Office M5 Pro"]]));
+    const backB = defaultMachineNickname(synced, "env-b", "Office M5 Pro", new Map([["env-a", "Anton M5MAX PROLED"]]));
+    expect(backA?.name).toBe("");
+    expect(backB?.name).toBe("");
+    // And they stay there, rather than flip back and forth.
+    const settled = { "env-a": backA!, "env-b": backB! };
+    expect(defaultMachineNickname(settled, "env-a", "Anton M5MAX PROLED", new Map([["env-b", "Office M5 Pro"]]))).toBeNull();
+    expect(defaultMachineNickname(settled, "env-b", "Office M5 Pro", new Map([["env-a", "Anton M5MAX PROLED"]]))).toBeNull();
   });
 
   it("finds another machine already shown under a name, ignoring case", () => {

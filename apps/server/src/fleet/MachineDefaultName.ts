@@ -12,31 +12,30 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as FleetTargets from "./FleetTargets.ts";
 
 /**
- * A machine nobody has named names itself once, from the chip in its computer
- * name ("Anton M5MAX PROLED" shows as "M5"), so a new machine reads short in
- * Runs on, thread rows and on every paired device without a rename first.
+ * A machine nobody has named names itself from the chip in its computer name
+ * ("Anton M5MAX PROLED" shows as "M5"), so a new machine reads short in Runs
+ * on, thread rows and on every paired device without a rename first.
  *
  * The name is stamped older than any choice: a rename made on any machine,
- * before or after, wins when nicknames sync. A machine that already has an
- * entry, even one that keeps the computer name, is left alone, and so is one
- * whose short name another machine on its fleet list shows or would take
- * (`defaultMachineNickname`). It is tried again whenever nicknames change, so
- * names that arrive from paired machines are counted first.
+ * before or after, wins when nicknames sync, and a name a person chose is never
+ * touched. While the machine still carries a name it gave itself, that name
+ * follows its fleet list (`defaultMachineNickname`): it goes back to the
+ * computer name when another machine shows or would take the same name, and
+ * takes the chip once the name is free again.
  */
 export const nameThisMachine = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const targets = yield* FleetTargets.FleetTargets;
   const descriptor = yield* environment.getDescriptor;
-  const current = yield* settings.getSettings;
-  const nicknames = current.machineNicknames ?? {};
-  if (nicknames[descriptor.environmentId] !== undefined) return false;
   const fleet = yield* targets.load.pipe(Effect.orElseSucceed(() => null));
   const others = new Map(
     (fleet?.machines ?? []).map((machine) => [machine.environmentId as string, machine.label]),
   );
+  // Read after the fleet list, so a name that arrived while it loaded counts.
+  const current = yield* settings.getSettings;
   const entry = defaultMachineNickname(
-    nicknames,
+    current.machineNicknames ?? {},
     descriptor.environmentId,
     descriptor.label,
     others,
@@ -48,19 +47,24 @@ export const nameThisMachine = Effect.gen(function* () {
 
 const attempt = nameThisMachine.pipe(Effect.catchCause(() => Effect.succeed(false)));
 
+/** The fleet list changes without a settings write (a machine removed or joined). */
+const RECHECK_EVERY = Duration.minutes(5);
+
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const settings = yield* ServerSettings.ServerSettingsService;
-    // Names that arrive from paired machines can make a name taken, so try again on each.
-    yield* attempt.pipe(
-      Effect.andThen(
-        settings.streamChanges.pipe(
-          Stream.map((current) => current.machineNicknames),
-          Stream.changesWith(sameMachineNicknames),
-          Stream.debounce(Duration.seconds(2)),
-          Stream.runForEach(() => attempt),
-        ),
+    // Subscribed before the first try, so a name that arrives during it is not missed.
+    const changes = yield* settings.subscribeChanges;
+    // The tick tries once at once, then again every few minutes.
+    yield* Stream.merge(
+      changes.pipe(
+        Stream.map((current) => current.machineNicknames),
+        Stream.changesWith(sameMachineNicknames),
+        Stream.debounce(Duration.seconds(2)),
       ),
+      Stream.tick(RECHECK_EVERY),
+    ).pipe(
+      Stream.runForEach(() => attempt),
       Effect.catchCause(() => Effect.void),
       Effect.forkScoped,
     );

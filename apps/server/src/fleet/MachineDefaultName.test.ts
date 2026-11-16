@@ -17,8 +17,9 @@ const services = (label: string, fleet: ReadonlyArray<{ environmentId: string; l
     Layer.mock(ServerEnvironment.ServerEnvironment)({
       getDescriptor: Effect.succeed({ environmentId: EnvironmentId.make("env-m5"), label } as never),
     }),
-    Layer.mock(FleetTargets.FleetTargets)({
+    Layer.succeed(FleetTargets.FleetTargets, {
       load: Effect.succeed({ machines: fleet } as never),
+      fetch: (() => Effect.die("not used")) as never,
     }),
   );
 
@@ -64,6 +65,30 @@ describe("a machine nobody named", () => {
       fleet: [{ environmentId: "env-studio", label: "Mac Studio" }],
     });
     expect(named).toBe(false);
+  });
+
+  it("goes back to its computer name when a machine on its list is named the same later", async () => {
+    const { named, nicknames } = await start("Anton M5MAX PROLED", {
+      before: {
+        "env-m5": { name: "M5", updatedAt: "1970-01-01T00:00:00.000Z" },
+        "env-studio": { name: "m5", updatedAt: "2026-11-16T08:00:00.000Z" },
+      },
+      fleet: [{ environmentId: "env-studio", label: "Mac Studio" }],
+    });
+    expect(named).toBe(true);
+    expect(nicknames["env-m5"]).toEqual({ name: "", updatedAt: "1970-01-01T00:00:00.001Z" });
+  });
+
+  it("never changes a name a person chose for it", async () => {
+    const { named, nicknames } = await start("Anton M5MAX PROLED", {
+      before: {
+        "env-m5": { name: "m5", updatedAt: "2026-11-16T07:00:00.000Z" },
+        "env-studio": { name: "m5", updatedAt: "2026-11-16T08:00:00.000Z" },
+      },
+      fleet: [{ environmentId: "env-studio", label: "Mac Studio" }],
+    });
+    expect(named).toBe(false);
+    expect(nicknames["env-m5"]?.name).toBe("m5");
   });
 
   it("ignores the name an old registration left behind", async () => {
