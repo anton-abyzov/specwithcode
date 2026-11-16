@@ -375,7 +375,8 @@ it("says not linked, with what that means, for checkouts registered on their own
   expect(rows[1]?.title).toBe(
     "Not linked: M1 runs its own coordinator, threads and memory for this repository.",
   );
-  expect(document.querySelector('[role="menu"]')?.textContent).not.toContain("separate project");
+  // The old row note is gone; the sentence above the rows may still call the projects separate.
+  expect(rows.map((row) => row.textContent).join(" ")).not.toContain("separate project");
 });
 
 const unlinkedNote = () =>
