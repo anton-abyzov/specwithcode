@@ -291,6 +291,38 @@ it("sends every detected secret file with the default choice, then approves with
   expect(container.textContent).not.toContain("stayed on M4");
 });
 
+it("offers the secret files again when Retry follows a copy the destination stopped for them", async () => {
+  state.sourceAccess = "granted";
+  measureRealRun();
+  const stopped = copyStatus("failed", {
+    failedStep: "applied",
+    committed: false,
+    projectId: null,
+    error: {
+      code: "refused",
+      message:
+        "10 secret files approved for this copy were no longer offered by M4. The other files are in place here. Copy again to send them.",
+    },
+  });
+  statuses = [copyStatus("previewed"), stopped];
+  await mount();
+  await click("Copy to M3");
+  await click("Copy to M3");
+  expect(container.textContent).toContain("were no longer offered by M4");
+  expect(sentSecrets()).toEqual([REAL_RUN]);
+  // Another window withdrew the list meanwhile: Retry sends it again, then retries.
+  statuses = [
+    copyStatus("applied", {
+      secrets: REAL_RUN.map((path) => ({ path, writtenAs: path, size: 10, state: "written" })),
+    }),
+  ];
+  state.handlers.copyRetry = () => copyStatus("applying");
+  await click("Retry");
+  expect(sentSecrets()).toEqual([REAL_RUN, REAL_RUN]);
+  expect(names().lastIndexOf("copySecrets")).toBeLessThan(names().indexOf("copyRetry"));
+  expect(left()).toBeNull();
+});
+
 const left = () => container.querySelector('[data-slot="copy-secrets-left"]');
 const resumed = (extra: Record<string, unknown> = {}) =>
   localStorage.setItem(

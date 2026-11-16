@@ -635,7 +635,8 @@ export class DestinationCopies {
         ...(sourceMoved ? { warnings: [...record.warnings, SOURCE_MOVED] } : {}),
         error: null,
         ...(options.withoutSecrets ? { withoutSecrets: true } : {}),
-        ...(!options.withoutSecrets && options.expectedSecrets?.length
+        // An empty list is an expectation too: the window sent none, so none are pulled.
+        ...(!options.withoutSecrets && options.expectedSecrets
           ? { secretsExpected: [...new Set(options.expectedSecrets)] }
           : {}),
         startedAt: this.now(),
@@ -1312,7 +1313,10 @@ export class DestinationCopies {
     if (record.withoutSecrets === true)
       return this.update(record.operationId, { secretsDone: true });
     const client = this.client(record);
-    const offered = await client.secrets();
+    // The approval named the files the window sent: only those are pulled, so a list another
+    // window staged meanwhile neither adds a file nor brings back one the person unticked.
+    const named = record.secretsExpected ? new Set(record.secretsExpected) : null;
+    const offered = (await client.secrets()).filter((file) => !named || named.has(file.path));
     let current = record;
     const machine = machineSlug(record.sourceMachine);
     for (const file of offered) {

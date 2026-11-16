@@ -202,4 +202,28 @@ describe("the secret files of a real copy", () => {
     await copies.close();
     await without.copies.close();
   }, 180_000);
+
+  it("pulls only the files the approval named, whatever else is staged", async () => {
+    const { operationId, copies, target } = await previewed("named");
+    // This window sent three; another window then staged the whole list.
+    const named = REAL_RUN.slice(0, 3);
+    await stage(operationId, named);
+    await stage(operationId, REAL_RUN);
+    await copies.approve(operationId, { expectedSecrets: named });
+    const applied = await settle(copies, operationId, ["applied", "failed"]);
+    expect(applied.error).toBeNull();
+    expect(applied.committed).toBe(true);
+    expect(arrived(target)).toEqual(named);
+    expect(applied.secrets?.map((file) => file.path)).toEqual(named);
+    // A window that sent none (every file unticked) gets none, although a list is staged.
+    const none = await previewed("named-none");
+    await stage(none.operationId, REAL_RUN);
+    await none.copies.approve(none.operationId, { expectedSecrets: [] });
+    const without = await settle(none.copies, none.operationId, ["applied", "failed"]);
+    expect(without.error).toBeNull();
+    expect(without.committed).toBe(true);
+    expect(arrived(none.target)).toEqual([]);
+    await copies.close();
+    await none.copies.close();
+  }, 180_000);
 });

@@ -1008,6 +1008,9 @@ export function HandoffFolderCopy({
         await moveCoordinator(operationId, machine, copy.projectId, copy, anyway);
         return;
       }
+      // Stopped for secret files the source no longer offered: this window offers them again.
+      if (copy?.failedStep === "applied" && copy.error?.code === "refused" && !secrets.gate.blocked)
+        await secrets.sendTicked(operationId).catch(() => undefined);
       setStage("copying");
       try {
         setCopy(unwrap(await retry({ environmentId: machine, input: { operationId } })));
