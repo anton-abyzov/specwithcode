@@ -145,6 +145,29 @@ describe("SSH targets", () => {
     expect(scan.sshTargets).toEqual([]);
   });
 
+  it("keeps the row, without a place, for a script whose host cannot be read", async () => {
+    await put("ops/v6.sh", "ssh root@[2001:db8::1] true\n");
+    const scan = await scanProjectCredentials(root);
+    expect(scan.found.get("ssh")).toEqual(["ops/v6.sh"]);
+    expect(credentialRows(scan, null).find((row) => row.id === "ssh")).toMatchObject({
+      sshTargets: [],
+      sshTargetsMore: false,
+    });
+  });
+
+  it("says when the project connects to more places than it lists", async () => {
+    for (const name of ["a", "b"])
+      await put(
+        `ops/${name}.sh`,
+        Array.from({ length: 8 }, (_, index) => `ssh root@${name}${index}.example.com true`).join(
+          "\n",
+        ),
+      );
+    const scan = await scanProjectCredentials(root);
+    expect(scan.sshTargets).toHaveLength(12);
+    expect(scan.sshTargetsMore).toBe(true);
+  });
+
   it("drops a target whose file name carries direction marks", async () => {
     await put("ops/\u202Edeploy.sh", "ssh root@203.0.113.10 true\n");
     const scan = await scanProjectCredentials(root);

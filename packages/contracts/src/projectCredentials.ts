@@ -183,6 +183,14 @@ const SSH_USER = /^[A-Za-z_][A-Za-z0-9_.-]{0,31}$/u;
 const SHELL_VARIABLE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u;
 const PRIVATE_IPV4 =
   /^(?:10|127)\.|^192\.168\.|^169\.254\.|^172\.(?:1[6-9]|2\d|3[01])\.|^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|^0\./u;
+const IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/u;
+const NUMBER_LABEL = /^(?:0x[0-9a-f]+|[0-9]+)$/iu;
+/**
+ * A host made of numbers that is not a plain dotted address: `0177.0.0.1`,
+ * `0x7f000001` and `2130706433` all reach 127.0.0.1 while reading as something else.
+ */
+const oddNumber = (host: string) =>
+  !IPV4.test(host) && NUMBER_LABEL.test(host.slice(host.lastIndexOf(".") + 1));
 export const MAX_SSH_TARGETS = 12;
 
 /**
@@ -192,7 +200,7 @@ export const MAX_SSH_TARGETS = 12;
  * quote, space or shell character, no port, no bracket, no non-ASCII look-alike.
  */
 export const isSafeSshHost = (value: string) =>
-  value.length <= 253 && SSH_HOST.test(value) && !looksLikeToken(value);
+  value.length <= 253 && SSH_HOST.test(value) && !looksLikeToken(value) && !oddNumber(value);
 export const isSafeSshUser = (value: string) => SSH_USER.test(value);
 export const isShellVariableName = (value: string) => SHELL_VARIABLE.test(value);
 /** Text free of control, bidirectional and other format characters. */

@@ -100,7 +100,7 @@ const CREDENTIAL_PROBES = [
     id: "ssh",
     status: "unknown",
     signIn: "ssh-keygen -t ed25519",
-    check: "ssh <host> true",
+    check: null,
   },
 ];
 export const linkCopyAsWorkers = async () => ({ status: "linked" });

@@ -67,7 +67,7 @@ const list = (over: Partial<Parameters<typeof CopyCredentialsList>[0]> = {}) => 
           new Map([
             ["azure", probe("azure", "not_signed_in")],
             ["kubernetes", probe("kubernetes", "ready", "az aks get-credentials")],
-            ["ssh", probe("ssh", "unknown", "ssh-keygen -t ed25519", "ssh <host> true")],
+            ["ssh", probe("ssh", "unknown", "ssh-keygen -t ed25519")],
           ])
         }
         state="ready"
@@ -128,12 +128,10 @@ describe("CopyCredentialsList", () => {
     expect(text()).toContain("Private keys stay on ");
     expect(text()).toContain("never copied");
     expect(text()).not.toMatch(/Send file|Send key|Not copied:/u);
-    // A project whose places are not known keeps the app's generic check.
-    expect(commands).toEqual([
-      "ssh-keygen -t ed25519",
-      "cat ~/.ssh/id_ed25519.pub",
-      "ssh <host> true",
-    ]);
+    // A project whose places are not known gets no command with a placeholder in it.
+    expect(commands).toEqual(["ssh-keygen -t ed25519", "cat ~/.ssh/id_ed25519.pub"]);
+    expect(text()).not.toContain("<host>");
+    expect(text()).toContain("~/.ssh/authorized_keys");
     expect(slot("copy-ssh-targets")).toHaveLength(0);
   });
 

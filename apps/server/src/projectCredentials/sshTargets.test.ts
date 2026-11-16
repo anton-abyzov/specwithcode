@@ -94,6 +94,59 @@ done
     ]);
   });
 
+  it("leaves a variable unknown for every other way a script can write it", () => {
+    const named = [{ kind: "variable", user: "root", host: null, variable: "H" }];
+    for (const write of [
+      "declare H=evil.example.com",
+      "declare -r H=evil.example.com",
+      "typeset H=evil.example.com",
+      "H+=.evil.example.com",
+      "read H",
+      "read -r A H",
+      "X=1; H=evil.example.com",
+      "H=evil.example.com true",
+      "H[0]=evil.example.com",
+      `H=good.example.com ${"x".repeat(2100)}`,
+    ])
+      expect(targets(`H=good.example.com\n${write}\nssh root@$H true\n`), write).toEqual(named);
+    expect(targets("declare -r H=good.example.com\nssh root@$H true\n")).toEqual([
+      server("root", "good.example.com", "H"),
+    ]);
+  });
+
+  it("says a script connects even when the place cannot be read", () => {
+    for (const script of [
+      "ssh root@[::1] true",
+      "ssh root@my_host true",
+      "ssh root@host.example.com. true",
+      "ssh ssh://root@host.example.com:2222 true",
+      "ssh root@0177.0.0.1 true",
+      "ssh root@2130706433 true",
+      "ssh root@0x7f000001 true",
+    ])
+      expect(sshTargetsInScript(`${script}\n`), script).toEqual({
+        targets: [],
+        more: false,
+        used: true,
+      });
+    for (const script of [
+      '/usr/bin/ssh "${ssh_opts[@]}" "$target" true',
+      "ssh -o User=a@b.example.com host true",
+      "# ssh root@build.example.com true",
+      "echo ops@example.com",
+    ])
+      expect(sshTargetsInScript(`${script}\n`).used, script).toBe(false);
+  });
+
+  it("reads one host once whatever its case, and skips comment lines", () => {
+    expect(targets("ssh root@Build.Example.com a\nssh root@build.example.com b\n")).toEqual([
+      server("root", "build.example.com"),
+    ]);
+    expect(targets("  # ssh root@old.example.com true\nssh root@new.example.com true\n")).toEqual([
+      server("root", "new.example.com"),
+    ]);
+  });
+
   it("stops at twelve targets", () => {
     const script = Array.from(
       { length: 30 },
@@ -125,5 +178,12 @@ describe("sshRemoteTarget", () => {
     expect(sshRemoteTarget("C:/repos/app")).toBeNull();
     expect(sshRemoteTarget("github.com:acme/app.git")).toBeNull();
     expect(sshRemoteTarget("ssh://git@-oProxyCommand=x/acme")).toBeNull();
+    // A password or token in the URL is never read as a host, and never returned.
+    const secret = `${"gl"}pat-${"t".repeat(20)}`;
+    expect(sshRemoteTarget(`ssh://oauth2:${secret}@gitlab.com/g/p`)).toBeNull();
+    expect(sshRemoteTarget("ssh://a@b@gitlab.com/g/p")).toBeNull();
+    expect(sshRemoteTarget("ssh://@gitlab.com/g/p")).toBeNull();
+    expect(sshRemoteTarget("ssh://git@gitlab.com:2222/g/p")).toMatchObject({ host: "gitlab.com" });
+    expect(sshRemoteTarget("ssh://git@2130706433/g/p")).toBeNull();
   });
 });

@@ -235,6 +235,8 @@ export async function scanProjectCredentials(root: string): Promise<CredentialSc
       const ssh = sshTargetsInScript(text);
       for (const target of ssh.targets) connects(target, relative);
       if (ssh.more) sshTargetsMore = true;
+      // A place that could not be read still needs a key: the row stays, without it.
+      if (ssh.used && isPlainText(relative)) note("ssh", relative);
     }
   }
   return { found, truncated, sshTargets: [...sshTargets.values()], sshTargetsMore };

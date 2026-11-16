@@ -35,14 +35,14 @@ const VARIABLE = new RegExp(String.raw`^\$\{?(${NAME})\}?$`, "u");
 const LITERAL = /^[A-Za-z0-9_.-]+$/u;
 /** `"$@"`, `$1`, `${2}`: what the caller passed, which a written default stands in for. */
 const POSITIONAL = /^\$(?:[@*]|\{?[0-9]+\}?)$/u;
-const ARRAY = new RegExp(
-  String.raw`^\s*(?:export\s+|readonly\s+|local\s+)?(${NAME})=\(([^)]*)\)`,
-  "u",
-);
-const SCALAR = new RegExp(
-  String.raw`^\s*(?:export\s+|readonly\s+|local\s+)?(${NAME})=(\S*)\s*(?:#.*)?$`,
-  "u",
-);
+const DECLARED = String.raw`(?:(?:export|readonly|local|declare|typeset)\s+(?:-[A-Za-z]+\s+)*)?`;
+const ARRAY = new RegExp(String.raw`^\s*${DECLARED}(${NAME})=\(([^)]*)\)\s*(?:#.*)?$`, "u");
+const SCALAR = new RegExp(String.raw`^\s*${DECLARED}(${NAME})=(\S*)\s*(?:#.*)?$`, "u");
+/** Any other way a line writes a variable: `A+=x`, `A=x cmd`, `A=1; B=2`, `A[0]=x`. */
+const OTHER_WRITE = new RegExp(String.raw`(?:^|[\s;&|(])(${NAME})(?:\[[^\]]*\])?\+?=`, "gu");
+const READ = new RegExp(String.raw`(?:^|[\s;&|(])read\s+(?:-\S+\s+)*((?:${NAME}\s*)+)`, "u");
+/** A destination-shaped word the patterns refuse: the script still uses SSH. */
+const LOOSE_DESTINATION = /^[^@\s[\]]+@\S|^ssh:\/\//u;
 const FALLBACK = new RegExp(String.raw`^\$\{(?:${NAME}|[0-9]+):-([^}]*)\}$`, "u");
 const LOOP = new RegExp(String.raw`^\s*for\s+(${NAME})\s+in\s+(.+?)\s*(?:;|$)`, "u");
 const LOOP_OVER = new RegExp(String.raw`^"?\$\{(${NAME})\[[@*]\]\}"?$`, "u");
@@ -82,8 +82,16 @@ function assignments(text: string): Map<string, ReadonlyArray<string>> {
       written.opaque = true;
     else written.sets.push(values);
   };
+  const opaque = (name: string) => {
+    for (const into of [scalars, arrays]) {
+      const written = into.get(name) ?? { sets: [], opaque: false };
+      into.set(name, written);
+      written.opaque = true;
+    }
+  };
   const loops: Array<{ readonly name: string; readonly from: string }> = [];
   for (const raw of text.split("\n")) {
+    // A longer line is cut, so the whole-line forms no longer fit it and its writes count as unknown.
     const line = raw.slice(0, MAX_LINE);
     const array = ARRAY.exec(line);
     if (array) {
@@ -93,6 +101,11 @@ function assignments(text: string): Map<string, ReadonlyArray<string>> {
     const scalar = SCALAR.exec(line);
     if (scalar) {
       const value = unquote(scalar[2]!);
+      if (value.startsWith("(")) {
+        // A list this file's plain form did not fit: `A=($(cmd))`.
+        opaque(scalar[1]!);
+        continue;
+      }
       const fallback = FALLBACK.exec(value);
       write(scalars, scalar[1]!, [fallback ? fallback[1]! : value]);
       continue;
@@ -102,7 +115,12 @@ function assignments(text: string): Map<string, ReadonlyArray<string>> {
       const over = LOOP_OVER.exec(loop[2]!.trim());
       if (over) loops.push({ name: loop[1]!, from: over[1]! });
       else write(scalars, loop[1]!, words(loop[2]!));
+      continue;
     }
+    // Every other write leaves its variable unknown rather than unseen.
+    for (const other of line.matchAll(OTHER_WRITE)) opaque(other[1]!);
+    const read = READ.exec(line);
+    if (read) for (const name of read[1]!.trim().split(/\s+/u)) opaque(name);
   }
   const settled = (written: Written | undefined): ReadonlyArray<string> | null => {
     if (written === undefined || written.opaque || written.sets.length === 0) return null;
@@ -137,11 +155,19 @@ const key = (target: SshTarget) =>
  * The `user@host` destinations of ssh, scp and rsync commands in a script's
  * text. `more` says the script names more of them than the list holds.
  */
-export function sshTargetsInScript(text: string): {
+export function sshTargetsInScript(script: string): {
   readonly targets: Array<SshTarget>;
   readonly more: boolean;
+  /** The script connects somewhere, whether or not the place could be read. */
+  readonly used: boolean;
 } {
+  // Comment lines describe a command; they do not run one.
+  const text = script
+    .split("\n")
+    .filter((line) => !/^\s*#/u.test(line))
+    .join("\n");
   const found = new Map<string, SshTarget>();
+  let used = false;
   let known: Map<string, ReadonlyArray<string>> | null = null;
   for (const match of text.matchAll(COMMAND)) {
     const tokens = words(match[1]!);
@@ -156,6 +182,7 @@ export function sshTargetsInScript(text: string): {
         if (VALUE_OPTIONS.has(token)) index += 1;
         continue;
       }
+      if (LOOSE_DESTINATION.test(token)) used = true;
       const destination = DESTINATION.exec(token);
       if (!destination) continue;
       known ??= assignments(text);
@@ -165,7 +192,9 @@ export function sshTargetsInScript(text: string): {
       const names: ReadonlyArray<string | null> = users.length > 0 ? users : [null];
       const variable =
         host.variable !== null && isShellVariableName(host.variable) ? host.variable : null;
-      const hosts = host.found ? host.values.filter(isSafeSshHost) : [];
+      const hosts = host.found
+        ? [...new Set(host.values.map((value) => value.toLowerCase()))].filter(isSafeSshHost)
+        : [];
       for (const name of names) {
         if (hosts.length === 0) {
           // A literal that failed the pattern is dropped; an unread variable is named.
@@ -182,18 +211,34 @@ export function sshTargetsInScript(text: string): {
     }
   }
   const targets = [...found.values()];
-  return { targets: targets.slice(0, MAX_SSH_TARGETS), more: targets.length > MAX_SSH_TARGETS };
+  return {
+    targets: targets.slice(0, MAX_SSH_TARGETS),
+    more: targets.length > MAX_SSH_TARGETS,
+    used,
+  };
 }
 
 /** A Git remote that travels over SSH, as its user and host; null for HTTPS and local paths. */
 export function sshRemoteTarget(url: string): SshTarget | null {
   const value = url.trim();
-  const scheme = /^(?:git\+)?ssh:\/\/(?:([^/@:]+)@)?([^/:?#[\]]+)/iu.exec(value);
-  const scp = scheme ? null : /^([^/@:\s]+)@([^/:@\s[\]]+):(?!\/\/)/u.exec(value);
-  const parts = scheme ?? scp;
-  if (!parts) return null;
-  const host = parts[2]!.toLowerCase();
+  let name: string | undefined;
+  let place: string;
+  const scheme = /^(?:git\+)?ssh:\/\/([^/?#]*)/iu.exec(value);
+  if (scheme) {
+    // The whole authority first: `user:password@host` must not be read as host `user`.
+    const authority = scheme[1]!;
+    const at = authority.lastIndexOf("@");
+    name = at === -1 ? undefined : authority.slice(0, at);
+    if (name !== undefined && (name === "" || /[:@]/u.test(name))) return null;
+    place = authority.slice(at + 1).replace(/:[0-9]*$/u, "");
+  } else {
+    const scp = /^([^/@:\s]+)@([^/:@\s[\]]+):(?!\/\/)/u.exec(value);
+    if (!scp) return null;
+    name = scp[1]!;
+    place = scp[2]!;
+  }
+  const host = place.toLowerCase();
   if (!isSafeSshHost(host)) return null;
-  const user = parts[1] !== undefined && isSafeSshUser(parts[1]) ? parts[1] : null;
+  const user = name !== undefined && isSafeSshUser(name) ? name : null;
   return { kind: "git", user, host, variable: null };
 }

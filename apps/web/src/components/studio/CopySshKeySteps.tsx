@@ -150,7 +150,13 @@ function Target({
         </p>
       )}
       <CopyCredentialCommand
-        label={on(tx("Then check from {targetLabel}:"))}
+        label={on(
+          target.kind === "git"
+            ? tx(
+                "Then check from {targetLabel}. A greeting with your account name means it worked:",
+              )
+            : tx("Then check from {targetLabel}:"),
+        )}
         command={sshCheckCommand(target)}
       />
     </li>

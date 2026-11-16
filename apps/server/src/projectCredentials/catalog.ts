@@ -168,7 +168,8 @@ export const CREDENTIAL_CATALOG: ReadonlyArray<CredentialEntry> = [
       posix: "ssh-keygen -t ed25519",
       windows: "ssh-keygen -t ed25519",
     },
-    check: "ssh <host> true",
+    // The dialog builds one check per place the project connects to; a placeholder is not a command.
+    check: null,
     fileNames: [/^ansible\.cfg$/u],
     terraformProviders: [],
     // Script destinations are read in sshTargets.ts, which also says where they point.
