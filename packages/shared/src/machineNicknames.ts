@@ -104,6 +104,11 @@ function freeChipName(
     if (entry === undefined || isAutomaticMachineNickname(entry)) {
       // Both named themselves the same: the lower id keeps it, so the pair
       // settles even when neither list shows the other's chip (a fleet alias).
+      // Known limit: when only the lower id lists the other, the higher never
+      // sees it and both keep the name until a person renames one. Yielding to
+      // claims from ids off the list would fix that, but a dead registration
+      // looks the same there, and a Mac that joined again would then yield to
+      // its own old record.
       const claimed = entry === undefined ? "" : normalizeMachineNickname(entry.name);
       if (claimed !== "" && foldShown(claimed) === wanted && id < environmentId) return null;
       if (suggestMachineNickname(label) === name) return null;
