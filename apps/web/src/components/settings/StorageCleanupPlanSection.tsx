@@ -169,7 +169,7 @@ function StorageCleanupPlanGroup({
         ))}
       </ul>
       {items.length > shown.length ? (
-        <Button size="xs" variant="ghost-muted" onClick={() => setShowAll(true)}>
+        <Button size="xs" variant="outline" onClick={() => setShowAll(true)}>
           {tx("Show all")} ({items.length})
         </Button>
       ) : null}
