@@ -417,6 +417,18 @@ describe("merged clone sweep", () => {
     assert.notInclude(found, NodePath.join(outer, "nested"));
   });
 
+  it("registers the clones inside a project folder that has no saved repository entry", async () => {
+    const umbrella = NodePath.join(root, "umbrella");
+    const inner = NodePath.join(umbrella, "repositories", "acme", "widgets");
+    NodeFS.mkdirSync(NodePath.dirname(inner), { recursive: true });
+    NodeChildProcess.execFileSync("git", ["clone", "--quiet", origin, inner]);
+    const registered = await registeredRepositories([
+      { workspace_root: umbrella, workspace_settings_json: null },
+    ]);
+    assert.isTrue(registered.remotes.has(normalizeRemoteUrl(origin)));
+    assert.include(registered.checkouts, inner);
+  });
+
   it("reads registered repositories from projects and compares remotes by one spelling", async () => {
     const checkout = NodePath.join(root, "seed");
     const registered = await registeredRepositories([
