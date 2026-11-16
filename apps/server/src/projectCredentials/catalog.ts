@@ -163,15 +163,14 @@ export const CREDENTIAL_CATALOG: ReadonlyArray<CredentialEntry> = [
     kind: "file",
     probe: null,
     signIn: {
-      posix:
-        'ssh-keygen -t ed25519 -C "$(hostname)"   (then add the new .pub key to each server and to your Git host)',
-      windows:
-        "ssh-keygen -t ed25519   (then add the new .pub key to each server and to your Git host)",
+      posix: "ssh-keygen -t ed25519",
+      windows: "ssh-keygen -t ed25519",
     },
     check: "ssh <host> true",
     fileNames: [/^ansible\.cfg$/u],
     terraformProviders: [],
-    scriptUse: /\b(?:ssh|scp|rsync)\s+(?:-\S+\s+)*\S+@\S|\bansible_ssh_private_key_file\b/u,
+    // Script destinations are read in sshTargets.ts, which also says where they point.
+    scriptUse: /\bansible_ssh_private_key_file\b/u,
     remoteHosts: [],
   },
 ];

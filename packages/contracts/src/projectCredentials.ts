@@ -172,6 +172,47 @@ export const formatProjectCredentialsManifest = (manifest: ProjectCredentialsMan
     2,
   )}\n`;
 
+const SSH_HOST_LABEL = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
+const SSH_HOST = new RegExp(`^${SSH_HOST_LABEL}(?:\\.${SSH_HOST_LABEL})*$`, "u");
+const SSH_USER = /^[A-Za-z_][A-Za-z0-9_.-]{0,31}$/u;
+const SHELL_VARIABLE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u;
+export const MAX_SSH_TARGETS = 12;
+
+/**
+ * A host name or IPv4 address in plain ASCII letters, digits, dots and inner
+ * hyphens. A project's files supply these and they end up inside commands a
+ * person copies, so nothing else passes: no leading hyphen (an ssh option), no
+ * quote, space or shell character, no port, no bracket, no non-ASCII look-alike.
+ */
+export const isSafeSshHost = (value: string) =>
+  value.length <= 253 && SSH_HOST.test(value) && !looksLikeToken(value);
+export const isSafeSshUser = (value: string) => SSH_USER.test(value);
+export const isShellVariableName = (value: string) => SHELL_VARIABLE.test(value);
+
+/**
+ * Where a project's scripts or Git remotes connect over SSH. `server` and
+ * `git` carry a host; `variable` names the shell variable a script takes its
+ * host from when the script does not say. Names only, each checked by the
+ * functions above on the machine that reads them and again where they are shown.
+ */
+export const ProjectSshTarget = Schema.Struct({
+  kind: Schema.Literals(["server", "git", "variable"]),
+  user: Schema.NullOr(bounded(32)),
+  host: Schema.NullOr(bounded(253)),
+  variable: Schema.NullOr(bounded(64)),
+  /** Project-relative file that showed it. */
+  source: bounded(4096),
+});
+export type ProjectSshTarget = typeof ProjectSshTarget.Type;
+
+/** A target as it may be shown: the right fields for its kind, every one of them safe. */
+export function isSafeSshTarget(target: ProjectSshTarget): boolean {
+  if (target.user !== null && !isSafeSshUser(target.user)) return false;
+  if (target.kind === "variable")
+    return target.host === null && target.variable !== null && isShellVariableName(target.variable);
+  return target.variable === null && target.host !== null && isSafeSshHost(target.host);
+}
+
 /** One credential the project uses, and what in the folder shows it. */
 export const ProjectCredentialRow = Schema.Struct({
   id: ProjectCredentialId,
@@ -184,6 +225,10 @@ export const ProjectCredentialRow = Schema.Struct({
   note: Schema.NullOr(bounded(MAX_MANIFEST_NOTE)),
   /** Home-folder places it is usually kept (`.kube/config`). Names from the app's list; a copy never reads or sends them. */
   keptIn: Schema.Array(bounded(200)),
+  /** SSH only: where the project connects. Absent from a machine that predates it. */
+  sshTargets: Schema.optional(
+    Schema.Array(ProjectSshTarget).check(Schema.isMaxLength(MAX_SSH_TARGETS)),
+  ),
 });
 export type ProjectCredentialRow = typeof ProjectCredentialRow.Type;
 

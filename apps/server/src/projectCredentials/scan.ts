@@ -10,10 +10,12 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import type {
-  ProjectCredentialId,
-  ProjectCredentialRow,
-  ProjectCredentialsManifest,
+import {
+  MAX_SSH_TARGETS,
+  type ProjectCredentialId,
+  type ProjectCredentialRow,
+  type ProjectCredentialsManifest,
+  type ProjectSshTarget,
 } from "@specweave-studio/contracts";
 
 import {
@@ -21,6 +23,7 @@ import {
   isUntrackedSecretConfigPath,
 } from "../workspace/WorkspaceSensitivePaths.ts";
 import { CREDENTIAL_CATALOG, CREDENTIAL_HOME_FILES } from "./catalog.ts";
+import { type SshTarget, sshRemoteTarget, sshTargetsInScript } from "./sshTargets.ts";
 
 const MAX_ENTRIES = 60_000;
 const MAX_DEPTH = 12;
@@ -122,6 +125,8 @@ export interface CredentialScan {
   /** Catalog id to the project-relative files that showed it. */
   readonly found: ReadonlyMap<ProjectCredentialId, ReadonlyArray<string>>;
   readonly truncated: boolean;
+  /** Where the project connects over SSH: script destinations and SSH Git remotes. */
+  readonly sshTargets: ReadonlyArray<ProjectSshTarget>;
 }
 
 /** Walks the project folder once and collects what shows each credential. */
@@ -131,6 +136,13 @@ export async function scanProjectCredentials(root: string): Promise<CredentialSc
     const sources = found.get(id) ?? [];
     if (!found.has(id)) found.set(id, sources);
     if (sources.length < MAX_SOURCES && !sources.includes(source)) sources.push(source);
+  };
+  const sshTargets = new Map<string, ProjectSshTarget>();
+  const connects = (target: SshTarget, source: string) => {
+    note("ssh", source);
+    const key = `${target.kind} ${target.user ?? ""} ${target.host ?? ""} ${target.variable ?? ""}`;
+    if (!sshTargets.has(key) && sshTargets.size < MAX_SSH_TARGETS)
+      sshTargets.set(key, { ...target, source });
   };
   const shortProviders = new Map<string, ProjectCredentialId>();
   const fullProviders = new Map<string, ProjectCredentialId>();
@@ -168,6 +180,8 @@ export async function scanProjectCredentials(root: string): Promise<CredentialSc
           const config = await readMarker(NodePath.join(root, relative, "config"));
           if (config !== null)
             for (const match of config.matchAll(GIT_URL)) {
+              const remote = sshRemoteTarget(match[1]!);
+              if (remote !== null) connects(remote, folder === "" ? "." : folder);
               const host = remoteHost(match[1]!);
               if (host === null) continue;
               for (const entry of CREDENTIAL_CATALOG)
@@ -211,9 +225,10 @@ export async function scanProjectCredentials(root: string): Promise<CredentialSc
       }
       for (const entry of CREDENTIAL_CATALOG)
         if (entry.scriptUse?.test(text)) note(entry.id, relative);
+      for (const target of sshTargetsInScript(text)) connects(target, relative);
     }
   }
-  return { found, truncated };
+  return { found, truncated, sshTargets: [...sshTargets.values()] };
 }
 
 /**
@@ -238,6 +253,7 @@ export function credentialRows(
       skip: listed?.skip === true,
       note: listed?.note ?? null,
       keptIn: [...CREDENTIAL_HOME_FILES[entry.id]],
+      ...(entry.id === "ssh" ? { sshTargets: [...scan.sshTargets] } : {}),
     });
   }
   return rows;
