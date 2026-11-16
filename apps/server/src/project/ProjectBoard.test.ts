@@ -5,7 +5,14 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { boardColumn, boardStatus, ledgerPullRequests, readProjectBoard } from "./ProjectBoard.ts";
+import {
+  boardColumn,
+  boardPlacement,
+  boardStatus,
+  ledgerPullRequests,
+  readBoardCard,
+  readProjectBoard,
+} from "./ProjectBoard.ts";
 
 const roots: string[] = [];
 const NOW = Date.parse("2026-11-14T12:00:00Z");
@@ -45,6 +52,7 @@ async function increment(
     updated?: string;
     tasks?: number;
     ledger?: ReadonlyArray<string>;
+    metadata?: Record<string, unknown>;
   } = {},
 ): Promise<string> {
   const folder = NodePath.join(root, ".specweave", "increments", id);
@@ -56,6 +64,7 @@ async function increment(
       status: input.status ?? "active",
       title: input.title ?? `Title of ${id}`,
       updated: input.updated ?? "2026-11-01T00:00:00.000Z",
+      ...input.metadata,
     }),
   );
   if (input.tasks !== undefined) {
@@ -90,12 +99,51 @@ describe("boardColumn", () => {
     expect(boardStatus("abandoned")).toBe("dropped");
     expect(boardStatus("something else")).toBe("planned");
   });
+
+  it("lets ledger evidence move a planned increment, and says why", () => {
+    const none = { finished: 0, blocked: 0, active: 0 };
+    expect(boardPlacement("planned", { total: 3, done: 1 }, { ...none, finished: 1 })).toEqual({
+      column: "active",
+      reason: "ledger",
+    });
+    expect(boardPlacement("unknown", { total: 3, done: 0 }, { ...none, active: 1 })).toEqual({
+      column: "active",
+      reason: "ledger",
+    });
+    expect(boardPlacement("planned", { total: 3, done: 1 }, none)).toEqual({
+      column: "planned",
+      reason: "status",
+    });
+    expect(boardPlacement("planned", { total: 2, done: 2 }, { ...none, finished: 2 })).toEqual({
+      column: "review",
+      reason: "tasks",
+    });
+    expect(boardPlacement("paused", { total: 2, done: 2 })).toEqual({
+      column: "active",
+      reason: "status",
+    });
+    expect(boardPlacement("active", { total: 3, done: 1 })).toEqual({
+      column: "active",
+      reason: "status",
+    });
+    expect(boardPlacement("in-review", { total: 3, done: 1 })).toEqual({
+      column: "review",
+      reason: "status",
+    });
+    expect(boardPlacement("abandoned", { total: 3, done: 1 })).toEqual({
+      column: "done",
+      reason: "status",
+    });
+    expect(boardColumn("planned", { total: 3, done: 0 }, { ...none, blocked: 1 })).toBe("active");
+  });
 });
 
 describe("ledgerPullRequests", () => {
   it("lists each pull request once, the last mentioned first, at most five", () => {
     const pull = (number: number) => `https://github.com/example/app/pull/${number}`;
-    const ledger = [1, 2, 1, 3, 4, 5, 6].map((number) => event("T-01", "done", { link: pull(number) }));
+    const ledger = [1, 2, 1, 3, 4, 5, 6].map((number) =>
+      event("T-01", "done", { link: pull(number) }),
+    );
     expect(ledgerPullRequests(ledger.join("\n"))).toEqual([6, 5, 4, 3, 1].map(pull));
     expect(ledgerPullRequests("https://github.com/example/app/issues/4")).toEqual([]);
   });
@@ -175,6 +223,7 @@ describe("readProjectBoard", () => {
     const first = await readProjectBoard(root, { now: NOW });
     const done = first.cards.filter((entry) => entry.column === "done");
     expect(first.counts.done).toBe(40);
+    expect(first.detail).toBe(true);
     expect(done).toHaveLength(30);
     expect(done[0]?.incrementId).toBe("0040-closed");
     expect(done.at(-1)?.incrementId).toBe("0011-closed");
@@ -201,6 +250,7 @@ describe("readProjectBoard", () => {
     expect((await readProjectBoard(root, { now: NOW })).cards[0]?.tasks).toEqual({
       total: 2,
       done: 0,
+      active: 0,
     });
 
     await NodeFSP.appendFile(
@@ -221,6 +271,7 @@ describe("readProjectBoard", () => {
     expect(await readProjectBoard(root, { now: NOW })).toEqual({
       cards: [],
       counts: { planned: 0, active: 0, review: 0, done: 0 },
+      detail: true,
     });
   });
 
@@ -254,4 +305,234 @@ describe("readProjectBoard", () => {
     expect(coldMs).toBeLessThan(1_000);
     expect(warmMs).toBeLessThan(150);
   }, 30_000);
+
+  const at = (iso: string) => ({ at: iso });
+  const cardOf = async (root: string, id: string, now = NOW) =>
+    (await readProjectBoard(root, { now })).cards.find((entry) => entry.incrementId === id);
+
+  it("moves a planned increment to Active only on real ledger work", async () => {
+    const root = await project();
+    await increment(root, "0001-one-done", {
+      status: "planned",
+      tasks: 3,
+      ledger: [event("T-01", "done", { evidence: "abc1234" })],
+    });
+    await increment(root, "0002-stale-claim", {
+      status: "planned",
+      tasks: 3,
+      ledger: [event("T-01", "claim", at("2026-11-14T09:00:00.000Z"))],
+    });
+    await increment(root, "0003-skipped", {
+      status: "planned",
+      tasks: 3,
+      ledger: [event("T-01", "skip", { note: "not needed" })],
+    });
+    await increment(root, "0004-blocked", {
+      status: "planned",
+      tasks: 3,
+      ledger: [event("T-01", "block", { note: "waiting for keys" })],
+    });
+    await increment(root, "0005-untouched", { status: "planned", tasks: 3, ledger: [] });
+
+    expect(await cardOf(root, "0001-one-done")).toMatchObject({
+      column: "active",
+      columnReason: "ledger",
+    });
+    expect(await cardOf(root, "0002-stale-claim")).toMatchObject({
+      column: "planned",
+      columnReason: "status",
+      tasks: { active: 0 },
+    });
+    expect(await cardOf(root, "0003-skipped")).toMatchObject({
+      column: "planned",
+      tasks: { done: 1 },
+    });
+    expect(await cardOf(root, "0004-blocked")).toMatchObject({
+      column: "active",
+      columnReason: "ledger",
+      blocked: true,
+      blockedTasks: 1,
+    });
+    expect(await cardOf(root, "0005-untouched")).toMatchObject({
+      column: "planned",
+      columnReason: "status",
+      blocked: false,
+      blockedTasks: 0,
+      blockers: [],
+      paused: false,
+      pausedReason: null,
+    });
+  });
+
+  it("drops a claim from Active once its lease ends, with no file change", async () => {
+    const root = await project();
+    await increment(root, "0001-claimed", {
+      status: "planned",
+      tasks: 2,
+      ledger: [event("T-01", "claim", at("2026-11-14T11:00:00.000Z"))],
+    });
+    expect(await cardOf(root, "0001-claimed")).toMatchObject({
+      column: "active",
+      columnReason: "ledger",
+      tasks: { total: 2, done: 0, active: 1 },
+    });
+    const afterLease = Date.parse("2026-11-14T13:01:00.000Z");
+    expect(await cardOf(root, "0001-claimed", afterLease)).toMatchObject({
+      column: "planned",
+      columnReason: "status",
+      tasks: { active: 0 },
+    });
+  });
+
+  it("keeps a paused increment in Active even with every task done", async () => {
+    const root = await project();
+    await increment(root, "0001-paused", {
+      status: "paused",
+      tasks: 2,
+      metadata: { pausedReason: `  waiting on design review${" ".repeat(4)}${"x".repeat(400)}` },
+      ledger: [
+        event("T-01", "done", { evidence: "abc1234" }),
+        event("T-02", "skip", { note: "covered by T-01" }),
+      ],
+    });
+    const card = await cardOf(root, "0001-paused");
+    expect(card).toMatchObject({
+      column: "active",
+      columnReason: "status",
+      paused: true,
+      blocked: true,
+      blockedTasks: 0,
+      tasks: { total: 2, done: 2 },
+    });
+    expect(card?.pausedReason?.startsWith("waiting on design review")).toBe(true);
+    expect(card?.pausedReason).toHaveLength(300);
+  });
+
+  it("names the blocked tasks of a paused increment, who blocked them and when", async () => {
+    const root = await project();
+    await increment(root, "0001-stuck", {
+      status: "paused",
+      tasks: 3,
+      metadata: { pausedReason: "Waiting on keys" },
+      ledger: [
+        event("T-01", "block", {
+          note: "needs the signing key",
+          by: "agent@host-a",
+          at: "2026-11-14T11:30:00.000Z",
+        }),
+        event("T-03", "block", { at: "2026-11-14T08:00:00.000Z" }),
+      ],
+    });
+    expect(await cardOf(root, "0001-stuck")).toMatchObject({
+      column: "active",
+      blocked: true,
+      paused: true,
+      pausedReason: "Waiting on keys",
+      blockedTasks: 2,
+      blockers: [
+        {
+          taskId: "T-01",
+          title: "Step 1",
+          note: "needs the signing key",
+          by: "agent@host-a",
+          at: "2026-11-14T11:30:00.000Z",
+          leased: true,
+        },
+        {
+          taskId: "T-03",
+          title: "Step 3",
+          note: null,
+          by: "tool@host",
+          at: "2026-11-14T08:00:00.000Z",
+          leased: false,
+        },
+      ],
+    });
+    // The block's own lease ends at 13:30 with no file change; the cached card must say so.
+    const later = await cardOf(root, "0001-stuck", Date.parse("2026-11-14T13:31:00.000Z"));
+    expect(later?.blockers?.map((blocker) => blocker.leased)).toEqual([false, false]);
+    expect(later?.blockedTasks).toBe(2);
+  });
+
+  it("carries at most three blockers but counts every blocked task", async () => {
+    const root = await project();
+    await increment(root, "0001-many", {
+      tasks: 5,
+      ledger: ["T-01", "T-02", "T-03", "T-04", "T-05"].map((task) =>
+        event(task, "block", { note: `blocked ${task}` }),
+      ),
+    });
+    const card = await cardOf(root, "0001-many");
+    expect(card?.blockedTasks).toBe(5);
+    expect(card?.blockers?.map((blocker) => blocker.taskId)).toEqual(["T-01", "T-02", "T-03"]);
+  });
+
+  it("reports no blockers on a completed increment", async () => {
+    const root = await project();
+    await increment(root, "0001-closed", {
+      status: "completed",
+      tasks: 2,
+      metadata: { pausedReason: "old reason" },
+      ledger: [event("T-01", "block", { note: "never cleared" })],
+    });
+    expect(await cardOf(root, "0001-closed")).toMatchObject({
+      column: "done",
+      columnReason: "status",
+      blocked: false,
+      paused: false,
+      pausedReason: null,
+      blockedTasks: 0,
+      blockers: [],
+    });
+  });
+
+  it("reads one card exactly as the board shows it", async () => {
+    const root = await project();
+    await increment(root, "0001-live", {
+      status: "planned",
+      tasks: 3,
+      ledger: [
+        event("T-01", "done", {
+          evidence: "abc1234",
+          link: "https://github.com/example/app/pull/9",
+        }),
+        event("T-02", "block", { note: "waiting" }),
+      ],
+    });
+    await increment(root, "0002-abandoned", { status: "abandoned", tasks: 1 });
+
+    const board = await readProjectBoard(root, { now: NOW });
+    expect(await readBoardCard(root, "0001-live", NOW)).toEqual(
+      board.cards.find((entry) => entry.incrementId === "0001-live"),
+    );
+    expect(await readBoardCard(root, "0009-missing", NOW)).toBeNull();
+    expect(await readBoardCard(root, "../0001-live", NOW)).toBeNull();
+    expect(board.cards.some((entry) => entry.incrementId === "0002-abandoned")).toBe(false);
+    expect(await readBoardCard(root, "0002-abandoned", NOW)).toMatchObject({
+      incrementId: "0002-abandoned",
+      status: "abandoned",
+      column: "done",
+      columnReason: "status",
+      blocked: false,
+    });
+  });
+
+  it("answers only for folders the board itself would list", async () => {
+    const root = await project();
+    await increment(root, "0001-live", { status: "planned", tasks: 1 });
+    await NodeFSP.mkdir(NodePath.join(root, ".specweave", "increments", "notes"));
+    const outside = await project();
+    const target = await increment(outside, "0002-elsewhere", { status: "active", tasks: 1 });
+    await NodeFSP.symlink(
+      target,
+      NodePath.join(root, ".specweave", "increments", "0002-elsewhere"),
+    );
+
+    const board = await readProjectBoard(root, { now: NOW });
+    expect(board.cards.map((entry) => entry.incrementId)).toEqual(["0001-live"]);
+    // The increments folder itself, a folder that is not an increment, and a link out of the root.
+    expect(await readBoardCard(root, "", NOW)).toBeNull();
+    expect(await readBoardCard(root, "notes", NOW)).toBeNull();
+    expect(await readBoardCard(root, "0002-elsewhere", NOW)).toBeNull();
+  });
 });
