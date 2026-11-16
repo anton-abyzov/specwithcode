@@ -4593,7 +4593,7 @@ export const pt: PhraseCatalog = {
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
     "Não vinculado: {machine} tem o próprio coordenador, threads e memória para este repositório.",
   "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.":
-    "Não vinculado: são projetos separados para este repositório, cada um com o próprio coordenador, threads e memória. Isso não impede de ver nenhum deles nem de enviar mensagens a ele.",
+    "Não vinculado: são projetos separados para este repositório, cada um com o próprio coordenador, threads e memória. Isso não impede de ver nenhum deles nem de enviar mensagens para qualquer um deles.",
   "Link them below to make one project.": "Vincule-os abaixo para que sejam um só projeto.",
   "{value}Messages go to Percy. {value2}": "{value}As mensagens vão para o Percy. {value2}",
   "Show only topics that need you in {project}":
