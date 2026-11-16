@@ -14,9 +14,10 @@ import {
   advisorOrder,
   advisorRouteForContext,
   claudeAdvisorPairAllowed,
-  claudeAdvisorRank,
   claudeBuiltInAdvisorModel,
+  claudeCapabilityLevel,
   claudeSessionAdvisor,
+  preferredAdvisor,
   resolveAdvisor,
   threadAdvisorState,
 } from "./advisor.ts";
@@ -213,34 +214,94 @@ describe("resolveAdvisor", () => {
   });
 });
 
-describe("Claude advisor ranks", () => {
-  it.each([
-    ["claude-fable-5-2", 10],
-    ["claude-fable-5-1", 9],
-    ["claude-opus-5-5", 7],
-    ["claude-opus-5", 7],
-    ["claude-sonnet-5-5", 6],
-    ["claude-haiku-4-5", 1],
-    ["claude-fable-5-2[1m]", 10],
-    ["claude-opus-5-5-20260901", 7],
-    ["claude-opus-5.5", 7],
-  ])("%s is %s", (slug, rank) => {
-    expect(claudeAdvisorRank(slug)).toBe(rank);
+describe("Claude advisor pairs", () => {
+  it("orders the models as the published compatibility table does", () => {
+    const level = (slug: string) => claudeCapabilityLevel(slug)!;
+    expect(level("claude-fable-5-2")).toBeGreaterThan(level("claude-fable-5-1"));
+    expect(level("claude-fable-5-1")).toBeGreaterThan(level("claude-opus-5-5"));
+    // Opus 5, Opus 5.5 and Fable 5 advise each other.
+    expect(level("claude-fable-5")).toBe(level("claude-opus-5-5"));
+    expect(level("claude-opus-5")).toBe(level("claude-opus-5-5"));
+    expect(level("claude-opus-5-5")).toBeGreaterThan(level("claude-sonnet-5-5"));
+    expect(level("claude-sonnet-5-5")).toBeGreaterThan(level("claude-opus-4-8"));
+    expect(level("claude-opus-4-7")).toBe(level("claude-opus-4-8"));
+    expect(level("claude-haiku-5-5")).toBe(level("claude-sonnet-5"));
+    expect(level("claude-sonnet-5")).toBeGreaterThan(level("claude-opus-4-6"));
+    expect(level("claude-opus-4-6")).toBeGreaterThan(level("claude-sonnet-4-6"));
+    expect(level("claude-sonnet-4-6")).toBeGreaterThan(level("claude-haiku-4-5"));
   });
 
-  it("an unknown model has no rank and is never paired", () => {
-    expect(claudeAdvisorRank("claude-next-9")).toBeNull();
-    expect(claudeAdvisorRank("gpt-6.1-sol")).toBeNull();
+  it.each(["claude-fable-5-2[1m]", "claude-fable-5-2-20261001", "claude-fable-5.2"])(
+    "reads %s as Fable 5.2",
+    (slug) => {
+      expect(claudeCapabilityLevel(slug)).toBe(claudeCapabilityLevel("claude-fable-5-2"));
+    },
+  );
+
+  it("an unlisted model is never paired", () => {
+    expect(claudeCapabilityLevel("claude-next-9")).toBeNull();
+    expect(claudeCapabilityLevel("gpt-6.1-sol")).toBeNull();
     expect(claudeAdvisorPairAllowed("claude-next-9", "claude-fable-5-2")).toBe(false);
     expect(claudeAdvisorPairAllowed("claude-opus-5-5", "claude-next-9")).toBe(false);
   });
 
-  it("allows a stronger or equal-rank different model, never a weaker one or itself", () => {
-    expect(claudeAdvisorPairAllowed("claude-opus-5-5", "claude-fable-5-2")).toBe(true);
-    expect(claudeAdvisorPairAllowed("claude-opus-5", "claude-opus-5-5")).toBe(true);
-    expect(claudeAdvisorPairAllowed("claude-fable-5-2", "claude-opus-5-5")).toBe(false);
+  it.each([
+    // [thread, advisor, allowed], rows of the published table
+    ["claude-opus-5-5", "claude-fable-5-2", true],
+    ["claude-opus-5-5", "claude-fable-5", true],
+    ["claude-opus-5-5", "claude-opus-5", true],
+    ["claude-opus-5-5", "claude-sonnet-5-5", false],
+    ["claude-sonnet-5-5", "claude-opus-5-5", true],
+    ["claude-sonnet-5-5", "claude-opus-4-8", false],
+    ["claude-haiku-5-5", "claude-sonnet-5", true],
+    ["claude-haiku-5-5", "claude-opus-4-6", false],
+    ["claude-opus-4-8", "claude-sonnet-5-5", true],
+    ["claude-opus-4-8", "claude-sonnet-5", false],
+    ["claude-fable-5-1", "claude-fable-5-2", true],
+    ["claude-fable-5-1", "claude-opus-5-5", false],
+    ["claude-fable-5", "claude-opus-5-5", true],
+    ["claude-haiku-4-5", "claude-sonnet-4-6", true],
+    ["claude-sonnet-4-6", "claude-haiku-4-5", false],
+    ["claude-fable-5-2", "claude-opus-5-5", false],
+  ])("thread %s, advisor %s: %s", (thread, advisor, allowed) => {
+    expect(claudeAdvisorPairAllowed(thread, advisor)).toBe(allowed);
+  });
+
+  it("a model never advises itself, under either of its names", () => {
     expect(claudeAdvisorPairAllowed("claude-fable-5-2", "claude-fable-5-2[1m]")).toBe(false);
-    expect(claudeAdvisorPairAllowed("claude-haiku-4-5", "claude-haiku-4-5")).toBe(false);
+    expect(claudeAdvisorPairAllowed("claude-fable-5-2", "claude-mythos-5-2")).toBe(false);
+    expect(claudeAdvisorPairAllowed("claude-opus-5-5", "claude-opus-5-5")).toBe(false);
+  });
+});
+
+describe("preferredAdvisor", () => {
+  it("is the first entry that is not the thread's own model, whatever its usage", () => {
+    const full = provider(
+      "claudeAgent",
+      "claudeAgent",
+      ["claude-fable-5-2", "claude-opus-5-5"],
+      100,
+    );
+    expect(
+      preferredAdvisor({
+        ...base,
+        providers: [full, codex, muse],
+        thread: sel("claudeAgent", "claude-opus-5-5"),
+      }),
+    ).toEqual(sel("claudeAgent", "claude-fable-5-2"));
+    expect(
+      preferredAdvisor({ ...base, thread: sel("claudeAgent", "claude-fable-5-2") })?.model,
+    ).toBe("muse-wonder-1.0");
+  });
+
+  it("follows a saved model", () => {
+    expect(
+      preferredAdvisor({
+        ...base,
+        model: sel("claudeAgent", "claude-opus-5-5"),
+        thread: sel("claudeAgent", "claude-sonnet-5-5"),
+      }),
+    ).toEqual(sel("claudeAgent", "claude-opus-5-5"));
   });
 });
 
@@ -283,7 +344,7 @@ describe("claudeBuiltInAdvisorModel", () => {
     ).toBeNull();
   });
 
-  it("is null when the ranks do not allow the pair", () => {
+  it("is null when Anthropic does not support the pair", () => {
     expect(claudeBuiltInAdvisorModel({ providers, thread: fable, advisor: opus })).toBeNull();
   });
 

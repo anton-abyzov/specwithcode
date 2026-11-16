@@ -197,30 +197,29 @@ export const ADVISOR_SKIP_NOTES: Record<AdvisorSkipReason, string> = {
 // ── Claude's own advisor ─────────────────────────────────────────────
 
 /**
- * How strong Anthropic rates each Claude model as an advisor. Claude's own
- * advisor accepts a pair only when the advisor's rank is at least 2 and at
- * least the working model's. A model missing here is never paired.
+ * Claude models from least to most capable, as Anthropic's advisor tool
+ * documentation lists the supported pairs ("Model compatibility",
+ * platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool): an
+ * advisor must be Claude Sonnet 4.6 or more capable, and at least as capable
+ * as the model it advises. Models on one line may advise each other. A model
+ * missing here is never paired.
  */
-const CLAUDE_ADVISOR_RANKS: ReadonlyArray<readonly [slug: string, rank: number]> = [
-  ["claude-haiku-4-5", 1],
-  ["claude-sonnet-4-6", 2],
-  ["claude-opus-4-6", 3],
-  ["claude-sonnet-5", 4],
-  ["claude-haiku-5-5", 4],
-  ["claude-opus-4-7", 5],
-  ["claude-opus-4-8", 5],
-  ["claude-sonnet-5-5", 6],
-  ["claude-opus-5", 7],
-  ["claude-opus-5-5", 7],
-  ["claude-fable-5", 8],
-  ["claude-mythos-5", 8],
-  ["claude-fable-5-1", 9],
-  ["claude-mythos-5-1", 9],
-  ["claude-fable-5-2", 10],
-  ["claude-mythos-5-2", 10],
+const CLAUDE_CAPABILITY_ORDER: ReadonlyArray<ReadonlyArray<string>> = [
+  ["claude-haiku-4-5"],
+  ["claude-sonnet-4-6"],
+  ["claude-opus-4-6"],
+  ["claude-sonnet-5", "claude-haiku-5-5"],
+  ["claude-opus-4-7", "claude-opus-4-8"],
+  ["claude-sonnet-5-5"],
+  ["claude-opus-5", "claude-opus-5-5", "claude-fable-5", "claude-mythos-5"],
+  ["claude-fable-5-1", "claude-mythos-5-1"],
+  ["claude-fable-5-2", "claude-mythos-5-2"],
 ];
-const CLAUDE_ADVISOR_RANK_BY_SLUG = new Map(CLAUDE_ADVISOR_RANKS);
-const MIN_CLAUDE_ADVISOR_RANK = 2;
+const CLAUDE_CAPABILITY_BY_SLUG = new Map(
+  CLAUDE_CAPABILITY_ORDER.flatMap((slugs, level) => slugs.map((slug) => [slug, level] as const)),
+);
+/** Claude Sonnet 4.6: the least capable model that may advise. */
+const MIN_CLAUDE_ADVISOR_LEVEL = 1;
 
 /** The slug without a context-window tag (`[1m]`) or a dated snapshot suffix. */
 function canonicalClaudeSlug(slug: string): string {
@@ -232,31 +231,55 @@ function canonicalClaudeSlug(slug: string): string {
     .replace(/(\d)\.(\d)/gu, "$1-$2");
 }
 
-/** The advisor rank of a Claude model, or null when it has none known. */
-export function claudeAdvisorRank(slug: string): number | null {
-  return CLAUDE_ADVISOR_RANK_BY_SLUG.get(canonicalClaudeSlug(slug)) ?? null;
+/** Where a Claude model stands in the capability order, or null when it is not listed. */
+export function claudeCapabilityLevel(slug: string): number | null {
+  return CLAUDE_CAPABILITY_BY_SLUG.get(canonicalClaudeSlug(slug)) ?? null;
+}
+
+/** Fable and Mythos of one version are the same model under two names. */
+function claudeModelIdentity(slug: string): string {
+  return canonicalClaudeSlug(slug).replace(/^claude-mythos-/u, "claude-fable-");
 }
 
 /** Whether Claude's own advisor accepts `advisor` for a thread on `thread`. */
 export function claudeAdvisorPairAllowed(thread: string, advisor: string): boolean {
-  const threadRank = claudeAdvisorRank(thread);
-  const advisorRank = claudeAdvisorRank(advisor);
-  if (threadRank === null || advisorRank === null) return false;
+  const threadLevel = claudeCapabilityLevel(thread);
+  const advisorLevel = claudeCapabilityLevel(advisor);
+  if (threadLevel === null || advisorLevel === null) return false;
   // A model does not advise itself here, though Claude would allow it.
-  if (canonicalClaudeSlug(thread) === canonicalClaudeSlug(advisor)) return false;
-  return advisorRank >= MIN_CLAUDE_ADVISOR_RANK && advisorRank >= threadRank;
+  if (claudeModelIdentity(thread) === claudeModelIdentity(advisor)) return false;
+  return advisorLevel >= MIN_CLAUDE_ADVISOR_LEVEL && advisorLevel >= threadLevel;
+}
+
+/**
+ * The first entry of the advisor order that is not the thread's own model,
+ * whatever its usage says. Claude's own advisor is chosen from this, not from
+ * `resolveAdvisor`: a choice that followed live usage would restart the
+ * Claude session each time a reading changed.
+ */
+export function preferredAdvisor(
+  input: AdvisorOrderInput & { readonly thread: ModelSelection },
+): ModelSelection | null {
+  const providerOf = (selection: Pick<ModelSelection, "instanceId">) =>
+    input.providers.find((provider) => provider.instanceId === selection.instanceId);
+  const threadNames = describeModel(providerOf(input.thread), input.thread.model);
+  return (
+    advisorOrder(input).find(
+      (entry) => !isSameModel(threadNames, describeModel(providerOf(entry), entry.model)),
+    ) ?? null
+  );
 }
 
 /**
  * The model Claude's own advisor would run for this thread, as the thread's
  * account spells it, or null when the pair must use the studio-code tool:
  * the thread is not on Claude Code signed in to a plan, the advisor is not a
- * Claude model that account lists, or the ranks do not allow the pair.
+ * Claude model that account lists, or Anthropic does not support the pair.
  */
 export function claudeBuiltInAdvisorModel(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly thread: ModelSelection;
-  /** The advisor `resolveAdvisor` picked. */
+  /** From `preferredAdvisor`. */
   readonly advisor: ModelSelection | null;
 }): string | null {
   if (input.advisor === null) return null;

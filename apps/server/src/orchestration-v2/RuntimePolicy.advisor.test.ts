@@ -79,6 +79,8 @@ function makeThread(input: {
   };
 }
 
+const readOnly = { type: "readOnly", access: { type: "fullAccess" }, networkAccess: false };
+
 const layerTest = RuntimePolicy.layerFromProjectStore.pipe(
   Layer.provideMerge(ServerSettings.layerTest({})),
   Layer.provide(
@@ -129,7 +131,6 @@ it.layer(layerTest)("RuntimePolicyV2 advisor", (it) => {
       });
       assert.isUndefined(resolved.claudeAdvisor);
       assert.isUndefined(resolved.advisorGuidance);
-      assert.notInclude(resolved.agentInstructions ?? "", "## Advisor");
       assert.isUndefined(resolved.sandboxPolicy);
     }),
   );
@@ -149,7 +150,8 @@ it.layer(layerTest)("RuntimePolicyV2 advisor", (it) => {
         contextLimit: 150_000,
       });
       assert.equal(resolved.advisorGuidance, ADVISOR_GUIDANCE);
-      assert.include(resolved.agentInstructions ?? "", ADVISOR_GUIDANCE);
+      // Adapters place it, and only for a thread with the studio-code tools.
+      assert.notInclude(resolved.agentInstructions ?? "", ADVISOR_GUIDANCE);
     }),
   );
 
@@ -226,7 +228,7 @@ it.layer(layerTest)("RuntimePolicyV2 advisor", (it) => {
         thread: makeThread({ now, modelSelection: fable, purpose: "advisor" }),
         modelSelection: fable,
       });
-      assert.deepEqual(claudeChild.sandboxPolicy, { type: "readOnly" });
+      assert.deepEqual(claudeChild.sandboxPolicy, readOnly);
       assert.equal(claudeChild.approvalPolicy, "never");
       assert.deepEqual(claudeChild.claudeAdvisor, { kind: "disable" });
       assert.isUndefined(claudeChild.advisorGuidance);
@@ -234,7 +236,7 @@ it.layer(layerTest)("RuntimePolicyV2 advisor", (it) => {
         thread: makeThread({ now, modelSelection: sol, purpose: "advisor" }),
         modelSelection: sol,
       });
-      assert.deepEqual(codexChild.sandboxPolicy, { type: "readOnly" });
+      assert.deepEqual(codexChild.sandboxPolicy, readOnly);
       assert.isUndefined(codexChild.advisorGuidance);
       // Off in settings changes nothing for a child: Claude's own setting must not reach it.
       yield* setAdvisor({ enabled: false });

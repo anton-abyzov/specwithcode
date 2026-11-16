@@ -739,6 +739,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.runtime-mode.set":
     case "thread.interaction-mode.set":
     case "thread.model-selection.set":
+    case "thread.advisor-mode.set":
     case "provider-session.detach":
     case "message.dispatch":
     case "notification.delivery.accept":
@@ -3250,6 +3251,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.runtime-mode.set"
           | "thread.interaction-mode.set"
           | "thread.model-selection.set"
+          | "thread.advisor-mode.set"
           | "provider.switch";
       }
     >,
@@ -4112,6 +4114,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return { ...thread, runtimeMode: command.runtimeMode, updatedAt: now };
         case "thread.interaction-mode.set":
           return { ...thread, interactionMode: command.interactionMode, updatedAt: now };
+        case "thread.advisor-mode.set":
+          // An advisor child has no advisor of its own to turn on.
+          return thread.purpose === "advisor" ||
+            (thread.advisorMode ?? null) === command.advisorMode
+            ? thread
+            : { ...thread, advisorMode: command.advisorMode, updatedAt: now };
         case "thread.model-selection.set":
         case "provider.switch":
           return {
@@ -4170,6 +4178,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.runtime-mode-updated" as const;
         case "thread.interaction-mode.set":
           return "thread.interaction-mode-updated" as const;
+        // An existing event type, so clients from before the advisor still read the stream.
+        case "thread.advisor-mode.set":
+          return "thread.metadata-updated" as const;
         case "thread.model-selection.set":
           return thread.providerInstanceId === command.modelSelection.instanceId
             ? ("thread.model-selection-updated" as const)
@@ -8041,6 +8052,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
+      // An advisor only answers its parent: it starts no work and consults nobody.
+      if (parentProjection.thread.purpose === "advisor") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "An advisor cannot delegate work or consult another advisor.",
+        });
+      }
       const parentRun = parentProjection.runs.find(
         (candidate) => candidate.id === command.parentRunId,
       );
@@ -8106,11 +8125,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.title === undefined ? {} : { title: command.title }),
         ordinal: parentProjection.subagents.length + 1,
       });
-      const runtimeMode = yield* creationRuntimeMode(
-        command,
-        parentProjection.thread.projectId,
-        command.runtimeMode,
-      );
+      // An advisor runs in the strictest mode whatever the caller asked for:
+      // a provider without a read-only sandbox then asks before it writes.
+      const runtimeMode =
+        command.purpose === "advisor"
+          ? ("approval-required" as const)
+          : yield* creationRuntimeMode(
+              command,
+              parentProjection.thread.projectId,
+              command.runtimeMode,
+            );
       yield* refuseAboveDispatchModeLimit(command, childThreadId, {
         runtimeMode,
         interactionMode: command.interactionMode,
@@ -8135,9 +8159,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           now,
           createdBy: command.createdBy,
           creationSource: command.creationSource,
+          ...(command.purpose === undefined ? {} : { purpose: command.purpose }),
         }),
         runtimeMode,
-        interactionMode: command.interactionMode,
+        interactionMode: command.purpose === "advisor" ? "default" : command.interactionMode,
         ...(command.routing === undefined ? {} : { routing: command.routing }),
         launchFallbackFrom: command.launchFallbackFrom ?? null,
       };
@@ -8158,6 +8183,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         model: command.modelSelection.model,
         ...(command.routing === undefined ? {} : { routing: command.routing }),
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
+        ...(command.purpose === undefined ? {} : { purpose: command.purpose }),
         status: "running",
         result: null,
         startedAt: now,
@@ -12920,6 +12946,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.runtime-mode.set":
       case "thread.interaction-mode.set":
       case "thread.model-selection.set":
+      case "thread.advisor-mode.set":
       case "provider.switch":
         yield* dispatchThreadMutation(command, events, effects);
         break;

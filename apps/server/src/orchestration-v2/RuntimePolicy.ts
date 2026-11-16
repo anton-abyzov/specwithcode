@@ -10,7 +10,7 @@ import {
   advisorGuidance,
   claudeBuiltInAdvisorModel,
   claudeSessionAdvisor,
-  resolveAdvisor,
+  preferredAdvisor,
 } from "@specweave-studio/shared/advisor";
 import {
   ModelSelection,
@@ -119,10 +119,12 @@ export const layerFromProjectStore: Layer.Layer<
     const projects = yield* ProjectStore.ProjectStoreV2;
     const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
-    // Optional: only the advisor reads provider snapshots here. Without them
-    // no Claude pair is found, so a thread whose advisor is on consults
-    // through the studio-code tool.
-    const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+    // Provider snapshots, for which Claude model may advise a Claude thread.
+    // Optional so layers built without the registry (most tests) keep working:
+    // without it no Claude pair is found and a thread whose advisor is on
+    // consults through the studio-code tool. Read again per turn when the
+    // layer was built before the registry.
+    const builtProviderRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
         const settings = yield* serverSettings.getSettings.pipe(
@@ -235,6 +237,9 @@ export const layerFromProjectStore: Layer.Layer<
           driver !== "claudeAgent"
             ? undefined
             : yield* Effect.gen(function* () {
+                const providerRegistry = Option.isSome(builtProviderRegistry)
+                  ? builtProviderRegistry
+                  : yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
                 const providers = Option.isSome(providerRegistry)
                   ? yield* providerRegistry.value.getProviders
                   : [];
@@ -245,7 +250,9 @@ export const layerFromProjectStore: Layer.Layer<
                   builtInModel: claudeBuiltInAdvisorModel({
                     providers,
                     thread: input.modelSelection,
-                    advisor: resolveAdvisor({
+                    // From the order alone, never from live usage: a choice
+                    // that followed usage would restart the session on each change.
+                    advisor: preferredAdvisor({
                       providers,
                       thread: input.modelSelection,
                       model: advisorSettings.advisor.model,
@@ -253,9 +260,7 @@ export const layerFromProjectStore: Layer.Layer<
                       tier: advisorSettings.adversarialReview.tier,
                       tiers: advisorSettings.modelTiers,
                       sourceOrder: advisorSettings.defaultModelProviders,
-                      excludedModels: advisorSettings.providerLimitExcludedModels,
-                      nowMs: yield* Clock.currentTimeMillis,
-                    }).advisor,
+                    }),
                   }),
                   // The adapter knows the session's context size and applies the limit.
                   contextTokens: null,
@@ -277,16 +282,23 @@ export const layerFromProjectStore: Layer.Layer<
           cwd,
           // An advisor only reads: the provider's read-only sandbox where it
           // has one, and nothing to approve because nothing may be written.
-          ...(advisorChild ? { approvalPolicy: "never", sandboxPolicy: { type: "readOnly" } } : {}),
-          agentInstructions: [
-            withServiceInstructions(
-              resolveAgentInstructions({
-                globalInstructions: settings.agentInstructions,
-                projectInstructions: projectOverrides?.agentInstructions,
-              }),
-            ),
-            ...(guidance === null ? [] : [guidance]),
-          ].join("\n\n"),
+          ...(advisorChild
+            ? {
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              }
+            : {}),
+          agentInstructions: withServiceInstructions(
+            resolveAgentInstructions({
+              globalInstructions: settings.agentInstructions,
+              projectInstructions: projectOverrides?.agentInstructions,
+            }),
+          ),
+          // Adapters add it only for a thread that has the studio-code tools.
           ...(guidance === null ? {} : { advisorGuidance: guidance }),
           ...(claudeAdvisor === undefined ? {} : { claudeAdvisor }),
           claudeWorkflowMode: projectOverrides?.claudeWorkflowMode ?? settings.claudeWorkflowMode,
