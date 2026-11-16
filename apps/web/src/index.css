@@ -1235,8 +1235,14 @@ video.artifact-viewer-media {
   background: var(--border);
 }
 
-/* Video opened from a thread plays centred on the same stage. */
+/* Video opened from a thread plays centred on the same stage. The stage is a
+   size container, so the player's room is its own size in container units: a
+   percentage would resolve against the player's auto-height wrapper and leave
+   a portrait video as tall as its file. */
 .viewer-media-video {
+  --media-height: 100cqh;
+  --media-width: 100cqw;
+  container-type: size;
   display: flex;
   min-height: 0;
   flex: 1;
