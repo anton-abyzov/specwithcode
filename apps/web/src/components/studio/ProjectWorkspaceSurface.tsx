@@ -174,6 +174,7 @@ import { ProjectArtifactShelf } from "./shell/ProjectArtifactShelf";
 import { useProjectArtifacts } from "../../studio/useProjectArtifacts";
 import { ProjectDesignsButton, ProjectDesignsPane } from "./shell/ProjectDesignsPane";
 import { useProjectDesigns } from "../design/useProjectDesigns";
+import { useBoardIncrementRoute } from "../../studio/useBoardIncrementRoute";
 import { useProjectPaneDeepLink } from "../../studio/useProjectPaneDeepLink";
 import { PullRequestsPane } from "./shell/PullRequestsPane";
 import { ScheduledPane } from "./shell/ScheduledPane";
@@ -1034,6 +1035,7 @@ export function ProjectWorkspaceSurface({
     [selectedThread, setOverviewOpen, setPaneTab, setSelected],
   );
   useProjectPaneDeepLink(showPaneTab);
+  const boardIncrement = useBoardIncrementRoute();
   const toggleOverview = useCallback(() => {
     if (threadOpen || overviewOpen) hideOverview();
     else setOverviewOpen(true);
@@ -2293,6 +2295,8 @@ export function ProjectWorkspaceSurface({
                   threads={workers}
                   machineLabels={machineLabels}
                   onOpenThread={(thread) => openThread(thread.id, thread.environmentId)}
+                  openIncrement={boardIncrement.incrementId}
+                  onOpenIncrement={boardIncrement.open}
                   onAsk={
                     canOperate && connected
                       ? (text) => {
