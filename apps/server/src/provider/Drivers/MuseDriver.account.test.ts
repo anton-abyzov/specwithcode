@@ -221,4 +221,30 @@ it.layer(layerTest)("MuseDriver account", (it) => {
       expect((yield* muse.runs).length).toBe(1);
     }).pipe(Effect.scoped),
   );
+  it.effect(
+    "fetches the list at the first signed-in check after a signed-out one saw an old list",
+    () =>
+      Effect.gen(function* () {
+        if (process.platform === "win32") return;
+        const muse = yield* fakeMuse;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // Signed out, with the list an earlier sign-in left on this machine.
+        yield* fs.writeFileString(path.join(muse.dir, "catalog"), "");
+        const instance = yield* MuseDriver.create({
+          instanceId: ProviderInstanceId.make("muse"),
+          displayName: undefined,
+          enabled: true,
+          environment: muse.environment,
+          config: { ...MuseDriver.defaultConfig(), binaryPath: muse.binary },
+        });
+        expect((yield* instance.snapshot.refresh).auth.status).toBe("unauthenticated");
+
+        // The list is cleared and the same account signs in again.
+        yield* muse.dropCatalog;
+        yield* muse.signIn;
+        expect((yield* instance.snapshot.refresh).status).toBe("ready");
+        expect((yield* muse.runs).length).toBe(1);
+      }).pipe(Effect.scoped),
+  );
 });

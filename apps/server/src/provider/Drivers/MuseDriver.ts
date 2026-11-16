@@ -292,8 +292,9 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         // reads the catalog when it starts, so a new one is asked afterwards.
         if (models.length > 0) {
           // A list that was here and goes later is not fetched by a timed check:
-          // the row then says to choose Check again.
-          modelListAsked = true;
+          // the row then says to choose Check again. A list left on disk by an
+          // account that is signed out says nothing about the next sign-in.
+          if (account?.signedIn !== false) modelListAsked = true;
         } else if (account?.signedIn === true && !modelListAsked) {
           modelListAsked = true;
           yield* downloadModelList;
