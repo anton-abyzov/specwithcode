@@ -2437,6 +2437,12 @@ const layerWsRpc = (
           ),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           Effect.gen(function* () {
+            // An agent installed since the server started may sit in a folder
+            // the shell added to PATH since. A person's click asks the shell
+            // again; any other refresh does so only when a startup file changed.
+            yield* providerRegistry.rereadPath({
+              force: input.fresh === true || input.refreshModels === true,
+            });
             if (input.discover && providerRegistry.findAgents) {
               return yield* providerRegistry.findAgents({ fresh: input.fresh === true });
             }
@@ -2476,7 +2482,9 @@ const layerWsRpc = (
                   fresh: input.fresh === true,
                 })
               : input.instanceId !== undefined
-                ? providerRegistry.refreshInstance(input.instanceId)
+                ? providerRegistry.refreshInstance(input.instanceId, {
+                    fresh: input.fresh === true,
+                  })
                 : providerRegistry.refresh();
             if (input.refreshModels) {
               const instances = yield* providerInstances.listInstances;

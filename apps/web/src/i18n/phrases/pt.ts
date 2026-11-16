@@ -5181,4 +5181,14 @@ export const pt: PhraseCatalog = {
     "Configurar esta máquina para iniciar trabalho em {there}",
   "Change what this machine may do on {there}":
     "Alterar o que esta máquina pode fazer em {there}",
+  "Installed, but it does not start": "Instalado, mas não inicia",
+  "Install {agent} on {machine} with this command:":
+    "Instale {agent} em {machine} com este comando:",
+  "Run its installer again:": "Execute o instalador de novo:",
+  "Install {agent} on {machine} from its own site.": "Instale {agent} em {machine} pelo site dele.",
+  "Open its install guide": "Abrir o guia de instalação",
+  "Run in terminal": "Executar no terminal",
+  "Waiting for the install. This page updates by itself.":
+    "Aguardando a instalação. Esta página se atualiza sozinha.",
+  "After it installs, choose Check again.": "Depois de instalar, escolha Verificar de novo.",
 };

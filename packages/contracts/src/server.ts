@@ -214,6 +214,20 @@ export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnap
 export const ServerProviderAvailability = Schema.Literals(["available", "unavailable"]);
 export type ServerProviderAvailability = typeof ServerProviderAvailability.Type;
 
+/**
+ * Why a command-line agent that is on cannot run, as the machine's own search
+ * for its command found it. "missing": no file by that name in any folder the
+ * machine looks in. "broken": the file is there and did not start.
+ */
+export const ServerProviderCli = Schema.Struct({
+  state: Schema.Literals(["missing", "broken"]),
+  /** The command as the machine runs it: a saved path, or a bare name. */
+  command: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+  /** Where that command was found, when it was. */
+  path: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(4_096))),
+});
+export type ServerProviderCli = typeof ServerProviderCli.Type;
+
 export const ServerProviderContinuation = Schema.Struct({
   groupKey: TrimmedNonEmptyString,
 });
@@ -345,6 +359,11 @@ export const ServerProvider = Schema.Struct({
   // Human-readable reason populated when `availability === "unavailable"`.
   // Surfaces in the UI alongside the missing-driver affordance.
   unavailableReason: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Set while the agent is on and its command-line program is not installed
+   * or does not start. Absent from older machines, and once it runs.
+   */
+  cli: ForwardCompatibleOptional(ServerProviderCli),
   models: Schema.Array(ServerProviderModel),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),

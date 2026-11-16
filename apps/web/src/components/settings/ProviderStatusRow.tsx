@@ -16,9 +16,8 @@ import { useTx } from "../../i18n";
 import { renderRich } from "../../i18n/rich";
 import {
   agentSignInAccount,
-  canInstallOnboardingAgent,
+  resolveAgentInstallCommand,
   resolveAgentSignInCommand,
-  resolveOnboardingProviderInstallCommand,
 } from "../../onboarding/providerReadiness.logic";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -38,6 +37,7 @@ import { useHeldFor } from "../onboarding/WizardFrame";
 import { Button } from "../ui/button";
 import { ClaudeSignIn } from "./ClaudeSignIn";
 import { useFoundAgentPath } from "./FoundAgents";
+import { ProviderInstallStep } from "./ProviderInstallStep";
 import { getProviderStatusView, getProviderVersionLabel } from "./providerStatus";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { TeamRulesLabel } from "./settingsLayout";
@@ -195,12 +195,24 @@ export function ProviderStatusRow({
   const searched =
     registryAgentId !== undefined || instanceId === defaultInstanceIdForDriver(instance.driver);
   const command =
-    saved !== null && /[\\/]/.test(saved) ? saved : ((searched ? foundPath : null) ?? saved);
+    provider?.cli?.path ??
+    (saved !== null && /[\\/]/.test(saved) ? saved : ((searched ? foundPath : null) ?? saved));
   // A sign-in the app has no way to start: the machine's words are the only lead.
   const signsInHere = hasSetupBlock || claude || signInCommand !== null;
   const noWayToSignIn = view.action === "signIn" && !signsInHere;
-  const detail =
-    view.detail ?? ((noWayToSignIn || stalled) && provider?.message ? provider.message : null);
+  // An agent from the registry installs from its own section; the rest are run here.
+  const showsInstallStep =
+    view.state === "notInstalled" &&
+    !(hasSetupBlock && !readOnly) &&
+    !checking &&
+    !installsInApp &&
+    registryAgentId === undefined &&
+    os !== undefined;
+  // A command that is nowhere is the install step's to explain; without the step, the machine's words are.
+  const installStepSpeaks = showsInstallStep && view.cli === "missing";
+  const detail = installStepSpeaks
+    ? null
+    : (view.detail ?? ((noWayToSignIn || stalled) && provider?.message ? provider.message : null));
   const urlAuthAction = provider?.auth.action;
 
   // Codex signs in again over the account it has, which is how its account is changed.
@@ -219,9 +231,10 @@ export function ProviderStatusRow({
 
   const checkAgain = () => {
     setCheckingAgain(true);
-    void Promise.resolve(refreshProviders({ environmentId, input: { instanceId } })).finally(() =>
-      setCheckingAgain(false),
-    );
+    // The machine reads its login shell's PATH again first, for an install that just added a folder.
+    void Promise.resolve(
+      refreshProviders({ environmentId, input: { instanceId, fresh: true } }),
+    ).finally(() => setCheckingAgain(false));
   };
   const checkAgainButton = (
     <Button size="sm" variant="outline" onClick={checkAgain}>
@@ -239,23 +252,7 @@ export function ProviderStatusRow({
     // Reading again changes nothing, so a connection that cannot change agents has it too.
     checkAgainButton
   ) : view.action === "install" ? (
-    readOnly || installsInApp ? null : canInstallOnboardingAgent(agent) && os ? (
-      <Button
-        size="sm"
-        disabled={panel.session !== null || !panel.available}
-        onClick={() =>
-          panel.open({
-            agent,
-            agentName: name,
-            providerInstanceId: instanceId,
-            command: resolveOnboardingProviderInstallCommand(agent, os),
-            purpose: "install",
-          })
-        }
-      >
-        {tx("Install")}
-      </Button>
-    ) : (
+    installsInApp ? null : (
       checkAgainButton
     )
   ) : showSignIn && !hasSetupBlock && !claude && signInCommand !== null ? (
@@ -402,6 +399,28 @@ export function ProviderStatusRow({
       ) : null}
       {hasSetupBlock && !readOnly ? (
         setupBlock
+      ) : view.state === "notInstalled" ? (
+        !showsInstallStep || !os ? null : (
+          <ProviderInstallStep
+            agentName={name}
+            machine={environmentLabel}
+            command={resolveAgentInstallCommand(agent, os)}
+            cli={view.cli}
+            documentationUrl={provider?.setup?.documentationUrl}
+            runDisabled={panel.session !== null || !panel.available}
+            canRun={!readOnly}
+            explained={detail !== null}
+            onRun={(installCommand) =>
+              panel.open({
+                agent,
+                agentName: name,
+                providerInstanceId: instanceId,
+                command: installCommand,
+                purpose: "install",
+              })
+            }
+          />
+        )
       ) : !showSignIn ? null : claude && provider ? (
         <ClaudeSignIn
           environmentId={environmentId}

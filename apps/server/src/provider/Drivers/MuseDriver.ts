@@ -31,15 +31,12 @@ import { MuseSettings } from "@specweave-studio/contracts";
 import {
   connectMuse,
   MuseCheckError,
-  museCheckFailure,
   museControl,
+  museFailure,
+  type MuseFailure,
 } from "../muse/MuseConnection.ts";
-import {
-  museModels,
-  museUsage,
-  museFullEntitled,
-  museUsageFromCliJson,
-} from "../muse/MuseDiscovery.ts";
+import { museCatalogDownloadArgs, museCliAccount, museReadiness } from "../muse/MuseAccount.ts";
+import { museModels, museUsage, museFullEntitled } from "../muse/MuseDiscovery.ts";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { makeMuseRuntime } from "../muse/MuseRuntime.ts";
 import { makeMuseTextGeneration } from "../../textGeneration/MuseTextGeneration.ts";
@@ -111,6 +108,23 @@ const MUSE_NO_ANSWER = /^Muse Code (?:handshake|control request) timed out$/;
 export const museGaveNoAnswer = (cause: unknown): boolean =>
   cause instanceof Error && MUSE_NO_ANSWER.test(cause.message);
 
+/**
+ * The row for a check that failed. A launcher that is missing or does not
+ * start is not installed, which leads to the install step; one that started
+ * and refused the account, or speaks another protocol, is installed.
+ */
+export function museFailedSnapshot(initial: ServerProvider, failure: MuseFailure): ServerProvider {
+  const failed = { ...initial, status: "error" as const, message: failure.message };
+  if (failure.kind === "signedOut") {
+    return {
+      ...failed,
+      installed: true,
+      auth: { status: "unauthenticated", type: "subscription" },
+    };
+  }
+  return failure.kind === "protocol" ? { ...failed, installed: true } : failed;
+}
+
 export type MuseDriverEnv =
   | Crypto.Crypto
   | ChildProcessSpawner.ChildProcessSpawner
@@ -128,6 +142,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
   create: (input) =>
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
+      const path = yield* Path.Path;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
@@ -165,41 +180,60 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
               status: "warning",
               auth: { status: "unknown" },
               message: input.enabled
-                ? "Refresh Providers after installing Muse Code and signing in with muse."
+                ? "Checking Muse Code on this machine."
                 : "Muse Code is disabled.",
             },
           }),
         );
-      // A cold `muse serve` host has observed no usage until one of its
-      // turns lands, so `usage/read` is empty in a provider check.
-      // `muse usage --json` reads the account allowance live without a
-      // model turn; it is the check's fallback, never a replacement for an
-      // observed MSP read.
-      const readCliUsage = Effect.gen(function* () {
+      // A `muse serve` host started for a check has observed no usage (it is
+      // empty until one of its turns lands) and cannot say whether the account
+      // is signed in (see `MuseAccount.ts`). `muse usage --json` reads both
+      // live without a model turn.
+      const readCliAccount = Effect.gen(function* () {
         const now = yield* DateTime.now;
         const child = yield* spawner.spawn(
           ChildProcess.make(settings.binaryPath || "muse", ["usage", "--json"], {
             env: environment,
             extendEnv: true,
+            stdin: "ignore",
           }),
         );
-        const [output, , exitCode] = yield* Effect.all(
+        const [stdout, stderr, exitCode] = yield* Effect.all(
           [
             child.stdout.pipe(Stream.decodeText(), Stream.mkString),
-            child.stderr.pipe(Stream.runDrain),
+            child.stderr.pipe(Stream.decodeText(), Stream.mkString),
             child.exitCode,
           ],
           { concurrency: "unbounded" },
         );
-        return exitCode === 0
-          ? museUsageFromCliJson(output, DateTime.toEpochMillis(now))
-          : undefined;
+        return museCliAccount({ exitCode, stdout, stderr }, DateTime.toEpochMillis(now));
       }).pipe(
         Effect.scoped,
         Effect.timeoutOption("15 seconds"),
         Effect.map(Option.getOrElse(() => undefined)),
         Effect.orElseSucceed(() => undefined),
       );
+      // Asked once per server run, and again when a person chooses Check again
+      // or the login changes: each ask leaves one empty session in Muse Code's
+      // own list, so it is never repeated on a timer.
+      let modelListAsked = false;
+      const modelListFolder = path.join(serverConfig.stateDir, "muse-model-list");
+      const downloadModelList = Effect.gen(function* () {
+        // Its own empty folder, so the run can touch no project.
+        yield* fileSystem.makeDirectory(modelListFolder, { recursive: true });
+        const child = yield* spawner.spawn(
+          ChildProcess.make(settings.binaryPath || "muse", [...museCatalogDownloadArgs], {
+            cwd: modelListFolder,
+            env: environment,
+            extendEnv: true,
+            stdin: "ignore",
+          }),
+        );
+        yield* Effect.all(
+          [child.stdout.pipe(Stream.runDrain), child.stderr.pipe(Stream.runDrain), child.exitCode],
+          { concurrency: "unbounded", discard: true },
+        );
+      }).pipe(Effect.scoped, Effect.timeoutOption("30 seconds"), Effect.ignoreCause({ log: true }));
       const checkProvider = Effect.gen(function* () {
         if (!input.enabled) return initial();
         const probe = Effect.result(
@@ -221,7 +255,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
             },
             catch: (cause) =>
               new MuseCheckError({
-                detail: museCheckFailure(cause, settings.binaryPath || "muse"),
+                detail: museFailure(cause, settings.binaryPath || "muse").message,
                 cause,
               }),
           }),
@@ -240,38 +274,35 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
                 status: "error" as const,
                 message: noAnswerMessage("Muse Code", MUSE_ANSWER_LIMIT_MS),
               }
-            : { ...initial(), status: "error" as const, message: probed.failure.detail };
+            : museFailedSnapshot(
+                initial(),
+                museFailure(probed.failure.cause, settings.binaryPath || "muse"),
+              );
           return failed;
         }
-        const { catalog, usage, version } = probed.success;
+        const { usage, version } = probed.success;
         const apiKey = Boolean(environment.META_API_KEY?.trim());
-        const limits = museUsage(usage) ?? (yield* readCliUsage);
-        const models = museModels(
-          catalog,
-          limits !== undefined || museFullEntitled(usage, apiKey),
-          apiKey,
-        );
-        // The host only serves its provider catalog to a signed-in
-        // account; a cold host has simply observed no usage yet, which
-        // is not a sign-out. Capacity (and fallback eligibility) still
-        // requires an observed usage read.
-        const authenticated = models.length > 0;
+        // An API key is its own route: the subscription's sign-in says nothing about it.
+        const account = apiKey ? undefined : yield* readCliAccount;
+        const limits = museUsage(usage) ?? account?.limits;
+        const listed = (catalog: unknown) =>
+          museModels(catalog, limits !== undefined || museFullEntitled(usage, apiKey), apiKey);
+        let models = listed(probed.success.catalog);
+        // Signed in and no list: the host has no catalog on disk yet. A host
+        // reads the catalog when it starts, so a new one is asked afterwards.
+        if (models.length === 0 && account?.signedIn === true && !modelListAsked) {
+          modelListAsked = true;
+          yield* downloadModelList;
+          const again = yield* probe;
+          if (again._tag === "Success") models = listed(again.success.catalog);
+        }
         const ready: ServerProvider = {
           ...initial(),
           installed: true,
           version,
-          status: models.length ? ("ready" as const) : ("warning" as const),
-          auth: {
-            status: authenticated ? ("authenticated" as const) : ("unknown" as const),
-            ...(apiKey ? { type: "api_key" } : { type: "subscription" }),
-          },
+          ...museReadiness({ models, limits, account, apiKey }),
           models,
           ...(limits ? { usageLimits: limits } : {}),
-          message: limits
-            ? "Muse Code native subscription. Wonder Full requires an eligible plan and account model availability."
-            : authenticated
-              ? "Signed in to Muse Code. Usage limits appear after this provider runs a turn; until then it will not be suggested as a fallback."
-              : "Sign in with muse and refresh. Subscription capacity is not yet verified; this provider will not be suggested as a fallback.",
         };
         return ready;
       });
@@ -282,6 +313,13 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         haveSettingsChanged: () => false,
         initialSnapshot: () => Effect.succeed(initial()),
         checkProvider,
+        // The launcher keeps its program beside itself and names it in this
+        // file, so a repair can land without the launcher changing.
+        installProbe: {
+          command: settings.binaryPath || "muse",
+          environment,
+          beside: [".muse-version"],
+        },
         // `muse login` in a terminal shows on a row that is on screen.
         signInProbe: {
           mark: loginFileMark(accountConfigPath).pipe(
@@ -312,7 +350,10 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         yield* watchLoginChanges({
           filePath: accountConfigPath,
           readIdentity: museLoginIdentity,
-          onChange: snapshot.refresh.pipe(Effect.ignoreCause({ log: true })),
+          // Another account has another model list.
+          onChange: Effect.sync(() => {
+            modelListAsked = false;
+          }).pipe(Effect.andThen(snapshot.refresh), Effect.ignoreCause({ log: true })),
         }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
       }
       const orchestrationAdapter = makeAcpAdapterV2({
@@ -338,6 +379,10 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         displayName: input.displayName,
         enabled: input.enabled,
         snapshot,
+        // Check again asks for the model list once more.
+        invalidateCaches: Effect.sync(() => {
+          modelListAsked = false;
+        }),
         readUsageLimitsNow: checkProvider.pipe(
           Effect.map((probed) => probed.usageLimits),
           Effect.catchCause(() => Effect.succeed(undefined)),

@@ -5117,4 +5117,15 @@ export const ko: PhraseCatalog = {
     "이 머신이 {there}에서 작업을 시작하도록 설정",
   "Change what this machine may do on {there}":
     "이 머신이 {there}에서 할 수 있는 일 변경",
+  "Installed, but it does not start": "설치되었지만 시작되지 않음",
+  "Install {agent} on {machine} with this command:":
+    "이 명령으로 {machine}에 {agent}을(를) 설치하세요:",
+  "Run its installer again:": "설치 프로그램을 다시 실행하세요:",
+  "Install {agent} on {machine} from its own site.":
+    "{agent}의 공식 사이트에서 {machine}에 설치하세요.",
+  "Open its install guide": "설치 가이드 열기",
+  "Run in terminal": "터미널에서 실행",
+  "Waiting for the install. This page updates by itself.":
+    "설치를 기다리는 중입니다. 이 페이지는 자동으로 업데이트됩니다.",
+  "After it installs, choose Check again.": "설치가 끝나면 다시 확인을 선택하세요.",
 };
