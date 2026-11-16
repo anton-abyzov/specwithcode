@@ -414,6 +414,7 @@ export function HandoffCopyStepPanels({
           sourceEnvironmentId={project.environmentId}
           projectId={project.id}
           destinationEnvironmentId={machine}
+          destinationProjectId={copy?.projectId ?? undefined}
           sourceLabel={sourceLabel}
           targetLabel={targetLabel}
         />

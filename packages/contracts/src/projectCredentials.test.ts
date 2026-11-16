@@ -9,7 +9,11 @@ import {
   isSafeSshHost,
   isSafeSshTarget,
   parseProjectCredentialsManifest,
+  PROJECT_CREDENTIAL_SSH_HOSTS,
   PROJECT_CREDENTIALS_RPC_METHODS,
+  ProjectCredentialProbe,
+  ProjectCredentialRow,
+  ProjectCredentialsProbeInput,
   ProjectSshTarget,
 } from "./projectCredentials.ts";
 
@@ -209,5 +213,150 @@ describe("SSH targets on the wire", () => {
       "10.example.com",
     ])
       expect(isPrivateSshHost(host), host).toBe(false);
+  });
+});
+
+describe("the tool check on the wire", () => {
+  const reads = (decode: (value: unknown) => unknown) => (value: unknown) => {
+    try {
+      decode(value);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const decoders = new Map<unknown, (value: unknown) => boolean>([
+    [ProjectCredentialProbe, reads(Schema.decodeUnknownSync(ProjectCredentialProbe))],
+    [ProjectCredentialRow, reads(Schema.decodeUnknownSync(ProjectCredentialRow))],
+    [ProjectCredentialsProbeInput, reads(Schema.decodeUnknownSync(ProjectCredentialsProbeInput))],
+  ]);
+  const accepts = (schema: unknown, value: unknown) => decoders.get(schema)!(value);
+  const answer = { id: "cloudflare", status: "unknown", signIn: "wrangler login", check: null };
+  const tool = {
+    name: "wrangler",
+    state: "missing",
+    folder: null,
+    install: "npm install --global wrangler",
+    newShell: false,
+    signIn: "wrangler login",
+    check: "wrangler whoami",
+    appPath: null,
+  };
+  const row = {
+    id: "cloudflare",
+    kind: "login",
+    sources: ["wrangler.jsonc"],
+    listed: false,
+    skip: false,
+    note: null,
+    keptIn: [],
+  };
+
+  it("still reads what a machine from before the check sends", () => {
+    expect(accepts(ProjectCredentialProbe, answer)).toBe(true);
+    expect(accepts(ProjectCredentialRow, row)).toBe(true);
+    expect(accepts(ProjectCredentialsProbeInput, { ids: ["npm"], fresh: false })).toBe(true);
+  });
+
+  it("reads the new fields, each optional", () => {
+    expect(
+      accepts(ProjectCredentialProbe, { ...answer, tool, ran: "waiting", signInFile: true }),
+    ).toBe(true);
+    // Node.js is what is missing: said only by a machine that knows to say it.
+    expect(
+      accepts(ProjectCredentialProbe, {
+        ...answer,
+        tool: { ...tool, install: null, needsNode: true },
+      }),
+    ).toBe(true);
+    expect(
+      accepts(ProjectCredentialProbe, { ...answer, tool: { ...tool, needsNode: "yes" } }),
+    ).toBe(false);
+    expect(accepts(ProjectCredentialRow, { ...row, packages: ["apps/site", "."] })).toBe(true);
+    expect(accepts(ProjectCredentialRow, { ...row, id: "npm", registryFile: true })).toBe(true);
+    expect(accepts(ProjectCredentialProbe, { ...answer, checkedMsAgo: 0 })).toBe(true);
+    expect(accepts(ProjectCredentialProbe, { ...answer, checkedMsAgo: 42_000 })).toBe(true);
+    expect(accepts(ProjectCredentialProbe, { ...answer, checkedMsAgo: -1 })).toBe(false);
+    expect(accepts(ProjectCredentialProbe, { ...answer, checkedMsAgo: 1.5 })).toBe(false);
+    expect(
+      accepts(ProjectCredentialsProbeInput, {
+        ids: ["cloudflare", "ssh"],
+        fresh: true,
+        projectId: "p1",
+        packages: [{ id: "cloudflare", folders: ["apps/site"] }],
+        sshHosts: ["github.com"],
+        projectTools: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("refuses a tool place, a run word or a host outside the app's own lists", () => {
+    expect(accepts(ProjectCredentialProbe, { ...answer, tool: { ...tool, state: "global" } })).toBe(
+      false,
+    );
+    expect(accepts(ProjectCredentialProbe, { ...answer, ran: "always" })).toBe(false);
+    expect(
+      accepts(ProjectCredentialsProbeInput, { ids: ["ssh"], fresh: true, sshHosts: ["evil.io"] }),
+    ).toBe(false);
+    expect(accepts(ProjectCredentialRow, { ...row, packages: ["a", "b", "c", "d"] })).toBe(false);
+    expect(
+      accepts(ProjectCredentialProbe, { ...answer, tool: { ...tool, install: "x".repeat(4701) } }),
+    ).toBe(false);
+  });
+
+  it("is read by a machine from before the check, which sees only the fields it knows", () => {
+    // What an older release decodes with: the same structs without the new optional fields.
+    const older = {
+      probe: Schema.decodeUnknownSync(
+        Schema.Struct({
+          id: Schema.String,
+          status: Schema.Literals(["ready", "not_signed_in", "tool_missing", "unknown"]),
+          signIn: Schema.String,
+          check: Schema.NullOr(Schema.String),
+        }),
+      ),
+      row: Schema.decodeUnknownSync(
+        Schema.Struct({
+          id: Schema.String,
+          kind: Schema.Literals(["login", "file"]),
+          sources: Schema.Array(Schema.String),
+          listed: Schema.Boolean,
+          skip: Schema.Boolean,
+          note: Schema.NullOr(Schema.String),
+          keptIn: Schema.Array(Schema.String),
+        }),
+      ),
+      input: Schema.decodeUnknownSync(
+        Schema.Struct({ ids: Schema.Array(Schema.String), fresh: Schema.optional(Schema.Boolean) }),
+      ),
+    };
+    expect(
+      older.probe({ ...answer, tool, ran: "tool", signInFile: true, checkedMsAgo: 12 }),
+    ).toEqual(answer);
+    expect(
+      older.row({ ...row, packages: ["."], sshHosts: ["github.com"], registryFile: true }),
+    ).toEqual(row);
+    expect(
+      older.input({
+        ids: ["npm"],
+        fresh: true,
+        projectId: "p1",
+        packages: [],
+        sshHosts: [],
+        projectTools: true,
+      }),
+    ).toEqual({ ids: ["npm"], fresh: true });
+    // No status, kind or error word was added: an older window never meets one it cannot read.
+    for (const status of ["ready", "not_signed_in", "tool_missing", "unknown"])
+      expect(accepts(ProjectCredentialProbe, { ...answer, status }), status).toBe(true);
+    expect(accepts(ProjectCredentialProbe, { ...answer, status: "offline" })).toBe(false);
+  });
+
+  it("names only the Git hosts the app knows on a row", () => {
+    expect(accepts(ProjectCredentialRow, { ...row, id: "ssh", sshHosts: ["github.com"] })).toBe(
+      true,
+    );
+    expect(accepts(ProjectCredentialRow, { ...row, id: "ssh", sshHosts: ["evil.io"] })).toBe(false);
+    expect(PROJECT_CREDENTIAL_SSH_HOSTS).toEqual(["github.com", "gitlab.com", "bitbucket.org"]);
   });
 });

@@ -79,6 +79,7 @@ try {
         .evaluateAll((nodes) => nodes.map((node) => node.dataset.credential));
       NodeAssert.deepEqual(rows, [
         "azure",
+        "google-cloud",
         "kubernetes",
         "hetzner-cloud",
         "cloudflare",
@@ -100,6 +101,42 @@ try {
       );
       NodeAssert.match(await kube.textContent(), /Stays on m4/);
       NodeAssert.match(await kube.textContent(), /~\/\.kube\/config/);
+      // A missing tool: its install comes first, then the sign-in, then the check.
+      const gcloud = section.locator('[data-credential="google-cloud"]');
+      NodeAssert.match(await gcloud.textContent(), /gcloud is not installed on m5/);
+      await gcloud.locator('[data-slot="copy-credential-sign-in"]').click();
+      NodeAssert.deepEqual(
+        await gcloud.locator('[data-slot="copy-credential-command"] code').allTextContents(),
+        [
+          "curl https://sdk.cloud.google.com | bash",
+          "gcloud auth login --no-launch-browser",
+          "gcloud auth list",
+        ],
+      );
+      NodeAssert.equal(await gcloud.locator('[data-slot="copy-credential-install"]').count(), 1);
+      // A tool the project lists installs through the project and runs from its folder.
+      const cloudflare = section.locator('[data-credential="cloudflare"]');
+      await cloudflare.locator('[data-slot="copy-credential-sign-in"]').click();
+      NodeAssert.deepEqual(
+        await cloudflare.locator('[data-slot="copy-credential-command"] code').allTextContents(),
+        [
+          "cd /Users/you/Projects/site/platform && npm install",
+          "cd /Users/you/Projects/site/platform && npx wrangler login",
+          "cd /Users/you/Projects/site/platform && npx wrangler whoami",
+        ],
+      );
+      // npm from the app's own folder: where it comes from, and a command that reaches it.
+      const npm = section.locator('[data-credential="npm"]');
+      await npm.locator('[data-slot="copy-credential-sign-in"]').click();
+      NodeAssert.match(
+        await npm.textContent(),
+        /npm comes with the Node\.js that SpecWithCode installs/,
+      );
+      NodeAssert.equal(
+        await npm.locator('[data-slot="copy-credential-command"] code').first().textContent(),
+        'export PATH=/Users/you/.specwithcode/commands:"$PATH" && npm login',
+      );
+      NodeAssert.match(await section.textContent(), /Checked just now/);
       // A key file: set up a new one there, never sent.
       const ssh = section.locator('[data-credential="ssh"]');
       await ssh.locator('[data-slot="copy-credential-sign-in"]').click();
@@ -124,7 +161,18 @@ try {
       await section.getByText(".specweave/project/credentials.json").waitFor();
       // Nothing in the section is wider than the dialog.
       const overflow = await section.evaluate((node) => node.scrollWidth - node.clientWidth);
-      NodeAssert.ok(overflow <= 1, `section overflows by ${overflow}px at ${width}`);
+      // Which parts stick out, so a failure names what to fix.
+      const wide = await section.evaluate((node) => {
+        const edge = node.getBoundingClientRect().right;
+        return [...node.querySelectorAll("*")]
+          .filter((part) => part.getBoundingClientRect().right > edge + 1)
+          .slice(0, 6)
+          .map((part) => `${part.tagName.toLowerCase()}[${part.dataset.slot ?? part.className}]`);
+      });
+      NodeAssert.ok(
+        overflow <= 1,
+        `section overflows by ${overflow}px at ${width}: ${wide.join(", ")}`,
+      );
       await section.scrollIntoViewIfNeeded();
       const path = NodePath.join(output, `credentials-${width}-${theme}.png`);
       await section.screenshot({ path, animations: "disabled" });

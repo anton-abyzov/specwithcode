@@ -38,6 +38,11 @@ const CREDENTIAL_ROWS = [
   { id: "github", sources: ["."], keptIn: [".config/gh/hosts.yml"] },
   { id: "azure", sources: ["infra/main.tf"], keptIn: [".azure/msal_token_cache.json"] },
   {
+    id: "google-cloud",
+    sources: ["scripts/deploy.sh"],
+    keptIn: [".config/gcloud/credentials.db"],
+  },
+  {
     id: "kubernetes",
     sources: ["scripts/deploy.sh", "k8s/kustomization.yaml"],
     keptIn: [".kube/config"],
@@ -46,7 +51,8 @@ const CREDENTIAL_ROWS = [
   {
     id: "cloudflare",
     sources: ["platform/wrangler.jsonc"],
-    keptIn: [".wrangler/config/default.toml"],
+    keptIn: [".wrangler/config/default.toml", "Library/Preferences/.wrangler/config/default.toml"],
+    packages: ["platform"],
   },
   { id: "npm", sources: [".github/workflows/release.yml"], keptIn: [".npmrc"] },
   {
@@ -88,14 +94,67 @@ const CREDENTIAL_PROBES = [
     signIn: "az aks get-credentials --resource-group <group> --name <cluster>",
     check: "kubectl get nodes",
   },
+  // An answer from before the tool check: no `tool`, the row reads as it did.
   {
     id: "hetzner-cloud",
     status: "tool_missing",
     signIn: "hcloud context create <name>",
     check: null,
   },
-  { id: "cloudflare", status: "unknown", signIn: "wrangler login", check: "wrangler whoami" },
-  { id: "npm", status: "unknown", signIn: "npm login", check: "npm whoami" },
+  // Missing, and the project lists it: its own install comes first, in its folder.
+  {
+    id: "cloudflare",
+    status: "tool_missing",
+    signIn: "wrangler login",
+    check: "wrangler whoami",
+    ran: "none",
+    tool: {
+      name: "wrangler",
+      state: "missing",
+      folder: "/Users/you/Projects/site/platform",
+      install: "cd /Users/you/Projects/site/platform && npm install",
+      newShell: false,
+      signIn: "cd /Users/you/Projects/site/platform && npx wrangler login",
+      check: "cd /Users/you/Projects/site/platform && npx wrangler whoami",
+      appPath: null,
+    },
+  },
+  // Missing, with an installer of its own and a new Terminal window after it.
+  {
+    id: "google-cloud",
+    status: "tool_missing",
+    signIn: "gcloud auth login --no-launch-browser",
+    check: "gcloud auth list",
+    ran: "none",
+    tool: {
+      name: "gcloud",
+      state: "missing",
+      folder: null,
+      install: "curl https://sdk.cloud.google.com | bash",
+      newShell: true,
+      signIn: "gcloud auth login --no-launch-browser",
+      check: "gcloud auth list",
+      appPath: null,
+    },
+  },
+  // There, but only in the app's own folder: the commands add that folder to PATH first.
+  {
+    id: "npm",
+    status: "not_signed_in",
+    signIn: "npm login",
+    check: "npm whoami",
+    ran: "tool",
+    tool: {
+      name: "npm",
+      state: "app",
+      folder: null,
+      install: null,
+      newShell: false,
+      signIn: 'export PATH=/Users/you/.specwithcode/commands:"$PATH" && npm login',
+      check: 'export PATH=/Users/you/.specwithcode/commands:"$PATH" && npm whoami',
+      appPath: "/Users/you/.specwithcode/commands/npm",
+    },
+  },
   {
     id: "ssh",
     status: "unknown",
@@ -424,3 +483,15 @@ export const MachineReadinessChecklist = () => (
   </p>
 );
 export const ProjectLinkDialog = () => null;
+// "Install there" opens a terminal on the other machine; the fixture shows the button only.
+export const CopyCredentialInstall = () => (
+  <button
+    type="button"
+    className="rounded-md border px-2 py-1 text-xs"
+    data-slot="copy-credential-install"
+  >
+    Install there
+  </button>
+);
+// The wait for an install left running reads the same terminal state: nothing to show here.
+export const CopyCredentialInstallWatch = () => null;
