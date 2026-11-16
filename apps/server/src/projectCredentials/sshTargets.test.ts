@@ -103,6 +103,26 @@ done
       "H+=.evil.example.com",
       "read H",
       "read -r A H",
+      'read -p "Host: " H',
+      "read -t 5 H",
+      "read -n 1 H",
+      "read -d '' H",
+      "read -u 3 H",
+      "mapfile -t H < hosts.txt",
+      "readarray H < hosts.txt",
+      "printf -v H '%s' evil.example.com",
+      "unset H",
+      "select H in a b; do break; done",
+      'while getopts "h:" H; do :; done',
+      "declare -n R=H",
+      "local H",
+      "export H",
+      ': "${H:=evil.example.com}"',
+      'echo "${H=evil.example.com}"',
+      "eval 'H=evil.example.com'",
+      "source ./hosts.env",
+      ". ./hosts.env",
+      "true && . ./hosts.env",
       "X=1; H=evil.example.com",
       "H=evil.example.com true",
       "H[0]=evil.example.com",
@@ -111,6 +131,37 @@ done
       expect(targets(`H=good.example.com\n${write}\nssh root@$H true\n`), write).toEqual(named);
     expect(targets("declare -r H=good.example.com\nssh root@$H true\n")).toEqual([
       server("root", "good.example.com", "H"),
+    ]);
+  });
+
+  it("reads the rest of a loop line, and a list a command or a file fills", () => {
+    const named = (variable: string) => [{ kind: "variable", user: "root", host: null, variable }];
+    expect(
+      targets("for H in good.example.com; do H=evil.example.com; ssh root@$H true; done\n"),
+    ).toEqual(named("H"));
+    expect(
+      targets(
+        'L=(good.example.com)\nmapfile -t L < hosts.txt\nfor H in "${L[@]}"; do\nssh root@$H true\ndone\n',
+      ),
+    ).toEqual(named("H"));
+    expect(targets("for H in a.example.com b.example.com; do ssh root@$H true; done\n")).toEqual([
+      server("root", "a.example.com", "H"),
+      server("root", "b.example.com", "H"),
+    ]);
+  });
+
+  it("takes only ssh's first word as its destination", () => {
+    expect(sshTargetsInScript("ssh bastion sendmail ops@old.example.com\n")).toEqual({
+      targets: [],
+      more: false,
+      used: false,
+    });
+    expect(targets("ssh -p 22 root@a.example.com mail ops@b.example.com\n")).toEqual([
+      server("root", "a.example.com"),
+    ]);
+    expect(targets("scp a.txt root@a.example.com:/tmp root@b.example.com:/tmp\n")).toEqual([
+      server("root", "a.example.com"),
+      server("root", "b.example.com"),
     ]);
   });
 
@@ -185,5 +236,12 @@ describe("sshRemoteTarget", () => {
     expect(sshRemoteTarget("ssh://@gitlab.com/g/p")).toBeNull();
     expect(sshRemoteTarget("ssh://git@gitlab.com:2222/g/p")).toMatchObject({ host: "gitlab.com" });
     expect(sshRemoteTarget("ssh://git@2130706433/g/p")).toBeNull();
+    // A token in the user position is not a user name: the host stays, the token does not.
+    expect(sshRemoteTarget(`ssh://${secret}@gitlab.com/g/p`)).toEqual({
+      kind: "git",
+      user: null,
+      host: "gitlab.com",
+      variable: null,
+    });
   });
 });

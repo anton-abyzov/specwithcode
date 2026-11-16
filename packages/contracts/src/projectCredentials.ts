@@ -201,7 +201,8 @@ export const MAX_SSH_TARGETS = 12;
  */
 export const isSafeSshHost = (value: string) =>
   value.length <= 253 && SSH_HOST.test(value) && !looksLikeToken(value) && !oddNumber(value);
-export const isSafeSshUser = (value: string) => SSH_USER.test(value);
+/** A user name; a token in a remote URL's user position is not one. */
+export const isSafeSshUser = (value: string) => SSH_USER.test(value) && !looksLikeToken(value);
 export const isShellVariableName = (value: string) => SHELL_VARIABLE.test(value);
 /** Text free of control, bidirectional and other format characters. */
 export const isPlainText = (value: string) => !UNSAFE_TEXT.test(value);

@@ -27,7 +27,7 @@ const VALUE_OPTIONS = new Set(
   "-b -B -c -D -e -E -F -i -I -J -l -L -m -o -O -p -P -Q -R -S -W -w -X".split(" "),
 );
 
-const COMMAND = /(?:^|[\s;&|(`'"=])(?:\/usr\/bin\/)?(?:ssh|scp|rsync)[ \t]+([^\n]*)/gu;
+const COMMAND = /(?:^|[\s;&|(`'"=])(?:\/usr\/bin\/)?(ssh|scp|rsync)[ \t]+([^\n]*)/gu;
 const NAME = "[A-Za-z_][A-Za-z0-9_]*";
 const PART = String.raw`(?:\$\{${NAME}\}|\$${NAME}|[A-Za-z0-9_.-]+)`;
 const DESTINATION = new RegExp(`^(${PART})@(${PART})(?::.*)?$`, "u");
@@ -38,14 +38,18 @@ const POSITIONAL = /^\$(?:[@*]|\{?[0-9]+\}?)$/u;
 const DECLARED = String.raw`(?:(?:export|readonly|local|declare|typeset)\s+(?:-[A-Za-z]+\s+)*)?`;
 const ARRAY = new RegExp(String.raw`^\s*${DECLARED}(${NAME})=\(([^)]*)\)\s*(?:#.*)?$`, "u");
 const SCALAR = new RegExp(String.raw`^\s*${DECLARED}(${NAME})=(\S*)\s*(?:#.*)?$`, "u");
-/** Any other way a line writes a variable: `A+=x`, `A=x cmd`, `A=1; B=2`, `A[0]=x`. */
-const OTHER_WRITE = new RegExp(String.raw`(?:^|[\s;&|(])(${NAME})(?:\[[^\]]*\])?\+?=`, "gu");
-const READ = new RegExp(String.raw`(?:^|[\s;&|(])read\s+(?:-\S+\s+)*((?:${NAME}\s*)+)`, "u");
+const FALLBACK = new RegExp(String.raw`^\$\{(?:${NAME}|[0-9]+):-([^}]*)\}$`, "u");
+const LOOP = new RegExp(String.raw`^(\s*for\s+(${NAME}))\s+in\s+(.+?)\s*(?:;|$)`, "u");
+const LOOP_OVER = new RegExp(String.raw`^"?\$\{(${NAME})\[[@*]\]\}"?$`, "u");
+/** `${A:=x}` and `${A=x}` read a variable and may write it. */
+const EXPANSION_WRITE = new RegExp(String.raw`\$\{(${NAME}):?=`, "gu");
+/** A read of a variable: `$A`, `${A}`, `${A:-x}`, `${A[@]}`, `${#A}`, `${!A}`. */
+const EXPANSION = new RegExp(String.raw`\$\{?[#!]?${NAME}`, "gu");
+const WORD = new RegExp(NAME, "gu");
+/** Code this file does not hold can write any variable: `eval`, `source x`, `. x`. */
+const RUNS_OTHER_CODE = /(?:^|[\s;&|(`])(?:eval|source)(?:\s|$)|(?:^|[;&|(])[ \t]*\.[ \t]+\S/mu;
 /** A destination-shaped word the patterns refuse: the script still uses SSH. */
 const LOOSE_DESTINATION = /^[^@\s[\]]+@\S|^ssh:\/\//u;
-const FALLBACK = new RegExp(String.raw`^\$\{(?:${NAME}|[0-9]+):-([^}]*)\}$`, "u");
-const LOOP = new RegExp(String.raw`^\s*for\s+(${NAME})\s+in\s+(.+?)\s*(?:;|$)`, "u");
-const LOOP_OVER = new RegExp(String.raw`^"?\$\{(${NAME})\[[@*]\]\}"?$`, "u");
 
 /** Splits on blanks, keeping a quoted run together; quotes are dropped. */
 function words(line: string): Array<string> {
@@ -65,14 +69,23 @@ interface Written {
 
 /**
  * The plain values a file gives its own variables: `A=x`, `A="${A:-x}"`,
- * `A=(x y)`, `for A in x y`, `for A in "${LIST[@]}"`. A variable counts as
- * known only when the file writes it once (apart from taking the caller's
- * arguments): two different values, or a value from a command, another
- * variable or a file, leave it unknown.
+ * `A=(x y)`, `for A in x y`, `for A in "${LIST[@]}"`.
+ *
+ * A shell has many ways to write a variable (`read`, `mapfile`, `printf -v`,
+ * `getopts`, `unset`, a name reference, `A+=x`), and this does not try to know
+ * them. It turns the question around: a variable is known only when every
+ * place the file names it is one of the plain forms above or a read of it
+ * (`$A`, `${A}`). Any other mention of the name leaves it unknown, as do two
+ * different values, and a file that runs code it does not hold (`eval`,
+ * `source`) has no known variables at all.
  */
 function assignments(text: string): Map<string, ReadonlyArray<string>> {
+  const known = new Map<string, ReadonlyArray<string>>();
+  if (RUNS_OTHER_CODE.test(text)) return known;
   const scalars = new Map<string, Written>();
   const arrays = new Map<string, Written>();
+  /** Names the file mentions anywhere outside a plain form or a read. */
+  const mentioned = new Set<string>();
   const write = (into: Map<string, Written>, name: string, values: ReadonlyArray<string>) => {
     const written = into.get(name) ?? { sets: [], opaque: false };
     into.set(name, written);
@@ -82,59 +95,48 @@ function assignments(text: string): Map<string, ReadonlyArray<string>> {
       written.opaque = true;
     else written.sets.push(values);
   };
-  const opaque = (name: string) => {
-    for (const into of [scalars, arrays]) {
-      const written = into.get(name) ?? { sets: [], opaque: false };
-      into.set(name, written);
-      written.opaque = true;
-    }
-  };
   const loops: Array<{ readonly name: string; readonly from: string }> = [];
-  for (const raw of text.split("\n")) {
-    // A longer line is cut, so the whole-line forms no longer fit it and its writes count as unknown.
-    const line = raw.slice(0, MAX_LINE);
-    const array = ARRAY.exec(line);
+  for (const line of text.split("\n")) {
+    // What is left of the line once its plain form, if it has one, is taken off the front.
+    let rest = line;
+    // A very long line is not parsed, so every name on it counts as a mention.
+    const array = line.length > MAX_LINE ? null : ARRAY.exec(line);
+    const scalar = array || line.length > MAX_LINE ? null : SCALAR.exec(line);
+    const loop = array || scalar || line.length > MAX_LINE ? null : LOOP.exec(line);
     if (array) {
       write(arrays, array[1]!, words(array[2]!));
-      continue;
-    }
-    const scalar = SCALAR.exec(line);
-    if (scalar) {
+      rest = array[2]!;
+    } else if (scalar) {
       const value = unquote(scalar[2]!);
-      if (value.startsWith("(")) {
-        // A list this file's plain form did not fit: `A=($(cmd))`.
-        opaque(scalar[1]!);
-        continue;
-      }
       const fallback = FALLBACK.exec(value);
-      write(scalars, scalar[1]!, [fallback ? fallback[1]! : value]);
-      continue;
+      // `A=($(cmd))` fits the one-word form but is a list from a command.
+      if (value.startsWith("(")) mentioned.add(scalar[1]!);
+      else write(scalars, scalar[1]!, [fallback ? fallback[1]! : value]);
+      rest = scalar[2]!;
+    } else if (loop) {
+      const over = LOOP_OVER.exec(loop[3]!.trim());
+      if (over) loops.push({ name: loop[2]!, from: over[1]! });
+      else write(scalars, loop[2]!, words(loop[3]!));
+      // The list and the loop's body on the same line are still read below.
+      rest = line.slice(loop[1]!.length);
     }
-    const loop = LOOP.exec(line);
-    if (loop) {
-      const over = LOOP_OVER.exec(loop[2]!.trim());
-      if (over) loops.push({ name: loop[1]!, from: over[1]! });
-      else write(scalars, loop[1]!, words(loop[2]!));
-      continue;
-    }
-    // Every other write leaves its variable unknown rather than unseen.
-    for (const other of line.matchAll(OTHER_WRITE)) opaque(other[1]!);
-    const read = READ.exec(line);
-    if (read) for (const name of read[1]!.trim().split(/\s+/u)) opaque(name);
+    for (const match of rest.matchAll(EXPANSION_WRITE)) mentioned.add(match[1]!);
+    for (const match of rest.replace(EXPANSION, " ").matchAll(WORD)) mentioned.add(match[0]);
   }
-  const settled = (written: Written | undefined): ReadonlyArray<string> | null => {
+  const settled = (name: string, into: Map<string, Written>): ReadonlyArray<string> | null => {
+    const written = into.get(name);
     if (written === undefined || written.opaque || written.sets.length === 0) return null;
+    if (mentioned.has(name)) return null;
     const first = written.sets[0]!.join(" ");
     return written.sets.every((set) => set.join(" ") === first) ? written.sets[0]! : null;
   };
   for (const loop of loops) {
-    const items = settled(arrays.get(loop.from));
-    if (items === null) write(scalars, loop.name, ["$("]);
-    else write(scalars, loop.name, items);
+    const items = settled(loop.from, arrays);
+    // A list that is not known makes the loop's variable unknown too.
+    write(scalars, loop.name, items ?? ["$("]);
   }
-  const known = new Map<string, ReadonlyArray<string>>();
-  for (const [name, written] of scalars) {
-    const values = settled(written);
+  for (const name of scalars.keys()) {
+    const values = settled(name, scalars);
     if (values !== null) known.set(name, values);
   }
   return known;
@@ -170,7 +172,7 @@ export function sshTargetsInScript(script: string): {
   let used = false;
   let known: Map<string, ReadonlyArray<string>> | null = null;
   for (const match of text.matchAll(COMMAND)) {
-    const tokens = words(match[1]!);
+    const tokens = words(match[2]!);
     // A command that brings its own key and ignores the person's SSH setup needs none of it.
     const ownConfig = tokens.some(
       (token, index) => token === "-F" && tokens[index + 1] === "/dev/null",
@@ -182,9 +184,15 @@ export function sshTargetsInScript(script: string): {
         if (VALUE_OPTIONS.has(token)) index += 1;
         continue;
       }
+      // After ssh's destination come the words of the remote command, which may hold an `@`.
+      const last = match[1] === "ssh";
       if (LOOSE_DESTINATION.test(token)) used = true;
       const destination = DESTINATION.exec(token);
-      if (!destination) continue;
+      if (!destination) {
+        if (last) break;
+        continue;
+      }
+      if (last) index = tokens.length;
       known ??= assignments(text);
       const user = resolve(destination[1]!, known);
       const host = resolve(destination[2]!, known);
