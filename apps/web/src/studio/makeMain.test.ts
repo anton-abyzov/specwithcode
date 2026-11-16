@@ -121,8 +121,11 @@ describe("makeMainPath", () => {
 
   it("gives no switch when main is not in sight or sits on the copy's own machine", () => {
     expect(makeMainPath(m5, [m5], machines())).toEqual({ kind: "none" });
-    const sameMachine = { ...copy("m4", { state: "transferred", successor: "m4" }), id: "other" };
-    expect(makeMainPath(sameMachine as EnvironmentProject, [m4, sameMachine], machines())).toEqual({
+    const sameMachine = {
+      ...copy("m4", { state: "transferred", successor: "m4" }),
+      id: "other",
+    } as unknown as EnvironmentProject;
+    expect(makeMainPath(sameMachine, [m4, sameMachine], machines())).toEqual({
       kind: "none",
     });
   });

@@ -68,7 +68,10 @@ const makeMainItems = () => [
   ...document.querySelectorAll<HTMLElement>("[data-orchestrator-make-main]"),
 ];
 
-async function renderSwitcher(props: Partial<Parameters<typeof OrchestratorSwitcher>[0]>) {
+async function renderSwitcher(
+  props: Partial<Parameters<typeof OrchestratorSwitcher>[0]> &
+    Pick<Parameters<typeof OrchestratorSwitcher>[0], "onView" | "onAllowWorkers">,
+) {
   await act(async () =>
     root.render(
       <OrchestratorSwitcher
