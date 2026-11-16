@@ -323,7 +323,12 @@ async function buildCard(
     title: meta.title,
     status: meta.status,
     column,
-    tasks: { total: detail.total, done: detail.done, active: closed ? 0 : detail.active },
+    tasks: {
+      total: detail.total,
+      done: detail.done,
+      active: closed ? 0 : detail.active,
+      finished: detail.finished,
+    },
     blocked: blockedTasks > 0 || paused,
     paused,
     pausedReason: paused ? meta.pausedReason : null,

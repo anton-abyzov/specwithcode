@@ -168,7 +168,9 @@ export function columnWhy(input: {
   if (card.column !== "active" || (card.columnReason !== "ledger" && !input.movedByThreads))
     return null;
   const parts: string[] = [];
-  if (card.tasks.done > 0) parts.push(count(card.tasks.done, "task is done", "tasks are done"));
+  // `done` counts skipped tasks too; a skipped task is not what moved the card.
+  const finished = card.tasks.finished ?? card.tasks.done;
+  if (finished > 0) parts.push(count(finished, "task is done", "tasks are done"));
   if ((card.blockedTasks ?? 0) > 0)
     parts.push(count(card.blockedTasks ?? 0, "task is blocked", "tasks are blocked"));
   if ((card.tasks.active ?? 0) > 0)

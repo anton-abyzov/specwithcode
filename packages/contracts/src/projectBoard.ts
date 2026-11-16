@@ -77,6 +77,8 @@ export const ProjectBoardCard = Schema.Struct({
     done: Schema.Int,
     /** Tasks claimed inside the two-hour lease; absent from older servers. */
     active: Schema.optional(Schema.Int),
+    /** Tasks done, skipped ones left out; absent from older servers. */
+    finished: Schema.optional(Schema.Int),
   }),
   /** A task is blocked, or the increment is paused. */
   blocked: Schema.Boolean,

@@ -1035,7 +1035,13 @@ export function ProjectWorkspaceSurface({
     [selectedThread, setOverviewOpen, setPaneTab, setSelected],
   );
   useProjectPaneDeepLink(showPaneTab);
-  const boardIncrement = useBoardIncrementRoute();
+  const showBoardTab = useCallback(() => showPaneTab("board"), [showPaneTab]);
+  // A link naming an increment (`?increment=`) lands on the Board tab with its view open.
+  const boardIncrement = useBoardIncrementRoute({
+    available: hasBoard,
+    shown: overviewOpen && selectedThread === null && paneTab === "board",
+    show: showBoardTab,
+  });
   const toggleOverview = useCallback(() => {
     if (threadOpen || overviewOpen) hideOverview();
     else setOverviewOpen(true);

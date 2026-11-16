@@ -251,6 +251,7 @@ describe("readProjectBoard", () => {
       total: 2,
       done: 0,
       active: 0,
+      finished: 0,
     });
 
     await NodeFSP.appendFile(
@@ -260,7 +261,7 @@ describe("readProjectBoard", () => {
     const later = new Date(NOW + 60_000);
     await NodeFSP.utimes(NodePath.join(folder, "ledger.jsonl"), later, later);
     expect((await readProjectBoard(root, { now: NOW })).cards[0]).toMatchObject({
-      tasks: { total: 2, done: 1 },
+      tasks: { total: 2, done: 1, finished: 1 },
       updatedAt: later.toISOString(),
     });
   });
@@ -381,6 +382,23 @@ describe("readProjectBoard", () => {
       column: "planned",
       columnReason: "status",
       tasks: { active: 0 },
+    });
+  });
+
+  it("counts done tasks apart from skipped ones", async () => {
+    const root = await project();
+    await increment(root, "0001-skipped", {
+      status: "planned",
+      tasks: 4,
+      ledger: [
+        event("T-01", "skip", { note: "not needed" }),
+        event("T-02", "skip", { note: "not needed" }),
+        event("T-03", "done", { evidence: "abc1234" }),
+      ],
+    });
+    expect(await cardOf(root, "0001-skipped")).toMatchObject({
+      column: "active",
+      tasks: { total: 4, done: 3, finished: 1 },
     });
   });
 

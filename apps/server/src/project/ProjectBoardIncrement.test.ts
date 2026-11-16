@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
+import { readProjectBoard } from "./ProjectBoard.ts";
 import { problemText, readProjectBoardIncrement } from "./ProjectBoardIncrement.ts";
 
 const roots: string[] = [];
@@ -340,6 +341,17 @@ describe("readProjectBoardIncrement", () => {
     expect(await readProjectBoardIncrement(root, { incrementId: "0099-never", now: NOW })).toBe(
       null,
     );
+  });
+
+  it("answers null for a linked increment folder, which the board never lists", async () => {
+    const root = await project();
+    const real = await increment(root, "0001-real");
+    await NodeFSP.symlink(real, NodePath.join(root, ".specweave", "increments", "0002-linked"));
+    const board = await readProjectBoard(root, { now: NOW });
+    expect(board.cards.map((card) => card.incrementId)).toEqual(["0001-real"]);
+    expect(
+      await readProjectBoardIncrement(root, { incrementId: "0002-linked", now: NOW }),
+    ).toBeNull();
   });
 
   it("refuses names and links that lead outside the planning root", async () => {

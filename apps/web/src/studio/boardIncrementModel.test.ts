@@ -285,6 +285,19 @@ describe("columnWhy", () => {
         threadsAtWork: 0,
       })?.because,
     ).toBe("1 task is done");
+    // Skipped tasks count as closed on the card, but they are not why it moved.
+    expect(
+      columnWhy({
+        card: card({
+          status: "planned",
+          columnReason: "ledger",
+          tasks: { total: 4, done: 2, finished: 0 },
+          blockedTasks: 1,
+        }),
+        movedByThreads: false,
+        threadsAtWork: 0,
+      })?.because,
+    ).toBe("1 task is blocked");
     expect(
       columnWhy({
         card: card({
