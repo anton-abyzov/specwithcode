@@ -5210,6 +5210,10 @@ export const ja: PhraseCatalog = {
     "1 個のフォルダーを削除しました（少なくとも {size}）。",
   "Removed {count} folders, at least {size}.":
     "{count} 個のフォルダーを削除しました（少なくとも {size}）。",
+  "The check could not finish.":
+    "確認を完了できませんでした。",
+  "This connection cannot change this machine's storage.":
+    "この接続では、このマシンのストレージを変更できません。",
   "Delete worktrees of resolved chats":
     "解決済みチャットのワークツリーを削除",
   "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
@@ -5218,42 +5222,42 @@ export const ja: PhraseCatalog = {
     "プルリクエストがマージされました。",
   "Its pull request closed and every commit is on the remote.":
     "プルリクエストがクローズされ、すべてのコミットがリモートにあります。",
-  "Its chats are resolved and everything is pushed.":
-    "チャットは解決済みで、すべてプッシュ済みです。",
+  "Its chats are resolved or archived and everything is pushed.":
+    "チャットは解決済みかアーカイブ済みで、すべてプッシュ済みです。",
   "Its chat was deleted.":
     "チャットが削除されました。",
-  "Its chats are resolved and it has been inactive.":
-    "チャットは解決済みで、しばらく使われていません。",
+  "Its chats are resolved or archived and it has been inactive.":
+    "チャットは解決済みかアーカイブ済みで、しばらく使われていません。",
   "Its branch has no commits of its own.":
     "ブランチに独自のコミットがありません。",
   "Leftover files of stopped downloads.":
     "中断したダウンロードの残りファイルです。",
-  "A chat using it is running or waiting.":
-    "これを使うチャットが実行中または待機中です。",
-  "A chat using it is still open.":
-    "これを使うチャットがまだ開いています。",
-  "Its work finished less than 6 hours ago.":
-    "作業が終わってから 6 時間たっていません。",
+  "Work in it has not finished.":
+    "その中の作業がまだ終わっていません。",
+  "A chat that is still open works in it or near it.":
+    "まだ開いているチャットが、その中か近くで作業しています。",
+  "It was used less than 6 hours ago.":
+    "最後に使われてから 6 時間たっていません。",
   "It has uncommitted changes.":
     "コミットされていない変更があります。",
   "It has files Git does not track.":
     "Git が追跡していないファイルがあります。",
-  "It has commits that are not pushed.":
-    "プッシュされていないコミットがあります。",
+  "It has commits that exist only on this machine.":
+    "このマシンにしかないコミットがあります。",
   "A stash was made on its branch.":
     "ブランチで stash が作成されています。",
-  "It has ignored files that cannot be rebuilt.":
-    "再生成できない無視ファイルがあります。",
+  "It has ignored files that may hold data.":
+    "データを含む可能性のある無視ファイルがあります。",
   "It holds more media than is copied automatically.":
     "自動でコピーされる量を超えるメディアがあります。",
-  "A terminal, an agent or a process is working in it.":
-    "ターミナル、エージェント、またはプロセスがその中で動いています。",
+  "Something is working in it, or it is locked.":
+    "何かがその中で動いているか、ロックされています。",
   "Its Git registration is broken. Check it by hand.":
     "Git の登録が壊れています。手動で確認してください。",
   "Another repository or hidden changes sit inside it.":
     "中に別のリポジトリまたは隠れた変更があります。",
-  "No cleanup rule that is on covers it.":
-    "オンになっているクリーンアップのルールが当てはまりません。",
-  "It could not be checked.":
-    "確認できませんでした。",
+  "No cleanup rule covers it.":
+    "当てはまるクリーンアップのルールがありません。",
+  "It could not be fully checked, so it is kept.":
+    "すべてを確認できなかったため、残します。",
 };

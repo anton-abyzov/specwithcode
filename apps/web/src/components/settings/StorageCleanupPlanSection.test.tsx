@@ -187,7 +187,9 @@ describe("StorageCleanupPlanSection", () => {
     expect(shown).toContain("Clean up finished worktrees");
     expect(shown).toContain("512 MB");
     expect(reasonOf(MERGED.path)).toEqual(["Its pull request merged."]);
-    expect(reasonOf(UNPUSHED.path)).toEqual(["It has commits that are not pushed. (feature/open)"]);
+    expect(reasonOf(UNPUSHED.path)).toEqual([
+      "It has commits that exist only on this machine. (feature/open)",
+    ]);
     // Leftover download files read as such, not as a folder name.
     expect(shown).toContain("Leftover files of stopped downloads");
     expect(button("data-storage-cleanup-check").children).toEqual(["Check again"]);
@@ -219,6 +221,40 @@ describe("StorageCleanupPlanSection", () => {
     const alert = renderer.root.find((node) => node.type === "p" && node.props.role === "alert");
     expect(alert.children.join("")).toContain("The Git host did not answer");
     expect(text()).not.toContain("would be freed");
+  });
+
+  it("says the check could not finish instead of nothing to remove", async () => {
+    state.getPlan.mockResolvedValue({
+      _tag: "Success",
+      value: { ...PLAN, items: [], removableBytes: 0, complete: false },
+    });
+    mount();
+    await press(button("data-storage-cleanup-check"));
+    const alert = renderer.root.find((node) => node.type === "p" && node.props.role === "alert");
+    expect(alert.children.join("")).toBe("The check could not finish.");
+    expect(text()).not.toContain("Nothing to remove right now.");
+    expect(text()).not.toContain("Some sizes could not be measured.");
+    expect(button("data-storage-cleanup-run").props.disabled).toBe(true);
+  });
+
+  it("shows the server's reason when the check could not finish", async () => {
+    state.getPlan.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        ...PLAN,
+        items: [],
+        removableBytes: 0,
+        complete: false,
+        failed: "The chat list could not be read.",
+      },
+    });
+    mount();
+    await press(button("data-storage-cleanup-check"));
+    const alert = renderer.root.find((node) => node.type === "p" && node.props.role === "alert");
+    expect(alert.children.join("")).toBe(
+      "The check could not finish. The chat list could not be read.",
+    );
+    expect(text()).not.toContain("Nothing to remove right now.");
   });
 
   it("shows the first 20 rows of a long group until Show all", async () => {

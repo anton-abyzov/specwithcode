@@ -5149,6 +5149,10 @@ export const ko: PhraseCatalog = {
     "폴더 1개를 삭제했습니다(최소 {size}).",
   "Removed {count} folders, at least {size}.":
     "폴더 {count}개를 삭제했습니다(최소 {size}).",
+  "The check could not finish.":
+    "확인을 끝내지 못했습니다.",
+  "This connection cannot change this machine's storage.":
+    "이 연결로는 이 컴퓨터의 저장 공간을 변경할 수 없습니다.",
   "Delete worktrees of resolved chats":
     "해결된 채팅의 워크트리 삭제",
   "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
@@ -5157,42 +5161,42 @@ export const ko: PhraseCatalog = {
     "풀 리퀘스트가 병합되었습니다.",
   "Its pull request closed and every commit is on the remote.":
     "풀 리퀘스트가 닫혔고 모든 커밋이 원격에 있습니다.",
-  "Its chats are resolved and everything is pushed.":
-    "채팅이 해결되었고 모든 내용이 푸시되었습니다.",
+  "Its chats are resolved or archived and everything is pushed.":
+    "채팅이 해결되었거나 보관되었고 모든 내용이 푸시되었습니다.",
   "Its chat was deleted.":
     "채팅이 삭제되었습니다.",
-  "Its chats are resolved and it has been inactive.":
-    "채팅이 해결되었고 한동안 비활성 상태였습니다.",
+  "Its chats are resolved or archived and it has been inactive.":
+    "채팅이 해결되었거나 보관되었고 한동안 비활성 상태였습니다.",
   "Its branch has no commits of its own.":
     "브랜치에 자체 커밋이 없습니다.",
   "Leftover files of stopped downloads.":
     "중단된 다운로드의 잔여 파일입니다.",
-  "A chat using it is running or waiting.":
-    "이를 사용하는 채팅이 실행 중이거나 대기 중입니다.",
-  "A chat using it is still open.":
-    "이를 사용하는 채팅이 아직 열려 있습니다.",
-  "Its work finished less than 6 hours ago.":
-    "작업이 끝난 지 6시간이 지나지 않았습니다.",
+  "Work in it has not finished.":
+    "그 안의 작업이 아직 끝나지 않았습니다.",
+  "A chat that is still open works in it or near it.":
+    "아직 열려 있는 채팅이 그 안이나 근처에서 작업 중입니다.",
+  "It was used less than 6 hours ago.":
+    "마지막으로 사용한 지 6시간이 지나지 않았습니다.",
   "It has uncommitted changes.":
     "커밋하지 않은 변경 사항이 있습니다.",
   "It has files Git does not track.":
     "Git이 추적하지 않는 파일이 있습니다.",
-  "It has commits that are not pushed.":
-    "푸시하지 않은 커밋이 있습니다.",
+  "It has commits that exist only on this machine.":
+    "이 컴퓨터에만 있는 커밋이 있습니다.",
   "A stash was made on its branch.":
     "브랜치에서 stash가 만들어졌습니다.",
-  "It has ignored files that cannot be rebuilt.":
-    "다시 만들 수 없는 무시된 파일이 있습니다.",
+  "It has ignored files that may hold data.":
+    "데이터가 들어 있을 수 있는 무시된 파일이 있습니다.",
   "It holds more media than is copied automatically.":
     "자동으로 복사되는 양보다 많은 미디어가 있습니다.",
-  "A terminal, an agent or a process is working in it.":
-    "터미널, 에이전트 또는 프로세스가 그 안에서 작업 중입니다.",
+  "Something is working in it, or it is locked.":
+    "무언가가 그 안에서 작업 중이거나 잠겨 있습니다.",
   "Its Git registration is broken. Check it by hand.":
     "Git 등록이 손상되었습니다. 직접 확인하세요.",
   "Another repository or hidden changes sit inside it.":
     "그 안에 다른 저장소나 숨은 변경 사항이 있습니다.",
-  "No cleanup rule that is on covers it.":
-    "켜져 있는 정리 규칙 중 해당하는 것이 없습니다.",
-  "It could not be checked.":
-    "확인할 수 없었습니다.",
+  "No cleanup rule covers it.":
+    "해당하는 정리 규칙이 없습니다.",
+  "It could not be fully checked, so it is kept.":
+    "완전히 확인할 수 없어서 유지합니다.",
 };

@@ -5234,6 +5234,10 @@ export const es: PhraseCatalog = {
     "Se eliminó 1 carpeta, al menos {size}.",
   "Removed {count} folders, at least {size}.":
     "Se eliminaron {count} carpetas, al menos {size}.",
+  "The check could not finish.":
+    "La comprobación no pudo terminar.",
+  "This connection cannot change this machine's storage.":
+    "Esta conexión no puede cambiar el almacenamiento de esta máquina.",
   "Delete worktrees of resolved chats":
     "Eliminar worktrees de chats resueltos",
   "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
@@ -5242,42 +5246,42 @@ export const es: PhraseCatalog = {
     "Su pull request se fusionó.",
   "Its pull request closed and every commit is on the remote.":
     "Su pull request se cerró y cada commit está en el remoto.",
-  "Its chats are resolved and everything is pushed.":
-    "Sus chats están resueltos y todo está enviado.",
+  "Its chats are resolved or archived and everything is pushed.":
+    "Sus chats están resueltos o archivados y todo está enviado.",
   "Its chat was deleted.":
     "Su chat se eliminó.",
-  "Its chats are resolved and it has been inactive.":
-    "Sus chats están resueltos y ha estado inactivo.",
+  "Its chats are resolved or archived and it has been inactive.":
+    "Sus chats están resueltos o archivados y ha estado inactivo.",
   "Its branch has no commits of its own.":
     "Su rama no tiene commits propios.",
   "Leftover files of stopped downloads.":
     "Restos de descargas detenidas.",
-  "A chat using it is running or waiting.":
-    "Un chat que lo usa está en ejecución o en espera.",
-  "A chat using it is still open.":
-    "Un chat que lo usa sigue abierto.",
-  "Its work finished less than 6 hours ago.":
-    "Su trabajo terminó hace menos de 6 horas.",
+  "Work in it has not finished.":
+    "El trabajo en él no ha terminado.",
+  "A chat that is still open works in it or near it.":
+    "Un chat que sigue abierto trabaja en él o cerca de él.",
+  "It was used less than 6 hours ago.":
+    "Se usó hace menos de 6 horas.",
   "It has uncommitted changes.":
     "Tiene cambios sin commit.",
   "It has files Git does not track.":
     "Tiene archivos que Git no rastrea.",
-  "It has commits that are not pushed.":
-    "Tiene commits sin enviar.",
+  "It has commits that exist only on this machine.":
+    "Tiene commits que solo existen en esta máquina.",
   "A stash was made on its branch.":
     "Se hizo un stash en su rama.",
-  "It has ignored files that cannot be rebuilt.":
-    "Tiene archivos ignorados que no se pueden reconstruir.",
+  "It has ignored files that may hold data.":
+    "Tiene archivos ignorados que pueden contener datos.",
   "It holds more media than is copied automatically.":
     "Contiene más multimedia de la que se copia automáticamente.",
-  "A terminal, an agent or a process is working in it.":
-    "Un terminal, un agente o un proceso está trabajando en él.",
+  "Something is working in it, or it is locked.":
+    "Algo está trabajando en él, o está bloqueado.",
   "Its Git registration is broken. Check it by hand.":
     "Su registro de Git está roto. Revísalo a mano.",
   "Another repository or hidden changes sit inside it.":
     "Dentro hay otro repositorio o cambios ocultos.",
-  "No cleanup rule that is on covers it.":
-    "Ninguna regla de limpieza activa lo cubre.",
-  "It could not be checked.":
-    "No se pudo comprobar.",
+  "No cleanup rule covers it.":
+    "Ninguna regla de limpieza lo cubre.",
+  "It could not be fully checked, so it is kept.":
+    "No se pudo comprobar del todo, así que se conserva.",
 };

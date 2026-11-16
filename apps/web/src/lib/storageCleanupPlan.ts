@@ -11,7 +11,7 @@ import {
 import * as Cause from "effect/Cause";
 import { useState } from "react";
 
-import { englishPhrase, type TranslatePhrase } from "../i18n";
+import { englishPhrase, useTx, type TranslatePhrase } from "../i18n";
 import { serverEnvironment } from "../state/server";
 import { readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -19,31 +19,42 @@ import { useAtomCommand } from "../state/use-atom-command";
 type StorageCleanupReason = StorageCleanupRemoveReason | StorageCleanupKeepReason;
 
 /**
- * One plain sentence per reason the cleanup gives. A `Record` over the contract's
- * reasons, so a reason added on the server is a type error here until it has words.
+ * One plain sentence per reason the cleanup gives, true for every case the server
+ * files under it (finishedWorktrees.ts). A `Record` over the contract's reasons, so
+ * a reason added on the server is a type error here until it has words.
  */
 const REASON_SENTENCES: Readonly<Record<StorageCleanupReason, string>> = {
   merged: "Its pull request merged.",
   closed: "Its pull request closed and every commit is on the remote.",
-  resolved: "Its chats are resolved and everything is pushed.",
+  resolved: "Its chats are resolved or archived and everything is pushed.",
   deleted: "Its chat was deleted.",
-  inactive: "Its chats are resolved and it has been inactive.",
+  inactive: "Its chats are resolved or archived and it has been inactive.",
   unchanged: "Its branch has no commits of its own.",
   "interrupted-downloads": "Leftover files of stopped downloads.",
-  running: "A chat using it is running or waiting.",
-  open: "A chat using it is still open.",
-  recent: "Its work finished less than 6 hours ago.",
+  running: "Work in it has not finished.",
+  open: "A chat that is still open works in it or near it.",
+  recent: "It was used less than 6 hours ago.",
   changes: "It has uncommitted changes.",
   untracked: "It has files Git does not track.",
-  unpushed: "It has commits that are not pushed.",
+  unpushed: "It has commits that exist only on this machine.",
   stash: "A stash was made on its branch.",
-  "ignored-files": "It has ignored files that cannot be rebuilt.",
+  "ignored-files": "It has ignored files that may hold data.",
   media: "It holds more media than is copied automatically.",
-  "in-use": "A terminal, an agent or a process is working in it.",
+  "in-use": "Something is working in it, or it is locked.",
   "broken-registration": "Its Git registration is broken. Check it by hand.",
   "nested-work": "Another repository or hidden changes sit inside it.",
-  "no-rule": "No cleanup rule that is on covers it.",
-  unknown: "It could not be checked.",
+  "no-rule": "No cleanup rule covers it.",
+  unknown: "It could not be fully checked, so it is kept.",
+};
+
+/**
+ * Server details that only repeat the reason's sentence. They are English from the
+ * server, so a person reading another language would see the same thing twice.
+ */
+const REPEATED_DETAILS: Partial<Record<StorageCleanupReason, ReadonlyArray<string>>> = {
+  unchanged: ["No commits of its own."],
+  "no-rule": ["No cleanup rule that is switched on covers it."],
+  unknown: ["It could not be checked.", "It could not be fully checked."],
 };
 
 /** The English sentence for a reason; callers translate it with `tx`. */
@@ -56,8 +67,27 @@ export function describeStorageCleanupReason(
   item: Pick<StorageCleanupPlanItem, "reason" | "detail">,
   tx: TranslatePhrase = englishPhrase,
 ): string {
-  const sentence = tx(storageCleanupReasonSentence(item.reason));
-  return item.detail === null || item.detail === "" ? sentence : `${sentence} (${item.detail})`;
+  const english = storageCleanupReasonSentence(item.reason);
+  const sentence = tx(english);
+  const detail = item.detail?.trim() ?? "";
+  const repeats = detail === english || (REPEATED_DETAILS[item.reason] ?? []).includes(detail);
+  return detail === "" || repeats ? sentence : `${sentence} (${detail})`;
+}
+
+/**
+ * Why a check gave no usable answer, or null when it did. A plan with no items that
+ * is not complete means the server could not read what it needed, which is not the
+ * same as having nothing to remove. `failed` is the server's reason when it sends one.
+ */
+export function storageCleanupPlanFailure(
+  plan: StorageCleanupPlan,
+): { readonly reason: string | null } | null {
+  const failed =
+    "failed" in plan && typeof plan.failed === "string" && plan.failed.trim() !== ""
+      ? plan.failed.trim()
+      : null;
+  if (failed !== null) return { reason: failed };
+  return plan.items.length === 0 && !plan.complete ? { reason: null } : null;
 }
 
 /** The last two segments of a folder, enough to tell worktrees apart in a list. */
@@ -126,6 +156,7 @@ const NO_SCOPE_MESSAGE = "This connection cannot change this machine's storage."
  * The client commands are single flight per machine, like old app versions.
  */
 export function useStorageCleanupPlan(environmentId: EnvironmentId) {
+  const tx = useTx();
   const getPlan = useAtomCommand(serverEnvironment.getStorageCleanupPlan, {
     reportFailure: false,
   });
@@ -135,7 +166,7 @@ export function useStorageCleanupPlan(environmentId: EnvironmentId) {
 
   const check = async () => {
     if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
-      setState({ status: "error", message: NO_SCOPE_MESSAGE, plan: shownPlan });
+      setState({ status: "error", message: tx(NO_SCOPE_MESSAGE), plan: shownPlan });
       return;
     }
     setState({ status: "checking" });
@@ -150,7 +181,7 @@ export function useStorageCleanupPlan(environmentId: EnvironmentId) {
   const cleanUp = async () => {
     if (shownPlan === null) return;
     if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
-      setState({ status: "error", message: NO_SCOPE_MESSAGE, plan: shownPlan });
+      setState({ status: "error", message: tx(NO_SCOPE_MESSAGE), plan: shownPlan });
       return;
     }
     setState({ status: "cleaning", plan: shownPlan });

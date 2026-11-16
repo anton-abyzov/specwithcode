@@ -11,31 +11,32 @@ import {
   describeStorageCleanupTotal,
   groupStorageCleanupPlan,
   storageCleanupFolderLabel,
+  storageCleanupPlanFailure,
   storageCleanupReasonSentence,
 } from "./storageCleanupPlan";
 
 const SENTENCES = {
   merged: "Its pull request merged.",
   closed: "Its pull request closed and every commit is on the remote.",
-  resolved: "Its chats are resolved and everything is pushed.",
+  resolved: "Its chats are resolved or archived and everything is pushed.",
   deleted: "Its chat was deleted.",
-  inactive: "Its chats are resolved and it has been inactive.",
+  inactive: "Its chats are resolved or archived and it has been inactive.",
   unchanged: "Its branch has no commits of its own.",
   "interrupted-downloads": "Leftover files of stopped downloads.",
-  running: "A chat using it is running or waiting.",
-  open: "A chat using it is still open.",
-  recent: "Its work finished less than 6 hours ago.",
+  running: "Work in it has not finished.",
+  open: "A chat that is still open works in it or near it.",
+  recent: "It was used less than 6 hours ago.",
   changes: "It has uncommitted changes.",
   untracked: "It has files Git does not track.",
-  unpushed: "It has commits that are not pushed.",
+  unpushed: "It has commits that exist only on this machine.",
   stash: "A stash was made on its branch.",
-  "ignored-files": "It has ignored files that cannot be rebuilt.",
+  "ignored-files": "It has ignored files that may hold data.",
   media: "It holds more media than is copied automatically.",
-  "in-use": "A terminal, an agent or a process is working in it.",
+  "in-use": "Something is working in it, or it is locked.",
   "broken-registration": "Its Git registration is broken. Check it by hand.",
   "nested-work": "Another repository or hidden changes sit inside it.",
-  "no-rule": "No cleanup rule that is on covers it.",
-  unknown: "It could not be checked.",
+  "no-rule": "No cleanup rule covers it.",
+  unknown: "It could not be fully checked, so it is kept.",
 } as const;
 
 const plan = (
@@ -68,7 +69,7 @@ describe("storageCleanupReasonSentence", () => {
 
   it("adds the detail in parentheses when there is one", () => {
     expect(describeStorageCleanupReason({ reason: "unpushed", detail: "feature/plan" })).toBe(
-      "It has commits that are not pushed. (feature/plan)",
+      "It has commits that exist only on this machine. (feature/plan)",
     );
     expect(describeStorageCleanupReason({ reason: "changes", detail: null })).toBe(
       "It has uncommitted changes.",
@@ -76,6 +77,37 @@ describe("storageCleanupReasonSentence", () => {
     expect(
       describeStorageCleanupReason({ reason: "merged", detail: null }, (english) => `[${english}]`),
     ).toBe("[Its pull request merged.]");
+  });
+
+  it("leaves out a detail that only repeats the sentence", () => {
+    // The server's details for these say what the sentence already says.
+    for (const [reason, detail] of [
+      ["merged", "Its pull request merged."],
+      ["closed", "Its pull request closed and every commit is on the remote."],
+      ["deleted", "Its chat was deleted."],
+      ["unchanged", "No commits of its own."],
+      ["no-rule", "No cleanup rule that is switched on covers it."],
+      ["unknown", "It could not be checked."],
+      ["unknown", "It could not be fully checked."],
+    ] as const) {
+      expect(describeStorageCleanupReason({ reason, detail }), detail).toBe(SENTENCES[reason]);
+    }
+    // Translated, the English detail would otherwise follow its own translation.
+    expect(
+      describeStorageCleanupReason(
+        { reason: "deleted", detail: "Its chat was deleted." },
+        (english) => `[${english}]`,
+      ),
+    ).toBe("[Its chat was deleted.]");
+    // A detail that adds a fact stays.
+    expect(
+      describeStorageCleanupReason({
+        reason: "unknown",
+        detail: "It is reached through a symbolic link.",
+      }),
+    ).toBe(
+      "It could not be fully checked, so it is kept. (It is reached through a symbolic link.)",
+    );
   });
 });
 
@@ -98,6 +130,26 @@ describe("plan helpers", () => {
     );
     expect(groups.remove.map((item) => item.path)).toEqual(["/b"]);
     expect(groups.keep.map((item) => item.path)).toEqual(["/a", "/c"]);
+  });
+
+  it("tells a check that could not finish from one with nothing to remove", () => {
+    expect(storageCleanupPlanFailure(plan([]))).toBeNull();
+    expect(storageCleanupPlanFailure({ ...plan([]), complete: false })).toEqual({ reason: null });
+    // Items with some sizes missing are a real answer, only with lower-bound totals.
+    expect(
+      storageCleanupPlanFailure({ ...plan([{ action: "keep", path: "/a" }]), complete: false }),
+    ).toBeNull();
+    // The server's reason is shown whenever it sends one, even next to download rows.
+    const failed = {
+      ...plan([{ action: "remove", path: "/a" }]),
+      complete: false,
+      failed: "The chat list could not be read.",
+    };
+    expect(storageCleanupPlanFailure(failed)).toEqual({
+      reason: "The chat list could not be read.",
+    });
+    const noReason = { ...plan([]), complete: false, failed: null };
+    expect(storageCleanupPlanFailure(noReason)).toEqual({ reason: null });
   });
 
   it("says the total as a lower bound and what a run removed", () => {

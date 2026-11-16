@@ -5206,6 +5206,10 @@ export const ru: PhraseCatalog = {
     "Удалена 1 папка, не меньше {size}.",
   "Removed {count} folders, at least {size}.":
     "Удалено папок: {count}, не меньше {size}.",
+  "The check could not finish.":
+    "Проверку не удалось завершить.",
+  "This connection cannot change this machine's storage.":
+    "Это подключение не может менять хранилище этой машины.",
   "Delete worktrees of resolved chats":
     "Удалять worktree решённых чатов",
   "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
@@ -5214,42 +5218,42 @@ export const ru: PhraseCatalog = {
     "Его пул-реквест смержен.",
   "Its pull request closed and every commit is on the remote.":
     "Его пул-реквест закрыт, и все коммиты есть на удалённом репозитории.",
-  "Its chats are resolved and everything is pushed.":
-    "Его чаты решены, и всё отправлено.",
+  "Its chats are resolved or archived and everything is pushed.":
+    "Его чаты решены или в архиве, и всё отправлено.",
   "Its chat was deleted.":
     "Его чат удалён.",
-  "Its chats are resolved and it has been inactive.":
-    "Его чаты решены, и он давно не используется.",
+  "Its chats are resolved or archived and it has been inactive.":
+    "Его чаты решены или в архиве, и он давно не используется.",
   "Its branch has no commits of its own.":
     "В его ветке нет своих коммитов.",
   "Leftover files of stopped downloads.":
     "Остатки прерванных загрузок.",
-  "A chat using it is running or waiting.":
-    "Чат, который его использует, работает или ждёт.",
-  "A chat using it is still open.":
-    "Чат, который его использует, ещё открыт.",
-  "Its work finished less than 6 hours ago.":
-    "Работа в нём закончилась меньше 6 часов назад.",
+  "Work in it has not finished.":
+    "Работа в нём не закончена.",
+  "A chat that is still open works in it or near it.":
+    "Ещё открытый чат работает в нём или рядом с ним.",
+  "It was used less than 6 hours ago.":
+    "Им пользовались меньше 6 часов назад.",
   "It has uncommitted changes.":
     "В нём есть незакоммиченные изменения.",
   "It has files Git does not track.":
     "В нём есть файлы, которые Git не отслеживает.",
-  "It has commits that are not pushed.":
-    "В нём есть неотправленные коммиты.",
+  "It has commits that exist only on this machine.":
+    "В нём есть коммиты, которые есть только на этой машине.",
   "A stash was made on its branch.":
     "В его ветке есть stash.",
-  "It has ignored files that cannot be rebuilt.":
-    "В нём есть игнорируемые файлы, которые нельзя пересоздать.",
+  "It has ignored files that may hold data.":
+    "В нём есть игнорируемые файлы, в которых могут быть данные.",
   "It holds more media than is copied automatically.":
     "В нём больше медиафайлов, чем копируется автоматически.",
-  "A terminal, an agent or a process is working in it.":
-    "В нём работает терминал, агент или процесс.",
+  "Something is working in it, or it is locked.":
+    "В нём что-то работает, или он заблокирован.",
   "Its Git registration is broken. Check it by hand.":
     "Его регистрация в Git сломана. Проверьте её вручную.",
   "Another repository or hidden changes sit inside it.":
     "Внутри есть другой репозиторий или скрытые изменения.",
-  "No cleanup rule that is on covers it.":
-    "Ни одно включённое правило очистки его не касается.",
-  "It could not be checked.":
-    "Его не удалось проверить.",
+  "No cleanup rule covers it.":
+    "Ни одно правило очистки его не касается.",
+  "It could not be fully checked, so it is kept.":
+    "Его не удалось проверить полностью, поэтому он оставлен.",
 };

@@ -13,6 +13,7 @@ import {
   describeStorageCleanupTotal,
   groupStorageCleanupPlan,
   storageCleanupFolderLabel,
+  storageCleanupPlanFailure,
   useStorageCleanupPlan,
 } from "../../lib/storageCleanupPlan";
 import { useEnvironmentScope } from "../../state/session";
@@ -62,6 +63,7 @@ function StorageCleanupPlanMachine({
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const plan = "plan" in state ? state.plan : null;
   const groups = plan === null ? null : groupStorageCleanupPlan(plan);
+  const failure = plan === null ? null : storageCleanupPlanFailure(plan);
   const checking = state.status === "checking";
   const cleaning = state.status === "cleaning";
   const busy = checking || cleaning;
@@ -112,17 +114,27 @@ function StorageCleanupPlanMachine({
         {plan !== null && groups !== null ? (
           <>
             <div className="space-y-0.5">
-              <p className="font-medium text-foreground">
-                {removable === 0
-                  ? tx("Nothing to remove right now.")
-                  : describeStorageCleanupTotal(plan, tx)}
-              </p>
-              <p className="text-muted-foreground">
-                {tx(
-                  "Dependency folders are left out: their files are shared with the package store.",
-                )}
-                {plan.complete ? null : <> {tx("Some sizes could not be measured.")}</>}
-              </p>
+              {failure === null ? (
+                <p className="font-medium text-foreground">
+                  {removable === 0
+                    ? tx("Nothing to remove right now.")
+                    : describeStorageCleanupTotal(plan, tx)}
+                </p>
+              ) : (
+                // Never "Nothing to remove": a check that could not finish knows nothing.
+                <p role="alert" className="font-medium text-destructive-foreground">
+                  {tx("The check could not finish.")}
+                  {failure.reason === null ? null : <> {failure.reason}</>}
+                </p>
+              )}
+              {failure !== null && plan.items.length === 0 ? null : (
+                <p className="text-muted-foreground">
+                  {tx(
+                    "Dependency folders are left out: their files are shared with the package store.",
+                  )}
+                  {plan.complete ? null : <> {tx("Some sizes could not be measured.")}</>}
+                </p>
+              )}
             </div>
             <StorageCleanupPlanGroup title={tx("Would be removed")} items={groups.remove} />
             <StorageCleanupPlanGroup title={tx("Kept")} items={groups.keep} />

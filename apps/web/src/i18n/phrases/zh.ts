@@ -5009,6 +5009,10 @@ export const zh: PhraseCatalog = {
     "已删除 1 个文件夹，至少 {size}。",
   "Removed {count} folders, at least {size}.":
     "已删除 {count} 个文件夹，至少 {size}。",
+  "The check could not finish.":
+    "检查未能完成。",
+  "This connection cannot change this machine's storage.":
+    "此连接无法更改这台机器的存储。",
   "Delete worktrees of resolved chats":
     "删除已解决聊天的工作树",
   "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
@@ -5017,42 +5021,42 @@ export const zh: PhraseCatalog = {
     "其拉取请求已合并。",
   "Its pull request closed and every commit is on the remote.":
     "其拉取请求已关闭，且所有提交都在远程。",
-  "Its chats are resolved and everything is pushed.":
-    "其聊天已解决，所有内容都已推送。",
+  "Its chats are resolved or archived and everything is pushed.":
+    "其聊天已解决或已归档，所有内容都已推送。",
   "Its chat was deleted.":
     "其聊天已删除。",
-  "Its chats are resolved and it has been inactive.":
-    "其聊天已解决，且已闲置。",
+  "Its chats are resolved or archived and it has been inactive.":
+    "其聊天已解决或已归档，且已闲置。",
   "Its branch has no commits of its own.":
     "其分支没有自己的提交。",
   "Leftover files of stopped downloads.":
     "中断下载的残留文件。",
-  "A chat using it is running or waiting.":
-    "使用它的聊天正在运行或等待。",
-  "A chat using it is still open.":
-    "使用它的聊天仍处于打开状态。",
-  "Its work finished less than 6 hours ago.":
-    "其工作在不到 6 小时前结束。",
+  "Work in it has not finished.":
+    "其中的工作尚未完成。",
+  "A chat that is still open works in it or near it.":
+    "仍在打开的聊天正在其中或其附近工作。",
+  "It was used less than 6 hours ago.":
+    "它在不到 6 小时前被使用过。",
   "It has uncommitted changes.":
     "有未提交的更改。",
   "It has files Git does not track.":
     "有 Git 未跟踪的文件。",
-  "It has commits that are not pushed.":
-    "有尚未推送的提交。",
+  "It has commits that exist only on this machine.":
+    "有只存在于这台机器上的提交。",
   "A stash was made on its branch.":
     "其分支上有 stash。",
-  "It has ignored files that cannot be rebuilt.":
-    "有无法重新生成的被忽略文件。",
+  "It has ignored files that may hold data.":
+    "有可能包含数据的被忽略文件。",
   "It holds more media than is copied automatically.":
     "其中的媒体超过了自动复制的上限。",
-  "A terminal, an agent or a process is working in it.":
-    "有终端、代理或进程正在其中工作。",
+  "Something is working in it, or it is locked.":
+    "有东西正在其中工作，或它已被锁定。",
   "Its Git registration is broken. Check it by hand.":
     "其 Git 注册已损坏。请手动检查。",
   "Another repository or hidden changes sit inside it.":
     "其中有另一个仓库或隐藏的更改。",
-  "No cleanup rule that is on covers it.":
-    "没有已开启的清理规则适用于它。",
-  "It could not be checked.":
-    "无法检查。",
+  "No cleanup rule covers it.":
+    "没有适用于它的清理规则。",
+  "It could not be fully checked, so it is kept.":
+    "无法完整检查，因此保留。",
 };
