@@ -1096,7 +1096,7 @@ export function makeClaudeQueryOptions(input: {
       input.mcpServers === undefined ? undefined : STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
     extraArgs,
     allowedTools: input.allowedTools,
-    disallowedTools: input.disallowedTools,
+    disallowedTools: claudeSessionDisallowedTools(input.disallowedTools, input.claudeAdvisor),
     environment: input.environment ?? process.env,
   });
   const mergedWorkflowSettings = mergeClaudeWorkflowSettings(
@@ -1176,6 +1176,24 @@ export function makeClaudeQueryOptions(input: {
   const withDirectories =
     additionalDirectories.length === 0 ? options : { ...options, additionalDirectories };
   return input.cwd === null ? withDirectories : { ...withDirectories, cwd: input.cwd };
+}
+
+/** The studio-code advisor tool as Claude Code names it. */
+export const STUDIO_ADVISOR_MCP_TOOL = "mcp__studio-code__advisor";
+
+/**
+ * A session that runs Claude's own advisor never also sees the studio-code
+ * one, so it has one advisor to call (AC-11).
+ */
+export function claudeSessionDisallowedTools(
+  disallowedTools: ReadonlyArray<string> | undefined,
+  claudeAdvisor: ClaudeSessionAdvisorOutcome | undefined,
+): ReadonlyArray<string> | undefined {
+  if (claudeAdvisor?.kind !== "model") return disallowedTools;
+  const current = disallowedTools ?? [];
+  return current.includes(STUDIO_ADVISOR_MCP_TOOL)
+    ? current
+    : [...current, STUDIO_ADVISOR_MCP_TOOL];
 }
 
 /**
