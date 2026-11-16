@@ -22,6 +22,7 @@ import {
   type MoveIntent,
   type SendFacts,
 } from "./ProjectMoveOptions";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { plainHandoffError } from "./handoffErrors";
 import { retentionReviewText, unmergedWorkerLine, unmergedWorkersText } from "./handoffRetention";
 import {
@@ -79,6 +80,12 @@ export function MachineHandoffButton({ className, ...props }: ComponentProps<typ
   );
 }
 
+/** " (copied 2h ago)" for a finished copy's title; nothing when the time is unknown. */
+const copiedWhen = (finishedAt: string | null): string => {
+  const when = finishedAt ? formatRelativeTimeLabel(finishedAt) : "";
+  return when ? ` (copied ${when})` : "";
+};
+
 /** The transfer has one explicit destination and one commit point. */
 export function MachineHandoffDialog({
   open,
@@ -117,6 +124,7 @@ export function MachineHandoffDialog({
   copyBusy = false,
   copyLocked,
   copyDoneOn = null,
+  copyDoneAt = null,
   machinesLoading = false,
   machinesExtra,
   sync = null,
@@ -149,6 +157,8 @@ export function MachineHandoffDialog({
   readonly copyLocked?: boolean;
   /** The machine a finished copy is on: the title says where the project is now. */
   readonly copyDoneOn?: string | null;
+  /** When that copy finished, so a reopened dialog reads as done, not as a new copy. */
+  readonly copyDoneAt?: string | null;
   /** Saves a folder on `machine` for the Git move; shown when it has none, or on Browse…. */
   readonly folderPicker?: ReactNode;
   readonly sourceChanges?: HandoffSourceChanges | null;
@@ -221,11 +231,11 @@ export function MachineHandoffDialog({
         >
           <DialogHeader>
             <DialogTitle className="wrap-anywhere">
-              {/* A copy of files only leaves the project here: its title says copied, not on. */}
+              {/* A finished copy says where the project is and when it got there. */}
               {copying && copyDoneOn
                 ? sync
                   ? `${projectTitle} is synced to ${copyDoneOn}`
-                  : `${projectTitle} ${intent === "copy" ? "is copied to" : "is on"} ${copyDoneOn}`
+                  : `${projectTitle} is on ${copyDoneOn}${intent === "copy" ? copiedWhen(copyDoneAt) : ""}`
                 : sync && copying
                   ? `Sync ${projectTitle} to ${sync.machine}`
                   : complete

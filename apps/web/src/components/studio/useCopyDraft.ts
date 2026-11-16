@@ -40,6 +40,7 @@ export function useCopyDraft({
   machines,
   canMove,
   explicit,
+  showFinished = false,
   form,
   latestPending,
   setForm,
@@ -50,6 +51,11 @@ export function useCopyDraft({
   readonly canMove: boolean;
   /** Choices the dialog was opened with (Move project, Move coordinator to X); they win over a draft. */
   readonly explicit: { readonly mode: boolean; readonly machine: boolean };
+  /**
+   * Opened plainly for a copy (no machine asked for, not a move): a finished copy is shown
+   * as done, with the form one click away, instead of a form that reads as "copy again".
+   */
+  readonly showFinished?: boolean;
   readonly form: CopyForm;
   readonly latestPending: RefObject<PendingCopy | null>;
   readonly setForm: {
@@ -82,9 +88,11 @@ export function useCopyDraft({
 
   useEffect(() => {
     const saved = readPendingCopy(pendingKey);
-    // A finished copy whose Done was seen becomes the last copy; the dialog starts a new one.
+    // A finished copy whose Done was seen becomes the last copy when the dialog was opened
+    // for something else (a move, a named machine); a plain open shows that copy as done.
     const archived =
       saved?.doneSeen === true &&
+      !showFinished &&
       archivePendingCopy({
         pendingKey,
         lastKey,
@@ -93,6 +101,15 @@ export function useCopyDraft({
       }) !== null;
     if (saved && !archived) {
       onResume(saved);
+      return;
+    }
+    // The same for a copy already put aside, unless the person has started a new form.
+    const finished =
+      showFinished && readCopyDraft(draftKey) === null
+        ? readoptLastCopy({ pendingKey, lastKey })
+        : null;
+    if (finished) {
+      onResume(finished);
       return;
     }
     const last = readLastCopy(lastKey);

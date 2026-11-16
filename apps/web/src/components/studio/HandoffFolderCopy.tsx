@@ -157,6 +157,7 @@ export function HandoffFolderCopy({
     readonly machine: EnvironmentId | null;
     readonly done: boolean;
     readonly review?: boolean;
+    readonly doneAt?: string | null;
   }) => void;
   readonly canMove: boolean;
   /** Uncommitted files in the source, named in What comes along; null when unknown. */
@@ -700,6 +701,7 @@ export function HandoffFolderCopy({
     machines,
     canMove,
     explicit: { mode: defaultMode !== undefined, machine: machineRequested },
+    showFinished: !machineRequested && defaultMode !== "copy-and-move",
     form: { machine, folderDraft, mode, chooseFirst, secrets: secrets.chosen },
     latestPending,
     setForm: {

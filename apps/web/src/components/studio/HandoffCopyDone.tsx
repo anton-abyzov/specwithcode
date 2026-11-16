@@ -564,8 +564,9 @@ export function HandoffCopyFailedActions({
 
 /**
  * The finished copy's buttons: Open on {machine} leads, unless Copy again (files changed
- * while copying or a check failed) or moving the coordinator comes first. Undo… sits left;
- * the ⋯ menu holds the rest.
+ * while copying or a check failed) or moving the coordinator comes first. A copy-only copy
+ * offers Copy changes again, which leads to the form. Undo… sits left; the ⋯ menu holds
+ * the rest.
  */
 export function HandoffCopyDoneActions({
   copy,
@@ -610,6 +611,10 @@ export function HandoffCopyDoneActions({
   readonly onStartNew: () => void;
 }) {
   const transfer = canTransfer && !copyAgain && onTransfer !== null;
+  // A finished copy's next copy is one visible step away, and leads to the form.
+  const changes = mode === "copy-only" && !copyAgain;
+  const again = !copyAgain && canCopyAgain;
+  const review = mode === "copy-only" && linkReview;
   return (
     <>
       {copyAgain && (
@@ -625,25 +630,36 @@ export function HandoffCopyDoneActions({
       <Button variant={copyAgain || transfer ? "outline" : "default"} onClick={onOpen}>
         Open on {targetLabel}
       </Button>
-      <Menu>
-        <MenuTrigger
-          render={<Button variant="ghost" size="icon" aria-label="More actions" disabled={busy} />}
-        >
-          <EllipsisIcon aria-hidden />
-        </MenuTrigger>
-        <MenuPopup align="end">
-          {!copyAgain && canCopyAgain && (
-            // Copying again releases the source like a new copy, so the same lock holds it.
-            <MenuItem disabled={startNewLocked} onClick={onCopyAgain}>
-              Copy again
-            </MenuItem>
-          )}
-          {mode === "copy-only" && linkReview && <MenuItem onClick={onLink}>Link…</MenuItem>}
-          <MenuItem disabled={startNewLocked} onClick={onStartNew}>
-            Start a new copy
-          </MenuItem>
-        </MenuPopup>
-      </Menu>
+      {changes && (
+        <Button variant="outline" disabled={busy || startNewLocked} onClick={onStartNew}>
+          Copy changes again
+        </Button>
+      )}
+      {(again || review || !changes) && (
+        <Menu>
+          <MenuTrigger
+            render={
+              <Button variant="ghost" size="icon" aria-label="More actions" disabled={busy} />
+            }
+          >
+            <EllipsisIcon aria-hidden />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            {again && (
+              // Copying again releases the source like a new copy, so the same lock holds it.
+              <MenuItem disabled={startNewLocked} onClick={onCopyAgain}>
+                Copy again
+              </MenuItem>
+            )}
+            {review && <MenuItem onClick={onLink}>Link…</MenuItem>}
+            {!changes && (
+              <MenuItem disabled={startNewLocked} onClick={onStartNew}>
+                Start a new copy
+              </MenuItem>
+            )}
+          </MenuPopup>
+        </Menu>
+      )}
       {canUndo && copy.backupsDiscardedAt === undefined && (
         <CopyUndoButton busy={busy} undoPreview={undoPreview} onUndo={onUndo} />
       )}
