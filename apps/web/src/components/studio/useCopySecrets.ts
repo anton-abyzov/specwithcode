@@ -21,7 +21,12 @@ import {
   type SecretsChoice,
 } from "./handoffFolderCopyPending";
 import { useLiveState } from "./handoffFolderCopyRules";
-import { sendSecretsOrWithdraw, useSecretsGate } from "./useSecretsGate";
+import {
+  secretsBlockedNow,
+  sendSecretsOrWithdraw,
+  useSecretsGate,
+  withoutSecrets,
+} from "./useSecretsGate";
 
 /** Said instead of approving when included secrets cannot be listed. */
 export const secretsUnreadText = (source: string): string =>
@@ -79,6 +84,8 @@ export function useCopySecrets({
   const { candidates, paths } = travellingSecrets({ summary, copy, skip, homeSupported, choice });
   const machinesNow = useRef(machines);
   machinesNow.current = machines;
+  /** The list last sent for a copy, which its approval then names to the destination. */
+  const sent = useRef<{ operationId: string; paths: ReadonlyArray<string> } | null>(null);
 
   const choose = (next: SecretsChoice) => {
     setChosen(next);
@@ -93,7 +100,10 @@ export function useCopySecrets({
   const sendTicked = async (operationId: string) => {
     const saved = latestPending.current;
     const there = machinesNow.current.find(({ id }) => id === (saved?.environmentId ?? machine));
-    const sending = gate.clamp(saved ? pendingSecrets(saved) : chosenNow.current);
+    // Read at the call, like the approval: a long run must not send on an older render's access.
+    const blocked = secretsBlockedNow(source);
+    const wanted = saved ? pendingSecrets(saved) : chosenNow.current;
+    const sending = blocked ? withoutSecrets(wanted) : wanted;
     if (!summaryNow.current && sending.included && saved) await readSummary(saved);
     if (!summaryNow.current && sending.included) throw new Error(secretsUnreadText(sourceLabel));
     const list = sendableSecrets({
@@ -103,15 +113,17 @@ export function useCopySecrets({
       machine: there,
       choice: sending,
     });
+    sent.current = null;
     if (!list) return;
     const input = { operationId, paths: list, destinationLabel: there?.label ?? targetLabel };
     await sendSecretsOrWithdraw(
-      { blocked: gate.blocked, sourceLabel, empty: list.length === 0 },
+      { blocked, sourceLabel, empty: list.length === 0 },
       {
         send: () => sendSecrets({ environmentId: source, input }),
         status: () => sourceStatus({ environmentId: source, input: { operationId } }),
       },
     );
+    sent.current = { operationId, paths: list };
   };
 
   const left = done ? secretsLeft(summary?.secretFiles, copy?.secrets) : 0;
@@ -134,6 +146,9 @@ export function useCopySecrets({
     paths,
     choose,
     sendTicked,
+    /** The secret files this dialog sent for that copy, or null when it sent none. */
+    sentFor: (operationId: string): ReadonlyArray<string> | null =>
+      sent.current?.operationId === operationId ? sent.current.paths : null,
     /** The pointer of a copy started or approved while the form showed the warning. */
     told: (saved: PendingCopy): PendingCopy =>
       gate.blocked && !saved.secretsStay ? { ...saved, secretsStay: true } : saved,

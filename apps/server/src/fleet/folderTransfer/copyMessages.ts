@@ -35,3 +35,9 @@ export function staleOfferMessage(record: DestinationRecord) {
   const action = record.mode === "copy-and-move" ? "move" : "copy";
   return `${name} no longer accepts this ${action} (prepared ${record.createdAt.slice(0, 10)}): its offer expired, was cancelled or replaced there, or was removed from ${name}. Start the ${action} again from ${name}.`;
 }
+
+/** Secret files the window sent before approving that the source no longer offers. */
+export function secretsNotOfferedMessage(record: DestinationRecord, missing: number) {
+  const one = missing === 1;
+  return `${missing.toLocaleString("en-US")} secret ${one ? "file" : "files"} approved for this copy ${one ? "was" : "were"} no longer offered by ${sourceName(record)}. The other files are in place here. Copy again to send ${one ? "it" : "them"}.`;
+}

@@ -1285,6 +1285,8 @@ export class SourceTransfers {
     readonly paths: ReadonlyArray<string>;
     readonly destinationLabel: string;
   }): Promise<SourceOperationRecord> {
+    // A list accepted while the service stops is never written: refuse it instead.
+    this.assertOpen();
     const loaded = await this.load(input.operationId);
     if (!loaded) throw new SourceTransferError(404, "not_found");
     if (TERMINAL.has(loaded.record.state)) throw new SourceTransferError(409, loaded.record.state);

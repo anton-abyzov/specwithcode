@@ -140,6 +140,8 @@ export interface DestinationRecord {
   readonly secretsDone?: boolean;
   /** Approved without secrets: none are pulled, whatever the source has staged. */
   readonly withoutSecrets?: boolean;
+  /** The secret files the approving window sent: the copy finishes only with all of them. */
+  readonly secretsExpected?: ReadonlyArray<string>;
   /** Chunks per batch the source offered in its hello; older sources and records omit it. */
   readonly sourceBatchChunks?: number;
   /** When the person approved the copy; the copy's clock starts here. */
@@ -554,7 +556,10 @@ export class DestinationCopies {
    */
   async approve(
     operationId: string,
-    options: { readonly withoutSecrets?: boolean } = {},
+    options: {
+      readonly withoutSecrets?: boolean;
+      readonly expectedSecrets?: ReadonlyArray<string>;
+    } = {},
   ): Promise<DestinationRecord> {
     const record = await this.require(operationId);
     if (record.state !== "previewed")
@@ -630,6 +635,9 @@ export class DestinationCopies {
         ...(sourceMoved ? { warnings: [...record.warnings, SOURCE_MOVED] } : {}),
         error: null,
         ...(options.withoutSecrets ? { withoutSecrets: true } : {}),
+        ...(!options.withoutSecrets && options.expectedSecrets?.length
+          ? { secretsExpected: [...new Set(options.expectedSecrets)] }
+          : {}),
         startedAt: this.now(),
         updatedAt: this.now(),
       };
@@ -1334,6 +1342,14 @@ export class DestinationCopies {
         secrets: [...(current.secrets ?? []), received],
       });
     }
+    // The window sent these before approving: a source that no longer offers one (its list
+    // was withdrawn or lost, or it answers as if it had none) must not read as a full copy.
+    const arrived = new Set((current.secrets ?? []).map((item) => item.path));
+    const missing = (current.secretsExpected ?? []).filter((path) => !arrived.has(path));
+    if (missing.length > 0)
+      throw new CopyError("refused", Messages.secretsNotOfferedMessage(current, missing.length), {
+        missingSecrets: missing.length,
+      });
     return this.update(current.operationId, { secretsDone: true });
   }
 

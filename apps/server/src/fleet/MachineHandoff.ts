@@ -672,7 +672,10 @@ const make = Effect.gen(function* () {
     ).pipe(Effect.flatMap(destinationStatus));
   const copyApprove: MachineHandoff["Service"]["copyApprove"] = (input) =>
     attempt(() =>
-      copies.approve(input.operationId, { withoutSecrets: input.withoutSecrets === true }),
+      copies.approve(input.operationId, {
+        withoutSecrets: input.withoutSecrets === true,
+        ...(input.expectedSecrets ? { expectedSecrets: input.expectedSecrets } : {}),
+      }),
     ).pipe(Effect.flatMap(destinationStatus));
   const copyRetry: MachineHandoff["Service"]["copyRetry"] = (input) =>
     attempt(() => copies.retry(input.operationId)).pipe(Effect.flatMap(destinationStatus));

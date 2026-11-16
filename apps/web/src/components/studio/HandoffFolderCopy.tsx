@@ -903,13 +903,15 @@ export function HandoffFolderCopy({
       withoutReplaceAll(saved);
       throw new Error(secretsSourceOnlyText(sourceLabel));
     }
-    if (!secretsSent || secrets.gate.blocked) await secrets.sendTicked(operationId);
+    if (!secretsSent || secretsBlockedNow(project.environmentId))
+      await secrets.sendTicked(operationId);
     setStage("copying");
     try {
       const input = approveInput(
         operationId,
         project.environmentId,
         pendingSecrets(saved).included,
+        secrets.sentFor(operationId),
       );
       setCopy(unwrap(await approve({ environmentId, input })));
     } catch (cause) {

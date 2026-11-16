@@ -78,12 +78,17 @@ export const sourceDeniesSecrets = (source: EnvironmentId): boolean =>
 /**
  * The approval for a copy: without secrets when this window may not send them or the
  * choice leaves them on the source. The destination then pulls none, whatever is staged.
+ * Otherwise it names the secret files this window sent (`sent`), so the destination only
+ * finishes with every one of them and never reads a lost list as a full copy.
  */
 export const approveInput = (
   operationId: string,
   source: EnvironmentId,
   included: boolean,
+  sent: ReadonlyArray<string> | null = null,
 ): FolderCopyApproveInput =>
   (sourceDeniesSecrets(source) || !included
     ? { operationId, withoutSecrets: true }
-    : { operationId }) as FolderCopyApproveInput;
+    : sent && sent.length > 0
+      ? { operationId, expectedSecrets: [...sent] }
+      : { operationId }) as FolderCopyApproveInput;
