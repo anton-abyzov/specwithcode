@@ -22,6 +22,7 @@ import {
   mergePathEntries,
   mergePathValues,
   readEnvironmentFromLoginShell,
+  readEnvironmentFromLoginShellAsync,
   readEnvironmentFromWindowsShell,
   readPathFromLaunchctl,
   readPathFromLoginShell,
@@ -126,6 +127,51 @@ describe("readPathFromLaunchctl", () => {
     });
 
     expect(readPathFromLaunchctl(execFile)).toBeUndefined();
+  });
+});
+
+describe("readEnvironmentFromLoginShellAsync", () => {
+  it("asks an interactive login shell without holding the process, with a hard time limit", async () => {
+    const execFile = vi.fn(
+      async (
+        _file: string,
+        _args: ReadonlyArray<string>,
+        _options: { encoding: "utf8"; timeout: number; killSignal?: NodeJS.Signals },
+      ) =>
+        // A profile that prints on start-up must not end up in the value.
+        [
+          "Welcome back",
+          "__STUDIO_ENV_PATH_START__",
+          "/home/dev/.agent/bin:/usr/bin",
+          "__STUDIO_ENV_PATH_END__",
+        ].join("\n"),
+    );
+    expect(
+      await readEnvironmentFromLoginShellAsync("/bin/zsh", ["PATH", "MISSING"], execFile),
+    ).toEqual({ PATH: "/home/dev/.agent/bin:/usr/bin" });
+    expect(execFile).toHaveBeenCalledTimes(1);
+    const [shell, args, options] = execFile.mock.calls[0]!;
+    expect(shell).toBe("/bin/zsh");
+    expect(args[0]).toBe("-ilc");
+    expect(options).toMatchObject({ killSignal: "SIGKILL" });
+    expect(options.timeout).toBeGreaterThan(0);
+  });
+
+  it("rejects when the shell fails, and asks nothing for no names", async () => {
+    const failing = vi.fn(async () => {
+      throw new Error("shell exited 127");
+    });
+    await expect(
+      readEnvironmentFromLoginShellAsync("/bin/nope", ["PATH"], failing),
+    ).rejects.toThrow("shell exited 127");
+    expect(await readEnvironmentFromLoginShellAsync("/bin/zsh", [], failing)).toEqual({});
+    expect(failing).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads PATH from a real shell on this machine", async () => {
+    if (process.platform === "win32") return;
+    const read = await readEnvironmentFromLoginShellAsync("/bin/sh", ["PATH"]);
+    expect(read.PATH).toContain("/");
   });
 });
 

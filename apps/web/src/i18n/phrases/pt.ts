@@ -4586,6 +4586,9 @@ export const pt: PhraseCatalog = {
   "not linked": "não vinculado",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
     "Não vinculado: {machine} tem o próprio coordenador, threads e memória para este repositório.",
+  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.":
+    "Não vinculado: são projetos separados para este repositório, cada um com o próprio coordenador, threads e memória. Isso não impede de ver nenhum deles nem de enviar mensagens para qualquer um deles.",
+  "Link them below to make one project.": "Vincule-os abaixo para que sejam um só projeto.",
   "{value}Messages go to Percy. {value2}": "{value}As mensagens vão para o Percy. {value2}",
   "Show only topics that need you in {project}":
     "Mostrar só os tópicos que precisam de você em {project}",
@@ -5263,4 +5266,14 @@ export const pt: PhraseCatalog = {
     "Nenhuma regra de limpeza se aplica a ela.",
   "It could not be fully checked, so it is kept.":
     "Não foi possível verificá-la por completo, então ela foi mantida.",
+  "Installed, but it does not start": "Instalado, mas não inicia",
+  "Install {agent} on {machine} with this command:":
+    "Instale {agent} em {machine} com este comando:",
+  "Run its installer again:": "Execute o instalador de novo:",
+  "Install {agent} on {machine} from its own site.": "Instale {agent} em {machine} pelo site dele.",
+  "Open its install guide": "Abrir o guia de instalação",
+  "Run in terminal": "Executar no terminal",
+  "Waiting for the install. This page updates by itself.":
+    "Aguardando a instalação. Esta página se atualiza sozinha.",
+  "After it installs, choose Check again.": "Depois de instalar, escolha Verificar de novo.",
 };

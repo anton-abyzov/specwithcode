@@ -4400,6 +4400,9 @@ export const zh: PhraseCatalog = {
   "not linked": "未关联",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
     "未关联：{machine} 为此仓库运行自己的协调者、线程和记忆。",
+  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.":
+    "未关联：这些是此仓库的独立项目，各有自己的协调者、线程和记忆。这不影响查看其中任何一个或向其发送消息。",
+  "Link them below to make one project.": "在下方关联即可合并为一个项目。",
   "{value}Messages go to Percy. {value2}": "{value}消息会发送给 Percy。{value2}",
   "Show only topics that need you in {project}": "只显示 {project} 中需要你处理的主题",
   "New topic in {title}": "在 {title} 中新建主题",
@@ -5059,4 +5062,12 @@ export const zh: PhraseCatalog = {
     "没有适用于它的清理规则。",
   "It could not be fully checked, so it is kept.":
     "无法完整检查，因此保留。",
+  "Installed, but it does not start": "已安装，但无法启动",
+  "Install {agent} on {machine} with this command:": "用这条命令在 {machine} 上安装 {agent}：",
+  "Run its installer again:": "重新运行它的安装程序：",
+  "Install {agent} on {machine} from its own site.": "从 {agent} 的官网在 {machine} 上安装它。",
+  "Open its install guide": "打开安装指南",
+  "Run in terminal": "在终端中运行",
+  "Waiting for the install. This page updates by itself.": "正在等待安装。此页面会自动更新。",
+  "After it installs, choose Check again.": "安装完成后，选择“重新检查”。",
 };

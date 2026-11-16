@@ -102,4 +102,30 @@ it.layer(layerTest)("GrokDriver", (it) => {
       Effect.scoped,
     ),
   );
+
+  // Unconfirmed on Windows, where a missing command may surface through a shell instead.
+  it.effect.skipIf(windowsHost)(
+    "names the missing command on an enabled instance that cannot find it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-grok-absent-" });
+        // A path that does not exist, so a Grok installed on this machine is not found instead.
+        const binaryPath = path.join(tempDir, "grok");
+        const instance = yield* GrokDriver.create({
+          instanceId: ProviderInstanceId.make("grok-absent"),
+          displayName: "Grok test",
+          enabled: true,
+          environment: [],
+          config: { ...GrokDriver.defaultConfig(), binaryPath },
+        });
+        const checked = yield* instance.snapshot.refresh;
+        expect(checked).toMatchObject({
+          installed: false,
+          status: "error",
+          cli: { state: "missing", command: binaryPath },
+        });
+      }).pipe(Effect.scoped),
+  );
 });

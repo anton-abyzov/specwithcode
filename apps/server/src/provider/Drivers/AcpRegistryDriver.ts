@@ -238,6 +238,17 @@ export const saveAcpRegistryCredential = (
   }).pipe(Effect.mapError(() => saveFailed));
 };
 
+/**
+ * The command a person installed and named for this agent, when it runs from
+ * one: a local command, or the executable override on a registry agent. Both
+ * are looked up on PATH before anything else. An agent the app runs through
+ * npx or uvx, or downloads itself, has no such command and gets undefined.
+ */
+export function acpRegistryInstalledCommand(settings: AcpRegistrySettings): string | undefined {
+  const command = settings.commandPath.trim();
+  return command.length > 0 ? command : undefined;
+}
+
 export function acpRegistrySnapshotReadiness(
   inspection:
     | AcpRegistrySupport.AcpRegistryInspection
@@ -969,6 +980,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           return { provider: enriched, generation: cacheState.generation };
         });
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+      const installedCommand = acpRegistryInstalledCommand(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<
         ProviderSnapshotSettings<AcpRegistrySettings>
       >({
@@ -978,6 +990,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: () => checkProvider,
         checkProvider: checkProviderWithUsage,
+        // Only a command the person installed is looked for again; what the app
+        // installs itself shows up when it finishes preparing it.
+        ...(installedCommand
+          ? { installProbe: { command: installedCommand, environment: processEnvironment } }
+          : {}),
         enrichSnapshot: (input) =>
           Effect.flatMap(currentTeamRules, (rules) => {
             // The probe starts the agent, and a hold must not revive one the rules blocked.

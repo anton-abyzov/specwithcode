@@ -194,6 +194,7 @@ export const layerPlanningRpcHandlers = WsProjectPlanningRpcGroup.middleware(
       [WS_METHODS.projectsThreadIncrementProgressRead]: incrementProgress.read,
       [WS_METHODS.projectsIncrementsList]: incrementProgress.listIncrements,
       [WS_METHODS.projectsBoard]: incrementProgress.board,
+      [WS_METHODS.projectsBoardIncrement]: incrementProgress.boardIncrement,
       [WS_METHODS.projectsThreadIncrementLink]: incrementProgress.link,
     };
   }),

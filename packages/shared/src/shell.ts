@@ -329,6 +329,64 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
   return environment;
 };
 
+type ExecFileAsyncLike = (
+  file: string,
+  args: ReadonlyArray<string>,
+  options: { encoding: "utf8"; timeout: number; killSignal?: NodeJS.Signals },
+) => Promise<string>;
+
+const execFileAsync: ExecFileAsyncLike = (file, args, options) =>
+  new Promise((resolve, reject) => {
+    const child = NodeChildProcess.execFile(
+      file,
+      [...args],
+      { ...options, maxBuffer: 1_048_576 },
+      (error, stdout) => (error ? reject(error) : resolve(stdout)),
+    );
+    // An interactive shell must not wait on this process for input.
+    child.stdin?.end();
+  });
+
+export type ShellEnvironmentReaderAsync = (
+  shell: string,
+  names: ReadonlyArray<string>,
+  execFile?: ExecFileAsyncLike,
+  /** How long this shell may take; a caller asking several shells shares one limit among them. */
+  timeoutMs?: number,
+) => Promise<Partial<Record<string, string>>>;
+
+/**
+ * The same read as `readEnvironmentFromLoginShell` without holding the
+ * process: for a server that is already running and asks again because a
+ * shell startup file changed. Rejects when the shell fails or runs out of time.
+ */
+export const readEnvironmentFromLoginShellAsync: ShellEnvironmentReaderAsync = async (
+  shell,
+  names,
+  execFile = execFileAsync,
+  timeoutMs = LOGIN_SHELL_PROBE_TIMEOUT_MS,
+) => {
+  if (names.length === 0) {
+    return {};
+  }
+
+  const output = await execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(names)], {
+    encoding: "utf8",
+    timeout: timeoutMs,
+    killSignal: "SIGKILL",
+  });
+
+  const environment: Partial<Record<string, string>> = {};
+  for (const name of names) {
+    const value = extractEnvironmentValue(output, name);
+    if (value !== undefined) {
+      environment[name] = value;
+    }
+  }
+
+  return environment;
+};
+
 export type WindowsShellEnvironmentReader = (
   names: ReadonlyArray<string>,
   options?: WindowsEnvironmentProbeOptions,

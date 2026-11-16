@@ -139,6 +139,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       };
       break;
     case "model/list":
+      // A host with no catalog on disk lists nothing, signed in or not.
+      if (
+        process.env.MUSE_TEST_CATALOG_FILE &&
+        !fs.existsSync(process.env.MUSE_TEST_CATALOG_FILE)
+      ) {
+        result = { source: "bundledCatalog", providerId: "meta", models: [] };
+        break;
+      }
       result = {
         source: "providerCatalog",
         providerId: "meta",
@@ -159,6 +167,11 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       };
       break;
     case "usage/read":
+      // A host started for a check has observed no usage yet.
+      if (process.env.MUSE_TEST_COLD_USAGE) {
+        result = {};
+        break;
+      }
       result = {
         usage: {
           observedAtMs: Date.now(),
