@@ -5201,8 +5201,8 @@ export const ja: PhraseCatalog = {
     "少なくとも {size} が空きます。",
   "Dependency folders are left out: their files are shared with the package store.":
     "依存関係のフォルダーは含みません。そのファイルはパッケージストアと共有されています。",
-  "Some sizes could not be measured.":
-    "一部のサイズは測定できませんでした。",
+  "Some folders could not be fully checked or measured.":
+    "一部のフォルダーは完全に確認または計測できませんでした。",
   "Leftover files of stopped downloads":
     "中断したダウンロードの残りファイル",
   "Nothing to remove right now.":

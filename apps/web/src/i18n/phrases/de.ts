@@ -5233,8 +5233,8 @@ export const de: PhraseCatalog = {
     "Mindestens {size} würden frei.",
   "Dependency folders are left out: their files are shared with the package store.":
     "Abhängigkeitsordner sind nicht mitgezählt: Ihre Dateien teilen sie mit dem Paketspeicher.",
-  "Some sizes could not be measured.":
-    "Manche Größen ließen sich nicht messen.",
+  "Some folders could not be fully checked or measured.":
+    "Einige Ordner konnten nicht vollständig geprüft oder gemessen werden.",
   "Leftover files of stopped downloads":
     "Reste abgebrochener Downloads",
   "Nothing to remove right now.":

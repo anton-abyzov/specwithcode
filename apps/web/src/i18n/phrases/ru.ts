@@ -5197,8 +5197,8 @@ export const ru: PhraseCatalog = {
     "Освободится не меньше {size}.",
   "Dependency folders are left out: their files are shared with the package store.":
     "Папки зависимостей не учитываются: их файлы общие с хранилищем пакетов.",
-  "Some sizes could not be measured.":
-    "Некоторые размеры измерить не удалось.",
+  "Some folders could not be fully checked or measured.":
+    "Некоторые папки не удалось полностью проверить или измерить.",
   "Leftover files of stopped downloads":
     "Остатки прерванных загрузок",
   "Nothing to remove right now.":

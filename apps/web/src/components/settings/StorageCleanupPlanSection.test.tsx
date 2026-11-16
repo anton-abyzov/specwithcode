@@ -178,7 +178,7 @@ describe("StorageCleanupPlanSection", () => {
     const shown = text();
     expect(shown).toContain("At least 1.3 GB would be freed.");
     expect(shown).toContain(
-      "Dependency folders are left out: their files are shared with the package store. Some sizes could not be measured.",
+      "Dependency folders are left out: their files are shared with the package store. Some folders could not be fully checked or measured.",
     );
     expect(renderer.root.findByProps({ "aria-label": "Would be removed" })).toBeTruthy();
     expect(renderer.root.findByProps({ "aria-label": "Kept" })).toBeTruthy();
@@ -206,7 +206,7 @@ describe("StorageCleanupPlanSection", () => {
     expect(shown).toContain("Removed 2 folders, at least 1.3 GB.");
     expect(shown).toContain("Nothing to remove right now.");
     expect(shown).not.toContain("app/1370-cleanup");
-    expect(shown).not.toContain("Some sizes could not be measured.");
+    expect(shown).not.toContain("Some folders could not be fully checked or measured.");
     expect(shown).toContain("app/1371-open");
     expect(button("data-storage-cleanup-run").props.disabled).toBe(true);
   });
@@ -233,7 +233,7 @@ describe("StorageCleanupPlanSection", () => {
     const alert = renderer.root.find((node) => node.type === "p" && node.props.role === "alert");
     expect(alert.children.join("")).toBe("The check could not finish.");
     expect(text()).not.toContain("Nothing to remove right now.");
-    expect(text()).not.toContain("Some sizes could not be measured.");
+    expect(text()).not.toContain("Some folders could not be fully checked or measured.");
     expect(button("data-storage-cleanup-run").props.disabled).toBe(true);
   });
 

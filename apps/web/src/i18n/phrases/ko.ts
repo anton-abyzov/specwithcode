@@ -5140,8 +5140,8 @@ export const ko: PhraseCatalog = {
     "최소 {size}가 확보됩니다.",
   "Dependency folders are left out: their files are shared with the package store.":
     "의존성 폴더는 제외됩니다. 해당 파일은 패키지 저장소와 공유됩니다.",
-  "Some sizes could not be measured.":
-    "일부 크기는 측정하지 못했습니다.",
+  "Some folders could not be fully checked or measured.":
+    "일부 폴더는 완전히 확인하거나 측정하지 못했습니다.",
   "Leftover files of stopped downloads":
     "중단된 다운로드의 잔여 파일",
   "Nothing to remove right now.":

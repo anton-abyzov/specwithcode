@@ -132,7 +132,9 @@ function StorageCleanupPlanMachine({
                   {tx(
                     "Dependency folders are left out: their files are shared with the package store.",
                   )}
-                  {plan.complete ? null : <> {tx("Some sizes could not be measured.")}</>}
+                  {plan.complete ? null : (
+                    <> {tx("Some folders could not be fully checked or measured.")}</>
+                  )}
                 </p>
               )}
             </div>

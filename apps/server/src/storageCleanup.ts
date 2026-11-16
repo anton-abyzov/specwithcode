@@ -914,6 +914,9 @@ export const make = Effect.gen(function* () {
 
   const worktreeSweep = yield* makeWorktreeCleanupSweep({
     liveTerminals: () => [...liveTerminals.values()].flatMap((entries) => [...entries.values()]),
+    sharedWithAnotherInstance: anotherInstanceDatabase.pipe(
+      Effect.map((database) => database !== null),
+    ),
   });
 
   /** Leftover download files in each checks copy (`<baseDir>/verify/*`), one item per copy. */

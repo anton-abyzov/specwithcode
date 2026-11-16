@@ -252,11 +252,31 @@ describe("the worktree sweep keeps what it cannot prove safe", () => {
       const result = yield* f.sweep("apply");
       expect(f.reasons(result.items, [folder])).toEqual(["keep:unknown"]);
       expect(f.itemOf(result.items, folder)?.detail).toContain(
-        "Its use changed right before removal after 1 of its worktrees",
+        "It changed, or its use did, right before removal after 1 of its worktrees",
       );
       expect(f.removed).toEqual([nested]);
       expect(result.removed).toEqual([]);
       expect(yield* f.fs.exists(f.path.join(folder, "file.txt"))).toBe(true);
+    }),
+  );
+
+  sweepTest("stops when a file appears in a member while an earlier one is removed", () =>
+    Effect.gen(function* () {
+      const f = yield* sweepFixture;
+      const { folder, nested } = yield* makeSet(f, "set-late-file");
+      yield* f.fs.writeFileString(
+        f.path.join(f.repo, ".git", "info", "exclude"),
+        "repositories/\n.env\n",
+      );
+      yield* f.addChat({ id: "set", folder, branch: "feature/set-late-file", state: "settled" });
+      // Reads: 1 the look under the lease, 2 before the nested member, 3 before the folder.
+      // Git would delete the ignored file without asking.
+      onRead(f, 3, f.fs.writeFileString(f.path.join(folder, ".env"), "TOKEN=only-here\n"));
+      const result = yield* f.sweep("apply");
+      expect(f.reasons(result.items, [folder])).toEqual(["keep:unknown"]);
+      expect(f.itemOf(result.items, folder)?.detail).toContain("after 1 of its worktrees");
+      expect(f.removed).toEqual([nested]);
+      expect(yield* f.fs.readFileString(f.path.join(folder, ".env"))).toBe("TOKEN=only-here\n");
     }),
   );
 

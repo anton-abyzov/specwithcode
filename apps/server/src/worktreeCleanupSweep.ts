@@ -171,6 +171,8 @@ interface Assessment {
   readonly fingerprint: string;
   /** The part of it that says who uses the folder (`readLive`). */
   readonly liveness: string;
+  /** The one branch its chats record, or null. */
+  readonly chatBranch: string | null;
   readonly head: { readonly id: string; readonly title: string } | null;
   readonly threadCount: number;
 }
@@ -233,6 +235,11 @@ const evidenceStamp = (now: number) =>
 export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(function* (options: {
   /** Live terminals, as the storage cleanup tracks them. */
   readonly liveTerminals: () => ReadonlyArray<TerminalSummary>;
+  /**
+   * True when another instance of the app records chats in these folders; read
+   * again before each removal, since one may start while a sweep runs.
+   */
+  readonly sharedWithAnotherInstance?: Effect.Effect<boolean>;
 }) {
   const config = yield* ServerConfig.ServerConfig;
   const settingsService = yield* Settings.ServerSettingsService;
@@ -361,11 +368,17 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     if (!inside(path.resolve(folder), path.resolve(memberPath))) return false;
     const realFolder = yield* realOrNull(folder);
     const realMember = yield* realOrNull(memberPath);
-    return (
-      realFolder !== null &&
-      realMember !== null &&
-      realMember ===
+    if (
+      realFolder === null ||
+      realMember === null ||
+      realMember !==
         path.join(realFolder, path.relative(path.resolve(folder), path.resolve(memberPath)))
+    )
+      return false;
+    // A volume mounted at the member's path has the same real path and other files.
+    return yield* Effect.all([fs.stat(realFolder), fs.stat(realMember)]).pipe(
+      Effect.map(([folderStat, memberStat]) => folderStat.dev === memberStat.dev),
+      Effect.orElseSucceed(() => false),
     );
   });
 
@@ -1005,6 +1018,7 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
       decision,
       members,
       liveness: live.key,
+      chatBranch,
       fingerprint: encodeJson([
         live.key,
         rules,
@@ -1106,9 +1120,44 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     );
 
   /**
+   * One member read again right before it goes: false when anything in it or
+   * about it differs from the assessment the removal rests on. Git deletes
+   * ignored files without asking, and earlier members can take minutes.
+   */
+  const memberUnchanged = Effect.fn("WorktreeCleanupSweep.memberUnchanged")(
+    function* (assessment: Assessment, state: MemberState) {
+      if (
+        state.member.relativePath !== "" &&
+        !(yield* memberStaysInside(assessment.group.folder, state.path))
+      )
+        return false;
+      const registration = yield* checkWorktreeRegistration(state.path);
+      if (!registration.ok || registration.locked) return false;
+      const again: MemberState = {
+        ...state,
+        head: null,
+        base: null,
+        media: [],
+        fingerprint: "",
+        git: undefined,
+      };
+      yield* readMemberGit(
+        again,
+        assessment.chatBranch,
+        assessment.members.length > 1 || state.member.repository !== "",
+      );
+      if (again.fingerprint !== state.fingerprint) return false;
+      yield* readNested(again);
+      return again.git?.nestedRepository === false;
+      // Anything unreadable counts as changed.
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
+  /**
    * Removes the members deepest first without force, stopping at the first
-   * Git refuses; then prunes each repository's registrations and removes the
-   * folders left empty. Branches and the manifest stay.
+   * that changed or that Git refuses, then removes the folders left empty.
+   * Branches and the manifest stay.
    */
   const removeMembers = Effect.fn("WorktreeCleanupSweep.removeMembers")(function* (
     assessment: Assessment,
@@ -1120,7 +1169,8 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     let gone = 0;
     for (const state of assessment.members.toSorted((left, right) => depth(right) - depth(left))) {
       // Removing a member can take minutes: a chat may have been reopened meanwhile.
-      if (!(yield* stillFree)) return { stopped: "changed" as const, member: "", gone };
+      if (!(yield* stillFree) || !(yield* memberUnchanged(assessment, state)))
+        return { stopped: "changed" as const, member: "", gone };
       // Files Git leaves behind were checked by nobody: they stay, and so does the rest.
       const removal = yield* git
         .removeWorktree({
@@ -1234,6 +1284,11 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     }
     const liveness = last.liveness;
     const stillFree = Effect.gen(function* () {
+      if (
+        options.sharedWithAnotherInstance !== undefined &&
+        (yield* options.sharedWithAnotherInstance)
+      )
+        return false;
       const snapshot = yield* readThreads();
       const groups = yield* readGroups(snapshot.threads, yield* settingsService.getSettings);
       const group = groups.find((entry) => entry.key === first.group.key);
@@ -1253,7 +1308,7 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
       if (removal.gone === 0 && evidence !== null) yield* discardEvidence(evidence);
       const why =
         removal.stopped === "changed"
-          ? "Its use changed right before removal"
+          ? "It changed, or its use did, right before removal"
           : `Git refused to remove ${removal.member}`;
       return changed(
         removal.gone === 0
