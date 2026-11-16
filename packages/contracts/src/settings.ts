@@ -58,6 +58,7 @@ import {
   AdversarialReviewSettingsPatch,
   ProviderModelTiers,
 } from "./adversarialReview.ts";
+import { AdvisorSettings, AdvisorSettingsPatch } from "./advisor.ts";
 import { ProjectScript } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { TeamRulesRefusal } from "./teamRules.ts";
@@ -1763,6 +1764,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "modelLanes",
   "modelTiers",
   "adversarialReview",
+  "advisor",
   "learnedModelPreferences",
   "keepActiveThreadsPerProject",
 ] as const;
@@ -1826,6 +1828,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   // Only the fields the project changed: the rest follow the machine. An
   // empty reviewer list is the built-in order.
   adversarialReview: Schema.optionalKey(AdversarialReviewSettingsPatch),
+  // Only the fields the project changed, like `adversarialReview`.
+  advisor: Schema.optionalKey(AdvisorSettingsPatch),
   learnedModelPreferences: Schema.optionalKey(LearnedModelPreferences),
   keepActiveThreadsPerProject: Schema.optionalKey(KeepActiveThreadsPerProject),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
@@ -2161,6 +2165,11 @@ export const ServerSettings = Schema.Struct({
    * `@specweave-studio/shared/adversarialReview`). Automatic review is off by default.
    */
   adversarialReview: AdversarialReviewSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /**
+   * A stronger model a running thread can consult and keep working (see
+   * `@specweave-studio/shared/advisor`). Off by default.
+   */
+  advisor: AdvisorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /** What a project learned from its user about which model suits which work. */
   learnedModelPreferences: LearnedModelPreferences.pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -2627,6 +2636,8 @@ export const ServerSettingsPatch = Schema.Struct({
   modelTiers: Schema.optionalKey(ProviderModelTiers),
   /** Changes only the fields it names; a list replaces the whole list. */
   adversarialReview: Schema.optionalKey(AdversarialReviewSettingsPatch),
+  /** Changes only the fields it names. */
+  advisor: Schema.optionalKey(AdvisorSettingsPatch),
   /** Replaces the whole list. */
   learnedModelPreferences: Schema.optionalKey(LearnedModelPreferences),
   backgroundActivity: Schema.optionalKey(

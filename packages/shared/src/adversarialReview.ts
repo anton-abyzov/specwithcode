@@ -357,7 +357,7 @@ export function resolveReviewer(input: {
  * failed or unsupported probe, with no windows and no limit denial seen.
  * Muse reports this way; it says nothing about the account being full.
  */
-function usageNeverRead(provider: ServerProvider | undefined): boolean {
+export function usageNeverRead(provider: ServerProvider | undefined): boolean {
   const limits = provider?.usageLimits;
   return (
     limits !== undefined &&

@@ -31,6 +31,7 @@ import {
 } from "./scheduledTask.ts";
 import { HandoffMachineThreadOutcome } from "./handoffMode.ts";
 import { ProviderModelTier } from "./adversarialReview.ts";
+import { AdvisorConsultInput, AdvisorConsultResult } from "./advisor.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
   LearnedModelPreference,
@@ -377,6 +378,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   increment: Schema.optional(OrchestratorMcpIncrementRef),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
+
+/** The `advisor` tool: a stronger model reviews the calling thread's work so far. */
+export const OrchestratorMcpAdvisorInput = AdvisorConsultInput;
+export type OrchestratorMcpAdvisorInput = typeof OrchestratorMcpAdvisorInput.Type;
+export const OrchestratorMcpAdvisorResult = AdvisorConsultResult;
+export type OrchestratorMcpAdvisorResult = typeof OrchestratorMcpAdvisorResult.Type;
 
 const OrchestratorMcpThreadLink = Schema.String.annotate({
   description:

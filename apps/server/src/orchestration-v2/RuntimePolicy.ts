@@ -7,6 +7,12 @@ import {
 import { currentTeamRules, teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
+  advisorGuidance,
+  claudeBuiltInAdvisorModel,
+  claudeSessionAdvisor,
+  resolveAdvisor,
+} from "@specweave-studio/shared/advisor";
+import {
   ModelSelection,
   OrchestrationV2AppThread,
   ProjectId,
@@ -15,6 +21,7 @@ import {
   type RuntimeMode,
   withServiceInstructions,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,6 +29,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2RuntimePolicy as ProviderAdapterV2RuntimePolicyType,
@@ -111,6 +119,10 @@ export const layerFromProjectStore: Layer.Layer<
     const projects = yield* ProjectStore.ProjectStoreV2;
     const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
+    // Optional: only the advisor reads provider snapshots here. Without them
+    // no Claude pair is found, so a thread whose advisor is on consults
+    // through the studio-code tool.
+    const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
         const settings = yield* serverSettings.getSettings.pipe(
@@ -212,16 +224,71 @@ export const layerFromProjectStore: Layer.Layer<
                 !isInsideFolder(threadFolderProject.workspaceRoot, worktreePath)
               ? threadFolderProject.workspaceRoot
               : false;
+        const advisorChild = input.thread.purpose === "advisor";
+        const advisorSettings = resolveProjectSettings(settings, input.thread.projectId).settings;
+        const guidance = advisorGuidance({
+          mode: input.thread.advisorMode,
+          settings: advisorSettings.advisor,
+          advisorChild,
+        });
+        const claudeAdvisor =
+          driver !== "claudeAgent"
+            ? undefined
+            : yield* Effect.gen(function* () {
+                const providers = Option.isSome(providerRegistry)
+                  ? yield* providerRegistry.value.getProviders
+                  : [];
+                const decision = claudeSessionAdvisor({
+                  advisorChild,
+                  mode: input.thread.advisorMode,
+                  settings: advisorSettings.advisor,
+                  builtInModel: claudeBuiltInAdvisorModel({
+                    providers,
+                    thread: input.modelSelection,
+                    advisor: resolveAdvisor({
+                      providers,
+                      thread: input.modelSelection,
+                      model: advisorSettings.advisor.model,
+                      reviewers: advisorSettings.adversarialReview.reviewers,
+                      tier: advisorSettings.adversarialReview.tier,
+                      tiers: advisorSettings.modelTiers,
+                      sourceOrder: advisorSettings.defaultModelProviders,
+                      excludedModels: advisorSettings.providerLimitExcludedModels,
+                      nowMs: yield* Clock.currentTimeMillis,
+                    }).advisor,
+                  }),
+                  // The adapter knows the session's context size and applies the limit.
+                  contextTokens: null,
+                  previousRoute: null,
+                });
+                return decision.kind === "inherit"
+                  ? undefined
+                  : decision.kind === "disable"
+                    ? ({ kind: "disable" } as const)
+                    : ({
+                        kind: "model",
+                        model: decision.model,
+                        contextLimit: advisorSettings.advisor.builtInContextLimit,
+                      } as const);
+              });
         return ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,
-          agentInstructions: withServiceInstructions(
-            resolveAgentInstructions({
-              globalInstructions: settings.agentInstructions,
-              projectInstructions: projectOverrides?.agentInstructions,
-            }),
-          ),
+          // An advisor only reads: the provider's read-only sandbox where it
+          // has one, and nothing to approve because nothing may be written.
+          ...(advisorChild ? { approvalPolicy: "never", sandboxPolicy: { type: "readOnly" } } : {}),
+          agentInstructions: [
+            withServiceInstructions(
+              resolveAgentInstructions({
+                globalInstructions: settings.agentInstructions,
+                projectInstructions: projectOverrides?.agentInstructions,
+              }),
+            ),
+            ...(guidance === null ? [] : [guidance]),
+          ].join("\n\n"),
+          ...(guidance === null ? {} : { advisorGuidance: guidance }),
+          ...(claudeAdvisor === undefined ? {} : { claudeAdvisor }),
           claudeWorkflowMode: projectOverrides?.claudeWorkflowMode ?? settings.claudeWorkflowMode,
           responseStyle: projectOverrides?.responseStyle ?? settings.responseStyle,
           preferSpecWithCodeBrowser: settings.preferSpecWithCodeBrowser,

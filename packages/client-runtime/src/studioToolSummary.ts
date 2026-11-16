@@ -147,6 +147,9 @@ export function summarizeStudioToolCalls(
     case "delegate":
       label = phrase("Delegated", "delegate", quantity(countEntities(entityIds("taskId")), "task"));
       break;
+    case "advisor":
+      label = `${completed.length > 0 ? "Asked" : "Tried to ask"} the advisor${selected.length > 1 ? ` ${times}` : ""}`;
+      break;
     case "thread-read":
     case "thread-wait": {
       const targets = threadIds.every((value) => value !== undefined)

@@ -50,6 +50,16 @@ import type {
   ProviderSelectionTransitionPlan,
 } from "./ProviderSelectionTransition.ts";
 
+export const ProviderAdapterV2ClaudeAdvisor = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("disable") }),
+  Schema.Struct({
+    kind: Schema.Literal("model"),
+    model: Schema.String,
+    contextLimit: Schema.Number,
+  }),
+]);
+export type ProviderAdapterV2ClaudeAdvisor = typeof ProviderAdapterV2ClaudeAdvisor.Type;
+
 export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -74,6 +84,18 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
    * switches in that folder's clones instead. Absent means no guard.
    */
   manualWorktreesBlocked: Schema.optional(Schema.Union([Schema.Boolean, Schema.String])),
+  /**
+   * When to consult the advisor, for a thread whose advisor is on. Already
+   * part of `agentInstructions`; adapters that do not send those read it here.
+   */
+  advisorGuidance: Schema.optional(Schema.String),
+  /**
+   * What a Claude session is told about Claude's own advisor. Absent passes
+   * nothing, so the person's own Claude setting applies. `model` holds only
+   * while the session's context is under `contextLimit` tokens (see
+   * `advisorRouteForContext`); past it the session gets `disable`.
+   */
+  claudeAdvisor: Schema.optional(ProviderAdapterV2ClaudeAdvisor),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 
