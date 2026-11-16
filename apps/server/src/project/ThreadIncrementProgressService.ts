@@ -24,6 +24,8 @@
 import {
   ProjectWorkspaceError,
   ThreadId,
+  type ProjectBoardIncrementInput,
+  type ProjectBoardIncrementResult,
   type ProjectBoardInput,
   type ProjectBoardResult,
   type ProjectIncrementsListInput,
@@ -45,6 +47,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { readProjectBoard } from "./ProjectBoard.ts";
+import { readProjectBoardIncrement } from "./ProjectBoardIncrement.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import {
@@ -70,6 +73,9 @@ export class ThreadIncrementProgressService extends Context.Service<
     readonly board: (
       input: ProjectBoardInput,
     ) => Effect.Effect<ProjectBoardResult, ProjectWorkspaceError>;
+    readonly boardIncrement: (
+      input: ProjectBoardIncrementInput,
+    ) => Effect.Effect<ProjectBoardIncrementResult, ProjectWorkspaceError>;
     readonly link: (
       input: ThreadIncrementLinkInput,
     ) => Effect.Effect<ThreadIncrementLinkResult, ProjectWorkspaceError>;
@@ -987,7 +993,30 @@ export const make = Effect.gen(function* () {
           ...(input.doneLimit === undefined ? {} : { doneLimit: input.doneLimit }),
         }),
       );
-      return { projectId: input.projectId, ...result };
+      // `detail` tells the client this server also answers projects.boardIncrement.
+      return { projectId: input.projectId, ...result, detail: true };
+    }).pipe(asWorkspaceError(input.projectId));
+
+  /**
+   * One increment of the board in full. A name that is not an increment
+   * folder, or one that leads outside the planning root, is refused; a folder
+   * that is gone answers with a null increment so the view can close.
+   */
+  const boardIncrement = (input: ProjectBoardIncrementInput) =>
+    Effect.gen(function* () {
+      const project = yield* projectOf(input.projectId);
+      const now = yield* Clock.currentTimeMillis;
+      const increment = yield* Effect.promise(() =>
+        readProjectBoardIncrement(project.workspaceRoot, {
+          incrementId: input.incrementId,
+          now,
+          ...(input.includeDone === undefined ? {} : { includeDone: input.includeDone }),
+        }),
+      );
+      if (increment === "invalid") {
+        return yield* new ProjectWorkspaceError({ code: "invalid", projectId: input.projectId });
+      }
+      return { projectId: input.projectId, incrementId: input.incrementId, increment };
     }).pipe(asWorkspaceError(input.projectId));
 
   const link = (input: ThreadIncrementLinkInput) =>
@@ -1018,7 +1047,13 @@ export const make = Effect.gen(function* () {
       return input;
     }).pipe(asWorkspaceError(input.projectId));
 
-  return ThreadIncrementProgressService.of({ read, listIncrements, board, link });
+  return ThreadIncrementProgressService.of({
+    read,
+    listIncrements,
+    board,
+    boardIncrement,
+    link,
+  });
 });
 
 export const layer = Layer.effect(ThreadIncrementProgressService, make);
