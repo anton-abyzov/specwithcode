@@ -40,6 +40,11 @@ export type ThreadToastData = {
   onClose?: (() => void) | undefined;
   dismissAfterVisibleMs?: number;
   hideCopyButton?: boolean;
+  /**
+   * Lifts the toasts above the hosted sign-in dialog while this toast shows.
+   * That dialog is fixed at z-index 10000 with a dimming backdrop.
+   */
+  aboveSignInDialog?: boolean;
   /** 0 to 1: one progress bar under the description. */
   progress?: number;
   /** Draws the bar as this many equal phases, like the copy's track. */
@@ -558,6 +563,7 @@ function Toasts({ position }: { position: ToastPosition }) {
     shouldRenderThreadScopedToast(toast.data, activeThreadRef),
   );
   const visibleToastLayout = buildVisibleToastLayout(visibleToasts);
+  const aboveSignInDialog = visibleToasts.some((toast) => toast.data?.aboveSignInDialog === true);
 
   useEffect(() => {
     const activeToastIds = new Set(toasts.map((toast) => toast.id));
@@ -572,7 +578,9 @@ function Toasts({ position }: { position: ToastPosition }) {
     <Toast.Portal data-slot="toast-portal">
       <Toast.Viewport
         className={cn(
-          "fixed z-100 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:var(--workspace-topbar-height)] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
+          "fixed mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:var(--workspace-topbar-height)] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
+          // Above the sign-in dialog (10000), below its menus (11000).
+          aboveSignInDialog ? "z-[10500]" : "z-100",
           // Vertical positioning
           "data-[position*=top]:top-[calc(var(--toast-inset)+var(--toast-header-offset))]",
           "data-[position*=bottom]:bottom-(--toast-inset)",
