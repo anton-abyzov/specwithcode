@@ -4,6 +4,7 @@ import {
   PrimaryConnectionTarget,
 } from "@specweave-studio/client-runtime/connection";
 import {
+  AuthEnvironmentMaintainScope,
   AuthProvidersManageScope,
   AuthTerminalOperateScope,
   DEFAULT_SERVER_SETTINGS,
@@ -886,6 +887,34 @@ describe("the agents step: found agents", () => {
       await vi.dynamicImportSettled();
     });
     expect(renderer!.root.findAllByProps({ "data-add-agent": true }).length).toBe(1);
+  });
+});
+
+describe("the agents step: Terminal commands", () => {
+  const line = () => renderer!.root.findAllByProps({ "data-agents-terminal-commands": true });
+
+  it("offers a ticked line to people who may maintain the machine, and saves an untick", async () => {
+    state.registry!.set(
+      state.sessions.get(remoteId)!,
+      AsyncResult.success(
+        session([AuthProvidersManageScope, AuthTerminalOperateScope, AuthEnvironmentMaintainScope]),
+      ),
+    );
+    await enterRemoteAgents();
+    expect(line()).toHaveLength(1);
+    expect(text(line()[0]!)).toContain("Use claude, codex and specweave in Terminal too.");
+    const box = line()[0]!.findByProps({ checked: true });
+    await act(async () => box.props.onCheckedChange(false));
+    expect(state.updateSettings).toHaveBeenCalledOnce();
+    expect(state.updateSettings.mock.calls[0]![0]).toMatchObject({
+      environmentId: remoteId,
+      input: { patch: { terminalCommands: false } },
+    });
+  });
+
+  it("is not shown to someone who may not maintain the machine", async () => {
+    await enterRemoteAgents();
+    expect(line()).toHaveLength(0);
   });
 });
 

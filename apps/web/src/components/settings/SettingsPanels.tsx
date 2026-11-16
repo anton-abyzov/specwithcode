@@ -3469,6 +3469,40 @@ export function GeneralSettingsPanel() {
               />
             }
           />
+          {/* Hidden only when every connected machine runs Windows, which has no block. */}
+          {!(
+            connectedEnvironments.length > 0 &&
+            connectedEnvironments.every(
+              (target) => target.serverConfig?.environment.platform.os === "windows",
+            )
+          ) ? (
+          <SettingsRow
+            serverScoped
+            settingKeys={["terminalCommands"]}
+            {...searchableSetting("terminal-commands")}
+            description="Lets a new Terminal window run claude, codex, specweave and the tools SpecWithCode installed, through one marked block in your shell startup file. Your own installs stay first. Off removes the block. macOS and Linux."
+            resetAction={
+              settings.terminalCommands !== DEFAULT_UNIFIED_SETTINGS.terminalCommands ? (
+                <SettingResetButton
+                  label={tx("Terminal commands")}
+                  onClick={() =>
+                    updateSettings({ terminalCommands: DEFAULT_UNIFIED_SETTINGS.terminalCommands })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <ScopedSwitch
+                settingKeys={["terminalCommands"]}
+                checked={settings.terminalCommands}
+                onCheckedChange={(checked) =>
+                  updateSettings({ terminalCommands: Boolean(checked) })
+                }
+                aria-label={tx("Use these commands in Terminal")}
+              />
+            }
+          />
+          ) : null}
 
           <SettingsRow
             {...searchableSetting("continue-threads-after-server-update")}

@@ -1926,6 +1926,13 @@ export const ServerSettings = Schema.Struct({
    */
   pauseWorkForUpdates: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
+   * "Use these commands in Terminal": keep claude, codex, specweave and the tools the app
+   * installs on a new Terminal's PATH through one marked block in the login shell's startup
+   * file (macOS and Linux). On by default; off removes the block, and a block the person
+   * deletes turns it off. Per machine, never copied to another.
+   */
+  terminalCommands: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
    * Whether agents may drive the in-app preview browser. Turning this off
    * withholds the MCP credential, so the `studio-code` server (and with it every
    * `preview_*` tool) is never attached to a provider session, and the prompt
@@ -2548,6 +2555,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   pauseWorkForUpdates: Schema.optionalKey(Schema.Boolean),
+  terminalCommands: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   agentBrowserProfileId: Schema.optionalKey(Schema.NullOr(BrowserProfileId)),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
