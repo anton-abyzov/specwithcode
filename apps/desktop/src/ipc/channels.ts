@@ -34,6 +34,8 @@ export const PROBE_REMOTE_EDITORS_CHANNEL = "desktop:probe-remote-editors";
 export const MENU_ACTION_CHANNEL = "desktop:menu-action";
 // The local backend answers again, as after a restart: windows reconnect at once.
 export const BACKEND_READY_CHANNEL = "desktop:backend-ready";
+// A Connect sign-in through another site changed state; sent to the window that asked.
+export const CONNECT_SIGN_IN_STATE_CHANNEL = "desktop:connect-sign-in-state";
 export const PASTE_AS_TEXT_CHANNEL = "desktop:paste-as-text";
 export const SNAP_SHOT_EVENT_CHANNEL = "desktop:snap-shot-event";
 export const QUIT_SHORTCUT_CHANNEL = "desktop:quit-shortcut";
