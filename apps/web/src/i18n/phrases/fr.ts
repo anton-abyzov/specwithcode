@@ -501,12 +501,6 @@ export const fr: PhraseCatalog = {
     "Retirer les lignes de crédit d’agents reconnues des messages de merge et de squash GitHub, en gardant les co-auteurs humains. Inclut l’auto-merge. Exclut les files de merge, les merges de piles et les commits existants.",
   "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.":
     "Supprimer les worktrees inutilisés quand des fils actifs ou archivés sont supprimés. Les worktrees avec des modifications locales sont conservés.",
-  "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
-    "Supprimer les worktrees dont les fils sont inactifs depuis ce nombre de jours. Les dossiers des fils ouverts sont toujours conservés. Les branches et l’historique des fils sont conservés.",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "Supprimer les worktrees dont la pull request est fusionnée et dont les commits sont dans la branche par défaut, ou fermée sans fusion avec tous ses commits poussés. Supprime aussi les worktrees propres et poussés que des agents ont créés sans fil, une fois leur pull request fusionnée ou fermée et après un jour d’inactivité. Les dossiers des fils ouverts sont toujours conservés.",
-  "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
-    "Supprimer les worktrees sans commit au-delà de la branche par défaut. Les dossiers des fils ouverts sont toujours conservés.",
   Rename: "Renommer",
   "Require a second click on the inline archive action before a thread is archived.":
     "Exiger un second clic sur l’action d’archivage en ligne avant d’archiver un fil.",
@@ -5219,4 +5213,88 @@ export const fr: PhraseCatalog = {
     "Configurer cette machine pour lancer du travail sur {there}",
   "Change what this machine may do on {there}":
     "Modifier ce que cette machine peut faire sur {there}",
+  "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
+    "Supprimer les worktrees dont les discussions sont résolues ou archivées et inactives depuis ce nombre de jours. Les branches et l’historique des discussions sont conservés.",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
+    "Supprimer les worktrees dont la pull request est fusionnée et dont les commits sont dans la branche par défaut, ou fermée sans fusion avec tous les commits poussés. Une discussion encore ouverte perd son dossier après 6 heures sans activité ; une discussion en cours ou en attente le garde toujours. La branche reste, donc une discussion rouverte retrouve son dossier. Supprime aussi les worktrees propres et poussés que des agents ont créés sans discussion, une fois leur pull request fusionnée ou fermée et après un jour d’inactivité.",
+  "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
+    "Supprimer les worktrees des discussions résolues ou archivées dont la branche n’a aucun commit au-delà de la branche par défaut.",
+  "What cleanup would remove":
+    "Ce que le nettoyage supprimerait",
+  "Chat worktrees and leftover downloads":
+    "Worktrees des discussions et restes de téléchargements",
+  "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
+    "Montre ce que le nettoyage supprimerait, ce qu’il garde, et pourquoi. La vérification interroge l’hôte Git pour chaque dossier terminé, elle ne s’exécute donc que lorsque vous appuyez sur Vérifier.",
+  "Check":
+    "Vérifier",
+  "Clean up now":
+    "Nettoyer maintenant",
+  "Cleaning up…":
+    "Nettoyage…",
+  "Would be removed":
+    "Serait supprimé",
+  "Kept":
+    "Conservé",
+  "At least {size} would be freed.":
+    "Au moins {size} seraient libérés.",
+  "Dependency folders are left out: their files are shared with the package store.":
+    "Les dossiers de dépendances ne sont pas comptés : leurs fichiers sont partagés avec le magasin de paquets.",
+  "Some sizes could not be measured.":
+    "Certaines tailles n’ont pas pu être mesurées.",
+  "Leftover files of stopped downloads":
+    "Restes de téléchargements interrompus",
+  "Nothing to remove right now.":
+    "Rien à supprimer pour l’instant.",
+  "Nothing was removed.":
+    "Rien n’a été supprimé.",
+  "Removed 1 folder, at least {size}.":
+    "1 dossier supprimé, au moins {size}.",
+  "Removed {count} folders, at least {size}.":
+    "{count} dossiers supprimés, au moins {size}.",
+  "Delete worktrees of resolved chats":
+    "Supprimer les worktrees des discussions résolues",
+  "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
+    "Supprime le worktree d’une discussion résolue ou archivée dès que tout y est commité et poussé. La branche reste, donc une discussion rouverte retrouve son dossier.",
+  "Its pull request merged.":
+    "Sa pull request a été fusionnée.",
+  "Its pull request closed and every commit is on the remote.":
+    "Sa pull request a été fermée et chaque commit est sur le dépôt distant.",
+  "Its chats are resolved and everything is pushed.":
+    "Ses discussions sont résolues et tout est poussé.",
+  "Its chat was deleted.":
+    "Sa discussion a été supprimée.",
+  "Its chats are resolved and it has been inactive.":
+    "Ses discussions sont résolues et il est inactif.",
+  "Its branch has no commits of its own.":
+    "Sa branche n’a aucun commit propre.",
+  "Leftover files of stopped downloads.":
+    "Restes de téléchargements interrompus.",
+  "A chat using it is running or waiting.":
+    "Une discussion qui l’utilise est en cours ou en attente.",
+  "A chat using it is still open.":
+    "Une discussion qui l’utilise est encore ouverte.",
+  "Its work finished less than 6 hours ago.":
+    "Son travail s’est terminé il y a moins de 6 heures.",
+  "It has uncommitted changes.":
+    "Il contient des modifications non commitées.",
+  "It has files Git does not track.":
+    "Il contient des fichiers que Git ne suit pas.",
+  "It has commits that are not pushed.":
+    "Il contient des commits non poussés.",
+  "A stash was made on its branch.":
+    "Un stash a été créé sur sa branche.",
+  "It has ignored files that cannot be rebuilt.":
+    "Il contient des fichiers ignorés qui ne peuvent pas être recréés.",
+  "It holds more media than is copied automatically.":
+    "Il contient plus de médias que ce qui est copié automatiquement.",
+  "A terminal, an agent or a process is working in it.":
+    "Un terminal, un agent ou un processus y travaille.",
+  "Its Git registration is broken. Check it by hand.":
+    "Son enregistrement Git est cassé. Vérifiez-le à la main.",
+  "Another repository or hidden changes sit inside it.":
+    "Il contient un autre dépôt ou des modifications cachées.",
+  "No cleanup rule that is on covers it.":
+    "Aucune règle de nettoyage active ne le couvre.",
+  "It could not be checked.":
+    "Il n’a pas pu être vérifié.",
 };

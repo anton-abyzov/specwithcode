@@ -191,6 +191,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalDataStatus]: AuthSettingsWriteScope,
   [WS_METHODS.personalDataSetAccess]: AuthSettingsWriteScope,
   [WS_METHODS.serverCleanOldAppVersions]: AuthSettingsWriteScope,
+  // The plan names local folders and costs a host lookup per finished folder;
+  // the run removes folders. Both are this machine's storage settings.
+  [WS_METHODS.serverGetStorageCleanupPlan]: AuthSettingsWriteScope,
+  [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   // Delivery logs hold request bodies, so they need the same scope as the URL.
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,

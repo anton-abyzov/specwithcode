@@ -276,6 +276,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.personalDataStatus]: "access",
   [WS_METHODS.personalDataSetAccess]: "access",
   [WS_METHODS.serverCleanOldAppVersions]: "server",
+  [WS_METHODS.serverGetStorageCleanupPlan]: "server",
+  [WS_METHODS.serverRunStorageCleanup]: "server",
   [WS_METHODS.cloudGetRelayClientStatus]: "cloud",
   [WS_METHODS.cloudInstallRelayClient]: "cloud",
   [WS_METHODS.pullRequestsList]: "pull-requests",

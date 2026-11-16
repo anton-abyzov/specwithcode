@@ -4,9 +4,11 @@ Threads work in folders under `~/.specwithcode/<id>/worktrees` (or the folder se
 
 ## The rule
 
-Never remove a folder that an open thread uses. An open thread is one that is not deleted, not archived and not resolved. The folder counts as used when the thread's recorded folder is that folder, sits inside it, or contains it.
+For people and scripts: never remove a folder that an open chat uses. An open chat is one that is not deleted, not archived and not resolved. The folder counts as used when the chat's recorded folder is that folder, sits inside it, or contains it. A sub-chat (a review, a worker's helper) records its parent's folder and follows its parent: while it has no run in progress or queued it counts as open exactly when its parent does, and while it runs it keeps the folder whatever its parent's state.
 
-This holds for every cleanup: by hand, from a script, or by the app. The app can put back a missing worktree when the thread resumes, but only from a branch it can still find in the project's own repository. A worktree of a nested or sibling repository, or one whose branch was deleted, cannot come back, and the thread stops with "Thread folder is missing".
+Leave finished folders to the app. It removes them with the checks below and keeps the branch, so a chat that resumes gets its folder back. A folder removed any other way can only come back from a branch the app can still find in the project's own repository. A worktree of a nested or sibling repository, or one whose branch was deleted, cannot come back, and the chat stops with "Thread folder is missing".
+
+**Never run `git worktree remove` on a repository folder inside a chat's folder.** A chat that works on several repositories records the outer folder (for example `worktrees/umbrella/1370-cleanup`), and the repositories sit inside it (`.../repositories/<owner>/<repo>`). No chat records the inner path, so a check by that path finds no owner. In November 2026 a job that ran every 30 minutes did exactly this to 11 folders that open chats were using. Git dropped each registration but left the files ("Directory not empty"). When Git later reused a registration name, five of those folders pointed at another chat's registration, so Git commands run there acted on another chat's branch. Check the outer folder with `worktree owners`, and let the app remove members.
 
 ## How to check
 
@@ -34,24 +36,41 @@ Without the CLI, the same data is in the thread projection:
 specweave-studio db query "SELECT thread_id, archived_at, deleted_at, json_extract(payload_json, '$.worktreePath') AS path, json_extract(payload_json, '$.settledOverride') AS settled FROM orchestration_v2_projection_threads WHERE json_extract(payload_json, '$.worktreePath') IS NOT NULL"
 ```
 
-A row with no `deleted_at`, no `archived_at` and `settled` other than `"settled"` is an open thread. Compare real paths (`realpath`), not spellings.
+A row with no `deleted_at`, no `archived_at` and `settled` other than `"settled"` is an open thread, with one exception the query cannot show: a sub-chat with no run in progress takes its parent's state (see the rule above). `worktree owners` applies that; prefer it. Compare real paths (`realpath`), not spellings.
 
 Never open `userdata/statev2.sqlite` yourself to answer this, not even read-only.
 
 ## What the app removes on its own
 
-**Settings → Storage → Worktrees** has four rules. **Delete merged worktrees** is on by default; the other three are off:
+**Settings → Storage → Worktrees** has five rules. **Delete merged worktrees** and **Delete worktrees of resolved chats** are on by default; the other three are off. A project whose **Automatic worktree cleanup** is Off keeps all its folders.
 
-- **Delete worktrees with deleted threads** removes a folder once its last thread is deleted and that thread's cleanup has finished.
-- **Delete inactive worktrees**, **Delete merged worktrees** and **Delete unchanged worktrees** remove the folders of resolved and archived threads. Folders of open threads are always kept, also when their pull request merged or they have been idle for a long time.
+- **Delete merged worktrees** removes a folder whose pull request merged (its commits are on the default branch) or closed with every commit pushed. When every chat using the folder is resolved or archived it goes at the next sweep. When a chat is still open, it goes once that chat has been quiet for 6 hours. A chat that is running or waiting always keeps it.
+- **Delete worktrees of resolved chats** removes a folder once every chat using it is resolved or archived and every repository in it is clean, with nothing unpushed. No merge is needed. This is a machine setting; a project cannot change it.
+- **Delete worktrees with deleted threads** removes a folder once its last chat is deleted and that chat's cleanup has finished.
+- **Delete inactive worktrees** and **Delete unchanged worktrees** remove the folders of resolved and archived chats after the days you set, or when the branch has no commits of its own.
 
-Every age these rules use fails closed: a time the app cannot read (an unreadable file, a missing or invalid timestamp) never counts as old, so the folder stays.
+A chat counts as quiet when its last run is completed, cancelled, interrupted or rolled back. A run that is waiting, queued, preparing, starting or running, a pending question, a background task or a queued message keeps the folder. Every age the rules use fails closed: a time the app cannot read never counts as old, so the folder stays.
 
-Before removing a folder the app also checks that no other thread shares it, no project lives in it, no agent session or terminal uses it, it has no local changes and no ignored files other than `node_modules`. It checks the open-thread rule again right before removal. It keeps the branch and the thread's recorded folder, so a reopened thread can get its checkout back from that branch.
+Before removing a folder the app checks, for every repository in it:
 
-Removing a worktree by hand from inside the app (deleting a thread and choosing to delete its worktree) refuses any folder that another thread still records, archived or not.
+- **The registration.** A worktree's `.git` file names a registration in its repository, and that registration's `gitdir` must point back at the same folder. If it does not, the folder is kept as "broken registration" and the app runs no Git command in it, because Git would act on whatever the registration now points to. To check one by hand, read the folder's `.git` file (`gitdir: <repo>/.git/worktrees/<name>`), then read `<repo>/.git/worktrees/<name>/gitdir`: it must name `<folder>/.git`. If it names another folder, or the registration is missing, the files in the folder are not tracked by the branch you expect. Copy what you need out of it, then remove the folder by hand.
+- **Nothing exists only here.** No uncommitted changes, no untracked files, no unpushed commits (unless the content is already on the default branch), no stash made on its branch, no commit only its reflog reaches, no hidden tracked changes (assume-unchanged or skip-worktree), and no nested repository that is not one of the chat's own repositories.
+- **Ignored files.** Rebuildable ones (`node_modules`, build caches) go with the folder. Ignored media (screenshots, recordings) up to 1 GiB per folder is copied to `<app folder>/evidence/removed-worktrees/<folder>-<time>/` and checked by size first. Any other ignored file, more media than that, or a failed copy keeps the folder; those files can be secrets or data.
+- **Nothing is working in it.** No chat using it is running, and no agent session, terminal or process has its working directory in it.
+
+All of these are read again right before removal, under the workspace lease. A folder with several repositories is removed member by member, deepest first, with plain `git worktree remove` (never `--force`). The branches and the folder's list of repositories stay, so a chat that resumes gets every repository back.
+
+Removing a worktree by hand from inside the app (deleting a chat and choosing to delete its worktree) refuses any folder that another chat still records, archived or not.
 
 Git can give up halfway through a removal, for example when a build is still writing into the folder: it forgets the worktree but leaves some files. The app then deletes what is left, so no folder stays behind that nothing points to.
+
+The sweep also removes leftover files of stopped downloads: `tmp_pack_*` and `tmp_obj_*` files older than six hours in `<app folder>/verify/*/.git`. A failed Git download or housekeeping run leaves one there each time, and nothing else removes them (see [heavy checks](heavy-checks.md)).
+
+A sweep runs every hour, and also when a chat is resolved or archived, when a pull request merges, and when the disk runs low. Requests that arrive together run as one sweep, and these extra sweeps run at most once every 2 minutes.
+
+### What would go, and why a folder stays
+
+**Settings → Storage → What cleanup would remove** shows the plan before anything goes. Press **Check**: it lists every chat folder and every set of leftover download files under **Would be removed** or **Kept**, each with the chat, its size and one sentence for the reason (for example "It has commits that are not pushed."). Nothing is checked until you press it, because the check asks the Git host about each finished folder. The total reads "at least": sizes leave out dependency folders, whose files are shared with the package store, so removing them returns far less than Finder shows. **Clean up now** runs one sweep with the same rules and shows what it removed. The list and the sweep share one decision, so the list shows what a sweep would do at that moment; a chat that starts work or a new commit after the check changes it.
 
 ## The scratch folder
 

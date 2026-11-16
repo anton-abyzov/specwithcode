@@ -501,12 +501,6 @@ export const pt: PhraseCatalog = {
     "Remover linhas de crédito de agentes reconhecidas das mensagens de merge e squash do GitHub, mantendo os coautores humanos. Inclui auto-merge. Exclui filas de merge, merges de pilhas e commits existentes.",
   "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.":
     "Remover worktrees sem uso quando threads ativas ou arquivadas forem excluídas. Worktrees com mudanças locais são mantidas.",
-  "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
-    "Remover worktrees depois que as threads delas ficarem inativas por esta quantidade de dias. As pastas de threads abertas são sempre mantidas. As branches e o histórico das threads são mantidos.",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "Remover worktrees cujo pull request foi mesclado e cujos commits estão na branch padrão, ou fechado sem mesclar com todos os commits enviados. Também remove worktrees limpas e enviadas que agentes criaram sem uma thread, quando o pull request delas é mesclado ou fechado e elas ficam um dia ociosas. As pastas de threads abertas são sempre mantidas.",
-  "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
-    "Remover worktrees sem commits além da branch padrão. As pastas de threads abertas são sempre mantidas.",
   Rename: "Renomear",
   "Require a second click on the inline archive action before a thread is archived.":
     "Exigir um segundo clique na ação de arquivar da linha antes de arquivar uma thread.",
@@ -5181,4 +5175,88 @@ export const pt: PhraseCatalog = {
     "Configurar esta máquina para iniciar trabalho em {there}",
   "Change what this machine may do on {there}":
     "Alterar o que esta máquina pode fazer em {there}",
+  "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
+    "Excluir worktrees cujos chats estão resolvidos ou arquivados e inativos por esta quantidade de dias. Branches e o histórico do chat são mantidos.",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
+    "Excluir worktrees cujo pull request foi mesclado e cujos commits estão na branch padrão, ou fechado sem mesclar com todos os commits enviados. Um chat ainda aberto perde a pasta após 6 horas sem atividade; um chat em execução ou aguardando sempre a mantém. A branch fica, então um chat reaberto recebe a pasta de volta. Também exclui worktrees limpas e enviadas que agentes criaram sem um chat quando o pull request é mesclado ou fechado e elas ficam um dia ociosas.",
+  "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
+    "Excluir worktrees de chats resolvidos ou arquivados cuja branch não tem commits além da branch padrão.",
+  "What cleanup would remove":
+    "O que a limpeza removeria",
+  "Chat worktrees and leftover downloads":
+    "Worktrees de chats e sobras de downloads",
+  "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
+    "Mostra o que a limpeza removeria, o que mantém e por quê. A verificação consulta o host Git sobre cada pasta concluída, então só roda quando você clica em Verificar.",
+  "Check":
+    "Verificar",
+  "Clean up now":
+    "Limpar agora",
+  "Cleaning up…":
+    "Limpando…",
+  "Would be removed":
+    "Seria removido",
+  "Kept":
+    "Mantido",
+  "At least {size} would be freed.":
+    "Pelo menos {size} seriam liberados.",
+  "Dependency folders are left out: their files are shared with the package store.":
+    "Pastas de dependências ficam de fora: os arquivos delas são compartilhados com o armazenamento de pacotes.",
+  "Some sizes could not be measured.":
+    "Alguns tamanhos não puderam ser medidos.",
+  "Leftover files of stopped downloads":
+    "Sobras de downloads interrompidos",
+  "Nothing to remove right now.":
+    "Nada para remover agora.",
+  "Nothing was removed.":
+    "Nada foi removido.",
+  "Removed 1 folder, at least {size}.":
+    "1 pasta removida, pelo menos {size}.",
+  "Removed {count} folders, at least {size}.":
+    "{count} pastas removidas, pelo menos {size}.",
+  "Delete worktrees of resolved chats":
+    "Excluir worktrees de chats resolvidos",
+  "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
+    "Remove a worktree de um chat resolvido ou arquivado quando tudo nela estiver commitado e enviado. A branch fica, então um chat reaberto recebe a pasta de volta.",
+  "Its pull request merged.":
+    "O pull request foi mesclado.",
+  "Its pull request closed and every commit is on the remote.":
+    "O pull request foi fechado e todos os commits estão no remoto.",
+  "Its chats are resolved and everything is pushed.":
+    "Os chats estão resolvidos e tudo foi enviado.",
+  "Its chat was deleted.":
+    "O chat foi excluído.",
+  "Its chats are resolved and it has been inactive.":
+    "Os chats estão resolvidos e ficou inativa.",
+  "Its branch has no commits of its own.":
+    "A branch não tem commits próprios.",
+  "Leftover files of stopped downloads.":
+    "Sobras de downloads interrompidos.",
+  "A chat using it is running or waiting.":
+    "Um chat que a usa está em execução ou aguardando.",
+  "A chat using it is still open.":
+    "Um chat que a usa ainda está aberto.",
+  "Its work finished less than 6 hours ago.":
+    "O trabalho terminou há menos de 6 horas.",
+  "It has uncommitted changes.":
+    "Tem alterações sem commit.",
+  "It has files Git does not track.":
+    "Tem arquivos que o Git não rastreia.",
+  "It has commits that are not pushed.":
+    "Tem commits que não foram enviados.",
+  "A stash was made on its branch.":
+    "Um stash foi feito na branch.",
+  "It has ignored files that cannot be rebuilt.":
+    "Tem arquivos ignorados que não podem ser recriados.",
+  "It holds more media than is copied automatically.":
+    "Contém mais mídia do que é copiado automaticamente.",
+  "A terminal, an agent or a process is working in it.":
+    "Um terminal, um agente ou um processo está trabalhando nela.",
+  "Its Git registration is broken. Check it by hand.":
+    "O registro do Git está quebrado. Verifique manualmente.",
+  "Another repository or hidden changes sit inside it.":
+    "Há outro repositório ou alterações ocultas dentro dela.",
+  "No cleanup rule that is on covers it.":
+    "Nenhuma regra de limpeza ativada se aplica a ela.",
+  "It could not be checked.":
+    "Não foi possível verificar.",
 };

@@ -58,6 +58,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { TeamRulesSummary } from "./teamRules.ts";
+import { StorageCleanupPlan, StorageCleanupRunResult } from "./storageCleanupPlan.ts";
 import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   CodexAuthCallbackInput,
@@ -649,6 +650,8 @@ export const WS_METHODS = {
   personalDataStatus: "personalData.status",
   personalDataSetAccess: "personalData.setAccess",
   serverCleanOldAppVersions: "server.cleanOldAppVersions",
+  serverGetStorageCleanupPlan: "server.getStorageCleanupPlan",
+  serverRunStorageCleanup: "server.runStorageCleanup",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
@@ -2094,6 +2097,20 @@ const WsServerCleanOldAppVersionsRpc = Rpc.make(WS_METHODS.serverCleanOldAppVers
   error: EnvironmentAuthorizationError,
 });
 
+/** What the storage cleanup would remove and keep right now, and why. Removes nothing. */
+const WsServerGetStorageCleanupPlanRpc = Rpc.make(WS_METHODS.serverGetStorageCleanupPlan, {
+  payload: Schema.Struct({}),
+  success: StorageCleanupPlan,
+  error: EnvironmentAuthorizationError,
+});
+
+/** Runs one storage cleanup sweep now ("Clean up now") and returns what it removed. */
+const WsServerRunStorageCleanupRpc = Rpc.make(WS_METHODS.serverRunStorageCleanup, {
+  payload: Schema.Struct({}),
+  success: StorageCleanupRunResult,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsScheduledTasksListWebhookDeliveriesRpc = Rpc.make(
   WS_METHODS.scheduledTasksListWebhookDeliveries,
   {
@@ -2498,6 +2515,12 @@ export const WsAppVersionsRpcGroup = RpcGroup.make(WsServerCleanOldAppVersionsRp
   RpcScopeAuthorization,
 );
 
+/** The storage cleanup plan and "Clean up now"; its own group for the same depth reason. */
+export const WsStorageCleanupRpcGroup = RpcGroup.make(
+  WsServerGetStorageCleanupPlanRpc,
+  WsServerRunStorageCleanupRpc,
+).middleware(RpcScopeAuthorization);
+
 export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsNativeConnectionsRpcGroup)
   .merge(WsStatusPageRpcGroup)
@@ -2525,4 +2548,5 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsDesignRpcGroup)
   .merge(WsDesignSystemImportRpcGroup)
   .merge(WsPersonalDataRpcGroup)
-  .merge(WsAppVersionsRpcGroup);
+  .merge(WsAppVersionsRpcGroup)
+  .merge(WsStorageCleanupRpcGroup);

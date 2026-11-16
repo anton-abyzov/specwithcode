@@ -483,12 +483,6 @@ export const zh: PhraseCatalog = {
     "从 GitHub 的合并和压缩提交信息中移除可识别的智能体署名行，保留人类共同作者。包括自动合并。不包括合并队列、堆叠合并和已有提交。",
   "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.":
     "删除活跃或已归档的会话时，移除未使用的工作树。有本地更改的工作树会保留。",
-  "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
-    "会话不活跃达这么多天后移除其工作树。打开中会话的文件夹始终保留。分支和会话历史会保留。",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "移除拉取请求已合并且提交已包含在默认分支中，或未合并即关闭且所有提交均已推送的工作树。也会移除智能体在没有会话的情况下创建的、干净且已推送的工作树，前提是其拉取请求已合并或关闭且已闲置一天。打开中会话的文件夹始终保留。",
-  "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
-    "移除相对默认分支没有新提交的工作树。打开中会话的文件夹始终保留。",
   Rename: "重命名",
   "Require a second click on the inline archive action before a thread is archived.":
     "在归档会话前，需要再次点击行内归档按钮确认。",
@@ -4977,4 +4971,88 @@ export const zh: PhraseCatalog = {
     "设置本机在 {there} 上开始工作",
   "Change what this machine may do on {there}":
     "更改本机在 {there} 上可以做的事",
+  "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
+    "删除其聊天已解决或已归档且已闲置这么多天的工作树。分支和聊天记录会保留。",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
+    "删除拉取请求已合并且提交已包含在默认分支中，或未合并即关闭且所有提交都已推送的工作树。仍打开的聊天在 6 小时无活动后会失去其文件夹；正在运行或等待的聊天始终保留。分支会保留，因此重新打开的聊天会找回其文件夹。也会删除代理在没有聊天时创建的、干净且已推送的工作树，前提是其拉取请求已合并或关闭且已闲置一天。",
+  "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
+    "删除已解决或已归档聊天中分支没有超出默认分支的提交的工作树。",
+  "What cleanup would remove":
+    "清理会删除的内容",
+  "Chat worktrees and leftover downloads":
+    "聊天工作树和下载残留",
+  "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
+    "显示清理会删除什么、保留什么以及原因。检查会就每个已完成的文件夹询问 Git 托管服务，因此只在你点按“检查”时运行。",
+  "Check":
+    "检查",
+  "Clean up now":
+    "立即清理",
+  "Cleaning up…":
+    "正在清理…",
+  "Would be removed":
+    "将被删除",
+  "Kept":
+    "保留",
+  "At least {size} would be freed.":
+    "至少会释放 {size}。",
+  "Dependency folders are left out: their files are shared with the package store.":
+    "不计入依赖文件夹：其文件与包存储共享。",
+  "Some sizes could not be measured.":
+    "部分大小无法测量。",
+  "Leftover files of stopped downloads":
+    "中断下载的残留文件",
+  "Nothing to remove right now.":
+    "目前没有可删除的内容。",
+  "Nothing was removed.":
+    "没有删除任何内容。",
+  "Removed 1 folder, at least {size}.":
+    "已删除 1 个文件夹，至少 {size}。",
+  "Removed {count} folders, at least {size}.":
+    "已删除 {count} 个文件夹，至少 {size}。",
+  "Delete worktrees of resolved chats":
+    "删除已解决聊天的工作树",
+  "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
+    "当已解决或已归档聊天的工作树中的所有内容都已提交并推送后，将其删除。分支会保留，因此重新打开的聊天会找回其文件夹。",
+  "Its pull request merged.":
+    "其拉取请求已合并。",
+  "Its pull request closed and every commit is on the remote.":
+    "其拉取请求已关闭，且所有提交都在远程。",
+  "Its chats are resolved and everything is pushed.":
+    "其聊天已解决，所有内容都已推送。",
+  "Its chat was deleted.":
+    "其聊天已删除。",
+  "Its chats are resolved and it has been inactive.":
+    "其聊天已解决，且已闲置。",
+  "Its branch has no commits of its own.":
+    "其分支没有自己的提交。",
+  "Leftover files of stopped downloads.":
+    "中断下载的残留文件。",
+  "A chat using it is running or waiting.":
+    "使用它的聊天正在运行或等待。",
+  "A chat using it is still open.":
+    "使用它的聊天仍处于打开状态。",
+  "Its work finished less than 6 hours ago.":
+    "其工作在不到 6 小时前结束。",
+  "It has uncommitted changes.":
+    "有未提交的更改。",
+  "It has files Git does not track.":
+    "有 Git 未跟踪的文件。",
+  "It has commits that are not pushed.":
+    "有尚未推送的提交。",
+  "A stash was made on its branch.":
+    "其分支上有 stash。",
+  "It has ignored files that cannot be rebuilt.":
+    "有无法重新生成的被忽略文件。",
+  "It holds more media than is copied automatically.":
+    "其中的媒体超过了自动复制的上限。",
+  "A terminal, an agent or a process is working in it.":
+    "有终端、代理或进程正在其中工作。",
+  "Its Git registration is broken. Check it by hand.":
+    "其 Git 注册已损坏。请手动检查。",
+  "Another repository or hidden changes sit inside it.":
+    "其中有另一个仓库或隐藏的更改。",
+  "No cleanup rule that is on covers it.":
+    "没有已开启的清理规则适用于它。",
+  "It could not be checked.":
+    "无法检查。",
 };
