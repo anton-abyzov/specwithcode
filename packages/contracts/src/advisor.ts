@@ -129,9 +129,9 @@ export const AdvisorRefusalReason = Schema.Literals([
 export type AdvisorRefusalReason = typeof AdvisorRefusalReason.Type;
 
 export const AdvisorConsultResult = Schema.Struct({
-  status: Schema.Literals(["advice", "working", "refused"]).annotate({
+  status: Schema.Literals(["advice", "working", "refused", "failed"]).annotate({
     description:
-      "advice: the advisor answered, read `advice`. working: the advisor is still thinking; keep going with work that does not depend on it, the advice arrives as a message to this thread. refused: nothing was started, `message` says why.",
+      "advice: the advisor answered, read `advice`. working: the advisor is still thinking; finish what does not depend on it and end your turn, the advice arrives as the next message, or call advisor again to pick it up. refused: nothing was started, `message` says why. failed: the advisor started but gave no advice; carry on without it.",
   }),
   message: Schema.String.annotate({
     description: "One sentence on what happened, safe to repeat to the user.",

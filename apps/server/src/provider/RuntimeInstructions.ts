@@ -258,8 +258,16 @@ export function buildRuntimeInstructions(runtime: {
    * receives them through its own system-prompt append, so it leaves this out.
    */
   readonly agentInstructions?: string | undefined;
+  /**
+   * When to consult the advisor (`runtimePolicy.advisorGuidance`). Pass it
+   * only for a thread that has the studio-code tools; absent adds nothing.
+   */
+  readonly advisorGuidance?: string | undefined;
 }): string {
   const agentInstructions = runtime.agentInstructions?.trim() ?? "";
+  const advisorGuidance = runtime.advisorGuidance?.trim() ?? "";
+  const advisorBlock =
+    advisorGuidance.length === 0 ? "" : `\n\n<advisor>\n${advisorGuidance}\n</advisor>`;
   const harness = toSingleLine(runtime.harness);
   const model = toSingleLine(runtime.model ?? "");
   const modelName = toSingleLine(runtime.modelName ?? "");
@@ -272,7 +280,7 @@ export function buildRuntimeInstructions(runtime: {
     agentInstructions.length === 0
       ? ""
       : `<agent_instructions>\n${agentInstructions}\n</agent_instructions>\n\n`;
-  return `${agentBlock}<runtime_info>You are running in SpecWithCode through the ${harness} harness${modelInfo}${effortInfo}; mention it only if asked. ${STUDIO_MEDIA_INSTRUCTIONS}</runtime_info>\n\n${responseStyleInstructions(runtime.responseStyle)}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}\n\n${STUDIO_HEADLESS_INSTRUCTIONS}\n\n${STUDIO_HEAVY_CHECKS_INSTRUCTIONS}`;
+  return `${agentBlock}<runtime_info>You are running in SpecWithCode through the ${harness} harness${modelInfo}${effortInfo}; mention it only if asked. ${STUDIO_MEDIA_INSTRUCTIONS}</runtime_info>\n\n${responseStyleInstructions(runtime.responseStyle)}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}\n\n${STUDIO_HEADLESS_INSTRUCTIONS}\n\n${STUDIO_HEAVY_CHECKS_INSTRUCTIONS}${advisorBlock}`;
 }
 
 function toSingleLine(value: string): string {
