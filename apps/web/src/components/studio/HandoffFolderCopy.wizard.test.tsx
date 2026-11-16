@@ -345,7 +345,7 @@ it("cancels the copy from Review's Change setup, and opens the form with the sam
   });
 });
 
-it("offers no Change once the copy is done, and starts a new copy from the menu", async () => {
+it("offers no Change once the copy is done, and Copy changes again leads to the form", async () => {
   measuredWithoutSecrets();
   const rows = [newRow(".")];
   statuses = [copyStatus("previewed", { rows }), copyStatus("applied", { rows })];
@@ -354,9 +354,12 @@ it("offers no Change once the copy is done, and starts a new copy from the menu"
   expect(stepState().at(-1)).toBe("Done:current");
   expect(changeLink()).toBeNull();
   await openMore();
-  expect(moreItems()).toEqual(["Copy again", "Start a new copy"]);
+  // A finished copy offers the form as a visible second choice, never as the main button.
+  expect(moreItems()).toEqual(["Copy again"]);
+  expect(() => button("Copy to M3")).toThrow();
+  expect(button("Copy changes again").getAttribute("data-variant")).not.toBe("default");
   const calls = state.calls.length;
-  await click("Start a new copy");
+  await click("Copy changes again");
   expect(stageNow()).toBe("setup");
   expect(pointerNow()).toBeNull();
   expect(folderInput().value).toBe("/Users/me/Projects/project");
@@ -500,12 +503,21 @@ it("says a copy finished while closed, then keeps it as the last copy with View 
   expect(state.link).toHaveBeenCalledOnce();
   expect(pointerNow()).toMatchObject({ seen: "done", doneSeen: true, linked: true });
 
-  // Done was seen: the next reopen starts a new copy and keeps this one one click away.
+  // Done was seen: the next plain reopen still shows the finished copy, not a form that
+  // reads as "copy it again".
   await reopen();
   await settle();
+  expect(stageNow()).toBe("done");
+  expect(noteText()).toBeNull();
+  expect(folderInput()).toBeNull();
+  expect(() => button("Copy to M3")).toThrow();
+  expect(button("Open on M3")).toBeTruthy();
+  expect(button("Undo…")).toBeTruthy();
+  expect(state.link).toHaveBeenCalledOnce();
+  // The form is one click away, and keeps this copy as the last copy.
+  await click("Copy changes again");
   expect(stageNow()).toBe("setup");
   expect(pointerNow()).toBeNull();
-  expect(names()).not.toContain("copyStatus");
   expect(document.querySelector('[data-slot="copy-last"]')?.textContent).toBe(
     "The last copy to /home/anton/Projects/project on M3 finished. View it to undo it.View",
   );
@@ -660,8 +672,7 @@ it("keeps a finished copy as the last copy when a new one starts from Done", asy
   await mount();
   await click("Copy to M3");
   expect(stageNow()).toBe("done");
-  await openMore();
-  await click("Start a new copy");
+  await click("Copy changes again");
   expect(pointerNow()).toBeNull();
   expect(JSON.parse(localStorage.getItem(LAST_KEY)!)).toMatchObject({
     targetFolder: "/home/anton/Projects/project",
@@ -698,9 +709,14 @@ it("keeps the move and machine the dialog was opened with over the last copy-onl
     finishedAt: "2026-10-19T20:00:00.000Z",
   };
   localStorage.setItem(LAST_KEY, JSON.stringify(last));
-  // Opened plainly, the form starts from the last copy: copy only, to M3.
+  // Opened plainly, the last copy shows as done; the form starts from it one click later.
+  state.handlers.copyStatus = () => copyStatus("applied");
   await mount();
+  await settle();
+  expect(stageNow()).toBe("done");
+  await click("Copy changes again");
   expect(button("Copy to M3").disabled).toBe(false);
+  expect(folderInput().value).toBe("/home/anton/last");
   await act(async () => root.unmount());
   root = createRoot(container);
   localStorage.setItem(LAST_KEY, JSON.stringify(last));
@@ -727,8 +743,7 @@ it("lets the last copy go back to being the last copy when its destination is of
   statuses = [copyStatus("previewed", { rows }), copyStatus("applied", { rows })];
   await mount();
   await click("Copy to M3");
-  await openMore();
-  await click("Start a new copy");
+  await click("Copy changes again");
   expect(localStorage.getItem(LAST_KEY)).not.toBeNull();
   state.handlers.copyStatus = () => {
     throw Object.assign(new Error("M3 is offline."), {
@@ -738,7 +753,7 @@ it("lets the last copy go back to being the last copy when its destination is of
   };
   await click("View");
   expect(checkingText()).toBe(
-    "A copy to /home/anton/Projects/project on M3 is unfinished. Check it again once M3 is reachable.",
+    "The copy to /home/anton/Projects/project on M3 finished. M3 is not reachable now. Check again to view or undo it.",
   );
   expect(pointerNow()).toMatchObject({ reopened: true });
   await click("Start a new copy");
@@ -748,6 +763,32 @@ it("lets the last copy go back to being the last copy when its destination is of
   expect(JSON.parse(localStorage.getItem(LAST_KEY)!)).not.toHaveProperty("reopened");
   expect(document.querySelector('[data-slot="copy-last"]')).not.toBeNull();
   expect(button("Copy to M3").disabled).toBe(false);
+});
+
+it("shows a finished copy as finished on a plain reopen while its machine is offline", async () => {
+  measuredWithoutSecrets();
+  const rows = [newRow(".")];
+  statuses = [copyStatus("previewed", { rows }), copyStatus("applied", { rows })];
+  await mount();
+  await click("Copy to M3");
+  expect(pointerNow()).toMatchObject({ doneSeen: true });
+  state.handlers.copyStatus = () => {
+    throw Object.assign(new Error("M3 is offline."), {
+      _tag: "FolderCopyError",
+      code: "unreachable",
+    });
+  };
+  await reopen();
+  await settle();
+  expect(checkingText()).toBe(
+    "The copy to /home/anton/Projects/project on M3 finished. M3 is not reachable now. Check again to view or undo it.",
+  );
+  expect(() => button("Copy to M3")).toThrow();
+  // It never traps the person: a new copy is still one click away, and this one is kept.
+  await click("Start a new copy");
+  expect(stageNow()).toBe("setup");
+  expect(pointerNow()).toBeNull();
+  expect(localStorage.getItem(LAST_KEY)).not.toBeNull();
 });
 
 it("offers only Check again for an unfinished copy whose destination is offline", async () => {

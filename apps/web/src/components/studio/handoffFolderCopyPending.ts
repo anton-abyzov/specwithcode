@@ -257,6 +257,21 @@ export function readoptLastCopy(input: {
   return pointer;
 }
 
+/**
+ * A finished copy shown again on a plain open. Marked like a viewed last copy, so it can be
+ * put aside for a new copy even while its machine cannot be reached.
+ */
+export function reshowFinishedCopy(key: string, pointer: PendingCopy): PendingCopy {
+  if (pointer.reopened === true) return pointer;
+  const shown: PendingCopy = { ...pointer, reopened: true };
+  try {
+    localStorage.setItem(key, JSON.stringify(shown));
+  } catch {
+    /* Resuming still works for this window. */
+  }
+  return shown;
+}
+
 /** The setup choices while no copy has started, so closing the dialog on Where loses nothing. */
 /** Whether secret files travel, and the ones the person unticked. */
 export interface SecretsChoice {

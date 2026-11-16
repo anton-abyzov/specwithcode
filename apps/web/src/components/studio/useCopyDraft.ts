@@ -9,6 +9,7 @@ import {
   readLastCopy,
   readoptLastCopy,
   readPendingCopy,
+  reshowFinishedCopy,
   writeCopyDraft,
   type CopyDraft,
   type LastCopy,
@@ -100,7 +101,9 @@ export function useCopyDraft({
         finishedAt: new Date().toISOString(),
       }) !== null;
     if (saved && !archived) {
-      onResume(saved);
+      onResume(
+        showFinished && saved.doneSeen === true ? reshowFinishedCopy(pendingKey, saved) : saved,
+      );
       return;
     }
     // The same for a copy already put aside, unless the person has started a new form.

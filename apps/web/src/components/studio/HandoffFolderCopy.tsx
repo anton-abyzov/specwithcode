@@ -1293,6 +1293,7 @@ export function HandoffFolderCopy({
           folder={pending?.targetFolder ?? folder}
           targetLabel={targetLabel}
           error={error}
+          finished={pending?.reopened === true}
           onCheckAgain={() => pending && resume(pending)}
           onStartNew={
             pending?.reopened

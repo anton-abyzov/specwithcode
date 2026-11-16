@@ -343,6 +343,22 @@ it("clones, stores the follow-up job and hands the new project to the menu", asy
   expect(onAdded).toHaveBeenCalledWith({ environmentId: "mini", projectId: "project-new" });
 });
 
+it("does not start the clone before the secret scan answers", async () => {
+  const offered = state.handlers.copyOffer!;
+  let answer: () => void = () => {};
+  state.handlers.copyOffer = (request) =>
+    new Promise((resolve) => {
+      answer = () => resolve(offered(request));
+    });
+  await render();
+  // Started now, the clone would carry none of the secret files the scan is about to list.
+  expect(button("Clone to Mini")!.disabled).toBe(true);
+  await act(async () => answer());
+  await settle();
+  expect(text()).toContain("Secrets (.env, keys): 1 file, included");
+  expect(button("Clone to Mini")!.disabled).toBe(false);
+});
+
 it("carries no secrets once the line is unticked, and ignored files when asked", async () => {
   await render();
   await act(async () => includeSecrets()!.click());

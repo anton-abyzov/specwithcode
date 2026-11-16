@@ -163,6 +163,8 @@ const pointer = (extra: Record<string, unknown> = {}) =>
       mode: "copy-only",
       targetFolder: "/target",
       projectId: null,
+      // What the dialog saves with every copy; an older version's pointer had no choice.
+      secrets: { included: false, out: [] },
       ...extra,
     }),
   );
@@ -502,11 +504,117 @@ it("approves a one-click copy with secret-like files and keeps watching an appro
   }
 });
 
-it("keeps secrets on the source for a one-click copy saved before the choice existed", async () => {
+// The secret files a real copy detected and left behind (an umbrella with nested repositories).
+const REAL_RUN = [
+  ".env",
+  ".env.bak-20260715",
+  ".env.cloudflare",
+  "repositories/anton-abyzov/specwithcode/.env",
+  "repositories/anton-abyzov/vskill-platform/.dev.vars",
+  "repositories/anton-abyzov/vskill-platform/.env",
+  "repositories/anton-abyzov/vskill-platform/.env.local",
+  "repositories/anton-abyzov/vskill-platform/crawl-worker/.env",
+  "repositories/anton-abyzov/vskill-platform/scanner-worker/.env",
+  "scripts/.cf-monitor.env",
+];
+const detected = (paths: ReadonlyArray<string>) => ({
+  state: "ready",
+  summary: { ...summary, secretFiles: paths.map((path) => ({ path, size: 1 })) },
+  progress: null,
+  error: null,
+});
+/** Records what the watcher sends to the source and how it approves. */
+const recordSecrets = () => {
+  const seen = { sent: [] as string[][], approvals: [] as unknown[] };
+  state.handlers.copySecrets = (request) => {
+    expect(seen.approvals).toEqual([]);
+    seen.sent.push((request as { input: { paths: string[] } }).input.paths);
+    return { state: "ready" };
+  };
+  state.handlers.copyApprove = (request) => {
+    seen.approvals.push((request as { input: unknown }).input);
+    return copyStatus("approved");
+  };
+  return seen;
+};
+
+it.each([
+  { how: "a one-click copy", saved: { auto: true } },
+  { how: "a Replace all left running", saved: { replaceAll: true } },
+])(
+  "with the dialog closed, sends every detected secret file of $how and approves with all of them",
+  async ({ saved }) => {
+    vi.useFakeTimers();
+    try {
+      state.sourceAccess = "granted";
+      // The default choice: Secrets included, nothing unticked.
+      pointer({ ...saved, secrets: { included: true, out: [] } });
+      state.handlers.copyStatus = () =>
+        previewed([
+          saved.replaceAll
+            ? row({ status: "diverged", choices: ["take-theirs"], decision: "take-theirs" })
+            : row(),
+        ]);
+      state.handlers.copySourceStatus = () => detected(REAL_RUN);
+      const seen = recordSecrets();
+      await renderWatcher();
+      await act(async () => vi.advanceTimersByTimeAsync(2000));
+      expect(seen.sent).toEqual([REAL_RUN]);
+      // The destination finishes only once every one of them is in place.
+      expect(seen.approvals).toEqual([
+        { operationId: "00000000-0000-4000-8000-000000000009", expectedSecrets: REAL_RUN },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each([
+  { takes: true as const, does: "sends a secret file under ~/ when that machine takes them" },
+  { takes: false as const, does: "leaves a secret file under ~/ when that machine cannot take it" },
+  { takes: null, does: "waits for the person while it is unknown whether ~/ files can go" },
+])("with the dialog closed, $does", async ({ takes }) => {
   vi.useFakeTimers();
   try {
-    // Saved by an older version, which left secrets out unless the person ticked them.
-    pointer({ auto: true });
+    state.sourceAccess = "granted";
+    pointer({ auto: true, secrets: { included: true, out: [] } });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => detected([".env", "~/.npmrc"]);
+    const seen = recordSecrets();
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          projectName="Project"
+          machineLabel={() => "M3"}
+          homeSecrets={() => takes}
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    if (takes === null) {
+      // Never approved on a guess that would leave the file behind unseen.
+      expect(seen.sent).toEqual([]);
+      expect(seen.approvals).toEqual([]);
+      expect(state.toasts).toMatchObject([{ title: "Copy to M3 is ready to review." }]);
+      return;
+    }
+    const sent = takes ? [".env", "~/.npmrc"] : [".env"];
+    expect(seen.sent).toEqual([sent]);
+    expect(seen.approvals).toMatchObject([{ expectedSecrets: sent }]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("stops at the review for a one-click copy saved before the secrets choice existed", async () => {
+  vi.useFakeTimers();
+  try {
+    // Saved by an older version: nothing says whether the person wanted the secrets, so
+    // the copy is not approved without them unseen.
+    pointer({ auto: true, secrets: undefined });
     state.handlers.copyStatus = () => previewed([row()]);
     state.handlers.copySourceStatus = () => ({
       state: "ready",
@@ -526,8 +634,9 @@ it("keeps secrets on the source for a one-click copy saved before the choice exi
     };
     await renderWatcher();
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(sent).toEqual([[]]);
-    expect(approvals).toBe(1);
+    expect(sent).toEqual([]);
+    expect(approvals).toBe(0);
+    expect(state.toasts).toMatchObject([{ title: "Copy to M3 is ready to review." }]);
   } finally {
     vi.useRealTimers();
   }
@@ -725,11 +834,12 @@ it.each([
     await renderWatcher();
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     // A blocked window takes them off first: an older destination ignores withoutSecrets.
-    expect(sent).toEqual(access === "denied" ? [[]] : []);
+    // A permitted one sends the choice again, so the approval can name every file.
+    expect(sent).toEqual(access === "denied" ? [[]] : [[".env"]]);
     expect(inputs[0]).toEqual(
       access === "denied"
         ? { operationId: expect.any(String), withoutSecrets: true }
-        : { operationId: expect.any(String) },
+        : { operationId: expect.any(String), expectedSecrets: [".env"] },
     );
   } finally {
     vi.useRealTimers();
