@@ -36,6 +36,7 @@ import { stageForStatus } from "./handoffCopySteps";
 import {
   approveInput,
   secretsBlockedNow,
+  secretsSenderNow,
   withdrawStagedSecrets,
   withoutSecrets,
 } from "./useSecretsGate";
@@ -48,6 +49,7 @@ import {
   replacingCount,
   secretsLeft,
   secretsLeftText,
+  type SecretsSender,
   undecidedCloneRows,
 } from "./handoffCopyAuto";
 import { copyProblem, groupCopyNotices, skippedWorktreeParts } from "./handoffCopyNotices";
@@ -55,6 +57,8 @@ import { copyProblem, groupCopyNotices, skippedWorktreeParts } from "./handoffCo
 const WATCH_MS = 2000;
 /** A one-click copy that cannot start after this many tries stops and says so. */
 const START_ATTEMPTS = 3;
+/** Checks a restored copy still to be linked waits for its machine to connect: one minute. */
+const RESTORED_LINK_WAITS = 30;
 /** The toast's way back: the project's Move dialog resumes the copy. */
 const reopenText = (projectName: string | undefined) =>
   `Open Move ${projectName?.trim() || "project"}`;
@@ -78,7 +82,7 @@ function leftBehind(
   status: FolderCopyStatus,
   summary: FolderCopySourceSummary | null,
   sourceLabel: string,
-  canSendSecrets: boolean,
+  sender: SecretsSender,
 ): string | null {
   if (!summary) return null;
   const worktrees = skippedWorktreeParts(
@@ -92,7 +96,7 @@ function leftBehind(
   const secrets = secretsLeftText(
     secretsLeft(summary.secretFiles, status.secrets),
     sourceLabel,
-    canSendSecrets,
+    sender,
   );
   const parts = [worktrees.length > 0 ? `${worktrees.join("; ")}.` : null, secrets].filter(
     (part): part is string => part !== null,
@@ -139,7 +143,7 @@ export function announceCopy(
   sourceLabel: string,
   openDialog: (() => void) | null,
   /** False in a window that may not send the source's secrets: the text says where to. */
-  canSendSecrets = true,
+  sender: SecretsSender = "here",
 ) {
   const reopen = (what: string) => (openDialog ? `Open it to ${what}.` : `${REOPEN} to ${what}.`);
   if (status.state === "previewed") {
@@ -171,7 +175,7 @@ export function announceCopy(
       openDialog,
     );
   } else if (status.state === "applied") {
-    const left = leftBehind(status, summary, sourceLabel, canSendSecrets);
+    const left = leftBehind(status, summary, sourceLabel, sender);
     addWithOpen(
       {
         type: "success",
@@ -341,6 +345,7 @@ export function HandoffFolderCopyWatcher({
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let startFailures = 0;
+    let linkWaits = 0;
     const operationId = readPendingCopy(key)!.operationId;
 
     /** Starts comparing a one-click copy the source has measured. */
@@ -539,7 +544,9 @@ export function HandoffFolderCopyWatcher({
      */
     const linkDone = async (done: FolderCopyStatus) => {
       const saved = readPendingCopy(key);
-      if (saved?.operationId !== operationId || saved.mode !== "copy-only" || saved.linked) return;
+      // A dialog that took the copy back links it itself.
+      if (stopped || saved?.operationId !== operationId) return;
+      if (saved.mode !== "copy-only" || saved.linked) return;
       if (stageForStatus(done) !== "done" || !done.projectId) return;
       try {
         const outcome = await linkCopyAsWorkers(latest.current.links, {
@@ -632,7 +639,8 @@ export function HandoffFolderCopyWatcher({
             });
           }
           // A copy that finished while the app was closed is linked without being announced.
-          await linkDone(destination.value);
+          // The link runs on by itself: the watch ends here either way.
+          void linkDone(destination.value);
           return false;
         }
         if (
@@ -655,7 +663,7 @@ export function HandoffFolderCopyWatcher({
           summary,
           sourceLabel,
           open ? () => open() : null,
-          !secretsBlockedNow(environmentId),
+          secretsSenderNow(environmentId),
         );
         if (destination.value.state === "previewed" && activity)
           notifyCopyReview({
@@ -666,11 +674,20 @@ export function HandoffFolderCopyWatcher({
             coordinatorThreadId: `project-coordinator:${projectId}`,
             onOpen: () => openCopyReview(activityKey),
           });
-        await linkDone(destination.value);
+        void linkDone(destination.value);
         return false;
       }
       // An unreachable destination may come back; keep watching, unless only restored.
-      if (!isFolderCopyNotFound(squashAtomCommandFailure(destination))) return !firstCheck;
+      if (!isFolderCopyNotFound(squashAtomCommandFailure(destination))) {
+        // After a restart machines connect a little later: a copy that may still need its
+        // link waits for that, quietly, instead of leaving the link to a reopened dialog.
+        const awaitsLink = restored && saved.mode === "copy-only" && !saved.linked;
+        if (firstCheck && awaitsLink && (linkWaits += 1) <= RESTORED_LINK_WAITS) {
+          quiet = true;
+          return true;
+        }
+        return !firstCheck;
+      }
       const source = await commands.sourceStatus({
         environmentId,
         input: { operationId },

@@ -115,6 +115,14 @@ export function useCopySecrets({
   };
 
   const left = done ? secretsLeft(summary?.secretFiles, copy?.secrets) : 0;
+  // A fresh copy with every secret ticked would carry some of what stayed.
+  const sendable =
+    left > 0 &&
+    secretsLeftSendable(
+      summary?.secretFiles,
+      copy?.secrets,
+      travellingSecrets({ summary, copy, skip, homeSupported, choice: ALL_SECRETS }).paths,
+    );
   return {
     /** The person's choice, before what this window may send. */
     chosen,
@@ -130,15 +138,12 @@ export function useCopySecrets({
     told: (saved: PendingCopy): PendingCopy =>
       gate.blocked && !saved.secretsStay ? { ...saved, secretsStay: true } : saved,
     /** What stayed on the source once the copy is done, with the action that sends it. */
-    leftNote: secretsLeftText(left, sourceLabel, !gate.blocked),
+    leftNote: secretsLeftText(
+      left,
+      sourceLabel,
+      gate.sender === "here" && !sendable ? null : gate.sender,
+    ),
     /** A fresh copy from this window would carry some of what stayed. */
-    canSendLeft:
-      left > 0 &&
-      !gate.blocked &&
-      secretsLeftSendable(
-        summary?.secretFiles,
-        copy?.secrets,
-        travellingSecrets({ summary, copy, skip, homeSupported, choice: ALL_SECRETS }).paths,
-      ),
+    canSendLeft: sendable && gate.sender === "here",
   };
 }

@@ -301,6 +301,103 @@ it("offers Copy again with secrets on Done in a window that can send them", asyn
   expect(left()).toBeNull();
 });
 
+it("names the source's window on Done while this window's access is unconfirmed", async () => {
+  // An unanswered session may turn out denied: no promise, and no button, from here.
+  state.sourceAccess = "unknown";
+  statuses = [copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await act(async () =>
+    container
+      .querySelector<HTMLElement>('[data-slot="copy-along-secrets"] [data-slot="checkbox"]')!
+      .click(),
+  );
+  await click("Copy to M3");
+  await click("Copy to M3");
+  expect(left()!.textContent).toBe(
+    "1 secret-like file (.env and similar) stayed on M4. To send them, start the copy again in SpecWithCode on M4 with Secrets ticked.",
+  );
+  expect(left()!.querySelector("button")).toBeNull();
+});
+
+it("offers no Copy again with secrets when a fresh copy would carry none of what stayed", async () => {
+  state.sourceAccess = "granted";
+  // Only a home-folder secret exists, and M3 cannot receive those.
+  const read = state.handlers.copySourceStatus!;
+  state.handlers.copySourceStatus = async (input) => {
+    const value = (await read(input)) as { summary: Record<string, unknown> };
+    return {
+      ...value,
+      summary: { ...value.summary, secretFiles: [{ path: "~/.config/tool/key", size: 10 }] },
+    };
+  };
+  statuses = [copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await click("Copy to M3");
+  await click("Copy to M3");
+  // The text names no action either: copying again would leave it behind again.
+  expect(left()!.textContent).toBe("1 secret-like file (.env and similar) stayed on M4.");
+  expect(left()!.querySelector("button")).toBeNull();
+});
+
+const unread = () => container.querySelector('[data-slot="copy-secrets-unread"]');
+
+it("shows the warning at a review whose secret list could not be read, before approving without secrets", async () => {
+  // Started with secrets included; this window then turned out unable to send them, and the
+  // source does not answer on reopen.
+  state.sourceAccess = "denied";
+  resumed();
+  state.handlers.copySourceStatus = () => {
+    throw new Error("M4 did not answer.");
+  };
+  statuses = [copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  expect(names()).not.toContain("copyApprove");
+  const warning = unread()!.querySelector('[data-slot="copy-secrets-locked"]')!;
+  expect(warning.textContent).toBe(
+    "Only SpecWithCode on M4 can send secrets. To include them, start this copy in the SpecWithCode window on M4.",
+  );
+  expect(unread()!.textContent).toContain("Secrets (.env, keys): left on M4");
+  expect(unread()!.querySelector('[data-slot="checkbox"]')!.hasAttribute("data-disabled")).toBe(
+    true,
+  );
+  // Approving a review that shows the warning is the person's decision.
+  await click("Copy to M3");
+  const approval = state.calls.find(([name]) => name === "copyApprove")![1] as {
+    input: Record<string, unknown>;
+  };
+  expect(approval.input).toEqual({ operationId: expect.any(String), withoutSecrets: true });
+  expect(JSON.parse(localStorage.getItem(KEY)!).secretsStay).toBe(true);
+});
+
+it("lets the person untick Secrets at a review whose secret list cannot be read", async () => {
+  state.sourceAccess = "granted";
+  resumed();
+  state.handlers.copySourceStatus = () => {
+    throw new Error("M4 did not answer.");
+  };
+  statuses = [copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  expect(unread()!.textContent).toContain("Secrets (.env, keys): included");
+  expect(unread()!.textContent).toContain(
+    "The list of secret files has not been read from M4 yet.",
+  );
+  await click("Copy to M3");
+  expect(names()).not.toContain("copyApprove");
+  expect(container.textContent).toContain("or untick Secrets to copy without them.");
+  // The instruction has a box to untick.
+  await act(async () => unread()!.querySelector<HTMLElement>('[data-slot="checkbox"]')!.click());
+  expect(unread()!.textContent).toContain("Secrets (.env, keys): left on M4");
+  expect(JSON.parse(localStorage.getItem(KEY)!).secrets.included).toBe(false);
+  await click("Copy to M3");
+  const approval = state.calls.find(([name]) => name === "copyApprove")![1] as {
+    input: Record<string, unknown>;
+  };
+  expect(approval.input).toEqual({ operationId: expect.any(String), withoutSecrets: true });
+  expect(names()).not.toContain("copySecrets");
+});
+
 it("reads the secret list before approving a reopened copy that could not read it", async () => {
   state.sourceAccess = "granted";
   resumed();

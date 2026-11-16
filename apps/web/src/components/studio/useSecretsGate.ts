@@ -1,5 +1,10 @@
 import { AuthAccessWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
-import { readEnvironmentScopeAccess, useEnvironmentScopeAccess } from "../../state/session";
+import {
+  readEnvironmentScopeAccess,
+  useEnvironmentScopeAccess,
+  type EnvironmentScopeAccess,
+} from "../../state/session";
+import type { SecretsSender } from "./handoffCopyAuto";
 import type { SecretsChoice } from "./handoffFolderCopyPending";
 
 /**
@@ -19,10 +24,21 @@ export const withoutSecrets = (choice: SecretsChoice): SecretsChoice =>
 export const secretsBlockedNow = (source: EnvironmentId): boolean =>
   readEnvironmentScopeAccess(source, AuthAccessWriteScope) === "denied";
 
+/** Only a confirmed grant makes this window the sender: an unanswered session may turn out denied. */
+const senderFor = (access: EnvironmentScopeAccess): SecretsSender =>
+  access === "granted" ? "here" : access === "denied" ? "source-only" : "unconfirmed";
+
+/** Who can send secrets from the source right now, as this window's session reports it. */
+export const secretsSenderNow = (source: EnvironmentId): SecretsSender =>
+  senderFor(readEnvironmentScopeAccess(source, AuthAccessWriteScope));
+
 export function useSecretsGate(source: EnvironmentId, sourceLabel: string) {
-  const blocked = useEnvironmentScopeAccess(source, AuthAccessWriteScope) === "denied";
+  const access = useEnvironmentScopeAccess(source, AuthAccessWriteScope);
+  const blocked = access === "denied";
   return {
     blocked,
+    /** Who the finish text names as able to send what stayed. */
+    sender: senderFor(access),
     note: blocked ? secretsSourceOnlyText(sourceLabel) : null,
     clamp: (choice: SecretsChoice) => (blocked ? withoutSecrets(choice) : choice),
   };

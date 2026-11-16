@@ -15,7 +15,7 @@ import type {
 import type { LeftOnSource } from "./HandoffSourceChanges";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { formatBytes } from "../../studio/folderCopy";
-import { HandoffSecretsStep } from "./HandoffSecretsStep";
+import { HandoffSecretsStep, SecretsUnreadStep } from "./HandoffSecretsStep";
 import { CopyCredentialsChecklist } from "./CopyCredentialsChecklist";
 import { CopyClassPicker, CopyPlanPreview } from "./HandoffCopyPreview";
 import { CopyProgressPanel } from "./CopyProgressPanel";
@@ -327,6 +327,15 @@ export function HandoffCopyStepPanels({
               {targetLabel} needs {formatBytes(copy.disk.needed)} free for this copy and has{" "}
               {formatBytes(copy.disk.free)}.
             </p>
+          )}
+          {!summary && (
+            <SecretsUnreadStep
+              included={includeSecrets}
+              sourceLabel={sourceLabel}
+              disabled={busy}
+              locked={secretsLocked}
+              onChange={(included) => onSecretsChange(included, [])}
+            />
           )}
           {summary && (
             <HandoffSecretsStep
