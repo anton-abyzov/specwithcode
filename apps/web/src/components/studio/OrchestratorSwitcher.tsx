@@ -188,6 +188,10 @@ export function OrchestratorSwitcher({
   }
   // Linking is what makes two projects for one repository one project; nothing is copied.
   const linkActions = onLink ? links : [];
+  // Every copy registered on its own: "not linked" is about the projects, and reads like a broken
+  // connection or missing access unless the menu says so. With a linked copy in the group an
+  // unlinked one can be held back, so the reassurance is for the all-unlinked case only.
+  const allUnlinked = copies.length > 1 && copies.every((copy) => copy.role === "independent");
   // Copy, link and the coordinator actions act on this project; threads and Leave on the machine.
   const projectActions = onCopy !== null || coordinatorActions.length > 0 || linkActions.length > 0;
   return (
@@ -225,6 +229,17 @@ export function OrchestratorSwitcher({
                 "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.",
               )}
             </p>
+            {allUnlinked ? (
+              <p
+                className="px-2 pb-1 text-muted-foreground text-xs"
+                data-orchestrator-unlinked-note=""
+              >
+                {tx(
+                  "Not linked: each machine has its own project for this repository, with its own coordinator, threads and memory. It is not a connection or access problem.",
+                )}
+                {linkActions.length > 0 ? ` ${tx("Link them below to make one project.")}` : null}
+              </p>
+            ) : null}
             <MenuRadioGroup
               value={current}
               onValueChange={(value) => {
