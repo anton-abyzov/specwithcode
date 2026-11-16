@@ -94,6 +94,11 @@ export const StorageCleanupPlan = Schema.Struct({
   removableBytes: Schema.Number,
   /** False when a list was cut short or a size is missing, so the totals are lower bounds. */
   complete: Schema.Boolean,
+  /**
+   * Why the check could not run, in a sentence a person reads; absent when it
+   * ran (or null). With it, an empty list means "unknown", never "nothing to remove".
+   */
+  failed: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type StorageCleanupPlan = typeof StorageCleanupPlan.Type;
 
