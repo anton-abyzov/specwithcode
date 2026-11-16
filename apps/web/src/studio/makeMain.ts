@@ -26,7 +26,6 @@ import type {
 } from "@specweave-studio/contracts";
 import { copyRoles } from "./projectDomain";
 import { highestEpoch, linkMemberOf, takeoverAvailability } from "./projectLink";
-import type { CopyRoleText } from "./workersOnlyCopy";
 
 /**
  * Why the switch is off for now. waiting: the old main has not been unreachable long
@@ -34,6 +33,12 @@ import type { CopyRoleText } from "./workersOnlyCopy";
  * window does not hold. copy-offline: the copy's own machine is not connected.
  * copy-not-ready: its machine cannot take over (an older app, or no permission there).
  */
+/** Words for the switch: an English phrase and its `{slot}` values, translated where shown. */
+export interface MainText {
+  readonly text: string;
+  readonly values?: Readonly<Record<string, string>>;
+}
+
 export type MakeMainBlock = "waiting" | "main-read-only" | "copy-offline" | "copy-not-ready";
 
 export type MakeMainPath<P> =
@@ -126,7 +131,7 @@ export const waitMinutes = (waitMs: number) => Math.max(1, Math.ceil(waitMs / 60
 export function makeMainBlockText(
   path: { readonly reason: MakeMainBlock; readonly waitMs: number },
   names: { readonly machine: string; readonly main: string },
-): { readonly reason: CopyRoleText; readonly note: CopyRoleText } {
+): { readonly reason: MainText; readonly note: MainText } {
   switch (path.reason) {
     case "waiting": {
       const values = { ...names, minutes: String(waitMinutes(path.waitMs)) };
@@ -172,9 +177,9 @@ export interface MainOffer {
   /** What a click does: the confirmed move, the confirmed takeover, or nothing yet. */
   readonly kind: "move" | "takeover" | "blocked";
   /** Why it is off, in a sentence; null while it can be pressed. */
-  readonly reason: CopyRoleText | null;
+  readonly reason: MainText | null;
   /** The same in a few words, beside the row. */
-  readonly note: CopyRoleText | null;
+  readonly note: MainText | null;
 }
 
 /** The offer for `path`, or null where the copy has no switch. */

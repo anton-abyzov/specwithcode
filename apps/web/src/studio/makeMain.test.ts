@@ -215,7 +215,7 @@ describe("makeMain", () => {
   const run = (over: Partial<Parameters<typeof makeMain>[1]> & { offline?: readonly string[] }) => {
     const calls = {
       move: vi.fn(),
-      takeover: vi.fn(async () => taken()),
+      takeover: vi.fn<(request: unknown) => Promise<unknown>>(async () => taken()),
       acceptStandby: vi.fn(async () => ({ _tag: "Success" as const, value: {} })),
     };
     return {

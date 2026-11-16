@@ -42,7 +42,7 @@ export function offlineSwitchPredecessor(
 /** Words about a copy: an English phrase and its `{slot}` values, translated where shown. */
 export interface CopyRoleText {
   readonly text: string;
-  readonly values?: Readonly<Record<string, string>>;
+  readonly values?: { readonly machine: string };
 }
 
 /**
