@@ -21,7 +21,9 @@ import {
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -54,6 +56,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
@@ -331,6 +334,43 @@ it("recreates a folder that belongs to the repository of the checkouts next to i
     path: worktreePath,
   });
   expect(writeIfRunCurrent).not.toHaveBeenCalled();
+});
+
+it("checks and restores the folder only after a cleanup removal holding its lease ends", async () => {
+  // The folder sits behind a symlinked parent; the sweep leases the real path.
+  const worktreePath = "/tmp/linked/ops-nr-repair-20261019";
+  const exists = vi.fn((target: string) => Effect.succeed(target === "/tmp/linked"));
+  const { start, createWorktree, pruneWorktrees } = deletedBranchHarness(worktreePath, {
+    fileSystem: {
+      exists,
+      realPath: (target: string) => Effect.succeed(target === "/tmp/linked" ? "/tmp/real" : target),
+      readDirectory: () => Effect.succeed([]),
+    },
+    branchIn: ["/tmp/provider-turn-start-project"],
+  });
+  await Effect.gen(function* () {
+    const acquired = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const removal = yield* withWorkspaceLease(
+      "/tmp/real/ops-nr-repair-20261019",
+      Deferred.succeed(acquired, undefined).pipe(Effect.andThen(Deferred.await(release))),
+    ).pipe(Effect.forkChild);
+    yield* Deferred.await(acquired);
+    const turn = yield* start.pipe(Effect.exit, Effect.forkChild);
+    for (let index = 0; index < 50; index++) yield* Effect.yieldNow;
+    // Reading the real path to pick the lease may touch the folder; restoring may not.
+    expect(pruneWorktrees).not.toHaveBeenCalled();
+    expect(createWorktree).not.toHaveBeenCalled();
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(removal);
+    yield* Fiber.join(turn);
+    expect(exists).toHaveBeenCalledWith(worktreePath);
+    expect(createWorktree).toHaveBeenCalledWith({
+      cwd: "/tmp/provider-turn-start-project",
+      refName: "ops/nr-repair-20261019",
+      path: worktreePath,
+    });
+  }).pipe(Effect.runPromise);
 });
 
 it("tries the next repository when the project repository lacks the branch", async () => {

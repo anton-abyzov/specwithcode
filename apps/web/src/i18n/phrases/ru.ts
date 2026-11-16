@@ -499,12 +499,6 @@ export const ru: PhraseCatalog = {
     "Убирать распознанные строки об участии агентов из сообщений merge и squash на GitHub, оставляя соавторов-людей. Включая автослияние. Не касается очередей слияния, слияния стеков и существующих коммитов.",
   "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.":
     "Удалять неиспользуемые worktree при удалении активных или архивных тредов. Worktree с локальными изменениями сохраняются.",
-  "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
-    "Удалять worktree, если их треды неактивны столько дней. Папки открытых тредов всегда сохраняются. Ветки и история тредов сохраняются.",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "Удалять worktree, пул-реквест которых смержен, а коммиты вошли в основную ветку, или закрыт без слияния, а все коммиты отправлены. Также удаляет чистые отправленные worktree, которые агенты создали без треда, когда их пул-реквест смержен или закрыт и они простаивают сутки. Папки открытых тредов всегда сохраняются.",
-  "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
-    "Удалять worktree без коммитов сверх основной ветки. Папки открытых тредов всегда сохраняются.",
   Rename: "Переименовать",
   "Require a second click on the inline archive action before a thread is archived.":
     "Требовать второго нажатия на встроенную кнопку архивации, прежде чем тред будет архивирован.",
@@ -5177,6 +5171,94 @@ export const ru: PhraseCatalog = {
     "Настроить эту машину для запуска работы на {there}",
   "Change what this machine may do on {there}":
     "Изменить, что этой машине можно на {there}",
+  "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
+    "Удалять worktree, чаты которых решены или в архиве и неактивны столько дней. Ветки и история чатов сохраняются.",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
+    "Удалять worktree, пул-реквест которых смержен, а коммиты вошли в основную ветку, или закрыт без слияния, а все коммиты отправлены. Открытый чат теряет папку после 6 часов без активности; чат, который работает или ждёт ответа, всегда её сохраняет. Ветка остаётся, поэтому открытый заново чат получает папку обратно. Также удаляет чистые отправленные worktree, которые агенты создали без чата, когда их пул-реквест смержен или закрыт и они простаивают сутки.",
+  "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
+    "Удалять worktree решённых или архивных чатов, в ветке которых нет коммитов сверх основной ветки.",
+  "What cleanup would remove":
+    "Что удалит очистка",
+  "Chat worktrees and leftover downloads":
+    "Worktree чатов и остатки загрузок",
+  "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
+    "Показывает, что очистка удалит, что оставит и почему. Проверка спрашивает Git-хостинг о каждой завершённой папке, поэтому запускается только по кнопке «Проверить».",
+  "Check":
+    "Проверить",
+  "Clean up now":
+    "Очистить сейчас",
+  "Cleaning up…":
+    "Очистка…",
+  "Would be removed":
+    "Будет удалено",
+  "Kept":
+    "Остаётся",
+  "At least {size} would be freed.":
+    "Освободится не меньше {size}.",
+  "Dependency folders are left out: their files are shared with the package store.":
+    "Папки зависимостей не учитываются: их файлы общие с хранилищем пакетов.",
+  "Some folders could not be fully checked or measured.":
+    "Некоторые папки не удалось полностью проверить или измерить.",
+  "Leftover files of stopped downloads":
+    "Остатки прерванных загрузок",
+  "Nothing to remove right now.":
+    "Сейчас удалять нечего.",
+  "Nothing was removed.":
+    "Ничего не удалено.",
+  "Removed 1 folder, at least {size}.":
+    "Удалена 1 папка, не меньше {size}.",
+  "Removed {count} folders, at least {size}.":
+    "Удалено папок: {count}, не меньше {size}.",
+  "The check could not finish.":
+    "Проверку не удалось завершить.",
+  "This connection cannot change this machine's storage.":
+    "Это подключение не может менять хранилище этой машины.",
+  "Delete worktrees of resolved chats":
+    "Удалять worktree решённых чатов",
+  "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
+    "Удаляет worktree решённого или архивного чата, когда всё в нём закоммичено и отправлено. Ветка остаётся, поэтому открытый заново чат получает папку обратно.",
+  "Its pull request merged.":
+    "Его пул-реквест смержен.",
+  "Its pull request closed and every commit is on the remote.":
+    "Его пул-реквест закрыт, и все коммиты есть на удалённом репозитории.",
+  "Its chats are resolved or archived and everything is pushed.":
+    "Его чаты решены или в архиве, и всё отправлено.",
+  "Its chat was deleted.":
+    "Его чат удалён.",
+  "Its chats are resolved or archived and it has been inactive.":
+    "Его чаты решены или в архиве, и он давно не используется.",
+  "Its branch has no commits of its own.":
+    "В его ветке нет своих коммитов.",
+  "Leftover files of stopped downloads.":
+    "Остатки прерванных загрузок.",
+  "Work in it has not finished.":
+    "Работа в нём не закончена.",
+  "A chat that is still open works in it or near it.":
+    "Ещё открытый чат работает в нём или рядом с ним.",
+  "It was used less than 6 hours ago.":
+    "Им пользовались меньше 6 часов назад.",
+  "It has uncommitted changes.":
+    "В нём есть незакоммиченные изменения.",
+  "It has files Git does not track.":
+    "В нём есть файлы, которые Git не отслеживает.",
+  "It has commits that exist only on this machine.":
+    "В нём есть коммиты, которые есть только на этой машине.",
+  "A stash was made on its branch.":
+    "В его ветке есть stash.",
+  "It has ignored files that may hold data.":
+    "В нём есть игнорируемые файлы, в которых могут быть данные.",
+  "It holds more media than is copied automatically.":
+    "В нём больше медиафайлов, чем копируется автоматически.",
+  "Something is working in it, or it is locked.":
+    "В нём что-то работает, или он заблокирован.",
+  "Its Git registration is broken. Check it by hand.":
+    "Его регистрация в Git сломана. Проверьте её вручную.",
+  "Another repository or hidden changes sit inside it.":
+    "Внутри есть другой репозиторий или скрытые изменения.",
+  "No cleanup rule covers it.":
+    "Ни одно правило очистки его не касается.",
+  "It could not be fully checked, so it is kept.":
+    "Его не удалось проверить полностью, поэтому он оставлен.",
   "Installed, but it does not start": "Установлен, но не запускается",
   "Install {agent} on {machine} with this command:":
     "Установите {agent} на {machine} этой командой:",

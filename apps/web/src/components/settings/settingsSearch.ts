@@ -291,6 +291,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "storage-cleanup-plan",
+    title: "What cleanup would remove",
+    to: "/settings/storage",
+    scope: "environment-defaults",
+    searchTerms: [
+      "disk storage free space dry run preview clean up now remove finished resolved merged closed chats worktrees kept reason leftover downloads",
+    ],
+  },
+  {
     id: "storage-worktrees-location",
     title: "Worktree storage",
     to: "/settings/storage",
