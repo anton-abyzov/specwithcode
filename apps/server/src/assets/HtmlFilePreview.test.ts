@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - hashes the same script bytes the browser hashes.
 import { createHash } from "node:crypto";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vite-plus/test";
