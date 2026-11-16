@@ -40,8 +40,10 @@ export const keepTerminalCommandsReachable = (baseDir: string) =>
     const oneAtATime = yield* Semaphore.make(1);
     // Say what changed once, not every pass.
     let last: string | null = null;
-    // Turned on since the last pass that got through: a block deleted earlier comes back.
-    let rearm = false;
+    // Each switch-on bumps `turnedOnSeq`; a pass that applied it records it as consumed, so a
+    // pass already running when the switch flips never clears a switch-on it did not see.
+    let turnedOnSeq = 0;
+    let consumedSeq = 0;
     const input = () => ({
       home: NodeOS.homedir(),
       baseDir,
@@ -55,12 +57,13 @@ export const keepTerminalCommandsReachable = (baseDir: string) =>
     });
     const pass = Effect.gen(function* () {
       const enabled = (yield* settings.getSettings).terminalCommands;
-      const rearming = enabled && rearm;
+      const seq = turnedOnSeq;
+      const rearming = enabled && seq > consumedSeq;
       const action = yield* Effect.tryPromise(async () => {
         if (enabled) await syncTerminalCommandLinks(input());
         return syncTerminalPath({ ...input(), enabled, rearm: rearming });
       });
-      if (action !== "busy") rearm = false;
+      if (rearming && action !== "busy") consumedSeq = seq;
       // The record still names the file, so a failed write here is retried on the next pass.
       if (action === "opted-out" && enabled) {
         yield* settings.updateSettings({ terminalCommands: false });
@@ -87,7 +90,7 @@ export const keepTerminalCommandsReachable = (baseDir: string) =>
         const turnedOn = !previous && next.terminalCommands;
         const flipped = previous !== next.terminalCommands;
         previous = next.terminalCommands;
-        if (turnedOn) rearm = true;
+        if (turnedOn) turnedOnSeq += 1;
         return flipped ? once : Effect.void;
       }),
       Effect.forkScoped,

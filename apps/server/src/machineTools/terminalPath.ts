@@ -503,9 +503,14 @@ export async function removeTerminalPathBlocks(
   for (const file of knownStartupFiles(home)) {
     try {
       const info = await fs.inspect(file);
-      if (info.kind !== "file") continue;
+      if (info.kind === "missing") continue;
       const text = (await fs.readBytes(file)).toString("latin1");
       if (!text.includes(TERMINAL_PATH_START) && !text.includes(TERMINAL_PATH_END)) continue;
+      // A link or anything but a regular file is the person's own machinery: name it, never edit.
+      if (info.kind !== "file") {
+        left.push(file);
+        continue;
+      }
       const { text: next, action } = applyTerminalPathBlock(text, null, true);
       if (action === "malformed" || !editable(info)) left.push(file);
       else if (next !== null && !(await fs.replace(file, toBytes(next), info.mode, info.stamp)))

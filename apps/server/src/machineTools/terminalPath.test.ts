@@ -454,5 +454,12 @@ describe("removeTerminalPathBlocks", () => {
     touch(zprofile(), `# mine\n${TERMINAL_PATH_START}\nx\n`);
     expect(await removeTerminalPathBlocks(home, nodeTerminalPathFs)).toEqual([zprofile()]);
     expect(read()).toBe(`# mine\n${TERMINAL_PATH_START}\nx\n`);
+    // A startup file that is a link to the person's dotfiles is named, never edited.
+    NodeFS.rmSync(zprofile());
+    const dotfile = NodePath.join(home, "dotfiles/zprofile");
+    touch(dotfile, `# stow\n${TERMINAL_PATH_START}\nx\n${TERMINAL_PATH_END}\n`);
+    NodeFS.symlinkSync(dotfile, zprofile());
+    expect(await removeTerminalPathBlocks(home, nodeTerminalPathFs)).toEqual([zprofile()]);
+    expect(read(dotfile)).toContain(TERMINAL_PATH_START);
   });
 });

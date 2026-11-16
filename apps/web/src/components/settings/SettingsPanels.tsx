@@ -3469,8 +3469,12 @@ export function GeneralSettingsPanel() {
               />
             }
           />
-          {connectedEnvironments.some(
-            (target) => target.serverConfig?.environment.platform.os !== "windows",
+          {/* Hidden only when every connected machine runs Windows, which has no block. */}
+          {!(
+            connectedEnvironments.length > 0 &&
+            connectedEnvironments.every(
+              (target) => target.serverConfig?.environment.platform.os === "windows",
+            )
           ) ? (
           <SettingsRow
             serverScoped
