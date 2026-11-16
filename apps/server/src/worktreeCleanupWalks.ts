@@ -17,6 +17,8 @@ export interface MediaFile {
   /** Relative to its member's folder. */
   readonly relative: string;
   readonly bytes: number;
+  /** A file rewritten at the same size still counts as changed. */
+  readonly modifiedMs: number;
 }
 
 /** The plan's size walk stops here and reports no size. */
@@ -74,7 +76,11 @@ export async function classifyIgnored(
     const target = NodePath.join(root, relative);
     const stat = await NodeFSP.lstat(target);
     if (stat.isFile() && isMediaFile(NodePath.basename(target)))
-      media.push({ relative: NodePath.normalize(relative), bytes: stat.size });
+      media.push({
+        relative: NodePath.normalize(relative),
+        bytes: stat.size,
+        modifiedMs: stat.mtimeMs,
+      });
     else other.push(NodePath.basename(target));
   };
   for (const entry of entries) {

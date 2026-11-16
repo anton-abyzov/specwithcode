@@ -233,10 +233,11 @@ describe("the worktree sweep keeps what it cannot prove safe", () => {
       const f = yield* sweepFixture;
       const { folder, nested } = yield* makeSet(f, "set-reused");
       yield* f.addChat({ id: "set", folder, branch: "feature/set-reused", state: "settled" });
-      // Reads: 1 the look under the lease, 2 before the nested member, 3 before the folder.
+      // Reads: 1 the look under the lease, 2 and 3 around the nested member's
+      // recheck, 4 and 5 around the folder's.
       onRead(
         f,
-        3,
+        4,
         Effect.sync(() => {
           f.hooks.terminals = [
             {
@@ -269,14 +270,33 @@ describe("the worktree sweep keeps what it cannot prove safe", () => {
         "repositories/\n.env\n",
       );
       yield* f.addChat({ id: "set", folder, branch: "feature/set-late-file", state: "settled" });
-      // Reads: 1 the look under the lease, 2 before the nested member, 3 before the folder.
-      // Git would delete the ignored file without asking.
-      onRead(f, 3, f.fs.writeFileString(f.path.join(folder, ".env"), "TOKEN=only-here\n"));
+      // Reads: 1 the look under the lease, 2 and 3 around the nested member's
+      // recheck, 4 and 5 around the folder's. Git would delete the ignored file.
+      onRead(f, 4, f.fs.writeFileString(f.path.join(folder, ".env"), "TOKEN=only-here\n"));
       const result = yield* f.sweep("apply");
       expect(f.reasons(result.items, [folder])).toEqual(["keep:unknown"]);
       expect(f.itemOf(result.items, folder)?.detail).toContain("after 1 of its worktrees");
       expect(f.removed).toEqual([nested]);
       expect(yield* f.fs.readFileString(f.path.join(folder, ".env"))).toBe("TOKEN=only-here\n");
+    }),
+  );
+
+  sweepTest("stops when a commit is left only in a member's reflog mid-removal", () =>
+    Effect.gen(function* () {
+      const f = yield* sweepFixture;
+      const { folder, nested } = yield* makeSet(f, "set-reflog");
+      // A commit on a side branch, made from the folder member and left there.
+      yield* f.run(folder, ["checkout", "-b", "side"]);
+      yield* f.commit(folder, "side.txt");
+      yield* f.run(folder, ["checkout", "feature/set-reflog"]);
+      yield* f.addChat({ id: "set", folder, branch: "feature/set-reflog", state: "settled" });
+      // Deleting the side branch leaves the commit in the member's reflog only,
+      // and removing the member would delete that reflog.
+      onRead(f, 4, f.run(folder, ["branch", "-D", "side"]));
+      const result = yield* f.sweep("apply");
+      expect(f.reasons(result.items, [folder])).toEqual(["keep:unknown"]);
+      expect(f.removed).toEqual([nested]);
+      expect(yield* f.fs.exists(folder)).toBe(true);
     }),
   );
 

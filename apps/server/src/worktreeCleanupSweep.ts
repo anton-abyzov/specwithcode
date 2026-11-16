@@ -563,6 +563,9 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
       hidden,
       facts.stash,
       facts.unpushedCommits,
+      // A side branch deleted or a remote ref pruned makes commits reflog-only.
+      facts.reflogOnlyCommits,
+      facts.restorable,
     ]);
   });
 
@@ -1133,6 +1136,19 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
         return false;
       const registration = yield* checkWorktreeRegistration(state.path);
       if (!registration.ok || registration.locked) return false;
+      // The same repository the assessment found, by the same rule.
+      const inSet = state.member.repository !== "";
+      if (inSet) {
+        if ((yield* realOrNull(path.join(state.repository, ".git"))) !== registration.commonDir)
+          return false;
+      } else if (registration.repository !== state.repository) return false;
+      // A volume mounted at the folder itself has the same real path and other files.
+      if (state.member.relativePath === "") {
+        const real = yield* realOrNull(state.path);
+        if (real === null) return false;
+        const [own, parent] = yield* Effect.all([fs.stat(real), fs.stat(path.dirname(real))]);
+        if (own.dev !== parent.dev) return false;
+      }
       const again: MemberState = {
         ...state,
         head: null,
@@ -1169,7 +1185,12 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     let gone = 0;
     for (const state of assessment.members.toSorted((left, right) => depth(right) - depth(left))) {
       // Removing a member can take minutes: a chat may have been reopened meanwhile.
-      if (!(yield* stillFree) || !(yield* memberUnchanged(assessment, state)))
+      // Use, then the member itself, then use again: the member walk takes time too.
+      if (
+        !(yield* stillFree) ||
+        !(yield* memberUnchanged(assessment, state)) ||
+        !(yield* stillFree)
+      )
         return { stopped: "changed" as const, member: "", gone };
       // Files Git leaves behind were checked by nobody: they stay, and so does the rest.
       const removal = yield* git
