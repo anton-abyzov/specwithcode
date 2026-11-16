@@ -7,6 +7,10 @@
  * Live terminals exist only in the running service's memory, so they are not
  * listed here. A folder bound to an open thread must never be removed.
  *
+ * The state shown is the one the app's own cleanup acts on: a sub-chat in its
+ * parent's folder shows its parent's state, or open while it has a run in
+ * progress. JSON lines also carry the thread's own state.
+ *
  * `--path` exit codes: 0 in use (an open thread, a project or a live agent
  * session), 1 not in use, 2 the check failed. Scripts remove a folder only on 1.
  */
@@ -19,10 +23,13 @@ import { Command, Flag } from "effect/cli";
 import {
   decodeWorktreeBindings,
   isOpenThreadOwner,
+  ownWorktreeThreadState,
   pathSpellings,
+  WORKTREE_OWNER_BUSY_SQL,
   WORKTREE_OWNER_PROJECTS_SQL,
   WORKTREE_OWNER_SESSIONS_SQL,
   WORKTREE_OWNER_THREADS_SQL,
+  withBusyThreads,
   type WorktreeOwnerRows,
   type WorktreeProjectOwner,
   type WorktreeSessionOwner,
@@ -43,9 +50,15 @@ const readOwnerRows = (dbPath: string) =>
       const database = openLiveDatabaseReadOnly(dbPath);
       try {
         const all = <Row>(sql: string) => database.prepare(sql).all() as unknown as Array<Row>;
+        let busy: ReadonlyArray<{ readonly thread_id: string }> | null = null;
+        try {
+          busy = all(WORKTREE_OWNER_BUSY_SQL);
+        } catch {
+          // Without a run reading every sub-chat counts as busy, the safe side.
+        }
         return {
           projects: all(WORKTREE_OWNER_PROJECTS_SQL),
-          threads: all(WORKTREE_OWNER_THREADS_SQL),
+          threads: withBusyThreads(all(WORKTREE_OWNER_THREADS_SQL), busy),
           sessions: all(WORKTREE_OWNER_SESSIONS_SQL),
         };
       } finally {
@@ -67,6 +80,8 @@ const ownerLine = (owner: WorktreeThreadOwner, json: boolean) =>
         threadId: owner.threadId,
         title: owner.title,
         state: worktreeThreadState(owner),
+        ownState: ownWorktreeThreadState(owner),
+        parentThreadId: owner.parentThreadId ?? null,
         projectId: owner.projectId,
       })
     : `${worktreeThreadState(owner).padEnd(8)} ${owner.path}  ${owner.title ?? ""} (${owner.threadId})`;
@@ -95,13 +110,13 @@ const ownersCommand = Command.make("owners", {
   ),
   json: Flag.Boolean("json").pipe(
     Flag.withDescription(
-      "Print one JSON line per owner. Thread lines have path, threadId, title, state and projectId.",
+      "Print one JSON line per owner. Thread lines have path, threadId, title, state, ownState, parentThreadId and projectId.",
     ),
     Flag.withDefault(false),
   ),
 }).pipe(
   Command.withDescription(
-    "List the folders threads use, and whether each thread is open, settled, archived or deleted. Never remove a folder an open thread uses.",
+    "List the folders threads use, and whether each thread is open, settled, archived or deleted. A sub-chat in its parent's folder shows its parent's state unless a run of it is in progress. Never remove a folder an open thread uses.",
   ),
   Command.withHandler(
     Effect.fn("cli.worktree.owners")(

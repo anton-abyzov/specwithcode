@@ -4,9 +4,17 @@
  * guard, the storage cleanup sweep and `specweave-studio worktree owners`, so
  * every path that may delete a checkout agrees on what "bound" means.
  *
- * The queries read only columns the oldest V2 tables have. The CLI runs the
- * same SQL over its read-only live connection, so it never opens the database
- * any other way.
+ * The queries read only columns the oldest V2 tables have (migration 055 made
+ * `orchestration_v2_projection_runs` with `thread_id` and `status`). The CLI
+ * runs the same SQL over its read-only live connection, so it never opens the
+ * database any other way. Runs are read by a query of their own: a database
+ * or test fixture without that table still reads every owner, and every
+ * sub-chat then counts as busy.
+ *
+ * Sub-chats copy their parent's folder. A sub-chat in its parent's folder with
+ * no run in progress takes its parent's state, so a worker with thirty finished
+ * reviews is as finished as the worker itself; one with a run in progress is
+ * open whatever its own state says.
  */
 import type { TerminalSummary } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
@@ -31,6 +39,11 @@ export const WORKTREE_OWNER_THREADS_SQL = `
     WHERE e.thread_id = t.thread_id AND e.status NOT IN ('succeeded', 'cancelled')
   )
 `;
+/** Threads with a run that has not reached a final status. */
+export const WORKTREE_OWNER_BUSY_SQL = `
+  SELECT DISTINCT thread_id FROM orchestration_v2_projection_runs
+  WHERE status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+`;
 export const WORKTREE_OWNER_SESSIONS_SQL = `
   SELECT thread_id, payload_json FROM orchestration_v2_projection_provider_sessions
   WHERE status != 'stopped'
@@ -44,6 +57,8 @@ export interface WorktreeOwnerRows {
     readonly deleted_at: string | null;
     readonly archived_at: string | null;
     readonly cleanup_failed: number | bigint;
+    /** A run in a non-final status. Rows built without it count as busy. */
+    readonly busy?: number | bigint;
   }>;
   readonly sessions: ReadonlyArray<{
     readonly thread_id: string | null;
@@ -59,6 +74,9 @@ const decodeThread = Schema.decodeUnknownEffect(
       title: Schema.optional(Schema.String),
       archivedAt: Schema.optional(Schema.NullOr(Schema.String)),
       settledOverride: Schema.optional(Schema.NullOr(Schema.String)),
+      lineage: Schema.optional(
+        Schema.Struct({ parentThreadId: Schema.optional(Schema.NullOr(Schema.String)) }),
+      ),
     }),
   ),
 );
@@ -85,6 +103,15 @@ export interface WorktreeThreadOwner {
   readonly cleanupPending: boolean;
   /** Deleted, and a cleanup effect failed or has an unknown status. */
   readonly cleanupFailed: boolean;
+  /** The chat that started this one, when it is a sub-chat. */
+  readonly parentThreadId?: string | null;
+  /** A run of it is preparing, queued, starting, running or waiting. Unknown counts as busy. */
+  readonly busy?: boolean;
+  /**
+   * The state cleanup acts on (`worktreeThreadState`). Absent means its own
+   * state; `decodeWorktreeBindings` always sets it.
+   */
+  readonly effectiveState?: WorktreeThreadState;
 }
 export interface WorktreeProjectOwner {
   readonly kind: "project";
@@ -119,15 +146,61 @@ export interface WorktreeOwners extends WorktreeBindings {
 
 export type WorktreeThreadState = "open" | "settled" | "archived" | "deleted";
 
-export function worktreeThreadState(owner: WorktreeThreadOwner): WorktreeThreadState {
+/** The thread's own state, from its own record alone. */
+export function ownWorktreeThreadState(owner: WorktreeThreadOwner): WorktreeThreadState {
   if (owner.deleted) return "deleted";
   if (owner.archived) return "archived";
   return owner.settled ? "settled" : "open";
 }
 
-/** Not deleted, not archived and not resolved: its folder is never removed automatically. */
+/**
+ * The state every remover acts on: a sub-chat in its parent's folder follows
+ * its parent unless it is busy (see `decodeWorktreeBindings`).
+ */
+export function worktreeThreadState(owner: WorktreeThreadOwner): WorktreeThreadState {
+  return owner.effectiveState ?? ownWorktreeThreadState(owner);
+}
+
+/** Open by its effective state: its folder is never removed for being finished. */
 export const isOpenThreadOwner = (owner: WorktreeThreadOwner): boolean =>
   worktreeThreadState(owner) === "open";
+
+/**
+ * Each thread's effective state. A thread whose parent is listed, is not
+ * deleted and shares one of its folder spellings follows that parent along the
+ * chain; a busy one is open. A deleted thread stays deleted, a chat whose
+ * parent is deleted or elsewhere keeps its own state, and a cycle stops at the
+ * thread it would revisit.
+ */
+function withEffectiveStates(
+  threads: ReadonlyArray<WorktreeThreadOwner>,
+): ReadonlyArray<WorktreeThreadOwner> {
+  const byId = new Map(threads.map((owner) => [owner.threadId, owner]));
+  const resolved = new Map<string, WorktreeThreadState>();
+  const resolve = (owner: WorktreeThreadOwner, visiting: Set<string>): WorktreeThreadState => {
+    const known = resolved.get(owner.threadId);
+    if (known !== undefined) return known;
+    const own = ownWorktreeThreadState(owner);
+    const parent = owner.parentThreadId == null ? undefined : byId.get(owner.parentThreadId);
+    let state = own;
+    if (
+      !owner.deleted &&
+      parent !== undefined &&
+      parent !== owner &&
+      !parent.deleted &&
+      owner.paths.some((spelling) => parent.paths.includes(spelling))
+    ) {
+      if (owner.busy !== false) state = "open";
+      else if (!visiting.has(parent.threadId)) {
+        visiting.add(owner.threadId);
+        state = resolve(parent, visiting);
+      }
+    }
+    resolved.set(owner.threadId, state);
+    return state;
+  };
+  return threads.map((owner) => ({ ...owner, effectiveState: resolve(owner, new Set()) }));
+}
 
 /** The real path of an existing folder, else the resolved spelling. */
 export const canonicalPath = Effect.fn("WorktreeOwnership.canonicalPath")(function* (
@@ -172,11 +245,30 @@ export function pathWithin(path: Path.Path, root: string, candidate: string): bo
   );
 }
 
+/**
+ * Marks each thread row busy or not from `WORKTREE_OWNER_BUSY_SQL`. With no
+ * reading (null), rows stay unmarked, and an unmarked row counts as busy.
+ */
+export function withBusyThreads(
+  threads: WorktreeOwnerRows["threads"],
+  busy: ReadonlyArray<{ readonly thread_id: string }> | null,
+): WorktreeOwnerRows["threads"] {
+  if (busy === null) return threads;
+  const ids = new Set(busy.map((row) => row.thread_id));
+  return threads.map((row) => ({ ...row, busy: ids.has(row.thread_id) ? 1 : 0 }));
+}
+
 export const readWorktreeOwnerRows = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const threads = yield* sql.unsafe<WorktreeOwnerRows["threads"][number]>(
+    WORKTREE_OWNER_THREADS_SQL,
+  );
+  const busy = yield* sql
+    .unsafe<{ readonly thread_id: string }>(WORKTREE_OWNER_BUSY_SQL)
+    .pipe(Effect.orElseSucceed(() => null));
   return {
     projects: yield* sql.unsafe<WorktreeOwnerRows["projects"][number]>(WORKTREE_OWNER_PROJECTS_SQL),
-    threads: yield* sql.unsafe<WorktreeOwnerRows["threads"][number]>(WORKTREE_OWNER_THREADS_SQL),
+    threads: withBusyThreads(threads, busy),
     sessions: yield* sql.unsafe<WorktreeOwnerRows["sessions"][number]>(WORKTREE_OWNER_SESSIONS_SQL),
   } satisfies WorktreeOwnerRows;
 });
@@ -210,6 +302,8 @@ export const decodeWorktreeBindings = Effect.fn("WorktreeOwnership.decodeBinding
       // The query keeps a deleted thread only while its cleanup is unfinished.
       cleanupPending: deleted,
       cleanupFailed: deleted && Number(row.cleanup_failed) !== 0,
+      parentThreadId: thread.lineage?.parentThreadId ?? null,
+      busy: row.busy === undefined || Number(row.busy) !== 0,
     });
   }
   const sessions: Array<WorktreeSessionOwner> = [];
@@ -218,7 +312,7 @@ export const decodeWorktreeBindings = Effect.fn("WorktreeOwnership.decodeBinding
     const paths = yield* pathSpellings(cwd);
     sessions.push({ kind: "session", threadId: row.thread_id, cwd, path: paths[0]!, paths });
   }
-  return { projects, threads, sessions } satisfies WorktreeBindings;
+  return { projects, threads: withEffectiveStates(threads), sessions } satisfies WorktreeBindings;
 });
 
 export const listWorktreeBindings = readWorktreeOwnerRows.pipe(
