@@ -5292,4 +5292,10 @@ export const fr: PhraseCatalog = {
     "La principale reste sur {main}. Pour l’avoir sur {machine}, faites de {machine} la principale après la liaison.",
   "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
     "Lier {machine} à ce projet. {machine} renonce à son propre objectif et à ses instructions : elle suit désormais ceux de ce projet, et les siens sont remplacés si elle devient la principale. Son propre coordinateur s’arrête, et cette conversation reste sur {machine} comme historique. Ses workers continuent de tourner. La principale reste sur {main}. Les fichiers ne sont pas copiés.",
+  "Work for {project} starts on {machine}.": "Le travail sur {project} commence sur {machine}.",
+  "Work for {project} starts on another machine.":
+    "Le travail sur {project} commence sur une autre machine.",
+  "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
+    "Connectez d’abord {main}. Cette fenêtre n’a pas chargé la copie principale sur {main} : elle ne peut donc pas encore faire de {machine} la principale.",
+  "connect {main} first": "connectez d’abord {main}",
 };

@@ -5251,4 +5251,10 @@ export const pt: PhraseCatalog = {
     "A principal continua em {main}. Para tê-la em {machine}, torne {machine} a principal depois de vincular.",
   "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
     "Vincular {machine} a este projeto. {machine} abre mão do próprio objetivo e das próprias instruções: passa a seguir os deste projeto, e os dela são substituídos se virar a principal. O coordenador próprio para, e essa conversa fica em {machine} como histórico. Os workers continuam em execução. A principal continua em {main}. Os arquivos não são copiados.",
+  "Work for {project} starts on {machine}.": "O trabalho em {project} começa em {machine}.",
+  "Work for {project} starts on another machine.":
+    "O trabalho em {project} começa em outra máquina.",
+  "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
+    "Conecte {main} primeiro. Esta janela não carregou a cópia principal em {main}, então ainda não pode tornar {machine} a principal.",
+  "connect {main} first": "conecte {main} primeiro",
 };

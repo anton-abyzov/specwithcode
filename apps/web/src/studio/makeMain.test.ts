@@ -119,8 +119,17 @@ describe("makeMainPath", () => {
     expect(makeMainPath(alsoMain, [m4, alsoMain], machines())).toEqual({ kind: "none" });
   });
 
-  it("gives no switch when main is not in sight or sits on the copy's own machine", () => {
-    expect(makeMainPath(m5, [m5], machines())).toEqual({ kind: "none" });
+  it("says to connect main's machine when this window never loaded main's copy", () => {
+    expect(makeMainPath(m5, [m5], machines())).toEqual({
+      kind: "unloaded",
+      mainEnvironmentId: "m4",
+    });
+    // An unlinked checkout has no main elsewhere to wait for.
+    const unlinked = copy("m1", { state: "active" }, null);
+    expect(makeMainPath(unlinked, [unlinked], machines())).toEqual({ kind: "none" });
+  });
+
+  it("gives no switch when main sits on the copy's own machine", () => {
     const sameMachine = {
       ...copy("m4", { state: "transferred", successor: "m4" }),
       id: "other",
@@ -286,6 +295,10 @@ describe("makeMain", () => {
       waitMs: 9 * 60_000,
     });
     expect(await makeMain(m4, input)).toEqual({ status: "none" });
+    expect(await makeMain(m5, { ...input, members: [m5] })).toEqual({
+      status: "unloaded",
+      mainEnvironmentId: "m4",
+    });
     expect(calls.takeover).not.toHaveBeenCalled();
     expect(calls.move).not.toHaveBeenCalled();
   });
@@ -321,6 +334,21 @@ describe("mainOffer", () => {
     );
     expect(off).toMatchObject({ kind: "blocked", note: { text: "in {minutes} min" } });
     expect(off?.reason?.values).toEqual({ machine: "M5", main: "m4", minutes: "1" });
+  });
+
+  it("is off with Connect main first while main's copy is not loaded", () => {
+    const off = mainOffer("m5:p", { kind: "unloaded", mainEnvironmentId: "m4" as never }, names);
+    expect(off).toEqual({
+      key: "m5:p",
+      machine: "M5",
+      main: "m4",
+      kind: "blocked",
+      reason: {
+        text: "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.",
+        values: names,
+      },
+      note: { text: "connect {main} first", values: names },
+    });
   });
 });
 

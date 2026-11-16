@@ -26,6 +26,7 @@ import type {
 } from "@specweave-studio/contracts";
 import { copyRoles } from "./projectDomain";
 import { highestEpoch, linkMemberOf, takeoverAvailability } from "./projectLink";
+import { coordinatorElsewhere } from "./workersOnlyCopy";
 
 /**
  * Why the switch is off for now. waiting: the old main has not been unreachable long
@@ -42,8 +43,13 @@ export interface MainText {
 export type MakeMainBlock = "waiting" | "main-read-only" | "copy-offline" | "copy-not-ready";
 
 export type MakeMainPath<P> =
-  /** No switch for this copy: it is main, not linked, mid-move, or its main is not in sight. */
+  /** No switch for this copy: it is main, not linked, mid-move, or main is on its own machine. */
   | { readonly kind: "none" }
+  /**
+   * Off: this window has never loaded main's copy, so it cannot tell whether main is
+   * connected or how long it has been gone. Connecting main's machine shows the switch.
+   */
+  | { readonly kind: "unloaded"; readonly mainEnvironmentId: EnvironmentId }
   | { readonly kind: "move"; readonly main: P }
   | { readonly kind: "takeover"; readonly main: P }
   | {
@@ -95,8 +101,13 @@ export function makeMainPath<P extends EnvironmentProject>(
   if (role?.role !== "copy" || copy.workspaceSettings?.coordinatorBinding?.state !== "transferred")
     return { kind: "none" };
   const main = role.main;
+  if (!main) {
+    // Main is not loaded here: the copy's own binding still names its machine.
+    const ref = coordinatorElsewhere(copy, linked);
+    return ref ? { kind: "unloaded", mainEnvironmentId: ref.environmentId } : { kind: "none" };
+  }
   // Main on this same machine (another folder) is not a switch between machines.
-  if (!main || main.environmentId === copy.environmentId) return { kind: "none" };
+  if (main.environmentId === copy.environmentId) return { kind: "none" };
   const blocked = (reason: MakeMainBlock, waitMs = 0): MakeMainPath<P> => ({
     kind: "blocked",
     main,
@@ -182,6 +193,20 @@ export interface MainOffer {
   readonly note: MainText | null;
 }
 
+/** Why the switch is off while main's copy is not loaded in this window. */
+export function unloadedMainText(names: { readonly machine: string; readonly main: string }): {
+  readonly reason: MainText;
+  readonly note: MainText;
+} {
+  return {
+    reason: {
+      text: "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.",
+      values: names,
+    },
+    note: { text: "connect {main} first", values: names },
+  };
+}
+
 /** The offer for `path`, or null where the copy has no switch. */
 export function mainOffer<P>(
   key: string,
@@ -189,6 +214,8 @@ export function mainOffer<P>(
   names: { readonly machine: string; readonly main: string },
 ): MainOffer | null {
   if (path.kind === "none") return null;
+  if (path.kind === "unloaded")
+    return { key, ...names, kind: "blocked", ...unloadedMainText(names) };
   if (path.kind !== "blocked") return { key, ...names, kind: path.kind, reason: null, note: null };
   return { key, ...names, kind: "blocked", ...makeMainBlockText(path, names) };
 }
@@ -216,6 +243,8 @@ export interface MakeMainRun<P> extends MakeMainMachines {
 
 export type MakeMainOutcome<P> =
   | { readonly status: "none" }
+  /** Main's copy is not loaded here; nothing ran. */
+  | { readonly status: "unloaded"; readonly mainEnvironmentId: EnvironmentId }
   | {
       readonly status: "blocked";
       readonly main: P;
@@ -237,6 +266,8 @@ export async function makeMain<P extends EnvironmentProject>(
 ): Promise<MakeMainOutcome<P>> {
   const path = makeMainPath(copy, run.members, run);
   if (path.kind === "none") return { status: "none" };
+  if (path.kind === "unloaded")
+    return { status: "unloaded", mainEnvironmentId: path.mainEnvironmentId };
   if (path.kind === "blocked")
     return { status: "blocked", main: path.main, reason: path.reason, waitMs: path.waitMs };
   if (path.kind === "move") {
@@ -256,8 +287,9 @@ export async function makeMain<P extends EnvironmentProject>(
     },
   });
   if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-  // A standby registered for an older main must never fire for one that gave way. The
-  // server claims the new epoch on reachable machines itself; this only disarms standbys.
+  // A standby registered for an older main must never fire for one that gave way, so
+  // each reachable standby is told to stand down. This fences nothing else: claiming the
+  // new epoch on the other machines, so they refuse the old main, lands with T-01 (#512).
   const epoch = result.value.coordinatorBinding.epoch;
   const logicalProjectId = result.value.logicalProject.id;
   for (const other of linked) {

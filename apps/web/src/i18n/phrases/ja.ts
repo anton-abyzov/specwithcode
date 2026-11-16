@@ -5249,4 +5249,9 @@ export const ja: PhraseCatalog = {
     "メインは {main} のままです。{machine} をメインにしたい場合は、リンク後に {machine} をメインにしてください。",
   "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
     "{machine} をこのプロジェクトにリンクします。{machine} は独自の目標と指示を手放し、今後はこのプロジェクトのものに従います。メインになった場合、独自のものは置き換えられます。{machine} 独自のコーディネーターは停止し、その会話は履歴として {machine} に残ります。ワーカーは動き続けます。メインは {main} のままです。ファイルはコピーされません。",
+  "Work for {project} starts on {machine}.": "{project} の作業は {machine} で始めます。",
+  "Work for {project} starts on another machine.": "{project} の作業は別のマシンで始めます。",
+  "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
+    "まず {main} を接続してください。このウィンドウは {main} のメインのコピーを読み込んでいないため、まだ {machine} をメインにできません。",
+  "connect {main} first": "先に {main} を接続",
 };

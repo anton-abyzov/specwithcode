@@ -5043,4 +5043,9 @@ export const zh: PhraseCatalog = {
     "主副本仍在 {main}。若要让主副本在 {machine} 上，请在关联后将 {machine} 设为主副本。",
   "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
     "将 {machine} 关联到此项目。{machine} 放弃自己的目标和指令：今后遵循此项目的目标和指令，如果它成为主副本，自己的会被替换。它自己的协调器会停止，那段对话作为历史留在 {machine} 上。它的 worker 继续运行。主副本仍在 {main}。不会复制文件。",
+  "Work for {project} starts on {machine}.": "{project} 的工作从 {machine} 开始。",
+  "Work for {project} starts on another machine.": "{project} 的工作从另一台机器开始。",
+  "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
+    "请先连接 {main}。此窗口尚未加载 {main} 上的主副本，因此还不能将 {machine} 设为主副本。",
+  "connect {main} first": "请先连接 {main}",
 };

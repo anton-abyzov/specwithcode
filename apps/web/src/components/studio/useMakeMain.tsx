@@ -21,10 +21,14 @@ import {
   requestMainMove,
   subscribeMainMove,
   takeMainMove,
+  unloadedMainText,
   type MainOffer,
   type MakeMainMachines,
 } from "../../studio/makeMain";
-import type { OrchestratorCopy } from "../../studio/projectCoordinatorMachine";
+import {
+  checkoutKeyEnvironmentId,
+  type OrchestratorCopy,
+} from "../../studio/projectCoordinatorMachine";
 import { projectLink } from "../../studio/projectLink";
 import { useRetiredMachineRecords } from "../settings/useReplacedMachineRecords";
 import { Button } from "../ui/button";
@@ -101,6 +105,10 @@ export function useMakeMain({
   const nameOf = (member: EnvironmentProject) =>
     copies.find((copy) => copy.key === keyOf(member))?.machine ??
     machines.label(member.environmentId);
+  // A machine whose copy this window has not loaded: named as the menu names it.
+  const machineName = (environmentId: EnvironmentProject["environmentId"]) =>
+    copies.find((copy) => checkoutKeyEnvironmentId(copy.key) === environmentId)?.machine ??
+    machines.label(environmentId);
 
   const reach: MakeMainMachines = {
     connected: machines.connected,
@@ -117,6 +125,14 @@ export function useMakeMain({
     for (const member of members) {
       const path = makeMainPath(member, members, reach);
       if (path.kind === "none") continue;
+      if (path.kind === "unloaded") {
+        const offer = mainOffer(keyOf(member), path, {
+          machine: nameOf(member),
+          main: machineName(path.mainEnvironmentId),
+        });
+        if (offer) offers.push(offer);
+        continue;
+      }
       // A reachable main forgets when it was last found gone, as Settings does.
       if (machines.connected(path.main.environmentId))
         unreachableSince(path.main.environmentId, true, now);
@@ -205,7 +221,17 @@ export function useMakeMain({
     const machine = nameOf(member);
     try {
       const outcome = await start(member);
-      if (outcome.status === "blocked") {
+      if (outcome.status === "unloaded") {
+        const { reason } = unloadedMainText({
+          machine,
+          main: machineName(outcome.mainEnvironmentId),
+        });
+        toastManager.add({
+          type: "warning",
+          title: tx("{machine} cannot become main yet.", { machine }),
+          description: tx(reason.text, reason.values),
+        });
+      } else if (outcome.status === "blocked") {
         const names = { machine, main: nameOf(outcome.main) };
         const { reason } = makeMainBlockText(outcome, names);
         toastManager.add({

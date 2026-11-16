@@ -127,6 +127,14 @@ try {
       await page.locator("[data-make-main-note]").textContent(),
       "Making m5 main moves the coordinator and its conversation here from m4, which becomes a copy.",
     );
+    // Nothing typed here could go anywhere, so the box is off and says where to write.
+    const prompt = page.locator("#project-prompt");
+    assert.equal(await prompt.isDisabled(), true);
+    assert.equal(await prompt.getAttribute("placeholder"), "Work for Atlas starts on m4.");
+    const send = page.locator(".sws-composer-card button.sws-send");
+    assert.equal(await send.isDisabled(), true);
+    assert.equal(await send.getAttribute("data-send-label"), null);
+    assert.equal(await page.locator(".sws-composer-card[data-inert]").count(), 1);
     file = await shot(page, `copy-message-box-${theme}`);
     await page.locator("[data-make-main]").click();
     assert.deepEqual(await madeMain(page), ["m5:p"]);
@@ -148,6 +156,8 @@ try {
       await page.locator("[data-workers-only] p").first().textContent(),
       /The conversation here is kept as history\.$/,
     );
+    assert.equal(await page.locator(".sws-composer-card button.sws-send").isDisabled(), true);
+    assert.equal(await page.locator("#project-prompt").isDisabled(), true);
     file = await shot(page, `copy-message-box-waiting-${theme}`);
     results.push({ theme, case: "copy's message box, main just lost", file });
     await page.close();
@@ -159,6 +169,7 @@ try {
       await page.locator('[data-make-main-note="takeover"]').textContent(),
       "m4 has been unreachable for 10 minutes or more. Making m5 main starts from the shared goal, memory and plan; the conversation on m4 stays there as history.",
     );
+    assert.equal(await page.locator(".sws-composer-card button.sws-send").isDisabled(), true);
     file = await shot(page, `copy-message-box-main-unreachable-${theme}`);
     results.push({ theme, case: "copy's message box, main unreachable", file });
     await page.close();
@@ -217,6 +228,11 @@ try {
     const said = await page.locator("[data-workers-only]").textContent();
     assert.match(said, /Atlas/);
     assert.doesNotMatch(said, /Main for Atlas|Write to m4|Make m5 main|Nothing is sent/, lang);
+    assert.notEqual(
+      await page.locator("#project-prompt").getAttribute("placeholder"),
+      "Work for Atlas starts on m4.",
+      `${lang}: the placeholder is not translated`,
+    );
     if (lang === "ru") await shot(page, "copy-message-box-ru-light");
     results.push({ lang, item, ...(file ? { file } : {}) });
     await page.close();

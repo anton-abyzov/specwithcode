@@ -5244,4 +5244,10 @@ export const ru: PhraseCatalog = {
     "Основная остаётся на {main}. Чтобы основная была на {machine}, сделайте {machine} основной после связывания.",
   "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
     "Связать {machine} с этим проектом. {machine} отказывается от собственных цели и инструкций: с этого момента он следует цели и инструкциям этого проекта, а его собственные будут заменены, если он станет основной. Его собственный координатор останавливается, а тот разговор остаётся на {machine} как история. Его воркеры продолжают работать. Основная остаётся на {main}. Файлы не копируются.",
+  "Work for {project} starts on {machine}.": "Работа над {project} начинается на {machine}.",
+  "Work for {project} starts on another machine.":
+    "Работа над {project} начинается на другой машине.",
+  "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
+    "Сначала подключите {main}. Это окно не загрузило основную копию на {main}, поэтому пока не может сделать {machine} основной.",
+  "connect {main} first": "сначала подключите {main}",
 };

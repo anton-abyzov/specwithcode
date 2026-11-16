@@ -664,6 +664,8 @@ export function ProjectWorkspaceSurface({
   const switchedFrom = offlineSwitchPredecessor(project);
   // An unreachable machine refuses first: a typed message is never sent elsewhere.
   const blocked = (connected ? null : admission) ?? workersOnly ?? ownershipProblem ?? admission;
+  // A copy whose main is elsewhere: its message box is off and says where to write.
+  const copyOff = blocked !== null && blocked === workersOnly;
   // Memoized, not just computed: these feed memoized callbacks below, and the
   // React Compiler keeps those only for values it knows are not changed later.
   const coordinator = useMemo(
@@ -2013,13 +2015,23 @@ export function ProjectWorkspaceSurface({
                 maxFileBytes={maxFileBytes}
                 sending={sending}
                 placeholder={
-                  coordinatorQuestion
-                    ? say("Answer the coordinator: type, paste or attach, then send")
-                    : hostStatus?.keepsDraft
-                      ? tx("Your draft stays here until it reconnects.")
-                      : promptPlaceholder
+                  copyOff
+                    ? coordinatorElsewhere?.machine
+                      ? tx("Work for {project} starts on {machine}.", {
+                          project: projectTitle,
+                          machine: coordinatorElsewhere.machine,
+                        })
+                      : tx("Work for {project} starts on another machine.", {
+                          project: projectTitle,
+                        })
+                    : coordinatorQuestion
+                      ? say("Answer the coordinator: type, paste or attach, then send")
+                      : hostStatus?.keepsDraft
+                        ? tx("Your draft stays here until it reconnects.")
+                        : promptPlaceholder
                 }
                 hostReachable={connected}
+                writesElsewhere={copyOff}
                 draftSentElsewhere={() =>
                   durableCoordinatorDraftSentElsewhere(project.environmentId, project.id)
                 }

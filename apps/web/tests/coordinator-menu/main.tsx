@@ -24,7 +24,7 @@ import { CoordinatorComposer } from "../../src/components/studio/CoordinatorComp
 import { OrchestratorSwitcher } from "../../src/components/studio/OrchestratorSwitcher";
 import { TooltipProvider } from "../../src/components/ui/tooltip";
 import { ToastProvider, AnchoredToastProvider } from "../../src/components/ui/toast";
-import { isLocale, setLocalePreference } from "../../src/i18n";
+import { isLocale, setLocalePreference, useTx } from "../../src/i18n";
 import { mainOffer, type MainOffer, type MakeMainPath } from "../../src/studio/makeMain";
 import { getProjectCoordinatorComposer } from "../../src/studio/projectCoordinatorComposer";
 import type { OrchestratorCopy } from "../../src/studio/projectCoordinatorMachine";
@@ -90,6 +90,7 @@ declare global {
 }
 
 function Page() {
+  const tx = useTx();
   const start =
     view === "switched" ? "m5:p" : `${params.get("view") ?? (view === "box" ? "m5" : "m4")}:p`;
   const [current, setCurrent] = useState(start);
@@ -149,7 +150,12 @@ function Page() {
         uploadsSupported
         maxFileBytes={20 * 1024 * 1024}
         sending={false}
-        placeholder="Ask the coordinator a question or start a task…"
+        placeholder={
+          onCopy
+            ? tx("Work for {project} starts on {machine}.", { project: PROJECT, machine: "m4" })
+            : "Ask the coordinator a question or start a task…"
+        }
+        writesElsewhere={onCopy}
         hostReachable
         promptLabel="Message the project coordinator"
         keybindings={DEFAULT_RESOLVED_KEYBINDINGS}

@@ -5186,4 +5186,9 @@ export const ko: PhraseCatalog = {
     "메인은 {main}에 그대로 있습니다. 메인을 {machine}에 두려면 연결한 뒤 {machine}을(를) 메인으로 만드세요.",
   "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
     "{machine}을(를) 이 프로젝트에 연결합니다. {machine}은(는) 자체 목표와 지침을 포기하고 지금부터 이 프로젝트의 것을 따르며, 메인이 되면 자체 목표와 지침은 대체됩니다. 자체 코디네이터는 멈추고 그 대화는 기록으로 {machine}에 남습니다. 워커는 계속 실행됩니다. 메인은 {main}에 그대로 있습니다. 파일은 복사되지 않습니다.",
+  "Work for {project} starts on {machine}.": "{project} 작업은 {machine}에서 시작합니다.",
+  "Work for {project} starts on another machine.": "{project} 작업은 다른 컴퓨터에서 시작합니다.",
+  "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
+    "먼저 {main}을(를) 연결하세요. 이 창은 {main}의 메인 사본을 불러오지 않아 아직 {machine}을(를) 메인으로 만들 수 없습니다.",
+  "connect {main} first": "먼저 {main} 연결",
 };

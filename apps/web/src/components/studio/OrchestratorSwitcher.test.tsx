@@ -11,7 +11,7 @@ vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => startCoor
 const toast = vi.hoisted(() => vi.fn());
 vi.mock("../ui/toast", () => ({ toastManager: { add: toast } }));
 
-import { OrchestratorSwitcher, useStartCoordinator } from "./OrchestratorSwitcher";
+import { linkKeeper, OrchestratorSwitcher, useStartCoordinator } from "./OrchestratorSwitcher";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -615,4 +615,19 @@ it("stays a plain label with one copy and no machine actions", async () => {
     ),
   );
   expect(container.querySelector("button")).toBeNull();
+});
+
+it("opens linking on main's own copy, and never on a copy that takes work from an unloaded main", () => {
+  const atlas = { logicalProject: { id: "atlas" } };
+  const viewed = { environmentId: "m5", id: "p", workspaceSettings: atlas };
+  const main = { environmentId: "m4", id: "p", workspaceSettings: atlas };
+  const alone = { environmentId: "m5", id: "q" };
+  const [m5, m4, single] = [viewed, main, alone] as unknown as EnvironmentProject[];
+  const copies = [copy("m4:p", "M4"), copy("m5:p", "M5", "workers")];
+  expect(linkKeeper(m5!, [m4!, m5!], copies)).toBe(m4);
+  // Main is linked but its copy never loaded here: nothing keeps main, so nothing is offered.
+  expect(linkKeeper(m5!, [m5!], copies)).toBeNull();
+  expect(linkKeeper(m5!, [m5!], [copy("m5:p", "M5", "workers")])).toBeNull();
+  // A project on its own keeps itself.
+  expect(linkKeeper(single!, [single!], [])).toBe(single);
 });

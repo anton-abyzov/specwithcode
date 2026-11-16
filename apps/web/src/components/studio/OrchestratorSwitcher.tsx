@@ -431,6 +431,23 @@ export function OrchestratorSwitcher({
 }
 
 /**
+ * The project that keeps main when another is linked to it: the viewed copy, or main when it is
+ * elsewhere. Linking never changes main, so the dialog opens on that copy and it stays main.
+ * Null while a linked project's main is not loaded here: a copy that takes work from main must
+ * never be the side that keeps it, so nothing is offered.
+ */
+export function linkKeeper(
+  project: EnvironmentProject,
+  projects: readonly EnvironmentProject[],
+  copies: readonly OrchestratorCopy[],
+): EnvironmentProject | null {
+  if (!project.workspaceSettings?.logicalProject) return project;
+  const mainKey = copies.find((copy) => copy.main)?.key;
+  if (mainKey === undefined) return null;
+  return projects.find((item) => `${item.environmentId}:${item.id}` === mainKey) ?? null;
+}
+
+/**
  * The switcher on a project page, with its actions wired: viewing changes only
  * what this page shows, "Make X main" runs the page's confirmed switch, linking
  * opens its confirmation. A machine that is not connected shows a red dot; the
@@ -478,13 +495,8 @@ export function ProjectOrchestratorSwitcher({
     () => (onCopy ? sameRepositoryLinkOffers(projects, project, () => null) : []),
     [onCopy, projects, project],
   );
-  // "This project" is the one that keeps main: the viewed copy, or main when it is elsewhere.
-  // Linking never changes main, so the dialog opens on that copy and it stays main.
-  const mainKey = copies.find((copy) => copy.main)?.key;
-  const linkProject =
-    (project.workspaceSettings?.logicalProject && mainKey !== undefined
-      ? projects.find((item) => `${item.environmentId}:${item.id}` === mainKey)
-      : undefined) ?? project;
+  const linkProject = linkKeeper(project, projects, copies);
+  const linkOffers = linkProject === null ? [] : offers;
   return (
     <>
       <OrchestratorSwitcher
@@ -502,12 +514,12 @@ export function ProjectOrchestratorSwitcher({
         mainOffers={mainOffers}
         onMakeMain={onMakeMain}
         onCopy={onCopy}
-        links={offers.map((offer) => ({
+        links={linkOffers.map((offer) => ({
           key: `${offer.environmentId}:${offer.id}`,
           machine: nickname(offer.environmentId),
         }))}
         onLink={(key) => {
-          const offer = offers.find((item) => `${item.environmentId}:${item.id}` === key);
+          const offer = linkOffers.find((item) => `${item.environmentId}:${item.id}` === key);
           if (offer) setLinkTarget({ environmentId: offer.environmentId, projectId: offer.id });
         }}
         // Away mode runs on this device's machine, so it is offered only there.
@@ -523,7 +535,7 @@ export function ProjectOrchestratorSwitcher({
             : null
         }
       />
-      {linkTarget !== null && (
+      {linkTarget !== null && linkProject !== null && (
         <ProjectLinkDialog
           open
           onOpenChange={(open) => {
