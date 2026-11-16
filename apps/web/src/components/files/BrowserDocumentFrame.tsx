@@ -48,16 +48,18 @@ function fileFrameSrc(src: string): string {
 }
 
 /**
- * Renders an HTML or PDF document from its URL. HTML runs in a sandboxed frame
- * with an opaque origin, so a page cannot reach the app's session or storage.
- * The built-in PDF viewer needs an unsandboxed frame; a PDF runs no scripts.
- * An agent's HTML render also wears the app theme.
+ * Renders an HTML or PDF document from its URL. A workspace file page runs in
+ * the locked frame. An attachment keeps today's sandboxed frame, raw URL and
+ * popups. The built-in PDF viewer needs an unsandboxed frame; a PDF runs no
+ * scripts. An agent's HTML render also wears the app theme.
  */
 export function BrowserDocumentFrame(props: {
   readonly src: string;
   readonly title: string;
   readonly pdf: boolean;
   readonly htmlRender?: boolean;
+  /** Workspace file page. The server wraps it. Attachments leave this off. */
+  readonly lockedFile?: boolean;
 }) {
   const className = "min-h-0 flex-1 border-0 bg-white";
   return props.pdf ? (
@@ -70,8 +72,16 @@ export function BrowserDocumentFrame(props: {
     />
   ) : props.htmlRender ? (
     <HtmlRenderPage key={props.src} src={props.src} title={props.title} />
-  ) : (
+  ) : props.lockedFile ? (
     <HtmlFileFrame src={props.src} title={props.title} className={className} />
+  ) : (
+    <iframe
+      key={props.src}
+      src={props.src}
+      title={props.title}
+      className={className}
+      sandbox="allow-scripts allow-forms allow-popups"
+    />
   );
 }
 
@@ -87,6 +97,7 @@ function HtmlFileFrame(props: {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const src = fileFrameSrc(props.src);
   useEffect(() => {
+    if (typeof window === "undefined") return;
     const openLink = (event: MessageEvent) => {
       const frame = frameRef.current;
       const request = readHtmlRenderLinkRequest(event.data);

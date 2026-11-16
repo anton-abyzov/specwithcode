@@ -816,7 +816,7 @@ describe("the focused file viewer (1049 AC-06, D-05)", () => {
   it("shows the file with the thread beside it, and offers Open beside once both fit", async () => {
     await openFocused();
     expect(useViewerOverlayStore.getState().active).toMatchObject({
-      kind: "File",
+      kind: "Document",
       title: "notes.md",
       badge: "MD",
       detail: "line 12",

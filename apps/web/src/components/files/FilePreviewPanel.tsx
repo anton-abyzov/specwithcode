@@ -247,6 +247,7 @@ function WorkspaceBrowserPreview(props: {
       src={`${assetUrl.url}${revisionSuffix}`}
       title={props.title}
       pdf={isPdfPreviewFile(props.absolutePath)}
+      lockedFile={!isPdfPreviewFile(props.absolutePath)}
     />
   );
 }

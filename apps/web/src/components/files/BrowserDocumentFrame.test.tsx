@@ -28,11 +28,25 @@ describe("BrowserDocumentFrame", () => {
     expect(html).toContain("report-html-frame");
   });
 
-  it("leaves other HTML files as a plain sandboxed frame", () => {
+  it("leaves an attachment on today's sandboxed frame", () => {
     const html = renderToStaticMarkup(
       <BrowserDocumentFrame src="https://x.test/page.html" title="Page" pdf={false} />,
     );
     expect(html).not.toContain("report-document-page");
+    expect(html).toContain('sandbox="allow-scripts allow-forms allow-popups"');
+    expect(html).toContain('src="https://x.test/page.html"');
+    expect(html).not.toContain("studio-frame");
+  });
+
+  it("wraps a workspace file page and does not allow popups", () => {
+    const html = renderToStaticMarkup(
+      <BrowserDocumentFrame
+        src="https://x.test/page.html"
+        title="Page"
+        pdf={false}
+        lockedFile
+      />,
+    );
     expect(html).toContain('sandbox="allow-scripts allow-forms"');
     expect(html).not.toContain("allow-popups");
     expect(html).toContain("studio-frame=1");

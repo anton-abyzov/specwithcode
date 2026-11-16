@@ -887,7 +887,7 @@ export function ArtifactViewer(props: {
         <Button
           type="button"
           size="xs"
-          variant="ghost"
+          variant="outline"
           data-html-source-switch=""
           onClick={() => setHtmlSource({ key: artifact.key, source: !showingHtmlSource })}
         >
@@ -1152,6 +1152,7 @@ function ArtifactBody(props: {
           title={artifact.name}
           pdf={false}
           htmlRender={"attachmentId" in artifact}
+          lockedFile={!("attachmentId" in artifact)}
         />
       );
     case "pdf":

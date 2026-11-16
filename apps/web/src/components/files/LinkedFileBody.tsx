@@ -89,7 +89,7 @@ export function HtmlSourceSwitch(props: { readonly path: string; readonly enable
     <Button
       type="button"
       size="xs"
-      variant="ghost"
+      variant="outline"
       data-html-source-switch=""
       onClick={() => mode.setSource(!mode.source)}
     >
@@ -133,7 +133,7 @@ function LinkedAssetPreview(props: {
   }
   switch (props.kind) {
     case "html":
-      return <BrowserDocumentFrame src={asset.url} title={props.name} pdf={false} />;
+      return <BrowserDocumentFrame src={asset.url} title={props.name} pdf={false} lockedFile />;
     case "pdf":
       return <BrowserDocumentFrame src={asset.url} title={props.name} pdf />;
     case "image":
