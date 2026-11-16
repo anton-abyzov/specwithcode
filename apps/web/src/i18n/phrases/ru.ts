@@ -4581,6 +4581,9 @@ export const ru: PhraseCatalog = {
   "not linked": "не связан",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
     "Не связан: у {machine} свой координатор, свои треды и своя память для этого репозитория.",
+  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.":
+    "Не связан: это отдельные проекты для этого репозитория, у каждого свой координатор, свои треды и своя память. Это не мешает смотреть любой из них и писать в него.",
+  "Link them below to make one project.": "Свяжите их ниже, чтобы получился один проект.",
   "{value}Messages go to Percy. {value2}": "{value}Сообщения идут в Percy. {value2}",
   "Show only topics that need you in {project}":
     "Показать только темы, которые ждут вас в {project}",

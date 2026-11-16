@@ -4586,6 +4586,9 @@ export const ja: PhraseCatalog = {
   "not linked": "未リンク",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
     "未リンク: {machine} はこのリポジトリ用に独自のコーディネーター、スレッド、メモリを持っています。",
+  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.":
+    "未リンク: これらはこのリポジトリ用の別々のプロジェクトで、それぞれ独自のコーディネーター、スレッド、メモリを持っています。それでも、どのプロジェクトも表示でき、メッセージも送れます。",
+  "Link them below to make one project.": "下でリンクすると 1 つのプロジェクトになります。",
   "{value}Messages go to Percy. {value2}": "{value}メッセージは Percy に届きます。{value2}",
   "Show only topics that need you in {project}": "{project} で対応が必要なトピックのみ表示",
   "New topic in {title}": "{title} で新しいトピック",
