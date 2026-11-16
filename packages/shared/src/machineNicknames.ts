@@ -56,6 +56,28 @@ export function suggestMachineNickname(hostLabel: string): string | null {
 }
 
 /**
+ * The stamp of a name a machine gives itself: older than any name a person
+ * chooses, so a rename made anywhere, before or after, always wins the merge.
+ */
+export const DEFAULT_MACHINE_NICKNAME_STAMP = "1970-01-01T00:00:00.000Z";
+
+/**
+ * The name a machine gives itself when nobody has named it: the chip in its
+ * computer name ("Anton M5MAX PROLED" becomes "M5"), stamped older than any
+ * choice. Null when an entry already exists, even an empty one (a person chose
+ * the computer name), or when the computer name holds no chip.
+ */
+export function defaultMachineNickname(
+  nicknames: MachineNicknames,
+  environmentId: string,
+  hostLabel: string,
+): MachineNickname | null {
+  if (nicknames[environmentId] !== undefined) return null;
+  const name = suggestMachineNickname(hostLabel);
+  return name === null ? null : { name, updatedAt: DEFAULT_MACHINE_NICKNAME_STAMP };
+}
+
+/**
  * The id of another machine already shown under this name, compared without
  * case, or null. `names` maps each known machine id to the name it shows.
  */

@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 
 import {
   assignMachineColors,
+  defaultMachineNickname,
   fitMachineNickname,
   machineNicknameHolder,
   mergeMachineNicknames,
@@ -35,6 +36,26 @@ describe("machine nicknames", () => {
     expect(suggestMachineNickname("sams-mbp.local")).toBeNull();
     expect(suggestMachineNickname("Anna's Macbook Air")).toBeNull();
     expect(suggestMachineNickname("DESKTOP-M3XQ7")).toBeNull();
+  });
+
+  it("names a machine nobody named after its chip, and never over a choice", () => {
+    expect(defaultMachineNickname({}, "env-m5", "Anton M5MAX PROLED")).toEqual({
+      name: "M5",
+      updatedAt: "1970-01-01T00:00:00.000Z",
+    });
+    expect(defaultMachineNickname({}, "env-mini", "linux-mini")).toBeNull();
+    // An empty entry is a choice too: the person kept the computer name.
+    expect(
+      defaultMachineNickname({ "env-m5": at("", "2026-11-14T00:00:00.000Z") }, "env-m5", "Anton M5MAX PROLED"),
+    ).toBeNull();
+    const own = defaultMachineNickname({}, "env-m5", "Anton M5MAX PROLED")!;
+    // A rename made anywhere wins the merge, whichever side it arrives on.
+    const chosen = at("Studio", "2026-11-01T00:00:00.000Z");
+    expect(newerMachineNickname(own, chosen)?.name).toBe("Studio");
+    expect(newerMachineNickname(chosen, own)?.name).toBe("Studio");
+    expect(nextMachineNicknameStamp(own, Date.parse("2026-11-16T00:00:00.000Z"))).toBe(
+      "2026-11-16T00:00:00.000Z",
+    );
   });
 
   it("finds another machine already shown under a name, ignoring case", () => {
