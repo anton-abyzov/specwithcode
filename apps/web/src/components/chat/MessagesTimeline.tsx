@@ -97,6 +97,7 @@ import { routedThreadReplyDisplayText } from "@specweave-studio/shared/routedMes
 import { useMachineNicknames } from "../../studio/machineNickname";
 import {
   filesChangedOutsideEditItems,
+  isAdvisorConsultItem,
   resolveWorkEntryToolPresentation,
   resolveViewedImageAsset,
   subagentDiffTarget,
@@ -351,6 +352,7 @@ import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
 import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextChip";
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
+import { AdvisorConsultRow } from "./AdvisorConsultRow";
 import { ChromeConnectCard } from "./ChromeConnectCard";
 import { UseWorktreesCard } from "./UseWorktreesCard";
 import { RunOnDeviceCardProvider, RunOnDeviceCardSlot } from "./RunOnDeviceCard";
@@ -6652,6 +6654,9 @@ function WorktreesOffCard() {
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
   const ctx = use(TimelineRowCtx);
   const item = props.workEntry.projectedItem?.item;
+  if (props.workEntry.projectedItem && isAdvisorConsultItem(item)) {
+    return <AdvisorWorkEntryRow {...props} />;
+  }
   const childThreadId =
     item?.type === "notification" ? notificationChildThreadId(item.source) : undefined;
   if (item?.type !== "notification" || childThreadId === undefined) {
@@ -6698,6 +6703,51 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowP
     />
   );
 });
+
+/**
+ * An advisor consult in the work log. Its open state lives in the work-group
+ * view state like its sibling rows, so it stays open across a remount.
+ */
+function AdvisorWorkEntryRow(props: WorkEntryRowProps) {
+  const ctx = use(TimelineRowCtx);
+  const groupView = use(WorkGroupViewCtx);
+  const { workEntry } = props;
+  const remembered = groupView?.state ?? ctx.workGroupViewState;
+  const opensByDefault = ctx.timelineDetail === "verbose";
+  const [toggleState, setToggleState] = useState(() => ({
+    opensByDefault,
+    toggled: remembered.expandedEntries.has(workEntry.id),
+  }));
+  if (toggleState.opensByDefault !== opensByDefault) {
+    setToggleState({ opensByDefault, toggled: false });
+  }
+  const expanded = toggleState.toggled !== opensByDefault;
+  if (!workEntry.projectedItem) return null;
+  return (
+    <AdvisorConsultRow
+      projectedItem={workEntry.projectedItem}
+      environmentId={ctx.activeThreadEnvironmentId}
+      cwd={ctx.markdownCwd}
+      threadRef={ctx.threadRef}
+      providers={ctx.providerStatuses}
+      expanded={expanded}
+      onExpandedChange={(next) => {
+        const toggled = next !== opensByDefault;
+        if (groupView) groupView.onToggleEntry(!next);
+        else props.onToggleEntry?.(!next);
+        if (toggled) remembered.expandedEntries.add(workEntry.id);
+        else remembered.expandedEntries.delete(workEntry.id);
+        setToggleState({ opensByDefault, toggled });
+      }}
+      trailing={
+        <TimelineRowTimestamp
+          createdAt={workEntry.createdAt}
+          timestampFormat={ctx.timestampFormat}
+        />
+      }
+    />
+  );
+}
 
 function WorkEntryLogRow(props: WorkEntryRowProps) {
   const tx = useTx();

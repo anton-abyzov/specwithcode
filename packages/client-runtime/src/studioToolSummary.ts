@@ -69,6 +69,56 @@ export function studioToolResultIndicatesFailure(output: unknown): boolean {
   return readResult(output).failed;
 }
 
+const ADVISOR_CONSULT_STATUSES = new Set(["advice", "working", "refused", "failed"]);
+
+/** What one studio-code `advisor` call returned, read from its stored result. */
+export interface AdvisorConsultOutcome {
+  readonly status: "advice" | "working" | "refused" | "failed";
+  readonly message: string | null;
+  readonly advice: string | null;
+  /** The advising model and the provider serving it. */
+  readonly advisor: string | null;
+  readonly consultsRemaining: number | null;
+}
+
+function text(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+/**
+ * A consult's fields: the full result once read, else the short fields the
+ * wire keeps under `advisorConsult` (no advice or message yet).
+ */
+function advisorConsultData(
+  data: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const status = data?.status;
+  if (typeof status === "string" && ADVISOR_CONSULT_STATUSES.has(status)) return data;
+  const compact = asRecord(data?.advisorConsult);
+  const compactStatus = compact?.status;
+  return typeof compactStatus === "string" && ADVISOR_CONSULT_STATUSES.has(compactStatus)
+    ? compact
+    : undefined;
+}
+
+/** The consult result of a studio-code `advisor` call, or null for anything else. */
+export function readAdvisorConsultResult(output: unknown): AdvisorConsultOutcome | null {
+  const data = advisorConsultData(readResult(output).data);
+  const status = data?.status;
+  if (typeof status !== "string" || !ADVISOR_CONSULT_STATUSES.has(status)) return null;
+  const remaining = data?.consultsRemaining;
+  return {
+    status: status as AdvisorConsultOutcome["status"],
+    message: text(data?.message),
+    advice: text(data?.advice),
+    advisor: text(data?.advisor),
+    consultsRemaining:
+      typeof remaining === "number" && Number.isSafeInteger(remaining) && remaining >= 0
+        ? remaining
+        : null,
+  };
+}
+
 function countEntities(ids: ReadonlyArray<string | undefined>): number {
   return (
     new Set(ids.filter((value) => value !== undefined)).size +
@@ -147,9 +197,24 @@ export function summarizeStudioToolCalls(
     case "delegate":
       label = phrase("Delegated", "delegate", quantity(countEntities(entityIds("taskId")), "task"));
       break;
-    case "advisor":
-      label = `${completed.length > 0 ? "Asked" : "Tried to ask"} the advisor${selected.length > 1 ? ` ${times}` : ""}`;
+    case "advisor": {
+      // A refused or failed consult gave no advice, and a working one has not yet.
+      // The wire keeps the status under `advisorConsult`; a full result has it at the top.
+      const statusOf = (call: (typeof completed)[number]) =>
+        advisorConsultData(call.output)?.status;
+      const answered = completed.filter((call) => {
+        const status = statusOf(call);
+        return status !== "refused" && status !== "failed" && status !== "working";
+      });
+      const waiting = completed.some((call) => statusOf(call) === "working");
+      label =
+        answered.length > 0
+          ? `Asked the advisor${answered.length > 1 ? ` ${quantity(answered.length, "time")}` : ""}`
+          : waiting
+            ? "Asked the advisor, still working"
+            : `Tried to ask the advisor${selected.length > 1 ? ` ${times}` : ""}`;
       break;
+    }
     case "thread-read":
     case "thread-wait": {
       const targets = threadIds.every((value) => value !== undefined)

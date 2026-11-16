@@ -1,5 +1,5 @@
 import { useTx } from "../../i18n";
-import { Code2Icon } from "lucide-react";
+import { Code2Icon, LightbulbIcon } from "lucide-react";
 import { isProviderAllowAllOption } from "@specweave-studio/shared/providerPermissions";
 import {
   type ModelSelection,
@@ -20,7 +20,7 @@ import {
   normalizeModelSlug,
 } from "@specweave-studio/shared/model";
 import { findEffortDescriptor } from "@specweave-studio/shared/effortLevel";
-import { Fragment, memo, useCallback } from "react";
+import { Fragment, lazy, memo, Suspense, useCallback } from "react";
 import {
   Menu,
   MenuGroup,
@@ -50,6 +50,12 @@ import {
 import { useComposerMenuState } from "./useComposerMenuState";
 import { getTraitsSpeedDisplay, TraitsSpeedIcon } from "./TraitsSpeed";
 import type { ModelPickerEffort } from "./ModelPickerEffortStrip";
+
+// Loaded on first open: the row reads thread and machine state, and a static
+// import would pull those stores into every module that reaches this picker.
+const ThreadAdvisorMenu = lazy(() =>
+  import("./ThreadAdvisorMenu").then((module) => ({ default: module.ThreadAdvisorMenu })),
+);
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -520,8 +526,13 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
       updateDescriptors,
     });
 
+  const threadRef = persistence.threadRef;
   if (!hasAnyControls) {
-    return null;
+    return threadRef ? (
+      <Suspense fallback={null}>
+        <ThreadAdvisorMenu threadRef={threadRef} separated={false} />
+      </Suspense>
+    ) : null;
   }
 
   if (modelIsUnavailable) {
@@ -546,6 +557,11 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
             </div>
           );
         })}
+        {threadRef ? (
+          <Suspense fallback={null}>
+            <ThreadAdvisorMenu threadRef={threadRef} separated />
+          </Suspense>
+        ) : null}
       </>
     );
   }
@@ -719,6 +735,11 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           </div>
         );
       })}
+      {threadRef ? (
+        <Suspense fallback={null}>
+          <ThreadAdvisorMenu threadRef={threadRef} separated />
+        </Suspense>
+      ) : null}
     </>
   );
 });
@@ -952,6 +973,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   size = "sm",
   hidden = false,
   disabled = false,
+  advisorRowAvailable = false,
   ...persistence
 }: TraitsMenuContentProps &
   TraitsPersistence & {
@@ -960,7 +982,13 @@ export const TraitsPicker = memo(function TraitsPicker({
     disabled?: boolean;
     /** Names what the value belongs to where the surroundings do not. */
     triggerAriaLabelPrefix?: string;
+    /**
+     * The thread can show the Advisor row, so the menu opens even for a model
+     * with no options of its own; it then holds the Advisor group alone.
+     */
+    advisorRowAvailable?: boolean;
   }) {
+  const tx = useTx();
   const composerFloatingLayerProps = useComposerMenuProps();
   const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden || disabled);
   const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
@@ -984,7 +1012,46 @@ export const TraitsPicker = memo(function TraitsPicker({
       planModeEnabled,
     })
   ) {
-    return null;
+    const threadRef = persistence.threadRef;
+    if (!advisorRowAvailable || !threadRef) return null;
+    return (
+      <Menu
+        open={isMenuOpen}
+        onOpenChange={(open) => {
+          setIsMenuOpen(open && !disabled);
+        }}
+      >
+        <MenuTrigger
+          render={
+            <ComposerControl
+              disabled={disabled}
+              aria-label={
+                triggerAriaLabelPrefix
+                  ? `${triggerAriaLabelPrefix}: ${tx("Advisor")}`
+                  : tx("Advisor")
+              }
+              data-composer-advisor-only-trigger=""
+              size={size}
+              className={cn("shrink-0 whitespace-nowrap", triggerClassName)}
+            />
+          }
+        >
+          {/* The mark stays when a tight toolbar hides labels, as the consult row draws it. */}
+          <LightbulbIcon
+            aria-hidden
+            className={size === "xs" ? "size-3.5" : "size-4"}
+            data-composer-control-icon
+          />
+          <span data-composer-control-label>{tx("Advisor")}</span>
+          <ComposerControlChevron size={size} />
+        </MenuTrigger>
+        <MenuPopup align="start" {...(isComposerOwned ? composerFloatingLayerProps : {})}>
+          <Suspense fallback={null}>
+            <ThreadAdvisorMenu threadRef={threadRef} separated={false} />
+          </Suspense>
+        </MenuPopup>
+      </Menu>
+    );
   }
 
   const triggerParts = buildTraitsTriggerParts({
