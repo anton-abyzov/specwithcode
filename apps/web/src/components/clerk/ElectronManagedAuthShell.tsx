@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { ManagedRelayAuthProvider } from "../../cloud/managedAuth";
 import { clerkAppearance } from "./clerkAppearance";
+import { useConnectSignInNotice } from "./useConnectSignInNotice";
 
 /**
  * Electron half of the managed-auth boundary. The Electron provider statically
@@ -18,6 +19,8 @@ export default function ElectronManagedAuthShell({
   readonly publishableKey: string;
   readonly children: ReactNode;
 }) {
+  // Signing in through another site continues in the system browser.
+  useConnectSignInNotice();
   return (
     <ClerkProvider appearance={clerkAppearance} publishableKey={publishableKey} passkeys={passkeys}>
       <ManagedRelayAuthProvider>{children}</ManagedRelayAuthProvider>
