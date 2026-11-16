@@ -65,7 +65,11 @@ const withServer = <A, E>(
 const folders = (environment: NodeJS.ProcessEnv) => (environment.PATH ?? "").split(":");
 
 describe("refreshServerPath", () => {
-  it.effect("adds the usual installer folders without asking the shell", () =>
+  // These stand in a macOS server, whose PATH puts ":" between folders: a
+  // Windows temp folder ("C:\\...") cannot be one of them. Windows has its own case below.
+  const onPosix = it.effect.skipIf(process.platform === "win32");
+
+  onPosix("adds the usual installer folders without asking the shell", () =>
     withServer(({ home, environment, shell }) =>
       Effect.gen(function* () {
         yield* refreshServerPath({ force: false });
@@ -76,7 +80,7 @@ describe("refreshServerPath", () => {
     ),
   );
 
-  it.effect("asks the shell again once a startup file changed, and not before", () =>
+  onPosix("asks the shell again once a startup file changed, and not before", () =>
     withServer(({ home, environment, shell }) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -104,7 +108,7 @@ describe("refreshServerPath", () => {
     ),
   );
 
-  it.effect("asks the shell when a person insists, one read for callers that overlap", () =>
+  onPosix("asks the shell when a person insists, one read for callers that overlap", () =>
     withServer(({ home, environment, shell }) =>
       Effect.gen(function* () {
         let release = () => {};
@@ -133,7 +137,7 @@ describe("refreshServerPath", () => {
     ),
   );
 
-  it.effect("keeps every folder it had, and the PATH itself when the shell fails", () =>
+  onPosix("keeps every folder it had, and the PATH itself when the shell fails", () =>
     withServer(({ home, environment, shell }) =>
       Effect.gen(function* () {
         environment.PATH = `/managed/tools:/usr/bin:/bin`;
@@ -152,7 +156,7 @@ describe("refreshServerPath", () => {
     ),
   );
 
-  it.effect("measures a change from server start, before anyone has looked", () =>
+  onPosix("measures a change from server start, before anyone has looked", () =>
     withServer(({ home, environment, shell }) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -167,7 +171,7 @@ describe("refreshServerPath", () => {
     ),
   );
 
-  it.effect("asks a shell that failed again, a minute later or at a person's click", () =>
+  onPosix("asks a shell that failed again, a minute later or at a person's click", () =>
     withServer(({ home, environment, shell }) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

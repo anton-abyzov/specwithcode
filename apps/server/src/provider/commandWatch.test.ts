@@ -17,6 +17,9 @@ import {
 
 /** A name no real folder on the machine running the tests holds. */
 const AGENT = "swc-test-agent-1369";
+const WINDOWS = process.platform === "win32";
+/** The file that name is on the machine running the tests. */
+const AGENT_FILE = WINDOWS ? `${AGENT}.cmd` : AGENT;
 
 describe("commandCandidates", () => {
   it("looks for a bare name in each PATH folder, then in the usual installer folders", () => {
@@ -90,9 +93,16 @@ describe("commandMark", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const dir = yield* fs.makeTempDirectoryScoped();
-        const environment = { PATH: path.join(dir, "bin"), HOME: path.join(dir, "home") };
+        const home = path.join(dir, "home");
+        // As the machine running the tests names things: Windows runs a file by its extension.
+        const environment = {
+          PATH: path.join(dir, "bin"),
+          HOME: home,
+          USERPROFILE: home,
+          PATHEXT: ".CMD",
+        };
         yield* fs.makeDirectory(path.join(dir, "bin"));
-        return yield* run({ dir, file: path.join(dir, "bin", AGENT), environment });
+        return yield* run({ dir, file: path.join(dir, "bin", AGENT_FILE), environment });
       }),
     ).pipe(Effect.provide(NodeServices.layer));
 
@@ -110,10 +120,10 @@ describe("commandMark", () => {
         assert.notStrictEqual(present.mark, absent.mark);
         assert.deepStrictEqual(yield* commandMark(probe), present);
 
-        // A repair that only makes it runnable is a change too.
+        // A repair that only makes it runnable is a change too (Windows keeps no such bit).
         yield* fs.chmod(file, 0o755);
         const runnable = yield* commandMark(probe);
-        assert.notStrictEqual(runnable.mark, present.mark);
+        if (!WINDOWS) assert.notStrictEqual(runnable.mark, present.mark);
 
         yield* fs.writeFileString(file, "#!/bin/sh\nexit 0\n");
         assert.notStrictEqual((yield* commandMark(probe)).mark, runnable.mark);
@@ -214,7 +224,12 @@ describe("watchCommandFolders", () => {
         const dir = yield* fs.makeTempDirectoryScoped();
         const bin = path.join(dir, "bin");
         yield* fs.makeDirectory(bin);
-        const environment = { PATH: `${bin}:${path.join(dir, "not-made-yet")}`, HOME: dir };
+        const environment = {
+          PATH: [bin, path.join(dir, "not-made-yet")].join(WINDOWS ? ";" : ":"),
+          HOME: dir,
+          USERPROFILE: dir,
+          PATHEXT: ".CMD",
+        };
         const folders = yield* commandWatchFolders({ command: AGENT, environment });
         assert.include(folders, bin);
         assert.notInclude(folders, path.join(dir, "not-made-yet"));
@@ -230,7 +245,7 @@ describe("watchCommandFolders", () => {
         yield* Effect.sleep("300 millis");
         yield* Queue.clear(changes);
 
-        yield* fs.writeFileString(path.join(bin, AGENT), "#!/bin/sh\n");
+        yield* fs.writeFileString(path.join(bin, AGENT_FILE), "#!/bin/sh\n");
         yield* Queue.take(changes).pipe(Effect.timeout("3 seconds"));
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
