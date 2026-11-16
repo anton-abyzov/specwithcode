@@ -654,6 +654,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "terminal-commands",
+    title: "Use these commands in Terminal",
+    to: "/settings/general",
+    searchTerms: [
+      "terminal shell path command not found claude codex specweave node gh zprofile zshrc bashrc bash_profile startup file",
+    ],
+    scope: "environment-defaults",
+  },
+  {
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",
     to: "/settings/general",

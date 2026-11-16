@@ -64,6 +64,7 @@ import {
   useAgentSetupPanel,
 } from "./AgentSetupPanel";
 import { MachineBasics } from "./MachineBasics";
+import { Checkbox } from "../ui/checkbox";
 import { StepShell, useHeldFor, WizardStepFooter } from "./WizardFrame";
 
 const AddProviderInstanceDialog = lazy(() =>
@@ -561,6 +562,28 @@ function ConnectedAgentsStep({
           ) : null
         }
       />
+      {os !== "windows" && settings && canMaintain ? (
+        <label
+          className="mt-3 flex items-start gap-2.5 px-1 text-xs text-muted-foreground"
+          data-agents-terminal-commands
+        >
+          <Checkbox
+            className="mt-px"
+            checked={settings.terminalCommands}
+            onCheckedChange={(checked) =>
+              void updateSettings({
+                environmentId,
+                input: { patch: { terminalCommands: checked === true } },
+              })
+            }
+          />
+          <span>
+            {tx(
+              "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.",
+            )}
+          </span>
+        </label>
+      ) : null}
       {addingAccount ? (
         <AddManagedCodexAccountDialog
           environmentId={environmentId}

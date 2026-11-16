@@ -12,10 +12,13 @@ import {
   applyTerminalPathBlock,
   findTerminalPathBlocks,
   nodeTerminalPathFs,
+  removeTerminalPathBlocks,
+  syncTerminalCommandLinks,
   syncTerminalPath,
   TERMINAL_PATH_END,
   TERMINAL_PATH_START,
   terminalPathBlock,
+  terminalCommandsDir,
   terminalPathBlockDirs,
   terminalPathStateFile,
   terminalStartupFile,
@@ -38,16 +41,26 @@ const touch = (file: string, text = "") => {
 const zprofile = () => NodePath.join(home, ".zprofile");
 const read = (file = zprofile()) => NodeFS.readFileSync(file, "utf8");
 
-const sync = (options: { baseDir?: string; shell?: string; fs?: TerminalPathFs } = {}) =>
-  syncTerminalPath({
+/** One runtime pass: link the versioned tools, then bring the block in line. */
+const sync = async (
+  options: { baseDir?: string; shell?: string; fs?: TerminalPathFs; enabled?: boolean } = {},
+) => {
+  const input = {
     home,
     baseDir: options.baseDir ?? NodePath.join(home, ".specwithcode"),
     platform: "darwin",
     arch: "arm64",
     glibc: false,
-    shell: options.shell ?? "/bin/zsh",
     fs: options.fs ?? nodeTerminalPathFs,
+  } as const;
+  await syncTerminalCommandLinks(input);
+  return syncTerminalPath({
+    ...input,
+    shell: options.shell ?? "/bin/zsh",
+    enabled: options.enabled ?? true,
   });
+};
+const commands = (baseDir = NodePath.join(home, ".specwithcode")) => terminalCommandsDir(baseDir);
 
 const pinned = (baseDir: string) => {
   const [node, gh, specweave] = managedToolDirs({
@@ -105,7 +118,7 @@ describe("the block", () => {
 });
 
 describe("syncTerminalPath", () => {
-  it("lists the folders holding claude, Node.js, SpecWeave and Codex, then settles", async () => {
+  it("lists claude's folder and one stable commands folder for Node.js, SpecWeave and Codex", async () => {
     const base = NodePath.join(home, ".specwithcode");
     const { node, specweave } = pinned(base);
     touch(NodePath.join(home, ".local/bin/claude"));
@@ -116,13 +129,69 @@ describe("syncTerminalPath", () => {
     touch(NodePath.join(home, ".local/share/specweave/providers/bin/README"));
 
     expect(await sync()).toBe("added");
-    const rel = (dir: string) => `"$HOME/${NodePath.relative(home, dir)}"`;
-    const codex = NodePath.join(base, "tools/codex/0.200.0/bin");
-    const listed = [node, specweave, codex].toSorted().map(rel).join(" ");
-    expect(read()).toContain(`for _swc_dir in "$HOME/.local/bin" ${listed}; do`);
+    expect(read()).toContain(
+      'for _swc_dir in "$HOME/.local/bin" "$HOME/.specwithcode/commands"; do',
+    );
     expect(read()).not.toContain("providers/bin");
+    expect(read()).toContain("Settings > General > Use these commands in Terminal");
+    expect(NodeFS.readlinkSync(NodePath.join(commands(), "node"))).toBe(
+      NodePath.join(node, "node"),
+    );
+    expect(NodeFS.readdirSync(commands()).toSorted()).toEqual(["codex", "node", "specweave"]);
     expect(JSON.parse(read(terminalPathStateFile(home)))).toEqual({ files: [zprofile()] });
     expect(await sync()).toBe("unchanged");
+
+    // Codex updates: the link follows, and the startup file stays as it is.
+    const before = read();
+    touch(NodePath.join(base, "tools/codex/active.json"), '{"version":"0.201.0"}');
+    touch(NodePath.join(base, "tools/codex/0.201.0/bin/codex"));
+    expect(await sync()).toBe("unchanged");
+    expect(read()).toBe(before);
+    expect(NodeFS.readlinkSync(NodePath.join(commands(), "codex"))).toBe(
+      NodePath.join(base, "tools/codex/0.201.0/bin/codex"),
+    );
+  });
+
+  it("drops links to tools that are gone and never touches the person's own files", async () => {
+    const { specweave } = pinned(NodePath.join(home, ".specwithcode"));
+    touch(NodePath.join(specweave, "specweave"));
+    touch(NodePath.join(commands(), "mine"), "# mine\n");
+    await sync();
+    NodeFS.rmSync(NodePath.join(specweave, "specweave"));
+    await sync();
+    expect(NodeFS.readdirSync(commands())).toEqual(["mine"]);
+    expect(NodeFS.existsSync(zprofile()) ? read() : "").not.toContain(TERMINAL_PATH_START);
+  });
+
+  it("moves a block that names versioned folders onto the commands folder", async () => {
+    const { specweave } = pinned(NodePath.join(home, ".specwithcode"));
+    touch(NodePath.join(specweave, "specweave"));
+    touch(zprofile(), `# mine\n${terminalPathBlock([specweave], home)!}`);
+    touch(terminalPathStateFile(home), JSON.stringify({ files: [zprofile()] }));
+    expect(await sync()).toBe("updated");
+    expect(terminalPathBlockDirs(read(), home)).toEqual([commands()]);
+    expect(read().startsWith("# mine\n")).toBe(true);
+  });
+
+  it("switched off, removes the block; switched on, adds it back", async () => {
+    touch(NodePath.join(home, ".local/bin/claude"));
+    touch(zprofile(), "# mine\n");
+    expect(await sync()).toBe("added");
+    expect(await sync({ enabled: false })).toBe("removed");
+    expect(read()).toBe("# mine\n");
+    expect(JSON.parse(read(terminalPathStateFile(home)))).toEqual({ files: [] });
+    expect(await sync({ enabled: false })).toBe("unchanged");
+    expect(await sync()).toBe("added");
+    expect(read()).toContain(TERMINAL_PATH_START);
+  });
+
+  it("switched off, keeps another app home's folder", async () => {
+    const other = NodePath.join(home, ".specweave-studio");
+    touch(NodePath.join(pinned(other).node, "node"));
+    touch(NodePath.join(home, ".local/bin/claude"));
+    await sync({ baseDir: other });
+    expect(await sync({ enabled: false })).toBe("updated");
+    expect(terminalPathBlockDirs(read(), home)).toEqual([commands(other)]);
   });
 
   it("keeps the person's bytes and file mode exactly", async () => {
@@ -147,22 +216,30 @@ describe("syncTerminalPath", () => {
     expect(await sync({ baseDir: a })).toBe("unchanged");
     expect(await sync({ baseDir: b })).toBe("unchanged");
     const dirs = terminalPathBlockDirs(read(), home);
-    expect(dirs).toContain(pinned(a).specweave);
-    expect(dirs).toContain(pinned(b).node);
+    expect(dirs).toEqual([commands(b), commands(a)]);
     // A home drops its own folder once it no longer holds a command; the other's stays.
     NodeFS.rmSync(NodePath.join(pinned(a).specweave, "specweave"));
     expect(await sync({ baseDir: a })).toBe("updated");
-    expect(terminalPathBlockDirs(read(), home)).toEqual([pinned(b).node]);
+    expect(terminalPathBlockDirs(read(), home)).toEqual([commands(b)]);
   });
 
-  it("never brings back a deleted block, even when its record is corrupt", async () => {
+  it("reports a deleted block as an opt-out, even when its record is corrupt", async () => {
     touch(NodePath.join(home, ".local/bin/claude"));
     await sync();
     NodeFS.writeFileSync(zprofile(), "# mine\n");
     expect(await sync()).toBe("opted-out");
+    expect(read()).toBe("# mine\n");
+    // The caller turns the switch off; switched off, nothing comes back.
+    expect(await sync({ enabled: false })).toBe("unchanged");
+    expect(read()).toBe("# mine\n");
+    // Turned back on, the record has let go of the file, so the block returns.
+    expect(await sync()).toBe("added");
+
+    NodeFS.writeFileSync(zprofile(), "# mine\n");
     NodeFS.writeFileSync(terminalPathStateFile(home), '{"fil');
     expect(await sync()).toBe("opted-out");
     expect(read()).toBe("# mine\n");
+    expect(JSON.parse(read(terminalPathStateFile(home)))).toEqual({ files: [] });
   });
 
   it("retries after a failed write instead of recording an opt-out", async () => {
@@ -233,13 +310,14 @@ describe("syncTerminalPath", () => {
     });
   });
 
-  it("remembers a deleted block across a shell switch and back", async () => {
+  it("switched off after a deleted block, a shell switch adds nothing", async () => {
     touch(NodePath.join(home, ".local/bin/claude"));
     await sync();
     NodeFS.writeFileSync(zprofile(), "# mine\n");
     expect(await sync()).toBe("opted-out");
-    expect(await sync({ shell: "/bin/bash" })).toBe("added");
-    expect(await sync()).toBe("opted-out");
+    expect(await sync({ shell: "/bin/bash", enabled: false })).toBe("unchanged");
+    expect(NodeFS.existsSync(NodePath.join(home, ".bash_profile"))).toBe(false);
+    expect(await sync({ enabled: false })).toBe("unchanged");
     expect(read()).toBe("# mine\n");
   });
 
@@ -324,5 +402,27 @@ describe("syncTerminalPath", () => {
     NodeFS.rmSync(NodePath.join(home, ".local"), { recursive: true });
     expect(await sync()).toBe("unchanged");
     expect(NodeFS.existsSync(zprofile())).toBe(false);
+  });
+});
+
+describe("removeTerminalPathBlocks", () => {
+  it("takes the block out of every startup file and clears the record", async () => {
+    touch(NodePath.join(home, ".local/bin/claude"));
+    touch(zprofile(), "# zsh\n");
+    await sync();
+    const bashrc = NodePath.join(home, ".bashrc");
+    touch(bashrc, `# bash\n${terminalPathBlock(["/a"], home)!}`);
+    touch(NodePath.join(home, ".zshrc"), "# untouched\n");
+    expect(await removeTerminalPathBlocks(home, nodeTerminalPathFs)).toEqual([]);
+    expect(read()).toBe("# zsh\n");
+    expect(read(bashrc)).toBe("# bash\n");
+    expect(read(NodePath.join(home, ".zshrc"))).toBe("# untouched\n");
+    expect(JSON.parse(read(terminalPathStateFile(home)))).toEqual({ files: [] });
+  });
+
+  it("names a file it could not change", async () => {
+    touch(zprofile(), `${TERMINAL_PATH_START}\nx\n${TERMINAL_PATH_END}\n`);
+    const refusing: TerminalPathFs = { ...nodeTerminalPathFs, replace: async () => false };
+    expect(await removeTerminalPathBlocks(home, refusing)).toEqual([zprofile()]);
   });
 });
