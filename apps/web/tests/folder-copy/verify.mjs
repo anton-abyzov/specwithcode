@@ -289,7 +289,7 @@ const intent = async (page) =>
 /** Picks "Move to {machine}" in "Where should the coordinator run?". */
 const moveCoordinator = (page) =>
   page.locator('[data-slot="handoff-coordinator"] label').filter({ hasText: "Move to" }).click();
-const COPY_TITLE = "Copy SpecWeave to ministorm";
+const COPY_TITLE = "Send SpecWeave to ministorm";
 const MOVE_TITLE = COPY_TITLE;
 /** The setup screen shows no step line. */
 const NO_STEPS = "none";
