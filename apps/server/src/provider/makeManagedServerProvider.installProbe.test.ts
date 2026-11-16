@@ -266,6 +266,28 @@ describe("an agent that is not installed", () => {
     ),
   );
 
+  it.effect("is not watched once installed, even while it fails for another reason", () =>
+    run(
+      Effect.gen(function* () {
+        const { provider, state, install, folderChanged } = yield* machine();
+        install("/tools/agent");
+        // Installed and signed out: nothing that lands in a folder ends that.
+        state.account = { ...ready, status: "error", auth: { status: "unauthenticated" } };
+        yield* look;
+        yield* until(() => state.checks === 2);
+        assert.isTrue((yield* provider.getSnapshot).installed);
+
+        const stats = state.stats;
+        install("/tools/agent", 3);
+        yield* folderChanged("/tools");
+        yield* look;
+        yield* look;
+        assert.strictEqual(state.checks, 2);
+        assert.strictEqual(state.stats, stats);
+      }),
+    ),
+  );
+
   it.effect("is found in an installer folder the shell's PATH never named", () =>
     run(
       Effect.gen(function* () {

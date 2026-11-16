@@ -71,9 +71,12 @@ function hasSeparator(command: string, platform: NodeJS.Platform): boolean {
   return command.includes("/") || (platform === "win32" && command.includes("\\"));
 }
 
-function folderOf(file: string, platform: NodeJS.Platform): string {
+/** The folder a file sits in, as the machine names it. */
+export function folderOf(file: string, platform: NodeJS.Platform): string {
   const cut = Math.max(file.lastIndexOf("/"), platform === "win32" ? file.lastIndexOf("\\") : -1);
-  return cut <= 0 ? file.slice(0, cut + 1) : file.slice(0, cut);
+  // `C:` alone is the drive's current folder, not its root: keep the separator.
+  const atRoot = cut <= 0 || (platform === "win32" && cut === 2 && file[1] === ":");
+  return atRoot ? file.slice(0, cut + 1) : file.slice(0, cut);
 }
 
 /** The file names one command can have: itself, or on Windows one per runnable extension. */

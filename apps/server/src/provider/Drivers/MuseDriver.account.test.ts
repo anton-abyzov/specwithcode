@@ -186,4 +186,39 @@ it.layer(layerTest)("MuseDriver account", (it) => {
       );
     }).pipe(Effect.scoped),
   );
+  it.effect("does not fetch a model list that went missing later until a person asks", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return;
+      const muse = yield* fakeMuse;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* muse.signIn;
+      // The list is already on this machine when the server starts.
+      yield* fs.writeFileString(path.join(muse.dir, "catalog"), "");
+      const instance = yield* MuseDriver.create({
+        instanceId: ProviderInstanceId.make("muse"),
+        displayName: undefined,
+        enabled: true,
+        environment: muse.environment,
+        config: { ...MuseDriver.defaultConfig(), binaryPath: muse.binary },
+      });
+      expect((yield* instance.snapshot.refresh).status).toBe("ready");
+      expect(yield* muse.runs).toEqual([]);
+
+      // An update clears it. The next timed check says so and downloads nothing.
+      yield* muse.dropCatalog;
+      expect(yield* instance.snapshot.refresh).toMatchObject({
+        status: "warning",
+        auth: { status: "authenticated" },
+        message:
+          "Signed in to Muse Code, but its model list is not on this machine yet. Choose Check again to download it.",
+      });
+      expect(yield* muse.runs).toEqual([]);
+
+      // Check again.
+      yield* instance.invalidateCaches ?? Effect.void;
+      expect((yield* instance.snapshot.refresh).status).toBe("ready");
+      expect((yield* muse.runs).length).toBe(1);
+    }).pipe(Effect.scoped),
+  );
 });

@@ -351,6 +351,8 @@ export type ShellEnvironmentReaderAsync = (
   shell: string,
   names: ReadonlyArray<string>,
   execFile?: ExecFileAsyncLike,
+  /** How long this shell may take; a caller asking several shells shares one limit among them. */
+  timeoutMs?: number,
 ) => Promise<Partial<Record<string, string>>>;
 
 /**
@@ -362,6 +364,7 @@ export const readEnvironmentFromLoginShellAsync: ShellEnvironmentReaderAsync = a
   shell,
   names,
   execFile = execFileAsync,
+  timeoutMs = LOGIN_SHELL_PROBE_TIMEOUT_MS,
 ) => {
   if (names.length === 0) {
     return {};
@@ -369,7 +372,7 @@ export const readEnvironmentFromLoginShellAsync: ShellEnvironmentReaderAsync = a
 
   const output = await execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(names)], {
     encoding: "utf8",
-    timeout: LOGIN_SHELL_PROBE_TIMEOUT_MS,
+    timeout: timeoutMs,
     killSignal: "SIGKILL",
   });
 

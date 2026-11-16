@@ -581,7 +581,8 @@ describe("the selected agent's status row", () => {
     await show(
       agent("muse", {
         ...missing,
-        message: "Muse Code could not start: its installed binary is missing.",
+        message:
+          "Muse Code could not start: its installed binary is missing. Run the Muse Code installer again.",
         cli: { state: "broken", command: "muse", path: "/home/dev/.local/bin/muse" },
       }),
       { name: "Muse Code" },
@@ -609,6 +610,20 @@ describe("the selected agent's status row", () => {
       }),
       { name: "Muse Code" },
     );
+    const step = container.querySelector<HTMLElement>("[data-agent-install-step]")!;
+    expect(step.textContent).toContain("Run its installer again:");
+  });
+
+  it("asks for the installer again when the machine's reason names no step", async () => {
+    await show(
+      agent("pi", {
+        ...missing,
+        message: "Failed to execute Pi CLI health check.",
+        cli: { state: "broken", command: "pi", path: "/home/dev/.local/bin/pi" },
+      }),
+      { name: "Pi" },
+    );
+    expect(text()).toContain("Failed to execute Pi CLI health check.");
     const step = container.querySelector<HTMLElement>("[data-agent-install-step]")!;
     expect(step.textContent).toContain("Run its installer again:");
   });

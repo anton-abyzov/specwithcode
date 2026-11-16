@@ -290,7 +290,11 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         let models = listed(probed.success.catalog);
         // Signed in and no list: the host has no catalog on disk yet. A host
         // reads the catalog when it starts, so a new one is asked afterwards.
-        if (models.length === 0 && account?.signedIn === true && !modelListAsked) {
+        if (models.length > 0) {
+          // A list that was here and goes later is not fetched by a timed check:
+          // the row then says to choose Check again.
+          modelListAsked = true;
+        } else if (account?.signedIn === true && !modelListAsked) {
           modelListAsked = true;
           yield* downloadModelList;
           const again = yield* probe;

@@ -516,11 +516,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   if (installProbe && readCommandMark) {
     const { probe, fileSystem } = installProbe;
     const withFileSystem = Effect.provideService(FileSystem.FileSystem, fileSystem);
-    // On, and either not here or here and failing: the two states a change on disk can end.
+    // On and not installed: missing, or a launcher whose program is not there.
+    // A row that is installed and failing for another reason (signed out, an
+    // unsupported version) is not watched: nothing landing in a folder ends it.
     const waiting = Ref.get(snapshotStateRef).pipe(
-      Effect.map(
-        ({ snapshot }) => snapshot.enabled && (!snapshot.installed || snapshot.status === "error"),
-      ),
+      Effect.map(({ snapshot }) => snapshot.enabled && !snapshot.installed),
     );
     let rechecking = false;
     const recheckOnChange = Effect.suspend(() => {

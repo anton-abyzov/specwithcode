@@ -409,7 +409,8 @@ export function ProviderStatusRow({
             documentationUrl={provider?.setup?.documentationUrl}
             runDisabled={panel.session !== null || !panel.available}
             canRun={!readOnly}
-            explained={detail !== null}
+            // Only a message that names the step stands in for it.
+            explained={detail !== null && /installer/i.test(detail)}
             onRun={(installCommand) =>
               panel.open({
                 agent,

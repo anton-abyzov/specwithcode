@@ -26,6 +26,7 @@ import {
 } from "@specweave-studio/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -36,8 +37,10 @@ const READ_REUSE_MS = 2_000;
 const MARK_REUSE_MS = 2_000;
 /** Windows keeps PATH in the registry, with no file to watch, so it is asked on a timer. */
 const WINDOWS_REREAD_MS = 30_000;
-/** A caller waits this long for the shell; the read itself goes on and still lands. */
-const WAIT_LIMIT = "8 seconds";
+/** One read may take this long in all, however many shells or registry keys it asks. */
+export const PATH_READ_LIMIT_MS = 5_000;
+/** A caller waits for the read, which is over by its limit, and a moment for it to settle. */
+const WAIT_LIMIT = Duration.millis(PATH_READ_LIMIT_MS + 500);
 /** A shell that did not answer is not asked again by itself for this long. */
 const FAILED_READ_RETRY_MS = 60_000;
 
@@ -149,12 +152,17 @@ const REGISTRY_PATH_KEYS = [
 export async function readWindowsRegistryPath(
   environment: NodeJS.ProcessEnv,
   run: ExecFile = execFile,
+  limitMs = PATH_READ_LIMIT_MS,
 ): Promise<string | undefined> {
   const parts: string[] = [];
+  const deadline = performance.now() + limitMs;
   for (const key of REGISTRY_PATH_KEYS) {
+    // Whole milliseconds: a child process refuses a fractional limit.
+    const left = Math.floor(deadline - performance.now());
+    if (left <= 0) break;
     try {
       const value = parseRegistryPath(
-        await run("reg.exe", ["query", key, "/v", "Path"], { timeout: 5_000 }),
+        await run("reg.exe", ["query", key, "/v", "Path"], { timeout: left }),
         environment,
       );
       if (value) parts.push(value);
@@ -165,20 +173,41 @@ export async function readWindowsRegistryPath(
   return parts.length > 0 ? parts.join(";") : undefined;
 }
 
-async function readLoginShellPath(
-  environment: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
+/**
+ * Asks each shell in turn until one answers, all within one limit: a shell
+ * that hangs leaves the next one only what is left of it.
+ */
+export async function readShellPathWithin(
+  shells: ReadonlyArray<string>,
+  limitMs: number,
+  read: (shell: string, timeoutMs: number) => Promise<string | undefined>,
 ): Promise<string | undefined> {
-  if (platform === "win32") return readWindowsRegistryPath(environment);
-  for (const shell of listLoginShellCandidates(platform, environment.SHELL)) {
+  const deadline = performance.now() + limitMs;
+  for (const shell of shells) {
+    // Whole milliseconds: a child process refuses a fractional limit.
+    const left = Math.floor(deadline - performance.now());
+    if (left <= 0) break;
     try {
-      const path = (await readEnvironmentFromLoginShellAsync(shell, ["PATH"])).PATH;
+      const path = await read(shell, left);
       if (path) return path;
     } catch {
       // The next shell is asked; with no answer at all the PATH stays as it is.
     }
   }
   return undefined;
+}
+
+async function readLoginShellPath(
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): Promise<string | undefined> {
+  if (platform === "win32") return readWindowsRegistryPath(environment);
+  return readShellPathWithin(
+    listLoginShellCandidates(platform, environment.SHELL),
+    PATH_READ_LIMIT_MS,
+    async (shell, timeoutMs) =>
+      (await readEnvironmentFromLoginShellAsync(shell, ["PATH"], undefined, timeoutMs)).PATH,
+  );
 }
 
 export type LoginShellPathReader = typeof readLoginShellPath;

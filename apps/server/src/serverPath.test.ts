@@ -16,6 +16,7 @@ import {
   mergeServerPath,
   noteServerPathRead,
   parseRegistryPath,
+  readShellPathWithin,
   readWindowsRegistryPath,
   refreshServerPath,
   startupFilesMark,
@@ -308,5 +309,59 @@ describe("Windows registry PATH", () => {
       "C:\\Windows",
       "C:\\Tools",
     ]);
+  });
+});
+
+describe("one limit for a whole read", () => {
+  it("gives a second shell only what the first left, and none once the limit is spent", async () => {
+    const asked: Array<{ shell: string; timeoutMs: number }> = [];
+    const path = await readShellPathWithin(
+      ["/bin/slow", "/bin/next", "/bin/last"],
+      120,
+      async (shell, timeoutMs) => {
+        asked.push({ shell, timeoutMs });
+        if (shell === "/bin/slow") {
+          await wait(60);
+          throw new Error("killed at its limit");
+        }
+        await wait(100);
+        return undefined;
+      },
+    );
+    assert.strictEqual(path, undefined);
+    assert.deepStrictEqual(
+      asked.map(({ shell }) => shell),
+      ["/bin/slow", "/bin/next"],
+    );
+    // A child process takes whole milliseconds only.
+    assert.isTrue(asked.every(({ timeoutMs }) => Number.isInteger(timeoutMs)));
+    assert.isAtMost(asked[0]!.timeoutMs, 120);
+    assert.isAtMost(asked[1]!.timeoutMs, 70);
+  });
+
+  it("stops at the first shell that answers", async () => {
+    const asked: string[] = [];
+    const path = await readShellPathWithin(["/bin/a", "/bin/b"], 1_000, async (shell) => {
+      asked.push(shell);
+      return "/usr/bin";
+    });
+    assert.strictEqual(path, "/usr/bin");
+    assert.deepStrictEqual(asked, ["/bin/a"]);
+  });
+
+  it("asks no second registry key once the limit is spent", async () => {
+    const asked: number[] = [];
+    await readWindowsRegistryPath(
+      {},
+      async (_file, _args, options) => {
+        asked.push(options.timeout);
+        await wait(50);
+        throw new Error("timed out");
+      },
+      40,
+    );
+    assert.strictEqual(asked.length, 1);
+    assert.isAtMost(asked[0]!, 40);
+    assert.isTrue(Number.isInteger(asked[0]));
   });
 });

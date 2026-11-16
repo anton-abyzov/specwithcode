@@ -11,6 +11,7 @@ import {
   commandFolders,
   commandMark,
   commandWatchFolders,
+  folderOf,
   watchCommandFolders,
 } from "./commandWatch.ts";
 
@@ -61,6 +62,13 @@ describe("commandCandidates", () => {
       commandCandidates({ command: "C:\\Tools\\agent.cmd", environment }, "win32"),
       ["C:\\Tools\\agent.cmd"],
     );
+  });
+
+  it("names a drive's root as a folder, not the drive alone", () => {
+    assert.strictEqual(folderOf("C:\\agent.exe", "win32"), "C:\\");
+    assert.strictEqual(folderOf("C:\\Tools\\agent.exe", "win32"), "C:\\Tools");
+    assert.strictEqual(folderOf("/agent", "linux"), "/");
+    assert.strictEqual(folderOf("/opt/bin/agent", "linux"), "/opt/bin");
   });
 
   it("does not walk a runaway PATH whole", () => {
