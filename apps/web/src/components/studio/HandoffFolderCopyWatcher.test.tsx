@@ -10,6 +10,8 @@ const state = vi.hoisted(() => ({
   toasts: [] as unknown[],
   /** This window's access:write on the source, as the session reports it. */
   sourceAccess: "unknown" as "granted" | "denied" | "unknown",
+  /** The link a finished copy-only copy gets; a test replaces it to watch or refuse it. */
+  link: null as unknown as (...args: unknown[]) => Promise<unknown>,
 }));
 vi.mock("../../state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/session")>()),
@@ -18,6 +20,10 @@ vi.mock("../../state/session", async (importOriginal) => ({
 }));
 vi.mock("../../studio/machineHandoff", () => ({
   machineHandoff: new Proxy({}, { get: (_target, name) => name }),
+}));
+vi.mock("../../studio/projectLink", () => ({
+  projectLink: new Proxy({}, { get: (_target, name) => `link:${String(name)}` }),
+  linkCopyAsWorkers: (...args: unknown[]) => state.link(...args),
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (name: string) => async (request: unknown) => {
@@ -80,6 +86,7 @@ beforeEach(() => {
   state.toasts = [];
   state.handlers = {};
   state.sourceAccess = "unknown";
+  state.link = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ status: "linked" }));
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -376,6 +383,7 @@ const renderWatcherFrom = (sourceLabel: string) =>
 it("approves a Replace all left running once the re-compare has nothing open, and says what stayed", async () => {
   vi.useFakeTimers();
   try {
+    state.sourceAccess = "granted";
     pointer({ replaceAll: true });
     const calls: string[] = [];
     let destination: "comparing" | "previewed" | "applied" = "comparing";
@@ -419,7 +427,7 @@ it("approves a Replace all left running once the re-compare has nothing open, an
         title: "Copy to M3 is done. Open Move Project to finish setting it up.",
         data: finishedTrack,
         description:
-          "2 worktrees with uncommitted changes stayed on M4. 1 secret-like file (.env and similar) stayed on M4. Copy them yourself, or run the copy again with “Let me choose file types first” to send them.",
+          "2 worktrees with uncommitted changes stayed on M4. 1 secret-like file (.env and similar) stayed on M4. To send them, copy again with Secrets ticked.",
       },
     ]);
   } finally {
@@ -688,7 +696,12 @@ it.each([
   vi.useFakeTimers();
   try {
     state.sourceAccess = access;
-    pointer({ replaceAll: true, secrets: { included: true, out: [] } });
+    // The review showed the denied window's warning when Replace all was clicked.
+    pointer({
+      replaceAll: true,
+      secrets: { included: true, out: [] },
+      ...(access === "denied" ? { secretsStay: true } : {}),
+    });
     state.handlers.copyStatus = () =>
       previewed([row({ status: "diverged", choices: ["take-theirs"], decision: "take-theirs" })]);
     // The click staged .env on the source while a permitted window had the dialog.
@@ -1024,7 +1037,12 @@ it("never starts a new comparison for a copy closed at its review", async () => 
     pointer({ auto: true });
     const calls: string[] = [];
     state.handlers.copyStatus = notFound;
-    state.handlers.copySourceStatus = () => ({ state: "scanned", summary, progress: null, error: null });
+    state.handlers.copySourceStatus = () => ({
+      state: "scanned",
+      summary,
+      progress: null,
+      error: null,
+    });
     state.handlers.copyOffer = () => {
       calls.push("copyOffer");
       return {

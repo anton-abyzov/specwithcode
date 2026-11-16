@@ -17,7 +17,7 @@ import {
 import { copiedProjectFolder } from "../../studio/folderCopy";
 import { movingProgressView } from "../../studio/copyProgress";
 import { CLOSABLE_WHILE_WORKING, type CopyStage } from "./handoffCopySteps";
-import type { PendingCopy } from "./handoffFolderCopyPending";
+import type { PendingCopy, SecretsChoice } from "./handoffFolderCopyPending";
 
 /** Opens the applied copy's project on its machine; nothing before it is registered there. */
 export function openCopiedProject(
@@ -53,6 +53,8 @@ export interface CopyChoices {
   readonly method: "copy" | "clone";
   readonly copyRoot: string;
   readonly projectRelativePath: string;
+  /** The secrets choice to start with; absent keeps the form's. */
+  readonly secrets?: SecretsChoice;
 }
 
 export const POLL_MS = 1000;

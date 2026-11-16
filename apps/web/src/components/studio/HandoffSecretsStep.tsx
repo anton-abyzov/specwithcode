@@ -10,6 +10,60 @@ export interface SecretFileRow {
   readonly size: number;
 }
 
+/** Why this window cannot send secrets, as a warning: it changes what the copy carries. */
+export function SecretsLockedNote({ children }: { readonly children: string }) {
+  return (
+    <span className="text-warning-foreground" data-slot="copy-secrets-locked">
+      {children}
+    </span>
+  );
+}
+
+/**
+ * The review's Secrets line while the source's list of secret files is unread (a reopened
+ * copy, an unreachable source). The warning or the choice still shows, so an approval never
+ * leaves secrets behind unsaid and "untick Secrets" has a box to untick.
+ */
+export function SecretsUnreadStep({
+  included,
+  sourceLabel,
+  disabled,
+  locked = null,
+  onChange,
+}: {
+  readonly included: boolean;
+  readonly sourceLabel: string;
+  readonly disabled: boolean;
+  readonly locked?: string | null;
+  readonly onChange: (included: boolean) => void;
+}) {
+  return (
+    <label
+      className="flex cursor-pointer items-start gap-2 text-sm"
+      data-slot="copy-secrets-unread"
+    >
+      <span className="flex h-5 items-center">
+        <Checkbox
+          checked={included}
+          disabled={disabled || !!locked}
+          aria-label="Include secrets (.env, keys)"
+          onCheckedChange={(checked) => onChange(checked === true)}
+        />
+      </span>
+      <span className="leading-5">
+        Secrets (.env, keys): {included ? "included" : `left on ${sourceLabel}`}
+        <span className="block text-xs text-muted-foreground">
+          {locked ? (
+            <SecretsLockedNote>{locked}</SecretsLockedNote>
+          ) : (
+            `The list of secret files has not been read from ${sourceLabel} yet.`
+          )}
+        </span>
+      </span>
+    </label>
+  );
+}
+
 export interface SecretHintRow {
   readonly path: string;
   readonly source: string;
@@ -92,11 +146,13 @@ export function HandoffSecretsStep({
               <span className="leading-5">
                 Secrets (.env, keys): {counted}, {included ? "included" : `left on ${sourceLabel}`}
                 <span className="block text-xs text-muted-foreground">
-                  {locked
-                    ? locked
-                    : included
-                      ? `Copied to ${targetLabel}, where only your user can read them.`
-                      : `They stay on ${sourceLabel}.`}{" "}
+                  {locked ? (
+                    <SecretsLockedNote>{locked}</SecretsLockedNote>
+                  ) : included ? (
+                    `Copied to ${targetLabel}, where only your user can read them.`
+                  ) : (
+                    `They stay on ${sourceLabel}.`
+                  )}{" "}
                   {secretsReason(targetLabel)} Sign-ins to Claude, Codex and GitHub are never
                   copied; sign in on {targetLabel} instead.
                 </span>

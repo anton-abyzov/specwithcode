@@ -4,6 +4,7 @@ import { copiedProjectFolder, DEFAULT_COPY_METHOD } from "../../studio/folderCop
 import { MachineOptionRows, type MachineOption } from "../handoff/MachineOptionRows";
 import { Checkbox } from "../ui/checkbox";
 import { secretsReason } from "./handoffCopySecrets";
+import { SecretsLockedNote } from "./HandoffSecretsStep";
 import { HandoffCopyScope, type useCopyScope } from "./HandoffCopyScope";
 import { RemoteFolderBrowser } from "./RemoteFolderBrowser";
 import {
@@ -192,11 +193,13 @@ export function HandoffCopySetup({
               <span className="min-w-0 leading-5">
                 Secrets (.env, keys): {along.includeSecrets ? "included" : `left on ${sourceLabel}`}
                 <span className="block text-xs text-muted-foreground">
-                  {along.secretsLocked
-                    ? along.secretsLocked
-                    : along.includeSecrets
-                      ? `Sent only to ${targetLabel}, readable only by your user there.`
-                      : `They stay on ${sourceLabel}.`}{" "}
+                  {along.secretsLocked ? (
+                    <SecretsLockedNote>{along.secretsLocked}</SecretsLockedNote>
+                  ) : along.includeSecrets ? (
+                    `Sent only to ${targetLabel}, readable only by your user there.`
+                  ) : (
+                    `They stay on ${sourceLabel}.`
+                  )}{" "}
                   {secretsReason(targetLabel)}
                 </span>
               </span>

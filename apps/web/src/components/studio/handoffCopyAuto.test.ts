@@ -10,6 +10,7 @@ import {
   replacesNothing,
   replacingCount,
   secretsLeft,
+  secretsLeftSendable,
   secretsLeftText,
 } from "./handoffCopyAuto";
 import {
@@ -137,9 +138,37 @@ describe("one-click approval", () => {
     expect(secretsLeft([{ path: ".env" }, { path: "key.pem" }], [{ path: ".env" }])).toBe(1);
     expect(secretsLeft(null, [])).toBe(0);
     expect(secretsLeftText(2, "M4")).toBe(
-      "2 secret-like files (.env and similar) stayed on M4. Copy them yourself, or run the copy again with “Let me choose file types first” to send them.",
+      "2 secret-like files (.env and similar) stayed on M4. To send them, copy again with Secrets ticked.",
     );
     expect(secretsLeftText(0, "M4")).toBeNull();
+  });
+
+  it("says where to start the copy when this window cannot send the secrets that stayed", () => {
+    expect(secretsLeftText(1, "M4", "source-only")).toBe(
+      "1 secret-like file (.env and similar) stayed on M4. This window can't send them: only SpecWithCode on M4 can. Start the copy again there with Secrets ticked.",
+    );
+    // An unanswered session may turn out denied: the text names the window that always can.
+    expect(secretsLeftText(1, "M4", "unconfirmed")).toBe(
+      "1 secret-like file (.env and similar) stayed on M4. To send them, start the copy again in SpecWithCode on M4 with Secrets ticked.",
+    );
+    // A fresh copy would carry none of them: no action is named.
+    expect(secretsLeftText(2, "M4", null)).toBe(
+      "2 secret-like files (.env and similar) stayed on M4.",
+    );
+    // The option that stops after measuring never chose secrets: no text names it.
+    for (const sender of ["here", "source-only", "unconfirmed", null] as const) {
+      expect(secretsLeftText(0, "M4", sender)).toBeNull();
+      expect(secretsLeftText(3, "M4", sender)).not.toContain("Let me choose file types first");
+    }
+  });
+
+  it("offers a fresh copy only for left-behind secrets that can travel", () => {
+    const files = [{ path: ".env" }, { path: "~/.config/tool/key" }];
+    expect(secretsLeftSendable(files, [], [".env"])).toBe(true);
+    // What stayed cannot be received there, or already arrived: copying again sends nothing.
+    expect(secretsLeftSendable(files, [{ path: ".env" }], [".env"])).toBe(false);
+    expect(secretsLeftSendable(files, [], [])).toBe(false);
+    expect(secretsLeftSendable(null, [], [".env"])).toBe(false);
   });
 
   it("counts only what Replace all would still replace", () => {

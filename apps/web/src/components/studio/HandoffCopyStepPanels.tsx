@@ -15,7 +15,7 @@ import type {
 import type { LeftOnSource } from "./HandoffSourceChanges";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { formatBytes } from "../../studio/folderCopy";
-import { HandoffSecretsStep } from "./HandoffSecretsStep";
+import { HandoffSecretsStep, SecretsUnreadStep } from "./HandoffSecretsStep";
 import { CopyCredentialsChecklist } from "./CopyCredentialsChecklist";
 import { CopyClassPicker, CopyPlanPreview } from "./HandoffCopyPreview";
 import { CopyProgressPanel } from "./CopyProgressPanel";
@@ -91,6 +91,7 @@ export function HandoffCopyStepPanels({
   leftOnSource,
   keptHere,
   secretsNote,
+  onSendSecrets = null,
   secretsLocked = null,
   link,
   linkDialog,
@@ -167,6 +168,8 @@ export function HandoffCopyStepPanels({
   /** The person kept the coordinator on the source. */
   readonly keptHere: boolean;
   readonly secretsNote: string | null;
+  /** Starts a fresh copy with every secret ticked; null when this window cannot send them. */
+  readonly onSendSecrets?: (() => void) | null;
   /** Why this window cannot send secrets and where to send them from; null when it can. */
   readonly secretsLocked?: string | null;
   readonly link: CopyLinkOutcome | { readonly status: "linking" } | null;
@@ -325,6 +328,15 @@ export function HandoffCopyStepPanels({
               {formatBytes(copy.disk.free)}.
             </p>
           )}
+          {!summary && (
+            <SecretsUnreadStep
+              included={includeSecrets}
+              sourceLabel={sourceLabel}
+              disabled={busy}
+              locked={secretsLocked}
+              onChange={(included) => onSecretsChange(included, [])}
+            />
+          )}
           {summary && (
             <HandoffSecretsStep
               files={secretFilesCopied(
@@ -387,6 +399,7 @@ export function HandoffCopyStepPanels({
           leftOnSource={leftOnSource}
           keptHere={keptHere}
           secretsNote={secretsNote}
+          onSendSecrets={onSendSecrets}
           link={link}
           undoPreview={undoPreview}
           linkDialog={linkDialog}
