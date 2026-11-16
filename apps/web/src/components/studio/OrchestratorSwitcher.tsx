@@ -191,7 +191,13 @@ export function OrchestratorSwitcher({
   // Every copy registered on its own: "not linked" is about the projects, and reads like a broken
   // connection or missing access unless the menu says so. With a linked copy in the group an
   // unlinked one can be held back, so the reassurance is for the all-unlinked case only.
-  const allUnlinked = copies.length > 1 && copies.every((copy) => copy.role === "independent");
+  const allUnlinked = listed.length > 1 && copies.every((copy) => copy.role === "independent");
+  // "Link them below" only when every other row has its link item: a second checkout on the
+  // viewed machine, or one at another place in the repository, is listed but gets no offer.
+  const linkCoversRows =
+    allUnlinked &&
+    others.length > 0 &&
+    others.every((copy) => linkActions.some((link) => link.key === copy.key));
   // Copy, link and the coordinator actions act on this project; threads and Leave on the machine.
   const projectActions = onCopy !== null || coordinatorActions.length > 0 || linkActions.length > 0;
   return (
@@ -235,9 +241,9 @@ export function OrchestratorSwitcher({
                 data-orchestrator-unlinked-note=""
               >
                 {tx(
-                  "Not linked: each machine has its own project for this repository, with its own coordinator, threads and memory. It is not a connection or access problem.",
+                  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. It is not a connection or access problem.",
                 )}
-                {linkActions.length > 0 ? ` ${tx("Link them below to make one project.")}` : null}
+                {linkCoversRows ? ` ${tx("Link them below to make one project.")}` : null}
               </p>
             ) : null}
             <MenuRadioGroup

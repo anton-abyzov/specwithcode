@@ -4607,8 +4607,8 @@ export const es: PhraseCatalog = {
   "not linked": "sin vincular",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
     "Sin vincular: {machine} tiene su propio coordinador, sus hilos y su memoria para este repositorio.",
-  "Not linked: each machine has its own project for this repository, with its own coordinator, threads and memory. It is not a connection or access problem.":
-    "Sin vincular: cada equipo tiene su propio proyecto para este repositorio, con su propio coordinador, hilos y memoria. No es un problema de conexión ni de acceso.",
+  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. It is not a connection or access problem.":
+    "Sin vincular: son proyectos separados para este repositorio, cada uno con su propio coordinador, sus hilos y su memoria. No es un problema de conexión ni de acceso.",
   "Link them below to make one project.": "Vincúlalos abajo para que sean un solo proyecto.",
   "{value}Messages go to Percy. {value2}": "{value}Los mensajes van a Percy. {value2}",
   "Show only topics that need you in {project}":

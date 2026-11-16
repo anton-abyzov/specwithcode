@@ -387,7 +387,7 @@ it("says once that not linked is about the projects, not the connection or acces
     copies: [copy("m4:p", "M4", "independent"), copy("m1:p", "M1", "independent")],
   });
   expect(unlinkedNote()).toBe(
-    "Not linked: each machine has its own project for this repository, with its own coordinator, threads and memory. It is not a connection or access problem.",
+    "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. It is not a connection or access problem.",
   );
 });
 
@@ -401,6 +401,22 @@ it("points at the link items when linking is offered", async () => {
   expect(unlinkedNote()).toMatch(
     /It is not a connection or access problem\. Link them below to make one project\.$/,
   );
+});
+
+it("does not point at link items a listed copy does not have", async () => {
+  // M3 is listed, but only M1 can be linked (M3 sits at another place in the repository).
+  await renderSwitcher({
+    ...handlers(),
+    copies: [
+      copy("m4:p", "M4", "independent"),
+      copy("m1:p", "M1", "independent"),
+      copy("m3:p", "M3", "independent"),
+    ],
+    onLink: vi.fn<(key: string) => void>(),
+    links: [{ key: "m1:p", machine: "M1" }],
+  });
+  expect(unlinkedNote()).toMatch(/It is not a connection or access problem\.$/);
+  expect(document.querySelectorAll("[data-orchestrator-link]")).toHaveLength(1);
 });
 
 it("keeps that note off linked projects and off a group with a linked copy", async () => {

@@ -89,7 +89,7 @@ try {
     // Said once, in the open: it is about the projects, not the connection or access.
     assert.equal(
       await page.locator("[data-orchestrator-unlinked-note]").textContent(),
-      "Not linked: each machine has its own project for this repository, with its own coordinator, threads and memory. It is not a connection or access problem. Link them below to make one project.",
+      "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. It is not a connection or access problem. Link them below to make one project.",
     );
     assert.deepEqual(await page.locator("[data-orchestrator-link]").allTextContents(), [
       "Link with the project on m1…",
