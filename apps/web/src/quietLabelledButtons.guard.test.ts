@@ -19,8 +19,9 @@ import { describe, expect, it } from "vite-plus/test";
  * stops or removes something), or, when it truly is one of those cases, add it to the list.
  *
  * A variant counts as quiet when any string literal it can take is quiet: `variant="ghost"`,
- * `variant={"ghost"}` and `variant={on ? "secondary" : "ghost"}` are all found. A variant
- * computed elsewhere (a variable or a prop) is not.
+ * `variant={"ghost"}`, `variant={on ? "secondary" : "ghost"}` and `variant={tone ?? "ghost"}`
+ * are all found. A ternary's condition is not read. A variant computed elsewhere (a
+ * variable or a prop) is not found.
  */
 const sourceRoot = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 
@@ -66,6 +67,66 @@ function openingTagEnd(source: string, start: number): number {
   return -1;
 }
 
+type Operator = { readonly at: number; readonly text: "?" | ":" | "??" | "||" };
+
+/** The `?`, `:`, `??` and `||` of `expression` that sit outside strings and brackets. */
+function topLevelOperators(expression: string): Operator[] {
+  const found: Operator[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  for (let index = 0; index < expression.length; index += 1) {
+    const char = expression[index] ?? "";
+    const pair = expression.slice(index, index + 2);
+    if (quote) {
+      if (char === "\\") index += 1;
+      else if (char === quote) quote = null;
+    } else if (char === '"' || char === "'" || char === "`") quote = char;
+    else if ("([{".includes(char)) depth += 1;
+    else if (")]}".includes(char)) depth -= 1;
+    else if (depth !== 0) continue;
+    else if (pair === "??" || pair === "||") {
+      found.push({ at: index, text: pair });
+      index += 1;
+    } else if (pair === "?.") index += 1;
+    else if (char === "?" || char === ":") found.push({ at: index, text: char });
+  }
+  return found;
+}
+
+/**
+ * The string literals `expression` can evaluate to: itself when it is one, each branch of
+ * a ternary, each side of `??` or `||`. A ternary's condition is not a result, so the
+ * `"ghost"` in `mode === "ghost" ? "outline" : "default"` is not returned.
+ */
+function resultLiterals(expression: string): string[] {
+  const text = expression.trim();
+  const operators = topLevelOperators(text);
+  const question = operators.findIndex((operator) => operator.text === "?");
+  if (question >= 0) {
+    let nested = 0;
+    for (const operator of operators.slice(question + 1)) {
+      if (operator.text === "?") nested += 1;
+      else if (operator.text === ":" && nested > 0) nested -= 1;
+      else if (operator.text === ":")
+        return [
+          ...resultLiterals(text.slice((operators[question]?.at ?? 0) + 1, operator.at)),
+          ...resultLiterals(text.slice(operator.at + 1)),
+        ];
+    }
+    return [];
+  }
+  const fallback = operators.find((operator) => operator.text === "??" || operator.text === "||");
+  if (fallback)
+    return [
+      ...resultLiterals(text.slice(0, fallback.at)),
+      ...resultLiterals(text.slice(fallback.at + 2)),
+    ];
+  const literal = /^(["'`])([\w-]+)\1$/.exec(text);
+  if (literal) return [literal[2] ?? ""];
+  if (text.startsWith("(") && text.endsWith(")")) return resultLiterals(text.slice(1, -1));
+  return [];
+}
+
 /**
  * The string literals the `name` attribute of an opening tag can take: one for `name="a"`
  * or `name={"a"}`, each branch for `name={on ? "a" : "b"}`, none when it has no literal.
@@ -89,10 +150,7 @@ function attributeLiterals(tag: string, name: string): string[] {
       if (depth === 0) break;
     }
   }
-  return Array.from(
-    tag.slice(start, end).matchAll(/(["'`])([\w-]+)\1/g),
-    (literal) => literal[2] ?? "",
-  );
+  return resultLiterals(tag.slice(start + 1, end));
 }
 
 /** How many Buttons in `source` are on a quiet variant with only a label inside. */
@@ -143,11 +201,34 @@ describe("labelled buttons rest on a border or a fill", () => {
       ).toBe(1);
     }
     expect(quietLabelledButtons(`<Button variant={"outline"}>Stop copy</Button>`)).toBe(0);
+    expect(
+      quietLabelledButtons(`<Button variant={(on ? "ghost" : "outline")}>Go</Button>`),
+    ).toBe(1);
+    expect(
+      quietLabelledButtons(`<Button variant={a ? "outline" : b ? "ghost" : "default"}>Go</Button>`),
+    ).toBe(1);
+    expect(quietLabelledButtons(`<Button variant={tone ?? "ghost-muted"}>Go</Button>`)).toBe(1);
     expect(quietLabelledButtons(`<Button variant={tone}>Stop copy</Button>`)).toBe(0);
     expect(quietLabelledButtons(`<Button data-variant="ghost">Stop copy</Button>`)).toBe(0);
     expect(quietLabelledButtons(`<Button variant="ghost" size={"icon-xs"}>×</Button>`)).toBe(0);
     expect(
       quietLabelledButtons(`<Button variant="ghost" size={small ? "icon-xs" : "sm"}>Go</Button>`),
+    ).toBe(1);
+  });
+
+  it("does not read a ternary's condition as a variant or a size", () => {
+    expect(
+      quietLabelledButtons(
+        `<Button variant={mode === "ghost" ? "outline" : "default"}>Save</Button>`,
+      ),
+    ).toBe(0);
+    expect(
+      quietLabelledButtons(`<Button variant={a?.b === "ghost" ? "outline" : "link"}>Save</Button>`),
+    ).toBe(0);
+    expect(
+      quietLabelledButtons(
+        `<Button variant="ghost" size={kind === "icon" ? "sm" : "xs"}>Save</Button>`,
+      ),
     ).toBe(1);
   });
 
