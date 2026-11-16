@@ -34,6 +34,12 @@ export interface PendingCopy {
    */
   readonly secrets?: SecretsChoice;
   /**
+   * The form said this window cannot send secrets when the copy started or Replace all was
+   * clicked, so approving without them is what the person was told. Absent with secrets
+   * included: nothing may approve the copy without them unseen.
+   */
+  readonly secretsStay?: true;
+  /**
    * One-click copy: measuring, comparing and an approval that replaces nothing run
    * straight through. Absent for copies that stop to choose what to copy.
    */
@@ -141,11 +147,13 @@ function parsePendingCopy(value: unknown): PendingCopy | null {
     reopened,
     needsComparison,
     secrets: savedSecrets,
+    secretsStay,
     ...fields
   } = pointer;
   const secrets = readSecretsChoice(savedSecrets);
   const rest: PendingCopy = {
     ...(secrets ? { secrets } : {}),
+    ...(secretsStay === true ? { secretsStay } : {}),
     ...fields,
     ...(auto === true ? { auto } : {}),
     ...(method === "copy" || method === "clone" ? { method } : {}),
@@ -273,6 +281,13 @@ export const ALL_SECRETS: SecretsChoice = { included: true, out: [] };
  */
 export const pendingSecrets = (saved: PendingCopy): SecretsChoice =>
   saved.secrets ?? { included: false, out: [] };
+
+/**
+ * True when approving this copy without secrets would be unseen: its choice includes them
+ * and the form never said this window cannot send them.
+ */
+export const secretsPromised = (saved: PendingCopy): boolean =>
+  pendingSecrets(saved).included && saved.secretsStay !== true;
 
 /** A saved secrets choice, or undefined when it is missing or malformed. */
 export function readSecretsChoice(value: unknown): SecretsChoice | undefined {

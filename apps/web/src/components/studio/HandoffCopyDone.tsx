@@ -53,6 +53,7 @@ export function HandoffCopyDone({
   leftOnSource = null,
   keptHere = false,
   secretsNote = null,
+  onSendSecrets = null,
   link,
   undoPreview,
   linkDialog,
@@ -84,6 +85,8 @@ export function HandoffCopyDone({
   readonly keptHere?: boolean;
   /** Secret-like files that stayed on the source, said once the copy is done. */
   readonly secretsNote?: string | null;
+  /** Starts a fresh copy with every secret ticked; null when this window cannot send them. */
+  readonly onSendSecrets?: (() => void) | null;
   readonly link: CopyLinkOutcome | { readonly status: "linking" } | null;
   readonly undoPreview: FolderCopyUndoResult | null;
   readonly linkDialog: boolean;
@@ -187,9 +190,14 @@ export function HandoffCopyDone({
         />
       )}
       {secretsNote && (
-        <p className="text-xs text-warning-foreground" data-slot="copy-secrets-left">
-          {secretsNote}
-        </p>
+        <div className="space-y-1.5" data-slot="copy-secrets-left">
+          <p className="text-xs text-warning-foreground">{secretsNote}</p>
+          {onSendSecrets && (
+            <Button type="button" size="xs" variant="outline" onClick={onSendSecrets}>
+              Copy again with secrets
+            </Button>
+          )}
+        </div>
       )}
       {mode === "copy-only" && link && (
         <p

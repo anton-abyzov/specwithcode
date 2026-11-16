@@ -10,6 +10,15 @@ export interface SecretFileRow {
   readonly size: number;
 }
 
+/** Why this window cannot send secrets, as a warning: it changes what the copy carries. */
+export function SecretsLockedNote({ children }: { readonly children: string }) {
+  return (
+    <span className="text-warning-foreground" data-slot="copy-secrets-locked">
+      {children}
+    </span>
+  );
+}
+
 export interface SecretHintRow {
   readonly path: string;
   readonly source: string;
@@ -92,11 +101,13 @@ export function HandoffSecretsStep({
               <span className="leading-5">
                 Secrets (.env, keys): {counted}, {included ? "included" : `left on ${sourceLabel}`}
                 <span className="block text-xs text-muted-foreground">
-                  {locked
-                    ? locked
-                    : included
-                      ? `Copied to ${targetLabel}, where only your user can read them.`
-                      : `They stay on ${sourceLabel}.`}{" "}
+                  {locked ? (
+                    <SecretsLockedNote>{locked}</SecretsLockedNote>
+                  ) : included ? (
+                    `Copied to ${targetLabel}, where only your user can read them.`
+                  ) : (
+                    `They stay on ${sourceLabel}.`
+                  )}{" "}
                   {secretsReason(targetLabel)} Sign-ins to Claude, Codex and GitHub are never
                   copied; sign in on {targetLabel} instead.
                 </span>

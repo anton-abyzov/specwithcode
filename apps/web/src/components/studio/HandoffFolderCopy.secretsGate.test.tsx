@@ -151,8 +151,15 @@ it("copies without secrets, and says where to send them from, in a window that m
       "Only SpecWithCode on M4 can send secrets. To include them, start this copy in the SpecWithCode window on M4.",
     );
     expect(along.querySelector('[data-slot="checkbox"]')!.hasAttribute("data-disabled")).toBe(true);
+    // A warning, not helper text: it changes what the copy carries, before it starts.
+    const locked = () => container.querySelector('[data-slot="copy-secrets-locked"]')!;
+    expect(locked().textContent).toContain("Only SpecWithCode on M4 can send secrets.");
+    expect(locked().className).toContain("text-warning-foreground");
     await click("Copy to M3");
     expect(container.textContent).toContain("Secrets (.env, keys): 1 file, left on M4");
+    expect(locked().className).toContain("text-warning-foreground");
+    // The copy records that its form said so, so it may be approved without them.
+    expect(JSON.parse(localStorage.getItem(KEY)!).secretsStay).toBe(true);
     await click("Copy to M3");
     // Approval goes ahead; nothing asks the source for a grant this window lacks.
     expect(names()).toContain("copyApprove");
@@ -229,4 +236,123 @@ it("approves with the secrets choice from a window that may send them", async ()
     input: Record<string, unknown>;
   };
   expect(approval.input).toEqual({ operationId: expect.any(String) });
+});
+
+const left = () => container.querySelector('[data-slot="copy-secrets-left"]');
+const resumed = (extra: Record<string, unknown> = {}) =>
+  localStorage.setItem(
+    KEY,
+    JSON.stringify({
+      operationId: "00000000-0000-4000-8000-000000000009",
+      environmentId: "m3",
+      mode: "copy-only",
+      targetFolder: "/home/anton/project",
+      projectId: null,
+      secrets: { included: true, out: [] },
+      ...extra,
+    }),
+  );
+
+it("says on Done that only the source's own window can send the secrets that stayed", async () => {
+  state.sourceAccess = "denied";
+  statuses = [copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await click("Copy to M3");
+  await click("Copy to M3");
+  expect(left()!.textContent).toBe(
+    "1 secret-like file (.env and similar) stayed on M4. This window can't send them: only SpecWithCode on M4 can. Start the copy again there with Secrets ticked.",
+  );
+  // No action here: copying again from this window would leave them behind again.
+  expect(left()!.querySelector("button")).toBeNull();
+});
+
+it("offers Copy again with secrets on Done in a window that can send them", async () => {
+  state.sourceAccess = "granted";
+  statuses = [copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  // The person unticks Secrets, so the copy leaves .env on M4.
+  await act(async () =>
+    container
+      .querySelector<HTMLElement>('[data-slot="copy-along-secrets"] [data-slot="checkbox"]')!
+      .click(),
+  );
+  await click("Copy to M3");
+  await click("Copy to M3");
+  expect(sentSecrets()).toEqual([[]]);
+  expect(left()!.textContent).toContain(
+    "1 secret-like file (.env and similar) stayed on M4. To send them, copy again with Secrets ticked.",
+  );
+  expect(left()!.textContent).not.toContain("Let me choose file types first");
+  const first = JSON.parse(localStorage.getItem(KEY)!).operationId as string;
+  statuses = [
+    copyStatus("previewed"),
+    copyStatus("applied", {
+      secrets: [{ path: ".env", writtenAs: ".env", size: 10, state: "written" }],
+    }),
+  ];
+  await act(async () => findButton(left()!, "Copy again with secrets").click());
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  // A fresh copy of the same folder and machine, with every secret ticked.
+  const again = JSON.parse(localStorage.getItem(KEY)!);
+  expect(again.operationId).not.toBe(first);
+  expect(again).toMatchObject({ environmentId: "m3", secrets: { included: true, out: [] } });
+  await click("Copy to M3");
+  expect(sentSecrets()).toEqual([[], [".env"]]);
+  expect(left()).toBeNull();
+});
+
+it("reads the secret list before approving a reopened copy that could not read it", async () => {
+  state.sourceAccess = "granted";
+  resumed();
+  const read = state.handlers.copySourceStatus!;
+  let reads = 0;
+  state.handlers.copySourceStatus = (input) => {
+    reads += 1;
+    // The source did not answer while the dialog reopened.
+    if (reads === 1) throw new Error("M4 did not answer.");
+    return read(input);
+  };
+  statuses = [copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  await click("Copy to M3");
+  // Included secrets are never approved with nothing staged.
+  expect(sentSecrets()).toEqual([[".env"]]);
+  expect(names().indexOf("copySecrets")).toBeLessThan(names().indexOf("copyApprove"));
+});
+
+it("does not approve included secrets blind when the secret list cannot be read", async () => {
+  state.sourceAccess = "granted";
+  resumed();
+  state.handlers.copySourceStatus = () => {
+    throw new Error("M4 did not answer.");
+  };
+  statuses = [copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  await click("Copy to M3");
+  expect(names()).not.toContain("copyApprove");
+  expect(names()).not.toContain("copySecrets");
+  expect(container.textContent).toContain(
+    "The list of secret files could not be read from M4. Try again once M4 is reachable, or untick Secrets to copy without them.",
+  );
+});
+
+it("stops a Replace all left running at the review when this window turned out unable to send secrets", async () => {
+  // The form said included; the source's session then showed this window may not send them.
+  state.sourceAccess = "denied";
+  resumed({ replaceAll: true, replaceAllOutcome: "copy" });
+  statuses = [copyStatus("previewed"), copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  expect(names()).not.toContain("copyApprove");
+  expect(container.textContent).toContain("Only SpecWithCode on M4 can send secrets.");
+  expect(JSON.parse(localStorage.getItem(KEY)!).replaceAll).toBeUndefined();
+  // The review shows the warning; approving there is the person's decision.
+  await click("Copy to M3");
+  const approval = state.calls.find(([name]) => name === "copyApprove")![1] as {
+    input: Record<string, unknown>;
+  };
+  expect(approval.input).toEqual({ operationId: expect.any(String), withoutSecrets: true });
+  expect(JSON.parse(localStorage.getItem(KEY)!).secretsStay).toBe(true);
 });

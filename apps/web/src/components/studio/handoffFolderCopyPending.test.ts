@@ -8,6 +8,7 @@ import {
   readLastCopy,
   readoptLastCopy,
   readPendingCopy,
+  secretsPromised,
   writeCopyDraft,
   type PendingCopy,
 } from "./handoffFolderCopyPending";
@@ -76,6 +77,22 @@ describe("the pointer's step fields", () => {
       doneSeen: true,
       linked: true,
     });
+  });
+
+  it("keeps that the form said secrets stay, and drops any other value", () => {
+    const included = { included: true, out: [] };
+    save(pendingKey, { ...pointer, secrets: included, secretsStay: true });
+    const told = readPendingCopy(pendingKey)!;
+    expect(told).toEqual({ ...pointer, secrets: included, secretsStay: true });
+    expect(secretsPromised(told)).toBe(false);
+    save(pendingKey, { ...pointer, secrets: included, secretsStay: "yes" });
+    const promised = readPendingCopy(pendingKey)!;
+    expect(promised).toEqual({ ...pointer, secrets: included });
+    // Included, and nothing told the person otherwise: approving without them would be unseen.
+    expect(secretsPromised(promised)).toBe(true);
+    // Unticked, or a copy older than the included default: nothing was promised.
+    expect(secretsPromised({ ...pointer, secrets: { included: false, out: [] } })).toBe(false);
+    expect(secretsPromised(pointer)).toBe(false);
   });
 
   it("drops invalid values and keeps the rest of the pointer", () => {

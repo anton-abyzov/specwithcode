@@ -229,10 +229,28 @@ export function replaceAllDecisions(
   return decisions;
 }
 
-/** "3 secret-like files (.env and similar) stayed on M4. …", or null when none stayed. */
-export function secretsLeftText(count: number, sourceLabel: string): string | null {
+/**
+ * "3 secret-like files (.env and similar) stayed on M4. …" with the action that sends them
+ * from this window, or where to start the copy when this window cannot send secrets; null
+ * when none stayed.
+ */
+export function secretsLeftText(count: number, sourceLabel: string, canSend = true): string | null {
   if (count <= 0) return null;
-  return `${count.toLocaleString()} secret-like ${count === 1 ? "file" : "files"} (.env and similar) stayed on ${sourceLabel}. Copy them yourself, or run the copy again with “Let me choose file types first” to send them.`;
+  const stayed = `${count.toLocaleString()} secret-like ${count === 1 ? "file" : "files"} (.env and similar) stayed on ${sourceLabel}.`;
+  return canSend
+    ? `${stayed} To send them, copy again with Secrets ticked.`
+    : `${stayed} This window can't send them: only SpecWithCode on ${sourceLabel} can. Start the copy again there with Secrets ticked.`;
+}
+
+/** The left-behind secret files a fresh copy could carry: those among the ones that can travel. */
+export function secretsLeftSendable(
+  secretFiles: ReadonlyArray<{ readonly path: string }> | null | undefined,
+  sent: ReadonlyArray<{ readonly path: string }> | null | undefined,
+  travel: ReadonlyArray<string>,
+): boolean {
+  if (!secretFiles) return false;
+  const arrived = new Set((sent ?? []).map((file) => file.path));
+  return secretFiles.some((file) => !arrived.has(file.path) && travel.includes(file.path));
 }
 
 /** Secret-like files measured on the source that were not sent with this copy. */

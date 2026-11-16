@@ -44,11 +44,13 @@ import {
   type PendingCopy,
   ALL_SECRETS,
   pendingSecrets,
+  secretsPromised,
   type SecretsChoice,
 } from "./handoffFolderCopyPending";
 import type { CopyMachine } from "./HandoffCopySetup";
 import { copyHeld } from "./HandoffCopyDone";
-import { approveInput, sendSecretsOrWithdraw, useSecretsGate } from "./useSecretsGate";
+import { approveInput, secretsBlockedNow, secretsSourceOnlyText } from "./useSecretsGate";
+import { useCopySecrets } from "./useCopySecrets";
 import { messageOf } from "./useCoordinatorTransfer";
 import { useCoordinatorMove } from "./useCoordinatorMove";
 import {
@@ -68,8 +70,6 @@ import {
   replacementText,
   replacesNothing,
   replacingCount,
-  secretsLeft,
-  secretsLeftText,
 } from "./handoffCopyAuto";
 import { copyNoticeWarnings, copyProblem, groupCopyNotices } from "./handoffCopyNotices";
 import { copyNeedsComparison, decideCopyClones } from "./handoffCopySnapshot";
@@ -102,13 +102,7 @@ import {
 import { useCopyLink } from "./useCopyLink";
 import { HandoffCopyFooter } from "./HandoffCopyFooter";
 import { HandoffWorkspaceSummary, type HandoffWorkspaceContext } from "./HandoffWorkspaceSummary";
-import {
-  planRepositoryChoices,
-  reviewedSecrets,
-  sendableSecrets,
-  travellingSecrets,
-  type RepositoryChoices,
-} from "./handoffCopySecrets";
+import { reviewedSecrets, type RepositoryChoices } from "./handoffCopySecrets";
 
 export { folderCopyStorageKey, isFolderCopyNotFound, readPendingCopy };
 export type { CopyMachine };
@@ -191,7 +185,6 @@ export function HandoffFolderCopy({
   const retry = useAtomCommand(machineHandoff.copyRetry, { reportFailure: false });
   const cancel = useAtomCommand(machineHandoff.copyCancel, { reportFailure: false });
   const undo = useAtomCommand(machineHandoff.copyUndo, { reportFailure: false });
-  const sendSecrets = useAtomCommand(machineHandoff.copySecrets, { reportFailure: false });
 
   const storageKey = folderCopyStorageKey(project.environmentId, project.id);
   const { machine, setMachine, folderDraft, setFolderDraft, folder, setFolder, findingHome } =
@@ -211,11 +204,6 @@ export function HandoffFolderCopy({
   const [selection, setSelection] =
     useState<ReadonlyArray<FolderCopyFileClass>>(DEFAULT_COPY_SELECTION);
   const [copy, setCopy, copyNow] = useLiveState<FolderCopyStatus | null>(null);
-  // Secrets travel by default (unless only the source's window may send them); unticked
-  // files stay out through a new measure or a reopen.
-  const [chosenSecrets, setSecretsChoice] = useState<SecretsChoice>(ALL_SECRETS);
-  const secretsGate = useSecretsGate(project.environmentId, sourceLabel);
-  const secretsChoice = secretsGate.clamp(chosenSecrets);
   const [pending, setPending] = useState<PendingCopy | null>(null);
   const [undoPreview, setUndoPreview] = useState<FolderCopyUndoResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -262,6 +250,27 @@ export function HandoffFolderCopy({
 
   const target = machines.find((entry) => entry.id === machine) ?? null;
   const targetLabel = target?.label ?? "the other machine";
+  const secrets = useCopySecrets({
+    source: project.environmentId,
+    sourceLabel,
+    targetLabel,
+    machine,
+    machines,
+    summary,
+    copy,
+    summaryNow,
+    copyNow,
+    repositoryChoices,
+    repositoryDraft,
+    latestPending,
+    done: stage === "done",
+    keep: (choice) => {
+      const saved = latestPending.current;
+      if (saved) remember({ ...withoutReplaceAll(saved), secrets: choice }); // its staged list is stale
+      else draft.keepDraft({ secrets: choice });
+    },
+    readSummary: (saved) => readSummary(saved),
+  });
   const { busy, closeLocked } = useCopyReporting({
     environmentId: project.environmentId,
     projectId: project.id,
@@ -591,7 +600,7 @@ export function HandoffFolderCopy({
     // Secret files and worktrees shown must be this copy's, never an earlier copy's.
     if (latestPending.current?.operationId !== saved.operationId) setSummary(null);
     // The secrets choice made for this copy, as it was before the dialog closed.
-    setSecretsChoice(pendingSecrets(saved));
+    secrets.setChosen(pendingSecrets(saved));
     latestPending.current = saved;
     setPending(saved);
     // A copy linked before the dialog closed is not linked again.
@@ -691,14 +700,14 @@ export function HandoffFolderCopy({
     machines,
     canMove,
     explicit: { mode: defaultMode !== undefined, machine: machineRequested },
-    form: { machine, folderDraft, mode, chooseFirst, secrets: chosenSecrets },
+    form: { machine, folderDraft, mode, chooseFirst, secrets: secrets.chosen },
     latestPending,
     setForm: {
       machine: setMachine,
       folder: setFolder,
       mode: setMode,
       chooseFirst: setChooseFirst,
-      secrets: setSecretsChoice,
+      secrets: secrets.setChosen,
     },
     onResume: resume,
   });
@@ -749,7 +758,8 @@ export function HandoffFolderCopy({
       projectRelativePath,
       projectId,
       selection,
-      secrets: chosenSecrets,
+      secrets: choices.secrets ?? secrets.chosen,
+      ...(secrets.gate.blocked ? { secretsStay: true as const } : {}),
       method: choices.method,
       ...(choices.auto ? { auto: true } : {}),
       ...(existing ? { existingDestination: true } : {}),
@@ -881,51 +891,19 @@ export function HandoffFolderCopy({
     }
   };
 
-  const { candidates: secretCandidates, paths: secretPaths } = travellingSecrets({
-    summary,
-    copy,
-    skip: copy ? (repositoryChoices ?? planRepositoryChoices(copy.rows)).skip : [],
-    homeSupported: target?.homeSecretFiles === true,
-    choice: secretsChoice,
-  });
-  const machinesNow = useRef(machines);
-  machinesNow.current = machines;
-  const chooseSecrets = (choice: SecretsChoice) => {
-    setSecretsChoice(choice);
-    const saved = latestPending.current;
-    if (saved) remember({ ...withoutReplaceAll(saved), secrets: choice }); // its staged list is stale
-    else draft.keepDraft({ secrets: choice });
-  };
-  /** The copy's secrets choice goes to the source before every approval (see sendableSecrets). */
-  const sendTickedSecrets = async (operationId: string) => {
-    const saved = latestPending.current;
-    const there = machinesNow.current.find(({ id }) => id === (saved?.environmentId ?? machine));
-    const paths = sendableSecrets({
-      summary: summaryNow.current,
-      plan: copyNow.current,
-      repositories: repositoryDraft.current,
-      machine: there,
-      choice: secretsGate.clamp(saved ? pendingSecrets(saved) : secretsChoice),
-    });
-    if (!paths) return;
-    const environmentId = project.environmentId;
-    const input = { operationId, paths, destinationLabel: there?.label ?? targetLabel };
-    await sendSecretsOrWithdraw(
-      { blocked: secretsGate.blocked, sourceLabel, empty: paths.length === 0 },
-      {
-        send: () => sendSecrets({ environmentId, input }),
-        status: () => sourceStatus({ environmentId, input: { operationId } }),
-      },
-    );
-  };
-
   /** Approves, then checks a failed answer once in case the approval landed anyway. */
   const applyNow = async (saved: PendingCopy, secretsSent = false) => {
     const environmentId = saved.environmentId as EnvironmentId;
     const operationId = saved.operationId;
     if (sourceChanged)
       throw new Error("The source changed. Measure and compare again before copying.");
-    if (!secretsSent || secretsGate.blocked) await sendTickedSecrets(operationId);
+    if (secretsBlockedNow(project.environmentId) && secretsPromised(saved)) {
+      // The form said included: the review says why not, and the person approves it there.
+      setStage("preview");
+      withoutReplaceAll(saved);
+      throw new Error(secretsSourceOnlyText(sourceLabel));
+    }
+    if (!secretsSent || secrets.gate.blocked) await secrets.sendTicked(operationId);
     setStage("copying");
     try {
       const input = approveInput(
@@ -966,7 +944,9 @@ export function HandoffFolderCopy({
   const apply = () =>
     run(async () => {
       if (!machine || !pending) return;
-      await applyNow(pending);
+      const saved = secrets.told(pending);
+      if (saved !== pending) remember(saved);
+      await applyNow(saved);
     });
 
   // Takes the source version of everything still open, then copies. The pointer records
@@ -976,9 +956,13 @@ export function HandoffFolderCopy({
       if (!pending || !copy) return;
       const environmentId = pending.environmentId as EnvironmentId;
       // Ticked secret files go first: an approval after the dialog closed cannot send them.
-      await sendTickedSecrets(pending.operationId);
+      await secrets.sendTicked(pending.operationId);
       const outcome = replaceAllOutcome(copy.rows);
-      const saved: PendingCopy = { ...pending, replaceAll: true, replaceAllOutcome: outcome };
+      const saved: PendingCopy = {
+        ...secrets.told(pending),
+        replaceAll: true,
+        replaceAllOutcome: outcome,
+      };
       remember(saved);
       setRecompare(recompareFor(outcome));
       setStage("planning");
@@ -1198,7 +1182,7 @@ export function HandoffFolderCopy({
     setCancelledFor(null);
     if (!keepChoices) {
       setSelection(DEFAULT_COPY_SELECTION);
-      setSecretsChoice(ALL_SECRETS);
+      secrets.setChosen(ALL_SECRETS);
     }
     setStage("setup");
   };
@@ -1206,7 +1190,7 @@ export function HandoffFolderCopy({
   const fresh = () => run(() => startOver());
 
   /** A fresh copy of the same folder, machine and choices; only changed files move. */
-  const copyAgainNow = (retried = false) =>
+  const copyAgainNow = (retried = false, withSecrets?: SecretsChoice) =>
     run(async () => {
       const last = latestPending.current;
       if (!last || !copy) return;
@@ -1222,6 +1206,7 @@ export function HandoffFolderCopy({
           copy.projectRelativePath ??
           last.projectRelativePath ??
           scope.selected.projectRelativePath,
+        ...(withSecrets ? { secrets: withSecrets } : {}),
       };
       if (failedBeforeApply)
         // The source may still hold the old operation and its snapshot if the destination
@@ -1234,6 +1219,7 @@ export function HandoffFolderCopy({
       if (retried) stepView.restarted();
       setChooseFirst(!again.auto);
       setSelection(again.selection);
+      if (withSecrets) secrets.setChosen(withSecrets);
       await measureNow(again);
     });
 
@@ -1253,10 +1239,6 @@ export function HandoffFolderCopy({
   const offerCopyAgain = (copyAgain || (copyProblems && !movingAnyway)) && pending !== null;
   // Newer destinations count the files the plan replaces or moves to the backup.
   const replacingFiles = stage === "preview" && copy ? replacingCount(copy) : null;
-  const secretsNote =
-    stage === "done"
-      ? secretsLeftText(secretsLeft(summary?.secretFiles, copy?.secrets), sourceLabel)
-      : null;
   const next = nextStepText({
     stage,
     auto,
@@ -1371,13 +1353,13 @@ export function HandoffFolderCopy({
             repositoryChoices={repositoryChoices}
             onRepositories={changeRepositories}
             replanning={replanning}
-            secretPaths={secretPaths}
-            includeSecrets={secretsChoice.included}
+            secretPaths={secrets.paths}
+            includeSecrets={secrets.choice.included}
             onSecretsChange={(included, paths) =>
-              chooseSecrets(reviewedSecrets(secretsChoice, secretCandidates, included, paths))
+              secrets.choose(reviewedSecrets(secrets.choice, secrets.candidates, included, paths))
             }
             onIncludeSecretsChange={(included) =>
-              chooseSecrets({ included, out: included ? [] : secretsChoice.out })
+              secrets.choose({ included, out: included ? [] : secrets.choice.out })
             }
             uncommittedFiles={uncommittedFiles}
             details={
@@ -1400,8 +1382,13 @@ export function HandoffFolderCopy({
             sourceReview={sourceReview}
             leftOnSource={leftOnSource}
             keptHere={keptHere}
-            secretsNote={secretsNote}
-            secretsLocked={secretsGate.note}
+            secretsNote={secrets.leftNote}
+            onSendSecrets={
+              secrets.canSendLeft && pending && !transferRecovery
+                ? () => void copyAgainNow(false, ALL_SECRETS)
+                : null
+            }
+            secretsLocked={secrets.gate.note}
             link={link}
             linkDialog={linkDialog}
             onLinkDialogClose={() => setLinkDialog(false)}
