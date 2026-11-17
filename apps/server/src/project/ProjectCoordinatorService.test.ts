@@ -1319,6 +1319,6 @@ it.effect("a stop on Fable's own weekly keeps the coordinator on Opus of the sam
         prompt: "Next",
       });
       expect(f.sends.at(-1)?.modelSelection).not.toMatchObject(opus);
-    }).pipe(Effect.provide(Coordinator.layer), Effect.provide(f.dependencies));
+    }).pipe(Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))));
   }),
 );
