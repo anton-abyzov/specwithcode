@@ -173,7 +173,7 @@ function rootMessage(cause: unknown): string | undefined {
 export function acpMcpCallFailureLine(cause: unknown, endpoint: string): string {
   if (isConnectionBlocked(cause)) {
     const host = URL.canParse(endpoint) ? new URL(endpoint).host : "its local address";
-    return `SpecWithCode tools are unreachable from this command: the agent's sandbox blocked the connection to SpecWithCode on this machine (${host}). Restarting the session or the app does not change that. Run the same command outside the sandbox, approving the request if one appears, or switch the thread to Full access.`;
+    return `SpecWithCode tools are unreachable from this command: the agent's sandbox blocked the connection to SpecWithCode on this machine (${host}). Restarting the session or the app does not change that. Run the same command outside the sandbox if you are allowed to. If that is denied too, stop retrying and tell the user: the thread's access mode decides it (Full access, or Supervised to be asked), and a thread already on Full access that still gets this is a SpecWithCode fault to report, not something a restart fixes.`;
   }
   const top = oneLine(cause instanceof Error ? cause.message : String(cause));
   const root = oneLine(rootMessage(cause) ?? "");

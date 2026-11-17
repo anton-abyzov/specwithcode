@@ -34,7 +34,13 @@ describe("acp-mcp-call failures", () => {
       expect(line).toContain("127.0.0.1:8319");
       expect(line).toContain("Restarting the session or the app does not change that");
       expect(line).toContain("outside the sandbox");
-      expect(line).toContain("Full access");
+      expect(line).toContain("the thread's access mode decides it");
+      // A Full access thread with prompts off can neither approve a request nor
+      // switch to the mode it is already on: the line must not send it there.
+      expect(line).not.toContain("approving the request");
+      expect(line).not.toContain("switch the thread to Full access");
+      expect(line).toContain("a thread already on Full access that still gets this");
+      expect(line).toContain("not something a restart fixes");
       expect(line).not.toContain("\n");
       expect(line).not.toMatch(/\bat \S+ \(/);
     }
