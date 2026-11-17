@@ -1333,6 +1333,50 @@ describe("ProjectLink", () => {
       ).toBe("invalid");
     });
 
+    it("lets a coordinator started beside main leave the link, only when asked to", async () => {
+      const pair = legacyPair();
+      await link(pair);
+      const started = await pair.m3.run((service) =>
+        service.startCoordinator({
+          operationId: startId,
+          projectId: pair.joining.projectId,
+          knownEpoch: 1,
+        }),
+      );
+      const leave = (env: typeof pair.m3, projectId: ProjectId, leaveCoordinator?: boolean) =>
+        env.fails(
+          env.run((service) =>
+            service.unlink({
+              side: "member",
+              operationId: unlinkId,
+              projectId,
+              notes: [],
+              ...(leaveCoordinator === undefined ? {} : { leaveCoordinator }),
+            }),
+          ),
+        );
+      // Without the flag a running coordinator is not a copy that can leave; main never can.
+      expect((await leave(pair.m3, pair.joining.projectId)).code).toBe("not_linked");
+      expect((await leave(pair.m4, pair.kept.projectId, true)).code).toBe("not_linked");
+      const left = await pair.m3.run((service) =>
+        service.unlink({
+          side: "member",
+          operationId: unlinkId,
+          projectId: pair.joining.projectId,
+          notes: [],
+          leaveCoordinator: true,
+        }),
+      );
+      expect(left.replayed).toBe(false);
+      expect(left.logicalProject.id).not.toBe(started.logicalProject.id);
+      expect(left.logicalProject.members).toEqual([pair.joining]);
+      expect(left.coordinatorBinding).toEqual({ epoch: 0, state: "active", operationId: unlinkId });
+      expect(pair.m3.ownershipModes).toEqual(["join-as-member", "start-coordinator", "unlink"]);
+      expect(
+        pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.coordinatorBinding,
+      ).toEqual({ epoch: 0, state: "active" });
+    });
+
     it("is a no-op on an active coordinator and refuses copies that are not linked members", async () => {
       const pair = legacyPair();
       await link(pair);

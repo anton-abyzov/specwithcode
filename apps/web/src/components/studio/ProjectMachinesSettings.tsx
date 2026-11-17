@@ -52,6 +52,12 @@ const ROLE_TEXT: Record<LinkedCopy["role"], string> = {
   pending: "Coordinator handoff pending.",
 };
 
+/** A coordinator started beside main (no predecessor, above epoch 0); it may leave the link. */
+const startedBeside = (project: EnvironmentProject) => {
+  const binding = project.workspaceSettings?.coordinatorBinding;
+  return binding?.state === "active" && binding.epoch > 0 && !binding.predecessor;
+};
+
 const failureMessage = (cause: unknown, fallback: string) =>
   cause instanceof Error && cause.message ? cause.message : fallback;
 
@@ -303,7 +309,13 @@ export function ProjectMachinesSettings({
       }
       const left = await unlink({
         environmentId: member.environmentId,
-        input: { side: "member", operationId, projectId: member.id, notes },
+        input: {
+          side: "member",
+          operationId,
+          projectId: member.id,
+          notes,
+          ...(startedBeside(member) ? { leaveCoordinator: true } : {}),
+        },
       });
       if (left._tag === "Failure") throw squashAtomCommandFailure(left);
       if (!keptReady) {
@@ -490,6 +502,17 @@ export function ProjectMachinesSettings({
                     Unlink
                   </Button>
                 </div>
+              ) : copy.project !== coordinator && startedBeside(copy.project) ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || problem !== null}
+                  title={problem ?? undefined}
+                  onClick={() => setConfirm(copy.project)}
+                  aria-label={`Unlink the copy on ${label}`}
+                >
+                  Unlink
+                </Button>
               ) : null
             }
           />

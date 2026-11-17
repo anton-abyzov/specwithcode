@@ -845,7 +845,11 @@ const make = Effect.gen(function* () {
             replayed: true,
           };
         if (binding?.state === "transferring") return yield* fail("handoff_in_progress");
-        if (binding?.state !== "transferred") return yield* fail("not_linked");
+        // A coordinator started beside main (no predecessor, above epoch 0) may leave too.
+        const side = binding?.state === "active" && binding.epoch > 0 && !binding.predecessor;
+        const sideLeaves =
+          input.leaveCoordinator === true && side && (identity?.members.length ?? 0) > 1;
+        if (binding?.state !== "transferred" && !sideLeaves) return yield* fail("not_linked");
         // Refuse before leaving when a note would be overwritten; nothing changes then.
         for (const note of input.notes) {
           const current = yield* workspace
