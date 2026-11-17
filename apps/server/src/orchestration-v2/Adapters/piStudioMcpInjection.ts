@@ -306,6 +306,8 @@ export function buildPiRpcLaunch(input: {
   // An inherited value would tell an advisor-off thread or an advisor child to consult.
   delete environment[STUDIO_PI_ADVISOR_GUIDANCE_ENV];
   const advisorGuidance = input.advisorGuidance?.trim() ?? "";
+  // The role belongs to this thread, never to the parent process.
+  delete environment[STUDIO_PI_COORDINATOR_ENV];
 
   return {
     args,

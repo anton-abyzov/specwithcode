@@ -117,10 +117,15 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       (sum, handoff) => sum + (handoff.history?.omittedItems ?? 0),
       0,
     );
+    const omittedWorkersBefore = pending.reduce(
+      (sum, handoff) => sum + (handoff.history?.omittedWorkers ?? 0),
+      0,
+    );
     let selected = selectHistory({
       messages,
       coverage: fullCoverage,
       omittedItems: omittedBefore,
+      omittedWorkers: omittedWorkersBefore,
       budget,
     });
     if (historyCost(selected.messages, selected.context) > budget) {
@@ -133,6 +138,13 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         messages: [],
         coverage: withSessions(compactCoverage),
         omittedItems: omittedBefore + messages.length,
+        omittedWorkers:
+          omittedWorkersBefore +
+          new Set(
+            messages
+              .filter((message) => message.kind === "subagent" || message.kind === "thread_created")
+              .map((message) => message.worker?.key ?? message.itemId),
+          ).size,
         budget,
       });
       if (historyCost([], pointer.context) > Math.max(budget, POINTER_HANDOFF_FLOOR)) {

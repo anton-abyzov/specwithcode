@@ -4747,7 +4747,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT payload_json FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${threadId}
             AND type IN ('user_message','assistant_message','command_execution','error',
-              'run_interrupt_result','file_change','proposed_plan')
+              'run_interrupt_result','file_change','proposed_plan','thread_created','subagent',
+              'dynamic_tool','user_input_request')
             AND ${runIds === undefined ? sql`1` : sql`run_id IN ${sql.in(runIds)}`}
           ORDER BY ordinal ASC, turn_item_id ASC
         `;
@@ -7687,6 +7688,10 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                     "run_interrupt_result",
                     "file_change",
                     "proposed_plan",
+                    "thread_created",
+                    "subagent",
+                    "dynamic_tool",
+                    "user_input_request",
                   ].includes(item.type) &&
                   (runIds === undefined || (item.runId !== null && runIds.includes(item.runId))),
               ),

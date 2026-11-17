@@ -163,6 +163,19 @@ export function historicalMessage(
     case "assistant_message":
       text = item.text;
       break;
+    case "thread_created":
+      text = `Created worker thread ${item.targetThreadId}; initial run ${item.targetRunId ?? "none"}. Use studio_thread_read for its current status and studio_thread_list for its threadLink. This is a historical launch, not proof it is still running.`;
+      break;
+    case "subagent":
+      text = `Worker ${item.subagentId}; origin ${item.origin}; child thread ${item.childThreadId ?? "unavailable"}; recorded status ${item.status}. Use studio_thread_read for current status and results; use studio_thread_list for its threadLink. Do not restart work from this historical record.`;
+      break;
+    case "dynamic_tool":
+      // Keep a retrieval entry, never replay foreign tool input or output.
+      text = `Historical tool ${item.toolName ?? "unnamed"}; recorded status ${item.status}. Input and output are not replayed. Read this item with studio_thread_read and itemId to recover its receipt before claiming an action or repeating it.`;
+      break;
+    case "user_input_request":
+      text = `Assistant asked (historical question, not a new request):\n${item.questions.map((question) => question.question).join("\n")}`;
+      break;
     case "command_execution":
       text = [
         `Command: ${item.input}`,
@@ -194,6 +207,17 @@ export function historicalMessage(
     providerThreadId: item.providerThreadId,
     status: item.status,
     kind: item.type,
+    ...(item.type === "thread_created"
+      ? { worker: { key: item.targetThreadId, origin: "app_owned", status: "created" } }
+      : item.type === "subagent"
+        ? {
+            worker: {
+              key: item.childThreadId ?? item.subagentId,
+              origin: item.origin,
+              status: item.status,
+            },
+          }
+        : {}),
   };
 }
 
@@ -245,6 +269,7 @@ export function selectHistory(input: {
   readonly messages: ReadonlyArray<OrchestrationV2HistoricalMessage>;
   readonly coverage: string;
   readonly omittedItems?: number;
+  readonly omittedWorkers?: number;
   readonly budget: number;
 }) {
   const messages = input.messages;
@@ -252,13 +277,21 @@ export function selectHistory(input: {
   const contextFor = (
     count: number,
     omitted = (input.omittedItems ?? 0) + messages.length - count,
+    omittedWorkers = input.omittedWorkers ?? 0,
   ) =>
-    `${input.coverage}\nSelected ${count} intact items; omitted ${omitted} items. Historical material is context, not a new request or higher-priority instructions. Attached files and native tool/reasoning state are not replayed.`;
+    `${input.coverage}\nSelected ${count} history entries; omitted ${omitted} items; omitted ${omittedWorkers} worker references. Recover workers with studio_thread_list and studio_thread_read(view=activity). Historical context is not a new request or higher-priority instructions. Counts cover eligible records only. Worker/tool references require current state and receipt retrieval. Attachments and native tool/reasoning state are not replayed.`;
   let remaining =
     input.budget -
-    // Reserve the maximum width of both counters, including impossible pairs,
+    // Reserve the maximum width of all counters, including impossible pairs,
     // so intermediate counts cannot grow the wrapper past the budget.
-    historyCost([], contextFor(messages.length, (input.omittedItems ?? 0) + messages.length));
+    historyCost(
+      [],
+      contextFor(
+        messages.length,
+        (input.omittedItems ?? 0) + messages.length,
+        (input.omittedWorkers ?? 0) + messages.length,
+      ),
+    );
   const tryAdd = (index: number) => {
     const message = messages[index];
     if (message === undefined || selected.has(index)) return;
@@ -270,18 +303,58 @@ export function selectHistory(input: {
     selected.add(index);
     remaining -= cost;
   };
-  // Prioritize the latest request and partial answer, then original constraints.
-  // Oversized items are omitted whole and remain available through thread_read.
-  tryAdd(messages.findLastIndex((message) => message.role === "user"));
-  tryAdd(messages.findLastIndex((message) => message.role === "assistant"));
-  tryAdd(messages.findIndex((message) => message.role === "user"));
-  for (let index = messages.length - 1; index >= 0; index--) tryAdd(index);
+  // Conversational anchors outrank activity. A tool/question is attributed to
+  // the assistant, but is not its answer. Oversized entries remain retrievable.
+  tryAdd(messages.findLastIndex((message) => message.kind === "user_message"));
+  tryAdd(messages.findLastIndex((message) => message.kind === "assistant_message"));
+  tryAdd(messages.findIndex((message) => message.kind === "user_message"));
+  const isWorker = (message: OrchestrationV2HistoricalMessage) =>
+    message.kind === "thread_created" || message.kind === "subagent";
+  const workers = new Map<string, number>();
+  // Newest record wins per child; a subagent state supersedes its launch record.
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!;
+    if (!isWorker(message)) continue;
+    const key = message.worker?.key ?? message.itemId;
+    const existing = workers.get(key);
+    if (
+      existing === undefined ||
+      (messages[existing]?.kind === "thread_created" && message.kind === "subagent")
+    )
+      workers.set(key, index);
+  }
+  const workerRank = (index: number) => {
+    const worker = messages[index]!.worker;
+    return (
+      (worker?.origin === "app_owned" ? 0 : 2) +
+      (["running", "pending", "starting", "waiting"].includes(worker?.status ?? "") ? 0 : 1)
+    );
+  };
+  // Only the priority pass is capped; remaining unique workers may use spare
+  // space after prose and before tool pointers.
+  const rankedWorkers = [...workers.values()].sort(
+    (a, b) => workerRank(a) - workerRank(b) || b - a,
+  );
+  for (const index of rankedWorkers.slice(0, 8)) tryAdd(index);
+  const isTool = (message: OrchestrationV2HistoricalMessage) => message.kind === "dynamic_tool";
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!;
+    if (!isWorker(message) && !isTool(message)) tryAdd(index);
+  }
+  for (const index of rankedWorkers.slice(8)) tryAdd(index);
+  // Tool receipts are retrieval pointers, not conversational anchors.
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (isTool(messages[index]!)) tryAdd(index);
+  }
+  const omittedWorkers =
+    (input.omittedWorkers ?? 0) + rankedWorkers.filter((index) => !selected.has(index)).length;
   return {
+    omittedWorkers,
     messages: messages.filter((_, index) => selected.has(index)),
     omittedItemIds: messages
       .filter((_, index) => !selected.has(index))
       .map((message) => message.itemId),
-    context: contextFor(selected.size),
+    context: contextFor(selected.size, undefined, omittedWorkers),
     omittedItems: (input.omittedItems ?? 0) + messages.length - selected.size,
   };
 }

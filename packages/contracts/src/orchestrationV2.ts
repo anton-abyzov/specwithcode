@@ -1163,6 +1163,14 @@ export const OrchestrationV2HistoricalMessage = Schema.Struct({
   providerThreadId: Schema.NullOr(ProviderThreadId),
   status: Schema.String,
   kind: Schema.String,
+  /** Compact identity for bounded worker selection; absent on older handoffs. */
+  worker: Schema.optional(
+    Schema.Struct({
+      key: Schema.String,
+      origin: Schema.String,
+      status: Schema.String,
+    }),
+  ),
 });
 export type OrchestrationV2HistoricalMessage = typeof OrchestrationV2HistoricalMessage.Type;
 
@@ -1193,6 +1201,7 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
       messages: Schema.Array(OrchestrationV2HistoricalMessage),
       coverage: Schema.String,
       omittedItems: NonNegativeInt,
+      omittedWorkers: Schema.optional(NonNegativeInt),
       // IDs omitted during preparation, before the target's delivery budget is known.
       omittedItemIds: Schema.optional(Schema.Array(TurnItemId)),
     }),

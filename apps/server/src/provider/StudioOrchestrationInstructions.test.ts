@@ -213,6 +213,26 @@ describe("SpecWithCode orchestration provider instructions", () => {
       isCoordinator: true,
     });
     assert.include(injected, "you route work, you do not do it");
+    // A coordinator past its first run (made coordinator later, or switched
+    // provider) still gets the routing line; a worker past run 1 gets nothing.
+    assert.include(
+      studioOrchestrationPromptForFirstRun({
+        prompt: "Read the logs and fix it.",
+        runOrdinal: 7,
+        hasStudioMcp: true,
+        isCoordinator: true,
+      }),
+      "you route work, you do not do it",
+    );
+    assert.equal(
+      studioOrchestrationPromptForFirstRun({
+        prompt: "Read the logs and fix it.",
+        runOrdinal: 7,
+        hasStudioMcp: true,
+        isCoordinator: false,
+      }),
+      "Read the logs and fix it.",
+    );
     assert.equal(studioOrchestrationSystemPrompt(true, true), coordinator);
     assert.include(
       studioAcpPromptWithInstructions({

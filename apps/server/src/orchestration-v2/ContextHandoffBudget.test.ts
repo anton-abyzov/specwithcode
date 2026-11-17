@@ -809,7 +809,7 @@ describe("handoff delivery", () => {
       assert.isDefined(captured);
       assert.deepEqual(captured.messages, []);
       assert.include(captured.context, "studio_thread_read");
-      assert.include(captured.context, "Selected 0 intact items; omitted 2 items");
+      assert.include(captured.context, "Selected 0 history entries; omitted 2 items");
       assert.include(captured.context, "/Users/test/.claude/projects/-work/0b878647");
       assert.isAtMost(historyCost([], captured.context), 4_096);
       assert.equal(durable.delivery?.status, "injected");
