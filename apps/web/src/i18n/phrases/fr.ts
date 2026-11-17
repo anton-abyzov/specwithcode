@@ -5475,4 +5475,10 @@ export const fr: PhraseCatalog = {
   "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
     "D’après leurs dossiers, ce ne sont pas des copies de {project}. N’en choisissez un que s’il s’agit d’une copie renommée ou clonée à nouveau.",
   "Review link": "Vérifier le lien",
+  "Message {machine}'s coordinator for {project}.":
+    "Écrire au coordinateur de {machine} pour {project}.",
+  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
+    "Envoyer transmet ton message au coordinateur de {machine} et ouvre sa page, où arrive la réponse.",
+  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
+    "Envoyer transmet ton message au coordinateur principal et ouvre sa page, où arrive la réponse.",
 };

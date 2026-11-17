@@ -5426,4 +5426,10 @@ export const ru: PhraseCatalog = {
   "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
     "Судя по папкам, это не копии {project}. Выбирайте только если это переименованная или заново клонированная копия.",
   "Review link": "Проверить связь",
+  "Message {machine}'s coordinator for {project}.":
+    "Напишите координатору {machine} для {project}.",
+  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
+    "Отправка передаёт сообщение координатору {machine} и открывает его страницу, куда придёт ответ.",
+  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
+    "Отправка передаёт сообщение главному координатору и открывает его страницу, куда придёт ответ.",
 };

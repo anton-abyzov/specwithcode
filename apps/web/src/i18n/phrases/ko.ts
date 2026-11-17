@@ -5362,4 +5362,10 @@ export const ko: PhraseCatalog = {
   "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
     "폴더로 보면 {project}의 복사본이 아닙니다. 이름을 바꿨거나 다시 클론한 복사본일 때만 고르세요.",
   "Review link": "연결 검토",
+  "Message {machine}'s coordinator for {project}.":
+    "{project}의 {machine} 코디네이터에게 메시지를 보내세요.",
+  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
+    "보내기를 누르면 {machine}의 코디네이터에게 메시지가 전달되고, 답이 오는 그 페이지가 열립니다.",
+  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
+    "보내기를 누르면 메인 코디네이터에게 메시지가 전달되고, 답이 오는 그 페이지가 열립니다.",
 };

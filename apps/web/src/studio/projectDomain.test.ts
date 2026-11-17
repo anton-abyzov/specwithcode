@@ -185,7 +185,8 @@ it("flags an ancestor still active at the epoch its successor took over at", () 
   expect(found?.coordinators).toEqual([successor, ancestor]);
   expect(found?.contested).toEqual([successor, ancestor]);
   expect(logicalCoordinator([ancestor, successor])?.problem).toContain("same epoch");
-  // A coordinator started after the takeover runs at a newer epoch and contests nothing.
+  // A coordinator started after the takeover runs at a newer epoch and contests nothing,
+  // and it runs beside the copy that took over by name, which still leads.
   const restarted = {
     ...ancestor,
     workspaceSettings: {
@@ -194,7 +195,7 @@ it("flags an ancestor still active at the epoch its successor took over at", () 
     },
   };
   expect(logicalCoordinators([restarted, successor])?.contested).toEqual([]);
-  expect(logicalCoordinator([restarted, successor])).toEqual({ member: restarted, problem: null });
+  expect(logicalCoordinator([restarted, successor])).toEqual({ member: successor, problem: null });
 });
 it("does not loop or supersede both copies when predecessors point at each other", () => {
   const a = {

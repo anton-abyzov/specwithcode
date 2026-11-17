@@ -3,9 +3,11 @@
    conversation from before).
    `?view=m5` the page of that copy, `?main=` connected | lost | gone (the old main is
    reachable, lost under 10 minutes ago, or unreachable for longer),
-   `?case=` menu | box | switched | unlinked: the machine menu, a copy's message box (the
-   real CoordinatorComposer), m5 after an offline switch, and three checkouts of one
-   repository that were never linked. `?theme=dark`, `?lang=` the interface language. */
+   `?case=` menu | box | switched | unlinked | m5: the machine menu, a copy's message box (the
+   real CoordinatorComposer), m5 after an offline switch, three checkouts of one
+   repository that were never linked, and m5's page worked out by the real resolver from
+   records shaped like the M5 state of November 17, 2026 (m1 started a coordinator beside
+   main at a higher epoch). `?theme=dark`, `?lang=` the interface language. */
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -25,7 +27,15 @@ import { OrchestratorSwitcher } from "../../src/components/studio/OrchestratorSw
 import { TooltipProvider } from "../../src/components/ui/tooltip";
 import { ToastProvider, AnchoredToastProvider } from "../../src/components/ui/toast";
 import { isLocale, setLocalePreference, useTx } from "../../src/i18n";
-import { mainOffer, type MainOffer, type MakeMainPath } from "../../src/studio/makeMain";
+import {
+  followedMain,
+  mainOffer,
+  makeMainPath,
+  type MainOffer,
+  type MakeMainPath,
+} from "../../src/studio/makeMain";
+import { routeTarget } from "../../src/studio/routeToMain";
+import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { getProjectCoordinatorComposer } from "../../src/studio/projectCoordinatorComposer";
 import type { OrchestratorCopy } from "../../src/studio/projectCoordinatorMachine";
 import { workersOnlyProblem } from "../../src/studio/workersOnlyCopy";
@@ -87,8 +97,54 @@ const offers: MainOffer[] =
 declare global {
   interface Window {
     __madeMain?: string[];
+    __routed?: Array<{ environmentId: string; projectId: string; text: string }>;
   }
 }
+
+// Records as the machines hold them: m4 is main at epoch 0 and m5 handed main to it; m1
+// joined earlier, then started its own coordinator (epoch 2, no predecessor) and never
+// learned of m5.
+const memberRef = (machine: string) => ({
+  environmentId: machine,
+  projectId: "p",
+  coordinatorThreadId: "project-coordinator:p",
+});
+const record = (machine: string, binding: object, roster: readonly string[]) =>
+  ({
+    environmentId: machine,
+    id: "p",
+    title: PROJECT,
+    workspaceRoot: "/w/atlas",
+    workspaceSettings: {
+      kind: "code",
+      logicalProject: {
+        id: "logical:atlas",
+        title: PROJECT,
+        coordinatorId: "coordinator:logical:atlas",
+        members: roster.map(memberRef),
+      },
+      coordinatorBinding: binding,
+    },
+  }) as unknown as EnvironmentProject;
+const records = [
+  record("m4", { epoch: 0, state: "active" }, ["m4", "linux-mini", "m5"]),
+  record("m5", { epoch: 0, state: "transferred", successor: memberRef("m4") }, [
+    "m4",
+    "linux-mini",
+    "m5",
+  ]),
+  record("m1", { epoch: 2, state: "active", operationId: "op" }, ["m4", "linux-mini", "m1"]),
+];
+const m5Path = makeMainPath(records[1]!, records, {
+  connected: () => true,
+  unreachableSince: () => null,
+  now: 0,
+  canMoveFrom: () => true,
+  takeoverReady: () => true,
+});
+const m5Main = followedMain(records[1]!, records)?.environmentId ?? "none";
+const m5MoveSource = m5Path.kind === "move" ? m5Path.main.environmentId : m5Path.kind;
+const m5Offer = mainOffer("m5:p", m5Path, { machine: "m5", main: m5MoveSource });
 
 function SettingsLabel() {
   const tx = useTx();
@@ -174,6 +230,72 @@ function Page() {
       onLink={view === "unlinked" ? () => {} : null}
     />
   );
+  if (view === "m5") {
+    const routed = routeTarget(`${m5Main}:p`);
+    return (
+      <div
+        className="fixture-page fixture-column"
+        data-viewing="m5:p"
+        data-move-source={m5MoveSource}
+        data-followed-main={m5Main}
+      >
+        <div className="project-conversation">
+          <article className="mb-3 rounded-lg border border-border p-3 text-sm">
+            This copy of {PROJECT} runs on m5.
+          </article>
+        </div>
+        <CoordinatorComposer
+          composer={getProjectCoordinatorComposer(EnvironmentId.make("m5"), "atlas-m5")}
+          threadRef={null}
+          environmentId={EnvironmentId.make(m5Main)}
+          cwd="/w/atlas"
+          sendBlocked={false}
+          missingModel={null}
+          canAttach={false}
+          uploadsSupported
+          maxFileBytes={20 * 1024 * 1024}
+          sending={false}
+          placeholder={tx("Message {machine}'s coordinator for {project}.", {
+            project: PROJECT,
+            machine: m5Main,
+          })}
+          writesElsewhere={false}
+          hostReachable
+          promptLabel="Message the project coordinator"
+          keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+          isPhoneKeyboard={false}
+          sendShortcut="enter"
+          onAppCommand={null}
+          provider={null}
+          onSend={async (text) => {
+            if (routed) (window.__routed ??= []).push({ ...routed, text });
+          }}
+          onError={() => {}}
+          status={
+            <CoordinatorBlockedNotice
+              text={workersOnlyProblem(m5Main, false, PROJECT)}
+              coordinator={{ key: `${m5Main}:p`, machine: m5Main }}
+              projectTitle={PROJECT}
+              current="m5:p"
+              copies={linked}
+              onOpen={() => {}}
+              mainOffer={m5Offer}
+              onMakeMain={makeMain}
+              routesToMain
+            />
+          }
+          notices={null}
+          meta={switcher}
+          controls={
+            <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              <span className="truncate">Runs on m5</span>
+            </span>
+          }
+          modelFallback={false}
+        />
+      </div>
+    );
+  }
   if (view !== "box" && view !== "switched")
     return (
       <div className="fixture-page" data-viewing={current}>

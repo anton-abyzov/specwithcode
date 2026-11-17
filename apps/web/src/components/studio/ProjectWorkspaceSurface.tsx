@@ -202,6 +202,7 @@ import { CoordinatorConversation } from "./CoordinatorConversation";
 import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
 import { CoordinatorBlockedNotice, OfflineSwitchNotice } from "./CoordinatorBlockedNotice";
 import { useMakeMain } from "./useMakeMain";
+import { useRouteToMain } from "./useRouteToMain";
 import { ProjectComposerHostStatus } from "./ComposerHostStatus";
 import { useTx } from "../../i18n";
 import {
@@ -666,6 +667,13 @@ export function ProjectWorkspaceSurface({
   const blocked = (connected ? null : admission) ?? workersOnly ?? ownershipProblem ?? admission;
   // A copy whose main is elsewhere: its message box is off and says where to write.
   const copyOff = blocked !== null && blocked === workersOnly;
+  // Main's machine is connected and may run work: what is typed here goes to main's coordinator.
+  const route = useRouteToMain({
+    mainKey: coordinatorElsewhere?.key ?? null,
+    copyOff,
+    onOpen: onCheckout,
+  });
+  const routes = route.ready;
   // Memoized, not just computed: these feed memoized callbacks below, and the
   // React Compiler keeps those only for values it knows are not changed later.
   const coordinator = useMemo(
@@ -1996,42 +2004,51 @@ export function ProjectWorkspaceSurface({
                 composer={composer}
                 // A viewer showing the coordinator borrows this composer.
                 threadRef={coordinatorRef}
-                environmentId={project.environmentId}
+                environmentId={
+                  routes && route.environmentId ? route.environmentId : project.environmentId
+                }
                 cwd={project.workspaceRoot}
                 sendBlocked={
-                  Boolean(blocked) ||
-                  Boolean(modelCompatibility) ||
-                  (!model && !coordinatorId) ||
-                  savingModel ||
-                  sending
+                  routes
+                    ? route.sending || sending
+                    : Boolean(blocked) ||
+                      Boolean(modelCompatibility) ||
+                      (!model && !coordinatorId) ||
+                      savingModel ||
+                      sending
                 }
                 missingModel={
                   !blocked && !model && !coordinatorId
                     ? missingModelMessage(modelsLoading, machinePrivate)
                     : null
                 }
-                canAttach={canOperate && connected}
+                canAttach={canOperate && connected && !routes}
                 uploadsSupported={uploadsSupported}
                 maxFileBytes={maxFileBytes}
                 sending={sending}
                 placeholder={
-                  copyOff
-                    ? coordinatorElsewhere?.machine
-                      ? tx("Work for {project} starts on {machine}.", {
-                          project: projectTitle,
-                          machine: coordinatorElsewhere.machine,
-                        })
-                      : tx("Work for {project} starts on another machine.", {
-                          project: projectTitle,
-                        })
-                    : coordinatorQuestion
-                      ? say("Answer the coordinator: type, paste or attach, then send")
-                      : hostStatus?.keepsDraft
-                        ? tx("Your draft stays here until it reconnects.")
-                        : promptPlaceholder
+                  routes && coordinatorElsewhere?.machine
+                    ? tx("Message {machine}'s coordinator for {project}.", {
+                        project: projectTitle,
+                        machine: coordinatorElsewhere.machine,
+                      })
+                    : copyOff
+                      ? coordinatorElsewhere?.machine
+                        ? tx("Work for {project} starts on {machine}.", {
+                            project: projectTitle,
+                            machine: coordinatorElsewhere.machine,
+                          })
+                        : tx("Work for {project} starts on another machine.", {
+                            project: projectTitle,
+                          })
+                      : coordinatorQuestion
+                        ? say("Answer the coordinator: type, paste or attach, then send")
+                        : hostStatus?.keepsDraft
+                          ? tx("Your draft stays here until it reconnects.")
+                          : promptPlaceholder
                 }
                 hostReachable={connected}
-                writesElsewhere={copyOff}
+                writesElsewhere={copyOff && !routes}
                 draftSentElsewhere={() =>
                   durableCoordinatorDraftSentElsewhere(project.environmentId, project.id)
                 }
@@ -2059,7 +2076,7 @@ export function ProjectWorkspaceSurface({
                 sendShortcut={sendShortcut}
                 onAppCommand={appCommandsOffered ? runAppCommand : null}
                 provider={model ? (providerEntries.get(model.instanceId) ?? null) : null}
-                onSend={sendFromComposer}
+                onSend={routes ? (text) => route.send(text) : sendFromComposer}
                 onError={setError}
                 status={
                   <>
@@ -2084,6 +2101,7 @@ export function ProjectWorkspaceSurface({
                           ) ?? null
                         }
                         onMakeMain={mainSwitch.run}
+                        routesToMain={routes}
                       />
                     )}
                     {switchedFrom && !blocked && !hostStatus ? (

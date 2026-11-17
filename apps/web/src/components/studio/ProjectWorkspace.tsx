@@ -37,6 +37,7 @@ import {
   WORKERS_ONLY_PROBLEM,
 } from "../../studio/projectCoordinatorMachine";
 import { useLinkMachines } from "./useLinkMachines";
+import { followedMain } from "../../studio/makeMain";
 import { type SelectProjectThread } from "../../studio/useProjectPaneSelection";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { SidebarInset } from "../ui/sidebar";
@@ -164,17 +165,21 @@ export function ProjectWorkspace({
     const name = nickname(environmentId, label);
     return label || name !== environmentId ? name : null;
   };
-  // A workers-only copy's work starts from its coordinator on another machine.
+  const linkMachines = useLinkMachines();
+  // The same retired records Settings uses, so a re-joined machine's old copy never leads.
+  const retired = useRetiredMachineRecords();
+  // A workers-only copy's work starts from its main on another machine: the one the switch
+  // names too (`followedMain`), else the successor its own record names.
+  const followed = member ? followedMain(member, members, retired) : null;
   const elsewhere =
     member && ownershipProblem === WORKERS_ONLY_PROBLEM
-      ? coordinatorElsewhere(member, members)
+      ? followed
+        ? { environmentId: followed.environmentId, projectId: followed.id }
+        : coordinatorElsewhere(member, members)
       : null;
   const unknownLabel = unknownRef
     ? (machineName(unknownRef.environmentId) ?? "That machine")
     : null;
-  const linkMachines = useLinkMachines();
-  // The same retired records Settings uses, so a re-joined machine's old copy never leads.
-  const retired = useRetiredMachineRecords();
   // The thread open when the checkout changed belongs to the old machine. The
   // panel closes, and until the URL catches up the new checkout does not see it,
   // or it would send the person to that machine's full page.

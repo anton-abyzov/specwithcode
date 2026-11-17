@@ -5425,4 +5425,10 @@ export const ja: PhraseCatalog = {
   "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
     "フォルダーを見るかぎり、{project} のコピーではありません。名前を変えたコピーやクローンし直したコピーの場合だけ選んでください。",
   "Review link": "リンクを確認",
+  "Message {machine}'s coordinator for {project}.":
+    "{project} の {machine} のコーディネーターにメッセージを送る。",
+  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
+    "送信すると {machine} のコーディネーターにメッセージが届き、返信が届くそのページが開きます。",
+  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
+    "送信するとメインのコーディネーターにメッセージが届き、返信が届くそのページが開きます。",
 };

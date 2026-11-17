@@ -181,3 +181,13 @@ it("says after an offline switch that the old conversation stays on the old mach
     "M5 became main while the old main was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.",
   );
 });
+
+it("says Send goes to main's coordinator when the box routes there", async () => {
+  await show({ routesToMain: true });
+  expect(note("routes-to-main")).toBe(
+    "Send delivers your message to M4's coordinator and opens its page, where the answer comes.",
+  );
+  // "Nothing is sent from here" would be false now.
+  expect(note("write-to-main-note")).toBeNull();
+  expect(texts()).toEqual(["Write to M4's coordinator", "Make M5 main"]);
+});

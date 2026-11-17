@@ -375,3 +375,47 @@ describe("a move asked for from the copy's page", () => {
     expect(takeMainMove("m4:p", NOW + 61_000)).toBeNull();
   });
 });
+
+describe("makeMainPath with a coordinator started beside main", () => {
+  // The M5 state of November 17, 2026: m4 is main at epoch 0 and the copies follow it;
+  // m1 joined earlier, then started its own coordinator (epoch 2, no predecessor).
+  const main = copy("m4", { state: "active", epoch: 0 });
+  const follower = copy("m5", { state: "transferred", epoch: 0, successor: "m4" });
+  const beside = copy("m1", { state: "active", epoch: 2 }, ["m4", "mini", "m1"]);
+
+  it("moves from the main the copy follows, not from the higher epoch", () => {
+    expect(makeMainPath(follower, [main, follower, beside], machines())).toEqual({
+      kind: "move",
+      main,
+    });
+    // The order the copies load in changes nothing.
+    expect(makeMainPath(follower, [beside, follower, main], machines())).toEqual({
+      kind: "move",
+      main,
+    });
+  });
+
+  it("follows main after the switch, with the side coordinator still at a higher epoch", () => {
+    const newMain = copy("m5", { state: "active", epoch: 0 });
+    const oldMain = copy("m4", { state: "transferred", epoch: 0, successor: "m5" });
+    expect(makeMainPath(oldMain, [oldMain, newMain, beside], machines())).toEqual({
+      kind: "move",
+      main: newMain,
+    });
+  });
+
+  it("still lets a copy that took over by name lead over the main it replaced", () => {
+    const tookOver = copy("m5", { state: "active", epoch: 1, predecessor: "m4" });
+    const other = copy("mini", { state: "transferred", epoch: 0, successor: "m4" });
+    expect(
+      makeMainPath(other, [main, tookOver, other, beside], machines({ offline: ["m4"] })),
+    ).toEqual({ kind: "move", main: tookOver });
+  });
+
+  it("falls back to the newest epoch when no copy names a main", () => {
+    const a = copy("m4", { state: "active", epoch: 0 });
+    const b = copy("m1", { state: "active", epoch: 2 });
+    const c = copy("m5", { state: "transferred", epoch: 0 });
+    expect(makeMainPath(c, [a, b, c], machines())).toEqual({ kind: "move", main: b });
+  });
+});
