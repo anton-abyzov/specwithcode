@@ -77,6 +77,10 @@ describe("identity-mismatch words", () => {
     expect(words.next).toBeNull();
     expect(words.action).toBe(ACTION);
     expect(machineReachDetail(words, null, 0)).toBe("Open Settings > Machines to fix it");
+    // A translated action ending in an ideographic full stop does not get a second stop.
+    expect(machineReachDetail(words, null, 0, () => "「設定 > マシン」を開いてください。")).toBe(
+      "「設定 > マシン」を開いてください",
+    );
     // Wins over the update ask: the update would not reach the right machine either.
     expect(machineReachWords("stopped", "unsupported", true).headline).toBe(HEADLINE);
   });
@@ -97,6 +101,10 @@ describe("a thread row on a machine at a mismatched address", () => {
   it("says Different machine at address instead of Host offline", () => {
     expect(hostDownWord("offline", true)).toBe("Different machine at address");
     expect(hostDownWord("cant-reach", true)).toBe("Different machine at address");
+    // Only while it is down, as everywhere else.
+    expect(hostDownWord("reconnecting", true)).toBe("Host offline");
+    expect(hostDownWord("connected", true)).toBe("Host offline");
+    expect(hostDownWord(undefined, true)).toBe("Host offline");
     expect(threadStatusWord(shell(), true, "offline", true)).toBe("Different machine at address");
     expect(threadCardStatus(shell(), true, "offline", true).label).toBe(
       "Different machine at address",

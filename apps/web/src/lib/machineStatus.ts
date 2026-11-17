@@ -175,7 +175,7 @@ export function hostDownWord(
   state: MachineReachState | undefined,
   identityMismatch = false,
 ): string {
-  if (identityMismatch && state !== "no-network") return "Different machine at address";
+  if (identityMismatchShown(state, identityMismatch)) return "Different machine at address";
   switch (state) {
     case "not-answering":
       return "Not answering";
@@ -217,7 +217,7 @@ export function machineReachDetail(
 ): string | null {
   const next = words.next !== null ? tx(words.next) : words.action ? tx(words.action) : null;
   if (next === null) return null;
-  return [lastAnsweredLabel(lastAnsweredAt, now, tx), next.replace(/\.$/, "")]
+  return [lastAnsweredLabel(lastAnsweredAt, now, tx), next.replace(/[.。]$/u, "")]
     .filter(Boolean)
     .join(" · ");
 }
