@@ -3804,7 +3804,9 @@ const make = Effect.gen(function* () {
               delegatedRuntimeModeWarning({
                 requested: Option.isSome(child) ? child.value.thread.runtimeMode : runtimeMode,
                 parentMode: parent.thread.runtimeMode,
-                provider: current.find((provider) => provider.instanceId === task.providerInstanceId),
+                provider: current.find(
+                  (provider) => provider.instanceId === task.providerInstanceId,
+                ),
               }),
             );
             return { ...task, ...incrementFields, ...(warning === undefined ? {} : { warning }) };
