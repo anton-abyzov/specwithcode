@@ -12,7 +12,7 @@ import {
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { threadRuntimeIsActive } from "@specweave-studio/client-runtime/state/shell";
 import type { ProjectId, ThreadId } from "@specweave-studio/contracts";
-import { machineReachWords, reachFromPhase } from "../lib/machineStatus";
+import { identityMismatchShown, machineReachWords, reachFromPhase } from "../lib/machineStatus";
 import { isAgentOwnedProjectThread } from "./projectPaneThreads";
 import { isProjectCoordinatorThread } from "./projectCoordinatorThreads";
 import { isNestedSubagentThread } from "./threadSubagents";
@@ -220,6 +220,8 @@ export type HostAdmissionContext = {
   readonly accessPending?: boolean;
   /** What the machine reads as now (`machineReach`); judged by phase when omitted. */
   readonly reach?: MachineReachState;
+  /** The fleet says the machine's address now answers as a different SpecWithCode. */
+  readonly identityMismatch?: boolean;
 };
 
 const REMOTE_PAST_GRACE: HostAdmissionContext = { isThisDevice: false, graceElapsed: true };
@@ -244,6 +246,7 @@ export function hostDisconnectedLabel(
   return machineReachWords(
     context.reach ?? reachFromPhase(connection?.phase as HostPhase),
     connection?.phase as HostPhase,
+    context.identityMismatch,
   ).short.replace(/…$/, "");
 }
 
@@ -290,6 +293,9 @@ const UNNAMED_HOST_HEADLINE: Record<MachineReachState, string> = {
   stopped: "Connection to this host failed",
   "not-connected": "This host is not connected",
 };
+
+const UNNAMED_IDENTITY_MISMATCH_HEADLINE =
+  "This host's address now answers as a different SpecWithCode";
 
 // The message box's placeholder says the draft is kept; the detail does not repeat it.
 const UNREACHABLE_DETAIL = [
@@ -343,7 +349,17 @@ export function composerHostStatus(
     };
   const phase = connection?.phase as HostPhase;
   const reach = context.reach ?? reachFromPhase(phase);
-  const words = machineReachWords(reach, phase);
+  const words = machineReachWords(reach, phase, context.identityMismatch);
+  if (identityMismatchShown(reach, context.identityMismatch))
+    return {
+      ...base,
+      tone: "offline",
+      headline: named ? words.headline : UNNAMED_IDENTITY_MISMATCH_HEADLINE,
+      action: words.action ?? null,
+      detail: UNREACHABLE_DETAIL,
+      showsSync: named,
+      keepsDraft: named,
+    };
   if (reach === "connecting")
     return {
       ...base,

@@ -5512,4 +5512,16 @@ export const es: PhraseCatalog = {
     "{device} está pidiendo acceso. Se vinculó a través de {hub}.",
   "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
     "{machine} rechazó este dispositivo. Vuelve a pedirlo mañana o apruébalo en SpecWithCode en {machine}.",
+  "Different machine at address":
+    "Otra máquina en la dirección",
+  "{machine}'s address now answers as a different SpecWithCode":
+    "La dirección de {machine} ahora responde como otro SpecWithCode",
+  "This host's address now answers as a different SpecWithCode":
+    "La dirección de este host ahora responde como otro SpecWithCode",
+  "Open Settings > Machines to fix it.":
+    "Abre Ajustes > Equipos para arreglarlo.",
+  "Resolved history from {machines} could not be loaded.":
+    "No se pudo cargar el historial resuelto de {machines}.",
+  "Resolved history from another machine could not be loaded.":
+    "No se pudo cargar el historial resuelto de otra máquina.",
 };

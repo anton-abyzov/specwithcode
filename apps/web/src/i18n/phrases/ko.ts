@@ -5415,4 +5415,16 @@ export const ko: PhraseCatalog = {
     "{device}에서 요청하고 있습니다. {hub}을(를) 통해 페어링되었습니다.",
   "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
     "{machine}이(가) 이 기기를 거부했습니다. 내일 다시 요청하거나 {machine}의 SpecWithCode에서 승인하세요.",
+  "Different machine at address":
+    "주소에 다른 기기",
+  "{machine}'s address now answers as a different SpecWithCode":
+    "{machine}의 주소가 이제 다른 SpecWithCode로 응답합니다",
+  "This host's address now answers as a different SpecWithCode":
+    "이 호스트의 주소가 이제 다른 SpecWithCode로 응답합니다",
+  "Open Settings > Machines to fix it.":
+    "해결하려면 설정 > 컴퓨터를 여세요.",
+  "Resolved history from {machines} could not be loaded.":
+    "{machines}의 해결된 기록을 불러올 수 없습니다.",
+  "Resolved history from another machine could not be loaded.":
+    "다른 기기의 해결된 기록을 불러올 수 없습니다.",
 };

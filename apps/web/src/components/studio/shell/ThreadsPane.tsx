@@ -100,7 +100,11 @@ import { UnplannedThreadChip, UnplannedThreadsFilter } from "./UnplannedThreads"
 import { useUnplannedNotice } from "../../../studio/unplannedNotice";
 import { HandoffRowAction, HandoffRowBadge } from "../../handoff/HandoffBadge";
 import { designRoute } from "../../design/gallery/designLinks";
-import { useHostReachStates, useUnreachableHosts } from "../../../studio/unreachableHosts";
+import {
+  useHostReachStates,
+  useIdentityMismatchedHosts,
+  useUnreachableHosts,
+} from "../../../studio/unreachableHosts";
 
 const SORT_STORAGE_KEY = "studio:project-threads-sort:v1";
 const SortSchema = Schema.Literals(THREAD_SORTS);
@@ -227,6 +231,7 @@ export function ThreadsPane({
     allThreads.some((thread) => thread.environmentId !== props.environmentId);
   const unreachable = useUnreachableHosts();
   const hostReach = useHostReachStates();
+  const identityMismatched = useIdentityMismatchedHosts();
   const { environments } = useEnvironments();
   const nickname = useMachineNicknames();
   const machineIdentity = useMachineIdentities();
@@ -996,6 +1001,7 @@ export function ThreadsPane({
                               thread,
                               hostOffline,
                               hostReach.get(thread.environmentId),
+                              identityMismatched.has(thread.environmentId),
                             ),
                             subagentsWorking,
                           ));
