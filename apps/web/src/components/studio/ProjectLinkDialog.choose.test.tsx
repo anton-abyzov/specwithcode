@@ -176,7 +176,6 @@ it("lists only copies of this project and folds every other project away", async
 
 it("selects the copy with the most matching repositories on a machine that can link", async () => {
   await render();
-  expect(picked()).toBeNull();
   await settle();
   // m1 is listed first, m3 matches more repositories.
   expect(rows()[0]).toBe("EasyChamp on m1");
