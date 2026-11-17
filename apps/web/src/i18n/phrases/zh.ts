@@ -5202,4 +5202,21 @@ export const zh: PhraseCatalog = {
     "未关联:{machine} 上的副本属于主副本在 {main} 的项目,{source} 不在其中。未关联任何内容。",
   "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
     "未关联:{machine} 上的副本属于另一个项目,{source} 不在其中。未关联任何内容。",
+  "Link with a project on another machine": "与另一台机器上的项目关联",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
+    "选择另一台机器上的 {project} 副本。每个副本保留自己的协调器；主副本仍在 {main}，可以随时切换。",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
+    "选择另一台机器上的 {project} 副本。每个副本保留自己的协调器，主副本可以随时切换。",
+  "Other copy": "另一个副本",
+  "No project on another connected machine. Add the folder on that machine first, then link it here.":
+    "其他已连接的机器上没有项目。请先在那台机器上添加文件夹，然后在这里关联。",
+  "{project} on {machine}": "{machine} 上的 {project}",
+  "Not a copy:": "不是副本：",
+  "Compared when you review the link.": "检查关联时进行比较。",
+  "Reading folders…": "正在读取文件夹…",
+  "No copy of {project} was found on another machine.": "在其他机器上没有找到 {project} 的副本。",
+  "Other projects ({count})": "其他项目（{count}）",
+  "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
+    "从文件夹来看，它们不是 {project} 的副本。只有在它是重命名或重新克隆的副本时才选择。",
+  "Review link": "检查关联",
 };

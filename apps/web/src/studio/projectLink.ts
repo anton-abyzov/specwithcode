@@ -228,6 +228,8 @@ export interface LinkCandidate {
   readonly score: number | null;
   readonly rootMatches: boolean | null;
   readonly summary: string | null;
+  /** How many repositories match, the count the summary names; absent until compared. */
+  readonly shared?: number | null;
 }
 
 /** Cheap first pass: the same repository or the same name earns a fingerprint comparison. */
@@ -254,7 +256,7 @@ export function looksLikeSameProject(
 export function fingerprintSummary(
   here: RepositoryFingerprint,
   there: RepositoryFingerprint,
-): { score: number; rootMatches: boolean; summary: string } {
+): { score: number; rootMatches: boolean; summary: string; shared: number } {
   const comparison = compareFingerprints(here, there);
   const total = there.repositories.length;
   const root =
@@ -272,6 +274,7 @@ export function fingerprintSummary(
     score: comparison.score,
     rootMatches: comparison.rootMatches,
     summary: `${root}; ${shared}${missing}.`,
+    shared: comparison.shared,
   };
 }
 
@@ -314,6 +317,20 @@ export function linkCandidates<P extends EnvironmentProject>(
 }
 
 /**
+ * The repository a project tracks and its place inside it, the one rule for "the same
+ * repository" before any folder is read. Null without a remote to compare or when the
+ * place inside the repository is unknown.
+ */
+export function sameRepositoryPlaceKey(
+  item: Pick<EnvironmentProject, "repositoryIdentity" | "workspaceRoot">,
+): string | null {
+  const inside = repositoryRelativePath(item);
+  return item.repositoryIdentity && inside !== null
+    ? `${repositoryGroupingKeyOf(item.repositoryIdentity).toLowerCase()}\u0000${inside}`
+    : null;
+}
+
+/**
  * Projects on other machines that track exactly the same repository as `project`
  * (a fork is another repository) at the same place inside it (apps/web and
  * apps/api in one monorepo are different work), and are not part of it or of
@@ -330,17 +347,11 @@ export function sameRepositoryLinkOffers<P extends EnvironmentProject>(
   >,
   scratchRootFor: ScratchRootLookup,
 ): P[] {
-  const keyOf = (item: Pick<EnvironmentProject, "repositoryIdentity" | "workspaceRoot">) => {
-    const inside = repositoryRelativePath(item);
-    return item.repositoryIdentity && inside !== null
-      ? `${repositoryGroupingKeyOf(item.repositoryIdentity).toLowerCase()}\u0000${inside}`
-      : null;
-  };
-  const key = keyOf(project);
+  const key = sameRepositoryPlaceKey(project);
   if (key === null) return [];
   const offers = new Map<string, P>();
   for (const item of linkCandidates(projects, project, scratchRootFor, null)) {
-    if (keyOf(item) !== key) continue;
+    if (sameRepositoryPlaceKey(item) !== key) continue;
     // A copy of another shared project has to leave that one first; the dialog says so.
     if (
       (item.workspaceSettings?.logicalProject?.members ?? []).some(

@@ -5345,4 +5345,21 @@ export const ko: PhraseCatalog = {
     "연결되지 않음: {machine}의 복사본은 메인이 {main}인 프로젝트에 속하며, {source}은(는) 그 일부가 아닙니다. 아무것도 연결되지 않았습니다.",
   "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
     "연결되지 않음: {machine}의 복사본은 다른 프로젝트에 속하며, {source}은(는) 그 일부가 아닙니다. 아무것도 연결되지 않았습니다.",
+  "Link with a project on another machine": "다른 머신의 프로젝트와 연결",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
+    "다른 머신에 있는 {project}의 복사본을 고르세요. 각 복사본은 자체 코디네이터를 유지합니다. 메인은 {main}에 그대로 있으며 언제든지 바꿀 수 있습니다.",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
+    "다른 머신에 있는 {project}의 복사본을 고르세요. 각 복사본은 자체 코디네이터를 유지하며, 메인은 언제든지 바꿀 수 있습니다.",
+  "Other copy": "다른 복사본",
+  "No project on another connected machine. Add the folder on that machine first, then link it here.":
+    "연결된 다른 머신에 프로젝트가 없습니다. 먼저 그 머신에서 폴더를 추가한 다음 여기에서 연결하세요.",
+  "{project} on {machine}": "{machine}의 {project}",
+  "Not a copy:": "복사본 아님:",
+  "Compared when you review the link.": "연결을 검토할 때 비교합니다.",
+  "Reading folders…": "폴더를 읽는 중…",
+  "No copy of {project} was found on another machine.": "다른 머신에서 {project}의 복사본을 찾지 못했습니다.",
+  "Other projects ({count})": "다른 프로젝트 ({count})",
+  "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
+    "폴더로 보면 {project}의 복사본이 아닙니다. 이름을 바꿨거나 다시 클론한 복사본일 때만 고르세요.",
+  "Review link": "연결 검토",
 };

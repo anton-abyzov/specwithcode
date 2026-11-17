@@ -5457,4 +5457,22 @@ export const fr: PhraseCatalog = {
     "Non liée : la copie sur {machine} appartient à un projet dont la principale est {main}, et {source} n’en fait pas partie. Rien n’a été lié.",
   "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
     "Non liée : la copie sur {machine} appartient à un autre projet, et {source} n’en fait pas partie. Rien n’a été lié.",
+  "Link with a project on another machine": "Lier à un projet sur une autre machine",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
+    "Choisissez la copie de {project} sur une autre machine. Chaque copie garde son propre coordinateur ; la principale reste sur {main} et vous pouvez la changer à tout moment.",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
+    "Choisissez la copie de {project} sur une autre machine. Chaque copie garde son propre coordinateur, et vous pouvez changer la principale à tout moment.",
+  "Other copy": "Autre copie",
+  "No project on another connected machine. Add the folder on that machine first, then link it here.":
+    "Aucun projet sur une autre machine connectée. Ajoutez d’abord le dossier sur cette machine, puis liez-le ici.",
+  "{project} on {machine}": "{project} sur {machine}",
+  "Not a copy:": "Pas une copie :",
+  "Compared when you review the link.": "Comparé lors de la vérification du lien.",
+  "Reading folders…": "Lecture des dossiers…",
+  "No copy of {project} was found on another machine.":
+    "Aucune copie de {project} n’a été trouvée sur une autre machine.",
+  "Other projects ({count})": "Autres projets ({count})",
+  "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
+    "D’après leurs dossiers, ce ne sont pas des copies de {project}. N’en choisissez un que s’il s’agit d’une copie renommée ou clonée à nouveau.",
+  "Review link": "Vérifier le lien",
 };

@@ -5408,4 +5408,22 @@ export const ru: PhraseCatalog = {
     "Не связано: копия на {machine} относится к проекту, основная которого на {main}, а {source} в него не входит. Ничего не связано.",
   "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
     "Не связано: копия на {machine} относится к другому проекту, а {source} в него не входит. Ничего не связано.",
+  "Link with a project on another machine": "Связать с проектом на другой машине",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
+    "Выберите копию {project} на другой машине. У каждой копии остаётся свой координатор; основная остаётся на {main}, и её можно сменить в любой момент.",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
+    "Выберите копию {project} на другой машине. У каждой копии остаётся свой координатор, а основную можно сменить в любой момент.",
+  "Other copy": "Другая копия",
+  "No project on another connected machine. Add the folder on that machine first, then link it here.":
+    "На других подключённых машинах нет проектов. Сначала добавьте папку на той машине, затем свяжите её здесь.",
+  "{project} on {machine}": "{project} на {machine}",
+  "Not a copy:": "Не копия:",
+  "Compared when you review the link.": "Сравнение при проверке связи.",
+  "Reading folders…": "Чтение папок…",
+  "No copy of {project} was found on another machine.":
+    "Копия {project} на другой машине не найдена.",
+  "Other projects ({count})": "Другие проекты ({count})",
+  "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
+    "Судя по папкам, это не копии {project}. Выбирайте только если это переименованная или заново клонированная копия.",
+  "Review link": "Проверить связь",
 };
