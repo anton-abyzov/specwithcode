@@ -1212,6 +1212,7 @@ import {
   type LaunchIncrementOutcome,
 } from "../project/launchIncrement.ts";
 import { writeLaunchBinding } from "../project/ThreadIncrementProgress.ts";
+import { delegatedRuntimeModeWarning, joinLaunchWarnings } from "./delegatedRuntimeMode.ts";
 import { deriveDelegatedTaskThread } from "../orchestration-v2/IdAllocator.ts";
 import { fileChangePatchText } from "../orchestration-v2/fileChangePatches.ts";
 import { buildAdvisorBrief } from "../orchestration-v2/AdvisorBrief.ts";
@@ -3726,8 +3727,20 @@ const make = Effect.gen(function* () {
             writeLaunchBinding(deriveDelegatedTaskThread({ commandId }), seeded),
           );
         }
+        const launchFields = launchIncrementFields(increment);
+        const warning = joinLaunchWarnings(
+          launchFields.warning,
+          delegatedRuntimeModeWarning({
+            requested: runtimeMode,
+            parentMode: parent.thread.runtimeMode,
+            provider: providers.find(
+              (provider) => provider.instanceId === target.modelSelection.instanceId,
+            ),
+          }),
+        );
         const incrementFields = {
-          ...launchIncrementFields(increment),
+          ...launchFields,
+          ...(warning === undefined ? {} : { warning }),
           ...(review === null || review.kind === "none"
             ? {}
             : { review: reviewResultFields(review, reviewPolicy) }),
