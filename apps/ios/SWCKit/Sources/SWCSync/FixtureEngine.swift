@@ -362,7 +362,13 @@ public final class FixtureEngine: AppEngine {
   public func send(_ text: String, images: [OutgoingImage], modelSelection: ModelSelection?, to target: ChatTarget) async throws {
     if case let .thread(ref) = target, let modelSelection {
       updateThread(ref) { thread in
-        thread.traits = thread.traits.map { ModelTraits(selection: modelSelection, descriptors: $0.descriptors) }
+        thread.modelSelection = modelSelection
+        if let choice = thread.modelChoices.first(where: { $0.matches(modelSelection) }) {
+          thread.identity = ThreadIdentity(provider: choice.provider, model: choice.name, providerBrand: thread.identity.providerBrand, modelBrand: thread.identity.modelBrand)
+          thread.traits = choice.traits(for: modelSelection)
+        } else {
+          thread.traits = thread.traits.map { ModelTraits(selection: modelSelection, descriptors: $0.descriptors) }
+        }
       }
     }
     try await send(text, images: images, to: target)
@@ -936,6 +942,14 @@ private enum FixtureSample {
     ProviderOptionDescriptor(id: "fastMode", label: "Fast Mode", kind: .boolean),
   ]
 
+  /// The models a fixture thread can switch to: two Claude Code models and a
+  /// Codex model that takes no options.
+  static let modelChoices: [ModelChoice] = [
+    ModelChoice(instanceId: "claudeAgent", provider: "Claude Code", slug: "claude-opus-5-5", name: "Opus 5.5", descriptors: claudeOptions),
+    ModelChoice(instanceId: "claudeAgent", provider: "Claude Code", slug: "claude-sonnet-5-5", name: "Sonnet 5.5", descriptors: claudeOptions),
+    ModelChoice(instanceId: "codex", provider: "Codex", slug: "gpt-5.5", name: "GPT-5.5"),
+  ]
+
   static let studio = "env-studio-mac"
   static let buildBox = "env-build-box"
   static let travel = "env-travel-laptop"
@@ -1019,6 +1033,8 @@ private enum FixtureSample {
           selection: ModelSelection(instanceId: "claudeAgent", model: "claude-opus-5-5", options: [ModelOption(id: "effort", value: .string("high"))]),
           descriptors: FixtureSample.claudeOptions
         )
+        summary.modelChoices = FixtureSample.modelChoices
+        summary.modelSelection = summary.traits?.selection
       }
       // Handed to the build box, so the project's threads span two machines.
       if id == "t-flaky" { summary.placement.runsOn = "Build box" }

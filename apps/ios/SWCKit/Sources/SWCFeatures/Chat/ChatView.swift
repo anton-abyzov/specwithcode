@@ -838,11 +838,14 @@ private struct ChatScreen: View {
           }
           if showsModelOptions, let thread = threadSummary {
             ModelOptionsMenu(
-              model: thread.identity.model,
+              model: chosenModelName ?? thread.identity.model,
               traits: chosenTraits,
               runtimeMode: thread.runtimeMode,
-              hasPendingChanges: !(router.optionDrafts[target] ?? []).isEmpty,
+              models: thread.modelChoices,
+              selectedModelId: chosenModelId,
+              hasPendingChanges: !(router.optionDrafts[target] ?? []).isEmpty || stagedModel != nil,
               onSet: setOption,
+              onModel: setModel,
               onAccess: setAccess
             )
             .layoutPriority(-1)
@@ -1072,21 +1075,57 @@ private struct ChatScreen: View {
   /// Threads only: a coordinator's messages go through its own send, which takes no model.
   private var showsModelOptions: Bool {
     guard let thread = threadSummary, session.sendBlockedReason == nil else { return false }
-    return thread.traits?.isEmpty == false || thread.runtimeMode != nil
+    return thread.traits?.isEmpty == false || thread.runtimeMode != nil || thread.modelChoices.count > 1
   }
 
-  /// The thread's options with the ones chosen here laid over them.
+  /// The model picked here and not sent yet, from the thread's choices.
+  private var stagedModel: ModelChoice? {
+    guard let staged = router.modelDrafts[target] else { return nil }
+    return threadSummary?.modelChoices.first { $0.matches(staged) }
+  }
+
+  /// The options of the model the next message runs on: the picked model's
+  /// own (starting from its defaults), else the thread's.
+  private var baseTraits: ModelTraits? {
+    if let staged = stagedModel { return staged.traits(for: router.modelDrafts[target] ?? staged.selection) }
+    return threadSummary?.traits
+  }
+
+  /// Those options with the ones chosen here laid over them.
   private var chosenTraits: ModelTraits? {
-    guard let traits = threadSummary?.traits else { return nil }
+    guard let traits = baseTraits else { return nil }
     return (router.optionDrafts[target] ?? []).reduce(traits) { $0.setting($1.id, to: $1.value) }
+  }
+
+  /// The model the chip names: the picked one, else the thread's.
+  private var chosenModelName: String? {
+    stagedModel?.name ?? threadSummary?.identity.model
+  }
+
+  /// The choice the menu checks: the picked model, else the thread's own.
+  private var chosenModelId: String? {
+    if let staged = stagedModel { return staged.id }
+    guard let thread = threadSummary, let selection = thread.modelSelection else { return nil }
+    return thread.modelChoices.first { $0.matches(selection) }?.id
   }
 
   private func setOption(_ id: String, _ value: ModelOption.Value) {
     var chosen = router.optionDrafts[target] ?? []
     chosen.removeAll { $0.id == id }
-    // Back to the thread's own value: nothing left to send.
-    if threadSummary?.traits?.selection.option(id) != value { chosen.append(ModelOption(id: id, value: value)) }
+    // Back to the model's own value: nothing left to send.
+    if baseTraits?.selection.option(id) != value { chosen.append(ModelOption(id: id, value: value)) }
     router.optionDrafts[target] = chosen.isEmpty ? nil : chosen
+  }
+
+  private func setModel(_ choice: ModelChoice) {
+    guard choice.id != chosenModelId else { return }
+    // Options belong to a model; a different model starts from its own.
+    router.optionDrafts[target] = nil
+    if let current = threadSummary?.modelSelection, choice.matches(current) {
+      router.modelDrafts[target] = nil
+    } else {
+      router.modelDrafts[target] = choice.selection
+    }
   }
 
   private func setAccess(_ mode: RuntimeModeChoice) {
@@ -1110,8 +1149,14 @@ private struct ChatScreen: View {
     router.drafts[target] = ""
     router.attachmentDrafts[target] = nil
     let chosen = router.optionDrafts[target] ?? []
-    let selection = chosen.isEmpty ? nil : threadSummary?.traits.map { ModelTraits.merging($0.selection, with: chosen) }
+    let stagedSelection = stagedModel == nil ? nil : router.modelDrafts[target]
+    let selection: ModelSelection? = if let stagedSelection {
+      ModelTraits.merging(stagedSelection, with: chosen)
+    } else {
+      chosen.isEmpty ? nil : threadSummary?.traits.map { ModelTraits.merging($0.selection, with: chosen) }
+    }
     router.optionDrafts[target] = nil
+    router.modelDrafts[target] = nil
     session.lastError = nil
     isNearBottom = true
     let target = target
@@ -1119,7 +1164,10 @@ private struct ChatScreen: View {
       do {
         try await model.engine.send(text, images: images, modelSelection: selection, to: target)
       } catch {
-        if !chosen.isEmpty, router.optionDrafts[target] == nil { router.optionDrafts[target] = chosen }
+        if router.modelDrafts[target] == nil, router.optionDrafts[target] == nil {
+          router.modelDrafts[target] = stagedSelection
+          if !chosen.isEmpty { router.optionDrafts[target] = chosen }
+        }
         // Whatever was added while the upload ran stays, after what failed to send.
         let added = router.drafts[target] ?? ""
         router.drafts[target] = added.isEmpty ? original : "\(original)\n\(added)"

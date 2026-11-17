@@ -167,6 +167,8 @@ final class AppRouter {
   var attachmentDrafts: [ChatTarget: [OutgoingImage]] = [:]
   /// Model options chosen in each chat's composer, sent with its next message.
   var optionDrafts: [ChatTarget: [ModelOption]] = [:]
+  /// A model picked in each chat's composer, sent with its next message.
+  var modelDrafts: [ChatTarget: ModelSelection] = [:]
   private(set) var pendingPhotoBatches: [ChatTarget: Int] = [:]
 
   func beginPhotoBatch(for target: ChatTarget) {

@@ -260,6 +260,10 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
   public var isCoordinatorWorker = false
   /// The model's options and the thread's values, for the composer's options menu.
   public var traits: ModelTraits?
+  /// The models it can switch to from that menu, from its machine's catalog.
+  public var modelChoices: [ModelChoice] = []
+  /// The model it runs on, as its machine records it.
+  public var modelSelection: ModelSelection?
   /// Its access level, for the same menu.
   public var runtimeMode: RuntimeModeChoice?
   public var machineLabel: String
