@@ -246,4 +246,27 @@ describe("the way back from a launch fallback", () => {
       expect(yield* sweepAt(world(10, { claude: unread }), later)).toEqual([]);
     }),
   );
+  it.effect("never reverses a pick learned between sweeps of one server lifetime", () =>
+    Effect.gen(function* () {
+      const state = world(92);
+      const sweeps = Effect.gen(function* () {
+        yield* TestClock.setTime(later);
+        const sweep = yield* makeSweep;
+        yield* sweep();
+        // The origin was read while the pick was full; the person picks the stand-in now.
+        state.launch = null;
+        state.claude = withWindow(provider(claudeId, "claudeAgent", later), opus, 10);
+        yield* TestClock.adjust(PROVIDER_FALLBACK_SWEEP_INTERVAL_MS);
+        yield* sweep();
+        return state.dispatched.map((command) => command.commandId);
+      }).pipe(Effect.provide(layers(state)), Effect.provideService(ProviderFallbackEnv, {}));
+      expect(yield* sweeps).toEqual([]);
+    }),
+  );
+
+  it.effect("holds a thread a person stopped", () =>
+    Effect.gen(function* () {
+      expect(yield* sweepAt(world(10, { stopped: true }), later)).toEqual([]);
+    }),
+  );
 });

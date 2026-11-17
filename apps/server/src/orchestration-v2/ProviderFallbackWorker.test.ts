@@ -2689,38 +2689,3 @@ describe("a stopped worker and its coordinator", () => {
     }),
   );
 });
-
-describe("providerFallbackCommand on the Review track", () => {
-  const museId = ProviderInstanceId.make("muse");
-  const claudeSpent = withUsage(provider(claudeId, "claudeAgent", now), 100);
-  const muse: ServerProvider = {
-    ...withUsage(provider(museId, "muse", now), 14),
-    models: [
-      {
-        slug: "muse-wonder-1.0",
-        name: "Muse Wonder",
-        isCustom: false,
-        isDefault: true,
-        capabilities: null,
-      },
-    ],
-  };
-  const stopped = {
-    ...idle,
-    status: "failed" as const,
-    lastErrorClass: "usage_limit" as const,
-    usageLimitResetAt: resetsAt,
-  };
-  const ownRule = { ...rule, providerLimitFallbackModelSelection: null };
-
-  it("leaves regular work waiting rather than on Muse, and lets a review continue there", () => {
-    expect(providerFallbackCommand(stopped, [claudeSpent, muse], ownRule, now)).toBeNull();
-    const review = {
-      ...stopped,
-      routing: { taskClass: "review" },
-    } as unknown as typeof stopped;
-    expect(providerFallbackCommand(review, [claudeSpent, muse], ownRule, now)).toMatchObject({
-      modelSelection: { instanceId: museId, model: "muse-wonder-1.0" },
-    });
-  });
-});

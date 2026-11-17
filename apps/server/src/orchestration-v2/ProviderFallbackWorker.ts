@@ -171,6 +171,8 @@ interface WayBack {
   readonly attemptKey: string;
   /** Set for the way back from a usage pre-switch, which its thread record holds. */
   readonly preswitch: PreswitchOrigin | null;
+  /** Set for the way back from a launch fallback: the pick its thread record holds. */
+  readonly launch?: ModelSelection;
   readonly returnCommand: (
     current: FallbackThread,
     attempt: number,
@@ -1103,6 +1105,7 @@ export const makeSweep = Effect.gen(function* () {
         home,
         attemptKey: `launch:${thread.id}:${home.instanceId}/${home.model}`,
         preswitch: null,
+        launch: home,
         returnCommand: (current, attempt) =>
           launchReturnCommand(current, home, providers, rule, nowMs, attempt),
       };
@@ -1167,7 +1170,7 @@ export const makeSweep = Effect.gen(function* () {
   ) {
     const plan = yield* apiCreditReturnPlan(thread, providers, nowMs, ruleOn, rule);
     if (plan === null) return null;
-    const { home, attemptKey, tries, returnCommand, preswitch, originKey } = plan;
+    const { home, attemptKey, tries, returnCommand, preswitch, launch, originKey } = plan;
     // Checked against the thread as it is now: a turn may have started since the snapshot.
     const shell = yield* projections
       .getThreadShell(thread.id)
@@ -1195,6 +1198,15 @@ export const makeSweep = Effect.gen(function* () {
       // A person's Stop holds the thread where it is, whatever its last run's status.
       if (yield* stopHoldsLatestRun(current)) return null;
     }
+    if (launch !== undefined) {
+      // A pick since the launch cleared the record; the cached origin is stale.
+      const recorded = records.value.thread?.launchFallbackFrom;
+      if (recorded?.instanceId !== launch.instanceId || recorded.model !== launch.model) {
+        yield* forgetOrigin(originKey);
+        return null;
+      }
+      if (yield* stopHoldsLatestRun(current)) return null;
+    }
     const pinned = queuedRunsPinnedTo(records.value.runs, thread.providerInstanceId);
     if (pinned.length > 0) {
       const { messages = [] } = yield* projections
@@ -1209,7 +1221,12 @@ export const makeSweep = Effect.gen(function* () {
       );
       if (holding.length > 0) return null;
     }
-    return { command, attemptKey, tries, originKey: preswitch === null ? null : originKey };
+    return {
+      command,
+      attemptKey,
+      tries,
+      originKey: preswitch === null && launch === undefined ? null : originKey,
+    };
   });
   // A thread the provider never answered resends its request instead of
   // continuing nothing (see limitRestartRequest).
