@@ -89,11 +89,11 @@ it("collapses launch plus child records and favors active app-owned work", () =>
   assert.equal(refs.filter((m) => m.worker?.key === "child:1").length, 1);
   assert.include(
     refs.map((m) => m.itemId),
-    "subagent:1",
+    TurnItemId.make("subagent:1"),
   );
   assert.include(
     refs.map((m) => m.itemId),
-    "subagent:51",
+    TurnItemId.make("subagent:51"),
   );
   assert.isAtMost(refs.length, 8);
 });
@@ -105,7 +105,7 @@ it("keeps the latest answer at a tight budget even when a worker reference canno
   });
   assert.include(
     selected.messages.map((m) => m.itemId),
-    "answer",
+    TurnItemId.make("answer"),
   );
   assert.isAtMost(historyCost(selected.messages, selected.context), 1700);
 });

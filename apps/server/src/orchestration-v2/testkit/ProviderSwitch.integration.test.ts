@@ -1015,6 +1015,7 @@ describe("orchestration v2 provider switching", () => {
               const prior = failed.turnItems.find(
                 (item) => item.runId === failed.runs.at(-1)!.id && item.type === "user_message",
               )!;
+              if (prior.type !== "user_message") throw new Error("Expected retained user message");
               const sink = yield* EventSink.EventSinkV2;
               yield* sink.write({
                 events: [
