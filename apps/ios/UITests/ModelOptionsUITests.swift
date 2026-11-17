@@ -6,7 +6,7 @@ import XCTest
 final class ModelOptionsUITests: SWCUITestCase {
   func testOptionsMenuTurnsOnUltracodeForTheNextMessage() throws {
     launch(route: "thread", appearance: "dark")
-    _ = hittableButton("Approve")  // the transcript has loaded
+    // The chip appears once the thread has loaded.
     let chip = app.buttons["chat.model-options"]
     waitForHittable(chip, "The composer should show the thread's model options")
     XCTAssertTrue(chip.label.contains("Opus 5.5"), "The chip should name the model: \(chip.label)")
@@ -35,7 +35,7 @@ final class ModelOptionsUITests: SWCUITestCase {
   /// The same menu switches the thread's model; the next message runs on it.
   func testOptionsMenuSwitchesTheModelForTheNextMessage() throws {
     launch(route: "thread", appearance: "dark")
-    _ = hittableButton("Approve")
+    // The chip appears once the thread has loaded.
     let chip = app.buttons["chat.model-options"]
     waitForHittable(chip, "The composer should show the thread's model options")
     XCTAssertTrue(chip.label.contains("Opus 5.5"), "The chip starts on the thread's model: \(chip.label)")
@@ -74,7 +74,7 @@ final class ModelOptionsUITests: SWCUITestCase {
   /// rail, clear of the system's clock, Wi-Fi and indicators at its top.
   func testDuoRailSitsBelowTheSystemStatusIcons() throws {
     launch(route: "thread", appearance: "dark")
-    _ = hittableButton("Approve")
+    // The chip appears once the thread has loaded.
     let rail = app.descendants(matching: .any).matching(identifier: "chat.rail").firstMatch
     guard rail.waitForExistence(timeout: 3) else {
       throw XCTSkip("No status rail on this device: it shows only on an unfolded iPhone Duo")
