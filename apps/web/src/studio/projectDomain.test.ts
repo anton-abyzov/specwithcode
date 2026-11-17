@@ -185,7 +185,8 @@ it("flags an ancestor still active at the epoch its successor took over at", () 
   expect(found?.coordinators).toEqual([successor, ancestor]);
   expect(found?.contested).toEqual([successor, ancestor]);
   expect(logicalCoordinator([ancestor, successor])?.problem).toContain("same epoch");
-  // A coordinator started after the takeover runs at a newer epoch and contests nothing.
+  // A coordinator started after the takeover runs at a newer epoch and contests nothing,
+  // and it runs beside the copy that took over by name, which still leads.
   const restarted = {
     ...ancestor,
     workspaceSettings: {
@@ -194,7 +195,7 @@ it("flags an ancestor still active at the epoch its successor took over at", () 
     },
   };
   expect(logicalCoordinators([restarted, successor])?.contested).toEqual([]);
-  expect(logicalCoordinator([restarted, successor])).toEqual({ member: restarted, problem: null });
+  expect(logicalCoordinator([restarted, successor])).toEqual({ member: successor, problem: null });
 });
 it("does not loop or supersede both copies when predecessors point at each other", () => {
   const a = {
@@ -249,5 +250,45 @@ describe("copyRolesSummary with retired records", () => {
         new Map([["old", "m1"]]),
       ),
     ).toBe("old: Copy · m4: Main");
+  });
+});
+
+describe("logicalCoordinator with a coordinator started beside main", () => {
+  const ref = (environmentId: string) => ({
+    environmentId,
+    projectId: "p",
+    coordinatorThreadId: "project-coordinator:p",
+  });
+  const member = (environmentId: string, coordinatorBinding: object) =>
+    ({
+      environmentId,
+      id: "p",
+      title: "Atlas",
+      workspaceRoot: `/${environmentId}`,
+      workspaceSettings: {
+        kind: "code",
+        logicalProject: {
+          id: "atlas",
+          title: "Atlas",
+          coordinatorId: "coordinator:atlas",
+          members: ["m4", "m5", "m1", "m3"].map(ref),
+        },
+        coordinatorBinding,
+      },
+    }) as unknown as EnvironmentProject;
+  const main = member("m4", { epoch: 0, state: "active" });
+  const follower = member("m5", { epoch: 0, state: "transferred", successor: ref("m4") });
+  const beside = member("m1", { epoch: 2, state: "active" });
+  const old = member("m3", { epoch: 0, state: "transferred", successor: ref("m1") });
+
+  it("replicates from the main the copies follow, not the higher epoch", () => {
+    expect(logicalCoordinator([beside, follower, main])?.member).toBe(main);
+  });
+
+  it("lets no retired record name the coordinator", () => {
+    const retired = { has: (id: string) => id === "m3" };
+    expect(logicalCoordinator([beside, follower, main, old], retired)?.member).toBe(main);
+    // Counted, m3's vote ties m1 with m4 at epoch 0, and m1's newer epoch would win.
+    expect(logicalCoordinator([beside, follower, main, old])?.member).toBe(beside);
   });
 });

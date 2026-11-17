@@ -375,3 +375,83 @@ describe("a move asked for from the copy's page", () => {
     expect(takeMainMove("m4:p", NOW + 61_000)).toBeNull();
   });
 });
+
+describe("makeMainPath with a coordinator started beside main", () => {
+  // The M5 state of November 17, 2026: m4 is main at epoch 0 and the copies follow it;
+  // m1 joined earlier, then started its own coordinator (epoch 2, no predecessor).
+  const main = copy("m4", { state: "active", epoch: 0 });
+  const follower = copy("m5", { state: "transferred", epoch: 0, successor: "m4" });
+  const beside = copy("m1", { state: "active", epoch: 2 }, ["m4", "mini", "m1"]);
+
+  it("moves from the main the copy follows, not from the higher epoch", () => {
+    expect(makeMainPath(follower, [main, follower, beside], machines())).toEqual({
+      kind: "move",
+      main,
+    });
+    // The order the copies load in changes nothing.
+    expect(makeMainPath(follower, [beside, follower, main], machines())).toEqual({
+      kind: "move",
+      main,
+    });
+  });
+
+  it("follows main after the switch, with the side coordinator still at a higher epoch", () => {
+    const newMain = copy("m5", { state: "active", epoch: 0 });
+    const oldMain = copy("m4", { state: "transferred", epoch: 0, successor: "m5" });
+    expect(makeMainPath(oldMain, [oldMain, newMain, beside], machines())).toEqual({
+      kind: "move",
+      main: newMain,
+    });
+  });
+
+  it("still lets a copy that took over by name lead over the main it replaced", () => {
+    const tookOver = copy("m5", { state: "active", epoch: 1, predecessor: "m4" });
+    const other = copy("mini", { state: "transferred", epoch: 0, successor: "m4" });
+    expect(
+      makeMainPath(other, [main, tookOver, other, beside], machines({ offline: ["m4"] })),
+    ).toEqual({ kind: "move", main: tookOver });
+  });
+
+  it("never re-crowns a main that gave way, even when it starts a coordinator again", () => {
+    // m5 took over from m4 by name; m4 later started its own coordinator at a higher epoch,
+    // and mini still points at m4. m5 stays main.
+    const tookOver = copy("m5", { state: "active", epoch: 1, predecessor: "m4" });
+    const restarted = copy("m4", { state: "active", epoch: 2 });
+    const stale = copy("mini", { state: "transferred", epoch: 0, successor: "m4" });
+    expect(makeMainPath(stale, [restarted, tookOver, stale], machines())).toEqual({
+      kind: "move",
+      main: tookOver,
+    });
+  });
+
+  it("never re-crowns a main that gave way two moves ago and started again", () => {
+    // m5 took over from m4, then main moved on to m1; m4 later started its own coordinator
+    // at the newest epoch, and mini still points at m4 from before any of it.
+    const current = copy("m1", { state: "active", epoch: 2, predecessor: "m5" });
+    const movedOn = copy("m5", { state: "transferred", epoch: 1, successor: "m1" });
+    const restarted = copy("m4", { state: "active", epoch: 3 });
+    const stale = copy("mini", { state: "transferred", epoch: 0, successor: "m4" });
+    expect(makeMainPath(stale, [restarted, movedOn, current, stale], machines())).toEqual({
+      kind: "move",
+      main: current,
+    });
+  });
+
+  it("ignores what a retired machine record points at", () => {
+    const old = copy("m3", { state: "transferred", epoch: 0, successor: "m1" });
+    const follower2 = copy("m5", { state: "transferred", epoch: 0, successor: "m4" });
+    const retired = { has: (id: string) => id === "m3" };
+    // Without m3's vote, m1 is not endorsed: m4, which m5 follows, leads.
+    expect(makeMainPath(follower2, [main, follower2, beside, old], machines({ retired }))).toEqual({
+      kind: "move",
+      main,
+    });
+  });
+
+  it("falls back to the newest epoch when no copy names a main", () => {
+    const a = copy("m4", { state: "active", epoch: 0 });
+    const b = copy("m1", { state: "active", epoch: 2 });
+    const c = copy("m5", { state: "transferred", epoch: 0 });
+    expect(makeMainPath(c, [a, b, c], machines())).toEqual({ kind: "move", main: b });
+  });
+});

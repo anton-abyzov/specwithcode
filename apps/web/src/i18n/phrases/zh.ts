@@ -5219,4 +5219,12 @@ export const zh: PhraseCatalog = {
   "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
     "从文件夹来看，它们不是 {project} 的副本。只有在它是重命名或重新克隆的副本时才选择。",
   "Review link": "检查关联",
+  "Message {machine}'s coordinator for {project}.":
+    "给 {machine} 上 {project} 的协调者发消息。",
+  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
+    "发送会把你的消息交给 {machine} 的协调者，并打开它的页面，回复会出现在那里。",
+  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
+    "发送会把你的消息交给主协调者，并打开它的页面，回复会出现在那里。",
+  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
+    "文件留在这台机器上。移除文件即可把文字发到主机器，或打开主机器的页面在那里附加。",
 };

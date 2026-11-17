@@ -21,6 +21,7 @@ export function CoordinatorBlockedNotice({
   onOpen,
   mainOffer = null,
   onMakeMain = null,
+  routesToMain = false,
 }: {
   text: string;
   /** The checkout that starts work for this copy (main); null for any other reason. */
@@ -36,6 +37,8 @@ export function CoordinatorBlockedNotice({
   /** "Make {this} main" for this page's copy; null when it has no switch. */
   mainOffer?: MainOffer | null;
   onMakeMain?: ((key: string) => void) | null;
+  /** Send here goes to main's coordinator (`useRouteToMain`), so the note says so. */
+  routesToMain?: boolean;
 }) {
   const tx = useTx();
   if (!coordinator)
@@ -87,7 +90,18 @@ export function CoordinatorBlockedNotice({
             </Button>
           ) : null}
         </div>
-        {onOpen ? (
+        {routesToMain ? (
+          <p className="mt-2 text-xs" data-routes-to-main="">
+            {main
+              ? tx(
+                  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.",
+                  { machine: main },
+                )
+              : tx(
+                  "Send delivers your message to main's coordinator and opens its page, where the answer comes.",
+                )}
+          </p>
+        ) : onOpen ? (
           <p className="mt-2 text-xs" data-write-to-main-note="">
             {main
               ? tx(

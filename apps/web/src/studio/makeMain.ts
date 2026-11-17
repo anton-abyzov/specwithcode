@@ -85,6 +85,22 @@ export function linkedWith<P extends EnvironmentProject>(copy: P, members: reado
 }
 
 /**
+ * The main `copy` takes its work from, by the same rule the switch uses (`copyRoles`): the
+ * coordinator the link names, never a coordinator merely started beside it at a higher
+ * epoch. Null when `copy` is not a plain copy, or its main is not loaded or is on its own
+ * machine. The page's notice, the switch and a routed send all name this one.
+ */
+export function followedMain<P extends EnvironmentProject>(
+  copy: P,
+  members: readonly P[],
+  retired?: { has(environmentId: string): boolean },
+): P | null {
+  const role = copyRoles(linkedWith(copy, members), retired).get(keyOf(copy));
+  if (role?.role !== "copy" || !role.main) return null;
+  return role.main.environmentId === copy.environmentId ? null : role.main;
+}
+
+/**
  * How `copy` would become its project's main right now. Only a copy that handed main on
  * (or joined as a copy) has a switch: main itself, an unlinked checkout, a copy mid-move
  * and one that runs a coordinator of its own beside main get none.

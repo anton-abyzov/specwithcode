@@ -5466,4 +5466,12 @@ export const de: PhraseCatalog = {
   "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
     "Nach ihren Ordnern sind das keine Kopien von {project}. Wähle eines nur, wenn es eine umbenannte oder neu geklonte Kopie ist.",
   "Review link": "Verknüpfung prüfen",
+  "Message {machine}'s coordinator for {project}.":
+    "{machine}s Koordinator für {project} schreiben.",
+  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
+    "Senden stellt deine Nachricht an {machine}s Koordinator zu und öffnet dessen Seite, wo die Antwort kommt.",
+  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
+    "Senden stellt deine Nachricht an den Koordinator des Hauptrechners zu und öffnet dessen Seite, wo die Antwort kommt.",
+  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
+    "Dateien bleiben auf diesem Rechner. Entferne sie, um den Text an den Hauptrechner zu senden, oder öffne dessen Seite, um sie dort anzuhängen.",
 };

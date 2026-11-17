@@ -202,6 +202,8 @@ import { CoordinatorConversation } from "./CoordinatorConversation";
 import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
 import { CoordinatorBlockedNotice, OfflineSwitchNotice } from "./CoordinatorBlockedNotice";
 import { useMakeMain } from "./useMakeMain";
+import { useRouteToMain } from "./useRouteToMain";
+import { ROUTED_FILES_MESSAGE } from "../../studio/routeToMain";
 import { ProjectComposerHostStatus } from "./ComposerHostStatus";
 import { useTx } from "../../i18n";
 import {
@@ -305,7 +307,12 @@ export function ProjectWorkspaceSurface({
   restoringThread?: boolean;
   ownershipProblem?: string | null;
   /** A workers-only copy's coordinator on another machine, where its work is started. */
-  coordinatorElsewhere?: { readonly key: string; readonly machine: string | null } | null;
+  coordinatorElsewhere?: {
+    readonly key: string;
+    readonly machine: string | null;
+    /** A live coordinator the resolver found (`followedMain`), so a send can route there. */
+    readonly live?: boolean;
+  } | null;
   setSelected: SelectProjectThread;
 }) {
   const projectTitle = logicalProjectTitle(project);
@@ -666,6 +673,21 @@ export function ProjectWorkspaceSurface({
   const blocked = (connected ? null : admission) ?? workersOnly ?? ownershipProblem ?? admission;
   // A copy whose main is elsewhere: its message box is off and says where to write.
   const copyOff = blocked !== null && blocked === workersOnly;
+  // Main's machine is connected and may run work: what is typed here goes to main's coordinator.
+  const route = useRouteToMain({
+    mainKey: coordinatorElsewhere?.key ?? null,
+    copyOff,
+    mainLive: coordinatorElsewhere?.live === true,
+    onOpen: onCheckout,
+  });
+  const routes = route.ready;
+  // Files were attached on this machine; a routed message carries text only.
+  const draftHasFiles = useSyncExternalStore(
+    composer.subscribe,
+    () => composer.getSnapshot().attachments.length > 0,
+    () => false,
+  );
+  const routedFilesBlock = routes && draftHasFiles ? tx(ROUTED_FILES_MESSAGE) : null;
   // Memoized, not just computed: these feed memoized callbacks below, and the
   // React Compiler keeps those only for values it knows are not changed later.
   const coordinator = useMemo(
@@ -1996,42 +2018,52 @@ export function ProjectWorkspaceSurface({
                 composer={composer}
                 // A viewer showing the coordinator borrows this composer.
                 threadRef={coordinatorRef}
-                environmentId={project.environmentId}
+                environmentId={
+                  routes && route.environmentId ? route.environmentId : project.environmentId
+                }
                 cwd={project.workspaceRoot}
                 sendBlocked={
-                  Boolean(blocked) ||
-                  Boolean(modelCompatibility) ||
-                  (!model && !coordinatorId) ||
-                  savingModel ||
-                  sending
+                  routes
+                    ? route.sending || sending || routedFilesBlock !== null
+                    : Boolean(blocked) ||
+                      Boolean(modelCompatibility) ||
+                      (!model && !coordinatorId) ||
+                      savingModel ||
+                      sending
                 }
                 missingModel={
-                  !blocked && !model && !coordinatorId
+                  routedFilesBlock ??
+                  (!blocked && !model && !coordinatorId
                     ? missingModelMessage(modelsLoading, machinePrivate)
-                    : null
+                    : null)
                 }
-                canAttach={canOperate && connected}
+                canAttach={canOperate && connected && !routes}
                 uploadsSupported={uploadsSupported}
                 maxFileBytes={maxFileBytes}
                 sending={sending}
                 placeholder={
-                  copyOff
-                    ? coordinatorElsewhere?.machine
-                      ? tx("Work for {project} starts on {machine}.", {
-                          project: projectTitle,
-                          machine: coordinatorElsewhere.machine,
-                        })
-                      : tx("Work for {project} starts on another machine.", {
-                          project: projectTitle,
-                        })
-                    : coordinatorQuestion
-                      ? say("Answer the coordinator: type, paste or attach, then send")
-                      : hostStatus?.keepsDraft
-                        ? tx("Your draft stays here until it reconnects.")
-                        : promptPlaceholder
+                  routes && coordinatorElsewhere?.machine
+                    ? tx("Message {machine}'s coordinator for {project}.", {
+                        project: projectTitle,
+                        machine: coordinatorElsewhere.machine,
+                      })
+                    : copyOff
+                      ? coordinatorElsewhere?.machine
+                        ? tx("Work for {project} starts on {machine}.", {
+                            project: projectTitle,
+                            machine: coordinatorElsewhere.machine,
+                          })
+                        : tx("Work for {project} starts on another machine.", {
+                            project: projectTitle,
+                          })
+                      : coordinatorQuestion
+                        ? say("Answer the coordinator: type, paste or attach, then send")
+                        : hostStatus?.keepsDraft
+                          ? tx("Your draft stays here until it reconnects.")
+                          : promptPlaceholder
                 }
                 hostReachable={connected}
-                writesElsewhere={copyOff}
+                writesElsewhere={copyOff && !routes}
                 draftSentElsewhere={() =>
                   durableCoordinatorDraftSentElsewhere(project.environmentId, project.id)
                 }
@@ -2057,9 +2089,10 @@ export function ProjectWorkspaceSurface({
                 keybindings={keybindings}
                 isPhoneKeyboard={isPhoneKeyboard}
                 sendShortcut={sendShortcut}
-                onAppCommand={appCommandsOffered ? runAppCommand : null}
-                provider={model ? (providerEntries.get(model.instanceId) ?? null) : null}
-                onSend={sendFromComposer}
+                // A routed message goes to main as typed: commands and skills here act on this copy.
+                onAppCommand={appCommandsOffered && !routes ? runAppCommand : null}
+                provider={model && !routes ? (providerEntries.get(model.instanceId) ?? null) : null}
+                onSend={routes ? (text, files) => route.send(text, files) : sendFromComposer}
                 onError={setError}
                 status={
                   <>
@@ -2084,6 +2117,7 @@ export function ProjectWorkspaceSurface({
                           ) ?? null
                         }
                         onMakeMain={mainSwitch.run}
+                        routesToMain={routes}
                       />
                     )}
                     {switchedFrom && !blocked && !hostStatus ? (
