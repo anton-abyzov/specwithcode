@@ -727,6 +727,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!apps/desktop/prod-resources/voice/**/*",
       "!apps/desktop/prod-resources/cli",
       "!apps/desktop/prod-resources/cli/**/*",
+      "!apps/desktop/prod-resources/icon.icon",
+      "!apps/desktop/prod-resources/icon.icon/**/*",
       "!apps/desktop/gnome-extension",
       "!apps/desktop/gnome-extension/**/*",
     ]);

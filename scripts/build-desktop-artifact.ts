@@ -107,7 +107,7 @@ const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
   return yield* decodeWorkspaceConfig(workspaceYaml);
 });
 
-// Staged into build resources (not shipped) and named by mac.icon.
+// Staged into build resources and named by mac.icon; app.asar excludes it.
 export const MAC_ICON_COMPOSER_FILE = "icon.icon";
 
 interface DesktopBuildIconAssets {
@@ -1049,6 +1049,9 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // The specwithcode command shim is run by the shell; it ships once at resources/cli.
   "!apps/desktop/prod-resources/cli",
   "!apps/desktop/prod-resources/cli/**/*",
+  // The Icon Composer source is compiled into Assets.car; the app never reads it.
+  "!apps/desktop/prod-resources/icon.icon",
+  "!apps/desktop/prod-resources/icon.icon/**/*",
   "!apps/desktop/gnome-extension",
   "!apps/desktop/gnome-extension/**/*",
 ] as const;
