@@ -5,34 +5,34 @@
 // Checks and shoots, light and dark, the first step of "Link with a project on another
 // machine": the copies with the best one selected, "Other projects" open, no copy found,
 // and a project that is already linked (the subtitle names Main).
-import assert from "node:assert/strict";
-import fs from "node:fs/promises";
-import http from "node:http";
-import { createRequire } from "node:module";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
+import * as NodeAssert from "node:assert/strict";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeHttp from "node:http";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 process.env.PWDEBUG = "0";
 process.env.PLAYWRIGHT_HTML_OPEN = "never";
 const { chromium } = process.env.STUDIO_PLAYWRIGHT_MODULE
-  ? await import(pathToFileURL(process.env.STUDIO_PLAYWRIGHT_MODULE).href)
-  : createRequire(path.resolve("apps/server/package.json"))("playwright-core");
-const output = path.resolve(
+  ? await import(NodeURL.pathToFileURL(process.env.STUDIO_PLAYWRIGHT_MODULE).href)
+  : NodeModule.createRequire(NodePath.resolve("apps/server/package.json"))("playwright-core");
+const output = NodePath.resolve(
   process.argv.slice(2).find((a) => !a.startsWith("--")) ?? ".artifacts/link-dialog/evidence",
 );
-await fs.mkdir(output, { recursive: true });
-const root = path.resolve(".artifacts/link-dialog/site");
-const server = http.createServer(async (req, res) => {
+await NodeFSP.mkdir(output, { recursive: true });
+const root = NodePath.resolve(".artifacts/link-dialog/site");
+const server = NodeHttp.createServer(async (req, res) => {
   try {
     const pathname = new URL(req.url, "http://localhost").pathname;
-    const file = path.resolve(root, `.${pathname === "/" ? "/index.html" : pathname}`);
-    assert(file.startsWith(root + path.sep));
+    const file = NodePath.resolve(root, `.${pathname === "/" ? "/index.html" : pathname}`);
+    NodeAssert.ok(file.startsWith(root + NodePath.sep));
     res.setHeader(
       "Content-Type",
       { ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" }[
-        path.extname(file)
+        NodePath.extname(file)
       ] ?? "text/html",
     );
-    res.end(await fs.readFile(file));
+    res.end(await NodeFSP.readFile(file));
   } catch {
     res.writeHead(404).end();
   }
@@ -59,7 +59,7 @@ async function open(query, viewport = { width: 820, height: 760 }) {
   return page;
 }
 const shot = async (page, name) => {
-  const file = path.join(output, `${name}.png`);
+  const file = NodePath.join(output, `${name}.png`);
   await page.screenshot({ path: file });
   return file;
 };
@@ -67,7 +67,9 @@ const rows = (page) =>
   page.locator('[data-slot="link-candidate"] span.font-medium').allTextContents();
 const picked = (page) =>
   page
-    .locator('[data-slot="link-candidate"]:has([role="radio"][aria-checked="true"]) span.font-medium')
+    .locator(
+      '[data-slot="link-candidate"]:has([role="radio"][aria-checked="true"]) span.font-medium',
+    )
     .allTextContents();
 const subtitle = (page) => page.locator('[data-slot="dialog-description"]').textContent();
 const fold = (page) => page.locator('[data-slot="link-other-projects"] > button');
@@ -85,63 +87,63 @@ try {
   for (const theme of ["light", "dark"]) {
     // Copies of this project only; the best match on a connected machine is selected.
     let page = await open(`theme=${theme}`);
-    assert.equal(
+    NodeAssert.equal(
       await subtitle(page),
       "Pick the copy of Atlas on another machine. Each copy keeps its own coordinator, and you can switch Main any time.",
     );
-    assert.deepEqual(await rows(page), COPIES);
-    assert.deepEqual(await picked(page), ["Atlas on m3"]);
+    NodeAssert.deepEqual(await rows(page), COPIES);
+    NodeAssert.deepEqual(await picked(page), ["Atlas on m3"]);
     const body = await page.locator('[data-slot="dialog-popup"]').textContent();
-    assert.match(body, /Same root repository; 34 of 36 repositories match, 2 missing here\./);
-    assert.match(body, /Same root repository; 32 of 36 repositories match, 4 missing here\./);
-    assert.match(body, /Connect linux-mini first\./);
-    assert.doesNotMatch(body, /sketchbook|One coordinator stays|No copy of Atlas/);
-    assert.equal(await fold(page).textContent(), "Other projects (6)");
-    assert.equal(await fold(page).getAttribute("aria-expanded"), "false");
-    assert.equal(await page.getByRole("button", { name: "Review link" }).isEnabled(), true);
+    NodeAssert.match(body, /Same root repository; 34 of 36 repositories match, 2 missing here\./);
+    NodeAssert.match(body, /Same root repository; 32 of 36 repositories match, 4 missing here\./);
+    NodeAssert.match(body, /Connect linux-mini first\./);
+    NodeAssert.doesNotMatch(body, /sketchbook|One coordinator stays|No copy of Atlas/);
+    NodeAssert.equal(await fold(page).textContent(), "Other projects (6)");
+    NodeAssert.equal(await fold(page).getAttribute("aria-expanded"), "false");
+    NodeAssert.equal(await page.getByRole("button", { name: "Review link" }).isEnabled(), true);
     let file = await shot(page, `link-dialog-copies-${theme}`);
     results.push({ theme, case: "copies only, best one selected", rows: COPIES, file });
 
     // Every other project is one click away, for a renamed or re-cloned copy.
     await fold(page).click();
-    assert.deepEqual(await rows(page), [...COPIES, ...OTHERS]);
-    assert.equal(await fold(page).getAttribute("aria-expanded"), "true");
-    assert.deepEqual(await picked(page), ["Atlas on m3"]);
+    NodeAssert.deepEqual(await rows(page), [...COPIES, ...OTHERS]);
+    NodeAssert.equal(await fold(page).getAttribute("aria-expanded"), "true");
+    NodeAssert.deepEqual(await picked(page), ["Atlas on m3"]);
     await page.locator('[data-slot="link-other-projects"]').scrollIntoViewIfNeeded();
     await page.waitForTimeout(150);
     file = await shot(page, `link-dialog-other-projects-open-${theme}`);
     // A row there can be picked; closing the fold drops that pick.
     await page.locator('[data-slot="link-candidate"]', { hasText: "ledger on m3" }).click();
-    assert.deepEqual(await picked(page), ["ledger on m3"]);
+    NodeAssert.deepEqual(await picked(page), ["ledger on m3"]);
     await fold(page).click();
-    assert.deepEqual(await rows(page), COPIES);
-    assert.deepEqual(await picked(page), []);
-    assert.equal(await page.getByRole("button", { name: "Review link" }).isEnabled(), false);
+    NodeAssert.deepEqual(await rows(page), COPIES);
+    NodeAssert.deepEqual(await picked(page), []);
+    NodeAssert.equal(await page.getByRole("button", { name: "Review link" }).isEnabled(), false);
     results.push({ theme, case: "Other projects open", file });
     await page.close();
 
     // No copy anywhere: the dialog says so and opens the other projects.
     page = await open(`theme=${theme}&case=empty`);
-    assert.equal(
+    NodeAssert.equal(
       await page.locator("[data-link-no-copy]").textContent(),
       "No copy of Atlas was found on another machine.",
     );
-    assert.equal(await fold(page).getAttribute("aria-expanded"), "true");
-    assert.deepEqual(await rows(page), OTHERS);
-    assert.deepEqual(await picked(page), []);
-    assert.equal(await page.getByRole("button", { name: "Review link" }).isEnabled(), false);
+    NodeAssert.equal(await fold(page).getAttribute("aria-expanded"), "true");
+    NodeAssert.deepEqual(await rows(page), OTHERS);
+    NodeAssert.deepEqual(await picked(page), []);
+    NodeAssert.equal(await page.getByRole("button", { name: "Review link" }).isEnabled(), false);
     file = await shot(page, `link-dialog-no-copy-${theme}`);
     results.push({ theme, case: "no copy found", file });
     await page.close();
 
     // Already linked with m5: the subtitle names the real Main.
     page = await open(`theme=${theme}&case=linked`);
-    assert.equal(
+    NodeAssert.equal(
       await subtitle(page),
       "Pick the copy of Atlas on another machine. Each copy keeps its own coordinator; Main stays on m5 and you can switch it any time.",
     );
-    assert.deepEqual(await rows(page), ["Atlas on m1"]);
-    assert.deepEqual(await picked(page), ["Atlas on m1"]);
+    NodeAssert.deepEqual(await rows(page), ["Atlas on m1"]);
+    NodeAssert.deepEqual(await picked(page), ["Atlas on m1"]);
     file = await shot(page, `link-dialog-linked-main-${theme}`);
     results.push({ theme, case: "linked project names Main", file });
     await page.close();
@@ -149,18 +151,18 @@ try {
 
   // Another interface language: the first step's own words are translated.
   const page = await open("theme=light&lang=ru");
-  assert.equal(
+  NodeAssert.equal(
     await page.locator('[data-slot="dialog-title"]').textContent(),
     "Связать с проектом на другой машине",
   );
-  assert.equal(await fold(page).textContent(), "Другие проекты (6)");
-  assert.deepEqual((await rows(page))[0], "Atlas на m3");
+  NodeAssert.equal(await fold(page).textContent(), "Другие проекты (6)");
+  NodeAssert.deepEqual((await rows(page))[0], "Atlas на m3");
   const file = await shot(page, "link-dialog-copies-ru-light");
   results.push({ theme: "light", case: "Russian", file });
   await page.close();
 
-  assert.deepEqual(errors, []);
-  await fs.writeFile(path.join(output, "results.json"), JSON.stringify(results, null, 2));
+  NodeAssert.deepEqual(errors, []);
+  await NodeFSP.writeFile(NodePath.join(output, "results.json"), JSON.stringify(results, null, 2));
   console.log(JSON.stringify({ ok: true, shots: results.length, output }, null, 2));
 } finally {
   await browser.close();

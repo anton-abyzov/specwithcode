@@ -120,7 +120,6 @@ export function ProjectLinkCandidates({
       value={selected}
       onValueChange={(value) => onSelect(String(value))}
       aria-label={tx("Other copy")}
-      className="gap-2"
     >
       {copies.map(row)}
       {copies.length === 0 && (

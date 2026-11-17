@@ -74,8 +74,7 @@ export function linkedMainEnvironmentId<
   const logical = project.workspaceSettings?.logicalProject;
   if (
     !logical?.members.some(
-      (member) =>
-        member.environmentId !== project.environmentId || member.projectId !== project.id,
+      (member) => member.environmentId !== project.environmentId || member.projectId !== project.id,
     )
   )
     return null;

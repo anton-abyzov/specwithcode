@@ -236,7 +236,6 @@ export function ProjectLinkDialog({
     if (!open || !scanned || namedKey !== null || bestKey === null) return;
     setSelected((current) => (current === "" ? bestKey : current));
     // The choice is made when the read finishes; later changes leave the selection alone.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, scanned]);
 
   const sides = previews

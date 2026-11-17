@@ -60,11 +60,29 @@ const copies = [
   project("linux-mini", "atlas", "Atlas", "/home/dana/Projects/atlas", REMOTE),
 ];
 const others = [
-  project("linux-mini", "ai-notes", "ai-notes", "/home/dana/Projects/ai-notes", "github.com/acme/ai-notes"),
+  project(
+    "linux-mini",
+    "ai-notes",
+    "ai-notes",
+    "/home/dana/Projects/ai-notes",
+    "github.com/acme/ai-notes",
+  ),
   project("m5", "first-steps", "first-steps", "/Users/dana/Projects/first-steps", null),
-  project("linux-mini", "voxel-run", "voxel-run", "/home/dana/Projects/voxel-run", "github.com/acme/voxel-run"),
+  project(
+    "linux-mini",
+    "voxel-run",
+    "voxel-run",
+    "/home/dana/Projects/voxel-run",
+    "github.com/acme/voxel-run",
+  ),
   project("m3", "ledger", "ledger", "/Users/dana/Documents/ledger", "github.com/acme/ledger"),
-  project("m1", "sketchbook", "sketchbook", "/Users/dana/Projects/sketchbook", "github.com/acme/sketchbook"),
+  project(
+    "m1",
+    "sketchbook",
+    "sketchbook",
+    "/Users/dana/Projects/sketchbook",
+    "github.com/acme/sketchbook",
+  ),
   project("m1", "weave", "weave", "/Users/dana/work/weave", "github.com/acme/weave"),
 ];
 const projects: EnvironmentProject[] =
