@@ -8,6 +8,7 @@ import {
   PI_STUDIO_MCP_EXTENSION_FILENAME,
   STUDIO_MCP_BEARER_ENV,
   STUDIO_MCP_URL_ENV,
+  STUDIO_PI_COORDINATOR_ENV,
   STUDIO_PI_RESPONSE_STYLE_ENV,
   STUDIO_PI_RUNTIME_MODE_ENV,
 } from "./piStudioMcpExtensionSource.ts";
@@ -87,6 +88,25 @@ describe("pi Studio MCP injection", () => {
     assert.isUndefined(permissionOnly.env[STUDIO_MCP_URL_ENV]);
     assert.isUndefined(permissionOnly.env[STUDIO_MCP_BEARER_ENV]);
     assert.equal(permissionOnly.env[STUDIO_PI_RUNTIME_MODE_ENV], "auto-accept-edits");
+  });
+
+  it("sets the coordinator role only for this thread, never from the parent env", () => {
+    const inherited = { [STUDIO_PI_COORDINATOR_ENV]: "1" };
+    const worker = buildPiRpcLaunch({
+      launchArgs: [],
+      environment: inherited,
+      mcpSession,
+      extensionPath: "/tmp/cache/pi-studio-mcp-extension.ts",
+    });
+    assert.isUndefined(worker.env[STUDIO_PI_COORDINATOR_ENV]);
+    const coordinator = buildPiRpcLaunch({
+      launchArgs: [],
+      environment: {},
+      mcpSession,
+      extensionPath: "/tmp/cache/pi-studio-mcp-extension.ts",
+      isCoordinator: true,
+    });
+    assert.equal(coordinator.env[STUDIO_PI_COORDINATOR_ENV], "1");
   });
 
   it("falls back to Pi's first supported mode for legacy auto threads", () => {

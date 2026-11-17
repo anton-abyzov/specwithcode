@@ -1907,10 +1907,17 @@ export function claudeEffectiveQueryPolicyKey(
     readonly subagentPromptFileContents?: string | undefined;
     /** The git shim is in the process environment, so turning Use worktrees on reopens it. */
     readonly manualWorktreesBlocked?: boolean | string | undefined;
+    /**
+     * The coordinator role sets the system prompt and the tool bans when the
+     * process opens, so a thread that gains or loses the role needs a new one.
+     */
+    readonly isCoordinator?: boolean | undefined;
   },
 ): string {
   return stringifyJson({
     agentInstructions: context?.agentInstructions,
+    // Only present when true, so worker keys stay what they were.
+    ...(context?.isCoordinator === true ? { isCoordinator: true } : {}),
     manualWorktreesBlocked: context?.manualWorktreesBlocked ?? false,
     claudeWorkflowMode: context?.claudeWorkflowMode ?? "on-request",
     responseStyle: context?.responseStyle ?? "concise",

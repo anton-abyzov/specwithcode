@@ -355,6 +355,16 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
         { subagentPromptFileContents: "new rules" },
       ),
     );
+    // Gaining or losing the coordinator role reopens the process: the role
+    // sets the system prompt and the native tool bans at launch.
+    assert.notEqual(
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(policy, {}, { isCoordinator: true }),
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(policy, {}, { isCoordinator: false }),
+    );
+    assert.equal(
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(policy, {}),
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(policy, {}, { isCoordinator: false }),
+    );
   });
 
   it("preserves human origin in the native message envelope", () => {

@@ -297,6 +297,8 @@ export function buildPiRpcLaunch(input: {
   // credentials inherited from the server or a parent provider process.
   delete environment[STUDIO_MCP_URL_ENV];
   delete environment[STUDIO_MCP_BEARER_ENV];
+  // The role belongs to this thread, never to the parent process.
+  delete environment[STUDIO_PI_COORDINATOR_ENV];
 
   return {
     args,
