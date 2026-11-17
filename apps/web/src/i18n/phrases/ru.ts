@@ -2321,10 +2321,13 @@ export const ru: PhraseCatalog = {
     "Удалить с этого устройства старую запись {name} ({host})?\nМашина подключилась заново как новая и продолжает работать; уходят только мёртвая запись и её кэшированные треды здесь.",
   "Use 2 or 3 characters.": "Используйте 2 или 3 символа.",
   "Not shared": "Не общий",
-  "{machine} is main now, with machines not yet following it": "{machine} теперь основная, но некоторые машины ещё не следуют за ней",
-  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.": "Эти машины ещё не приняли новую основную: {machines}. Работу прежней они начнут отклонять только после этого.",
+  "{machine} is main now, with machines not yet following it":
+    "{machine} теперь основная, но некоторые машины ещё не следуют за ней",
+  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.":
+    "Эти машины ещё не приняли новую основную: {machines}. Работу прежней они начнут отклонять только после этого.",
   "Not linked · also on {machine}": "Не связана · также на {machine}",
-  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "Эта копия не связана с копиями на {machine}. Свяжите их из меню проекта, чтобы был один координатор.",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.":
+    "Эта копия не связана с копиями на {machine}. Свяжите их из меню проекта, чтобы был один координатор.",
   "No other machine has a copy of this project.":
     "Ни на одной другой машине нет копии этого проекта.",
   "Connect to see its role": "Подключитесь, чтобы увидеть роль",
@@ -4683,8 +4686,6 @@ export const ru: PhraseCatalog = {
     "Передаёт работу машине для режима «Не на месте», когда этот Mac засыпает. Сначала она ждёт заданное время, и если вы вернётесь раньше, ничего не переносится. Только Mac.",
   "How long the target waits after the lid closes before it takes over.":
     "Сколько машина ждёт после закрытия крышки, прежде чем взять работу.",
-  "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.":
-    "Она также получает ключ для управления доступом, обновлениями и навыками на этой машине на год. Текущие ограничения по проектам и входам продолжают действовать.",
   "Its app sees this machine": "Её приложение видит эту машину",
   "Its work may use any sign-in on this machine.":
     "Её работа может использовать любой вход на этой машине.",
@@ -4725,8 +4726,6 @@ export const ru: PhraseCatalog = {
   "No sign-ins: every launch is refused": "Нет входов: каждый запуск отклоняется",
   "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.":
     "Нет. Чтобы открыть проекты этой машины с {machineLabel}, создайте здесь одноразовую ссылку и откройте её там.",
-  "Not included. Each secret transfer still asks you.":
-    "Не входит. Каждая передача секрета по-прежнему требует вашего подтверждения.",
   "Not set up yet.": "Ещё не настроено.",
   "Nothing allowed yet: tick a project or pick All projects":
     "Пока ничего не разрешено: отметьте проект или выберите «Все проекты»",
@@ -5101,74 +5100,45 @@ export const ru: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "Путь к AppImage нельзя записать в команду. Переместите AppImage в папку с простым путём и откройте его оттуда.",
   "Could not write {path} ({error}).": "Не удалось записать {path} ({error}).",
-  "Main":
-    "Основная",
-  "Moving main":
-    "Основная переезжает",
-  "Copy · main on {machine}":
-    "Копия · основная на {machine}",
+  Main: "Основная",
+  "Moving main": "Основная переезжает",
+  "Copy · main on {machine}": "Копия · основная на {machine}",
   "Work for this project starts here. Copies on other machines take work from it.":
     "Работа над этим проектом начинается здесь. Копии на других машинах получают работу отсюда.",
   "Main is on {machine}. This copy can also start work of its own.":
     "Основная на {machine}. Эта копия тоже может начинать свою работу.",
   "Work starts on {machine}. This copy takes work from there.":
     "Работа начинается на {machine}. Эта копия получает работу оттуда.",
-  "Main is moving between machines right now.":
-    "Основная прямо сейчас переезжает между машинами.",
-  "{there} can start work here":
-    "{there} может начинать работу здесь",
-  "{there} can't start work here":
-    "{there} не может начинать работу здесь",
-  "This machine can start work on {there}":
-    "Эта машина может начинать работу на {there}",
-  "This machine can't start work on {there}":
-    "Эта машина не может начинать работу на {there}",
-  "until you stop it":
-    "пока вы не остановите",
-  "1 running thread stops at {time}.":
-    "1 работающий поток остановится в {time}.",
-  "{count} running threads stop at {time}.":
-    "Работающие потоки ({count}) остановятся в {time}.",
-  "Its access ran out {date}.":
-    "Доступ истёк {date}.",
-  "Its access ran out.":
-    "Доступ истёк.",
-  "Time limit ended {date}.":
-    "Срок закончился {date}.",
-  "Stopped {date}.":
-    "Остановлено {date}.",
-  "Stopped.":
-    "Остановлено.",
-  "{there} stopped it.":
-    "{there} остановил это.",
-  "{there} has not allowed it yet.":
-    "{there} ещё не разрешил это.",
-  "Allow…":
-    "Разрешить…",
-  "Set up…":
-    "Настроить…",
-  "Change…":
-    "Изменить…",
-  "Allow {there} to start work here for":
-    "Разрешить {there} начинать работу здесь на",
-  "More for {machine}":
-    "Ещё для {machine}",
-  "Hide connection details":
-    "Скрыть сведения о подключении",
-  "Let {thereLabel} start work here":
-    "Разрешить {thereLabel} начинать работу здесь",
+  "Main is moving between machines right now.": "Основная прямо сейчас переезжает между машинами.",
+  "{there} can start work here": "{there} может начинать работу здесь",
+  "{there} can't start work here": "{there} не может начинать работу здесь",
+  "This machine can start work on {there}": "Эта машина может начинать работу на {there}",
+  "This machine can't start work on {there}": "Эта машина не может начинать работу на {there}",
+  "until you stop it": "пока вы не остановите",
+  "1 running thread stops at {time}.": "1 работающий поток остановится в {time}.",
+  "{count} running threads stop at {time}.": "Работающие потоки ({count}) остановятся в {time}.",
+  "Its access ran out {date}.": "Доступ истёк {date}.",
+  "Its access ran out.": "Доступ истёк.",
+  "Time limit ended {date}.": "Срок закончился {date}.",
+  "Stopped {date}.": "Остановлено {date}.",
+  "Stopped.": "Остановлено.",
+  "{there} stopped it.": "{there} остановил это.",
+  "{there} has not allowed it yet.": "{there} ещё не разрешил это.",
+  "Allow…": "Разрешить…",
+  "Set up…": "Настроить…",
+  "Change…": "Изменить…",
+  "Allow {there} to start work here for": "Разрешить {there} начинать работу здесь на",
+  "More for {machine}": "Ещё для {machine}",
+  "Hide connection details": "Скрыть сведения о подключении",
+  "Let {thereLabel} start work here": "Разрешить {thereLabel} начинать работу здесь",
   "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
     "{there} может начинать работу здесь: его агенты могут запускать потоки в проектах этой машины. «Остановить» сразу отклоняет новую работу; уже запущенные потоки останавливаются через 2 минуты. Эта машина может начинать работу на {there}: здешние агенты могут запускать там потоки в пределах доступа, который разрешает {there}.",
-  "Allow {there} to start work here":
-    "Разрешить {there} начинать работу здесь",
-  "Stop {there} starting work here":
-    "Запретить {there} начинать работу здесь",
-  "Allow {there} again to start work here":
-    "Снова разрешить {there} начинать работу здесь",
+  "Allow {there} to start work here": "Разрешить {there} начинать работу здесь",
+  "Stop {there} starting work here": "Запретить {there} начинать работу здесь",
+  "Allow {there} again to start work here": "Снова разрешить {there} начинать работу здесь",
   "Set up this machine to start work on {there}":
     "Настроить эту машину для запуска работы на {there}",
-  "Change what this machine may do on {there}":
-    "Изменить, что этой машине можно на {there}",
+  "Change what this machine may do on {there}": "Изменить, что этой машине можно на {there}",
   Advisor: "Советник",
   "Let threads ask a stronger model": "Разрешить тредам спрашивать более сильную модель",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
@@ -5202,100 +5172,76 @@ export const ru: PhraseCatalog = {
   "The advisor gave no advice": "Советник не дал совета",
   "Advisor unavailable": "Советник недоступен",
   "Claude built-in": "Встроенный в Claude",
-  "The advisor is still working. Its advice arrives as a new message.": "Советник ещё работает. Совет придёт новым сообщением.",
+  "The advisor is still working. Its advice arrives as a new message.":
+    "Советник ещё работает. Совет придёт новым сообщением.",
   "Still working": "Ещё работает",
   "{count} left this run": "Осталось в этом запуске: {count}",
   "Advice applied (hidden by Claude)": "Совет учтён (скрыт Claude)",
   "Advisor consult": "Консультация советника",
   "Follow project (on)": "Как в проекте (вкл.)",
   "Follow project (off)": "Как в проекте (выкл.)",
-  "Lets this thread ask a stronger model to check its work.": "Позволяет этому треду просить более сильную модель проверить работу.",
+  "Lets this thread ask a stronger model to check its work.":
+    "Позволяет этому треду просить более сильную модель проверить работу.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Удалять worktree, чаты которых решены или в архиве и неактивны столько дней. Ветки и история чатов сохраняются.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
     "Удалять worktree, пул-реквест которых смержен, а коммиты вошли в основную ветку, или закрыт без слияния, а все коммиты отправлены. Открытый чат теряет папку после 6 часов без активности; чат, который работает или ждёт ответа, всегда её сохраняет. Ветка остаётся, поэтому открытый заново чат получает папку обратно. Также удаляет чистые отправленные worktree, которые агенты создали без чата, когда их пул-реквест смержен или закрыт и они простаивают сутки.",
   "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
     "Удалять worktree решённых или архивных чатов, в ветке которых нет коммитов сверх основной ветки.",
-  "What cleanup would remove":
-    "Что удалит очистка",
-  "Chat worktrees and leftover downloads":
-    "Worktree чатов и остатки загрузок",
+  "What cleanup would remove": "Что удалит очистка",
+  "Chat worktrees and leftover downloads": "Worktree чатов и остатки загрузок",
   "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
     "Показывает, что очистка удалит, что оставит и почему. Проверка спрашивает Git-хостинг о каждой завершённой папке, поэтому запускается только по кнопке «Проверить».",
-  "Check":
-    "Проверить",
-  "Clean up now":
-    "Очистить сейчас",
-  "Cleaning up…":
-    "Очистка…",
-  "Would be removed":
-    "Будет удалено",
-  "Kept":
-    "Остаётся",
-  "At least {size} would be freed.":
-    "Освободится не меньше {size}.",
+  Check: "Проверить",
+  "Clean up now": "Очистить сейчас",
+  "Cleaning up…": "Очистка…",
+  "Would be removed": "Будет удалено",
+  Kept: "Остаётся",
+  "At least {size} would be freed.": "Освободится не меньше {size}.",
   "Dependency folders are left out: their files are shared with the package store.":
     "Папки зависимостей не учитываются: их файлы общие с хранилищем пакетов.",
   "Some folders could not be fully checked or measured.":
     "Некоторые папки не удалось полностью проверить или измерить.",
-  "Leftover files of stopped downloads":
-    "Остатки прерванных загрузок",
-  "Nothing to remove right now.":
-    "Сейчас удалять нечего.",
-  "Nothing was removed.":
-    "Ничего не удалено.",
-  "Removed 1 folder, at least {size}.":
-    "Удалена 1 папка, не меньше {size}.",
-  "Removed {count} folders, at least {size}.":
-    "Удалено папок: {count}, не меньше {size}.",
-  "The check could not finish.":
-    "Проверку не удалось завершить.",
+  "Leftover files of stopped downloads": "Остатки прерванных загрузок",
+  "Nothing to remove right now.": "Сейчас удалять нечего.",
+  "Nothing was removed.": "Ничего не удалено.",
+  "Removed 1 folder, at least {size}.": "Удалена 1 папка, не меньше {size}.",
+  "Removed {count} folders, at least {size}.": "Удалено папок: {count}, не меньше {size}.",
+  "The check could not finish.": "Проверку не удалось завершить.",
   "This connection cannot change this machine's storage.":
     "Это подключение не может менять хранилище этой машины.",
-  "Delete worktrees of resolved chats":
-    "Удалять worktree решённых чатов",
+  "Delete worktrees of resolved chats": "Удалять worktree решённых чатов",
   "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
     "Удаляет worktree решённого или архивного чата, когда всё в нём закоммичено и отправлено. Ветка остаётся, поэтому открытый заново чат получает папку обратно.",
-  "Its pull request merged.":
-    "Его пул-реквест смержен.",
+  "Its pull request merged.": "Его пул-реквест смержен.",
   "Its pull request closed and every commit is on the remote.":
     "Его пул-реквест закрыт, и все коммиты есть на удалённом репозитории.",
   "Its chats are resolved or archived and everything is pushed.":
     "Его чаты решены или в архиве, и всё отправлено.",
-  "Its chat was deleted.":
-    "Его чат удалён.",
+  "Its chat was deleted.": "Его чат удалён.",
   "Its chats are resolved or archived and it has been inactive.":
     "Его чаты решены или в архиве, и он давно не используется.",
-  "Its branch has no commits of its own.":
-    "В его ветке нет своих коммитов.",
-  "Leftover files of stopped downloads.":
-    "Остатки прерванных загрузок.",
-  "Work in it has not finished.":
-    "Работа в нём не закончена.",
+  "Its branch has no commits of its own.": "В его ветке нет своих коммитов.",
+  "Leftover files of stopped downloads.": "Остатки прерванных загрузок.",
+  "Work in it has not finished.": "Работа в нём не закончена.",
   "A chat that is still open works in it or near it.":
     "Ещё открытый чат работает в нём или рядом с ним.",
-  "It was used less than 6 hours ago.":
-    "Им пользовались меньше 6 часов назад.",
-  "It has uncommitted changes.":
-    "В нём есть незакоммиченные изменения.",
-  "It has files Git does not track.":
-    "В нём есть файлы, которые Git не отслеживает.",
+  "It was used less than 6 hours ago.": "Им пользовались меньше 6 часов назад.",
+  "It has uncommitted changes.": "В нём есть незакоммиченные изменения.",
+  "It has files Git does not track.": "В нём есть файлы, которые Git не отслеживает.",
   "It has commits that exist only on this machine.":
     "В нём есть коммиты, которые есть только на этой машине.",
-  "A stash was made on its branch.":
-    "В его ветке есть stash.",
+  "A stash was made on its branch.": "В его ветке есть stash.",
   "It has ignored files that may hold data.":
     "В нём есть игнорируемые файлы, в которых могут быть данные.",
   "It holds more media than is copied automatically.":
     "В нём больше медиафайлов, чем копируется автоматически.",
-  "Something is working in it, or it is locked.":
-    "В нём что-то работает, или он заблокирован.",
+  "Something is working in it, or it is locked.": "В нём что-то работает, или он заблокирован.",
   "Its Git registration is broken. Check it by hand.":
     "Его регистрация в Git сломана. Проверьте её вручную.",
   "Another repository or hidden changes sit inside it.":
     "Внутри есть другой репозиторий или скрытые изменения.",
-  "No cleanup rule covers it.":
-    "Ни одно правило очистки его не касается.",
+  "No cleanup rule covers it.": "Ни одно правило очистки его не касается.",
   "It could not be fully checked, so it is kept.":
     "Его не удалось проверить полностью, поэтому он оставлен.",
   "Installed, but it does not start": "Установлен, но не запускается",
@@ -5434,4 +5380,93 @@ export const ru: PhraseCatalog = {
     "Отправка передаёт сообщение главному координатору и открывает его страницу, куда придёт ответ.",
   "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
     "Файлы остаются на этом компьютере. Уберите их, чтобы отправить текст на главный, или откройте страницу главного и прикрепите их там.",
+  "1 device waiting": "1 устройство ждёт",
+  "A Linux computer": "Компьютер Linux",
+  "A Mac": "Mac",
+  "A Windows PC": "ПК с Windows",
+  "A computer": "Компьютер",
+  "A device cannot approve itself. Type this code on another device or on the machine.":
+    "Устройство не может одобрить само себя. Введите этот код на другом устройстве или на машине.",
+  "A new device wants to use {machine}": "Новое устройство хочет использовать {machine}",
+  "A phone": "Телефон",
+  "A tablet": "Планшет",
+  "Allow lets it open threads, terminals, files and settings on {machine}, as this app can. Allow only a device you have in front of you.":
+    "«Разрешить» даёт ему открывать треды, терминалы, файлы и настройки на {machine}, так же как это приложение. Разрешайте только устройство, которое у вас перед глазами.",
+  "Allow {coordinatorLabel} to run work on {hereLabel}?":
+    "Разрешить {coordinatorLabel} запускать работу на {hereLabel}?",
+  "Allowing…": "Разрешаем…",
+  "An Android phone": "Телефон Android",
+  "An Android tablet": "Планшет Android",
+  "An iPad": "iPad",
+  "An iPhone": "iPhone",
+  "Approve this device on the machine.": "Одобрите это устройство на машине.",
+  "Approved {date} by {approver}": "Одобрено {date} ({approver})",
+  "Checking devices…": "Проверка устройств…",
+  "Code shown on {device}": "Код, который показывает {device}",
+  "Could not reach this machine.": "Не удалось связаться с этой машиной.",
+  "Could not reach this machine. Try again.":
+    "Не удалось связаться с этой машиной. Попробуйте ещё раз.",
+  "Could not remove {device}": "Не удалось удалить устройство {device}",
+  "Could not repair the list": "Не удалось восстановить список",
+  "Could not save the list": "Не удалось сохранить список",
+  "Could not turn that device away": "Не удалось отклонить это устройство",
+  "Deny turns it away for a day.": "«Отклонить» не пускает его сутки.",
+  "Devices that can use this machine": "Устройства, которые могут использовать эту машину",
+  "First seen {date}": "Впервые замечено {date}",
+  "It also gets a key to this machine for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Project limits stay in force.":
+    "Оно также получает ключ к этой машине на год: терминалы, файлы, настройки и входы, а также доступ, обновления и навыки. Ограничения проектов продолжают действовать.",
+  "It stops using {machine} right away. To use it again, it asks with a new code.":
+    "Оно сразу перестаёт использовать {machine}. Чтобы снова получить доступ, оно запросит его с новым кодом.",
+  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
+    "Его приложение одобрено здесь по коду, поэтому оно может использовать эту машину, а агенты этой машины теперь могут запускать на нём работу. Изменить или удалить его можно в «Настройки > Машины».",
+  "Kept by the update": "Сохранено при обновлении",
+  "Kept by the update. Check this list.": "Сохранено при обновлении. Проверьте этот список.",
+  Later: "Позже",
+  "New device approved on {machine} by {approver}":
+    "Новое устройство одобрено на {machine} ({approver})",
+  "No device is waiting with that code. Check the code shown on the device that asked for {machine}.":
+    "Нет устройства, которое ждёт с этим кодом. Проверьте код на устройстве, которое запросило доступ к {machine}.",
+  "No other devices yet. A phone or computer signed in to SpecWithCode Connect asks here first, with a code.":
+    "Других устройств пока нет. Телефон или компьютер, вошедший в SpecWithCode Connect, сначала запрашивает доступ здесь, с кодом.",
+  "Not sent on their own. Each secret transfer asks first, and that card appears on the machine that asks, not on this one.":
+    "Сами по себе не отправляются. Каждая передача секретов сначала спрашивает разрешения, и эта карточка появляется на машине, которая запрашивает, а не на этой.",
+  "Open SpecWithCode on {machine} and type this code:":
+    "Откройте SpecWithCode на {machine} и введите этот код:",
+  "Remove {device}?": "Удалить устройство {device}?",
+  "Sign in to SpecWithCode Connect again on this device to ask {machine} for approval.":
+    "Снова войдите в SpecWithCode Connect на этом устройстве, чтобы запросить одобрение у {machine}.",
+  "The device list on {machine} is damaged, so other devices are turned away until it is repaired. Repair starts an empty list; devices then ask again with a code.":
+    "Список устройств на {machine} повреждён, поэтому другие устройства не допускаются, пока его не восстановят. Восстановление создаёт пустой список; затем устройства снова запрашивают доступ с кодом.",
+  "The device list on {machine} is damaged. Open SpecWithCode on {machine} to repair it.":
+    "Список устройств на {machine} повреждён. Откройте SpecWithCode на {machine}, чтобы восстановить его.",
+  "The list is right": "Список верный",
+  "These devices were in use when {machine} updated, so they were kept. Remove any you do not know.":
+    "Эти устройства работали во время обновления на {machine}, поэтому они сохранены. Удалите те, которые вы не знаете.",
+  "This device connects on its own once {machine} allows it.":
+    "Это устройство подключится само, как только {machine} его разрешит.",
+  "This machine cannot check new devices yet. Open SpecWithCode on it and update.":
+    "Эта машина пока не умеет проверять новые устройства. Откройте на ней SpecWithCode и обновите.",
+  "This machine does not ask before new devices connect yet. Update it to choose which devices can use it.":
+    "Эта машина пока не спрашивает, прежде чем подключаются новые устройства. Обновите её, чтобы выбирать, какие устройства могут её использовать.",
+  "Too many wrong codes. Type the code on {machine} itself, or wait 10 minutes.":
+    "Слишком много неверных кодов. Введите код прямо на {machine} или подождите 10 минут.",
+  "Try again.": "Попробуйте ещё раз.",
+  "Turning away…": "Отклоняем…",
+  "Type the code shown on {device}": "Введите код, который показывает {device}",
+  "another device": "другое устройство",
+  "the update": "обновление",
+  "{coordinatorLabel} receives a key to {hereLabel} for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Its work is capped at {cap}. Project limits stay in force. Each secret transfer asks first, on {coordinatorLabel}.":
+    "{coordinatorLabel} получает ключ к {hereLabel} на год: терминалы, файлы, настройки и входы, а также доступ, обновления и навыки. Его работа ограничена: {cap}. Ограничения проектов продолжают действовать. Каждая передача секретов сначала спрашивает разрешения на {coordinatorLabel}.",
+  "{count} devices waiting": "Устройств в ожидании: {count}",
+  "{device} can now use {machine}": "{device} теперь может использовать {machine}",
+  "{device} is asking.": "{device} запрашивает доступ.",
+  "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
+    "{device} запрашивает доступ. Вход в SpecWithCode Connect выполнен как {account}.",
+  "{device} is asking. It signed in to your SpecWithCode Connect account.":
+    "{device} запрашивает доступ. Вход выполнен в ваш аккаунт SpecWithCode Connect.",
+  "{device} is waiting to use {machine}.": "{device} ждёт доступа к {machine}.",
+  "{label} joined": "Подключено: {label}",
+  "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
+    "{machine} больше не пускает это устройство. Одобрите его снова в SpecWithCode на {machine}.",
+  "{position} of {total} waiting": "{position} из {total} в ожидании",
 };

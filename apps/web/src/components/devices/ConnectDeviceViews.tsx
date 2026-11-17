@@ -2,16 +2,20 @@
  * What the owner and a waiting device see (1327). Views take plain props so the
  * hosts and the fixture under tests/device-approval render the same thing.
  */
-import { CheckIcon, CopyIcon, MonitorSmartphoneIcon, ShieldAlertIcon } from "lucide-react";
+import { MonitorSmartphoneIcon, ShieldAlertIcon } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import {
   type ConnectDevice,
   type ConnectDeviceRequest,
   type ConnectDevicesSnapshot,
-  describeConnectDevice,
+  approverName,
+  connectDeviceDetails,
+  connectDeviceName,
   isCompleteApprovalCode,
+  longDate,
 } from "../../studio/connectDevices.logic";
+import { useLocale, useTx } from "../../i18n";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -25,6 +29,7 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { SettingsSection } from "../settings/settingsLayout";
+import { DeviceApprovalCode } from "./inlineApprovalCode";
 
 /** Resolves to an error to show, or null when the code was accepted. */
 export type ApproveWithCode = (code: string) => Promise<string | null>;
@@ -44,6 +49,7 @@ function CodeForm({
   autoFocus?: boolean;
   compact?: boolean;
 }) {
+  const tx = useTx();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState<"allow" | "deny" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -87,11 +93,9 @@ function CodeForm({
           aria-invalid={error ? true : undefined}
           autoCapitalize="characters"
           autoComplete="off"
-          className={
-            compact
-              ? "w-36 font-mono uppercase tracking-[0.2em]"
-              : "font-mono text-lg uppercase tracking-[0.3em]"
-          }
+          className={compact ? "w-36" : undefined}
+          font="mono"
+          size={compact ? "sm" : "lg"}
           maxLength={9}
           onChange={(event) => {
             setCode(event.target.value);
@@ -107,7 +111,7 @@ function CodeForm({
             size={compact ? "xs" : "default"}
             disabled={!isCompleteApprovalCode(code) || busy !== null}
           >
-            {busy === "allow" ? "Allowing…" : "Allow"}
+            {busy === "allow" ? tx("Allowing…") : tx("Allow")}
           </Button>
           <Button
             type="button"
@@ -116,7 +120,7 @@ function CodeForm({
             disabled={busy !== null}
             onClick={() => void deny()}
           >
-            {busy === "deny" ? "Turning away…" : "Deny"}
+            {busy === "deny" ? tx("Turning away…") : tx("Deny")}
           </Button>
         </div>
       </div>
@@ -132,6 +136,7 @@ function CodeForm({
 /** Opens on its own on the machine when a device asks; never needs Settings to find. */
 export function DeviceApprovalPrompt({
   machine,
+  account = null,
   request,
   position,
   total,
@@ -140,6 +145,8 @@ export function DeviceApprovalPrompt({
   onLater,
 }: {
   machine: string;
+  /** The SpecWithCode Connect account the device signed in with, when known here. */
+  account?: string | null;
   request: ConnectDeviceRequest;
   position: number;
   total: number;
@@ -147,21 +154,43 @@ export function DeviceApprovalPrompt({
   onDeny: () => Promise<void>;
   onLater: () => void;
 }) {
-  const who = describeConnectDevice(request);
+  const tx = useTx();
+  const who = connectDeviceName(request, tx);
+  const details = connectDeviceDetails(request, tx);
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onLater())}>
       <DialogPopup className="max-w-md" data-device-approval-prompt={request.id}>
         <DialogHeader>
-          <DialogTitle>A new device wants to use {machine}</DialogTitle>
+          <DialogTitle>{tx("A new device wants to use {machine}", { machine })}</DialogTitle>
           <DialogDescription data-device-approval-line>
-            {who} is asking. Allow lets it use {machine} like this app does.
+            {request.kind === "connect" && account
+              ? tx("{device} is asking. It signed in to SpecWithCode Connect as {account}.", {
+                  device: who,
+                  account,
+                })
+              : request.kind === "connect"
+                ? tx("{device} is asking. It signed in to your SpecWithCode Connect account.", {
+                    device: who,
+                  })
+                : tx("{device} is asking.", { device: who })}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
+          {details ? (
+            <p className="text-xs text-muted-foreground" data-device-approval-details>
+              {details}
+            </p>
+          ) : null}
+          <p className="text-sm" data-device-approval-grants>
+            {tx(
+              "Allow lets it open threads, terminals, files and settings on {machine}, as this app can. Allow only a device you have in front of you.",
+              { machine },
+            )}
+          </p>
           <CodeForm
             key={request.id}
             id={request.id}
-            label={`Type the code shown on ${request.label}`}
+            label={tx("Type the code shown on {device}", { device: who })}
             onApprove={onApprove}
             onDeny={onDeny}
             autoFocus
@@ -169,10 +198,12 @@ export function DeviceApprovalPrompt({
         </DialogPanel>
         <DialogFooter className="items-center sm:justify-between">
           <span className="text-xs text-muted-foreground">
-            {total > 1 ? `${position} of ${total} waiting` : "Deny turns it away for a day."}
+            {total > 1
+              ? tx("{position} of {total} waiting", { position, total })
+              : tx("Deny turns it away for a day.")}
           </span>
-          <Button variant="ghost" size="sm" onClick={onLater}>
-            Later
+          <Button variant="outline" size="sm" onClick={onLater}>
+            {tx("Later")}
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -182,53 +213,24 @@ export function DeviceApprovalPrompt({
 
 /** On the waiting device: where to go and the code to type, large and copyable. */
 export function DeviceWaitingCard({ machine, code }: { machine: string; code: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setCopied(false);
-    }
-  };
   return (
     <section
       aria-live="polite"
       data-device-waiting={machine}
       className="w-[min(30rem,calc(100vw-2rem))] rounded-2xl border border-border bg-popover p-4 text-popover-foreground shadow-lg"
     >
-      <p className="text-sm font-medium" data-device-waiting-line>
-        Open SpecWithCode on {machine} and type this code:
-      </p>
-      <div className="mt-3 flex items-center gap-3">
-        <output
-          className="select-all font-mono text-3xl font-semibold tracking-[0.25em]"
-          data-device-waiting-code
-        >
-          {code}
-        </output>
-        <Button size="sm" variant="outline" onClick={() => void copy()}>
-          {copied ? <CheckIcon /> : <CopyIcon />}
-          {copied ? "Copied" : "Copy"}
-        </Button>
-      </div>
-      <p className="mt-2 text-xs text-muted-foreground">
-        This device connects on its own once {machine} allows it.
-      </p>
+      <DeviceApprovalCode machine={machine} code={code} />
     </section>
   );
 }
 
-function approvedLine(device: ConnectDevice) {
-  const when = new Date(device.approvedAt).toLocaleDateString(undefined, {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
+function approvedLine(device: ConnectDevice, tx: ReturnType<typeof useTx>, locale: string) {
   return device.keptByUpdate
-    ? "Kept by the update. Check this list."
-    : `Approved ${when} by ${device.approvedBy}`;
+    ? tx("Kept by the update. Check this list.")
+    : tx("Approved {date} by {approver}", {
+        date: longDate(device.approvedAt, locale),
+        approver: approverName(device.approvedBy, tx),
+      });
 }
 
 export interface ConnectDevicesListActions {
@@ -247,6 +249,8 @@ export function ConnectDevicesList({
   snapshot: ConnectDevicesSnapshot;
   actions: ConnectDevicesListActions;
 }) {
+  const tx = useTx();
+  const locale = useLocale();
   const [busy, setBusy] = useState<string | null>(null);
   const act = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
@@ -263,8 +267,10 @@ export function ConnectDevicesList({
         <div role="alert" className="flex flex-wrap items-center gap-3 px-3 py-3 sm:px-4">
           <ShieldAlertIcon className="size-4 text-destructive-foreground" />
           <p className="min-w-0 flex-1 text-sm">
-            The device list on {machine} is damaged, so other devices are turned away until it is
-            repaired. Repair starts an empty list; devices then ask again with a code.
+            {tx(
+              "The device list on {machine} is damaged, so other devices are turned away until it is repaired. Repair starts an empty list; devices then ask again with a code.",
+              { machine },
+            )}
           </p>
           {snapshot.canRepair ? (
             <Button
@@ -272,7 +278,7 @@ export function ConnectDevicesList({
               disabled={busy !== null}
               onClick={() => void act("repair", actions.onRepair)}
             >
-              Repair
+              {tx("Repair")}
             </Button>
           ) : null}
         </div>
@@ -283,15 +289,18 @@ export function ConnectDevicesList({
           className="px-3 py-3 sm:px-4"
           data-connect-device-waiting={request.id}
         >
-          <p className="mb-2 text-sm">
-            <span className="font-medium">{describeConnectDevice(request)}</span>{" "}
-            <span className="text-muted-foreground">is waiting to use {machine}.</span>
+          <p className="text-sm">
+            {tx("{device} is waiting to use {machine}.", {
+              device: connectDeviceName(request, tx),
+              machine,
+            })}
           </p>
+          <p className="mb-2 text-xs text-muted-foreground">{connectDeviceDetails(request, tx)}</p>
           {snapshot.canApprove ? (
             <CodeForm
               compact
               id={request.id}
-              label={`Code shown on ${request.label}`}
+              label={tx("Code shown on {device}", { device: connectDeviceName(request, tx) })}
               onApprove={actions.onApprove}
               onDeny={() => actions.onDeny(request.id)}
             />
@@ -304,8 +313,10 @@ export function ConnectDevicesList({
           data-connect-devices-review
         >
           <p className="min-w-0 flex-1 text-sm">
-            These devices were in use when {machine} updated, so they were kept. Remove any you do
-            not know.
+            {tx(
+              "These devices were in use when {machine} updated, so they were kept. Remove any you do not know.",
+              { machine },
+            )}
           </p>
           <Button
             size="xs"
@@ -313,14 +324,15 @@ export function ConnectDevicesList({
             disabled={busy !== null}
             onClick={() => void act("review", actions.onConfirmReview)}
           >
-            The list is right
+            {tx("The list is right")}
           </Button>
         </div>
       ) : null}
       {snapshot.devices.length === 0 && snapshot.pending.length === 0 ? (
         <p className="px-3 py-3 text-sm text-muted-foreground sm:px-4">
-          No other devices yet. A phone or computer signed in to SpecWithCode Connect asks here
-          first, with a code.
+          {tx(
+            "No other devices yet. A phone or computer signed in to SpecWithCode Connect asks here first, with a code.",
+          )}
         </p>
       ) : null}
       {snapshot.devices.map((device) => (
@@ -331,7 +343,12 @@ export function ConnectDevicesList({
         >
           <MonitorSmartphoneIcon className="size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm">{describeConnectDevice(device)}</p>
+            <p className="truncate text-sm">{connectDeviceName(device, tx)}</p>
+            {connectDeviceDetails(device, tx, locale) ? (
+              <p className="truncate text-xs text-muted-foreground" data-connect-device-details>
+                {connectDeviceDetails(device, tx, locale)}
+              </p>
+            ) : null}
             <p
               className={
                 device.keptByUpdate && snapshot.needsReview
@@ -340,18 +357,18 @@ export function ConnectDevicesList({
               }
             >
               {device.keptByUpdate && !snapshot.needsReview
-                ? "Kept by the update"
-                : approvedLine(device)}
+                ? tx("Kept by the update")
+                : approvedLine(device, tx, locale)}
             </p>
           </div>
           {snapshot.canApprove ? (
             <Button
               size="xs"
-              variant="ghost-muted"
+              variant="destructive-outline"
               disabled={busy !== null}
               onClick={() => void act(device.key, () => actions.onRemove(device))}
             >
-              Remove
+              {tx("Remove")}
             </Button>
           ) : null}
         </div>
@@ -362,10 +379,11 @@ export function ConnectDevicesList({
 
 /** "1 device waiting" for the section header, so a missed pop-up is still easy to find. */
 export function WaitingBadge({ count }: { count: number }) {
+  const tx = useTx();
   if (count === 0) return null;
   return (
     <Badge variant="warning" data-connect-devices-waiting-count={count}>
-      {count === 1 ? "1 device waiting" : `${count} devices waiting`}
+      {count === 1 ? tx("1 device waiting") : tx("{count} devices waiting", { count })}
     </Badge>
   );
 }
@@ -384,26 +402,28 @@ export function ConnectDevicesSectionView({
   error: string | null;
   actions: ConnectDevicesListActions;
 }) {
+  const tx = useTx();
   if (!supported)
     return (
-      <SettingsSection id="connect-devices" title={SECTION_TITLE}>
+      <SettingsSection id="connect-devices" title={tx(SECTION_TITLE)}>
         <p className="px-3 py-3 text-sm text-muted-foreground sm:px-4">
-          This machine does not ask before new devices connect yet. Update it to choose which
-          devices can use it.
+          {tx(
+            "This machine does not ask before new devices connect yet. Update it to choose which devices can use it.",
+          )}
         </p>
       </SettingsSection>
     );
   return (
     <SettingsSection
       id="connect-devices"
-      title={SECTION_TITLE}
+      title={tx(SECTION_TITLE)}
       headerAction={<WaitingBadge count={snapshot?.pending.length ?? 0} />}
     >
       {snapshot ? (
         <ConnectDevicesList snapshot={snapshot} actions={actions} />
       ) : (
         <p className="px-3 py-3 text-sm text-muted-foreground sm:px-4">
-          {error ?? "Checking devices…"}
+          {error ?? tx("Checking devices…")}
         </p>
       )}
     </SettingsSection>

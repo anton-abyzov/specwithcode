@@ -24,6 +24,12 @@ export const ConnectDevice = Schema.Struct({
   kind: ConnectDeviceKind,
   label: Schema.String,
   deviceType: Schema.optionalKey(Schema.String),
+  /** False when `label` is a stand-in: the device gave no name of its own. */
+  named: Schema.optionalKey(Schema.Boolean),
+  /** The device's own word about its system and app, for telling devices apart. */
+  system: Schema.optionalKey(Schema.String),
+  app: Schema.optionalKey(Schema.String),
+  firstSeenAt: Schema.optionalKey(IsoDateTime),
   approvedAt: IsoDateTime,
   /** "this machine", a device's name, or "the update". */
   approvedBy: Schema.String,
@@ -37,6 +43,11 @@ export const ConnectDeviceRequest = Schema.Struct({
   kind: ConnectDeviceKind,
   label: Schema.String,
   deviceType: Schema.optionalKey(Schema.String),
+  /** False when `label` is a stand-in: the device gave no name of its own. */
+  named: Schema.optionalKey(Schema.Boolean),
+  /** The device's own word about its system and app, for telling devices apart. */
+  system: Schema.optionalKey(Schema.String),
+  app: Schema.optionalKey(Schema.String),
   askedAt: IsoDateTime,
   expiresAt: IsoDateTime,
 });
@@ -46,6 +57,9 @@ export const ConnectDevicesNotice = Schema.Struct({
   id: Schema.String,
   at: IsoDateTime,
   message: Schema.String,
+  /** The parts of `message`, so each window can say it in its own language. */
+  machine: Schema.optionalKey(Schema.String),
+  approvedBy: Schema.optionalKey(Schema.String),
 });
 
 export const ConnectDevicesListInput = exact(Schema.Struct({}), []);

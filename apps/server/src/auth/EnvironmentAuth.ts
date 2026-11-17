@@ -74,6 +74,7 @@ import {
 import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "./requestOrigin.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
+import { clientDescriptionFacts, sessionClient } from "./sessionClientMetadata.ts";
 
 const DEFAULT_SESSION_SUBJECT = "local-cli-owner";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
@@ -130,9 +131,7 @@ export const FLEET_INVITATION_SUBJECT = "fleet-invitation";
 /** How long an MCP client sign-in, OAuth-approved or a static token, lasts by default. */
 export const MCP_CLIENT_SESSION_TTL = Duration.days(30);
 
-export const mcpClientScopes = (
-  access: AuthMcpClientAccess,
-): ReadonlyArray<AuthEnvironmentScope> =>
+export const mcpClientScopes = (access: AuthMcpClientAccess): ReadonlyArray<AuthEnvironmentScope> =>
   access === "read-only"
     ? [AuthOrchestrationReadScope]
     : [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
@@ -156,6 +155,10 @@ export interface AuthenticatedSession extends PrincipalApproval {
   readonly clientDeviceType?: string;
   /** What the client calls itself, for `rules records`. Self-reported. */
   readonly clientLabel?: string;
+  /** System, browser and user agent, so a waiting device is described (1327). */
+  readonly clientOs?: string;
+  readonly clientBrowser?: string;
+  readonly clientUserAgent?: string;
   /**
    * The approved device behind this session (1327): its own key, or the key
    * of the device whose credential minted it. What it mints is bound to it.
@@ -365,6 +368,9 @@ export class EnvironmentAuth extends Context.Service<
         | "principal"
         | "clientDeviceType"
         | "clientLabel"
+        | "clientOs"
+        | "clientBrowser"
+        | "clientUserAgent"
         | "proofKeyThumbprint"
         | "deviceKey"
         | "boundDevice"
@@ -591,6 +597,7 @@ export const make = Effect.gen(function* () {
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
         clientDeviceType: session.client.deviceType,
         ...(session.client.label === undefined ? {} : { clientLabel: session.client.label }),
+        ...clientDescriptionFacts(session.client),
         ...(session.boundDevice === undefined ? {} : { boundDevice: session.boundDevice }),
       })),
     );
@@ -1008,10 +1015,7 @@ export const make = Effect.gen(function* () {
         ...(previousSession?.method === "browser-session-cookie"
           ? { replaceSessionId: previousSession.sessionId }
           : {}),
-        client: {
-          ...requestMetadata,
-          ...(grant.label ? { label: grant.label } : {}),
-        },
+        client: sessionClient(requestMetadata, grant),
       })
       .pipe(Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause })));
     return {
@@ -1135,10 +1139,7 @@ export const make = Effect.gen(function* () {
                 // Desktop restarts forget the previous bearer token. Replace
                 // its session, including stale entries left by older versions.
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
-                client: {
-                  ...requestMetadata,
-                  ...(grant.label ? { label: grant.label } : {}),
-                },
+                client: sessionClient(requestMetadata, grant),
               })
               .pipe(
                 Effect.mapError(
@@ -1510,6 +1511,7 @@ export const make = Effect.gen(function* () {
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
               clientDeviceType: session.client.deviceType,
               ...(session.client.label === undefined ? {} : { clientLabel: session.client.label }),
+              ...clientDescriptionFacts(session.client),
               ...(session.boundDevice === undefined ? {} : { boundDevice: session.boundDevice }),
             })),
             Effect.flatMap((session) => refuseSession(session, request)),
@@ -1601,6 +1603,7 @@ export const make = Effect.gen(function* () {
           proofKeyThumbprint: session.proofKeyThumbprint,
           clientLabel: session.client.label,
           clientDeviceType: session.client.deviceType,
+          ...clientDescriptionFacts(session.client),
           boundDevice: session.boundDevice,
         }).pipe(Effect.map((checked) => ({ session, deviceKey: checked.deviceKey }))),
       ),

@@ -2,8 +2,12 @@
  * The always-mounted parts of device approval (1327): the pop-up on the machine
  * a device asks to use, and the card on a device that is waiting for one.
  */
+import { useUser } from "@clerk/react";
 import type { EnvironmentId } from "@specweave-studio/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+
+import { hasCloudPublicConfig } from "../../cloud/publicConfig";
+import { txNow, useTx } from "../../i18n";
 
 import { requestConfirmDialog } from "../../confirmDialog";
 import { useServerConfigs } from "../../state/entities";
@@ -12,9 +16,10 @@ import {
   type ConnectDevice,
   type ConnectDevicesSnapshot,
   approveOutcomeMessage,
+  connectDeviceName,
   connectDevices,
-  describeConnectDevice,
   makeSeenNotices,
+  noticeMessage,
 } from "../../studio/connectDevices";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -22,6 +27,7 @@ import {
   DeviceApprovalPrompt,
   DeviceWaitingCard,
 } from "./ConnectDeviceViews";
+import { inlineCodeShown, inlineCodesVersion, subscribeInlineCodes } from "./inlineApprovalCode";
 
 const POLL_MS = 4_000;
 const HIDDEN_POLL_MS = 20_000;
@@ -38,7 +44,7 @@ const takeFreshNotices = makeSeenNotices(() => {
 /** "New device approved on m4 by Anton's MacBook", once per notice on this device. */
 function announceNotices(environmentId: EnvironmentId, notices: ConnectDevicesSnapshot["notices"]) {
   for (const notice of takeFreshNotices(environmentId, notices))
-    toastManager.add(stackedThreadToast({ type: "info", title: notice.message }));
+    toastManager.add(stackedThreadToast({ type: "info", title: noticeMessage(notice, txNow) }));
 }
 
 /** True when that machine's server checks new devices; older ones never answer the list. */
@@ -73,7 +79,7 @@ export function useConnectDevices(
       announceNotices(environmentId, next.notices);
     } catch (cause) {
       if (mine !== generation.current) return;
-      setError(cause instanceof Error ? cause.message : "Could not reach this machine.");
+      setError(cause instanceof Error ? cause.message : txNow("Could not reach this machine."));
     }
   }, [environmentId, enabled]);
 
@@ -114,7 +120,7 @@ const failed = (title: string, cause: unknown) =>
     stackedThreadToast({
       type: "error",
       title,
-      description: cause instanceof Error ? cause.message : "Try again.",
+      description: cause instanceof Error ? cause.message : txNow("Try again."),
     }),
   );
 
@@ -124,21 +130,27 @@ export function useConnectDevicesActions(
   machine: string,
   refresh: () => Promise<void>,
 ): ConnectDevicesListActions {
+  const tx = useTx();
   return {
     onApprove: async (code) => {
       try {
         const result = await connectDevices.approve(environmentId, code);
-        const problem = approveOutcomeMessage(result, machine);
+        const problem = approveOutcomeMessage(result, machine, tx);
         if (problem === null && result.device)
           toastManager.add(
             stackedThreadToast({
               type: "success",
-              title: `${describeConnectDevice(result.device)} can now use ${machine}`,
+              title: tx("{device} can now use {machine}", {
+                device: connectDeviceName(result.device, tx),
+                machine,
+              }),
             }),
           );
         return problem;
       } catch (cause) {
-        return cause instanceof Error ? cause.message : "Could not reach this machine. Try again.";
+        return cause instanceof Error
+          ? cause.message
+          : tx("Could not reach this machine. Try again.");
       } finally {
         await refresh();
       }
@@ -147,20 +159,24 @@ export function useConnectDevicesActions(
       try {
         await connectDevices.deny(environmentId, requestId);
       } catch (cause) {
-        failed("Could not turn that device away", cause);
+        failed(tx("Could not turn that device away"), cause);
       }
       await refresh();
     },
     onRemove: async (device: ConnectDevice) => {
+      const name = connectDeviceName(device, tx);
       const confirmed = await requestConfirmDialog(
-        `Remove ${device.label}?\nIt stops using ${machine} right away. To use it again, it asks with a new code.`,
-        { variant: "destructive", confirmLabel: "Remove" },
+        `${tx("Remove {device}?", { device: name })}\n${tx(
+          "It stops using {machine} right away. To use it again, it asks with a new code.",
+          { machine },
+        )}`,
+        { variant: "destructive", confirmLabel: tx("Remove") },
       );
       if (confirmed !== true) return;
       try {
         await connectDevices.remove(environmentId, device.key);
       } catch (cause) {
-        failed(`Could not remove ${device.label}`, cause);
+        failed(tx("Could not remove {device}", { device: name }), cause);
       }
       await refresh();
     },
@@ -168,7 +184,7 @@ export function useConnectDevicesActions(
       try {
         await connectDevices.confirmReview(environmentId);
       } catch (cause) {
-        failed("Could not save the list", cause);
+        failed(tx("Could not save the list"), cause);
       }
       await refresh();
     },
@@ -176,7 +192,7 @@ export function useConnectDevicesActions(
       try {
         await connectDevices.repair(environmentId);
       } catch (cause) {
-        failed("Could not repair the list", cause);
+        failed(tx("Could not repair the list"), cause);
       }
       await refresh();
     },
@@ -227,7 +243,17 @@ function DeviceApprovalPromptForMachine({
   onLater: () => void;
 }) {
   const actions = useConnectDevicesActions(environmentId, snapshot.machine, refresh);
-  return (
+  return hasCloudPublicConfig() ? (
+    <DeviceApprovalPromptWithAccount
+      machine={snapshot.machine}
+      request={request}
+      position={position}
+      total={total}
+      onApprove={actions.onApprove}
+      onDeny={() => actions.onDeny(request.id)}
+      onLater={onLater}
+    />
+  ) : (
     <DeviceApprovalPrompt
       machine={snapshot.machine}
       request={request}
@@ -240,11 +266,27 @@ function DeviceApprovalPromptForMachine({
   );
 }
 
+/**
+ * Names the Connect account in the pop-up (1327). A Connect device can only
+ * reach this machine signed in to the account this machine is signed in to.
+ */
+function DeviceApprovalPromptWithAccount(
+  props: Omit<Parameters<typeof DeviceApprovalPrompt>[0], "account">,
+) {
+  const { user } = useUser();
+  return (
+    <DeviceApprovalPrompt {...props} account={user?.primaryEmailAddress?.emailAddress ?? null} />
+  );
+}
+
 /** On a device a machine has not approved yet: where to go, and the code to type there. */
 export function DeviceWaitingForApprovalHost() {
   const { environments } = useEnvironments();
+  useSyncExternalStore(subscribeInlineCodes, inlineCodesVersion);
   const waiting = environments.filter(
-    (environment) => environment.connection.deviceApprovalCode !== undefined,
+    (environment) =>
+      environment.connection.deviceApprovalCode !== undefined &&
+      !inlineCodeShown(environment.environmentId),
   );
   if (waiting.length === 0) return null;
   return (

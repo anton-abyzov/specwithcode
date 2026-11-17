@@ -54,6 +54,7 @@ import { clearComposerDraftsEnvironment } from "../composerDraftStore";
 import { isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { currentOwnMachineName } from "./ownMachineName";
 import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
 import {
   desktopLocalConnectionId,
@@ -223,6 +224,7 @@ function clientMetadata() {
       maxTouchPoints: navigator.maxTouchPoints,
     },
     desktopBridge: window.desktopBridge,
+    machineName: window.desktopBridge === undefined ? undefined : currentOwnMachineName(),
   });
 }
 
@@ -286,7 +288,10 @@ export const provisionDesktopSshEnvironment = Effect.fn(
 const layerCapabilities = Layer.effectContext(
   Effect.sync(() => {
     const presentation = ClientCapabilities.ClientPresentation.of({
-      metadata: clientMetadata(),
+      // Read at each connection: the machine name arrives after this layer starts.
+      get metadata() {
+        return clientMetadata();
+      },
     });
     const cloudSession = ClientCapabilities.CloudSession.of({
       identity: Effect.sync(() =>

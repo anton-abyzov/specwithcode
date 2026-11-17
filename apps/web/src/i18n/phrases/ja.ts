@@ -2327,10 +2327,13 @@ export const ja: PhraseCatalog = {
     "{name}（{host}）の古い記録をこのデバイスから削除しますか？\nこのマシンは新しいマシンとして再参加し、引き続き動作します。削除されるのは使われなくなった記録と、ここにキャッシュされたスレッドだけです。",
   "Use 2 or 3 characters.": "2〜3文字にしてください。",
   "Not shared": "共有なし",
-  "{machine} is main now, with machines not yet following it": "{machine} がメインになりましたが、まだ従っていないマシンがあります",
-  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.": "これらのマシンはまだ新しいメインを受け入れていません: {machines}。受け入れて初めて旧メインからの作業を拒否します。",
+  "{machine} is main now, with machines not yet following it":
+    "{machine} がメインになりましたが、まだ従っていないマシンがあります",
+  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.":
+    "これらのマシンはまだ新しいメインを受け入れていません: {machines}。受け入れて初めて旧メインからの作業を拒否します。",
   "Not linked · also on {machine}": "未リンク · {machine} にもあり",
-  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "このコピーは {machine} 上のコピーとリンクしていません。プロジェクトメニューからリンクするとコーディネーターを共有できます。",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.":
+    "このコピーは {machine} 上のコピーとリンクしていません。プロジェクトメニューからリンクするとコーディネーターを共有できます。",
   "No other machine has a copy of this project.":
     "このプロジェクトのコピーは他のどのマシンにもありません。",
   "Connect to see its role": "接続すると役割が表示されます",
@@ -4689,8 +4692,6 @@ export const ja: PhraseCatalog = {
     "この Mac がスリープすると、作業を不在時の移動先に渡します。移動先はまず猶予時間だけ待ち、それより早く戻れば何も移動しません。Mac のみ。",
   "How long the target waits after the lid closes before it takes over.":
     "蓋を閉じてから移動先が引き継ぐまでの待ち時間です。",
-  "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.":
-    "さらに、このマシンのアクセス、アップデート、スキルを 1 年間管理できるキーも受け取ります。既存のプロジェクトとサインインの制限は引き続き有効です。",
   "Its app sees this machine": "そのアプリからこのマシンが見える",
   "Its work may use any sign-in on this machine.":
     "その作業は、このマシンのどのサインインでも使えます。",
@@ -4729,8 +4730,6 @@ export const ja: PhraseCatalog = {
   "No sign-ins: every launch is refused": "サインインなし: すべての起動が拒否されます",
   "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.":
     "いいえ。{machineLabel} からこのマシンのプロジェクトを開くには、ここで 1 回限りのリンクを作成し、そちらで開いてください。",
-  "Not included. Each secret transfer still asks you.":
-    "含まれません。シークレットを転送するたびに確認します。",
   "Not set up yet.": "まだ設定されていません。",
   "Nothing allowed yet: tick a project or pick All projects":
     "まだ何も許可されていません: プロジェクトにチェックを入れるか、「すべてのプロジェクト」を選んでください",
@@ -5105,74 +5104,44 @@ export const ja: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "AppImage のパスをコマンドに書き込めません。AppImage を単純なフォルダーに移動し、そこから開いてください。",
   "Could not write {path} ({error}).": "{path} を書き込めませんでした（{error}）。",
-  "Main":
-    "メイン",
-  "Moving main":
-    "メインを移動中",
-  "Copy · main on {machine}":
-    "コピー · メインは {machine}",
+  Main: "メイン",
+  "Moving main": "メインを移動中",
+  "Copy · main on {machine}": "コピー · メインは {machine}",
   "Work for this project starts here. Copies on other machines take work from it.":
     "このプロジェクトの作業はここで始まります。他のマシンのコピーはここから作業を受け取ります。",
   "Main is on {machine}. This copy can also start work of its own.":
     "メインは {machine} にあります。このコピーも独自に作業を開始できます。",
   "Work starts on {machine}. This copy takes work from there.":
     "作業は {machine} で始まります。このコピーはそこから作業を受け取ります。",
-  "Main is moving between machines right now.":
-    "メインは現在マシン間で移動中です。",
-  "{there} can start work here":
-    "{there} はここで作業を開始できます",
-  "{there} can't start work here":
-    "{there} はここで作業を開始できません",
-  "This machine can start work on {there}":
-    "このマシンは {there} で作業を開始できます",
-  "This machine can't start work on {there}":
-    "このマシンは {there} で作業を開始できません",
-  "until you stop it":
-    "停止するまで",
-  "1 running thread stops at {time}.":
-    "実行中のスレッド 1 件が {time} に停止します。",
-  "{count} running threads stop at {time}.":
-    "実行中のスレッド {count} 件が {time} に停止します。",
-  "Its access ran out {date}.":
-    "アクセスは {date} に期限切れになりました。",
-  "Its access ran out.":
-    "アクセスの期限が切れました。",
-  "Time limit ended {date}.":
-    "期限は {date} に終了しました。",
-  "Stopped {date}.":
-    "{date} に停止しました。",
-  "Stopped.":
-    "停止しました。",
-  "{there} stopped it.":
-    "{there} が停止しました。",
-  "{there} has not allowed it yet.":
-    "{there} はまだ許可していません。",
-  "Allow…":
-    "許可…",
-  "Set up…":
-    "設定…",
-  "Change…":
-    "変更…",
-  "Allow {there} to start work here for":
-    "{there} にここで作業の開始を許可する期間",
-  "More for {machine}":
-    "{machine} のその他",
-  "Hide connection details":
-    "接続の詳細を隠す",
-  "Let {thereLabel} start work here":
-    "{thereLabel} にここで作業を開始させる",
+  "Main is moving between machines right now.": "メインは現在マシン間で移動中です。",
+  "{there} can start work here": "{there} はここで作業を開始できます",
+  "{there} can't start work here": "{there} はここで作業を開始できません",
+  "This machine can start work on {there}": "このマシンは {there} で作業を開始できます",
+  "This machine can't start work on {there}": "このマシンは {there} で作業を開始できません",
+  "until you stop it": "停止するまで",
+  "1 running thread stops at {time}.": "実行中のスレッド 1 件が {time} に停止します。",
+  "{count} running threads stop at {time}.": "実行中のスレッド {count} 件が {time} に停止します。",
+  "Its access ran out {date}.": "アクセスは {date} に期限切れになりました。",
+  "Its access ran out.": "アクセスの期限が切れました。",
+  "Time limit ended {date}.": "期限は {date} に終了しました。",
+  "Stopped {date}.": "{date} に停止しました。",
+  "Stopped.": "停止しました。",
+  "{there} stopped it.": "{there} が停止しました。",
+  "{there} has not allowed it yet.": "{there} はまだ許可していません。",
+  "Allow…": "許可…",
+  "Set up…": "設定…",
+  "Change…": "変更…",
+  "Allow {there} to start work here for": "{there} にここで作業の開始を許可する期間",
+  "More for {machine}": "{machine} のその他",
+  "Hide connection details": "接続の詳細を隠す",
+  "Let {thereLabel} start work here": "{thereLabel} にここで作業を開始させる",
   "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
     "{there} はここで作業を開始できます: そのエージェントはこのマシンのプロジェクトでスレッドを開始できます。停止すると新しい作業はすぐに拒否され、実行中のスレッドは 2 分後に停止します。このマシンは {there} で作業を開始できます: ここのエージェントは {there} が許可するアクセスの範囲でスレッドを開始できます。",
-  "Allow {there} to start work here":
-    "{there} にここで作業の開始を許可",
-  "Stop {there} starting work here":
-    "{there} によるここでの作業開始を停止",
-  "Allow {there} again to start work here":
-    "{there} にここで作業の開始を再び許可",
-  "Set up this machine to start work on {there}":
-    "このマシンが {there} で作業を開始できるよう設定",
-  "Change what this machine may do on {there}":
-    "このマシンが {there} でできることを変更",
+  "Allow {there} to start work here": "{there} にここで作業の開始を許可",
+  "Stop {there} starting work here": "{there} によるここでの作業開始を停止",
+  "Allow {there} again to start work here": "{there} にここで作業の開始を再び許可",
+  "Set up this machine to start work on {there}": "このマシンが {there} で作業を開始できるよう設定",
+  "Change what this machine may do on {there}": "このマシンが {there} でできることを変更",
   Advisor: "アドバイザー",
   "Let threads ask a stronger model": "スレッドがより強いモデルに相談できるようにする",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
@@ -5205,90 +5174,67 @@ export const ja: PhraseCatalog = {
   "The advisor gave no advice": "アドバイザーから助言はありませんでした",
   "Advisor unavailable": "アドバイザーを利用できません",
   "Claude built-in": "Claude 組み込み",
-  "The advisor is still working. Its advice arrives as a new message.": "アドバイザーはまだ作業中です。助言は新しいメッセージで届きます。",
+  "The advisor is still working. Its advice arrives as a new message.":
+    "アドバイザーはまだ作業中です。助言は新しいメッセージで届きます。",
   "Still working": "作業中",
   "{count} left this run": "この実行で残り {count} 回",
   "Advice applied (hidden by Claude)": "助言を適用済み (Claude により非表示)",
   "Advisor consult": "アドバイザーへの相談",
   "Follow project (on)": "プロジェクトに従う (オン)",
   "Follow project (off)": "プロジェクトに従う (オフ)",
-  "Lets this thread ask a stronger model to check its work.": "このスレッドが、より強力なモデルに作業の確認を頼めるようにします。",
+  "Lets this thread ask a stronger model to check its work.":
+    "このスレッドが、より強力なモデルに作業の確認を頼めるようにします。",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "チャットが解決済みまたはアーカイブ済みで、この日数のあいだ非アクティブなワークツリーを削除します。ブランチとチャットの履歴は残ります。",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
     "プルリクエストがマージされ、コミットが既定のブランチに含まれているか、マージせずにクローズされすべてのコミットがプッシュ済みのワークツリーを削除します。開いたままのチャットは、6 時間動きがなければフォルダーを失います。実行中または待機中のチャットは常にフォルダーを残します。ブランチは残るので、再開したチャットはフォルダーを取り戻せます。エージェントがチャットなしで作った、変更がなくプッシュ済みのワークツリーも、プルリクエストがマージまたはクローズされ 1 日アイドルなら削除します。",
   "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
     "解決済みまたはアーカイブ済みのチャットのうち、ブランチに既定のブランチより先のコミットがないワークツリーを削除します。",
-  "What cleanup would remove":
-    "クリーンアップで削除されるもの",
-  "Chat worktrees and leftover downloads":
-    "チャットのワークツリーとダウンロードの残り",
+  "What cleanup would remove": "クリーンアップで削除されるもの",
+  "Chat worktrees and leftover downloads": "チャットのワークツリーとダウンロードの残り",
   "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
     "クリーンアップで削除されるものと残るもの、その理由を表示します。確認では完了した各フォルダーについて Git ホストに問い合わせるため、「確認」を押したときだけ実行されます。",
-  "Check":
-    "確認",
-  "Clean up now":
-    "今すぐクリーンアップ",
-  "Cleaning up…":
-    "クリーンアップ中…",
-  "Would be removed":
-    "削除対象",
-  "Kept":
-    "残すもの",
-  "At least {size} would be freed.":
-    "少なくとも {size} が空きます。",
+  Check: "確認",
+  "Clean up now": "今すぐクリーンアップ",
+  "Cleaning up…": "クリーンアップ中…",
+  "Would be removed": "削除対象",
+  Kept: "残すもの",
+  "At least {size} would be freed.": "少なくとも {size} が空きます。",
   "Dependency folders are left out: their files are shared with the package store.":
     "依存関係のフォルダーは含みません。そのファイルはパッケージストアと共有されています。",
   "Some folders could not be fully checked or measured.":
     "一部のフォルダーは完全に確認または計測できませんでした。",
-  "Leftover files of stopped downloads":
-    "中断したダウンロードの残りファイル",
-  "Nothing to remove right now.":
-    "今は削除するものはありません。",
-  "Nothing was removed.":
-    "何も削除されませんでした。",
-  "Removed 1 folder, at least {size}.":
-    "1 個のフォルダーを削除しました（少なくとも {size}）。",
+  "Leftover files of stopped downloads": "中断したダウンロードの残りファイル",
+  "Nothing to remove right now.": "今は削除するものはありません。",
+  "Nothing was removed.": "何も削除されませんでした。",
+  "Removed 1 folder, at least {size}.": "1 個のフォルダーを削除しました（少なくとも {size}）。",
   "Removed {count} folders, at least {size}.":
     "{count} 個のフォルダーを削除しました（少なくとも {size}）。",
-  "The check could not finish.":
-    "確認を完了できませんでした。",
+  "The check could not finish.": "確認を完了できませんでした。",
   "This connection cannot change this machine's storage.":
     "この接続では、このマシンのストレージを変更できません。",
-  "Delete worktrees of resolved chats":
-    "解決済みチャットのワークツリーを削除",
+  "Delete worktrees of resolved chats": "解決済みチャットのワークツリーを削除",
   "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
     "解決済みまたはアーカイブ済みのチャットのワークツリーを、中身がすべてコミットされプッシュされたら削除します。ブランチは残るので、再開したチャットはフォルダーを取り戻せます。",
-  "Its pull request merged.":
-    "プルリクエストがマージされました。",
+  "Its pull request merged.": "プルリクエストがマージされました。",
   "Its pull request closed and every commit is on the remote.":
     "プルリクエストがクローズされ、すべてのコミットがリモートにあります。",
   "Its chats are resolved or archived and everything is pushed.":
     "チャットは解決済みかアーカイブ済みで、すべてプッシュ済みです。",
-  "Its chat was deleted.":
-    "チャットが削除されました。",
+  "Its chat was deleted.": "チャットが削除されました。",
   "Its chats are resolved or archived and it has been inactive.":
     "チャットは解決済みかアーカイブ済みで、しばらく使われていません。",
-  "Its branch has no commits of its own.":
-    "ブランチに独自のコミットがありません。",
-  "Leftover files of stopped downloads.":
-    "中断したダウンロードの残りファイルです。",
-  "Work in it has not finished.":
-    "その中の作業がまだ終わっていません。",
+  "Its branch has no commits of its own.": "ブランチに独自のコミットがありません。",
+  "Leftover files of stopped downloads.": "中断したダウンロードの残りファイルです。",
+  "Work in it has not finished.": "その中の作業がまだ終わっていません。",
   "A chat that is still open works in it or near it.":
     "まだ開いているチャットが、その中か近くで作業しています。",
-  "It was used less than 6 hours ago.":
-    "最後に使われてから 6 時間たっていません。",
-  "It has uncommitted changes.":
-    "コミットされていない変更があります。",
-  "It has files Git does not track.":
-    "Git が追跡していないファイルがあります。",
-  "It has commits that exist only on this machine.":
-    "このマシンにしかないコミットがあります。",
-  "A stash was made on its branch.":
-    "ブランチで stash が作成されています。",
-  "It has ignored files that may hold data.":
-    "データを含む可能性のある無視ファイルがあります。",
+  "It was used less than 6 hours ago.": "最後に使われてから 6 時間たっていません。",
+  "It has uncommitted changes.": "コミットされていない変更があります。",
+  "It has files Git does not track.": "Git が追跡していないファイルがあります。",
+  "It has commits that exist only on this machine.": "このマシンにしかないコミットがあります。",
+  "A stash was made on its branch.": "ブランチで stash が作成されています。",
+  "It has ignored files that may hold data.": "データを含む可能性のある無視ファイルがあります。",
   "It holds more media than is copied automatically.":
     "自動でコピーされる量を超えるメディアがあります。",
   "Something is working in it, or it is locked.":
@@ -5297,10 +5243,8 @@ export const ja: PhraseCatalog = {
     "Git の登録が壊れています。手動で確認してください。",
   "Another repository or hidden changes sit inside it.":
     "中に別のリポジトリまたは隠れた変更があります。",
-  "No cleanup rule covers it.":
-    "当てはまるクリーンアップのルールがありません。",
-  "It could not be fully checked, so it is kept.":
-    "すべてを確認できなかったため、残します。",
+  "No cleanup rule covers it.": "当てはまるクリーンアップのルールがありません。",
+  "It could not be fully checked, so it is kept.": "すべてを確認できなかったため、残します。",
   "Installed, but it does not start": "インストール済みですが起動しません",
   "Install {agent} on {machine} with this command:":
     "このコマンドで {machine} に {agent} をインストールします:",
@@ -5319,7 +5263,8 @@ export const ja: PhraseCatalog = {
   "This window can only read {main}, so it cannot move main from there. Open SpecWithCode on {main}, or connect to it with full access, to make {machine} main.":
     "このウィンドウは {main} を読み取ることしかできないため、そこからメインを移動できません。{machine} をメインにするには、{main} で SpecWithCode を開くか、フルアクセスで接続してください。",
   "read-only on {main}": "{main} は読み取り専用",
-  "Connect {machine} first to make it main.": "メインにするには、まず {machine} を接続してください。",
+  "Connect {machine} first to make it main.":
+    "メインにするには、まず {machine} を接続してください。",
   "{machine} cannot take over yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
     "{machine} はまだ引き継げません。そのマシンの SpecWithCode を更新するか、設定の変更と作業の実行ができる権限で接続してください。",
   "not ready": "準備未完了",
@@ -5384,12 +5329,14 @@ export const ja: PhraseCatalog = {
   "Move {project} to {machine}": "{project} を {machine} に移動",
   "Copy {project} to another machine": "{project} を別のマシンにコピー",
   "Move {project} to another machine": "{project} を別のマシンに移動",
-  "Nothing on {machine} is replaced without asking.": "{machine} 上のものが確認なしに置き換えられることはありません。",
+  "Nothing on {machine} is replaced without asking.":
+    "{machine} 上のものが確認なしに置き換えられることはありません。",
   "the other machine": "別のマシン",
   "From {source}. Main stays on {main}.": "{source} から。メインは {main} のままです。",
   "From {source}. Main stays where it is.": "{source} から。メインは今の場所のままです。",
   "From {source}. Main moves to {machine}.": "{source} から。メインは {machine} に移ります。",
-  "From {source}. Main moves to the machine you choose.": "{source} から。メインは選んだマシンに移ります。",
+  "From {source}. Main moves to the machine you choose.":
+    "{source} から。メインは選んだマシンに移ります。",
   "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
     "{source} から。{source} のコピーは、{machine} が属するプロジェクトにリンクされていません(メイン: {main})。",
   "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
@@ -5400,10 +5347,12 @@ export const ja: PhraseCatalog = {
     "{machine} のコピーにはファイルだけがコピーされます。そのメインは変わらず、{source} はそのプロジェクトにリンクされません。1 つのプロジェクトにするには、マシンメニューから {source} をリンクしてください。",
   "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
     "ここからメインを {machine} に移すことはできません。{source} は {machine} が属するプロジェクトにリンクされていません。先にマシンメニューから {source} をリンクするか、ファイルをコピーしてください。",
-  "Not available: that machine already has Main.": "利用できません: そのマシンにはすでにメインがあります。",
+  "Not available: that machine already has Main.":
+    "利用できません: そのマシンにはすでにメインがあります。",
   "Not available: it would move Main into a project this copy is not linked to.":
     "利用できません: このコピーがリンクされていないプロジェクトにメインが移ってしまいます。",
-  "{machine} has a copy. Main stays on {main}.": "{machine} にコピーがあります。メインは {main} のままです。",
+  "{machine} has a copy. Main stays on {main}.":
+    "{machine} にコピーがあります。メインは {main} のままです。",
   "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
     "リンクされていません: {machine} のコピーはメインが {main} のプロジェクトに属していて、{source} はその一員ではありません。何もリンクされませんでした。",
   "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
@@ -5420,7 +5369,8 @@ export const ja: PhraseCatalog = {
   "Not a copy:": "コピーではありません:",
   "Compared when you review the link.": "リンクの確認時に比較します。",
   "Reading folders…": "フォルダーを読み込んでいます…",
-  "No copy of {project} was found on another machine.": "別のマシンに {project} のコピーは見つかりませんでした。",
+  "No copy of {project} was found on another machine.":
+    "別のマシンに {project} のコピーは見つかりませんでした。",
   "Other projects ({count})": "その他のプロジェクト ({count})",
   "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
     "フォルダーを見るかぎり、{project} のコピーではありません。名前を変えたコピーやクローンし直したコピーの場合だけ選んでください。",
@@ -5433,4 +5383,94 @@ export const ja: PhraseCatalog = {
     "送信するとメインのコーディネーターにメッセージが届き、返信が届くそのページが開きます。",
   "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
     "ファイルはこのマシンに残ります。テキストをメインに送るにはファイルを外すか、メインのページを開いてそちらで添付してください。",
+  "1 device waiting": "1 台のデバイスが待機中",
+  "A Linux computer": "Linux コンピューター",
+  "A Mac": "Mac",
+  "A Windows PC": "Windows PC",
+  "A computer": "コンピューター",
+  "A device cannot approve itself. Type this code on another device or on the machine.":
+    "デバイスは自分自身を承認できません。このコードを別のデバイスかマシンで入力してください。",
+  "A new device wants to use {machine}": "新しいデバイスが {machine} の使用を求めています",
+  "A phone": "スマートフォン",
+  "A tablet": "タブレット",
+  "Allow lets it open threads, terminals, files and settings on {machine}, as this app can. Allow only a device you have in front of you.":
+    "許可すると、このアプリと同じように {machine} のスレッド、ターミナル、ファイル、設定を開けるようになります。許可するのは目の前にあるデバイスだけにしてください。",
+  "Allow {coordinatorLabel} to run work on {hereLabel}?":
+    "{coordinatorLabel} に {hereLabel} での作業の実行を許可しますか？",
+  "Allowing…": "許可しています…",
+  "An Android phone": "Android スマートフォン",
+  "An Android tablet": "Android タブレット",
+  "An iPad": "iPad",
+  "An iPhone": "iPhone",
+  "Approve this device on the machine.": "このデバイスをマシンで承認してください。",
+  "Approved {date} by {approver}": "{date} に {approver} が承認",
+  "Checking devices…": "デバイスを確認しています…",
+  "Code shown on {device}": "{device} に表示されたコード",
+  "Could not reach this machine.": "このマシンに接続できませんでした。",
+  "Could not reach this machine. Try again.":
+    "このマシンに接続できませんでした。もう一度お試しください。",
+  "Could not remove {device}": "{device} を削除できませんでした",
+  "Could not repair the list": "一覧を修復できませんでした",
+  "Could not save the list": "一覧を保存できませんでした",
+  "Could not turn that device away": "そのデバイスを拒否できませんでした",
+  "Deny turns it away for a day.": "拒否すると、1 日接続できなくなります。",
+  "Devices that can use this machine": "このマシンを使えるデバイス",
+  "First seen {date}": "初回検出 {date}",
+  "It also gets a key to this machine for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Project limits stay in force.":
+    "さらに、このマシンのキーを 1 年間受け取ります。対象はターミナル、ファイル、設定、サインインに加え、アクセス、アップデート、スキルです。プロジェクトの制限は引き続き適用されます。",
+  "It stops using {machine} right away. To use it again, it asks with a new code.":
+    "すぐに {machine} を使えなくなります。再び使うには、新しいコードで申請します。",
+  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
+    "そのアプリはここでコードによって承認されたため、このマシンを使えます。また、このマシンのエージェントもそちらで作業を実行できるようになりました。変更や削除は 設定 > マシン で行えます。",
+  "Kept by the update": "アップデートで保持",
+  "Kept by the update. Check this list.":
+    "アップデートで保持されました。この一覧を確認してください。",
+  Later: "あとで",
+  "New device approved on {machine} by {approver}":
+    "{approver} が {machine} で新しいデバイスを承認しました",
+  "No device is waiting with that code. Check the code shown on the device that asked for {machine}.":
+    "そのコードで待機中のデバイスはありません。{machine} の使用を求めたデバイスに表示されたコードを確認してください。",
+  "No other devices yet. A phone or computer signed in to SpecWithCode Connect asks here first, with a code.":
+    "ほかのデバイスはまだありません。SpecWithCode Connect にサインインしたスマートフォンやコンピューターは、まずここでコードを使って申請します。",
+  "Not sent on their own. Each secret transfer asks first, and that card appears on the machine that asks, not on this one.":
+    "自動では送信されません。シークレットの転送は毎回まず確認され、その確認カードはこのマシンではなく、要求したマシンに表示されます。",
+  "Open SpecWithCode on {machine} and type this code:":
+    "{machine} で SpecWithCode を開き、このコードを入力してください:",
+  "Remove {device}?": "{device} を削除しますか？",
+  "Sign in to SpecWithCode Connect again on this device to ask {machine} for approval.":
+    "{machine} に承認を求めるには、このデバイスで SpecWithCode Connect にもう一度サインインしてください。",
+  "The device list on {machine} is damaged, so other devices are turned away until it is repaired. Repair starts an empty list; devices then ask again with a code.":
+    "{machine} のデバイス一覧が破損しているため、修復するまでほかのデバイスは拒否されます。修復すると空の一覧から始まり、デバイスはもう一度コードで申請します。",
+  "The device list on {machine} is damaged. Open SpecWithCode on {machine} to repair it.":
+    "{machine} のデバイス一覧が破損しています。修復するには {machine} で SpecWithCode を開いてください。",
+  "The list is right": "一覧は正しい",
+  "These devices were in use when {machine} updated, so they were kept. Remove any you do not know.":
+    "これらのデバイスは {machine} のアップデート時に使用中だったため、保持されました。心当たりのないものは削除してください。",
+  "This device connects on its own once {machine} allows it.":
+    "{machine} が許可すると、このデバイスは自動で接続します。",
+  "This machine cannot check new devices yet. Open SpecWithCode on it and update.":
+    "このマシンはまだ新しいデバイスを確認できません。このマシンで SpecWithCode を開いてアップデートしてください。",
+  "This machine does not ask before new devices connect yet. Update it to choose which devices can use it.":
+    "このマシンはまだ、新しいデバイスが接続する前に確認しません。使えるデバイスを選ぶには、アップデートしてください。",
+  "Too many wrong codes. Type the code on {machine} itself, or wait 10 minutes.":
+    "間違ったコードが多すぎます。{machine} 本体でコードを入力するか、10 分待ってください。",
+  "Try again.": "もう一度お試しください。",
+  "Turning away…": "拒否しています…",
+  "Type the code shown on {device}": "{device} に表示されたコードを入力",
+  "another device": "別のデバイス",
+  "the update": "アップデート",
+  "{coordinatorLabel} receives a key to {hereLabel} for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Its work is capped at {cap}. Project limits stay in force. Each secret transfer asks first, on {coordinatorLabel}.":
+    "{coordinatorLabel} は {hereLabel} のキーを 1 年間受け取ります。対象はターミナル、ファイル、設定、サインインに加え、アクセス、アップデート、スキルです。作業の上限は {cap} です。プロジェクトの制限は引き続き適用されます。シークレットの転送は毎回まず {coordinatorLabel} で確認されます。",
+  "{count} devices waiting": "{count} 台のデバイスが待機中",
+  "{device} can now use {machine}": "{device} が {machine} を使えるようになりました",
+  "{device} is asking.": "{device} が申請しています。",
+  "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
+    "{device} が申請しています。SpecWithCode Connect に {account} としてサインインしています。",
+  "{device} is asking. It signed in to your SpecWithCode Connect account.":
+    "{device} が申請しています。あなたの SpecWithCode Connect アカウントにサインインしています。",
+  "{device} is waiting to use {machine}.": "{device} が {machine} の使用を待っています。",
+  "{label} joined": "{label} が参加しました",
+  "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
+    "{machine} はこのデバイスの接続を許可しなくなりました。{machine} の SpecWithCode でもう一度承認してください。",
+  "{position} of {total} waiting": "待機中 {position}/{total}",
 };

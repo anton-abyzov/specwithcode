@@ -153,7 +153,14 @@ it.effect(
         const tablet = ConnectDeviceTrust.noticesFor(snapshot, "jkt:tablet-key");
         expect(tablet.map((notice) => notice.message)).toEqual([byOwner, byLaptop]);
         expect(new Set(tablet.map((notice) => notice.id)).size).toBe(2);
-        expect(Object.keys(tablet[0]!).toSorted()).toEqual(["at", "id", "message"]);
+        // The parts let each window translate; who approved stays a name, never a device key.
+        expect(Object.keys(tablet[0]!).toSorted()).toEqual([
+          "approvedBy",
+          "at",
+          "id",
+          "machine",
+          "message",
+        ]);
       }),
     ),
 );
@@ -251,6 +258,55 @@ const forgetSetup = Effect.gen(function* () {
   yield* fileSystem.remove(yield* storePath, { force: true });
   yield* fileSystem.remove(yield* markerPath, { force: true });
 });
+
+it.effect("a waiting device is named from its session, never by the pairing link's label", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const session = {
+        subject: ConnectDeviceTrust.CONNECT_SUBJECT,
+        proofKeyThumbprint: "m5-key",
+        clientLabel: "SpecWithCode Connect connect",
+        clientDeviceType: "desktop",
+        clientOs: "macOS",
+        clientBrowser: "Electron",
+        clientUserAgent: "Mozilla/5.0 (Macintosh) SpecWeaveStudio(Alpha)/1.0.338 Electron/39",
+      };
+      const code = refusedCode(yield* trust.check(session));
+      const waiting = (yield* trust.snapshot).pending[0];
+      expect(waiting).toMatchObject({
+        label: "A Mac",
+        named: false,
+        system: "macOS",
+        app: "SpecWithCode 1.0.338",
+      });
+      // The device sends its own name later: the request follows it.
+      yield* trust.check({ ...session, clientLabel: "M5" });
+      expect((yield* trust.snapshot).pending[0]).toMatchObject({ label: "M5", named: true });
+      const approved = yield* trust.approve({
+        code,
+        approvedBy: "this machine",
+        approverKey: null,
+      });
+      if (approved.status !== "approved")
+        throw new Error(`expected approval, got ${approved.status}`);
+      expect(approved.device).toMatchObject({
+        label: "M5",
+        named: true,
+        system: "macOS",
+        app: "SpecWithCode 1.0.338",
+      });
+      expect(approved.device?.firstSeenAt).toBe(waiting?.askedAt);
+      const listed = JSON.stringify(yield* trust.snapshot);
+      expect(listed).not.toContain("SpecWithCode Connect connect");
+      // The notice carries its parts, so each window can say it in its own language.
+      expect((yield* trust.snapshot).notices.at(-1)).toMatchObject({
+        machine: "this machine",
+        approvedBy: "this machine",
+      });
+    }),
+  ),
+);
 
 it.effect("the first start keeps devices with a live session, flagged for one review", () =>
   withMachine(

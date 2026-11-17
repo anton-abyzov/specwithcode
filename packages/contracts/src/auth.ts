@@ -303,6 +303,12 @@ export type AuthClientMetadataDeviceType = typeof AuthClientMetadataDeviceType.T
 
 export const AuthClientPresentationMetadata = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * The device's own name, such as the machine name its app shows (1327). It
+   * names the device to a machine that asks its owner to approve it; it is
+   * the device's own word and never approves anything.
+   */
+  deviceName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(80))),
   deviceType: Schema.optionalKey(AuthClientMetadataDeviceType),
   os: Schema.optionalKey(TrimmedNonEmptyString),
   osMajorVersion: Schema.optionalKey(Schema.Int),

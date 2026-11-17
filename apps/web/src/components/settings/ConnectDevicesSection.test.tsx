@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   approveOutcomeMessage,
-  describeConnectDevice,
+  connectDeviceDetails,
+  connectDeviceName,
+  noticeMessage,
   isCompleteApprovalCode,
   makeSeenNotices,
   takeUnseenNotices,
@@ -64,13 +66,52 @@ describe("device approval copy", () => {
     expect(isCompleteApprovalCode("K7QX2O")).toBe(false);
   });
 
-  it("names the device and what it is", () => {
-    expect(describeConnectDevice({ label: "Anton's iPhone", kind: "phone" })).toBe(
-      "Anton's iPhone (phone)",
-    );
-    expect(describeConnectDevice({ label: "Work laptop", kind: "connect" })).toBe(
-      "Work laptop (computer)",
-    );
+  it("names the device by its own name, never the label every Connect window shared", () => {
+    expect(connectDeviceName({ label: "Anton's iPhone", kind: "phone" })).toBe("Anton's iPhone");
+    expect(connectDeviceName({ label: "M5", kind: "connect", named: true })).toBe("M5");
+    // Rows from before 1327 and machines that still send the link's label.
+    expect(
+      connectDeviceName({
+        label: "SpecWithCode Connect connect",
+        kind: "connect",
+        system: "macOS",
+      }),
+    ).toBe("A Mac");
+    expect(
+      connectDeviceName({ label: "A Mac", kind: "connect", named: false, system: "Linux" }),
+    ).toBe("A Linux computer");
+    expect(
+      connectDeviceName({ label: "Phone", kind: "phone", deviceType: "mobile", system: "iOS" }),
+    ).toBe("An iPhone");
+  });
+
+  it("tells devices apart by system, app and first seen", () => {
+    expect(
+      connectDeviceDetails(
+        { system: "macOS", app: "SpecWithCode 1.0.338", firstSeenAt: "2026-11-17T15:00:00.000Z" },
+        undefined,
+        "en-US",
+      ),
+    ).toBe("macOS · SpecWithCode 1.0.338 · First seen November 17, 2026");
+    expect(connectDeviceDetails({})).toBe("");
+  });
+
+  it("says an approval notice in this window's words", () => {
+    const notice = {
+      id: "n1",
+      at: "2026-11-17T15:00:00.000Z",
+      message: "New device approved on m4 by this machine.",
+      machine: "m4",
+      approvedBy: "this machine",
+    };
+    expect(noticeMessage(notice)).toBe("New device approved on m4 by this machine");
+    const tx = (english: string, values?: Readonly<Record<string, string | number>>) =>
+      english === "this machine"
+        ? "эта машина"
+        : `RU:${english.replace(/\{(\w+)\}/g, (_m, name: string) => String(values?.[name]))}`;
+    expect(noticeMessage(notice, tx)).toBe("RU:New device approved on m4 by эта машина");
+    // A machine from before the parts were sent keeps its own sentence.
+    expect(noticeMessage({ id: "n2", at: notice.at, message: "Old text." })).toBe("Old text.");
   });
 
   it("explains a refused code, including a device typing its own", () => {
@@ -101,8 +142,7 @@ describe("Devices that can use this machine", () => {
     const html = renderToStaticMarkup(
       <ConnectDevicesList snapshot={snapshot()} actions={actions} />,
     );
-    expect(html).toContain("Anton&#x27;s iPhone (phone)");
-    expect(html).toContain("is waiting to use m4.");
+    expect(html).toContain("Anton&#x27;s iPhone is waiting to use m4.");
     expect(html).toContain('data-device-code-form="request-1"');
     expect(html).toContain(">Allow<");
     expect(html).toContain(">Deny<");
@@ -112,10 +152,35 @@ describe("Devices that can use this machine", () => {
     const html = renderToStaticMarkup(
       <ConnectDevicesList snapshot={snapshot({ pending: [] })} actions={actions} />,
     );
-    expect(html).toContain("Anton&#x27;s MacBook (computer)");
+    expect(html).toContain("Anton&#x27;s MacBook");
     expect(html).toMatch(/Approved November 13, 2026 by this machine/);
     expect(html).toContain(">Remove<");
     expect(html).not.toContain("data-device-code-form");
+  });
+
+  it("names a kept row from its session, never as SpecWithCode Connect connect (1327)", () => {
+    const kept = snapshot({
+      pending: [],
+      needsReview: true,
+      devices: [
+        {
+          key: "jkt:m5",
+          kind: "connect",
+          label: "SpecWithCode Connect connect",
+          deviceType: "desktop",
+          system: "macOS",
+          app: "SpecWithCode 1.0.338",
+          firstSeenAt: "2026-11-16T15:00:00.000Z",
+          approvedAt: "2026-11-17T15:00:00.000Z",
+          approvedBy: "the update",
+          keptByUpdate: true,
+        },
+      ],
+    });
+    const html = renderToStaticMarkup(<ConnectDevicesList snapshot={kept} actions={actions} />);
+    expect(html).not.toContain("SpecWithCode Connect connect");
+    expect(html).toContain("A Mac");
+    expect(html).toContain("macOS · SpecWithCode 1.0.338 · First seen");
   });
 
   it("flags devices the update kept until the owner confirms the list once", () => {

@@ -2333,10 +2333,13 @@ export const pt: PhraseCatalog = {
     "Remover deste dispositivo o registro antigo de {name} ({host})?\nA máquina entrou de novo como uma nova e continua funcionando; só o registro morto e as conversas em cache aqui saem.",
   "Use 2 or 3 characters.": "Use 2 ou 3 caracteres.",
   "Not shared": "Não compartilhado",
-  "{machine} is main now, with machines not yet following it": "{machine} agora é a principal, mas algumas máquinas ainda não a seguem",
-  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.": "Estas máquinas ainda não aceitaram a nova principal: {machines}. Só recusarão o trabalho da anterior depois de aceitar.",
+  "{machine} is main now, with machines not yet following it":
+    "{machine} agora é a principal, mas algumas máquinas ainda não a seguem",
+  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.":
+    "Estas máquinas ainda não aceitaram a nova principal: {machines}. Só recusarão o trabalho da anterior depois de aceitar.",
   "Not linked · also on {machine}": "Não vinculada · também em {machine}",
-  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "Esta cópia não está vinculada às cópias em {machine}. Vincule-as no menu do projeto para compartilhar um coordenador.",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.":
+    "Esta cópia não está vinculada às cópias em {machine}. Vincule-as no menu do projeto para compartilhar um coordenador.",
   "No other machine has a copy of this project.":
     "Nenhuma outra máquina tem uma cópia deste projeto.",
   "Connect to see its role": "Conecte para ver o papel",
@@ -4696,8 +4699,6 @@ export const pt: PhraseCatalog = {
     "Passa o trabalho para o destino ao se ausentar quando este Mac dorme. O destino espera primeiro o tempo de espera, e nada muda se você voltar antes. Só no Mac.",
   "How long the target waits after the lid closes before it takes over.":
     "Quanto tempo o destino espera depois que a tampa fecha antes de assumir.",
-  "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.":
-    "Ela também recebe uma chave para gerenciar acesso, atualizações e skills nesta máquina, por um ano. Os limites de projetos e logins existentes continuam valendo.",
   "Its app sees this machine": "O app dela vê esta máquina",
   "Its work may use any sign-in on this machine.":
     "O trabalho dela pode usar qualquer login desta máquina.",
@@ -4737,8 +4738,6 @@ export const pt: PhraseCatalog = {
   "No sign-ins: every launch is refused": "Nenhum login: todo início é recusado",
   "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.":
     "Não. Para abrir os projetos desta máquina a partir de {machineLabel}, gere um link de uso único aqui e abra-o lá.",
-  "Not included. Each secret transfer still asks you.":
-    "Não incluído. Cada transferência de segredo ainda pergunta a você.",
   "Not set up yet.": "Ainda não configurado.",
   "Nothing allowed yet: tick a project or pick All projects":
     "Nada permitido ainda: marque um projeto ou escolha Todos os projetos",
@@ -5108,74 +5107,45 @@ export const pt: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "O caminho do AppImage não pode ser gravado no comando. Mova o AppImage para uma pasta mais simples e abra-o de lá.",
   "Could not write {path} ({error}).": "Não foi possível gravar {path} ({error}).",
-  "Main":
-    "Principal",
-  "Moving main":
-    "Movendo a principal",
-  "Copy · main on {machine}":
-    "Cópia · principal em {machine}",
+  Main: "Principal",
+  "Moving main": "Movendo a principal",
+  "Copy · main on {machine}": "Cópia · principal em {machine}",
   "Work for this project starts here. Copies on other machines take work from it.":
     "O trabalho deste projeto começa aqui. As cópias em outras máquinas recebem trabalho daqui.",
   "Main is on {machine}. This copy can also start work of its own.":
     "A principal está em {machine}. Esta cópia também pode iniciar trabalho próprio.",
   "Work starts on {machine}. This copy takes work from there.":
     "O trabalho começa em {machine}. Esta cópia recebe trabalho de lá.",
-  "Main is moving between machines right now.":
-    "A principal está mudando de máquina agora.",
-  "{there} can start work here":
-    "{there} pode iniciar trabalho aqui",
-  "{there} can't start work here":
-    "{there} não pode iniciar trabalho aqui",
-  "This machine can start work on {there}":
-    "Esta máquina pode iniciar trabalho em {there}",
-  "This machine can't start work on {there}":
-    "Esta máquina não pode iniciar trabalho em {there}",
-  "until you stop it":
-    "até você parar",
-  "1 running thread stops at {time}.":
-    "1 thread em execução para às {time}.",
-  "{count} running threads stop at {time}.":
-    "{count} threads em execução param às {time}.",
-  "Its access ran out {date}.":
-    "O acesso expirou em {date}.",
-  "Its access ran out.":
-    "O acesso expirou.",
-  "Time limit ended {date}.":
-    "O limite de tempo terminou em {date}.",
-  "Stopped {date}.":
-    "Parado em {date}.",
-  "Stopped.":
-    "Parado.",
-  "{there} stopped it.":
-    "{there} parou.",
-  "{there} has not allowed it yet.":
-    "{there} ainda não permitiu.",
-  "Allow…":
-    "Permitir…",
-  "Set up…":
-    "Configurar…",
-  "Change…":
-    "Alterar…",
-  "Allow {there} to start work here for":
-    "Permitir que {there} inicie trabalho aqui por",
-  "More for {machine}":
-    "Mais para {machine}",
-  "Hide connection details":
-    "Ocultar detalhes da conexão",
-  "Let {thereLabel} start work here":
-    "Deixar {thereLabel} iniciar trabalho aqui",
+  "Main is moving between machines right now.": "A principal está mudando de máquina agora.",
+  "{there} can start work here": "{there} pode iniciar trabalho aqui",
+  "{there} can't start work here": "{there} não pode iniciar trabalho aqui",
+  "This machine can start work on {there}": "Esta máquina pode iniciar trabalho em {there}",
+  "This machine can't start work on {there}": "Esta máquina não pode iniciar trabalho em {there}",
+  "until you stop it": "até você parar",
+  "1 running thread stops at {time}.": "1 thread em execução para às {time}.",
+  "{count} running threads stop at {time}.": "{count} threads em execução param às {time}.",
+  "Its access ran out {date}.": "O acesso expirou em {date}.",
+  "Its access ran out.": "O acesso expirou.",
+  "Time limit ended {date}.": "O limite de tempo terminou em {date}.",
+  "Stopped {date}.": "Parado em {date}.",
+  "Stopped.": "Parado.",
+  "{there} stopped it.": "{there} parou.",
+  "{there} has not allowed it yet.": "{there} ainda não permitiu.",
+  "Allow…": "Permitir…",
+  "Set up…": "Configurar…",
+  "Change…": "Alterar…",
+  "Allow {there} to start work here for": "Permitir que {there} inicie trabalho aqui por",
+  "More for {machine}": "Mais para {machine}",
+  "Hide connection details": "Ocultar detalhes da conexão",
+  "Let {thereLabel} start work here": "Deixar {thereLabel} iniciar trabalho aqui",
   "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
     "{there} pode iniciar trabalho aqui: seus agentes podem iniciar threads nos projetos desta máquina. Parar recusa trabalho novo na hora; as threads em execução param 2 minutos depois. Esta máquina pode iniciar trabalho em {there}: os agentes daqui podem iniciar threads lá, até o acesso que {there} permitir.",
-  "Allow {there} to start work here":
-    "Permitir que {there} inicie trabalho aqui",
-  "Stop {there} starting work here":
-    "Impedir que {there} inicie trabalho aqui",
-  "Allow {there} again to start work here":
-    "Permitir de novo que {there} inicie trabalho aqui",
+  "Allow {there} to start work here": "Permitir que {there} inicie trabalho aqui",
+  "Stop {there} starting work here": "Impedir que {there} inicie trabalho aqui",
+  "Allow {there} again to start work here": "Permitir de novo que {there} inicie trabalho aqui",
   "Set up this machine to start work on {there}":
     "Configurar esta máquina para iniciar trabalho em {there}",
-  "Change what this machine may do on {there}":
-    "Alterar o que esta máquina pode fazer em {there}",
+  "Change what this machine may do on {there}": "Alterar o que esta máquina pode fazer em {there}",
   Advisor: "Consultor",
   "Let threads ask a stronger model": "Permitir que as threads consultem um modelo mais forte",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
@@ -5209,90 +5179,66 @@ export const pt: PhraseCatalog = {
   "The advisor gave no advice": "O consultor não deu conselho",
   "Advisor unavailable": "Consultor indisponível",
   "Claude built-in": "Integrado ao Claude",
-  "The advisor is still working. Its advice arrives as a new message.": "O consultor ainda está trabalhando. O conselho chegará como uma nova mensagem.",
+  "The advisor is still working. Its advice arrives as a new message.":
+    "O consultor ainda está trabalhando. O conselho chegará como uma nova mensagem.",
   "Still working": "Ainda trabalhando",
   "{count} left this run": "Restam {count} nesta execução",
   "Advice applied (hidden by Claude)": "Conselho aplicado (oculto pelo Claude)",
   "Advisor consult": "Consulta ao consultor",
   "Follow project (on)": "Como no projeto (ativado)",
   "Follow project (off)": "Como no projeto (desativado)",
-  "Lets this thread ask a stronger model to check its work.": "Permite que esta thread peça a um modelo mais forte para revisar o trabalho.",
+  "Lets this thread ask a stronger model to check its work.":
+    "Permite que esta thread peça a um modelo mais forte para revisar o trabalho.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Excluir worktrees cujos chats estão resolvidos ou arquivados e inativos por esta quantidade de dias. Branches e o histórico do chat são mantidos.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
     "Excluir worktrees cujo pull request foi mesclado e cujos commits estão na branch padrão, ou fechado sem mesclar com todos os commits enviados. Um chat ainda aberto perde a pasta após 6 horas sem atividade; um chat em execução ou aguardando sempre a mantém. A branch fica, então um chat reaberto recebe a pasta de volta. Também exclui worktrees limpas e enviadas que agentes criaram sem um chat quando o pull request é mesclado ou fechado e elas ficam um dia ociosas.",
   "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
     "Excluir worktrees de chats resolvidos ou arquivados cuja branch não tem commits além da branch padrão.",
-  "What cleanup would remove":
-    "O que a limpeza removeria",
-  "Chat worktrees and leftover downloads":
-    "Worktrees de chats e sobras de downloads",
+  "What cleanup would remove": "O que a limpeza removeria",
+  "Chat worktrees and leftover downloads": "Worktrees de chats e sobras de downloads",
   "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
     "Mostra o que a limpeza removeria, o que mantém e por quê. A verificação consulta o host Git sobre cada pasta concluída, então só roda quando você clica em Verificar.",
-  "Check":
-    "Verificar",
-  "Clean up now":
-    "Limpar agora",
-  "Cleaning up…":
-    "Limpando…",
-  "Would be removed":
-    "Seria removido",
-  "Kept":
-    "Mantido",
-  "At least {size} would be freed.":
-    "Pelo menos {size} seriam liberados.",
+  Check: "Verificar",
+  "Clean up now": "Limpar agora",
+  "Cleaning up…": "Limpando…",
+  "Would be removed": "Seria removido",
+  Kept: "Mantido",
+  "At least {size} would be freed.": "Pelo menos {size} seriam liberados.",
   "Dependency folders are left out: their files are shared with the package store.":
     "Pastas de dependências ficam de fora: os arquivos delas são compartilhados com o armazenamento de pacotes.",
   "Some folders could not be fully checked or measured.":
     "Algumas pastas não puderam ser totalmente verificadas ou medidas.",
-  "Leftover files of stopped downloads":
-    "Sobras de downloads interrompidos",
-  "Nothing to remove right now.":
-    "Nada para remover agora.",
-  "Nothing was removed.":
-    "Nada foi removido.",
-  "Removed 1 folder, at least {size}.":
-    "1 pasta removida, pelo menos {size}.",
-  "Removed {count} folders, at least {size}.":
-    "{count} pastas removidas, pelo menos {size}.",
-  "The check could not finish.":
-    "A verificação não pôde terminar.",
+  "Leftover files of stopped downloads": "Sobras de downloads interrompidos",
+  "Nothing to remove right now.": "Nada para remover agora.",
+  "Nothing was removed.": "Nada foi removido.",
+  "Removed 1 folder, at least {size}.": "1 pasta removida, pelo menos {size}.",
+  "Removed {count} folders, at least {size}.": "{count} pastas removidas, pelo menos {size}.",
+  "The check could not finish.": "A verificação não pôde terminar.",
   "This connection cannot change this machine's storage.":
     "Esta conexão não pode alterar o armazenamento desta máquina.",
-  "Delete worktrees of resolved chats":
-    "Excluir worktrees de chats resolvidos",
+  "Delete worktrees of resolved chats": "Excluir worktrees de chats resolvidos",
   "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
     "Remove a worktree de um chat resolvido ou arquivado quando tudo nela estiver commitado e enviado. A branch fica, então um chat reaberto recebe a pasta de volta.",
-  "Its pull request merged.":
-    "O pull request foi mesclado.",
+  "Its pull request merged.": "O pull request foi mesclado.",
   "Its pull request closed and every commit is on the remote.":
     "O pull request foi fechado e todos os commits estão no remoto.",
   "Its chats are resolved or archived and everything is pushed.":
     "Os chats estão resolvidos ou arquivados e tudo foi enviado.",
-  "Its chat was deleted.":
-    "O chat foi excluído.",
+  "Its chat was deleted.": "O chat foi excluído.",
   "Its chats are resolved or archived and it has been inactive.":
     "Os chats estão resolvidos ou arquivados e ficou inativa.",
-  "Its branch has no commits of its own.":
-    "A branch não tem commits próprios.",
-  "Leftover files of stopped downloads.":
-    "Sobras de downloads interrompidos.",
-  "Work in it has not finished.":
-    "O trabalho nela não terminou.",
+  "Its branch has no commits of its own.": "A branch não tem commits próprios.",
+  "Leftover files of stopped downloads.": "Sobras de downloads interrompidos.",
+  "Work in it has not finished.": "O trabalho nela não terminou.",
   "A chat that is still open works in it or near it.":
     "Um chat ainda aberto trabalha nela ou perto dela.",
-  "It was used less than 6 hours ago.":
-    "Foi usada há menos de 6 horas.",
-  "It has uncommitted changes.":
-    "Tem alterações sem commit.",
-  "It has files Git does not track.":
-    "Tem arquivos que o Git não rastreia.",
-  "It has commits that exist only on this machine.":
-    "Tem commits que existem só nesta máquina.",
-  "A stash was made on its branch.":
-    "Um stash foi feito na branch.",
-  "It has ignored files that may hold data.":
-    "Tem arquivos ignorados que podem conter dados.",
+  "It was used less than 6 hours ago.": "Foi usada há menos de 6 horas.",
+  "It has uncommitted changes.": "Tem alterações sem commit.",
+  "It has files Git does not track.": "Tem arquivos que o Git não rastreia.",
+  "It has commits that exist only on this machine.": "Tem commits que existem só nesta máquina.",
+  "A stash was made on its branch.": "Um stash foi feito na branch.",
+  "It has ignored files that may hold data.": "Tem arquivos ignorados que podem conter dados.",
   "It holds more media than is copied automatically.":
     "Contém mais mídia do que é copiado automaticamente.",
   "Something is working in it, or it is locked.":
@@ -5301,8 +5247,7 @@ export const pt: PhraseCatalog = {
     "O registro do Git está quebrado. Verifique manualmente.",
   "Another repository or hidden changes sit inside it.":
     "Há outro repositório ou alterações ocultas dentro dela.",
-  "No cleanup rule covers it.":
-    "Nenhuma regra de limpeza se aplica a ela.",
+  "No cleanup rule covers it.": "Nenhuma regra de limpeza se aplica a ela.",
   "It could not be fully checked, so it is kept.":
     "Não foi possível verificá-la por completo, então ela foi mantida.",
   "Installed, but it does not start": "Instalado, mas não inicia",
@@ -5441,4 +5386,93 @@ export const pt: PhraseCatalog = {
     "Enviar entrega sua mensagem ao coordenador principal e abre a página dele, onde chega a resposta.",
   "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
     "Os arquivos ficam nesta máquina. Remova-os para enviar o texto à principal, ou abra a página da principal para anexá-los lá.",
+  "1 device waiting": "1 dispositivo aguardando",
+  "A Linux computer": "Um computador Linux",
+  "A Mac": "Um Mac",
+  "A Windows PC": "Um PC com Windows",
+  "A computer": "Um computador",
+  "A device cannot approve itself. Type this code on another device or on the machine.":
+    "Um dispositivo não pode aprovar a si mesmo. Digite este código em outro dispositivo ou na máquina.",
+  "A new device wants to use {machine}": "Um novo dispositivo quer usar {machine}",
+  "A phone": "Um celular",
+  "A tablet": "Um tablet",
+  "Allow lets it open threads, terminals, files and settings on {machine}, as this app can. Allow only a device you have in front of you.":
+    "Permitir deixa que ele abra threads, terminais, arquivos e configurações em {machine}, como este app. Só permita um dispositivo que esteja na sua frente.",
+  "Allow {coordinatorLabel} to run work on {hereLabel}?":
+    "Permitir que {coordinatorLabel} execute trabalho em {hereLabel}?",
+  "Allowing…": "Permitindo…",
+  "An Android phone": "Um celular Android",
+  "An Android tablet": "Um tablet Android",
+  "An iPad": "Um iPad",
+  "An iPhone": "Um iPhone",
+  "Approve this device on the machine.": "Aprove este dispositivo na máquina.",
+  "Approved {date} by {approver}": "Aprovado em {date} por {approver}",
+  "Checking devices…": "Verificando dispositivos…",
+  "Code shown on {device}": "Código mostrado em {device}",
+  "Could not reach this machine.": "Não foi possível acessar esta máquina.",
+  "Could not reach this machine. Try again.":
+    "Não foi possível acessar esta máquina. Tente de novo.",
+  "Could not remove {device}": "Não foi possível remover {device}",
+  "Could not repair the list": "Não foi possível reparar a lista",
+  "Could not save the list": "Não foi possível salvar a lista",
+  "Could not turn that device away": "Não foi possível recusar esse dispositivo",
+  "Deny turns it away for a day.": "Negar recusa o dispositivo por um dia.",
+  "Devices that can use this machine": "Dispositivos que podem usar esta máquina",
+  "First seen {date}": "Visto pela primeira vez em {date}",
+  "It also gets a key to this machine for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Project limits stay in force.":
+    "Ele também recebe uma chave desta máquina por um ano: terminais, arquivos, configurações e logins, além de acesso, atualizações e habilidades. Os limites do projeto continuam valendo.",
+  "It stops using {machine} right away. To use it again, it asks with a new code.":
+    "Ele para de usar {machine} na hora. Para usar de novo, ele pede com um novo código.",
+  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
+    "O app dele foi aprovado aqui com um código, então ele pode usar esta máquina, e os agentes desta máquina já podem executar trabalho nele. Você pode alterar ou remover isso em Configurações > Máquinas.",
+  "Kept by the update": "Mantido pela atualização",
+  "Kept by the update. Check this list.": "Mantido pela atualização. Confira esta lista.",
+  Later: "Depois",
+  "New device approved on {machine} by {approver}":
+    "Novo dispositivo aprovado em {machine} por {approver}",
+  "No device is waiting with that code. Check the code shown on the device that asked for {machine}.":
+    "Nenhum dispositivo está aguardando com esse código. Confira o código mostrado no dispositivo que pediu acesso a {machine}.",
+  "No other devices yet. A phone or computer signed in to SpecWithCode Connect asks here first, with a code.":
+    "Ainda não há outros dispositivos. Um celular ou computador conectado ao SpecWithCode Connect pede aqui primeiro, com um código.",
+  "Not sent on their own. Each secret transfer asks first, and that card appears on the machine that asks, not on this one.":
+    "Não são enviados sozinhos. Cada transferência de segredos pede permissão antes, e esse cartão aparece na máquina que pede, não nesta.",
+  "Open SpecWithCode on {machine} and type this code:":
+    "Abra o SpecWithCode em {machine} e digite este código:",
+  "Remove {device}?": "Remover {device}?",
+  "Sign in to SpecWithCode Connect again on this device to ask {machine} for approval.":
+    "Entre de novo no SpecWithCode Connect neste dispositivo para pedir aprovação a {machine}.",
+  "The device list on {machine} is damaged, so other devices are turned away until it is repaired. Repair starts an empty list; devices then ask again with a code.":
+    "A lista de dispositivos em {machine} está danificada, então outros dispositivos são recusados até ela ser reparada. O reparo começa uma lista vazia; depois os dispositivos pedem de novo com um código.",
+  "The device list on {machine} is damaged. Open SpecWithCode on {machine} to repair it.":
+    "A lista de dispositivos em {machine} está danificada. Abra o SpecWithCode em {machine} para repará-la.",
+  "The list is right": "A lista está certa",
+  "These devices were in use when {machine} updated, so they were kept. Remove any you do not know.":
+    "Estes dispositivos estavam em uso durante a atualização de {machine}, então foram mantidos. Remova os que você não conhece.",
+  "This device connects on its own once {machine} allows it.":
+    "Este dispositivo se conecta sozinho assim que {machine} permitir.",
+  "This machine cannot check new devices yet. Open SpecWithCode on it and update.":
+    "Esta máquina ainda não consegue verificar novos dispositivos. Abra o SpecWithCode nela e atualize.",
+  "This machine does not ask before new devices connect yet. Update it to choose which devices can use it.":
+    "Esta máquina ainda não pergunta antes de novos dispositivos se conectarem. Atualize-a para escolher quais dispositivos podem usá-la.",
+  "Too many wrong codes. Type the code on {machine} itself, or wait 10 minutes.":
+    "Muitos códigos errados. Digite o código diretamente em {machine} ou aguarde 10 minutos.",
+  "Try again.": "Tente de novo.",
+  "Turning away…": "Recusando…",
+  "Type the code shown on {device}": "Digite o código mostrado em {device}",
+  "another device": "outro dispositivo",
+  "the update": "atualização",
+  "{coordinatorLabel} receives a key to {hereLabel} for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Its work is capped at {cap}. Project limits stay in force. Each secret transfer asks first, on {coordinatorLabel}.":
+    "{coordinatorLabel} recebe uma chave de {hereLabel} por um ano: terminais, arquivos, configurações e logins, além de acesso, atualizações e habilidades. O trabalho tem limite de {cap}. Os limites do projeto continuam valendo. Cada transferência de segredos pede permissão antes, em {coordinatorLabel}.",
+  "{count} devices waiting": "{count} dispositivos aguardando",
+  "{device} can now use {machine}": "{device} já pode usar {machine}",
+  "{device} is asking.": "{device} está pedindo acesso.",
+  "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
+    "{device} está pedindo acesso. Ele entrou no SpecWithCode Connect como {account}.",
+  "{device} is asking. It signed in to your SpecWithCode Connect account.":
+    "{device} está pedindo acesso. Ele entrou na sua conta do SpecWithCode Connect.",
+  "{device} is waiting to use {machine}.": "{device} está aguardando para usar {machine}.",
+  "{label} joined": "{label} entrou",
+  "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
+    "{machine} não deixa mais este dispositivo entrar. Aprove de novo no SpecWithCode em {machine}.",
+  "{position} of {total} waiting": "{position} de {total} aguardando",
 };

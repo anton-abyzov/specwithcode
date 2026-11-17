@@ -59,6 +59,7 @@ import {
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { describeDeviceClient } from "./connectDeviceNames.ts";
 
 const FILE_NAME = "connect-devices.json";
 /** Written once, after the first start kept its devices; never removed. */
@@ -85,6 +86,10 @@ export interface DeviceSessionFacts {
   readonly proofKeyThumbprint?: string | undefined;
   readonly clientLabel?: string | undefined;
   readonly clientDeviceType?: string | undefined;
+  /** What the client said about its system and app, so the owner can tell devices apart. */
+  readonly clientOs?: string | undefined;
+  readonly clientBrowser?: string | undefined;
+  readonly clientUserAgent?: string | undefined;
   /** The device this session was minted for, from its signed claims. */
   readonly boundDevice?: { readonly key: string; readonly approval: string } | undefined;
 }
@@ -94,9 +99,22 @@ export interface GatedDevice {
   /** Null when the session carries nothing that names one device. */
   readonly key: string | null;
   readonly account: string;
+  /** The device's own name, or an English stand-in when `named` is false. */
   readonly label: string;
+  readonly named: boolean;
   readonly deviceType: string | undefined;
+  readonly system?: string;
+  readonly app?: string;
 }
+
+const describeSession = (session: DeviceSessionFacts, deviceType: string | undefined) =>
+  describeDeviceClient({
+    label: session.clientLabel,
+    deviceType,
+    os: session.clientOs,
+    browser: session.clientBrowser,
+    userAgent: session.clientUserAgent,
+  });
 
 export const deviceKeyOfThumbprint = (thumbprint: string) => `jkt:${thumbprint}`;
 
@@ -108,7 +126,7 @@ export const gatedDevice = (session: DeviceSessionFacts): GatedDevice | null => 
       kind: "connect",
       key: thumbprint === undefined ? null : deviceKeyOfThumbprint(thumbprint),
       account: "connect",
-      label: session.clientLabel?.trim() || "SpecWithCode Connect device",
+      ...describeSession(session, session.clientDeviceType),
       deviceType: session.clientDeviceType,
     };
   if (session.subject.startsWith(PHONE_LINK_PREFIX)) {
@@ -117,7 +135,7 @@ export const gatedDevice = (session: DeviceSessionFacts): GatedDevice | null => 
       kind: "phone",
       key: thumbprint === undefined ? `link:${session.subject}` : deviceKeyOfThumbprint(thumbprint),
       account: `hub:${hub}`,
-      label: session.clientLabel?.trim() || "Phone",
+      ...describeSession(session, session.clientDeviceType ?? "mobile"),
       deviceType: session.clientDeviceType ?? "mobile",
     };
   }
@@ -132,6 +150,12 @@ const DeviceRecord = Schema.Struct({
   kind: Schema.Literals(["connect", "phone"]),
   label: Schema.String,
   deviceType: Schema.optionalKey(Schema.String),
+  /** False when `label` is a stand-in the device did not choose. Absent on lists from before names. */
+  named: Schema.optionalKey(Schema.Boolean),
+  system: Schema.optionalKey(Schema.String),
+  app: Schema.optionalKey(Schema.String),
+  /** When this machine first saw the device ask, or its session at the update. */
+  firstSeenAt: Schema.optionalKey(Schema.String),
   approvedAt: Schema.String,
   /** Who approved it, in words: "this machine", a device's name, or "the update". */
   approvedBy: Schema.String,
@@ -147,6 +171,10 @@ const PendingRecord = Schema.Struct({
   kind: Schema.Literals(["connect", "phone"]),
   label: Schema.String,
   deviceType: Schema.optionalKey(Schema.String),
+  /** False when `label` is a stand-in the device did not choose. Absent on lists from before names. */
+  named: Schema.optionalKey(Schema.Boolean),
+  system: Schema.optionalKey(Schema.String),
+  app: Schema.optionalKey(Schema.String),
   account: Schema.String,
   codeHash: Schema.String,
   createdAt: Schema.String,
@@ -164,7 +192,39 @@ const NoticeRecord = Schema.Struct({
   by: Schema.optionalKey(Schema.String),
   /** The device that was approved. */
   device: Schema.optionalKey(Schema.String),
+  /** The parts of `message`, so each window can say it in its own language. */
+  machine: Schema.optionalKey(Schema.String),
+  approvedBy: Schema.optionalKey(Schema.String),
 });
+
+interface Described {
+  readonly label: string;
+  readonly named?: boolean | undefined;
+  readonly deviceType?: string | undefined;
+  readonly system?: string | undefined;
+  readonly app?: string | undefined;
+}
+
+/** The fields that say what a device is, without empty keys. */
+const describedFields = (device: Described) => ({
+  label: device.label,
+  ...(device.named === undefined ? {} : { named: device.named }),
+  ...(device.deviceType === undefined ? {} : { deviceType: device.deviceType }),
+  ...(device.system === undefined ? {} : { system: device.system }),
+  ...(device.app === undefined ? {} : { app: device.app }),
+});
+
+const withoutDescription = <T extends Described>(entry: T) => {
+  const {
+    label: _label,
+    named: _named,
+    deviceType: _type,
+    system: _system,
+    app: _app,
+    ...rest
+  } = entry;
+  return rest;
+};
 
 /** Stands for this machine's own app as the approver of a notice. */
 export const OWNER_NOTICE_KEY = "owner";
@@ -177,7 +237,13 @@ export const OWNER_NOTICE_KEY = "owner";
 export const noticesFor = (
   snapshot: Pick<TrustSnapshot, "notices" | "devices">,
   callerKey: string | null,
-): ReadonlyArray<{ readonly id: string; readonly at: string; readonly message: string }> => {
+): ReadonlyArray<{
+  readonly id: string;
+  readonly at: string;
+  readonly message: string;
+  readonly machine?: string;
+  readonly approvedBy?: string;
+}> => {
   const caller = callerKey ?? OWNER_NOTICE_KEY;
   const joined = snapshot.devices.find((device) => device.key === callerKey)?.approvedAt;
   return snapshot.notices
@@ -187,7 +253,13 @@ export const noticesFor = (
         notice.device !== caller &&
         (joined === undefined || Date.parse(notice.at) > Date.parse(joined)),
     )
-    .map(({ id, at, message }) => ({ id, at, message }));
+    .map(({ id, at, message, machine, approvedBy }) => ({
+      id,
+      at,
+      message,
+      ...(machine === undefined ? {} : { machine }),
+      ...(approvedBy === undefined ? {} : { approvedBy }),
+    }));
 };
 
 /**
@@ -253,7 +325,10 @@ export interface PendingSummary {
   readonly id: string;
   readonly kind: DeviceKind;
   readonly label: string;
+  readonly named?: boolean;
   readonly deviceType?: string;
+  readonly system?: string;
+  readonly app?: string;
   readonly askedAt: string;
   readonly expiresAt: string;
 }
@@ -272,6 +347,8 @@ export interface TrustSnapshot {
     readonly message: string;
     readonly by?: string;
     readonly device?: string;
+    readonly machine?: string;
+    readonly approvedBy?: string;
   }>;
 }
 
@@ -461,13 +538,16 @@ export const makeWith = (options: MakeOptions = {}) =>
               : undefined,
             clientLabel: session.client.label,
             clientDeviceType: session.client.deviceType,
+            clientOs: session.client.os,
+            clientBrowser: session.client.browser,
+            clientUserAgent: session.client.userAgent,
           });
           if (device?.key == null || kept.has(device.key)) continue;
           kept.set(device.key, {
             key: device.key,
             kind: device.kind,
-            label: device.label,
-            ...(device.deviceType === undefined ? {} : { deviceType: device.deviceType }),
+            ...describedFields(device),
+            firstSeenAt: DateTime.formatIso(session.issuedAt),
             approvedAt: now,
             approvedBy: "the update",
             keptByUpdate: true,
@@ -604,9 +684,12 @@ export const makeWith = (options: MakeOptions = {}) =>
         if (existing !== undefined) {
           const known = codes.get(device.key);
           if (known !== undefined && codeMatches(known, existing.codeHash)) {
-            // A better name than the one Connect knew at mint time.
+            // At mint time no session said what the device is; its session does.
             const relabel =
-              existing.label !== device.label && device.label !== "SpecWithCode Connect device";
+              existing.label !== device.label ||
+              existing.named !== device.named ||
+              existing.system !== device.system ||
+              existing.app !== device.app;
             return [
               { _tag: "waiting", code: known },
               relabel
@@ -614,13 +697,7 @@ export const makeWith = (options: MakeOptions = {}) =>
                     ...file,
                     pending: file.pending.map((entry) =>
                       entry.key === device.key
-                        ? {
-                            ...entry,
-                            label: device.label,
-                            ...(device.deviceType === undefined
-                              ? {}
-                              : { deviceType: device.deviceType }),
-                          }
+                        ? { ...withoutDescription(entry), ...describedFields(device) }
                         : entry,
                     ),
                   }
@@ -650,8 +727,7 @@ export const makeWith = (options: MakeOptions = {}) =>
           id: random(18).toString("base64url"),
           key: device.key,
           kind: device.kind,
-          label: device.label,
-          ...(device.deviceType === undefined ? {} : { deviceType: device.deviceType }),
+          ...describedFields(device),
           account: device.account,
           codeHash: hashCode(code),
           createdAt: isoOf(now),
@@ -829,8 +905,7 @@ export const makeWith = (options: MakeOptions = {}) =>
         pending: file.pending.map((entry) => ({
           id: entry.id,
           kind: entry.kind,
-          label: entry.label,
-          ...(entry.deviceType === undefined ? {} : { deviceType: entry.deviceType }),
+          ...describedFields(entry),
           askedAt: entry.createdAt,
           expiresAt: entry.expiresAt,
         })),
@@ -858,8 +933,8 @@ export const makeWith = (options: MakeOptions = {}) =>
           const device: DeviceRecord = {
             key: match.key,
             kind: match.kind,
-            label: match.label,
-            ...(match.deviceType === undefined ? {} : { deviceType: match.deviceType }),
+            ...describedFields(match),
+            firstSeenAt: match.createdAt,
             approvedAt: isoOf(now),
             approvedBy: input.approvedBy,
             keptByUpdate: false,
@@ -870,6 +945,8 @@ export const makeWith = (options: MakeOptions = {}) =>
             id: random(9).toString("base64url"),
             at: isoOf(now),
             message: `New device approved on ${machineName} by ${input.approvedBy}.`,
+            machine: machineName,
+            approvedBy: input.approvedBy,
             by: input.approverKey ?? OWNER_NOTICE_KEY,
             device: match.key,
           };

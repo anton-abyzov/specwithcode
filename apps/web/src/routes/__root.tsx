@@ -216,6 +216,9 @@ function RootRouteView() {
           <AwayDialogHost />
           {/* Setup can start Restart to update, which asks before stopping running work. */}
           <ConfirmDialogHost />
+          {/* 1327: a device can ask this machine, or wait on another, during setup too. */}
+          {primaryEnvironmentAuthenticated ? <DeviceApprovalPromptHost /> : null}
+          <DeviceWaitingForApprovalHost />
           {/* A link started during setup may need the relay client. The sign-in step installs it
               in its own row; any other link here asks, and the question needs this to be seen. */}
           <RelayClientInstallDialog />
