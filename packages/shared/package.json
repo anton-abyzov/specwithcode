@@ -4,6 +4,10 @@
   "license": "MIT",
   "type": "module",
   "exports": {
+    "./reservedDeviceNames": {
+      "types": "./src/reservedDeviceNames.ts",
+      "import": "./src/reservedDeviceNames.ts"
+    },
     "./threadLifecycleEvidence": {
       "types": "./src/threadLifecycleEvidence.ts",
       "import": "./src/threadLifecycleEvidence.ts"

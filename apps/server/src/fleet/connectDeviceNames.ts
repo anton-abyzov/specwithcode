@@ -6,6 +6,8 @@
  * owner, never what approves (the typed code does).
  */
 
+import { isReservedDeviceName } from "@specweave-studio/shared/reservedDeviceNames";
+
 /** Labels every client of one kind shares: they name no device. */
 const SHARED_LABELS: ReadonlySet<string> = new Set([
   "SpecWithCode Connect connect",
@@ -20,12 +22,6 @@ const SHARED_LABELS: ReadonlySet<string> = new Set([
  * Words the device list uses for the owner and the update. A device may not
  * take them as its name, or its approvals would read as the owner's (1327).
  */
-const RESERVED_NAMES: ReadonlySet<string> = new Set([
-  "this machine",
-  "the update",
-  "another device",
-]);
-
 const MAX_NAME_LENGTH = 80;
 
 export interface DeviceClientFacts {
@@ -52,7 +48,7 @@ export const isOwnDeviceName = (label: string | undefined): label is string => {
     trimmed !== undefined &&
     trimmed.length > 0 &&
     !SHARED_LABELS.has(trimmed) &&
-    !RESERVED_NAMES.has(trimmed.toLowerCase())
+    !isReservedDeviceName(trimmed)
   );
 };
 
