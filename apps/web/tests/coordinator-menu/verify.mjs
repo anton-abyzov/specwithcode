@@ -206,6 +206,10 @@ try {
     await routedPrompt.fill("time now?");
     file = await shot(page, `m5-routes-to-m4-${theme}`);
     const routedSend = page.locator(".sws-composer-card button.sws-send");
+    // The chip under the box and Send name one machine: main, where the coordinator runs.
+    assert.deepEqual(await page.locator(".sws-host-name").allTextContents(), ["Runs on m4"]);
+    const sendLabel = await routedSend.getAttribute("data-send-label");
+    assert.ok(sendLabel === null || sendLabel === "Send to m4", `Send names ${sendLabel}`);
     assert.equal(await routedSend.isDisabled(), false);
     await routedSend.click();
     await page.waitForFunction(() => (window.__routed ?? []).length === 1);

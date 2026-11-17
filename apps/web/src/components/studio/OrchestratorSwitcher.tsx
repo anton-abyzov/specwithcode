@@ -5,6 +5,7 @@ import {
 } from "../../studio/machineIdentity";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
+import type { EnvironmentId } from "@specweave-studio/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightLeftIcon,
@@ -467,12 +468,23 @@ export function ProjectOrchestratorSwitcher({
   mainOffers = [],
   onMakeMain = null,
   onCopy = null,
+  runsOn = null,
 }: {
   project: EnvironmentProject;
   label: string;
   connected: boolean;
   isThisDevice: boolean;
   disconnectedLabel: string;
+  /**
+   * Where this page's coordinator runs when that is not the viewed copy's machine: main's,
+   * for a copy whose main is elsewhere (`composerMachines`). The chip names it, as Send does.
+   */
+  runsOn?: {
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    readonly connected: boolean;
+    readonly disconnectedLabel: string;
+  } | null;
   current: string;
   copies: readonly OrchestratorCopy[];
   unknown: ReadonlyArray<{ key: string; machine: string }>;
@@ -484,8 +496,10 @@ export function ProjectOrchestratorSwitcher({
 }) {
   const navigate = useNavigate();
   // A nickname shows as typed; only a host label drops its owner.
-  const name = useMachineNickname(project.environmentId, label);
-  const identity = useMachineIdentity(project.environmentId, label);
+  const chipEnvironmentId = runsOn?.environmentId ?? project.environmentId;
+  const chipLabel = runsOn?.label ?? label;
+  const name = useMachineNickname(chipEnvironmentId, chipLabel);
+  const identity = useMachineIdentity(chipEnvironmentId, chipLabel);
   const [linkTarget, setLinkTarget] = useState<ProjectLinkTarget | null>(null);
   const projects = useProjects();
   const nickname = useMachineNicknames();
@@ -502,10 +516,10 @@ export function ProjectOrchestratorSwitcher({
       <OrchestratorSwitcher
         identity={identity}
         label={name}
-        hostLabel={label}
-        connected={connected}
+        hostLabel={chipLabel}
+        connected={runsOn?.connected ?? connected}
         // The line above the message box says the rest once; the chip names the state.
-        statusDetail={disconnectedLabel}
+        statusDetail={runsOn?.disconnectedLabel ?? disconnectedLabel}
         current={current}
         copies={copies}
         unknown={unknown}

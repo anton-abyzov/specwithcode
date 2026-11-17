@@ -17,6 +17,27 @@ export function routeTarget(
 }
 
 /**
+ * The machines a project page's message box names, from one rule. On a copy whose main is
+ * elsewhere (`copyOff`) the coordinator runs on main, so the chip under the box names main;
+ * Send names main too while it routes there, and no machine while it cannot. Everywhere
+ * else both name the machine being looked at. `send` is never a machine the chip does not
+ * name.
+ */
+export function composerMachines(input: {
+  /** The machine of the copy this page shows. */
+  readonly viewed: string;
+  /** Main's checkout, `environmentId:projectId`; null when this page is not a copy. */
+  readonly mainKey: string | null;
+  readonly copyOff: boolean;
+  /** `canRouteToMain` holds: Send delivers to main's coordinator. */
+  readonly routes: boolean;
+}): { readonly chip: string; readonly send: string | null } {
+  const main = input.copyOff ? routeTarget(input.mainKey)?.environmentId : undefined;
+  if (!main) return { chip: input.viewed, send: input.viewed };
+  return { chip: main, send: input.routes ? main : null };
+}
+
+/**
  * Whether a copy's message box can route to main: only to a main the resolver found live
  * (an active coordinator, never a checkout mid-move or a bare successor reference), while
  * its machine is connected and this window may run work there. Otherwise the box stays off

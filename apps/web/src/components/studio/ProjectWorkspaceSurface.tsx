@@ -48,6 +48,7 @@ import {
   CommandId,
   logicalProjectTitle,
   type ChatAttachment,
+  type EnvironmentId,
   type ModelSelection,
   type ProjectStarterSuggestion,
   type ThreadId,
@@ -203,7 +204,7 @@ import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
 import { CoordinatorBlockedNotice, OfflineSwitchNotice } from "./CoordinatorBlockedNotice";
 import { useMakeMain } from "./useMakeMain";
 import { useRouteToMain } from "./useRouteToMain";
-import { ROUTED_FILES_MESSAGE } from "../../studio/routeToMain";
+import { composerMachines, ROUTED_FILES_MESSAGE } from "../../studio/routeToMain";
 import { ProjectComposerHostStatus } from "./ComposerHostStatus";
 import { useTx } from "../../i18n";
 import {
@@ -689,6 +690,15 @@ export function ProjectWorkspaceSurface({
     onOpen: onCheckout,
   });
   const routes = route.ready;
+  // One rule names the machine on the chip under the box and on Send: on a copy whose main
+  // is elsewhere both say main, never the copy's machine beside main's.
+  const named = composerMachines({
+    viewed: project.environmentId,
+    mainKey: coordinatorElsewhere?.key ?? null,
+    copyOff,
+    routes,
+  });
+  const chipEnvironment = useEnvironment(named.chip as EnvironmentId);
   // Files were attached on this machine; a routed message carries text only.
   const draftHasFiles = useSyncExternalStore(
     composer.subscribe,
@@ -2036,9 +2046,7 @@ export function ProjectWorkspaceSurface({
                 composer={composer}
                 // A viewer showing the coordinator borrows this composer.
                 threadRef={coordinatorRef}
-                environmentId={
-                  routes && route.environmentId ? route.environmentId : project.environmentId
-                }
+                environmentId={(named.send ?? project.environmentId) as EnvironmentId}
                 cwd={project.workspaceRoot}
                 sendBlocked={
                   routes
@@ -2194,6 +2202,21 @@ export function ProjectWorkspaceSurface({
                         environment?.connection,
                         admissionContext,
                       )}
+                      // A copy whose main is elsewhere: its coordinator runs on main.
+                      runsOn={
+                        named.chip === project.environmentId
+                          ? null
+                          : {
+                              environmentId: named.chip as EnvironmentId,
+                              label:
+                                chipEnvironment?.label ?? coordinatorElsewhere?.machine ?? "Host",
+                              connected: chipEnvironment?.connection.phase === "connected",
+                              disconnectedLabel: hostDisconnectedLabel(
+                                chipEnvironment?.connection,
+                                admissionContext,
+                              ),
+                            }
+                      }
                       current={`${project.environmentId}:${project.id}`}
                       copies={checkouts}
                       unknown={unknownMachines}

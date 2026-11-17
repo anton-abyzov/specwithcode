@@ -34,7 +34,7 @@ import {
   type MainOffer,
   type MakeMainPath,
 } from "../../src/studio/makeMain";
-import { routeTarget } from "../../src/studio/routeToMain";
+import { composerMachines, routeTarget } from "../../src/studio/routeToMain";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { getProjectCoordinatorComposer } from "../../src/studio/projectCoordinatorComposer";
 import type { OrchestratorCopy } from "../../src/studio/projectCoordinatorMachine";
@@ -203,10 +203,10 @@ function Page() {
   const [current, setCurrent] = useState(start);
   const viewed = copies.find((item) => item.key === current)!;
   const makeMain = (key: string) => (window.__madeMain ??= []).push(key);
-  const switcher = (
+  const switcherNamed = (label: string) => (
     <OrchestratorSwitcher
       identity={{ color: "teal" } as never}
-      label={viewed.machine}
+      label={label}
       connected
       statusDetail=""
       current={current}
@@ -230,8 +230,16 @@ function Page() {
       onLink={view === "unlinked" ? () => {} : null}
     />
   );
+  const switcher = switcherNamed(viewed.machine);
   if (view === "m5") {
     const routed = routeTarget(`${m5Main}:p`);
+    // The page's own rule names the chip and Send (`composerMachines`), as on the M5.
+    const named = composerMachines({
+      viewed: "m5",
+      mainKey: `${m5Main}:p`,
+      copyOff: true,
+      routes: true,
+    });
     return (
       <div
         className="fixture-page fixture-column"
@@ -247,7 +255,7 @@ function Page() {
         <CoordinatorComposer
           composer={getProjectCoordinatorComposer(EnvironmentId.make("m5"), "atlas-m5")}
           threadRef={null}
-          environmentId={EnvironmentId.make(m5Main)}
+          environmentId={EnvironmentId.make(named.send ?? "m5")}
           cwd="/w/atlas"
           sendBlocked={false}
           missingModel={null}
@@ -285,10 +293,10 @@ function Page() {
             />
           }
           notices={null}
-          meta={switcher}
+          meta={switcherNamed(named.chip)}
           controls={
             <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-              <span className="truncate">Runs on m5</span>
+              <span className="truncate">Opus 5.5</span>
             </span>
           }
           modelFallback={false}
