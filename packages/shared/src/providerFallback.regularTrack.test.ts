@@ -317,16 +317,17 @@ describe("regular work never falls back to a Review-track model", () => {
 
   it("still lets review work and a Muse model the person listed reach Muse", () => {
     expect(
-      resolveWorkerLaunchSelection({
-        preferred: fable,
-        coordinator: museWonder,
+      resolveProviderFallback({
         providers: onlyMuse,
+        currentInstanceId: claude.instanceId,
+        currentModel: FABLE,
         rule,
         nowMs: now,
+        anyReady: true,
         limitedInstanceIds: limited,
         review: true,
       }),
-    ).toEqual({ selection: museWonder, reason: "coordinator" });
+    ).toEqual(museWonder);
     expect(
       resolveProviderFallback({
         providers: onlyMuse,
@@ -338,5 +339,37 @@ describe("regular work never falls back to a Review-track model", () => {
         limitedInstanceIds: limited,
       }),
     ).toEqual(museWonder);
+  });
+});
+
+describe("a real post-stop snapshot", () => {
+  // At the stop the account read also says ordinary usage is denied and when.
+  const deniedClaude: ServerProvider = {
+    ...claude,
+    usageLimits: {
+      ...claude.usageLimits!,
+      ordinaryUsageAllowed: false,
+      rateLimitReachedType: "seven_day_fable",
+      nativeDenialObservedAt: iso(now),
+      nativeAllowanceObservedAt: iso(now),
+    },
+  };
+
+  it("still continues on Opus on the same Claude account", () => {
+    expect(
+      resolveProviderFallback({
+        providers: [deniedClaude, codex, copilot, copilotEnterprise, muse],
+        currentInstanceId: claude.instanceId,
+        currentModel: FABLE,
+        rule,
+        nowMs: now,
+        belowPercent: 100,
+        anyReady: true,
+      }),
+    ).toEqual(opus);
+  });
+
+  it("keeps a newer release of a built-in Daily model on the Regular side", () => {
+    expect(reviewOnlyModel(rule)({ model: "gpt-6.2-sol" })).toBe(false);
   });
 });

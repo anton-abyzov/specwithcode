@@ -29,7 +29,12 @@ import {
   namedFallbackOrder,
 } from "./modelTiers.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
-import { namedModelElsewhere, type RegularTrackRule, reviewOnlyModel } from "./regularTrack.ts";
+import {
+  denialSparesModel,
+  namedModelElsewhere,
+  type RegularTrackRule,
+  reviewOnlyModel,
+} from "./regularTrack.ts";
 export { fallbackModelOrder, fallbackSelectionKey };
 import { effectiveUsedPercent, isLiveWindow, windowAppliesToModel } from "./usageWindows.ts";
 
@@ -243,7 +248,8 @@ export function hasUsableFallbackCapacity(
   )
     return false;
   const deniedAt = Date.parse(limits.nativeDenialObservedAt ?? "");
-  if (Number.isFinite(deniedAt) && deniedAt >= observedAt) return false;
+  const denied = Number.isFinite(deniedAt) && deniedAt >= observedAt;
+  if (denied && !denialSparesModel(provider, model, nowMs)) return false;
   if (
     limits.windows.some(
       (window) =>
@@ -1138,8 +1144,6 @@ export function resolveWorkerLaunchSelection(input: {
   readonly rule: ProviderFallbackRule;
   readonly nowMs: number;
   readonly limitedInstanceIds?: ReadonlySet<string>;
-  /** A review worker may start on the Review track; regular work never does. */
-  readonly review?: boolean;
 }): { readonly selection: ModelSelection; readonly reason: WorkerLaunchSelectionReason } {
   const threshold = input.rule.providerLimitSwitchAtPercent ?? 100;
   const limited = input.limitedInstanceIds ?? new Set<string>();
@@ -1187,11 +1191,12 @@ export function resolveWorkerLaunchSelection(input: {
       });
   if (same !== null) return { selection: same, reason: "same-model" };
   const coordinator = input.coordinator;
+  // A worker does regular work: never on a Review-track model the coordinator runs.
   if (
     !listOnly &&
     coordinator !== null &&
     coordinator.instanceId !== preferred.instanceId &&
-    (input.review === true || !reviewOnlyModel(input.rule)(coordinator))
+    !reviewOnlyModel(input.rule)(coordinator)
   ) {
     const provider = input.providers.find((entry) => entry.instanceId === coordinator.instanceId);
     if (
@@ -1235,7 +1240,6 @@ export function resolveWorkerLaunchSelection(input: {
       modelLanes: input.rule.modelLanes,
       adversarialReview: input.rule.adversarialReview,
     },
-    ...(input.review === true ? { review: true } : {}),
     nowMs: input.nowMs,
     belowPercent: threshold,
     anyReady: true,
@@ -1502,8 +1506,7 @@ export function resolveCoordinatorTurnSelection(input: {
   )
     return { selection: input.saved, reason: "saved-resets-soon" };
   const thread = input.thread;
-  // The coordinator does regular work: it never stays on a Review-track model
-  // a move put it on. A pick by hand saves the model, so `saved` is never one.
+  // Never staying on a Review-track model a move put it on (a pick saves `saved`).
   if (
     thread !== null &&
     thread.instanceId !== input.saved.instanceId &&

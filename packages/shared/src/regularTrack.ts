@@ -43,6 +43,29 @@ export function limitStopIsAccountWide(
 }
 
 /**
+ * Whether a denial the account reported spares `model`: every spent window is
+ * scoped to other models (Fable's weekly while Opus runs) and no spend control
+ * is reached. Such a denial says nothing about `model`'s room.
+ */
+export function denialSparesModel(
+  provider: ServerProvider,
+  model: string | null | undefined,
+  nowMs: number,
+): boolean {
+  const limits = provider.usageLimits;
+  if (limits === undefined || limits.spendControlReached === true || !model) return false;
+  const spent = limits.windows.filter(
+    (window) => window.usedPercent >= 100 && isLiveWindow(window, nowMs),
+  );
+  return (
+    spent.length > 0 &&
+    spent.every(
+      (window) => windowModelScope(window) !== null && !windowAppliesToModel(window, model),
+    )
+  );
+}
+
+/**
  * A model of the person's own fallback list on another account that serves
  * it, when its own account cannot take the thread: Opus 5.5 on Copilot
  * Enterprise once the Claude account is spent. The person named the model,
@@ -128,8 +151,9 @@ export interface RegularTrackRule {
  * Daily and Complex tracks (the person's, else the built-in ones), their
  * fallback list, or the project's default model. The whole line is held
  * back because a provider's default can be a sibling of the reviewer (Muse
- * Wonder 1.0 next to the Muse Wonder Full reviewer); a model named on the
- * Regular side still counts, by its own identity.
+ * Wonder 1.0 next to the Muse Wonder Full reviewer). A model the person named
+ * counts by its own identity; a built-in entry by its line, since it follows
+ * the newest release (GPT-6.2 Sol for the GPT-6.1 Sol entry).
  */
 export function reviewOnlyModel(
   rule: RegularTrackRule,
@@ -141,10 +165,12 @@ export function reviewOnlyModel(
       : DEFAULT_MODEL_TRACKS.review.map((entry) => entry.model)
     ).map(modelLine),
   );
-  const lane = (saved: ReadonlyArray<ModelSelection> | undefined, track: "daily" | "complex") =>
-    saved !== undefined && saved.length > 0
-      ? saved.map((entry) => entry.model)
-      : DEFAULT_MODEL_TRACKS[track].map((entry) => entry.model);
+  const builtInLines = new Set<string>();
+  const lane = (saved: ReadonlyArray<ModelSelection> | undefined, track: "daily" | "complex") => {
+    if (saved !== undefined && saved.length > 0) return saved.map((entry) => entry.model);
+    for (const entry of DEFAULT_MODEL_TRACKS[track]) builtInLines.add(modelLine(entry.model));
+    return [];
+  };
   const regular = [
     ...lane(rule.modelLanes?.routine, "daily"),
     ...lane(rule.modelLanes?.complex, "complex"),
@@ -153,7 +179,12 @@ export function reviewOnlyModel(
       entry == null ? [] : [entry.model],
     ),
   ];
-  return ({ model }) =>
-    reviewLines.has(modelLine(model)) &&
-    !regular.some((named) => isSameModel({ slug: named }, { slug: model }));
+  return ({ model }) => {
+    const line = modelLine(model);
+    return (
+      reviewLines.has(line) &&
+      !builtInLines.has(line) &&
+      !regular.some((named) => isSameModel({ slug: named }, { slug: model }))
+    );
+  };
 }
