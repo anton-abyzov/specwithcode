@@ -60,6 +60,8 @@ async function open(query, viewport = { width: 820, height: 760 }) {
 }
 const shot = async (page, name) => {
   const file = NodePath.join(output, `${name}.png`);
+  // The dialog focuses its first control on opening; the ring is not part of the picture.
+  await page.evaluate(() => document.activeElement?.blur());
   await page.screenshot({ path: file });
   return file;
 };
