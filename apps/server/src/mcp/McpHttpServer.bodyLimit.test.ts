@@ -1,5 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- a half-open node:http request, which the Effect client will not send, and a 2 MiB node:crypto chunk.
 import * as NodeCrypto from "node:crypto";
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- a half-open request, which the Effect client will not send.
 import * as NodeHttp from "node:http";
 
 import { expect, it } from "@effect/vitest";
@@ -172,6 +172,7 @@ it.effect("answers a wrong credential with 401 before reading the body", () =>
       const received = yield* serveProbe;
       const address = (yield* HttpServer.HttpServer).address;
       if (!NetAddress.isInetAddress(address)) return yield* Effect.die("expected an IP address");
+      // @effect-diagnostics-next-line globalDateInEffect:off -- wall clock for the 401-before-body bound.
       const started = Date.now();
       const status = yield* Effect.promise(
         () =>
@@ -197,6 +198,7 @@ it.effect("answers a wrong credential with 401 before reading the body", () =>
             // Headers go out now. The body stays open, so a read-first server cannot answer.
             req.flushHeaders();
             req.write('{"jsonrpc":"2.0","id":2,"method":"tools/call"}');
+            // @effect-diagnostics-next-line globalTimers:off -- the body stays open, so this deadline cannot be an Effect sleep.
             const timer = setTimeout(() => {
               req.destroy();
               reject(new Error("no response while the body was still open"));
@@ -204,6 +206,7 @@ it.effect("answers a wrong credential with 401 before reading the body", () =>
             req.on("response", () => clearTimeout(timer));
           }),
       );
+      // @effect-diagnostics-next-line globalDateInEffect:off -- wall clock for the 401-before-body bound.
       expect(Date.now() - started).toBeLessThan(1_000);
       expect(status).toBe(401);
       expect(received).toEqual([]);

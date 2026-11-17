@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- the bounded reader resumes and destroys the Node IncomingMessage so a refused body still gets 413.
 import * as NodeHttp from "node:http";
 
 import * as NodeStream from "@effect/platform-node/NodeStream";

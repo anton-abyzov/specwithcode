@@ -1,8 +1,7 @@
 import * as SchemaAST from "effect/SchemaAST";
-import { none, type Many } from "stream-chain/defs.js";
+import { none } from "stream-chain/defs.js";
 import { Assembler } from "stream-json/core/assembler.js";
-import * as StreamJson from "stream-json/core/parser.js";
-import type { ParserOptions, Token } from "stream-json/core/parser.js";
+import { jsonParser, type Token } from "stream-json/core/parser.js";
 
 type JsonPath = ReadonlyArray<string | number | null>;
 
@@ -56,15 +55,11 @@ export function createTranscriptJsonReader(
   selectPath: (path: JsonPath) => boolean,
   options?: { readonly maxDepth?: number },
 ) {
-  // The synchronous tokenizer is exported at runtime in 3.6.0, but omitted
-  // from its bundled types. Unlike parser(), it does not wrap tokens in an
-  // async generator; the file reader already supplies backpressure and UTF-8.
-  const { jsonParser } = StreamJson as typeof StreamJson & {
-    jsonParser: (
-      options: ParserOptions,
-    ) => (input: string | typeof none) => Many<Token> | typeof none;
-  };
+  // jsonParser is the synchronous tokenizer. parser() would wrap it in a stream,
+  // and the file reader already supplies backpressure and UTF-8. A flush is a
+  // call with `none`; Flushable's signature only names the chunk type.
   const tokenize = jsonParser({ packValues: false });
+  const pull = tokenize as (input: string | typeof none) => ReturnType<typeof tokenize>;
   const assembler = new Assembler();
   let key: string | null = null;
   let value = "";
@@ -158,7 +153,7 @@ export function createTranscriptJsonReader(
   const consume = (input: string | typeof none) => {
     if (malformed) return;
     try {
-      const tokens = tokenize(input);
+      const tokens = pull(input);
       if (tokens === none) return;
       for (const token of tokens.values) {
         if (token.name === "startObject" || token.name === "startArray") {
