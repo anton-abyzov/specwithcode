@@ -107,6 +107,7 @@ import {
   type OpenFailure,
   PROVIDER_FALLBACK_CONTINUE_TEXT,
   PROVIDER_RETRY_MESSAGE_PREFIX,
+  isReviewWork,
   providerRetryAwaitsRead,
   providerRetryCommand,
   threadIsFree,
@@ -234,6 +235,7 @@ export function providerFallbackCommand(
       belowPercent: rule.providerLimitSwitchAtPercent ?? 100,
       anyReady: true,
       proven,
+      review: isReviewWork(thread),
       ...(limited === undefined ? {} : { limitedInstanceIds: limited }),
       ...(failed === undefined ? {} : { excludedSelections: failed }),
     });
@@ -272,6 +274,7 @@ export function providerFallbackCommand(
     belowPercent: rule.providerLimitSwitchAtPercent,
     anyReady: true,
     proven,
+    review: isReviewWork(thread),
     ...(limited === undefined ? {} : { limitedInstanceIds: limited }),
   });
   if (target === null) return null;
