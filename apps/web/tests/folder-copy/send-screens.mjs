@@ -1,5 +1,7 @@
-// Headless screenshots of Send to another machine… (increment 1326) on the copy flow: what the
-// chosen machine holds (a copy, Main, several copies, nothing), Copy or Move, and the plan.
+// Headless screenshots of Copy to another machine… (increments 1326, 1372) on the copy flow:
+// what the chosen machine holds (a copy, Main, several copies, nothing), the header naming the
+// real Main, a source not linked to the destination's project, the plan, and the done screen
+// with "Make {machine} main".
 // Build first: node node_modules/vite-plus/bin/vp build --config apps/web/tests/folder-copy/vite.config.ts
 // Run from the repository root: node apps/web/tests/folder-copy/send-screens.mjs /absolute/report-dir
 import * as NodeFS from "node:fs";
@@ -53,6 +55,8 @@ const browser = await chromium.launch({
   headless: true,
   ...(executablePath ? { executablePath } : {}),
 });
+// The done scenes copy into an empty folder, which takes one click in the fixture.
+const DONE_HOLDING = "none";
 const saved = [];
 const shot = async (page, name) => {
   const path = NodePath.join(output, `${name}.png`);
@@ -63,24 +67,35 @@ const text = async (page, slot) =>
   (await page.locator(`[data-slot="${slot}"]`).count())
     ? await page.locator(`[data-slot="${slot}"]`).textContent()
     : null;
+const UMBRELLA = "~/Projects/github/specweave-umb/repositories/anton-abyzov/specweave";
 try {
   for (const [name, query, width, theme] of [
     ["copy", "holding=copy", 760, "light"],
     ["copy-dark", "holding=copy", 760, "dark"],
     ["copy-390", "holding=copy", 390, "light"],
-    ["move", "holding=copy", 760, "light"],
+    ["unlinked", "holding=copy&unlinked=1", 760, "light"],
+    ["unlinked-dark", "holding=copy&unlinked=1", 760, "dark"],
+    ["move", "holding=copy&move=1", 760, "light"],
     ["main", "holding=main", 760, "light"],
     ["several", "holding=several", 760, "light"],
     ["several-main", "holding=several-main", 760, "light"],
     ["none", "holding=none", 760, "light"],
   ]) {
-    const page = await browser.newPage({ viewport: { width, height: 1500 }, deviceScaleFactor: 2 });
-    await page.goto(`${base}?short=1&secrets=1&uncommitted=18&theme=${theme}&${query}`);
-    await page.locator('[data-slot="handoff-coordinator"]').waitFor();
+    // The unlinked scenes are tall enough to show Git only switched off under Details.
+    const height = name.startsWith("unlinked") ? 2400 : 1500;
+    const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 2 });
+    await page.goto(
+      `${base}?short=1&method=clone&secrets=1&uncommitted=18&theme=${theme}&${query}`,
+    );
+    await page.locator('[data-slot="send-summary"]').waitFor();
     const dialog = await page.locator('[data-slot="dialog-popup"]').textContent();
-    NodeAssert.match(dialog, /Send specweave to m5/);
+    NodeAssert.match(dialog, name === "move" ? /Move specweave to m5/ : /Copy specweave to m5/);
+    // A folder copy asks nothing about Main.
+    NodeAssert.equal(await page.locator('[data-slot="handoff-coordinator"]').count(), 0);
+    NodeAssert.doesNotMatch(dialog, /Copy or move/);
+    const header = await text(page, "dialog-description");
     // The folder is the existing copy's checkout, never a second one beside it.
-    if (name.startsWith("copy") || name === "move" || name === "main" || name === "several-main")
+    if (name !== "several" && name !== "none")
       NodeAssert.match(
         await page.locator('input[aria-label="Folder on m5"]').inputValue(),
         name === "several-main"
@@ -88,21 +103,47 @@ try {
           : /^\/Users\/you\/Projects\/github\/specweave-umb$/,
       );
     if (name === "move") {
-      await page.getByRole("radio", { name: /Move to m5/ }).click();
       await page.getByRole("button", { name: "Copy and move to m5", exact: true }).waitFor();
+      NodeAssert.match(header, /^From m4\. Main moves to m5\./);
       NodeAssert.equal(
         await text(page, "send-plan"),
-        "Copy 18 changed local files into m5's copy at ~/Projects/github/specweave-umb/repositories/anton-abyzov/specweave, then move Main there. Work continues on m5, and this copy stops starting work.",
+        `Copy 18 changed local files into m5's copy at ${UMBRELLA}, then move Main there. Work continues on m5, and this copy stops starting work.`,
       );
     }
-    if (name.startsWith("copy"))
+    if (name.startsWith("copy")) {
+      NodeAssert.equal(
+        header,
+        "From m4. Main stays on m4. Nothing on m5 is replaced without asking.",
+      );
       NodeAssert.equal(
         await text(page, "send-plan"),
-        "Copy 18 changed local files into m5's copy at ~/Projects/github/specweave-umb/repositories/anton-abyzov/specweave. Main stays on m4.",
+        `Copy 18 changed local files into m5's copy at ${UMBRELLA}. Main stays on m4.`,
       );
+      await page.getByRole("button", { name: "Copy to m5", exact: true }).waitFor();
+    }
+    if (name.startsWith("unlinked")) {
+      NodeAssert.equal(
+        header,
+        "From m1. m1's copy is not linked to the project m5 belongs to (Main: m4). Nothing on m5 is replaced without asking.",
+      );
+      NodeAssert.equal(
+        await text(page, "send-unlinked"),
+        "Only files are copied into m5's copy. Main stays on m4, and m1 is not linked to that project. To make them one project, link m1 to it from the machine menu.",
+      );
+      NodeAssert.match(await text(page, "send-plan"), /Main stays on m4\.$/);
+      // Git only would move m1's Main into that project: off, with the reason.
+      const git = page.getByRole("radio", { name: /Git only, no file copy/ });
+      if (!(await git.isVisible())) await page.getByRole("button", { name: "Details" }).click();
+      await git.scrollIntoViewIfNeeded();
+      NodeAssert.equal(await git.getAttribute("aria-disabled"), "true");
+      NodeAssert.match(
+        await page.locator('[data-slot="handoff-method"]').textContent(),
+        /Not available: it would move Main into a project this copy is not linked to\./,
+      );
+    }
     if (name === "main") {
       NodeAssert.match(await text(page, "send-existing-copy"), /m5 already has Main/);
-      NodeAssert.equal(await page.locator('[data-send-choice="move"]').count(), 0);
+      NodeAssert.match(header, /^From m4\. Main stays on m5\./);
       NodeAssert.match(await text(page, "send-plan"), /Main stays on m5\.$/);
     }
     if (name === "several") {
@@ -113,13 +154,49 @@ try {
         true,
       );
     }
-    if (name === "several-main") {
-      NodeAssert.equal(await page.locator('[data-send-choice="move"]').count(), 0);
+    if (name === "several-main")
       NodeAssert.match(await text(page, "send-plan"), /Main stays on m5\.$/);
-    }
     if (name === "none")
       NodeAssert.equal(await text(page, "send-plan"), "Copy the folder to m5. Main stays on m4.");
-    await shot(page, `send-dialog-v2-${name}`);
+    await shot(page, `copy-dialog-${name}`);
+    await page.close();
+  }
+  // The done screen: a copy into a linked copy offers the switch; another project's copy does not.
+  for (const [name, query, theme] of [
+    ["done-make-main", "makemain=1", "light"],
+    ["done-make-main-dark", "makemain=1", "dark"],
+    ["done-make-main-blocked", "makemain=blocked", "light"],
+    ["done-unlinked", "makemain=1&unlinked=1", "light"],
+  ]) {
+    const page = await browser.newPage({
+      viewport: { width: 760, height: 1500 },
+      deviceScaleFactor: 2,
+    });
+    await page.goto(`${base}?short=1&method=clone&theme=${theme}&holding=${DONE_HOLDING}&${query}`);
+    const footer = page.locator('[data-slot="dialog-footer"]');
+    await footer.getByRole("button", { name: "Copy to m5", exact: true }).click();
+    await footer.getByRole("button", { name: "Open on m5", exact: true }).waitFor();
+    const makeMain = page.locator('[data-slot="copy-make-main"]');
+    if (name === "done-unlinked") {
+      NodeAssert.equal(await makeMain.count(), 0, "no switch into a project it is not linked to");
+      NodeAssert.match(
+        await text(page, "copy-not-linked"),
+        /^Not linked: the copy on m5 belongs to a project whose Main is m4, and m1 is not part of it\./,
+      );
+    } else {
+      NodeAssert.equal((await makeMain.textContent()).trim(), "Make m5 main");
+      NodeAssert.equal(await makeMain.isDisabled(), name === "done-make-main-blocked");
+      NodeAssert.match(
+        await page.locator('[data-slot="dialog-popup"]').textContent(),
+        /m5 has a copy\. Main stays on m4\./,
+      );
+    }
+    await shot(page, `copy-dialog-${name}`);
+    if (name === "done-make-main") {
+      await makeMain.click();
+      await page.getByRole("dialog").waitFor({ state: "detached" });
+      NodeAssert.equal(await page.evaluate(() => document.body.dataset.madeMain), "m5:m5");
+    }
     await page.close();
   }
   await NodeFSP.writeFile(

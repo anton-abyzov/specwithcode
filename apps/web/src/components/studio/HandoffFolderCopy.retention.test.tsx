@@ -8,6 +8,7 @@ import {
   CopyFixture,
   copyStatus,
   findButton,
+  MOVE,
   type FixtureOptions,
 } from "./HandoffFolderCopy.testkit";
 
@@ -137,11 +138,7 @@ const moveToM3 = async () => {
       projectId: "00000000-0000-4000-8000-000000000002",
     }),
   ];
-  await mount();
-  const move = [
-    ...container.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]'),
-  ].find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!;
-  await act(async () => move.click());
+  await mount(MOVE);
   await click("Copy and move to M3");
   await click("Copy and move to M3");
 };

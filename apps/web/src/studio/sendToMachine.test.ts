@@ -2,8 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   existingCopyLine,
   machineHoldings,
+  otherProjectNote,
+  otherProjectOf,
   pickedHolding,
-  SEND_CHOICES,
+  sendHeader,
   sendPlan,
 } from "./sendToMachine";
 
@@ -94,16 +96,90 @@ describe("roles among several copies and retired records", () => {
   });
 });
 
+describe("a source that is not linked to the destination's project", () => {
+  // Anton, November 16: specweave is m4 (Main), linux-mini and M5; m1 is a separate copy.
+  const m4 = project("m4", "p4", { logical: "L", state: "active", epoch: 0 });
+  const mini = project("mini", "pm", { logical: "L", state: "transferred", epoch: 0 });
+  const m5 = project("m5", "p5", { logical: "L", state: "transferred", epoch: 0 });
+  const m1 = project("m1", "p1");
+
+  it("finds the destination project's own Main, never the source", () => {
+    expect(otherProjectOf({ source: m1, copy: m5, projects: [m1, m4, mini, m5] })).toEqual({
+      mainEnvironmentId: "m4",
+    });
+    // A source linked to another project is just as unlinked from this one.
+    const elsewhere = project("m1", "p1", { logical: "K" });
+    expect(otherProjectOf({ source: elsewhere, copy: m5, projects: [elsewhere, m4, m5] })).toEqual({
+      mainEnvironmentId: "m4",
+    });
+  });
+
+  it("names Main from the copy's own successor when Main is not loaded here", () => {
+    const lone = {
+      ...m5,
+      workspaceSettings: {
+        logicalProject: { id: "L" } as never,
+        coordinatorBinding: {
+          state: "transferred",
+          epoch: 0,
+          successor: { environmentId: "m4", projectId: "p4" },
+        } as never,
+      },
+    };
+    expect(otherProjectOf({ source: m1, copy: lone, projects: [m1, lone] })).toEqual({
+      mainEnvironmentId: "m4",
+    });
+  });
+
+  it("is nothing for a copy of the source's own project, an unlinked copy or no copy", () => {
+    expect(otherProjectOf({ source: m4, copy: m5, projects: [m4, m5] })).toBeNull();
+    expect(otherProjectOf({ source: m4, copy: m1, projects: [m4, m1] })).toBeNull();
+    expect(otherProjectOf({ source: m4, copy: null, projects: [m4] })).toBeNull();
+  });
+
+  it("names the source's own Main: itself when registered on its own, else by role", () => {
+    const own = machineHoldings({ source: m1, machineIds: ["m5"], projects: [m1, m5] });
+    expect(own.mainEnvironmentId).toBe("m1");
+    expect(own.byMachine.get("m5")?.kind).toBe("copy");
+    const linked = machineHoldings({ source: mini, machineIds: ["m5"], projects: [mini, m5] });
+    // Main (m4) is not in sight and no successor names it: unknown, not the source.
+    expect(linked.mainEnvironmentId).toBeNull();
+  });
+});
+
 describe("the dialog's words", () => {
   const copy = { kind: "copy", copy: { workspaceRoot: "/Users/anton/specweave" } } as const;
   const main = { kind: "main", copy: copy.copy } as const;
 
-  it("offers Copy first, in the owner's words", () => {
-    expect(`${SEND_CHOICES.copy.label("m1")}. ${SEND_CHOICES.copy.detail}`).toBe(
-      "Copy to m1. Keep working here.",
+  const say = (words: { text: string; values?: Readonly<Record<string, string>> }) =>
+    words.text.replace(/\{(\w+)\}/g, (slot, name: string) => words.values?.[name] ?? slot);
+
+  it("names the real Main under the title, and where it goes on a move", () => {
+    const base = { source: "linux-mini", there: "M5", main: "m4" };
+    expect(say(sendHeader({ ...base, move: false }))).toBe("From linux-mini. Main stays on m4.");
+    expect(say(sendHeader({ ...base, move: true }))).toBe("From linux-mini. Main moves to M5.");
+    expect(say(sendHeader({ ...base, move: true, there: null }))).toBe(
+      "From linux-mini. Main moves to the machine you choose.",
     );
-    expect(`${SEND_CHOICES.move.label("m1")}. ${SEND_CHOICES.move.detail}`).toBe(
-      "Move to m1. Work continues there, and this copy stops starting work.",
+    // Nothing in sight names Main: never guessed as the source.
+    expect(say(sendHeader({ ...base, move: false, main: null }))).toBe(
+      "From linux-mini. Main stays where it is.",
+    );
+  });
+
+  it("says plainly when the source is not linked to the destination's project", () => {
+    const base = { source: "m1", there: "M5", main: "m1", move: false };
+    expect(say(sendHeader({ ...base, otherProject: { main: "m4" } }))).toBe(
+      "From m1. m1's copy is not linked to the project M5 belongs to (Main: m4).",
+    );
+    expect(say(sendHeader({ ...base, otherProject: { main: null } }))).toBe(
+      "From m1. m1's copy is not linked to the project M5 belongs to.",
+    );
+    expect(say(otherProjectNote({ source: "m1", there: "M5", main: "m4" }))).toBe(
+      "Only files are copied into M5's copy. Main stays on m4, and m1 is not linked to that project. To make them one project, link m1 to it from the machine menu.",
+    );
+    expect(say(otherProjectNote({ source: "m1", there: "M5", main: null }))).toContain(
+      "Its Main does not change",
     );
   });
 
@@ -147,6 +223,10 @@ describe("the dialog's words", () => {
     // A machine holding Main is never moved to: the plan is a copy, and Main stays there.
     expect(sendPlan({ ...base, there: "m4", choice: "move", holding: main, localFiles: 0 })).toBe(
       "Compare with m4's copy at ~/specweave and copy what it is missing. Main stays on m4.",
+    );
+    // Main unknown here: the plan does not invent a machine.
+    expect(sendPlan({ ...base, main: null, choice: "copy", holding: { kind: "none" } })).toBe(
+      "Copy the folder to m1. Main stays where it is.",
     );
     // Several copies: no plan until one is picked.
     expect(

@@ -278,19 +278,14 @@ const chooseFirst = async (page) => {
   if (!(await box.isVisible())) await page.getByRole("button", { name: "Details" }).click();
   await box.click();
 };
-/** Which coordinator choice is checked: "Keep on …" or "Move to …". */
+/** What the dialog does, from its title: "Copy …" keeps Main, "Move …" moves it. */
 const intent = async (page) =>
-  (
-    await page
-      .locator('[data-slot="handoff-coordinator"] [role="radio"][aria-checked="true"]')
-      .first()
-      .evaluate((radio) => radio.closest("label")?.textContent ?? radio.textContent ?? "")
-  ).trim();
-/** Picks "Move to {machine}" in "Where should the coordinator run?". */
+  (await page.getByRole("dialog").getByRole("heading").first().textContent()).trim();
+/** A move asked for with "Make X main": the fixture opens a fresh flow set to move. */
 const moveCoordinator = (page) =>
-  page.locator('[data-slot="handoff-coordinator"] label').filter({ hasText: "Move to" }).click();
+  page.evaluate(() => window.dispatchEvent(new Event("fixture-move")));
 const COPY_TITLE = "Copy SpecWeave to ministorm";
-const MOVE_TITLE = COPY_TITLE;
+const MOVE_TITLE = "Move SpecWeave to ministorm";
 /** The setup screen shows no step line. */
 const NO_STEPS = "none";
 const DONE_TITLE = "SpecWeave is on ministorm";
@@ -314,7 +309,7 @@ const choosing = async (page, w) => {
     title: COPY_TITLE,
   });
   NodeAssert.equal(await action("Cancel").count(), 1, "Where offers Cancel");
-  NodeAssert.match(await intent(page), /^Keep on /, "the dialog opened keeping the coordinator");
+  NodeAssert.match(await intent(page), /^Copy /, "the dialog opened as a copy: Main stays");
   await chooseFirst(page);
   await check("where-choose", {
     primary: "Copy to ministorm",
@@ -540,7 +535,7 @@ const oneClick = async (page, w) => {
 const move = async (page, w) => {
   const { footer, action, pause, release, calls, body, menu, check, fixture } = w;
   await moveCoordinator(page);
-  NodeAssert.match(await intent(page), /^Move to ministorm/);
+  NodeAssert.match(await intent(page), /^Move SpecWeave to ministorm/);
   await chooseFirst(page);
   await check("where", {
     primary: "Copy and move to ministorm",

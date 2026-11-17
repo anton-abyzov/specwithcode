@@ -10,6 +10,7 @@ import {
   findButton,
   isDisabled,
   moreItems,
+  MOVE,
   newRow,
   noSecrets,
   onBusyChange,
@@ -420,11 +421,7 @@ it("checks the destination after Apply before fencing the source and starting co
       projectId: "00000000-0000-4000-8000-000000000002",
     }),
   ];
-  await mount();
-  const move = [
-    ...container.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]'),
-  ].find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!;
-  await act(async () => move.click());
+  await mount(MOVE);
   await click("Copy and move to M3");
   const start = state.calls.find(([name]) => name === "copyStart")![1] as any;
   expect(start.input.projectId).toBe("00000000-0000-4000-8000-000000000002");
@@ -496,12 +493,6 @@ const editFolder = async (value: string) =>
     );
     inputFolder().dispatchEvent(new Event("input", { bubbles: true }));
   });
-const selectMove = async () =>
-  act(async () => {
-    [...container.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]')]
-      .find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!
-      .click();
-  });
 const deferredCopy = () => {
   statuses = [
     copyStatus("previewed", { mode: "copy-and-move" }),
@@ -552,8 +543,7 @@ it("finishes the copy while busy and transfers context only on an explicit retry
   state.handlers.prepare = () => {
     throw Object.assign(new Error("busy"), { code: "busy" });
   };
-  await mount();
-  await selectMove();
+  await mount(MOVE);
   await click("Copy and move to M3");
   await click("Copy and move to M3");
   expect(container.querySelector('[data-slot="copy-done"]')).not.toBeNull();
@@ -582,8 +572,7 @@ it("keeps a changed-source copy successful and asks for a fresh copy", async () 
   state.handlers.prepare = () => {
     throw Object.assign(new Error("changed"), { code: "source_changed" });
   };
-  await mount();
-  await selectMove();
+  await mount(MOVE);
   await click("Copy and move to M3");
   await click("Copy and move to M3");
   expect(container.querySelector('[data-slot="copy-done"]')).not.toBeNull();
@@ -615,8 +604,7 @@ it("reopening an applied copy never automatically transfers coordinator context"
 it("does not fence or transfer after copied files were unstable", async () => {
   deferredCopy();
   statuses[1] = { ...statuses[1], unstable: ["work-in-progress.ts"] };
-  await mount();
-  await selectMove();
+  await mount(MOVE);
   await click("Copy and move to M3");
   await click("Copy and move to M3");
   expect(container.querySelector('[data-slot="copy-done"]')).not.toBeNull();
@@ -633,8 +621,7 @@ it.each(["offline", "busy"])(
         return { phase: "ready", executionMode: "project-folder", projectId: input.projectId };
       throw Object.assign(new Error("Destination unavailable"), { code });
     };
-    await mount();
-    await selectMove();
+    await mount(MOVE);
     await click("Copy and move to M3");
     await click("Copy and move to M3");
     expect(container.querySelector('[data-slot="copy-done"]')).not.toBeNull();
@@ -714,8 +701,7 @@ it.each(["same", "folder", "machine"])(
     state.handlers.prepare = () => {
       throw Object.assign(new Error("busy"), { code: "busy" });
     };
-    await mount({ m1Available: true });
-    await selectMove();
+    await mount({ m1Available: true, ...MOVE });
     await click("Copy and move to M3");
     await click("Copy and move to M3");
     await openMore();
@@ -743,13 +729,13 @@ it.each(["same", "folder", "machine"])(
 
 it("uses the existing project registration for a known destination folder", async () => {
   await mount({
+    ...MOVE,
     savedFolder: "/srv/project/",
     savedProject: (machine, folder) =>
       machine === "m3" && folder === "/srv/project/"
         ? { id: "existing-project", environmentId: "m3", workspaceRoot: "/srv/project" }
         : null,
   });
-  await selectMove();
   await click("Copy and move to M3");
   const request = state.calls.find(([name]) => name === "copyStart")![1] as any;
   expect(request.input.projectId).toBe("existing-project");
@@ -788,8 +774,7 @@ it.each(["project-coordinator:existing-project", "custom-coordinator"])(
         },
       };
     };
-    await mount({ savedFolder: "/srv/project/", savedProject: () => existing });
-    await selectMove();
+    await mount({ savedFolder: "/srv/project/", savedProject: () => existing, ...MOVE });
     await click("Copy and move to M3");
     await click("Copy and move to M3");
     const prepares = state.calls.filter(([name]) => name === "prepare");
@@ -822,8 +807,7 @@ it.each(["busy", "conflict", "invalid"])(
     state.handlers.receive = () => {
       throw Object.assign(new Error("Check the destination project"), { code });
     };
-    await mount();
-    await selectMove();
+    await mount(MOVE);
     await click("Copy and move to M3");
     await click("Copy and move to M3");
     expect(container.querySelector('[data-slot="copy-done"]')).not.toBeNull();
@@ -886,8 +870,7 @@ it("reads a destination registration that arrived while Apply was running", asyn
     await mount(options);
     return copyStatus("approved");
   };
-  await mount(options);
-  await selectMove();
+  await mount({ ...options, ...MOVE });
   await click("Copy and move to M3");
   await click("Copy and move to M3");
   const prepared = state.calls.find(([name]) => name === "prepare")![1] as any;
@@ -1002,13 +985,7 @@ it("keeps deferred context retry in the footer with current handlers", async () 
   state.handlers.prepare = () => {
     throw Object.assign(new Error("busy"), { code: "busy" });
   };
-  await mount({ dialog: true });
-  await act(async () => {
-    const choice = [
-      ...document.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]'),
-    ].find((element) => element.closest("label")?.textContent?.startsWith("Move to") === true);
-    choice!.click();
-  });
+  await mount({ dialog: true, ...MOVE });
   await dialogClick("Copy and move to M3");
   await dialogClick("Copy and move to M3");
   expect(document.querySelector('[data-slot="copy-done"]')?.textContent).toContain(
@@ -1250,12 +1227,12 @@ it("registers, previews context and opens the child project while copying the wh
     }),
   ];
   await mount({
+    ...MOVE,
     workspaceRoot: childRoot,
     savedFolder: childDestination,
     savedProject: (machine, folder) =>
       machine === "m3" && folder === childDestination ? existing : null,
   });
-  await selectMove();
   await click("Copy and move to M3");
   expect(state.calls.find(([name]) => name === "copyStart")?.[1]).toMatchObject({
     input: { projectId: existing.id, targetFolder: umbrellaDestination },
@@ -1293,8 +1270,7 @@ it.each(["same", "child-only", "different-root"])(
     state.handlers.prepare = () => {
       throw Object.assign(new Error("busy"), { code: "busy" });
     };
-    await mount({ workspaceRoot: childRoot });
-    await selectMove();
+    await mount({ workspaceRoot: childRoot, ...MOVE });
     await click("Copy and move to M3");
     await click("Copy and move to M3");
     await openMore();
@@ -1327,12 +1303,6 @@ const scanning = (progress: { files: number; bytes: number } | null = null) => (
   error: null,
 });
 const waitPoll = () => act(async () => new Promise((resolve) => setTimeout(resolve, 1100)));
-const moveMode = async () => {
-  const move = [
-    ...document.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]'),
-  ].find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!;
-  await act(async () => move.click());
-};
 const skippedSummary = {
   ...summary,
   totals: { ...summary.totals, rebuildable: total(0, 0) },
@@ -1449,8 +1419,7 @@ it("cancels measuring on the source, releases a move and returns to setup withou
   const offer = state.handlers.copyOffer!;
   state.handlers.copyOffer = (input) => ({ ...(offer(input) as object), status: scanning() });
   state.handlers.copySourceStatus = () => scanning({ files: 10, bytes: 10 });
-  await mount();
-  await moveMode();
+  await mount(MOVE);
   await click("Copy and move to M3");
   const key = "specwithcode:folder-copy:m4:source";
   expect(localStorage.getItem(key)).not.toBeNull();
@@ -1485,8 +1454,7 @@ it("keeps the dialog open only while coordinator context transfers", async () =>
     new Promise((resolve) => {
       finishPrepare = () => resolve(prepare(input));
     });
-  await mount({ dialog: true });
-  await moveMode();
+  await mount({ dialog: true, ...MOVE });
   await dialogClick("Copy and move to M3");
   await dialogClick("Copy and move to M3");
   expect(document.querySelector('[data-slot="copy-working"]')?.textContent).toBe(
@@ -2356,8 +2324,7 @@ it("leaves a full destination to its own alert after Replace all and names open 
 });
 
 it("does not promise to wait for idle work before transferring context", async () => {
-  await mount();
-  await selectMove();
+  await mount(MOVE);
   expect(button("Copy and move to M3")).toBeTruthy();
   expect(container.textContent).not.toContain("when source work is idle");
 });
@@ -2480,8 +2447,7 @@ it("undoes a held copy from its problems screen", async () => {
 
 it("holds a fresh move whose checks failed instead of showing a bare error", async () => {
   statuses = [copyStatus("previewed", { mode: "copy-and-move" }), heldMove()];
-  await mount();
-  await selectMove();
+  await mount(MOVE);
   await click("Copy and move to M3");
   await click("Copy and move to M3");
   expect(container.querySelector('[data-slot="copy-problems"]')?.textContent).toContain(

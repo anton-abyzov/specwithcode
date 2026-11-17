@@ -9,6 +9,7 @@ import {
   findButton,
   isDisabled,
   moreItems,
+  MOVE,
   newRow,
   noSecrets,
   openMore,
@@ -109,10 +110,6 @@ const editFolder = (value: string) =>
     );
     folderInput().dispatchEvent(new Event("input", { bubbles: true }));
   });
-const moveRadio = () =>
-  [
-    ...document.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]'),
-  ].find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!;
 const stageNow = () =>
   container.querySelector('[data-slot="handoff-folder-copy"]')?.getAttribute("data-stage");
 const measuredWithoutSecrets = () => {
@@ -198,8 +195,7 @@ it("offers no Change while coordinator context transfers", async () => {
       projectId: "00000000-0000-4000-8000-000000000002",
     }),
   ];
-  await mount();
-  await act(async () => moveRadio().click());
+  await mount(MOVE);
   await click("Copy and move to M3");
   await click("Copy and move to M3");
   expect(stageNow()).toBe("moving");
@@ -312,8 +308,7 @@ it("offers no Back anywhere", async () => {
 });
 
 it("cancels the copy from Review's Change setup, and opens the form with the same choices", async () => {
-  await mount();
-  await act(async () => moveRadio().click());
+  await mount(MOVE);
   await chooseFirst();
   await click("Copy and move to M3");
   await click("Preview on M3");
@@ -334,7 +329,6 @@ it("cancels the copy from Review's Change setup, and opens the form with the sam
   );
   expect(folderInput().disabled).toBe(false);
   expect(folderInput().value).toBe("/home/anton/Projects/project");
-  expect(moveRadio().getAttribute("aria-checked")).toBe("true");
   expect(button("Copy and move to M3").disabled).toBe(false);
   // Closing right after keeps those choices for the next open.
   expect(JSON.parse(localStorage.getItem(DRAFT_KEY)!)).toMatchObject({
@@ -437,11 +431,11 @@ it("locks starting a new copy while a coordinator transfer may need recovering",
 // Reopening: the dialog checks the copy first, then brings back the step that was on screen.
 const LAST_KEY = "specwithcode:folder-copy-last:m4:source";
 const DRAFT_KEY = "specwithcode:folder-copy-draft:m4:source";
-const reopen = async () => {
+const reopen = async (overrides: FixtureOptions = {}) => {
   await act(async () => root.unmount());
   state.calls = [];
   root = createRoot(container);
-  await mount();
+  await mount(overrides);
 };
 const noteText = () =>
   document.querySelector('[data-slot="copy-resume-note"]')?.textContent ?? null;
@@ -646,9 +640,8 @@ it("shows an old pointer's live step as before, and starts remembering it", asyn
 });
 
 it("remembers the setup form while no copy has started", async () => {
-  await mount();
+  await mount(MOVE);
   await chooseFirst();
-  await act(async () => moveRadio().click());
   await editFolder("/home/anton/Elsewhere/project");
   expect(JSON.parse(localStorage.getItem(DRAFT_KEY)!)).toEqual({
     machine: "m3",
@@ -657,10 +650,10 @@ it("remembers the setup form while no copy has started", async () => {
     chooseFirst: true,
     secrets: { included: true, out: [] },
   });
-  await reopen();
+  // The draft keeps the folder and the choices; the move comes from how the dialog opened.
+  await reopen(MOVE);
   await settle();
   expect(folderInput().value).toBe("/home/anton/Elsewhere/project");
-  expect(moveRadio().getAttribute("aria-checked")).toBe("true");
   await click("Copy and move to M3");
   // The copy's pointer holds the choices from here.
   expect(localStorage.getItem(DRAFT_KEY)).toBeNull();
@@ -729,7 +722,6 @@ it("keeps the move and machine the dialog was opened with over the last copy-onl
     preferredMachine: "m1",
     machineRequested: true,
   });
-  expect(moveRadio().getAttribute("aria-checked")).toBe("true");
   expect(button("Copy and move to M1").disabled).toBe(false);
   expect(() => button("Copy to M3")).toThrow();
   await act(async () => root.unmount());

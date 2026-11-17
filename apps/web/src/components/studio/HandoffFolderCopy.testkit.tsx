@@ -171,6 +171,9 @@ export const copyHandlers = ({
   }),
 });
 
+/** Opened to move Main ("Make X main"): the copy flow no longer asks, the dialog says. */
+export const MOVE = { defaultMode: "copy-and-move" } as const;
+
 export interface FixtureOptions {
   coordinatorId?: string | null;
   canMove?: boolean;

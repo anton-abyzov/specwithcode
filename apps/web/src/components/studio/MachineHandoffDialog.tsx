@@ -222,7 +222,7 @@ export function MachineHandoffDialog({
   const header = sendHeader({
     source: sourceLabel,
     there,
-    move: moving,
+    move: moving && refused !== "main",
     main: send?.mainLabel ?? null,
     otherProject: there ? send?.otherProject : null,
   });
