@@ -16,6 +16,7 @@ import {
   withHeadlessBrowserEnvironment,
 } from "./RuntimeInstructions.ts";
 import { ThreadToolkit } from "../mcp/toolkits/thread/tools.ts";
+import { ADVISOR_GUIDANCE } from "@specweave-studio/shared/advisor";
 
 describe("headless browser environment", () => {
   it("applies the headless variables over an inherited or provider value", () => {
@@ -386,4 +387,24 @@ it("keeps the response style block near 320 tokens", () => {
   // 2,093 characters before the closure protocol moved out; 1,262 now.
   expect(block("concise").length).toBeLessThanOrEqual(1_300);
   expect(block("detailed").length).toBeLessThanOrEqual(1_350);
+});
+
+describe("advisor guidance", () => {
+  const base = { harness: "Codex", model: "gpt-5.5" } as const;
+
+  it("appends the guidance in an <advisor> block after the shared rules", () => {
+    const text = buildRuntimeInstructions({ ...base, advisorGuidance: ADVISOR_GUIDANCE });
+    expect(text).toContain(`<advisor>\n${ADVISOR_GUIDANCE}\n</advisor>`);
+    expect(text.endsWith("</advisor>")).toBe(true);
+    expect(text.indexOf("<advisor>")).toBeGreaterThan(
+      text.indexOf(STUDIO_HEAVY_CHECKS_INSTRUCTIONS),
+    );
+  });
+
+  it("adds nothing when the advisor is off", () => {
+    const off = buildRuntimeInstructions(base);
+    expect(off).not.toContain("<advisor>");
+    expect(buildRuntimeInstructions({ ...base, advisorGuidance: undefined })).toBe(off);
+    expect(buildRuntimeInstructions({ ...base, advisorGuidance: "  \n " })).toBe(off);
+  });
 });

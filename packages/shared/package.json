@@ -304,6 +304,10 @@
       "types": "./src/adversarialReview.ts",
       "import": "./src/adversarialReview.ts"
     },
+    "./advisor": {
+      "types": "./src/advisor.ts",
+      "import": "./src/advisor.ts"
+    },
     "./reviewPolicy": {
       "types": "./src/reviewPolicy.ts",
       "import": "./src/reviewPolicy.ts"

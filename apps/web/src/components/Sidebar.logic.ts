@@ -575,8 +575,13 @@ export function buildMultiSelectThreadContextMenuItems(input: {
   ];
 }
 
-export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
-  return thread.lineage.relationshipToParent === "subagent";
+/** A subagent, or an advisor child (never listed, whoever started it). */
+export function isSidebarSubagentThread(
+  thread: Pick<SidebarThreadSummary, "lineage"> & Partial<Pick<SidebarThreadSummary, "source">>,
+): boolean {
+  return (
+    thread.lineage.relationshipToParent === "subagent" || thread.source?.purpose === "advisor"
+  );
 }
 
 export function filterSidebarV2VisibleThreads<

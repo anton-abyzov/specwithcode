@@ -22,6 +22,7 @@ import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
+import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 
 const providerToken = "bodyLimitProbeTokenWithoutDots";
 const providerScope: McpInvocationContext.McpThreadInvocationScope = {
@@ -74,6 +75,8 @@ const serveProbe = Effect.gen(function* () {
         resolve: (token) => Effect.succeed(token === providerToken ? providerScope : undefined),
       }),
     ),
+    // As in production, the advisor-caller guard reads the caller's thread.
+    Layer.provide(McpToolAccessTestkit.recordingLiveThreadsLayer([])),
   );
   yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
     Layer.build,

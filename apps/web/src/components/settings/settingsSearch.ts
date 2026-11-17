@@ -83,6 +83,8 @@ export interface SettingsSearchItem {
    */
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  /** Its section renders only when every selected machine offers the advisor. */
+  readonly requiresAdvisor?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -95,6 +97,8 @@ export interface SettingsSearchAvailability {
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
+  /** Every selected, connected machine advertises the `advisor` capability. */
+  readonly hasAdvisor?: boolean;
 }
 
 /**
@@ -892,6 +896,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     macProviderSettingsOnly: true,
   },
   {
+    id: "advisor",
+    title: "Advisor",
+    to: "/settings/models",
+    searchTerms: [
+      "advisor second opinion stronger model consult review approach stuck before done fable claude built-in brief size consults per run context limit",
+    ],
+    providerSettingsOnly: true,
+    requiresAdvisor: true,
+  },
+  {
     id: "adversarial-review",
     title: "Adversarial review",
     to: "/settings/models",
@@ -1579,6 +1593,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
+      (!item.requiresAdvisor || availability.hasAdvisor === true) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true),
   );
 }

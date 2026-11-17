@@ -16,6 +16,8 @@ import { STUDIO_MCP_TOOL_NAMES } from "@specweave-studio/shared/studioMcpToolPre
 
 import type { ThreadCheckpointSummary } from "../state/threadCheckpoints.ts";
 import {
+  advisorConsultView,
+  isAdvisorConsultItem,
   commandDetailRepeatsCommand,
   extractCommandOutputText,
   fileChangeItemPaths,
@@ -308,7 +310,8 @@ describe("resolveWorkEntryToolPresentation", () => {
       };
       const presentation = resolveWorkEntryToolPresentation(entry);
       expect(presentation, tool).not.toBeNull();
-      expect(presentation?.displayName, tool).not.toContain(tool);
+      // "Asked the advisor" names the tool because the tool is named after what it asks.
+      if (tool !== "advisor") expect(presentation?.displayName, tool).not.toContain(tool);
       const summary = summarizeToolGroup([entry]);
       expect(summary.summary, tool).not.toMatch(/Used (?:1 tool|SpecWithCode integration)/);
       expect(summary.hasFailure, tool).toBe(false);
@@ -1586,5 +1589,124 @@ describe("turnDiffState", () => {
     expect(turnDiffState({ runId, runs: [], checkpoints: [checkpoint()] })).toEqual({
       kind: "unknown",
     });
+  });
+});
+
+describe("advisorConsultView", () => {
+  const at = DateTime.makeUnsafe("2026-11-16T12:00:00.000Z");
+  const tool = (overrides: Record<string, unknown>): OrchestrationV2TurnItem =>
+    ({
+      id: TurnItemId.make("advisor-item"),
+      threadId: ThreadId.make("thread-1"),
+      runId: RunId.make("run-1"),
+      type: "dynamic_tool",
+      toolName: "mcp__studio-code__advisor",
+      title: null,
+      status: "completed",
+      input: {},
+      startedAt: at,
+      completedAt: at,
+      createdAt: at,
+      updatedAt: at,
+      ...overrides,
+    }) as unknown as OrchestrationV2TurnItem;
+  const envelope = (value: Record<string, unknown>) => ({
+    content: [{ type: "text", text: JSON.stringify(value) }],
+    structuredContent: value,
+  });
+
+  it("knows the studio-code tool and Claude's own, not another server's", () => {
+    expect(isAdvisorConsultItem(tool({}))).toBe(true);
+    expect(isAdvisorConsultItem(tool({ toolName: "studio-code.advisor" }))).toBe(true);
+    expect(isAdvisorConsultItem(tool({ toolName: "advisor" }))).toBe(true);
+    expect(isAdvisorConsultItem(tool({ toolName: "mcp__github__advisor" }))).toBe(false);
+    expect(isAdvisorConsultItem(tool({ toolName: "mcp__studio-code__delegate_task" }))).toBe(false);
+  });
+
+  it("reads each status of a studio-code consult", () => {
+    expect(
+      advisorConsultView(
+        tool({
+          output: envelope({
+            status: "advice",
+            message: "The advisor answered.",
+            advice: "Check the budget.",
+            advisor: "Claude Fable 5.2 on Claude",
+            consultsRemaining: 1,
+          }),
+        }),
+      ),
+    ).toEqual({
+      state: "advice",
+      advisor: "Claude Fable 5.2 on Claude",
+      detail: "Check the budget.",
+      code: null,
+      consultsRemaining: 1,
+      builtIn: false,
+    });
+    for (const status of ["working", "refused", "failed"] as const) {
+      expect(
+        advisorConsultView(tool({ output: envelope({ status, message: "Because." }) })),
+      ).toMatchObject({ state: status, detail: "Because.", builtIn: false });
+    }
+    expect(advisorConsultView(tool({ status: "running", completedAt: null }))).toMatchObject({
+      state: "running",
+      detail: null,
+    });
+  });
+
+  it("reads Claude's own advisor from its plain text", () => {
+    expect(
+      advisorConsultView(
+        tool({
+          toolName: "advisor",
+          title: "Asked the advisor (claude-fable-5-2)",
+          output: "Split the migration.",
+        }),
+      ),
+    ).toEqual({
+      state: "advice",
+      advisor: "claude-fable-5-2",
+      detail: "Split the migration.",
+      code: null,
+      consultsRemaining: null,
+      builtIn: true,
+    });
+    expect(
+      advisorConsultView(
+        tool({ toolName: "advisor", output: "Advice applied (hidden by Claude)" }),
+      ),
+    ).toMatchObject({ state: "hidden", builtIn: true });
+    expect(
+      advisorConsultView(
+        tool({ toolName: "advisor", status: "failed", output: "Advisor unavailable (overloaded)" }),
+      ),
+    ).toMatchObject({ state: "unavailable", code: "overloaded", builtIn: true });
+    expect(
+      advisorConsultView(
+        tool({
+          toolName: "advisor",
+          status: "failed",
+          output: "The advisor declined to advise.",
+        }),
+      ),
+    ).toMatchObject({ state: "failed", detail: "The advisor declined to advise." });
+  });
+
+  it("never shows a cut studio-code result as advice", () => {
+    const cut = `${JSON.stringify({ status: "advice", advice: "x".repeat(40) }).slice(0, 30)}...`;
+    expect(advisorConsultView(tool({ output: cut }))).toMatchObject({
+      state: "advice",
+      detail: null,
+      builtIn: false,
+    });
+    expect(advisorConsultView(tool({ status: "failed", output: cut }))).toMatchObject({
+      state: "failed",
+      detail: null,
+    });
+  });
+
+  it("is null for anything that is not a consult", () => {
+    expect(advisorConsultView(tool({ toolName: "mcp__studio-code__delegate_task" }))).toBeNull();
   });
 });

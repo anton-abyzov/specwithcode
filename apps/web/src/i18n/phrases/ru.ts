@@ -5169,6 +5169,47 @@ export const ru: PhraseCatalog = {
     "Настроить эту машину для запуска работы на {there}",
   "Change what this machine may do on {there}":
     "Изменить, что этой машине можно на {there}",
+  Advisor: "Советник",
+  "Let threads ask a stronger model": "Разрешить тредам спрашивать более сильную модель",
+  "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
+    "Тред может попросить более сильную модель проверить свой подход и продолжить работу. Каждая консультация расходует лимит модели-советника.",
+  advisor: "советник",
+  "Advisor model": "Модель-советник",
+  "A thread is never advised by its own model; the next model in the order answers instead.":
+    "Тред никогда не консультируется у своей же модели; вместо неё отвечает следующая модель в порядке.",
+  "advisor model": "модель-советник",
+  "Use the default advisor order": "Использовать порядок советников по умолчанию",
+  "Fable 5.2, then the Review track": "Fable 5.2, затем трек Review",
+  "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
+    "В тредах Claude встроенный советник Claude перечитывает весь разговор при каждой консультации. Советник Fable оплачивается кредитами использования Claude.",
+  "Claude's own advisor": "собственный советник Claude",
+  "Context limit for Claude's advisor": "Лимит контекста для советника Claude",
+  "Above this many tokens of context, a Claude thread sends the budgeted brief instead.":
+    "Если контекст больше этого числа токенов, тред Claude отправляет сжатую сводку.",
+  "context limit": "лимит контекста",
+  tokens: "токенов",
+  "Consults per run": "Консультаций за запуск",
+  "Further consults in the same run are refused.":
+    "Следующие консультации в том же запуске отклоняются.",
+  "consults per run": "консультаций за запуск",
+  "Brief size": "Размер сводки",
+  "The most a consult sends to the advisor. Older activity is left out first.":
+    "Максимум, который консультация отправляет советнику. Старые действия отбрасываются первыми.",
+  "brief size": "размер сводки",
+  "Asking the advisor": "Запрашиваю совет",
+  "Asked the advisor": "Совет запрошен",
+  "Did not ask the advisor": "Совет не запрошен",
+  "The advisor gave no advice": "Советник не дал совета",
+  "Advisor unavailable": "Советник недоступен",
+  "Claude built-in": "Встроенный в Claude",
+  "The advisor is still working. Its advice arrives as a new message.": "Советник ещё работает. Совет придёт новым сообщением.",
+  "Still working": "Ещё работает",
+  "{count} left this run": "Осталось в этом запуске: {count}",
+  "Advice applied (hidden by Claude)": "Совет учтён (скрыт Claude)",
+  "Advisor consult": "Консультация советника",
+  "Follow project (on)": "Как в проекте (вкл.)",
+  "Follow project (off)": "Как в проекте (выкл.)",
+  "Lets this thread ask a stronger model to check its work.": "Позволяет этому треду просить более сильную модель проверить работу.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Удалять worktree, чаты которых решены или в архиве и неактивны столько дней. Ветки и история чатов сохраняются.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":

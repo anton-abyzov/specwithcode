@@ -1923,6 +1923,10 @@ export function threadShellFromProjection(
     pinnedAt: projection.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
+    ...(projection.thread.advisorMode == null
+      ? {}
+      : { advisorMode: projection.thread.advisorMode }),
+    ...(projection.thread.purpose === undefined ? {} : { purpose: projection.thread.purpose }),
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
@@ -2282,6 +2286,10 @@ function shellFromState(input: {
     pinnedAt: input.state.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
+    ...(input.state.thread.advisorMode == null
+      ? {}
+      : { advisorMode: input.state.thread.advisorMode }),
+    ...(input.state.thread.purpose === undefined ? {} : { purpose: input.state.thread.purpose }),
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,

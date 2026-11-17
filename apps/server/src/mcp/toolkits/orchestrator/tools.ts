@@ -1,4 +1,6 @@
 import {
+  OrchestratorMcpAdvisorInput,
+  OrchestratorMcpAdvisorResult,
   OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpCreateThreadsInput,
@@ -97,6 +99,23 @@ export const DelegateTaskTool = Tool.make("delegate_task", {
   .annotate(Tool.Title, "Delegate a child task")
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
+
+export const AdvisorTool = Tool.make("advisor", {
+  description:
+    "Needs an agent running inside a SpecWithCode thread whose advisor is on. Asks a stronger model to review this thread's work so far; SpecWithCode sends it a brief of the thread (what was asked, what you did, where things stand), so no arguments are needed. Pass focus only to name the one question or decision you most want checked. Good moments: once you understand the task and before the substantive work, before you report the work as done (save results first), and when you are stuck or about to change approach. Results: advice is the review, weigh it and reconcile any conflict with evidence you hold; working means the advisor needs longer, so do what does not depend on it and end your turn, and the advice arrives as your next message (calling advisor again before it arrives picks up the same consult); refused started nothing and message says why; failed means no advice came, carry on without it. Consults are limited per turn; consultsRemaining says how many are left.",
+  parameters: OrchestratorMcpAdvisorInput,
+  success: OrchestratorMcpAdvisorResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Consult the advisor")
+  // Read-only so plan-mode and read-only-sandbox threads may consult: the
+  // advisor child runs read-only and the call changes nothing in the workspace.
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
 
 const TaskStatusTool = Tool.make("task_status", {
   description:
@@ -402,6 +421,7 @@ const ThreadContinueHereTool = Tool.make("studio_thread_continue_here", {
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
+  AdvisorTool,
   TaskStatusTool,
   TaskCancelTool,
   ScheduleTaskTool,

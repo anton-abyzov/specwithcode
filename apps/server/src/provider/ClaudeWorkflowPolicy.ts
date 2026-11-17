@@ -176,6 +176,12 @@ export function compileClaudeWorkflowPolicy(input: {
   readonly ultracode?: boolean | undefined;
   readonly agentInstructions?: string | undefined;
   readonly responseStyle?: ResponseStyle | undefined;
+  /**
+   * When to consult the advisor, only for a session that has an advisor to
+   * call. The main session gets it; Agent workers do not, so consults stay
+   * the parent's choice.
+   */
+  readonly advisorGuidance?: string | undefined;
   readonly orchestrationInstructions?: string | undefined;
   readonly subagentPromptFileContents?: string | undefined;
   readonly extraArgs?: Readonly<Record<string, string | null>> | undefined;
@@ -192,15 +198,23 @@ export function compileClaudeWorkflowPolicy(input: {
       "Claude worker instruction file must be resolved before compiling workflow policy.",
     );
   }
-  const instructions = [
-    input.agentInstructions?.trim(),
-    input.extraArgs?.["append-subagent-system-prompt"],
-    input.subagentPromptFileContents,
-    buildRuntimeInstructions({ harness: "Claude Code", responseStyle: input.responseStyle }),
-    input.orchestrationInstructions,
-  ]
-    .filter((part): part is string => typeof part === "string" && part.length > 0)
-    .join("\n\n");
+  const joinInstructions = (advisorGuidance: string | undefined) =>
+    [
+      input.agentInstructions?.trim(),
+      input.extraArgs?.["append-subagent-system-prompt"],
+      input.subagentPromptFileContents,
+      buildRuntimeInstructions({
+        harness: "Claude Code",
+        responseStyle: input.responseStyle,
+        advisorGuidance,
+      }),
+      input.orchestrationInstructions,
+    ]
+      .filter((part): part is string => typeof part === "string" && part.length > 0)
+      .join("\n\n");
+  const instructions = joinInstructions(input.advisorGuidance);
+  const subagentInstructions =
+    input.advisorGuidance === undefined ? instructions : joinInstructions(undefined);
   const extraArgs = { ...input.extraArgs };
   // The CLI rejects simultaneous inline/file additions. Preserve both contents
   // in one append rather than passing conflicting flags or discarding rules.
@@ -211,7 +225,7 @@ export function compileClaudeWorkflowPolicy(input: {
   if (launchUltracode) extraArgs.effort = "xhigh";
   // An initialize-only SDK append is not inherited by workflow workers.
   // The documented CLI flag is: verified against native worker journals.
-  extraArgs["append-subagent-system-prompt"] = instructions;
+  extraArgs["append-subagent-system-prompt"] = subagentInstructions;
   const settings = {
     enableWorkflows: mode !== "disabled",
     ultracode: resolveClaudeUltracode(mode, input.ultracode, launchUltracode),

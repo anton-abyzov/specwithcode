@@ -29,6 +29,7 @@ import {
   type RuntimeMode,
   type RuntimeRequestId,
   type ThreadId,
+  type ThreadAdvisorMode,
   type ThreadEnvMode,
   type UploadChatAttachment,
 } from "@specweave-studio/contracts";
@@ -551,6 +552,21 @@ export const setThreadAutoSettle = Effect.fn("EnvironmentCommands.setThreadAutoS
     enabled: input.enabled,
   });
 });
+
+export interface SetThreadAdvisorModeInput extends ThreadCommandInput {
+  /** The thread's own choice; null follows the project again. */
+  readonly advisorMode: ThreadAdvisorMode | null;
+}
+export const setThreadAdvisorMode = Effect.fn("EnvironmentCommands.setThreadAdvisorMode")(
+  function* (input: SetThreadAdvisorModeInput) {
+    return yield* dispatch({
+      type: "thread.advisor-mode.set",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      advisorMode: input.advisorMode,
+    });
+  },
+);
 
 export const reorderPinnedThread = Effect.fn("EnvironmentCommands.reorderPinnedThread")(function* (
   input: ReorderPinnedThreadInput,

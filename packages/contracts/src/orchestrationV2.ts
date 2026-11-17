@@ -3,6 +3,7 @@ import { LifecycleReceipt, LifecycleReceiptReport } from "./threadLifecycleEvide
 import { ThreadRuntimeModeSetCommand } from "./threadRuntimeModeCommand.ts";
 import { ManualCodexCreditIntent } from "./manualCodexCredits.ts";
 import { StartAdversarialReviewInput, StartAdversarialReviewResult } from "./adversarialReview.ts";
+import { AdvisorTaskPurpose, ThreadAdvisorMode } from "./advisor.ts";
 export {
   ManualCodexCreditIntent,
   manualCreditBindingMatches,
@@ -510,6 +511,10 @@ export const OrchestrationV2AppThread = Schema.Struct({
   limitPreswitchFrom: Schema.optional(Schema.NullOr(OrchestrationV2LimitPreswitchOrigin)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** The thread's own advisor choice; absent or null follows the project. */
+  advisorMode: Schema.optional(Schema.NullOr(ThreadAdvisorMode)),
+  /** Set on a child that exists only to advise its parent; never changed. */
+  purpose: Schema.optional(AdvisorTaskPurpose),
   // Fractional-index slot in the user-arranged pinned order. Optional so
   // payloads from pre-reorder servers still decode.
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -916,6 +921,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   // blocking tool call). Absent on legacy records; treated as settled_only.
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
+  /** Set when the task is an advisor consult rather than delegated work. */
+  purpose: Schema.optional(AdvisorTaskPurpose),
   status: Schema.Literals([
     "idle",
     "pending",
@@ -2465,6 +2472,10 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   /** Omitted by servers that predate thread pinning. */
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** The thread's own advisor choice; absent or null follows the project. */
+  advisorMode: Schema.optional(Schema.NullOr(ThreadAdvisorMode)),
+  /** Set on a child that exists only to advise its parent; never changed. */
+  purpose: Schema.optional(AdvisorTaskPurpose),
   /** Slot in the user-arranged pinned order; omitted by pre-reorder servers. */
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Slot in the user-arranged active order; omitted by pre-reorder servers. */
@@ -3433,6 +3444,13 @@ export const OrchestrationV2Command = Schema.Union([
     modelSelection: ModelSelection,
   }),
   Schema.Struct({
+    type: Schema.Literal("thread.advisor-mode.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** null follows the project again. */
+    advisorMode: Schema.NullOr(ThreadAdvisorMode),
+  }),
+  Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
     commandId: CommandId,
     threadId: ThreadId,
@@ -3651,6 +3669,8 @@ export const OrchestrationV2Command = Schema.Union([
     // Omitted behaves as "settled_only" (no wake while the parent has a live
     // run); producers that want fire-and-forget wakes must set "always".
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+    /** An advisor consult: the child is read-only and cannot consult or delegate. */
+    purpose: Schema.optional(AdvisorTaskPurpose),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({

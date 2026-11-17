@@ -173,6 +173,25 @@ describe("Claude workflow policy", () => {
     assert.equal(policy.extraArgs["append-subagent-system-prompt"], policy.instructions);
   });
 
+  it("tells the lead when to consult the advisor, once, and leaves workers out", () => {
+    const guidance = "## Advisor\nConsult before substantive work.";
+    const policy = compileClaudeWorkflowPolicy({
+      agentInstructions: "Project rules",
+      advisorGuidance: guidance,
+      environment: {},
+    });
+    assert.equal(policy.instructions.split("<advisor>").length - 1, 1);
+    assert.include(policy.instructions, guidance);
+    assert.include(policy.extraArgs["append-subagent-system-prompt"], "Project rules");
+    assert.notInclude(policy.extraArgs["append-subagent-system-prompt"], "<advisor>");
+    const off = compileClaudeWorkflowPolicy({
+      agentInstructions: "Project rules",
+      environment: {},
+    });
+    assert.notInclude(off.instructions, "<advisor>");
+    assert.equal(off.extraArgs["append-subagent-system-prompt"], off.instructions);
+  });
+
   it("gives leads and workflow workers the chosen response style", () => {
     const concise = compileClaudeWorkflowPolicy({ environment: {} });
     assert.include(concise.instructions, '<response_style mode="concise">');

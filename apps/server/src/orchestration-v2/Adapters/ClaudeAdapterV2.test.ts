@@ -81,6 +81,12 @@ import {
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import type { PromptSuggestionOffer } from "../PromptSuggestions.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
+import type { AdvisorRoute } from "@specweave-studio/shared/advisor";
+import {
+  CLAUDE_DISABLE_ADVISOR_ENV,
+  type ClaudeSessionAdvisorOutcome,
+  resolveClaudeSessionAdvisor,
+} from "../../claudeModelOptions.ts";
 import {
   CLAUDE_TOOL_RESULT_FIXTURES,
   type ClaudeToolResultFixture,
@@ -220,6 +226,118 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.include(append("concise"), '<response_style mode="concise">');
     assert.include(append("detailed"), '<response_style mode="detailed">');
     assert.notInclude(append("detailed"), '<response_style mode="concise">');
+  });
+
+  describe("Claude's own advisor", () => {
+    const advisorOptions = (input: {
+      readonly claudeAdvisor?: ClaudeSessionAdvisorOutcome;
+      readonly advisorGuidance?: string;
+      readonly withStudioTools?: boolean;
+    }) =>
+      ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        nativeThreadId: "claude-advisor",
+        resume: false,
+        cwd: "/workspace",
+        // Never the runner's shell: "no variable" must not depend on it.
+        environment: {},
+        ...(input.claudeAdvisor === undefined ? {} : { claudeAdvisor: input.claudeAdvisor }),
+        ...(input.advisorGuidance === undefined ? {} : { advisorGuidance: input.advisorGuidance }),
+        ...(input.withStudioTools === true
+          ? {
+              mcpServers: {
+                "studio-code": { type: "http" as const, url: "http://127.0.0.1:1/mcp" },
+              },
+            }
+          : {}),
+      });
+    const appendOf = (options: ReturnType<typeof advisorOptions>) => {
+      const prompt = options.systemPrompt;
+      if (typeof prompt !== "object" || Array.isArray(prompt) || prompt.type !== "preset")
+        throw new Error("Expected native Claude preset prompt");
+      return prompt.append ?? "";
+    };
+    const resolve = (contextTokens: number | null, previousRoute: AdvisorRoute | null) =>
+      resolveClaudeSessionAdvisor({
+        claudeAdvisor: { kind: "model", model: "claude-fable-5-2", contextLimit: 1_000 },
+        contextTokens,
+        previousRoute,
+      });
+
+    it("passes nothing when the policy has no advisor", () => {
+      const options = advisorOptions({});
+      assert.notProperty(options.settings, "advisorModel");
+      assert.notProperty(options.env, CLAUDE_DISABLE_ADVISOR_ENV);
+    });
+
+    it("switches Claude's advisor off with the variable", () => {
+      const options = advisorOptions({ claudeAdvisor: { kind: "disable" } });
+      assert.equal(options.env?.[CLAUDE_DISABLE_ADVISOR_ENV], "1");
+      assert.notProperty(options.settings, "advisorModel");
+    });
+
+    it("names the advisor model in the flag settings and sets no variable", () => {
+      const options = advisorOptions({
+        claudeAdvisor: { kind: "model", model: "claude-fable-5-2" },
+      });
+      assert.include(options.settings, { advisorModel: "claude-fable-5-2" });
+      assert.notProperty(options.env, CLAUDE_DISABLE_ADVISOR_ENV);
+    });
+
+    it("moves past the limit to the app's advisor and back only under half of it", () => {
+      const over = resolve(1_200, "built-in");
+      assert.deepEqual(over, { outcome: { kind: "disable" }, route: "studio" });
+      const switchedOff = advisorOptions({ claudeAdvisor: over.outcome! });
+      assert.equal(switchedOff.env?.[CLAUDE_DISABLE_ADVISOR_ENV], "1");
+      assert.notProperty(switchedOff.settings, "advisorModel");
+      // Under the limit but over half of it: still the app's advisor.
+      assert.deepEqual(resolve(700, "studio").route, "studio");
+      const back = resolve(400, "studio");
+      assert.deepEqual(back, {
+        outcome: { kind: "model", model: "claude-fable-5-2" },
+        route: "built-in",
+      });
+      assert.include(advisorOptions({ claudeAdvisor: back.outcome! }).settings, {
+        advisorModel: "claude-fable-5-2",
+      });
+      // An unknown size keeps the previous route.
+      assert.equal(resolve(null, "studio").route, "studio");
+      assert.equal(resolve(null, null).route, "built-in");
+    });
+
+    it("tells the session when to consult only when it has an advisor to call", () => {
+      const guidance = "## Advisor\nConsult before substantive work.";
+      const withTools = advisorOptions({ advisorGuidance: guidance, withStudioTools: true });
+      assert.equal(appendOf(withTools).split("<advisor>").length - 1, 1);
+      assert.include(appendOf(withTools), guidance);
+      // Agent workers are not told to consult; the parent decides.
+      assert.notInclude(withTools.extraArgs?.["append-subagent-system-prompt"] ?? "", "<advisor>");
+      assert.include(
+        appendOf(
+          advisorOptions({
+            advisorGuidance: guidance,
+            claudeAdvisor: { kind: "model", model: "claude-fable-5-2" },
+          }),
+        ),
+        guidance,
+      );
+      assert.notInclude(appendOf(advisorOptions({ advisorGuidance: guidance })), "<advisor>");
+      assert.notInclude(appendOf(advisorOptions({ withStudioTools: true })), "<advisor>");
+    });
+
+    it("keys the live query on the guidance the session gets", () => {
+      const policy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
+        CLAUDE_TEST_RUNTIME_POLICY,
+      );
+      assert.notEqual(
+        ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(policy, {}, { advisorGuidance: "x" }),
+        ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(policy, {}, {}),
+      );
+      assert.equal(
+        ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(policy, {}, { advisorGuidance: undefined }),
+        ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(policy, {}, {}),
+      );
+    });
   });
 
   it("makeClaudeQueryOptions sends the thread's Ultracode toggle beside its effort", () => {
@@ -894,6 +1012,56 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       assert.deepEqual(overrides.allowedTools, [
         ...ClaudeAdapterV2.CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS,
       ]);
+    });
+  });
+
+  it("gives an advisor child a read-only session without Claude's own advisor", () => {
+    const threadId = ThreadId.make("thread-claude-advisor-child");
+    withMcpSession(threadId, () => {
+      // As RuntimePolicy makes it for a thread whose purpose is "advisor".
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: "/workspace",
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "readOnly", access: { type: "fullAccess" }, networkAccess: false },
+        claudeAdvisor: { kind: "disable" },
+      });
+      const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(runtimePolicy);
+      const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+        threadId,
+        readOnlySandbox: true,
+        ...(queryPolicy.allowedTools === undefined
+          ? {}
+          : { allowedTools: queryPolicy.allowedTools }),
+      });
+      const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        nativeThreadId: "advisor-child",
+        resume: false,
+        cwd: "/workspace",
+        environment: {},
+        ...overrides,
+        permissionMode: queryPolicy.permissionMode,
+        claudeAdvisor: resolveClaudeSessionAdvisor({
+          claudeAdvisor: runtimePolicy.claudeAdvisor,
+          contextTokens: null,
+          previousRoute: null,
+        }).outcome,
+      });
+      // Only a recognised read-only policy gets the read-only tool list.
+      assert.deepEqual(queryPolicy.allowedTools, ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS);
+      assert.equal(options.permissionMode, "dontAsk");
+      assert.equal(options.env?.[CLAUDE_DISABLE_ADVISOR_ENV], "1");
+      assert.notProperty(options.settings, "advisorModel");
+      assert.includeMembers(
+        [...(options.allowedTools ?? [])],
+        [...ClaudeAdapterV2.CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS],
+      );
+      assert.notInclude(
+        options.allowedTools ?? [],
+        ClaudeAdapterV2.CLAUDE_STUDIO_MCP_TOOL_WILDCARD,
+      );
     });
   });
 
@@ -3217,6 +3385,167 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }
       assert.equal(new Set(items.map((item) => item.id)).size, 1);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  const advisorPolicy = (contextLimit: number) =>
+    ProviderAdapterV2RuntimePolicy.make({
+      ...CLAUDE_TEST_RUNTIME_POLICY,
+      claudeAdvisor: { kind: "model", model: "claude-fable-5-2", contextLimit },
+    });
+  const advisorFrame = (input: {
+    readonly uuid: string;
+    readonly content?: unknown;
+    readonly inputTokens?: number;
+  }) =>
+    claudeSdkFrame({
+      type: "assistant",
+      uuid: input.uuid,
+      session_id: WAKE_NATIVE_SESSION,
+      parent_tool_use_id: null,
+      message: {
+        id: `msg_${input.uuid}`,
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        content:
+          input.content === undefined
+            ? [{ type: "text", text: "Done" }]
+            : [
+                {
+                  type: "server_tool_use",
+                  id: `advisor-${input.uuid}`,
+                  name: "advisor",
+                  input: {},
+                },
+                {
+                  type: "advisor_tool_result",
+                  tool_use_id: `advisor-${input.uuid}`,
+                  content: input.content,
+                },
+              ],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: {
+          input_tokens: input.inputTokens ?? 1,
+          output_tokens: 1,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+      },
+    });
+
+  it.effect.each([
+    {
+      content: {
+        type: "advisor_result",
+        text: "Check the migration first.",
+        stop_reason: "end_turn",
+      },
+      output: "Check the migration first.",
+      status: "completed",
+    },
+    {
+      content: {
+        type: "advisor_redacted_result",
+        encrypted_content: "opaque",
+        stop_reason: "end_turn",
+      },
+      output: "Advice applied (hidden by Claude)",
+      status: "completed",
+    },
+    {
+      content: { type: "advisor_tool_result_error", error_code: "overloaded" },
+      output: "Advisor unavailable (overloaded)",
+      status: "failed",
+    },
+  ])("stores a consult of Claude's own advisor readably: $output", ({ content, output, status }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("claude-advisor-item"),
+          text: "Plan the change",
+          attachments: [],
+          runtimePolicy: advisorPolicy(100_000),
+        }),
+      );
+      assert.include(harness.getOpenedOptions()?.settings, { advisorModel: "claude-fable-5-2" });
+      yield* harness.offerAndWait(advisorFrame({ uuid: "advisor-consult", content }));
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "advisor-terminal", result: "Planned" }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem]
+          : [],
+      );
+      const last = items.at(-1);
+      assert.equal(last?.toolName, "advisor");
+      assert.equal(last?.status, status);
+      assert.equal(last?.output, output);
+      for (const item of items) assert.equal(item.title, "Asked the advisor (claude-fable-5-2)");
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("moves Claude's advisor by context size at the next turn, never mid-turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`claude-advisor-route:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            runtimePolicy: advisorPolicy(1_000),
+          });
+        const finish = (ordinal: number, inputTokens: number) =>
+          Effect.gen(function* () {
+            yield* harness.offerAndWait(
+              advisorFrame({ uuid: `advisor-route-${ordinal}`, inputTokens }),
+            );
+            yield* Queue.offer(
+              harness.sdkMessages,
+              makeResultFrame({ uuid: `advisor-route-result-${ordinal}`, result: "ok" }),
+            );
+            yield* Queue.take(harness.terminalReceipts);
+          });
+        const builtIn = (options: ReturnType<typeof harness.getOpenedOptions>) => {
+          assert.include(options?.settings, { advisorModel: "claude-fable-5-2" });
+          assert.notProperty(options?.env, CLAUDE_DISABLE_ADVISOR_ENV);
+        };
+        const studio = (options: ReturnType<typeof harness.getOpenedOptions>) => {
+          assert.notProperty(options?.settings, "advisorModel");
+          assert.equal(options?.env?.[CLAUDE_DISABLE_ADVISOR_ENV], "1");
+        };
+
+        yield* harness.runtime.startTurn(turn(1));
+        const first = harness.getOpenedOptions();
+        builtIn(first);
+        yield* finish(1, 300);
+        // An unchanged value keeps the process.
+        yield* harness.runtime.startTurn(turn(2));
+        assert.strictEqual(harness.getOpenedOptions(), first);
+        // The context passes the limit during the turn; the process keeps its advisor.
+        yield* finish(2, 1_200);
+        assert.strictEqual(harness.getOpenedOptions(), first);
+
+        // The next turn opens a process on the app's advisor.
+        yield* harness.runtime.startTurn(turn(3));
+        const third = harness.getOpenedOptions();
+        assert.notStrictEqual(third, first);
+        studio(third);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
   );
 
   it.effect(

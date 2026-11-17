@@ -8,6 +8,7 @@ export interface StudioMcpToolPresentation {
 export type StudioMcpToolSummaryAction =
   | "capabilities"
   | "delegate"
+  | "advisor"
   | "task-status"
   | "task-cancel"
   | "schedule-run"
@@ -127,6 +128,7 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     "capabilities",
   ),
   delegate_task: tool(["Delegate", "Delegating", "Delegated", "a child task"], "delegate"),
+  advisor: tool(["Ask", "Asking", "Asked", "the advisor"], "advisor"),
   task_status: tool(["Get", "Getting", "Got", "delegated task status"], "task-status"),
   task_cancel: tool(
     ["Cancel", "Canceling", "Requested cancellation of", "delegated task"],

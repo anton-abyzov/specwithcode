@@ -55,6 +55,7 @@ import type * as EffectAcpProtocol from "@specweave-studio/effect-acp/protocol";
 import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
 
 import * as ServerConfig from "../../config.ts";
+import { ADVISOR_GUIDANCE } from "@specweave-studio/shared/advisor";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import {
@@ -1091,6 +1092,24 @@ describe("AcpAdapterV2", () => {
         "session/set_config_option",
         "Build should restore the native mode that Studio temporarily replaced for Plan",
       );
+      assert.notInclude(restoredBuild.prompt, "<advisor>");
+
+      // The advisor guidance follows each turn's policy while the tools are wired.
+      const advisorPolicy = ProviderAdapterV2RuntimePolicy.make({
+        ...defaultPolicy,
+        advisorGuidance: ADVISOR_GUIDANCE,
+      });
+      const advisorOn = yield* runTurn(7, advisorPolicy, "Review the approach.");
+      assert.include(advisorOn.prompt, `<advisor>\n${ADVISOR_GUIDANCE}\n</advisor>`);
+      assert.notInclude(
+        (yield* runTurn(8, defaultPolicy, "Advisor is off now.")).prompt,
+        "<advisor>",
+      );
+      // Without the studio-code tools the guidance would name a tool the agent lacks.
+      McpProviderSession.clearMcpProviderSession(threadId);
+      const noTools = yield* runTurn(9, advisorPolicy, "Continue without tools.");
+      assert.notInclude(noTools.prompt, "SpecWithCode orchestration");
+      assert.notInclude(noTools.prompt, "<advisor>");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

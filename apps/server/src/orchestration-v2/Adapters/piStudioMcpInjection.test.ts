@@ -8,6 +8,7 @@ import {
   PI_STUDIO_MCP_EXTENSION_FILENAME,
   STUDIO_MCP_BEARER_ENV,
   STUDIO_MCP_URL_ENV,
+  STUDIO_PI_ADVISOR_GUIDANCE_ENV,
   STUDIO_PI_COORDINATOR_ENV,
   STUDIO_PI_RESPONSE_STYLE_ENV,
   STUDIO_PI_RUNTIME_MODE_ENV,
@@ -133,6 +134,24 @@ describe("pi Studio MCP injection", () => {
     assert.equal(launch(), "concise");
     assert.equal(launch("concise"), "concise");
     assert.equal(launch("detailed"), "detailed");
+  });
+
+  it("passes the advisor guidance only with the studio-code server and never an inherited one", () => {
+    const launch = (input: { advisorGuidance?: string; withMcp: boolean }) =>
+      buildPiRpcLaunch({
+        launchArgs: [],
+        environment: { [STUDIO_PI_ADVISOR_GUIDANCE_ENV]: "inherited guidance" },
+        mcpSession: input.withMcp ? mcpSession : undefined,
+        extensionPath: "/tmp/cache/pi-studio-mcp-extension.ts",
+        ...(input.advisorGuidance === undefined ? {} : { advisorGuidance: input.advisorGuidance }),
+      }).env[STUDIO_PI_ADVISOR_GUIDANCE_ENV];
+    assert.equal(
+      launch({ advisorGuidance: "Consult before done.", withMcp: true }),
+      "Consult before done.",
+    );
+    assert.isUndefined(launch({ advisorGuidance: "Consult before done.", withMcp: false }));
+    assert.isUndefined(launch({ withMcp: true }));
+    assert.isUndefined(launch({ advisorGuidance: "  ", withMcp: true }));
   });
 
   it("forces tools and user extensions off for unattended text generation", () => {

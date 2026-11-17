@@ -23,6 +23,12 @@ export const STUDIO_MCP_BEARER_ENV = "STUDIO_MCP_BEARER_TOKEN";
 export const STUDIO_PI_RUNTIME_MODE_ENV = "STUDIO_PI_RUNTIME_MODE";
 /** The response style chosen for this session: "concise" (default) or "detailed". */
 export const STUDIO_PI_RESPONSE_STYLE_ENV = "STUDIO_PI_RESPONSE_STYLE";
+/**
+ * When to consult the advisor (`runtimePolicy.advisorGuidance`). Set only while
+ * the thread's advisor is on and the studio-code server is wired; the
+ * extension adds it to the system prompt only when the endpoint is present.
+ */
+export const STUDIO_PI_ADVISOR_GUIDANCE_ENV = "STUDIO_PI_ADVISOR_GUIDANCE";
 /** "1" when this session is its project's coordinator and must route work to workers. */
 export const STUDIO_PI_COORDINATOR_ENV = "STUDIO_PI_COORDINATOR";
 
@@ -44,6 +50,7 @@ const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(studioOrchestrationInstructi
 const COORDINATOR_ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(studioOrchestrationInstructionsForRole(true).trim())};
 const COORDINATOR_ENV = ${JSON.stringify(STUDIO_PI_COORDINATOR_ENV)};
 const RESPONSE_STYLE_ENV = ${JSON.stringify(STUDIO_PI_RESPONSE_STYLE_ENV)};
+const ADVISOR_GUIDANCE_ENV = ${JSON.stringify(STUDIO_PI_ADVISOR_GUIDANCE_ENV)};
 const CONCISE_RESPONSE_STYLE = ${JSON.stringify(STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS)};
 const DETAILED_RESPONSE_STYLE = ${JSON.stringify(STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS)};
 const HEADLESS_INSTRUCTIONS = ${JSON.stringify(STUDIO_HEADLESS_INSTRUCTIONS)};
@@ -79,6 +86,11 @@ function runtimeMode(): RuntimeMode {
     value === "full-access"
     ? value
     : "full-access";
+}
+
+function advisorInstructions(): Array<string> {
+  const guidance = env(ADVISOR_GUIDANCE_ENV)?.trim() ?? "";
+  return guidance.length === 0 ? [] : ["<advisor>\\n" + guidance + "\\n</advisor>"];
 }
 
 function responseStyleInstructions(): string {
@@ -293,7 +305,10 @@ export default async function studioMcpExtension(pi: ExtensionAPI) {
       MEDIA_INSTRUCTIONS,
       HEADLESS_INSTRUCTIONS,
       ...(hasStudioMcp
-        ? [env(COORDINATOR_ENV) === "1" ? COORDINATOR_ORCHESTRATION_INSTRUCTIONS : ORCHESTRATION_INSTRUCTIONS]
+        ? [
+            env(COORDINATOR_ENV) === "1" ? COORDINATOR_ORCHESTRATION_INSTRUCTIONS : ORCHESTRATION_INSTRUCTIONS,
+            ...advisorInstructions(),
+          ]
         : []),
     ].join("\\n\\n"),
   }));

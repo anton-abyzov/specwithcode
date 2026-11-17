@@ -174,6 +174,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands thread.auto-settle.set (per-thread auto-settle off).
       Same version-skew contract as threadSettlement. */
   threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),
+  /** Server reads the `advisor` setting, understands thread.advisor-mode.set and
+      serves the studio-code `advisor` tool. Absent on older servers, so clients
+      hide the Advisor controls there. */
+  advisor: Schema.optionalKey(Schema.Boolean),
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),

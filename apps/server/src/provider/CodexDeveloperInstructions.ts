@@ -187,6 +187,12 @@ export interface CodexRuntimeInfo {
   readonly reasoningEffort: string;
   readonly responseStyle?: ResponseStyle | undefined;
   readonly agentInstructions?: string | undefined;
+  /**
+   * When to consult the advisor (`runtimePolicy.advisorGuidance`), present only
+   * while the thread's advisor is on. It gets its own entry so the runtime
+   * entry stays under Codex's per-entry cap.
+   */
+  readonly advisorGuidance?: string | undefined;
 }
 
 /** Mode prompt for `turn/start.collaborationMode.settings.developer_instructions`. */
@@ -215,8 +221,9 @@ export function buildCodexAdditionalContext(
   toolsAvailable: boolean | SpecWeaveStudioToolAvailability = true,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
-  const { agentInstructions, isCoordinator, ...runtimeInfo } = runtime;
+  const { agentInstructions, advisorGuidance, isCoordinator, ...runtimeInfo } = runtime;
   const agent = agentInstructions?.trim() ?? "";
+  const advisor = advisorGuidance?.trim() ?? "";
   // Separate keys keep each value under Codex's per-entry token cap.
   return {
     ...(agent ? { studio_code_agent_instructions: { kind: "application", value: agent } } : {}),
@@ -229,5 +236,6 @@ export function buildCodexAdditionalContext(
       value: buildRuntimeInstructions({ harness: "Codex", ...runtimeInfo }),
     },
     ...(tools ? { studio_code_tools: { kind: "application", value: tools } } : {}),
+    ...(advisor ? { studio_code_advisor: { kind: "application", value: advisor } } : {}),
   };
 }

@@ -207,6 +207,24 @@ export function cursorRuntimeAgentPolicy(
   };
 }
 
+/**
+ * Runtime context appended to each Cursor user message. The advisor guidance
+ * names the studio-code `advisor` tool, so only a turn with those tools gets it.
+ */
+export function cursorRuntimeInstructions(input: {
+  readonly model: string;
+  readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly hasStudioMcp: boolean;
+}): string {
+  return buildRuntimeInstructions({
+    harness: "Cursor",
+    model: input.model,
+    responseStyle: input.runtimePolicy.responseStyle,
+    agentInstructions: input.runtimePolicy.agentInstructions,
+    advisorGuidance: input.hasStudioMcp ? input.runtimePolicy.advisorGuidance : undefined,
+  });
+}
+
 export function cursorMcpServers(threadId: ThreadId): Record<string, McpServerConfig> | undefined {
   const session = McpProviderSession.readMcpProviderSession(threadId);
   if (session === undefined) {
@@ -2214,6 +2232,7 @@ export function makeCursorAdapterV2(
                 .map((skill) => skill.name),
             );
           }
+          const hasStudioMcp = cursorMcpServers(turnInput.threadId) !== undefined;
           const userText = studioOrchestrationPromptForFirstRun({
             prompt: providerMessageTextWithAttachmentPaths({
               text:
@@ -2224,7 +2243,7 @@ export function makeCursorAdapterV2(
               attachmentsDir: serverConfig.attachmentsDir,
             }),
             runOrdinal: turnInput.runOrdinal,
-            hasStudioMcp: cursorMcpServers(turnInput.threadId) !== undefined,
+            hasStudioMcp,
             isCoordinator: turnInput.runtimePolicy.isCoordinator,
           });
           const images = yield* Effect.forEach(
@@ -2264,11 +2283,10 @@ export function makeCursorAdapterV2(
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
-          const runtimeInstructions = buildRuntimeInstructions({
-            harness: "Cursor",
+          const runtimeInstructions = cursorRuntimeInstructions({
             model: turnInput.modelSelection.model,
-            responseStyle: turnInput.runtimePolicy.responseStyle,
-            agentInstructions: turnInput.runtimePolicy.agentInstructions,
+            runtimePolicy: turnInput.runtimePolicy,
+            hasStudioMcp,
           });
           const text = `${userText}\n\n${runtimeInstructions}`;
           return images.length === 0

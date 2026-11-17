@@ -5176,6 +5176,47 @@ export const pt: PhraseCatalog = {
     "Configurar esta máquina para iniciar trabalho em {there}",
   "Change what this machine may do on {there}":
     "Alterar o que esta máquina pode fazer em {there}",
+  Advisor: "Consultor",
+  "Let threads ask a stronger model": "Permitir que as threads consultem um modelo mais forte",
+  "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
+    "Uma thread pode pedir a um modelo mais forte que revise sua abordagem e depois continuar trabalhando. Cada consulta gasta uso do modelo consultor.",
+  advisor: "consultor",
+  "Advisor model": "Modelo consultor",
+  "A thread is never advised by its own model; the next model in the order answers instead.":
+    "Uma thread nunca é aconselhada pelo próprio modelo; o próximo modelo da ordem responde no lugar dele.",
+  "advisor model": "modelo consultor",
+  "Use the default advisor order": "Usar a ordem padrão de consultores",
+  "Fable 5.2, then the Review track": "Fable 5.2, depois a trilha Review",
+  "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
+    "Nas threads do Claude, o consultor embutido do Claude relê a conversa inteira a cada consulta. Um consultor Fable é cobrado nos créditos de uso do Claude.",
+  "Claude's own advisor": "consultor do próprio Claude",
+  "Context limit for Claude's advisor": "Limite de contexto do consultor do Claude",
+  "Above this many tokens of context, a Claude thread sends the budgeted brief instead.":
+    "Acima desta quantidade de tokens de contexto, uma thread do Claude envia o resumo limitado.",
+  "context limit": "limite de contexto",
+  tokens: "tokens",
+  "Consults per run": "Consultas por execução",
+  "Further consults in the same run are refused.":
+    "Consultas adicionais na mesma execução são recusadas.",
+  "consults per run": "consultas por execução",
+  "Brief size": "Tamanho do resumo",
+  "The most a consult sends to the advisor. Older activity is left out first.":
+    "O máximo que uma consulta envia ao consultor. A atividade mais antiga sai primeiro.",
+  "brief size": "tamanho do resumo",
+  "Asking the advisor": "Consultando o consultor",
+  "Asked the advisor": "Consultor consultado",
+  "Did not ask the advisor": "Consultor não consultado",
+  "The advisor gave no advice": "O consultor não deu conselho",
+  "Advisor unavailable": "Consultor indisponível",
+  "Claude built-in": "Integrado ao Claude",
+  "The advisor is still working. Its advice arrives as a new message.": "O consultor ainda está trabalhando. O conselho chegará como uma nova mensagem.",
+  "Still working": "Ainda trabalhando",
+  "{count} left this run": "Restam {count} nesta execução",
+  "Advice applied (hidden by Claude)": "Conselho aplicado (oculto pelo Claude)",
+  "Advisor consult": "Consulta ao consultor",
+  "Follow project (on)": "Como no projeto (ativado)",
+  "Follow project (off)": "Como no projeto (desativado)",
+  "Lets this thread ask a stronger model to check its work.": "Permite que esta thread peça a um modelo mais forte para revisar o trabalho.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Excluir worktrees cujos chats estão resolvidos ou arquivados e inativos por esta quantidade de dias. Branches e o histórico do chat são mantidos.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":

@@ -270,6 +270,7 @@ import {
 import { matchComposerThreadItems } from "@specweave-studio/client-runtime/composerThreadItems";
 import { THREAD_CONTEXT_DROP_EVENT, threadContextDropTargetProps } from "./threadContextDrag";
 import { readThreadShell, useThreadShells } from "~/state/entities";
+import { useThreadAdvisorRowAvailable } from "./threadAdvisorAvailability";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { encodeComposerContextFragment } from "@specweave-studio/shared/composerContextClipboard";
 import type {
@@ -3369,6 +3370,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
 
+  const advisorRowAvailable = useThreadAdvisorRowAvailable(
+    routeKind === "server" ? routeThreadRef : null,
+  );
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
@@ -3381,6 +3385,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     prompt,
     onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
+    advisorRowAvailable,
   });
   const providerTraitsPickerInput = {
     provider: selectedProvider,
@@ -3395,6 +3400,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
     isComposerOwned: true,
+    advisorRowAvailable,
   } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
   const providerTraitsPicker = renderProviderTraitsPicker(providerTraitsPickerInput);
   // The model picker sets the same effort from its strip, beside the model it belongs to.

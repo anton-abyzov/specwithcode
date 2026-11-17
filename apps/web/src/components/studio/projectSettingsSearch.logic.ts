@@ -47,6 +47,8 @@ export interface ProjectSettingsSearchRow {
   /** Heading, label or legend text the row starts with in the dialog. */
   readonly anchors: readonly string[];
   readonly searchTerms?: readonly string[];
+  /** The row renders only when the project's machines offer the advisor. */
+  readonly requiresAdvisor?: boolean;
 }
 
 /** Rows of the Project settings dialog, in the order each tab renders them. */
@@ -115,6 +117,16 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
     searchTerms: [
       "review second opinion critique other model family reviewer order frontier automatic finished feature",
     ],
+  },
+  {
+    id: "project-advisor",
+    title: "Advisor",
+    tab: "general",
+    anchors: ["Advisor"],
+    searchTerms: [
+      "advisor second opinion stronger model consult review approach fable claude built-in brief consults",
+    ],
+    requiresAdvisor: true,
   },
   {
     id: "project-auto-resume",
@@ -251,9 +263,16 @@ export type ProjectSettingsSearchResult = GroupedSettingsSearchResult<
   ProjectSettingsSearchRow
 >;
 
+/** What the open project's machines offer; a row they lack is not searchable. */
+export interface ProjectSettingsSearchAvailability {
+  /** False hides the advisor row; left out, the row stays, as for callers without a project. */
+  readonly hasAdvisor?: boolean;
+}
+
 export function searchProjectSettings(
   query: string,
   tabs: readonly ProjectSettingsTab[],
+  availability: ProjectSettingsSearchAvailability = {},
 ): ProjectSettingsSearchResult[] {
   return searchSettingsGrouped(
     query,
@@ -262,7 +281,10 @@ export function searchProjectSettings(
       label: PROJECT_SETTINGS_TAB_LABELS[tab],
       searchTerms: TAB_SEARCH_TERMS[tab],
     })),
-    PROJECT_SETTINGS_SEARCH_ROWS.filter((row) => tabs.includes(row.tab)),
+    PROJECT_SETTINGS_SEARCH_ROWS.filter(
+      (row) =>
+        tabs.includes(row.tab) && (!row.requiresAdvisor || availability.hasAdvisor !== false),
+    ),
     (row) => row.tab,
   );
 }

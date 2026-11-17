@@ -5173,6 +5173,46 @@ export const ja: PhraseCatalog = {
     "このマシンが {there} で作業を開始できるよう設定",
   "Change what this machine may do on {there}":
     "このマシンが {there} でできることを変更",
+  Advisor: "アドバイザー",
+  "Let threads ask a stronger model": "スレッドがより強いモデルに相談できるようにする",
+  "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
+    "スレッドはより強いモデルに進め方の確認を頼み、そのまま作業を続けられます。相談のたびにアドバイザーモデルの使用量を消費します。",
+  advisor: "アドバイザー",
+  "Advisor model": "アドバイザーモデル",
+  "A thread is never advised by its own model; the next model in the order answers instead.":
+    "スレッドが自分と同じモデルから助言を受けることはありません。代わりに順序の次のモデルが答えます。",
+  "advisor model": "アドバイザーモデル",
+  "Use the default advisor order": "既定のアドバイザー順序を使う",
+  "Fable 5.2, then the Review track": "Fable 5.2、次に Review トラック",
+  "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
+    "Claude のスレッドでは、Claude に組み込まれたアドバイザーが相談のたびに会話全体を読み直します。Fable のアドバイザーは Claude の使用クレジットに請求されます。",
+  "Claude's own advisor": "Claude 自身のアドバイザー",
+  "Context limit for Claude's advisor": "Claude のアドバイザーのコンテキスト上限",
+  "Above this many tokens of context, a Claude thread sends the budgeted brief instead.":
+    "コンテキストがこのトークン数を超えると、Claude のスレッドは代わりに上限付きの要約を送ります。",
+  "context limit": "コンテキスト上限",
+  tokens: "トークン",
+  "Consults per run": "1 回の実行あたりの相談回数",
+  "Further consults in the same run are refused.": "同じ実行内でそれ以上の相談は拒否されます。",
+  "consults per run": "1 回の実行あたりの相談回数",
+  "Brief size": "要約のサイズ",
+  "The most a consult sends to the advisor. Older activity is left out first.":
+    "1 回の相談でアドバイザーに送る上限です。古いアクティビティから省かれます。",
+  "brief size": "要約のサイズ",
+  "Asking the advisor": "アドバイザーに相談中",
+  "Asked the advisor": "アドバイザーに相談しました",
+  "Did not ask the advisor": "アドバイザーに相談しませんでした",
+  "The advisor gave no advice": "アドバイザーから助言はありませんでした",
+  "Advisor unavailable": "アドバイザーを利用できません",
+  "Claude built-in": "Claude 組み込み",
+  "The advisor is still working. Its advice arrives as a new message.": "アドバイザーはまだ作業中です。助言は新しいメッセージで届きます。",
+  "Still working": "作業中",
+  "{count} left this run": "この実行で残り {count} 回",
+  "Advice applied (hidden by Claude)": "助言を適用済み (Claude により非表示)",
+  "Advisor consult": "アドバイザーへの相談",
+  "Follow project (on)": "プロジェクトに従う (オン)",
+  "Follow project (off)": "プロジェクトに従う (オフ)",
+  "Lets this thread ask a stronger model to check its work.": "このスレッドが、より強力なモデルに作業の確認を頼めるようにします。",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "チャットが解決済みまたはアーカイブ済みで、この日数のあいだ非アクティブなワークツリーを削除します。ブランチとチャットの履歴は残ります。",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
