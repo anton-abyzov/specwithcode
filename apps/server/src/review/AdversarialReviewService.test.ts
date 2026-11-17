@@ -179,6 +179,11 @@ describe("AdversarialReviewService", () => {
       const launch = launches[0]!;
       expect(launch.title).toBe("Adversarial review: Sign in with passkeys");
       expect(launch.modelSelection).toEqual({ instanceId: codex.instanceId, model: "gpt-6.1-sol" });
+      // Marked as review work, so a limit stop may keep it on the Review track.
+      expect(launch.routing).toMatchObject({
+        taskClass: "review",
+        selection: launch.modelSelection,
+      });
       expect(launch.workspaceStrategy).toEqual({
         type: "existing_worktree",
         worktreePath,

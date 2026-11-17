@@ -69,7 +69,7 @@ export type FallbackThread = Pick<
 
 /** A review thread may fall back along the Review track; any other work never does. */
 export const isReviewWork = (thread: FallbackThread): boolean =>
-  thread.routing?.taskClass === "review";
+  thread.routing?.taskClass === "review" || thread.routing?.reviewFamily !== undefined;
 
 /** Nothing holds the thread: no turn running and no question that really waits. */
 export const threadIsFree = (thread: FallbackThread): boolean =>
