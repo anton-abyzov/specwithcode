@@ -43,7 +43,9 @@ export function UnreachableHostsProvider({ children }: { children: ReactNode }) 
   return (
     <UnreachableHostsContext.Provider value={unreachable}>
       <MachineReachContext.Provider value={states}>
-        <IdentityMismatchContext.Provider value={mismatched}>{children}</IdentityMismatchContext.Provider>
+        <IdentityMismatchContext.Provider value={mismatched}>
+          {children}
+        </IdentityMismatchContext.Provider>
       </MachineReachContext.Provider>
     </UnreachableHostsContext.Provider>
   );

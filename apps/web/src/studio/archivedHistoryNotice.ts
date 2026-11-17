@@ -12,7 +12,8 @@ export interface ArchivedHistoryNotice {
   readonly params: Readonly<Record<string, string>>;
 }
 
-export const ARCHIVED_HISTORY_FAILED_NAMED = "Resolved history from {machines} could not be loaded.";
+export const ARCHIVED_HISTORY_FAILED_NAMED =
+  "Resolved history from {machines} could not be loaded.";
 export const ARCHIVED_HISTORY_FAILED_UNNAMED =
   "Resolved history from another machine could not be loaded.";
 

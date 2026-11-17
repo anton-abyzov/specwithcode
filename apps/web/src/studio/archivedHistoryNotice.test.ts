@@ -13,9 +13,7 @@ const reach = (entries: Record<string, MachineReachState>) => new Map(Object.ent
 
 describe("archivedHistoryNotice", () => {
   it("does not show when nothing failed", () => {
-    expect(
-      archivedHistoryNotice({ failedEnvironmentIds: [], reach: reach({}), label }),
-    ).toBeNull();
+    expect(archivedHistoryNotice({ failedEnvironmentIds: [], reach: reach({}), label })).toBeNull();
   });
 
   it("does not show when every machine that failed is already shown down", () => {
