@@ -36,6 +36,7 @@ private struct ChatScreen: View {
   @Environment(AppRouter.self) private var router
   @Environment(StackNavigator.self) private var nav
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.scenePhase) private var scenePhase
   @Environment(\.isNavigationSidebarVisible) private var sidebarVisible
   @Environment(\.isWideLayout) private var wide
   @Environment(\.layoutClass) private var layoutClass
@@ -138,6 +139,12 @@ private struct ChatScreen: View {
         composerFocused = false
         dictation.stop()
         model.closeSession(session)
+        // A sent model only bridges the queue while this chat watches it;
+        // reopened, the thread's own selection is the truth.
+        router.sentModels[target] = nil
+      }
+      .onChange(of: scenePhase) { _, phase in
+        if phase == .background { router.sentModels[target] = nil }
       }
       .task(id: router.pendingComposerFocus) {
         guard router.pendingComposerFocus == target else { return }
