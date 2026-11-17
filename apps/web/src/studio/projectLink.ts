@@ -317,7 +317,7 @@ export function linkCandidates<P extends EnvironmentProject>(
  * Projects on other machines that track exactly the same repository as `project`
  * (a fork is another repository) at the same place inside it (apps/web and
  * apps/api in one monorepo are different work), and are not part of it or of
- * another shared project: what "Link with the project on <machine>…" offers.
+ * another shared project: what "Link <machine> to this project…" offers.
  * One per machine, the most recently updated; the dialog lists that machine's
  * others. Nothing is offered for a project whose repository has no remote to
  * compare or whose place in it is unknown.

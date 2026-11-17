@@ -2244,6 +2244,7 @@ export function makeCursorAdapterV2(
             }),
             runOrdinal: turnInput.runOrdinal,
             hasStudioMcp,
+            isCoordinator: turnInput.runtimePolicy.isCoordinator,
           });
           const images = yield* Effect.forEach(
             turnInput.message.attachments.filter(isProviderNativeImageAttachment),

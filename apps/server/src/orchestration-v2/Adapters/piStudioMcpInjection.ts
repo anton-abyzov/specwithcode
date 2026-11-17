@@ -11,6 +11,7 @@ import {
   STUDIO_MCP_BEARER_ENV,
   STUDIO_MCP_URL_ENV,
   STUDIO_PI_ADVISOR_GUIDANCE_ENV,
+  STUDIO_PI_COORDINATOR_ENV,
   STUDIO_PI_RESPONSE_STYLE_ENV,
   STUDIO_PI_RUNTIME_MODE_ENV,
 } from "./piStudioMcpExtensionSource.ts";
@@ -266,6 +267,7 @@ export function buildPiRpcLaunch(input: {
   readonly responseStyle?: ResponseStyle | undefined;
   /** `runtimePolicy.advisorGuidance`; reaches Pi only with the studio-code server. */
   readonly advisorGuidance?: string | undefined;
+  readonly isCoordinator?: boolean | undefined;
 }): {
   readonly args: ReadonlyArray<string>;
   readonly env: NodeJS.ProcessEnv;
@@ -317,6 +319,9 @@ export function buildPiRpcLaunch(input: {
         : {}),
       ...(hasStudioExtension
         ? { [STUDIO_PI_RESPONSE_STYLE_ENV]: input.responseStyle ?? "concise" }
+        : {}),
+      ...(hasStudioExtension && input.isCoordinator === true
+        ? { [STUDIO_PI_COORDINATOR_ENV]: "1" }
         : {}),
       ...(hasStudioMcp && input.mcpSession !== undefined
         ? {

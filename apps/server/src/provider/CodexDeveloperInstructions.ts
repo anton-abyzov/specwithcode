@@ -4,7 +4,7 @@ import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
 
 import {
   STUDIO_CODE_BROWSER_TOOL_INSTRUCTIONS,
-  STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+  studioOrchestrationInstructionsForRole,
 } from "./StudioOrchestrationInstructions.ts";
 
 const STUDIO_CODE_DEVICE_TOOL_INSTRUCTIONS = `## SpecWithCode devices
@@ -212,7 +212,7 @@ export function buildCodexDeveloperInstructions(interactionMode: ProviderInterac
  * the client's `developer_instructions` entirely.
  */
 export function buildCodexAdditionalContext(
-  runtime: CodexRuntimeInfo,
+  runtime: CodexRuntimeInfo & { readonly isCoordinator?: boolean | undefined },
   /**
    * Whether the `studio-code` MCP server is attached to this turn. Callers derive
    * it from the session's actual MCP configuration rather than re-reading the
@@ -221,7 +221,7 @@ export function buildCodexAdditionalContext(
   toolsAvailable: boolean | SpecWeaveStudioToolAvailability = true,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
-  const { agentInstructions, advisorGuidance, ...runtimeInfo } = runtime;
+  const { agentInstructions, advisorGuidance, isCoordinator, ...runtimeInfo } = runtime;
   const agent = agentInstructions?.trim() ?? "";
   const advisor = advisorGuidance?.trim() ?? "";
   // Separate keys keep each value under Codex's per-entry token cap.
@@ -229,7 +229,7 @@ export function buildCodexAdditionalContext(
     ...(agent ? { studio_code_agent_instructions: { kind: "application", value: agent } } : {}),
     studio_code_orchestration: {
       kind: "application",
-      value: STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      value: studioOrchestrationInstructionsForRole(isCoordinator),
     },
     studio_code_runtime: {
       kind: "application",

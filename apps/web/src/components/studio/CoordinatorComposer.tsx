@@ -159,6 +159,12 @@ function CoordinatorComposerForm(props: {
   readonly modelFallback: boolean;
   /** False while the coordinator's machine is not connected: Send then names no machine. */
   readonly hostReachable?: boolean;
+  /**
+   * A copy whose main is on another machine: work is started there, so this box is off
+   * as a whole (no typing, no attaching, Send names no machine) and its placeholder says
+   * where to write. Nothing typed here could be sent.
+   */
+  readonly writesElsewhere?: boolean;
   /** Checked before a send; see `submitCoordinatorDraft`. */
   readonly draftSentElsewhere?: () => Promise<boolean>;
 }) {
@@ -205,7 +211,9 @@ function CoordinatorComposerForm(props: {
   const machine = useMachineIdentity(environmentId, hostEnvironment?.label);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   // An unreachable machine takes nothing, so Send never names it; the status line says why.
+  const inert = props.writesElsewhere === true;
   const sendsElsewhere =
+    !inert &&
     props.hostReachable !== false &&
     machine !== null &&
     primaryEnvironmentId !== null &&
@@ -242,10 +250,12 @@ function CoordinatorComposerForm(props: {
       <div
         className={machine ? "sws-composer-card machine-composer" : "sws-composer-card"}
         {...machineColorProps(machine)}
+        data-inert={inert ? "" : undefined}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes("Files")) e.preventDefault();
         }}
         onDrop={(e) => {
+          if (inert) return;
           if (!e.dataTransfer.types.includes("Files")) return;
           // Every dropped file is answered: attached, or told why not.
           e.preventDefault();
@@ -279,6 +289,7 @@ function CoordinatorComposerForm(props: {
           aria-expanded={slashMenu.open}
           aria-autocomplete="list"
           placeholder={props.placeholder}
+          disabled={inert}
           onPaste={(e) => {
             const files = pastedFilesFrom(e.clipboardData);
             if (files.length === 0) return;
@@ -328,7 +339,7 @@ function CoordinatorComposerForm(props: {
             aria-label={
               sendsElsewhere ? `Send to the coordinator on ${machine.name}` : "Send to coordinator"
             }
-            disabled={sendDisabled}
+            disabled={sendDisabled || inert}
           >
             <ArrowUpIcon aria-hidden />
             <span className="sr-only">{sending || preparing ? "Sending…" : "Send"}</span>
@@ -355,7 +366,7 @@ function CoordinatorComposerForm(props: {
               type="button"
               className="sws-icon-button sws-attach"
               aria-label="Attach files"
-              disabled={!canAttach && props.hostReachable !== false}
+              disabled={inert || (!canAttach && props.hostReachable !== false)}
               onClick={() => filePicker.current?.click()}
             >
               <PlusIcon aria-hidden />

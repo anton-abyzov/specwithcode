@@ -800,6 +800,7 @@ export function buildCodexTurnStartParams(input: {
               responseStyle: input.runtimePolicy.responseStyle,
               agentInstructions: input.runtimePolicy.agentInstructions,
               advisorGuidance: input.runtimePolicy.advisorGuidance,
+              isCoordinator: input.runtimePolicy.isCoordinator,
             },
             {
               browser: input.browserToolsAvailable ?? true,

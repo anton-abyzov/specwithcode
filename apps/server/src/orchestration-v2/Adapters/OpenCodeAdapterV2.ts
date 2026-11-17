@@ -521,7 +521,7 @@ export function openCodeSystemPrompt(input: {
   readonly hasStudioMcp: boolean;
 }): string {
   return [
-    studioOrchestrationSystemPrompt(input.hasStudioMcp),
+    studioOrchestrationSystemPrompt(input.hasStudioMcp, input.runtimePolicy.isCoordinator),
     buildRuntimeInstructions({
       harness: "OpenCode",
       model: input.model,

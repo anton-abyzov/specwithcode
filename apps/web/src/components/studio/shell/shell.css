@@ -2122,6 +2122,18 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 .sws-composer .sws-composer-card textarea::placeholder {
   color: var(--muted-foreground);
 }
+/* A copy whose main is elsewhere: the box is off, and its placeholder says where to write. */
+/* It drops the machine's tint too: nothing here goes to a machine. */
+.sws-composer .sws-composer-card[data-inert],
+.sws-composer .sws-composer-card[data-inert]:focus-within {
+  border-color: var(--input);
+  border-style: dashed;
+  background: color-mix(in srgb, var(--muted-foreground) 7%, var(--card));
+  box-shadow: none;
+}
+.sws-composer .sws-composer-card[data-inert] textarea {
+  cursor: not-allowed;
+}
 /* Images waiting to go out with the message. */
 .sws-attachments {
   flex: 0 0 100%;

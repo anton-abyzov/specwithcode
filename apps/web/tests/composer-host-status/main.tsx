@@ -169,8 +169,8 @@ function Harness() {
             <CoordinatorBlockedNotice
               text={blocked}
               coordinator={null}
+              projectTitle="specweave"
               current="linux-mini-env:specweave"
-              members={[]}
               copies={[]}
               onOpen={null}
             />
@@ -204,7 +204,6 @@ function Harness() {
               unknown={[]}
               savedMachineMissing={false}
               onView={() => {}}
-              onMove={null}
               onAllowWorkers={null}
             />
             <ComposerVoiceMenu

@@ -13,3 +13,15 @@ body {
   padding: 24px;
   box-sizing: border-box;
 }
+/* A copy's own page: the conversation above, its message box below. */
+.fixture-column {
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0;
+}
+.fixture-column > .project-conversation {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}

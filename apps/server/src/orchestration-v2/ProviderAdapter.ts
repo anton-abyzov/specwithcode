@@ -99,6 +99,8 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
    * `advisorRouteForContext`); past it the session gets `disable`.
    */
   claudeAdvisor: Schema.optional(ProviderAdapterV2ClaudeAdvisor),
+  /** The thread is its project's coordinator: it routes work instead of doing it. */
+  isCoordinator: Schema.optional(Schema.Boolean),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 

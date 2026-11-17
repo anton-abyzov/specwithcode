@@ -276,9 +276,12 @@ export const layerFromProjectStore: Layer.Layer<
                         contextLimit: advisorSettings.advisor.builtInContextLimit,
                       } as const);
               });
+        const coordinatorProject = localProject ?? threadFolderProject;
         return ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
+          isCoordinator:
+            coordinatorProject?.workspaceSettings?.coordinatorThreadId === input.thread.id,
           cwd,
           // An advisor only reads: the provider's read-only sandbox where it
           // has one, and nothing to approve because nothing may be written.

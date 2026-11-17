@@ -57,6 +57,7 @@ import {
   hasSavedProjectIcon,
   isPortableProjectFaviconPath,
 } from "@specweave-studio/shared/projectFavicon";
+import { equalEpochTakeoverWins } from "@specweave-studio/shared/linkedPairSync";
 import { teamRulesMachineLinkRefusal } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as Context from "effect/Context";
@@ -1181,10 +1182,28 @@ const make = Effect.gen(function* () {
           ?.coordinatorBinding ?? { epoch: 0, state: "active" };
         const incoming = input.coordinatorBinding;
         if (!identity || identity.id !== input.logicalProjectId) return yield* fail("not_linked");
+        // Two flips at the same epoch: the earlier takeover (then the smaller
+        // copy ref) wins, and the later one gives way to it here.
+        const tieWin =
+          incoming.epoch === binding.epoch &&
+          equalEpochTakeoverWins(
+            {
+              environmentId: input.successor.environmentId,
+              projectId: input.successor.projectId,
+              logicalProjectId: input.logicalProjectId,
+              binding: incoming,
+            },
+            {
+              environmentId: self.environmentId,
+              projectId: self.projectId,
+              logicalProjectId: identity.id,
+              binding,
+            },
+          );
         if (
           incoming.state !== "active" ||
           incoming.predecessor === undefined ||
-          !sameMember(incoming.predecessor, self) ||
+          (!sameMember(incoming.predecessor, self) && !tieWin) ||
           incoming.operationId === undefined ||
           incoming.takenOverAt === undefined ||
           logicalProjectMemberKey(input.successor) === logicalProjectMemberKey(self)
@@ -1203,7 +1222,8 @@ const make = Effect.gen(function* () {
           };
         if (
           binding.state !== "active" ||
-          incoming.epoch <= binding.epoch ||
+          incoming.epoch < binding.epoch ||
+          (incoming.epoch === binding.epoch && !tieWin) ||
           !identity.members.some((member) => sameMember(member, input.successor))
         )
           return yield* fail("superseded_conflict");

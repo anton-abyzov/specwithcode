@@ -158,7 +158,7 @@ import {
   readClaudeSubagentPromptFile,
   type ClaudeWorkflowMode,
 } from "../../provider/ClaudeWorkflowPolicy.ts";
-import { STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/StudioOrchestrationInstructions.ts";
+import { studioOrchestrationInstructionsForRole } from "../../provider/StudioOrchestrationInstructions.ts";
 import {
   BROWSER_EXTENSION_DIR,
   isPaired,
@@ -989,6 +989,7 @@ export function makeClaudeQueryOptions(input: {
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly agentInstructions?: string | undefined;
   readonly claudeWorkflowMode?: ClaudeWorkflowMode | undefined;
+  readonly isCoordinator?: boolean | undefined;
   readonly responseStyle?: ResponseStyle | undefined;
   readonly subagentPromptFileContents?: string | undefined;
   /** Ask the SDK for a suggested next prompt after each reply. */
@@ -1083,6 +1084,7 @@ export function makeClaudeQueryOptions(input: {
         } as ClaudeSdkSettings);
   const workflowPolicy = compileClaudeWorkflowPolicy({
     mode: input.claudeWorkflowMode,
+    coordinator: input.isCoordinator,
     ultracode: compiledSelection.settings.ultracode,
     agentInstructions: input.agentInstructions,
     responseStyle: input.responseStyle,
@@ -1093,7 +1095,9 @@ export function makeClaudeQueryOptions(input: {
     }),
     subagentPromptFileContents: input.subagentPromptFileContents,
     orchestrationInstructions:
-      input.mcpServers === undefined ? undefined : STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      input.mcpServers === undefined
+        ? undefined
+        : studioOrchestrationInstructionsForRole(input.isCoordinator),
     extraArgs,
     allowedTools: input.allowedTools,
     disallowedTools: input.disallowedTools,
@@ -8507,6 +8511,7 @@ export function makeClaudeAdapterV2(
               : { projectAdditionalDirectories: turnInput.projectAdditionalDirectories }),
             agentInstructions: turnInput.runtimePolicy.agentInstructions,
             claudeWorkflowMode: turnInput.runtimePolicy.claudeWorkflowMode,
+            isCoordinator: turnInput.runtimePolicy.isCoordinator,
             responseStyle: turnInput.runtimePolicy.responseStyle,
             subagentPromptFileContents,
             promptSuggestions: yield* (
