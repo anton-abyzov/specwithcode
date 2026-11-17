@@ -2333,6 +2333,8 @@ export const ja: PhraseCatalog = {
     "{name}（{host}）の古い記録をこのデバイスから削除しますか？\nこのマシンは新しいマシンとして再参加し、引き続き動作します。削除されるのは使われなくなった記録と、ここにキャッシュされたスレッドだけです。",
   "Use 2 or 3 characters.": "2〜3文字にしてください。",
   "Not shared": "共有なし",
+  "Not linked · also on {machine}": "未リンク · {machine} にもあり",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "このコピーは {machine} 上のコピーとリンクしていません。プロジェクトメニューからリンクするとコーディネーターを共有できます。",
   "No other machine has a copy of this project.":
     "このプロジェクトのコピーは他のどのマシンにもありません。",
   "Connect to see its role": "接続すると役割が表示されます",

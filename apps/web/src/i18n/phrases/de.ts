@@ -2344,6 +2344,8 @@ export const de: PhraseCatalog = {
     "Den alten Eintrag von {name} ({host}) von diesem Gerät entfernen?\nDie Maschine ist neu beigetreten und läuft weiter; nur der tote Eintrag und seine zwischengespeicherten Threads hier verschwinden.",
   "Use 2 or 3 characters.": "Verwende 2 oder 3 Zeichen.",
   "Not shared": "Nicht geteilt",
+  "Not linked · also on {machine}": "Nicht verknüpft · auch auf {machine}",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "Diese Kopie ist nicht mit den Kopien auf {machine} verknüpft. Verknüpfe sie über das Projektmenü, um einen Koordinator zu teilen.",
   "No other machine has a copy of this project.":
     "Keine andere Maschine hat eine Kopie dieses Projekts.",
   "Connect to see its role": "Verbinden, um die Rolle zu sehen",

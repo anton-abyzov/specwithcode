@@ -2249,6 +2249,8 @@ export const zh: PhraseCatalog = {
     "要从此设备删除 {name}（{host}）的旧记录吗？\n这台机器已作为新机器重新加入并继续工作；只会删除失效的记录及其在此缓存的线程。",
   "Use 2 or 3 characters.": "请使用 2 或 3 个字符。",
   "Not shared": "未共享",
+  "Not linked · also on {machine}": "未关联 · {machine} 上也有",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "此副本未与 {machine} 上的副本关联。从项目菜单关联后可共享一个协调器。",
   "No other machine has a copy of this project.": "没有其他机器有这个项目的副本。",
   "Connect to see its role": "连接后可查看角色",
   "This app cannot see this machine, so it cannot tell what this copy does.":

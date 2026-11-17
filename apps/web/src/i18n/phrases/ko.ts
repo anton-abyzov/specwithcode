@@ -2311,6 +2311,8 @@ export const ko: PhraseCatalog = {
     "이 기기에서 {name}({host})의 이전 기록을 제거할까요?\n이 머신은 새 머신으로 다시 참여해 계속 작동합니다. 여기의 사용하지 않는 기록과 캐시된 스레드만 사라집니다.",
   "Use 2 or 3 characters.": "2~3자를 사용하세요.",
   "Not shared": "공유 안 함",
+  "Not linked · also on {machine}": "연결 안 됨 · {machine}에도 있음",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "이 복사본은 {machine}의 복사본과 연결되어 있지 않습니다. 프로젝트 메뉴에서 연결하면 코디네이터를 공유할 수 있습니다.",
   "No other machine has a copy of this project.":
     "다른 어떤 머신에도 이 프로젝트의 복사본이 없습니다.",
   "Connect to see its role": "연결하면 역할이 보입니다",

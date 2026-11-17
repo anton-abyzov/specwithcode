@@ -2350,6 +2350,8 @@ export const fr: PhraseCatalog = {
     "Supprimer de cet appareil l'ancien enregistrement de {name} ({host}) ?\nLa machine a rejoint à nouveau comme une nouvelle et continue de fonctionner ; seuls l'enregistrement mort et ses fils en cache ici disparaissent.",
   "Use 2 or 3 characters.": "Utilisez 2 ou 3 caractères.",
   "Not shared": "Non partagé",
+  "Not linked · also on {machine}": "Non liée · aussi sur {machine}",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "Cette copie n'est pas liée aux copies sur {machine}. Lie-les depuis le menu du projet pour partager un coordinateur.",
   "No other machine has a copy of this project.": "Aucune autre machine n'a de copie de ce projet.",
   "Connect to see its role": "Connectez-vous pour voir son rôle",
   "This app cannot see this machine, so it cannot tell what this copy does.":

@@ -2327,6 +2327,8 @@ export const ru: PhraseCatalog = {
     "Удалить с этого устройства старую запись {name} ({host})?\nМашина подключилась заново как новая и продолжает работать; уходят только мёртвая запись и её кэшированные треды здесь.",
   "Use 2 or 3 characters.": "Используйте 2 или 3 символа.",
   "Not shared": "Не общий",
+  "Not linked · also on {machine}": "Не связана · также на {machine}",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "Эта копия не связана с копиями на {machine}. Свяжите их из меню проекта, чтобы был один координатор.",
   "No other machine has a copy of this project.":
     "Ни на одной другой машине нет копии этого проекта.",
   "Connect to see its role": "Подключитесь, чтобы увидеть роль",
