@@ -449,7 +449,7 @@ it.effect.each(["sqlite", "memory"] as const)(
       assert.include(replay, "tool-receipt");
       assert.notInclude(replay, "do not replay");
       assert.notInclude(replay, "do not inject raw output");
-      assert.include(replay, "Counts cover eligible history records, not the whole timeline");
+      assert.include(replay, "Counts cover eligible records only");
       // The launch is collapsed into the newer child-state reference, and
       // remains explicitly accounted for rather than silently disappearing.
       assert.equal(selectedHistory.omittedItems, 1);

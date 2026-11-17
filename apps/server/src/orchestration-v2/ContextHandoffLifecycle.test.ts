@@ -48,7 +48,7 @@ it.each([4096, 16000])(
         selected.messages.map((m) => m.itemId),
         anchor.itemId,
       );
-    assert.isAtMost(selected.messages.filter((m) => m.worker).length, 8);
+    assert.equal(selected.omittedWorkers, 50 - selected.messages.filter((m) => m.worker).length);
     assert.equal(selected.omittedItems, 53 - selected.messages.length);
     assert.isAtMost(historyCost(selected.messages, selected.context), budget);
   },
@@ -109,3 +109,38 @@ it("keeps the latest answer at a tight budget even when a worker reference canno
   );
   assert.isAtMost(historyCost(selected.messages, selected.context), 1700);
 });
+
+it.each([4096, 64000])(
+  "keeps all workers that fit and discloses omissions at %i bytes",
+  (budget) => {
+    const workers = Array.from({ length: 12 }, (_, i) => worker(i));
+    const tools = Array.from({ length: 30 }, (_, i) =>
+      message(`tool:${i}`, "dynamic_tool", "Receipt pointer"),
+    );
+    const selected = selectHistory({
+      messages: [...anchors, ...workers, ...tools],
+      coverage: "History",
+      budget,
+    });
+    for (const anchor of anchors)
+      assert.include(
+        selected.messages.map((m) => m.itemId),
+        anchor.itemId,
+      );
+    const kept = selected.messages.filter((m) => m.worker).length;
+    assert.equal(selected.omittedWorkers, 12 - kept);
+    assert.include(selected.context, `omitted ${12 - kept} worker references`);
+    assert.include(selected.context, "studio_thread_list");
+    assert.isAtMost(historyCost(selected.messages, selected.context), budget);
+    if (budget === 64000) assert.equal(kept, 12);
+    else assert.isAbove(selected.omittedWorkers, 0);
+    const delivery = selectHistory({
+      messages: selected.messages,
+      coverage: "Delivery",
+      budget: 64000,
+      omittedItems: selected.omittedItems,
+      omittedWorkers: selected.omittedWorkers,
+    });
+    assert.include(delivery.context, `omitted ${12 - kept} worker references`);
+  },
+);

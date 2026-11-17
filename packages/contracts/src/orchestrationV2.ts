@@ -1194,6 +1194,7 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
       messages: Schema.Array(OrchestrationV2HistoricalMessage),
       coverage: Schema.String,
       omittedItems: NonNegativeInt,
+      omittedWorkers: Schema.optional(NonNegativeInt),
       // IDs omitted during preparation, before the target's delivery budget is known.
       omittedItemIds: Schema.optional(Schema.Array(TurnItemId)),
     }),
