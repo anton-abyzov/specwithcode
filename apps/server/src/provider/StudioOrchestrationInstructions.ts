@@ -129,7 +129,10 @@ export function studioOrchestrationPromptForFirstRun(input: {
   readonly hasStudioMcp: boolean;
   readonly isCoordinator?: boolean | undefined;
 }): string {
-  return input.runOrdinal === 1 && input.hasStudioMcp
+  // A coordinator gets its routing line on every turn: a thread that became
+  // the coordinator after run 1, or switched provider later, would otherwise
+  // keep the worker line from its first prompt.
+  return input.hasStudioMcp && (input.runOrdinal === 1 || input.isCoordinator === true)
     ? prependStudioOrchestrationInstructions(input.prompt, input.isCoordinator)
     : input.prompt;
 }

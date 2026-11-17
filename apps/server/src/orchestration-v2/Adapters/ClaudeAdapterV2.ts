@@ -1907,10 +1907,17 @@ export function claudeEffectiveQueryPolicyKey(
     readonly subagentPromptFileContents?: string | undefined;
     /** The git shim is in the process environment, so turning Use worktrees on reopens it. */
     readonly manualWorktreesBlocked?: boolean | string | undefined;
+    /**
+     * The coordinator role sets the system prompt and the tool bans when the
+     * process opens, so a thread that gains or loses the role needs a new one.
+     */
+    readonly isCoordinator?: boolean | undefined;
   },
 ): string {
   return stringifyJson({
     agentInstructions: context?.agentInstructions,
+    // Only present when true, so worker keys stay what they were.
+    ...(context?.isCoordinator === true ? { isCoordinator: true } : {}),
     manualWorktreesBlocked: context?.manualWorktreesBlocked ?? false,
     claudeWorkflowMode: context?.claudeWorkflowMode ?? "on-request",
     responseStyle: context?.responseStyle ?? "concise",
@@ -8250,11 +8257,15 @@ export function makeClaudeAdapterV2(
             claudeInChromeRefused,
           ]);
           const projectAdditionalDirectories = turnInput.projectAdditionalDirectories ?? [];
+          // The coordinator role is a tool change, not launch context: a
+          // process running background work is refused rather than reused
+          // when the thread gains or loses the role.
+          const roleContext = { isCoordinator: turnInput.runtimePolicy.isCoordinator };
           const queryCoreBaseKey = stringifyJson(
-            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides),
+            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides, roleContext),
           );
           const queryCoreKey = stringifyJson([
-            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides),
+            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides, roleContext),
             projectAdditionalDirectories,
           ]);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
