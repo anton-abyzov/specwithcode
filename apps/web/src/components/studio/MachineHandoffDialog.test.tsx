@@ -732,7 +732,8 @@ describe("handoff file method and intent", () => {
       );
       expect(description()).toContain("Main stays on MacBook Pro.");
       expect(button("Move project to MacBook Pro").disabled).toBe(true);
-      expect(text("send-plan")).toContain("Main stays on MacBook Pro.");
+      // Nothing to plan: the line above already says there is nothing to move.
+      expect(text("send-plan")).toBeNull();
     });
 
     it("says a source is not linked to the destination's project, and moves no Main", async () => {
@@ -850,7 +851,9 @@ describe("handoff file method and intent", () => {
       expect(onPick).toHaveBeenCalledWith("a");
       await git({ picked: "b" });
       expect(button("Move project to MacBook Pro").disabled).toBe(true);
-      expect(text("send-plan")).toContain("Main stays on MacBook Pro.");
+      expect(text("send-plan")).toBe(
+        "MacBook Pro already has Main, at ~/b, so there is nothing to move.",
+      );
       await git({ picked: "a" });
       expect(button("Move project to MacBook Pro").disabled).toBe(false);
       expect(text("send-plan")).toContain("move Main to MacBook Pro's copy at ~/a");

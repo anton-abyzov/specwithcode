@@ -125,8 +125,11 @@ export function SendSummary({
         }
       : otherProjectNote({ source: sourceLabel, there: targetLabel, main: other.main })
     : null;
+  // A refused move has no plan. The copy picked among several that is Main says why.
   const plan = refused
-    ? null
+    ? refused === "main" && send.holding.kind === "several"
+      ? existingCopyLine({ there: targetLabel, holding })
+      : null
     : sendPlan({
         choice: move ? "move" : "copy",
         there: targetLabel,
