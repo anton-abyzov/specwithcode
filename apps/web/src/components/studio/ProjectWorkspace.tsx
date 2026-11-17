@@ -358,6 +358,7 @@ export function ProjectWorkspace({
             ? {
                 key: `${elsewhere.environmentId}:${elsewhere.projectId}`,
                 machine: machineName(elsewhere.environmentId),
+                live: followed !== null,
               }
             : null
         }

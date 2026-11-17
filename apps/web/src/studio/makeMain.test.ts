@@ -412,6 +412,29 @@ describe("makeMainPath with a coordinator started beside main", () => {
     ).toEqual({ kind: "move", main: tookOver });
   });
 
+  it("never re-crowns a main that gave way, even when it starts a coordinator again", () => {
+    // m5 took over from m4 by name; m4 later started its own coordinator at a higher epoch,
+    // and mini still points at m4. m5 stays main.
+    const tookOver = copy("m5", { state: "active", epoch: 1, predecessor: "m4" });
+    const restarted = copy("m4", { state: "active", epoch: 2 });
+    const stale = copy("mini", { state: "transferred", epoch: 0, successor: "m4" });
+    expect(makeMainPath(stale, [restarted, tookOver, stale], machines())).toEqual({
+      kind: "move",
+      main: tookOver,
+    });
+  });
+
+  it("ignores what a retired machine record points at", () => {
+    const old = copy("m3", { state: "transferred", epoch: 0, successor: "m1" });
+    const follower2 = copy("m5", { state: "transferred", epoch: 0, successor: "m4" });
+    const retired = { has: (id: string) => id === "m3" };
+    // Without m3's vote, m1 is not endorsed: m4, which m5 follows, leads.
+    expect(makeMainPath(follower2, [main, follower2, beside, old], machines({ retired }))).toEqual({
+      kind: "move",
+      main,
+    });
+  });
+
   it("falls back to the newest epoch when no copy names a main", () => {
     const a = copy("m4", { state: "active", epoch: 0 });
     const b = copy("m1", { state: "active", epoch: 2 });

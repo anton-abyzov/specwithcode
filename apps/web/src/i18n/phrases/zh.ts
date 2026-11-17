@@ -5225,4 +5225,6 @@ export const zh: PhraseCatalog = {
     "发送会把你的消息交给 {machine} 的协调者，并打开它的页面，回复会出现在那里。",
   "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
     "发送会把你的消息交给主协调者，并打开它的页面，回复会出现在那里。",
+  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
+    "文件留在这台机器上。移除文件即可把文字发到主机器，或打开主机器的页面在那里附加。",
 };

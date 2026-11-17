@@ -5481,4 +5481,6 @@ export const fr: PhraseCatalog = {
     "Envoyer transmet ton message au coordinateur de {machine} et ouvre sa page, où arrive la réponse.",
   "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
     "Envoyer transmet ton message au coordinateur principal et ouvre sa page, où arrive la réponse.",
+  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
+    "Les fichiers restent sur cette machine. Retire-les pour envoyer le texte à la principale, ou ouvre la page de la principale pour les y joindre.",
 };

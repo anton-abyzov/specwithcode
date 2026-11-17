@@ -5368,4 +5368,6 @@ export const ko: PhraseCatalog = {
     "보내기를 누르면 {machine}의 코디네이터에게 메시지가 전달되고, 답이 오는 그 페이지가 열립니다.",
   "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
     "보내기를 누르면 메인 코디네이터에게 메시지가 전달되고, 답이 오는 그 페이지가 열립니다.",
+  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
+    "파일은 이 기기에 남습니다. 텍스트를 메인으로 보내려면 파일을 빼거나, 메인 페이지를 열어 그곳에서 첨부하세요.",
 };

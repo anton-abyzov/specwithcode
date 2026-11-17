@@ -203,6 +203,7 @@ import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
 import { CoordinatorBlockedNotice, OfflineSwitchNotice } from "./CoordinatorBlockedNotice";
 import { useMakeMain } from "./useMakeMain";
 import { useRouteToMain } from "./useRouteToMain";
+import { ROUTED_FILES_MESSAGE } from "../../studio/routeToMain";
 import { ProjectComposerHostStatus } from "./ComposerHostStatus";
 import { useTx } from "../../i18n";
 import {
@@ -306,7 +307,12 @@ export function ProjectWorkspaceSurface({
   restoringThread?: boolean;
   ownershipProblem?: string | null;
   /** A workers-only copy's coordinator on another machine, where its work is started. */
-  coordinatorElsewhere?: { readonly key: string; readonly machine: string | null } | null;
+  coordinatorElsewhere?: {
+    readonly key: string;
+    readonly machine: string | null;
+    /** A live coordinator the resolver found (`followedMain`), so a send can route there. */
+    readonly live?: boolean;
+  } | null;
   setSelected: SelectProjectThread;
 }) {
   const projectTitle = logicalProjectTitle(project);
@@ -671,9 +677,17 @@ export function ProjectWorkspaceSurface({
   const route = useRouteToMain({
     mainKey: coordinatorElsewhere?.key ?? null,
     copyOff,
+    mainLive: coordinatorElsewhere?.live === true,
     onOpen: onCheckout,
   });
   const routes = route.ready;
+  // Files were attached on this machine; a routed message carries text only.
+  const draftHasFiles = useSyncExternalStore(
+    composer.subscribe,
+    () => composer.getSnapshot().attachments.length > 0,
+    () => false,
+  );
+  const routedFilesBlock = routes && draftHasFiles ? tx(ROUTED_FILES_MESSAGE) : null;
   // Memoized, not just computed: these feed memoized callbacks below, and the
   // React Compiler keeps those only for values it knows are not changed later.
   const coordinator = useMemo(
@@ -2010,7 +2024,7 @@ export function ProjectWorkspaceSurface({
                 cwd={project.workspaceRoot}
                 sendBlocked={
                   routes
-                    ? route.sending || sending
+                    ? route.sending || sending || routedFilesBlock !== null
                     : Boolean(blocked) ||
                       Boolean(modelCompatibility) ||
                       (!model && !coordinatorId) ||
@@ -2018,9 +2032,10 @@ export function ProjectWorkspaceSurface({
                       sending
                 }
                 missingModel={
-                  !blocked && !model && !coordinatorId
+                  routedFilesBlock ??
+                  (!blocked && !model && !coordinatorId
                     ? missingModelMessage(modelsLoading, machinePrivate)
-                    : null
+                    : null)
                 }
                 canAttach={canOperate && connected && !routes}
                 uploadsSupported={uploadsSupported}
@@ -2074,9 +2089,10 @@ export function ProjectWorkspaceSurface({
                 keybindings={keybindings}
                 isPhoneKeyboard={isPhoneKeyboard}
                 sendShortcut={sendShortcut}
-                onAppCommand={appCommandsOffered ? runAppCommand : null}
-                provider={model ? (providerEntries.get(model.instanceId) ?? null) : null}
-                onSend={routes ? (text) => route.send(text) : sendFromComposer}
+                // A routed message goes to main as typed: commands and skills here act on this copy.
+                onAppCommand={appCommandsOffered && !routes ? runAppCommand : null}
+                provider={model && !routes ? (providerEntries.get(model.instanceId) ?? null) : null}
+                onSend={routes ? (text, files) => route.send(text, files) : sendFromComposer}
                 onError={setError}
                 status={
                   <>

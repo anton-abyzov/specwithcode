@@ -84,14 +84,27 @@ const bindingOf = (member: CoordinatedCopy) => member.workspaceSettings?.coordin
  * Coordinators the link itself names as main: the checkout a copy handed main to (its
  * successor, followed along later moves), and a copy that took over from a named
  * predecessor. A coordinator started beside main (`startCoordinator`) names neither, so
- * its higher epoch alone never makes it main over the one the copies follow.
+ * its higher epoch alone never makes it main over the one the copies follow. A copy that
+ * another coordinator took over from by name gave way: copies still pointing at it no
+ * longer endorse it, even if it later starts a coordinator again. Copies on retired
+ * machine records endorse nothing.
  */
-export function endorsedCoordinators(copies: readonly CoordinatedCopy[]): ReadonlySet<string> {
+export function endorsedCoordinators(
+  copies: readonly CoordinatedCopy[],
+  retired?: { has(environmentId: string): boolean },
+): ReadonlySet<string> {
   const byKey = new Map(copies.map((copy) => [memberKey(copy), copy]));
-  const endorsed = new Set<string>();
+  const followed = new Set<string>();
+  const tookOver = new Set<string>();
+  const gaveWay = new Set<string>();
   for (const copy of copies) {
+    if (retired?.has(copy.environmentId)) continue;
     const binding = bindingOf(copy);
-    if (binding?.state === "active" && binding.predecessor) endorsed.add(memberKey(copy));
+    if (binding?.state === "active" && binding.predecessor) {
+      tookOver.add(memberKey(copy));
+      const named = `${binding.predecessor.environmentId}:${binding.predecessor.projectId}`;
+      if (named !== memberKey(copy)) gaveWay.add(named);
+    }
     if (binding?.state !== "transferred" || !binding.successor) continue;
     const seen = new Set([memberKey(copy)]);
     let successor = binding.successor;
@@ -101,13 +114,13 @@ export function endorsedCoordinators(copies: readonly CoordinatedCopy[]): Readon
       seen.add(key);
       const next = bindingOf(byKey.get(key) ?? { environmentId: "", id: "" });
       if (next?.state !== "transferred" || !next.successor) {
-        endorsed.add(key);
+        followed.add(key);
         break;
       }
       successor = next.successor;
     }
   }
-  return endorsed;
+  return new Set([...[...followed].filter((key) => !gaveWay.has(key)), ...tookOver]);
 }
 
 /**
@@ -227,7 +240,7 @@ export function copyRoles<T extends CoordinatedCopy>(
   if (!found) return roles;
   const epochOf = (copy: T) => bindingOf(copy)?.epoch ?? 0;
   // The coordinator the copies follow leads; epoch only orders the rest.
-  const endorsed = endorsedCoordinators(copies);
+  const endorsed = endorsedCoordinators(copies, retired);
   const rank = (copy: T) => (endorsed.has(memberKey(copy)) ? 1 : 0);
   // A linked copy with no binding recorded yet coordinates, as it always has.
   const live = new Set([

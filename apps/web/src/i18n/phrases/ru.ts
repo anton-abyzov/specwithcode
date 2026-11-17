@@ -5432,4 +5432,6 @@ export const ru: PhraseCatalog = {
     "Отправка передаёт сообщение координатору {machine} и открывает его страницу, куда придёт ответ.",
   "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
     "Отправка передаёт сообщение главному координатору и открывает его страницу, куда придёт ответ.",
+  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
+    "Файлы остаются на этом компьютере. Уберите их, чтобы отправить текст на главный, или откройте страницу главного и прикрепите их там.",
 };

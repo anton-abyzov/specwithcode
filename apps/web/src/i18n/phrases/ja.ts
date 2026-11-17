@@ -5431,4 +5431,6 @@ export const ja: PhraseCatalog = {
     "送信すると {machine} のコーディネーターにメッセージが届き、返信が届くそのページが開きます。",
   "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
     "送信するとメインのコーディネーターにメッセージが届き、返信が届くそのページが開きます。",
+  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
+    "ファイルはこのマシンに残ります。テキストをメインに送るにはファイルを外すか、メインのページを開いてそちらで添付してください。",
 };
