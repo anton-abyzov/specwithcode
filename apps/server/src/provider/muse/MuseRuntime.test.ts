@@ -7,12 +7,18 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
-import { EXPECTED_SCHEMA_FINGERPRINT } from "@muse-code/sdk";
+import { EXPECTED_SCHEMA_FINGERPRINT, MspError } from "@muse-code/sdk";
 import { makeMuseRuntime } from "./MuseRuntime.ts";
 import { connectMuse, museCheckFailure, museFailure } from "./MuseConnection.ts";
 import type { AcpSessionRuntimeEvent } from "../acp/AcpSessionRuntime.ts";
 import type * as Acp from "@specweave-studio/effect-acp/compat";
-import { museRequireHumanReviewer } from "./MuseRequests.ts";
+import {
+  MUSE_ASK_PROFILE,
+  MUSE_FULL_ACCESS_PROFILE,
+  museProfileRefused,
+  museRequireHumanReviewer,
+  museRequireProfile,
+} from "./MuseRequests.ts";
 const fs = Effect.runSync(Effect.provide(FileSystem.FileSystem, NodeFileSystem.layer));
 
 const dirs: string[] = [];
@@ -477,7 +483,7 @@ describe("Muse 1.4.13 turns", () => {
     );
   });
 
-  it("keeps Muse's own approval policy in full access", async () => {
+  it("selects the unrestricted profile for a new full access session", async () => {
     const input = await fixture();
     await run(
       Effect.gen(function* () {
@@ -487,7 +493,170 @@ describe("Muse 1.4.13 turns", () => {
     );
     const start = (await requests(input.cwd)).find((r) => r.method === "session/start");
     expect(start?.params.approvalMode).toBe("allowAll");
-    expect(start?.params).not.toHaveProperty("permissionProfile");
+    expect(start?.params.permissionProfile).toBe(":unrestricted");
+  });
+
+  it("selects the unrestricted profile on every open of a configured full access session", async () => {
+    const input = await fixture({ MUSE_TEST_GRANT_SESSION_MCP: "1" });
+    await run(
+      Effect.gen(function* () {
+        const runtime = yield* makeMuseRuntime({
+          ...input,
+          runtimeMode: "full-access",
+          mcpServers: [{ name: "studio-code", command: "/bin/echo", args: [], env: [] }],
+        });
+        yield* runtime.start();
+      }),
+    );
+    const opens = (await requests(input.cwd)).filter((r) =>
+      /^session\/(start|resume)$/.test(r.method),
+    );
+    expect(opens.map((r) => r.method)).toEqual(["session/start", "session/resume"]);
+    expect(opens.map((r) => r.params.permissionProfile)).toEqual([
+      ":unrestricted",
+      ":unrestricted",
+    ]);
+  });
+
+  // The stored session keeps the profile it was created with (":auto-review" on an
+  // older Muse Code, ":ask-me" after a Supervised start) unless the resume picks one.
+  it("re-selects the unrestricted profile when a full access session resumes", async () => {
+    const plain = await fixture();
+    await run(
+      Effect.gen(function* () {
+        const runtime = yield* makeMuseRuntime({
+          ...plain,
+          runtimeMode: "full-access",
+          resumeSessionId: "native-muse-session",
+        });
+        yield* runtime.start();
+      }),
+    );
+    const plainCalls = await requests(plain.cwd);
+    expect(plainCalls.some((r) => r.method === "session/start")).toBe(false);
+    const plainResumes = plainCalls.filter((r) => r.method === "session/resume");
+    expect(plainResumes.map((r) => r.params.permissionProfile)).toEqual([":unrestricted"]);
+    expect(plainCalls.find((r) => r.method === "session/setApprovalMode")?.params.mode).toBe(
+      "allowAll",
+    );
+
+    const configured = await fixture({ MUSE_TEST_GRANT_SESSION_MCP: "1" });
+    await run(
+      Effect.gen(function* () {
+        const runtime = yield* makeMuseRuntime({
+          ...configured,
+          runtimeMode: "full-access",
+          resumeSessionId: "native-muse-session",
+          mcpServers: [{ name: "studio-code", command: "/bin/echo", args: [], env: [] }],
+        });
+        yield* runtime.start();
+      }),
+    );
+    const configuredResumes = (await requests(configured.cwd)).filter(
+      (r) => r.method === "session/resume",
+    );
+    expect(configuredResumes.map((r) => r.params.permissionProfile)).toEqual([
+      ":unrestricted",
+      ":unrestricted",
+    ]);
+  });
+
+  it("keeps the ask-me profile and prompts when a supervised session starts or resumes", async () => {
+    for (const resumeSessionId of [undefined, "native-muse-session"]) {
+      const input = await fixture();
+      await run(
+        Effect.gen(function* () {
+          const runtime = yield* makeMuseRuntime({
+            ...input,
+            runtimeMode: "approval-required",
+            ...(resumeSessionId ? { resumeSessionId } : {}),
+          });
+          yield* runtime.start();
+        }),
+      );
+      const calls = await requests(input.cwd);
+      const opens = calls.filter((r) => /^session\/(start|resume)$/.test(r.method));
+      expect(opens.map((r) => r.params.permissionProfile)).toEqual([":ask-me"]);
+      expect(calls.find((r) => r.method === "session/setApprovalMode")?.params.mode).toBe(
+        "promptUnmatched",
+      );
+    }
+  });
+
+  it("opens without a profile when the host does not admit the unrestricted one", async () => {
+    for (const reason of ["permission_profile_unknown", "permission_profile_unavailable"]) {
+      for (const resumeSessionId of [undefined, "native-muse-session"]) {
+        const input = await fixture({ MUSE_TEST_REFUSE_PROFILE: reason });
+        await run(
+          Effect.gen(function* () {
+            const runtime = yield* makeMuseRuntime({
+              ...input,
+              runtimeMode: "full-access",
+              ...(resumeSessionId ? { resumeSessionId } : {}),
+            });
+            yield* runtime.start();
+          }),
+        );
+        const opens = (await requests(input.cwd)).filter((r) =>
+          /^session\/(start|resume)$/.test(r.method),
+        );
+        expect(opens.map((r) => r.params.permissionProfile)).toEqual([":unrestricted", undefined]);
+      }
+    }
+  });
+
+  it("fails the open on any other rejection, and never drops the ask-me profile", async () => {
+    const other = await fixture({ MUSE_TEST_REFUSE_PROFILE: "session_busy" });
+    const otherResult = await run(
+      Effect.gen(function* () {
+        const runtime = yield* makeMuseRuntime({ ...other, runtimeMode: "full-access" });
+        return yield* Effect.result(runtime.start());
+      }),
+    );
+    expect(otherResult._tag).toBe("Failure");
+    expect((await requests(other.cwd)).filter((r) => r.method === "session/start")).toHaveLength(1);
+
+    const supervised = await fixture({ MUSE_TEST_REFUSE_PROFILE: "permission_profile_unknown" });
+    const supervisedResult = await run(
+      Effect.gen(function* () {
+        const runtime = yield* makeMuseRuntime({ ...supervised, runtimeMode: "approval-required" });
+        return yield* Effect.result(runtime.start());
+      }),
+    );
+    expect(supervisedResult._tag).toBe("Failure");
+    expect(
+      (await requests(supervised.cwd)).filter((r) => r.method === "session/start"),
+    ).toHaveLength(1);
+  });
+
+  it("fails a full access open when the host reports another committed profile", async () => {
+    const sandboxed = await fixture({
+      MUSE_TEST_PERMISSION_STATE: JSON.stringify({
+        profileId: ":auto-review",
+        reviewerAuthority: "autoReview",
+      }),
+    });
+    const result = await run(
+      Effect.gen(function* () {
+        const runtime = yield* makeMuseRuntime({ ...sandboxed, runtimeMode: "full-access" });
+        return yield* Effect.result(runtime.start());
+      }),
+    );
+    expect(result._tag).toBe("Failure");
+    expect(JSON.stringify(result)).toContain("Full access");
+
+    const applied = await fixture({
+      MUSE_TEST_PERMISSION_STATE: JSON.stringify({
+        profileId: ":unrestricted",
+        reviewerAuthority: "none",
+      }),
+    });
+    await run(
+      Effect.gen(function* () {
+        const runtime = yield* makeMuseRuntime({ ...applied, runtimeMode: "full-access" });
+        yield* runtime.start();
+      }),
+    );
   });
 
   it("fails a completed turn that produced nothing SpecWithCode can show", async () => {
@@ -527,5 +696,43 @@ describe("Muse 1.4.13 turns", () => {
       museRequireHumanReviewer({ permissionState: { reviewerAuthority: "human" } }),
     ).not.toThrow();
     expect(() => museRequireHumanReviewer({ workspaceRoot: "/w" })).not.toThrow();
+  });
+
+  it("checks the committed profile only when the host reports it", () => {
+    expect(() =>
+      museRequireProfile({ permissionState: { profileId: ":ask-me" } }, MUSE_FULL_ACCESS_PROFILE),
+    ).toThrow(/Full access/);
+    expect(() =>
+      museRequireProfile(
+        { permissionState: { profileId: ":unrestricted", reviewerAuthority: "none" } },
+        MUSE_FULL_ACCESS_PROFILE,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      museRequireProfile({ workspaceRoot: "/w" }, MUSE_FULL_ACCESS_PROFILE),
+    ).not.toThrow();
+    expect(() =>
+      museRequireProfile(
+        { permissionState: { reviewerAuthority: "autoReview" } },
+        MUSE_ASK_PROFILE,
+      ),
+    ).toThrow(/automated reviewer/);
+    expect(() =>
+      museRequireProfile({ permissionState: { reviewerAuthority: "human" } }, MUSE_ASK_PROFILE),
+    ).not.toThrow();
+  });
+
+  it("reads only a profile rejection as a refused profile", () => {
+    const rejected = (reason: string) =>
+      new MspError({
+        code: -32030,
+        message: "rejected",
+        data: { kind: "commandRejected", retryable: false, reason },
+      });
+    expect(museProfileRefused(rejected("permission_profile_unknown"))).toBe(true);
+    expect(museProfileRefused(rejected("permission_profile_unavailable"))).toBe(true);
+    expect(museProfileRefused(rejected("permission_profile_ephemeral_fixed"))).toBe(true);
+    expect(museProfileRefused(rejected("session_busy"))).toBe(false);
+    expect(museProfileRefused(new Error("permission_profile_unknown"))).toBe(false);
   });
 });

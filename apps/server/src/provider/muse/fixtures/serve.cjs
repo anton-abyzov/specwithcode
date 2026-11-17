@@ -115,7 +115,32 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     activeTurnId: null,
     status: "idle",
     providerId: "meta",
+    // Only a host serving the committed permission state reports it.
+    ...(process.env.MUSE_TEST_PERMISSION_STATE
+      ? { permissionState: JSON.parse(process.env.MUSE_TEST_PERMISSION_STATE) }
+      : {}),
   };
+  // A host whose catalog does not admit the picked profile rejects the open, as Muse 1.4.23 does.
+  if (
+    process.env.MUSE_TEST_REFUSE_PROFILE &&
+    (method === "session/start" || method === "session/resume") &&
+    p.permissionProfile !== undefined
+  ) {
+    send({
+      id,
+      error: {
+        code: -32030,
+        message: `command ${p.commandId} rejected: no profile ${p.permissionProfile} in the host catalog`,
+        data: {
+          kind: "commandRejected",
+          retryable: false,
+          commandId: p.commandId,
+          reason: process.env.MUSE_TEST_REFUSE_PROFILE,
+        },
+      },
+    });
+    return;
+  }
   let result = {};
   switch (method) {
     case "initialize":
