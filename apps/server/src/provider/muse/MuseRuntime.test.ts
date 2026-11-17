@@ -584,7 +584,11 @@ describe("Muse 1.4.13 turns", () => {
   });
 
   it("opens without a profile when the host does not admit the unrestricted one", async () => {
-    for (const reason of ["permission_profile_unknown", "permission_profile_unavailable"]) {
+    for (const reason of [
+      "permission_profile_unknown",
+      "permission_profile_unavailable",
+      "permission_profile_ephemeral_fixed",
+    ]) {
       for (const resumeSessionId of [undefined, "native-muse-session"]) {
         const input = await fixture({ MUSE_TEST_REFUSE_PROFILE: reason });
         await run(
