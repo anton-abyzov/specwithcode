@@ -736,7 +736,7 @@ describe("orchestration v2 provider switching", () => {
             assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.driver, CLAUDE_DRIVER);
             if (scenario.includes("small")) {
               const delivered = yield* encodeJson(yield* Ref.get(injectedHistory));
-              assert.include(delivered, "Selected 0 intact items");
+              assert.include(delivered, "Selected 0 history entries");
               assert.include(delivered, "studio_thread_read");
             }
             return;

@@ -7,6 +7,8 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
+  type OrchestrationV2TurnItem,
   ThreadId,
   TurnItemId,
   type OrchestrationV2AppThread,
@@ -17,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { historicalMessage, selectHistory, renderHistory } from "./ContextHandoffBudget.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 const layerDatabase = Layer.mergeAll(
@@ -350,6 +353,103 @@ it.effect.each(["sqlite", "memory"] as const)(
         (yield* store.getTurnStartContext(threadId, runId)).messages.map((m) => m.id),
         marker.id,
       );
+      // Exercise the production SQL read as well as the in-memory implementation:
+      // prose alone cannot identify a worker after switching providers.
+      const workerId = ThreadId.make("worker:migration");
+      const lifecycleBase = {
+        id: item.id,
+        threadId,
+        runId: oldRunId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 10,
+        status: "completed" as const,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+      const lifecycle: OrchestrationV2TurnItem[] = [
+        {
+          ...lifecycleBase,
+          id: TurnItemId.make("launch"),
+          ordinal: 10,
+          type: "thread_created",
+          targetThreadId: workerId,
+          targetRunId: null,
+          targetProviderInstanceId: instanceId,
+          targetModel: "test",
+        },
+        {
+          ...lifecycleBase,
+          id: TurnItemId.make("worker"),
+          ordinal: 11,
+          type: "subagent",
+          subagentId: NodeId.make("child:migration"),
+          origin: "app_owned",
+          driver: "codex",
+          providerInstanceId: instanceId,
+          childThreadId: workerId,
+          prompt: "Migrate",
+          result: null,
+          status: "running",
+        },
+        {
+          ...lifecycleBase,
+          id: TurnItemId.make("tool-receipt"),
+          ordinal: 12,
+          type: "dynamic_tool",
+          toolName: "delegate_task",
+          input: { command: "do not replay" },
+          output: { privatePayload: "do not inject raw output" },
+        },
+        {
+          ...lifecycleBase,
+          id: TurnItemId.make("question"),
+          ordinal: 13,
+          type: "user_input_request",
+          requestId: RuntimeRequestId.make("target-question"),
+          questions: [
+            { id: "target", header: "Target", question: "Which deployment target?", options: [] },
+          ],
+        },
+      ];
+      for (const entry of lifecycle) {
+        yield* store.apply({
+          id: EventId.make(`event:${entry.id}`),
+          type: "turn-item.updated",
+          threadId,
+          runId: oldRunId,
+          occurredAt: now,
+          payload: entry,
+        });
+      }
+      const history = yield* store.getTurnStartHistory(threadId, [oldRunId]);
+      assert.deepEqual(
+        history.filter((entry) => lifecycle.some((expected) => expected.id === entry.id)),
+        lifecycle,
+      );
+      assert.deepEqual(yield* store.getTurnStartHistory(threadId, [runId]), []);
+      const selectedHistory = selectHistory({
+        messages: history.flatMap((entry) => {
+          const message = historicalMessage(entry);
+          return message === null ? [] : [message];
+        }),
+        coverage: "Provider switch fixture",
+        budget: 16_000,
+      });
+      const replay = renderHistory(selectedHistory.messages, selectedHistory.context);
+      assert.include(replay, workerId);
+      assert.include(replay, "recorded status running");
+      assert.include(replay, "Which deployment target?");
+      assert.include(replay, "tool-receipt");
+      assert.notInclude(replay, "do not replay");
+      assert.notInclude(replay, "do not inject raw output");
+      assert.include(replay, "Counts cover eligible history records, not the whole timeline");
+      assert.equal(selectedHistory.omittedItems, 0);
       const other = ThreadId.make("other");
       yield* putThread({ ...thread, id: other });
       assert.deepEqual((yield* store.getTurnStartContext(other, runId)).messages, []);

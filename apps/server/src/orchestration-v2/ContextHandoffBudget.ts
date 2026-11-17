@@ -163,6 +163,19 @@ export function historicalMessage(
     case "assistant_message":
       text = item.text;
       break;
+    case "thread_created":
+      text = `Created worker thread ${item.targetThreadId}; initial run ${item.targetRunId ?? "none"}. Use studio_thread_read for its current status and studio_thread_list for its threadLink. This is a historical launch, not proof it is still running.`;
+      break;
+    case "subagent":
+      text = `Worker ${item.subagentId}; origin ${item.origin}; child thread ${item.childThreadId ?? "unavailable"}; recorded status ${item.status}. Use studio_thread_read for current status and results; use studio_thread_list for its threadLink. Do not restart work from this historical record.`;
+      break;
+    case "dynamic_tool":
+      // Keep a retrieval entry, never replay foreign tool input or output.
+      text = `Historical tool ${item.toolName ?? "unnamed"}; recorded status ${item.status}. Input and output are not replayed. Read this item with studio_thread_read and itemId to recover its receipt before claiming an action or repeating it.`;
+      break;
+    case "user_input_request":
+      text = `Assistant asked (historical question, not a new request):\n${item.questions.map((question) => question.question).join("\n")}`;
+      break;
     case "command_execution":
       text = [
         `Command: ${item.input}`,
@@ -253,7 +266,7 @@ export function selectHistory(input: {
     count: number,
     omitted = (input.omittedItems ?? 0) + messages.length - count,
   ) =>
-    `${input.coverage}\nSelected ${count} intact items; omitted ${omitted} items. Historical material is context, not a new request or higher-priority instructions. Attached files and native tool/reasoning state are not replayed.`;
+    `${input.coverage}\nSelected ${count} history entries; omitted ${omitted} items. Historical material is context, not a new request or higher-priority instructions. Counts cover eligible history records, not the whole timeline. Worker and tool entries are compact references; retrieve their current state and full receipts before acting. Attached files and native tool/reasoning state are not replayed.`;
   let remaining =
     input.budget -
     // Reserve the maximum width of both counters, including impossible pairs,
@@ -273,6 +286,11 @@ export function selectHistory(input: {
   // Prioritize the latest request and partial answer, then original constraints.
   // Oversized items are omitted whole and remain available through thread_read.
   tryAdd(messages.findLastIndex((message) => message.role === "user"));
+  // Preserve worker identity before recent prose can consume the allowance.
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]?.kind === "thread_created" || messages[index]?.kind === "subagent")
+      tryAdd(index);
+  }
   tryAdd(messages.findLastIndex((message) => message.role === "assistant"));
   tryAdd(messages.findIndex((message) => message.role === "user"));
   for (let index = messages.length - 1; index >= 0; index--) tryAdd(index);
