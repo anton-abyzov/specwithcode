@@ -1427,7 +1427,9 @@ export function HandoffFolderCopy({
             <HandoffCopyScanFreshness
               capturedAt={copy?.capturedAt}
               status={scanStatus}
-              sourceChanged={sourceChanged}
+              // The footer offers Measure and compare again only on Review; on What the
+              // freshness line holds it, or a changed source would leave no way forward.
+              sourceChanged={stage === "preview" && sourceChanged}
               busy={busy}
               onRefresh={() => void refreshScan()}
               onCompareAgain={rechoose}

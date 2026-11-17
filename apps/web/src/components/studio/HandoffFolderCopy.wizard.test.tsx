@@ -877,6 +877,26 @@ it("replaces saved worktree notices with current counts after refreshing", async
   expect(button("Measure and compare again")).not.toBeNull();
 });
 
+it("offers Measure and compare again on What once the source changed, with Preview off", async () => {
+  measuredWithoutSecrets();
+  measured();
+  await mount();
+  await chooseFirst();
+  await click("Copy to M3");
+  expect(stageNow()).toBe("select");
+  state.handlers.copySourceStatus = () => ({
+    state: "ready",
+    summary: noSecrets,
+    freshness: { checkedAt: Date.now(), current: false },
+  });
+  await click("Check for changes");
+  // Preview is off while the source changed, so What must keep a way forward.
+  expect(button("Preview on M3").disabled).toBe(true);
+  expect(pageText()).not.toContain("Check for changes");
+  const compare = document.querySelectorAll('[data-slot="copy-scan-freshness"] button');
+  expect([...compare].map((node) => node.textContent)).toEqual(["Measure and compare again"]);
+});
+
 it("unlocks a stalled read-only refresh without changing choices or accepting a late reply", async () => {
   await toPreview();
   const saved = pointerNow();
