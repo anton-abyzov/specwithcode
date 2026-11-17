@@ -137,6 +137,7 @@ function CodeForm({
 export function DeviceApprovalPrompt({
   machine,
   account = null,
+  hub = null,
   request,
   position,
   total,
@@ -147,6 +148,8 @@ export function DeviceApprovalPrompt({
   machine: string;
   /** The SpecWithCode Connect account the device signed in with, when known here. */
   account?: string | null;
+  /** For a phone: the hub machine it was paired through, when this app knows its name. */
+  hub?: string | null;
   request: ConnectDeviceRequest;
   position: number;
   total: number;
@@ -172,7 +175,11 @@ export function DeviceApprovalPrompt({
                 ? tx("{device} is asking. It signed in to your SpecWithCode Connect account.", {
                     device: who,
                   })
-                : tx("{device} is asking.", { device: who })}
+                : hub
+                  ? tx("{device} is asking. It was paired through {hub}.", { device: who, hub })
+                  : tx("{device} is asking. It was paired through another of your machines.", {
+                      device: who,
+                    })}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -183,8 +190,13 @@ export function DeviceApprovalPrompt({
           ) : null}
           <p className="text-sm" data-device-approval-grants>
             {tx(
-              "Allow lets it open threads, terminals, files and settings on {machine}, as this app can. Allow only a device you have in front of you.",
+              "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.",
               { machine },
+            )}
+          </p>
+          <p className="text-xs text-muted-foreground" data-device-approval-provenance>
+            {tx(
+              "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.",
             )}
           </p>
           <CodeForm

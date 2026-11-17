@@ -48,6 +48,8 @@ export const ConnectDeviceRequest = Schema.Struct({
   /** The device's own word about its system and app, for telling devices apart. */
   system: Schema.optionalKey(Schema.String),
   app: Schema.optionalKey(Schema.String),
+  /** For a phone: the environment id of the hub machine it was paired through. */
+  via: Schema.optionalKey(Schema.String),
   askedAt: IsoDateTime,
   expiresAt: IsoDateTime,
 });

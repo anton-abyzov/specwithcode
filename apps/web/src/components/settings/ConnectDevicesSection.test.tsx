@@ -7,6 +7,7 @@ import {
   connectDeviceDetails,
   connectDeviceName,
   noticeMessage,
+  translateDeviceRefusal,
   isCompleteApprovalCode,
   makeSeenNotices,
   takeUnseenNotices,
@@ -83,6 +84,10 @@ describe("device approval copy", () => {
     expect(
       connectDeviceName({ label: "Phone", kind: "phone", deviceType: "mobile", system: "iOS" }),
     ).toBe("An iPhone");
+    // A device calling itself "this machine" must not read as the owner.
+    expect(connectDeviceName({ label: "This machine", kind: "connect", system: "macOS" })).toBe(
+      "A Mac",
+    );
   });
 
   it("tells devices apart by system, app and first seen", () => {
@@ -94,6 +99,27 @@ describe("device approval copy", () => {
       ),
     ).toBe("macOS · SpecWithCode 1.0.338 · First seen November 17, 2026");
     expect(connectDeviceDetails({})).toBe("");
+    expect(
+      connectDeviceDetails(
+        { system: "iOS", askedAt: "2026-11-17T15:05:00.000Z" },
+        undefined,
+        "en-US",
+      ),
+    ).toMatch(/^iOS · Asked at \d{1,2}:05/);
+  });
+
+  it("says the machine's refusals in this window's words", () => {
+    const tx = (english: string, values?: Readonly<Record<string, string | number>>) =>
+      `T:${english.replace(/\{(\w+)\}/g, (_m, name: string) => String(values?.[name]))}`;
+    for (const message of [
+      "Open SpecWithCode on m4 and type this code: K7QX2M",
+      "m4 turned this device away. Ask again tomorrow, or approve it in SpecWithCode on m4.",
+      "Too many devices are waiting for approval on m4. Try again in a few minutes.",
+      "m4 no longer lets this device in. Approve it again in SpecWithCode on m4.",
+      "The device list on m4 is damaged. Open SpecWithCode on m4 to repair it.",
+    ])
+      expect(translateDeviceRefusal(message, tx)).toMatch(/^T:/);
+    expect(translateDeviceRefusal("Something else.", tx)).toBe("Something else.");
   });
 
   it("says an approval notice in this window's words", () => {

@@ -16,6 +16,9 @@ describe("connect device names (1327)", () => {
     ])
       expect(isOwnDeviceName(label)).toBe(false);
     expect(isOwnDeviceName("M5")).toBe(true);
+    // The list's words for the owner and the update are never a device's name.
+    for (const label of ["this machine", "The Update", "another device"])
+      expect(isOwnDeviceName(label)).toBe(false);
   });
 
   it("names a nameless desktop from its session: system, app and version", () => {

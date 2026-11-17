@@ -1012,6 +1012,8 @@ export const make = Effect.gen(function* () {
         ...principalApproval(grant),
         subject: grant.subject,
         scopes: grant.scopes,
+        // A code an approved device made lasts only while that device stays approved (1327).
+        ...(grant.creatorDevice === undefined ? {} : { boundDevice: grant.creatorDevice }),
         ...(previousSession?.method === "browser-session-cookie"
           ? { replaceSessionId: previousSession.sessionId }
           : {}),
@@ -1130,6 +1132,8 @@ export const make = Effect.gen(function* () {
                 ...principalApproval(grant),
                 subject: grant.subject,
                 scopes: grantedScopes,
+                // Bound to the device that made the code: Remove ends it too (1327).
+                ...(grant.creatorDevice === undefined ? {} : { boundDevice: grant.creatorDevice }),
                 ...(input?.proofKeyThumbprint
                   ? {
                       proofKeyThumbprint: input.proofKeyThumbprint,

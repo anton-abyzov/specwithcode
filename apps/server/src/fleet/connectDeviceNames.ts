@@ -16,6 +16,16 @@ const SHARED_LABELS: ReadonlySet<string> = new Set([
   "Phone",
 ]);
 
+/**
+ * Words the device list uses for the owner and the update. A device may not
+ * take them as its name, or its approvals would read as the owner's (1327).
+ */
+const RESERVED_NAMES: ReadonlySet<string> = new Set([
+  "this machine",
+  "the update",
+  "another device",
+]);
+
 const MAX_NAME_LENGTH = 80;
 
 export interface DeviceClientFacts {
@@ -38,7 +48,12 @@ export interface DeviceDescription {
 /** True when a label names one device rather than a kind of client. */
 export const isOwnDeviceName = (label: string | undefined): label is string => {
   const trimmed = label?.trim();
-  return trimmed !== undefined && trimmed.length > 0 && !SHARED_LABELS.has(trimmed);
+  return (
+    trimmed !== undefined &&
+    trimmed.length > 0 &&
+    !SHARED_LABELS.has(trimmed) &&
+    !RESERVED_NAMES.has(trimmed.toLowerCase())
+  );
 };
 
 const APP_VERSION = /(?:SpecWithCode|SpecWeaveStudio(?:\(Alpha\))?)\/(\d+\.\d+\.\d+)/;

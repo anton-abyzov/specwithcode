@@ -5393,8 +5393,6 @@ export const ja: PhraseCatalog = {
   "A new device wants to use {machine}": "新しいデバイスが {machine} の使用を求めています",
   "A phone": "スマートフォン",
   "A tablet": "タブレット",
-  "Allow lets it open threads, terminals, files and settings on {machine}, as this app can. Allow only a device you have in front of you.":
-    "許可すると、このアプリと同じように {machine} のスレッド、ターミナル、ファイル、設定を開けるようになります。許可するのは目の前にあるデバイスだけにしてください。",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
     "{coordinatorLabel} に {hereLabel} での作業の実行を許可しますか？",
   "Allowing…": "許可しています…",
@@ -5463,7 +5461,6 @@ export const ja: PhraseCatalog = {
     "{coordinatorLabel} は {hereLabel} のキーを 1 年間受け取ります。対象はターミナル、ファイル、設定、サインインに加え、アクセス、アップデート、スキルです。作業の上限は {cap} です。プロジェクトの制限は引き続き適用されます。シークレットの転送は毎回まず {coordinatorLabel} で確認されます。",
   "{count} devices waiting": "{count} 台のデバイスが待機中",
   "{device} can now use {machine}": "{device} が {machine} を使えるようになりました",
-  "{device} is asking.": "{device} が申請しています。",
   "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
     "{device} が申請しています。SpecWithCode Connect に {account} としてサインインしています。",
   "{device} is asking. It signed in to your SpecWithCode Connect account.":
@@ -5473,4 +5470,17 @@ export const ja: PhraseCatalog = {
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} はこのデバイスの接続を許可しなくなりました。{machine} の SpecWithCode でもう一度承認してください。",
   "{position} of {total} waiting": "待機中 {position}/{total}",
+  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
+    "許可すると、このアプリと同じように {machine} のターミナル、ファイル、設定、サインインを使い、そこで作業を始められるようになります。",
+  "Asked at {time}": "{time} に申請",
+  "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
+    "名前はデバイスが自分で付けたものです。目の前のデバイスであることを証明するのはコードだけなので、そのデバイスに表示されたコードだけを許可してください。",
+  "Too many devices are waiting for approval on {machine}. Try again in a few minutes.":
+    "{machine} で承認を待っているデバイスが多すぎます。数分後にもう一度お試しください。",
+  "{device} is asking. It was paired through another of your machines.":
+    "{device} が申請しています。別のマシン経由でペアリングされています。",
+  "{device} is asking. It was paired through {hub}.":
+    "{device} が申請しています。{hub} 経由でペアリングされています。",
+  "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
+    "{machine} がこのデバイスを拒否しました。明日もう一度申請するか、{machine} の SpecWithCode で承認してください。",
 };

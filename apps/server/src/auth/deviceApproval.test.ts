@@ -539,6 +539,37 @@ it.effect("a folder offer made through a device's MCP client is bound to that de
   ),
 );
 
+it.effect("a session redeemed from a device's code ends when that device is removed", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const { device } = yield* approvedConnectDevice();
+      const code = yield* auth.issuePairingCredential({
+        scopes: AuthStandardClientScopes,
+        coordinatorEnvironmentId: EnvironmentId.make("env-hub"),
+        creatorDeviceKey: device,
+      });
+      const phone = makeTestDpopKey();
+      const redeemed = yield* auth.exchangeBootstrapCredentialForAccessToken(
+        code.credential,
+        undefined,
+        { deviceType: "mobile" },
+        { proofKeyThumbprint: phone.thumbprint },
+      );
+      // Works while the device that made the code stands...
+      yield* auth.authenticateHttpRequest(dpopRequest(phone, redeemed.access_token));
+      yield* trust.remove(device);
+      // ...and stops with it, though the code was redeemed before Remove.
+      expect(
+        yield* auth
+          .authenticateHttpRequest(dpopRequest(phone, redeemed.access_token))
+          .pipe(Effect.flip),
+      ).toBeDefined();
+    }),
+  ),
+);
+
 it.effect("a removed device cannot come back through a pairing code it created", () =>
   withMachine(
     Effect.gen(function* () {

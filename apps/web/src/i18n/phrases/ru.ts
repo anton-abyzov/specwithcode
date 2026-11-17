@@ -5390,8 +5390,6 @@ export const ru: PhraseCatalog = {
   "A new device wants to use {machine}": "Новое устройство хочет использовать {machine}",
   "A phone": "Телефон",
   "A tablet": "Планшет",
-  "Allow lets it open threads, terminals, files and settings on {machine}, as this app can. Allow only a device you have in front of you.":
-    "«Разрешить» даёт ему открывать треды, терминалы, файлы и настройки на {machine}, так же как это приложение. Разрешайте только устройство, которое у вас перед глазами.",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
     "Разрешить {coordinatorLabel} запускать работу на {hereLabel}?",
   "Allowing…": "Разрешаем…",
@@ -5459,7 +5457,6 @@ export const ru: PhraseCatalog = {
     "{coordinatorLabel} получает ключ к {hereLabel} на год: терминалы, файлы, настройки и входы, а также доступ, обновления и навыки. Его работа ограничена: {cap}. Ограничения проектов продолжают действовать. Каждая передача секретов сначала спрашивает разрешения на {coordinatorLabel}.",
   "{count} devices waiting": "Устройств в ожидании: {count}",
   "{device} can now use {machine}": "{device} теперь может использовать {machine}",
-  "{device} is asking.": "{device} запрашивает доступ.",
   "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
     "{device} запрашивает доступ. Вход в SpecWithCode Connect выполнен как {account}.",
   "{device} is asking. It signed in to your SpecWithCode Connect account.":
@@ -5469,4 +5466,17 @@ export const ru: PhraseCatalog = {
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} больше не пускает это устройство. Одобрите его снова в SpecWithCode на {machine}.",
   "{position} of {total} waiting": "{position} из {total} в ожидании",
+  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
+    "«Разрешить» даёт ему терминалы, файлы, настройки и входы в аккаунты на {machine}, а также запуск работы там, так же как это приложение.",
+  "Asked at {time}": "Запрос в {time}",
+  "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
+    "Имя устройство выбирает само. Доказывает, что это устройство перед вами, только код, поэтому разрешайте лишь код, который видите на нём.",
+  "Too many devices are waiting for approval on {machine}. Try again in a few minutes.":
+    "Слишком много устройств ждут одобрения на {machine}. Попробуйте через несколько минут.",
+  "{device} is asking. It was paired through another of your machines.":
+    "{device} запрашивает доступ. Оно подключено через другую вашу машину.",
+  "{device} is asking. It was paired through {hub}.":
+    "{device} запрашивает доступ. Оно подключено через {hub}.",
+  "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
+    "{machine} отклонила это устройство. Запросите снова завтра или одобрите его в SpecWithCode на {machine}.",
 };

@@ -5173,8 +5173,6 @@ export const zh: PhraseCatalog = {
   "A new device wants to use {machine}": "有新设备想使用 {machine}",
   "A phone": "一部手机",
   "A tablet": "一台平板",
-  "Allow lets it open threads, terminals, files and settings on {machine}, as this app can. Allow only a device you have in front of you.":
-    "允许后，它可以像此应用一样在 {machine} 上打开会话、终端、文件和设置。只允许你眼前的设备。",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
     "允许 {coordinatorLabel} 在 {hereLabel} 上运行工作？",
   "Allowing…": "正在允许…",
@@ -5240,7 +5238,6 @@ export const zh: PhraseCatalog = {
     "{coordinatorLabel} 会获得 {hereLabel} 的密钥，有效期一年：终端、文件、设置和登录，以及权限、更新和技能。它的工作上限为 {cap}。项目限制仍然有效。每次传输机密都会先在 {coordinatorLabel} 上询问。",
   "{count} devices waiting": "{count} 台设备在等待",
   "{device} can now use {machine}": "{device} 现在可以使用 {machine}",
-  "{device} is asking.": "{device} 正在申请。",
   "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
     "{device} 正在申请。它以 {account} 登录了 SpecWithCode Connect。",
   "{device} is asking. It signed in to your SpecWithCode Connect account.":
@@ -5250,4 +5247,16 @@ export const zh: PhraseCatalog = {
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} 不再允许此设备连接。请在 {machine} 上的 SpecWithCode 中重新批准。",
   "{position} of {total} waiting": "等待中：第 {position} 个，共 {total} 个",
+  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
+    "允许后，它可以像此应用一样使用 {machine} 上的终端、文件、设置和登录，并在那里开始工作。",
+  "Asked at {time}": "申请于 {time}",
+  "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
+    "名称是设备自己起的。只有代码能证明它就是你眼前的设备，所以只允许你能在它上面看到的代码。",
+  "Too many devices are waiting for approval on {machine}. Try again in a few minutes.":
+    "{machine} 上等待批准的设备太多。请几分钟后再试。",
+  "{device} is asking. It was paired through another of your machines.":
+    "{device} 正在申请。它是通过你的另一台电脑配对的。",
+  "{device} is asking. It was paired through {hub}.": "{device} 正在申请。它是通过 {hub} 配对的。",
+  "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
+    "{machine} 拒绝了此设备。请明天再申请，或在 {machine} 上的 SpecWithCode 中批准它。",
 };

@@ -329,6 +329,7 @@ export interface PendingSummary {
   readonly deviceType?: string;
   readonly system?: string;
   readonly app?: string;
+  readonly via?: string;
   readonly askedAt: string;
   readonly expiresAt: string;
 }
@@ -906,6 +907,8 @@ export const makeWith = (options: MakeOptions = {}) =>
           id: entry.id,
           kind: entry.kind,
           ...describedFields(entry),
+          // The hub machine a phone was paired through, so the owner can tell where it came from.
+          ...(entry.account.startsWith("hub:") ? { via: entry.account.slice(4) } : {}),
           askedAt: entry.createdAt,
           expiresAt: entry.expiresAt,
         })),

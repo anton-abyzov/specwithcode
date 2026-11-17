@@ -5441,8 +5441,6 @@ export const fr: PhraseCatalog = {
   "A new device wants to use {machine}": "Un nouvel appareil veut utiliser {machine}",
   "A phone": "Un téléphone",
   "A tablet": "Une tablette",
-  "Allow lets it open threads, terminals, files and settings on {machine}, as this app can. Allow only a device you have in front of you.":
-    "Autoriser lui permet d’ouvrir des fils, des terminaux, des fichiers et des réglages sur {machine}, comme cette app. N’autorisez qu’un appareil que vous avez devant vous.",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
     "Autoriser {coordinatorLabel} à exécuter du travail sur {hereLabel} ?",
   "Allowing…": "Autorisation…",
@@ -5509,7 +5507,6 @@ export const fr: PhraseCatalog = {
     "{coordinatorLabel} reçoit une clé de {hereLabel} pour un an : terminaux, fichiers, réglages et connexions, plus l’accès, les mises à jour et les compétences. Son travail est plafonné à {cap}. Les limites du projet restent en vigueur. Chaque transfert de secret demande d’abord, sur {coordinatorLabel}.",
   "{count} devices waiting": "{count} appareils en attente",
   "{device} can now use {machine}": "{device} peut maintenant utiliser {machine}",
-  "{device} is asking.": "{device} demande l’accès.",
   "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
     "{device} demande l’accès. Il s’est connecté à SpecWithCode Connect en tant que {account}.",
   "{device} is asking. It signed in to your SpecWithCode Connect account.":
@@ -5519,4 +5516,17 @@ export const fr: PhraseCatalog = {
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} n’accepte plus cet appareil. Approuvez-le à nouveau dans SpecWithCode sur {machine}.",
   "{position} of {total} waiting": "{position} sur {total} en attente",
+  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
+    "Autoriser lui permet d’utiliser les terminaux, les fichiers, les réglages et les connexions sur {machine} et d’y lancer du travail, comme cette app.",
+  "Asked at {time}": "Demandé à {time}",
+  "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
+    "Le nom est celui que l’appareil se donne. Seul le code prouve que c’est l’appareil devant vous, alors n’autorisez qu’un code que vous lisez dessus.",
+  "Too many devices are waiting for approval on {machine}. Try again in a few minutes.":
+    "Trop d’appareils attendent une approbation sur {machine}. Réessayez dans quelques minutes.",
+  "{device} is asking. It was paired through another of your machines.":
+    "{device} demande l’accès. Il a été associé via une autre de vos machines.",
+  "{device} is asking. It was paired through {hub}.":
+    "{device} demande l’accès. Il a été associé via {hub}.",
+  "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
+    "{machine} a refusé cet appareil. Redemandez demain ou approuvez-le dans SpecWithCode sur {machine}.",
 };

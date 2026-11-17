@@ -243,9 +243,17 @@ function DeviceApprovalPromptForMachine({
   onLater: () => void;
 }) {
   const actions = useConnectDevicesActions(environmentId, snapshot.machine, refresh);
+  const { environments } = useEnvironments();
+  // A phone's hub by the name this app knows it under; unknown hubs read as "another machine".
+  const hub =
+    request.via === undefined
+      ? null
+      : (environments.find((environment) => environment.environmentId === request.via)?.label ??
+        null);
   return hasCloudPublicConfig() ? (
     <DeviceApprovalPromptWithAccount
       machine={snapshot.machine}
+      hub={hub}
       request={request}
       position={position}
       total={total}
@@ -256,6 +264,7 @@ function DeviceApprovalPromptForMachine({
   ) : (
     <DeviceApprovalPrompt
       machine={snapshot.machine}
+      hub={hub}
       request={request}
       position={position}
       total={total}

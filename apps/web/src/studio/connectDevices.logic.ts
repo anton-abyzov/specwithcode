@@ -24,6 +24,13 @@ const SHARED_LABELS: ReadonlySet<string> = new Set([
   "Phone",
 ]);
 
+/** Words the list uses for the owner and the update; never a device's own name. */
+const RESERVED_NAMES: ReadonlySet<string> = new Set([
+  "this machine",
+  "the update",
+  "another device",
+]);
+
 type DeviceFacts = Pick<ConnectDevice, "label" | "kind" | "deviceType" | "named" | "system">;
 
 /** The English stand-in for a device that gave no name; each window translates it. */
@@ -53,13 +60,19 @@ export function standInDeviceName(device: Pick<DeviceFacts, "kind" | "deviceType
  */
 export function connectDeviceName(device: DeviceFacts, tx: TranslatePhrase = englishPhrase) {
   const label = device.label.trim();
-  const own = device.named !== false && label.length > 0 && !SHARED_LABELS.has(label);
+  const own =
+    device.named !== false &&
+    label.length > 0 &&
+    !SHARED_LABELS.has(label) &&
+    !RESERVED_NAMES.has(label.toLowerCase());
   return own ? label : tx(standInDeviceName(device));
 }
 
 /** "macOS · SpecWithCode 1.0.338 · First seen November 17, 2026": what tells devices apart. */
 export function connectDeviceDetails(
-  device: Partial<Pick<ConnectDevice, "system" | "app" | "firstSeenAt">>,
+  device: Partial<Pick<ConnectDevice, "system" | "app" | "firstSeenAt">> & {
+    readonly askedAt?: string;
+  },
   tx: TranslatePhrase = englishPhrase,
   locale?: string,
 ) {
@@ -68,6 +81,15 @@ export function connectDeviceDetails(
   if (device.app) parts.push(device.app);
   if (device.firstSeenAt)
     parts.push(tx("First seen {date}", { date: longDate(device.firstSeenAt, locale) }));
+  else if (device.askedAt)
+    parts.push(
+      tx("Asked at {time}", {
+        time: new Date(device.askedAt).toLocaleTimeString(locale, {
+          hour: "numeric",
+          minute: "2-digit",
+        }),
+      }),
+    );
   return parts.join(" · ");
 }
 
@@ -164,6 +186,21 @@ const DEVICE_REFUSALS: ReadonlyArray<
       tx("This machine cannot check new devices yet. Open SpecWithCode on it and update."),
   ],
   [/^Approve this device on the machine\.$/, (_m, tx) => tx("Approve this device on the machine.")],
+  [
+    /^(.+) turned this device away\. Ask again tomorrow, or approve it in SpecWithCode on (.+)\.$/,
+    (m, tx) =>
+      tx(
+        "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.",
+        { machine: m[1]! },
+      ),
+  ],
+  [
+    /^Too many devices are waiting for approval on (.+)\. Try again in a few minutes\.$/,
+    (m, tx) =>
+      tx("Too many devices are waiting for approval on {machine}. Try again in a few minutes.", {
+        machine: m[1]!,
+      }),
+  ],
 ];
 
 export function translateDeviceRefusal(message: string, tx: TranslatePhrase): string {

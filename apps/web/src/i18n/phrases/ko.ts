@@ -5328,8 +5328,6 @@ export const ko: PhraseCatalog = {
   "A new device wants to use {machine}": "새 기기가 {machine}을(를) 사용하려고 합니다",
   "A phone": "휴대폰",
   "A tablet": "태블릿",
-  "Allow lets it open threads, terminals, files and settings on {machine}, as this app can. Allow only a device you have in front of you.":
-    "허용하면 이 앱처럼 {machine}의 스레드, 터미널, 파일, 설정을 열 수 있습니다. 눈앞에 있는 기기만 허용하세요.",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
     "{coordinatorLabel}이(가) {hereLabel}에서 작업을 실행하도록 허용할까요?",
   "Allowing…": "허용 중…",
@@ -5395,7 +5393,6 @@ export const ko: PhraseCatalog = {
     "{coordinatorLabel}은(는) {hereLabel}의 키를 1년 동안 받습니다. 터미널, 파일, 설정, 로그인과 함께 권한, 업데이트, 스킬이 포함됩니다. 작업 한도는 {cap}입니다. 프로젝트 제한은 계속 적용됩니다. 비밀 전송은 매번 먼저 {coordinatorLabel}에서 확인합니다.",
   "{count} devices waiting": "기기 {count}대 대기 중",
   "{device} can now use {machine}": "이제 {device}에서 {machine}을(를) 사용할 수 있습니다",
-  "{device} is asking.": "{device}에서 요청하고 있습니다.",
   "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
     "{device}에서 요청하고 있습니다. {account}(으)로 SpecWithCode Connect에 로그인했습니다.",
   "{device} is asking. It signed in to your SpecWithCode Connect account.":
@@ -5405,4 +5402,17 @@ export const ko: PhraseCatalog = {
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine}에서 더 이상 이 기기의 연결을 허용하지 않습니다. {machine}의 SpecWithCode에서 다시 승인하세요.",
   "{position} of {total} waiting": "대기 중 {position}/{total}",
+  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
+    "허용하면 이 앱처럼 {machine}의 터미널, 파일, 설정, 로그인을 사용하고 그곳에서 작업을 시작할 수 있습니다.",
+  "Asked at {time}": "{time}에 요청",
+  "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
+    "이름은 기기가 스스로 정한 것입니다. 눈앞의 기기임을 증명하는 것은 코드뿐이니, 그 기기에서 읽을 수 있는 코드만 허용하세요.",
+  "Too many devices are waiting for approval on {machine}. Try again in a few minutes.":
+    "{machine}에서 승인을 기다리는 기기가 너무 많습니다. 몇 분 후에 다시 시도하세요.",
+  "{device} is asking. It was paired through another of your machines.":
+    "{device}에서 요청하고 있습니다. 다른 컴퓨터를 통해 페어링되었습니다.",
+  "{device} is asking. It was paired through {hub}.":
+    "{device}에서 요청하고 있습니다. {hub}을(를) 통해 페어링되었습니다.",
+  "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
+    "{machine}이(가) 이 기기를 거부했습니다. 내일 다시 요청하거나 {machine}의 SpecWithCode에서 승인하세요.",
 };

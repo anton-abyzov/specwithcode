@@ -5423,8 +5423,6 @@ export const es: PhraseCatalog = {
   "A new device wants to use {machine}": "Un dispositivo nuevo quiere usar {machine}",
   "A phone": "Un teléfono",
   "A tablet": "Una tableta",
-  "Allow lets it open threads, terminals, files and settings on {machine}, as this app can. Allow only a device you have in front of you.":
-    "Permitir le deja abrir hilos, terminales, archivos y ajustes en {machine}, igual que esta app. Permite solo un dispositivo que tengas delante.",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
     "¿Permitir que {coordinatorLabel} ejecute trabajo en {hereLabel}?",
   "Allowing…": "Permitiendo…",
@@ -5492,7 +5490,6 @@ export const es: PhraseCatalog = {
     "{coordinatorLabel} recibe una clave de {hereLabel} durante un año: terminales, archivos, ajustes e inicios de sesión, además de acceso, actualizaciones y habilidades. Su trabajo tiene un límite de {cap}. Los límites del proyecto siguen vigentes. Cada transferencia de secretos pide permiso primero, en {coordinatorLabel}.",
   "{count} devices waiting": "{count} dispositivos esperando",
   "{device} can now use {machine}": "{device} ya puede usar {machine}",
-  "{device} is asking.": "{device} está pidiendo acceso.",
   "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
     "{device} está pidiendo acceso. Inició sesión en SpecWithCode Connect como {account}.",
   "{device} is asking. It signed in to your SpecWithCode Connect account.":
@@ -5502,4 +5499,17 @@ export const es: PhraseCatalog = {
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} ya no deja entrar a este dispositivo. Vuelve a aprobarlo en SpecWithCode en {machine}.",
   "{position} of {total} waiting": "{position} de {total} en espera",
+  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
+    "Permitir le deja usar terminales, archivos, ajustes e inicios de sesión en {machine} y empezar trabajo allí, igual que esta app.",
+  "Asked at {time}": "Pedido a las {time}",
+  "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
+    "El nombre lo pone el propio dispositivo. Solo el código demuestra que es el dispositivo que tienes delante, así que permite solo un código que puedas leer en él.",
+  "Too many devices are waiting for approval on {machine}. Try again in a few minutes.":
+    "Hay demasiados dispositivos esperando aprobación en {machine}. Inténtalo de nuevo en unos minutos.",
+  "{device} is asking. It was paired through another of your machines.":
+    "{device} está pidiendo acceso. Se vinculó a través de otro de tus equipos.",
+  "{device} is asking. It was paired through {hub}.":
+    "{device} está pidiendo acceso. Se vinculó a través de {hub}.",
+  "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
+    "{machine} rechazó este dispositivo. Vuelve a pedirlo mañana o apruébalo en SpecWithCode en {machine}.",
 };
