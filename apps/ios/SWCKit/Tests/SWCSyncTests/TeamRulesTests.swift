@@ -91,6 +91,14 @@ import SWCWire
     #expect(notice.switchTo == nil)
   }
 
+  @Test func aPhoneWaitingForItsCodeSaysWhereToTypeIt() {
+    var machine = MachineSummary(id: "e", label: "m4", status: .reconnecting)
+    machine.deviceApprovalCode = "K7QX2M"
+    #expect(machine.recoveryTitle == "Waiting for approval on m4")
+    #expect(machine.recoveryMessage.hasPrefix("Open SpecWithCode on m4 and type this code: K7QX2M."))
+    #expect(machine.canRetryConnection)
+  }
+
   @Test func aRefusalReadsAsRulesNotAnExpiredPairing() {
     var machine = MachineSummary(id: "e", label: "Mac", status: .reconnecting)
     machine.teamRulesRefusal = "Acme's rules turn off phones on this machine."

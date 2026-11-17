@@ -604,6 +604,7 @@ public final class LiveEngine: AppEngine {
     result.isSettling = settling
     if case .http(status: 429, code: _)? = entry.status.lastError { result.isRefusingSignIns = true }
     if case let .teamRules(message)? = entry.status.lastError { result.teamRulesRefusal = message }
+    if case let .awaitingApproval(code, _)? = entry.status.lastError { result.deviceApprovalCode = code }
     result.teamRules = entry.teamRules.map(TeamRulesInfo.init)
     return result
   }

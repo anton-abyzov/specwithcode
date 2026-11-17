@@ -57,6 +57,8 @@ public actor MachineConnection {
     /// Delay between starting probes of successive routes.
     public var probeStagger: Duration
     public var backoff: Backoff
+    /// How often a phone waiting for its approval code asks again (1327).
+    public var approvalRetry: Duration
     /// A connection that lasts at least this long resets the backoff when it
     /// drops; a shorter one counts as a failure.
     public var stableConnection: Duration
@@ -72,6 +74,7 @@ public actor MachineConnection {
     public init(
       probeStagger: Duration = .milliseconds(300),
       backoff: Backoff = Backoff(),
+      approvalRetry: Duration = .seconds(4),
       stableConnection: Duration = .seconds(10),
       socket: RpcSocket.Configuration = RpcSocket.Configuration(),
       ticketReuseMargin: TimeInterval = 30,
@@ -82,6 +85,7 @@ public actor MachineConnection {
     ) {
       self.probeStagger = probeStagger
       self.backoff = backoff
+      self.approvalRetry = approvalRetry
       self.stableConnection = stableConnection
       self.socket = socket
       self.ticketReuseMargin = ticketReuseMargin
@@ -253,11 +257,14 @@ public actor MachineConnection {
     } catch {
       return
     }
-    if case .teamRules = await sessionRejection(token: credential.token, route: route) {
+    switch await sessionRejection(token: credential.token, route: route) {
+    case .teamRules, .awaitingApproval:
       // Not a dead pairing: the supervisor's next attempt reports the refusal and keeps trying.
       guard gen == generation else { return }
       if let socket { Task { await socket.close() } }
       return
+    default:
+      break
     }
     guard gen == generation else { return }
     halt(.needsRepair, error: .needsRepair)
@@ -270,6 +277,8 @@ public actor MachineConnection {
       _ = try await http.websocketTicket(token: token, at: route.httpBase)
     } catch let TransportError.teamRules(message) {
       return .teamRules(message: message)
+    } catch let TransportError.awaitingApproval(code, message) {
+      return .awaitingApproval(code: code, message: message)
     } catch {}
     return .needsRepair
   }
@@ -381,7 +390,14 @@ public actor MachineConnection {
   }
 
   private func backOff(_ gen: Int, error: TransportError) async throws {
-    let delay = configuration.backoff.delay(afterFailures: failures, random: configuration.random())
+    // A phone waiting for its code asks again every few seconds, not on a growing backoff,
+    // so it gets in soon after the owner types the code (1327).
+    let delay: Duration
+    if case .awaitingApproval = error {
+      delay = configuration.approvalRetry
+    } else {
+      delay = configuration.backoff.delay(afterFailures: failures, random: configuration.random())
+    }
     var next = status
     next.state = backoffState()
     next.lastError = error

@@ -98,6 +98,8 @@ public struct MachineSummary: Identifiable, Hashable, Sendable {
   public var teamRules: TeamRulesInfo? = nil
   /// Why the machine's Team rules refuse this phone right now, in the machine's words.
   public var teamRulesRefusal: String? = nil
+  /// The code this machine waits for before this phone may use it (1327).
+  public var deviceApprovalCode: String? = nil
 
   public init(id: String, label: String, displayName: String? = nil, status: MachineStatus, platform: String? = nil, serverVersion: String? = nil, address: String? = nil, tokenDaysLeft: Int? = nil, isStale: Bool = false, viaConnect: Bool = false, needsSignIn: Bool = false, checkedAt: Date? = nil, hasDirectPairing: Bool? = nil) {
     self.displayName = displayName ?? MachineNickname.shortName(label)
