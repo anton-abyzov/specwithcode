@@ -128,6 +128,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   storageCleanup: Schema.optionalKey(Schema.Boolean),
   /** Server answers `server.cleanOldAppVersions` and measures old app versions apart. */
   cleanOldAppVersions: Schema.optionalKey(Schema.Boolean),
+  /** Server answers `server.getStorageCleanupPlan` and `server.runStorageCleanup`. */
+  storageCleanupPlan: Schema.optionalKey(Schema.Boolean),
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   /** Purge of deleted threads and archived threads' event log (storageCleanup). */
   threadHistoryRetention: Schema.optionalKey(Schema.Boolean),

@@ -1131,6 +1131,20 @@ export const DesktopThreadNotificationInputSchema = Schema.Struct({
 });
 export type DesktopThreadNotificationInput = typeof DesktopThreadNotificationInputSchema.Type;
 
+/**
+ * Where a desktop Connect sign-in through another site stands, sent to the
+ * window that asked: the browser was opened and the app waits for it
+ * (`waiting`), another window's request took over (`replaced`), the browser
+ * could not be opened (`open-failed`), it did not come back in time
+ * (`timed-out`), or it came back (`completed`).
+ */
+export type DesktopConnectSignInState =
+  | "waiting"
+  | "replaced"
+  | "open-failed"
+  | "timed-out"
+  | "completed";
+
 /** Handoff mode menu actions the desktop sends over `onMenuAction`. */
 export const DESKTOP_HANDOFF_SLEEP_ACTION = "handoff-mode:sleep";
 export const DESKTOP_HANDOFF_MACHINE_ACTION = "handoff-mode:open-machine-dialog";
@@ -1391,6 +1405,11 @@ export interface DesktopBridge extends DesktopUpdateBridge {
    * desktop builds never emit it.
    */
   onBackendReady?: (listener: () => void) => () => void;
+  /**
+   * State of a Connect sign-in this window started through another site.
+   * Optional: older desktop builds never emit it.
+   */
+  onConnectSignInState?: (listener: (state: DesktopConnectSignInState) => void) => () => void;
   /**
    * Quit-confirmation hint pushes. Optional: older desktop builds never emit
    * them.

@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopConnectSignInState,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingInputEvent,
   DesktopPreviewRecordingFrame,
@@ -28,6 +29,18 @@ function isSnapShotEvent(value: unknown): value is DesktopSnapShotEvent {
     SNAP_SHOT_EVENT_TYPES.has(type) &&
     (id === undefined || typeof id === "string")
   );
+}
+
+// Every state the main process may send; a new one must be added here to pass.
+const CONNECT_SIGN_IN_STATES = {
+  waiting: true,
+  replaced: true,
+  "open-failed": true,
+  "timed-out": true,
+  completed: true,
+} satisfies Record<DesktopConnectSignInState, true>;
+function isConnectSignInState(value: unknown): value is DesktopConnectSignInState {
+  return typeof value === "string" && Object.hasOwn(CONNECT_SIGN_IN_STATES, value);
 }
 
 exposeClerkBridge({ passkeys: true });
@@ -387,6 +400,17 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(IpcChannels.BACKEND_READY_CHANNEL, wrappedListener);
     return () => {
       ipcRenderer.removeListener(IpcChannels.BACKEND_READY_CHANNEL, wrappedListener);
+    };
+  },
+  onConnectSignInState: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
+      if (!isConnectSignInState(state)) return;
+      listener(state);
+    };
+
+    ipcRenderer.on(IpcChannels.CONNECT_SIGN_IN_STATE_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.CONNECT_SIGN_IN_STATE_CHANNEL, wrappedListener);
     };
   },
   onSnapShotEvent: (listener) => {

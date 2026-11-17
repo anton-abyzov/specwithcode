@@ -61,6 +61,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsSave]: AuthFilesystemWriteScope,
   // Sign-in state says which services a person uses and runs their tools: operate, not read.
   [PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsProbe]: AuthOrchestrationOperateScope,
+  // The cleanup list names folders and chats; running it removes folders, like the settings that switch it on.
+  [WS_METHODS.serverGetStorageCleanupPlan]: AuthSettingsWriteScope,
+  [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   // Reading a folder's repositories and a copy's notes before linking.
   [WS_METHODS.projectsFingerprint]: AuthFilesystemReadScope,
   [WS_METHODS.projectLinkPreview]: AuthOrchestrationReadScope,

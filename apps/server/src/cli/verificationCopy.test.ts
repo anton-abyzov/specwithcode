@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - a real git repository, a real clone of it and a recorded install command.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - a real git repository, a real clone of it and a recorded install command.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -198,6 +198,59 @@ describe("verification copy", () => {
     };
     assert.throws(() => copyOf(undefined, refusing), "the gate is held");
     assert.strictEqual(git(NodePath.join(home, "verify", "widgets"), "rev-parse", "HEAD"), before);
+  });
+
+  it("fetches without starting git's housekeeping", () => {
+    const trace = NodePath.join(root, "git-trace.log");
+    const traced = { ...env, GIT_TRACE: trace };
+    ensureVerificationCopy({ source, home, env: traced });
+    write("src/index.ts", "export const one = 5;\n");
+    commit("fifth");
+    ensureVerificationCopy({ source, home, env: traced });
+    const lines = NodeFS.readFileSync(trace, "utf8").split("\n");
+    const fetches = lines.filter((line) => /built-in: git fetch /.test(line));
+    assert.strictEqual(fetches.length, 2);
+    for (const line of fetches) assert.include(line, "--no-auto-gc");
+    assert.isFalse(lines.some((line) => /maintenance run --auto|gc --auto/.test(line)));
+  });
+
+  it("removes leftover download files older than an hour before fetching and keeps a fresh one", () => {
+    const { path } = copyOf();
+    // A local clone starts with hard-linked loose objects; a real pack must survive too.
+    git(path, "repack", "--quiet", "-a", "-d");
+    const packDir = NodePath.join(path, ".git", "objects", "pack");
+    const later = Date.now() + 2 * 3_600_000;
+    const plant = (file: string, bytes: number) => {
+      NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+      NodeFS.writeFileSync(file, Buffer.alloc(bytes));
+      return file;
+    };
+    const oldPack = plant(NodePath.join(packDir, "tmp_pack_old"), 3 * 1024 * 1024);
+    const oldObject = plant(NodePath.join(path, ".git", "objects", "ab", "tmp_obj_old"), 1024);
+    const fresh = plant(NodePath.join(packDir, "tmp_pack_fresh"), 1024);
+    // Written ten minutes before `later`: a fetch could still be writing it.
+    NodeFS.utimesSync(fresh, (later - 600_000) / 1000, (later - 600_000) / 1000);
+    const realPacks = NodeFS.readdirSync(packDir).filter((name) => name.startsWith("pack-"));
+    assert.isAbove(realPacks.length, 0);
+
+    write("src/index.ts", "export const one = 6;\n");
+    const next = commit("sixth");
+    const lines: Array<string> = [];
+    const result = ensureVerificationCopy({
+      source,
+      home,
+      env,
+      now: () => later,
+      log: (line) => lines.push(line),
+    });
+
+    assert.strictEqual(result.commit, next);
+    assert.isFalse(NodeFS.existsSync(oldPack));
+    assert.isFalse(NodeFS.existsSync(oldObject));
+    assert.isTrue(NodeFS.existsSync(fresh));
+    for (const name of realPacks) assert.isTrue(NodeFS.existsSync(NodePath.join(packDir, name)));
+    assert.include(lines, `checks: removed 2 leftover download files (3 MB) from ${path}`);
+    git(path, "fsck", "--no-progress");
   });
 
   it("names the copy after the repository and picks the install command from packageManager", () => {
