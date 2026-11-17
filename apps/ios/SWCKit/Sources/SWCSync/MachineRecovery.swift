@@ -7,6 +7,7 @@ extension MachineSummary {
 
   public var recoveryTitle: String {
     if isDisconnected { return "Disconnected on this phone" }
+    if deviceApprovalCode != nil { return "Waiting for approval on \(displayName)" }
     if teamRulesRefusal != nil { return "Turned off by team rules" }
     if needsSignIn { return "Sign in again" }
     if isRefusingSignIns { return "\(displayName) is refusing sign-ins for now" }
@@ -20,6 +21,9 @@ extension MachineSummary {
   public var recoveryMessage: String {
     if isDisconnected {
       return "Automatic retries are paused. Reconnect when you're ready. Your pairing, saved conversations and drafts stay on this phone."
+    }
+    if let deviceApprovalCode {
+      return "Open SpecWithCode on \(displayName) and type this code: \(deviceApprovalCode). This phone connects on its own once \(displayName) allows it."
     }
     if let teamRulesRefusal {
       return "\(teamRulesRefusal) Your pairing stays on this phone, and the app connects again when the rule is removed."
