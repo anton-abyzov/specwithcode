@@ -174,7 +174,6 @@ function CoordinatorPane() {
               unknown={[]}
               savedMachineMissing={false}
               onView={() => {}}
-              onMove={() => {}}
               onAllowWorkers={null}
               onCopy={() => {}}
             />

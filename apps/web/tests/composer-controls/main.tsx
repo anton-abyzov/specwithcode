@@ -67,7 +67,6 @@ function App() {
                 unknown={[]}
                 savedMachineMissing={false}
                 onView={() => {}}
-                onMove={() => {}}
                 onAllowWorkers={() => {}}
                 onMigrate={() => {}}
                 onCopy={() => {}}

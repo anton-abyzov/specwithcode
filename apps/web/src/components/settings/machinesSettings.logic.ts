@@ -1,8 +1,11 @@
 import {
   logicalProjectTitle,
+  repositoryGroupingKeyOf,
+  repositoryRelativePathOf,
   type EnvironmentId,
   type LogicalProject,
   type ProjectCoordinatorBinding,
+  type RepositoryIdentity,
   type TeamRulesPeerRules,
   type TeamRulesSummary,
 } from "@specweave-studio/contracts";
@@ -65,6 +68,7 @@ export interface MachineProjectInput {
   readonly id: string;
   readonly title: string;
   readonly workspaceRoot: string;
+  readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
   readonly workspaceSettings?:
     | {
         readonly kind?: string | undefined;
@@ -282,6 +286,39 @@ export function isSharedProject(project: MachineProjectInput): boolean {
   return (project.workspaceSettings?.logicalProject?.members.length ?? 0) > 1;
 }
 
+function repositoryKeyOf(project: MachineProjectInput): string | null {
+  if (!project.repositoryIdentity) return null;
+  const inside = repositoryRelativePathOf(
+    project.workspaceRoot,
+    project.repositoryIdentity.rootPath,
+  );
+  if (inside === null) return null;
+  return `${repositoryGroupingKeyOf(project.repositoryIdentity)}\u0000${inside}`;
+}
+
+/** Unlinked copies of the same repository and place, on other machines. */
+export function unlinkedElsewhereCopies(
+  project: MachineProjectInput,
+  projects: readonly MachineProjectInput[],
+): MachineProjectInput[] {
+  const key = repositoryKeyOf(project);
+  if (key === null || isSharedProject(project)) return [];
+  const seenMachines = new Set<string>();
+  return projects.filter((candidate) => {
+    if (candidate.environmentId === project.environmentId) return false;
+    if (seenMachines.has(candidate.environmentId)) return false;
+    if (
+      candidate.workspaceSettings?.logicalProject?.id !== undefined &&
+      candidate.workspaceSettings.logicalProject.id ===
+        project.workspaceSettings?.logicalProject?.id
+    )
+      return false;
+    if (repositoryKeyOf(candidate) !== key) return false;
+    seenMachines.add(candidate.environmentId);
+    return true;
+  });
+}
+
 function workerGrant(machine: StudioFleetMachine): MachineWorkerGrant | null {
   const workers = machine.workers;
   if (!workers) return null;
@@ -457,16 +494,31 @@ function projectsOn(
       )
         continue;
       const shared = isSharedProject(project);
+      const unlinked = shared ? [] : unlinkedElsewhereCopies(project, projects);
+      const unlinkedNames = [...new Set(unlinked.map((copy) => machineOf(copy.environmentId).name))];
       const words = shared
         ? roleWords(project, projects, (id) => machineOf(id).name, retired)
-        : {
-            role: "only-here" as const,
-            roleLabel: "Not shared",
-            roleHelp: "No other machine has a copy of this project.",
-          };
+        : unlinked.length > 0
+          ? {
+              role: "only-here" as const,
+              roleLabel: "Not linked · also on {machine}",
+              roleHelp:
+                "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.",
+              roleValues: { machine: unlinkedNames.join(", ") },
+            }
+          : {
+              role: "only-here" as const,
+              roleLabel: "Not shared",
+              roleHelp: "No other machine has a copy of this project.",
+            };
       const elsewhere = shared
         ? otherCopies(environmentId, project, projects, machineOf, retired)
-        : [];
+        : unlinked.map((copy) => ({
+            environmentId: copy.environmentId,
+            ...machineOf(copy.environmentId),
+            folder: copy.workspaceRoot,
+            roleLabel: null,
+          }));
       lists[projectListOf(project)].push({
         key: project.workspaceSettings?.logicalProject?.id ?? project.id,
         title: logicalProjectTitle(project),

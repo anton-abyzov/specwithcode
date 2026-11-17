@@ -64,8 +64,15 @@ repository belongs to a configured SpecWeave umbrella, Details also offers the
 containing workspace as the copy root.
 
 For a machine that already has a linked copy, the machine menu also offers
-**Move coordinator to &lt;machine&gt;…**: it copies nothing and moves only the
-coordinator, through Git.
+**Make &lt;machine&gt; main**, and that copy's own message box offers it too,
+next to **Write to &lt;main&gt;'s coordinator**. While the current main is
+connected it copies nothing and moves only the coordinator and its
+conversation, through Git, after you confirm. If the current main has been
+unreachable for 10 minutes or more, the copy takes over instead: it starts from
+the shared goal, memory and plan, and the earlier conversation stays on the old
+machine as history. In between, the item is off and says when it unlocks. A
+machine whose project is not linked gets **Link &lt;machine&gt; to this
+project…** instead (see [Shared projects](shared-projects.md)).
 
 The source keeps working while the copy runs. Unfinished tasks and uncommitted
 edits are allowed. Active writers produce a warning because the copy is not an

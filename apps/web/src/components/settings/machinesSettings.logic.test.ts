@@ -573,6 +573,38 @@ describe("buildMachineRows project lists", () => {
     expect(row?.projects.archived.map((entry) => entry.title)).toEqual(["old", "old-check"]);
   });
 
+  it("labels an unlinked copy that exists elsewhere Not linked, also on that machine", () => {
+    const identity = (rootPath: string) =>
+      ({
+        canonicalKey: "github.com/anton-abyzov/easychamp",
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: "https://github.com/anton-abyzov/easychamp.git",
+        },
+        rootPath,
+      }) as never;
+    const mine: MachineProjectInput = {
+      ...project("solo-m4"),
+      workspaceRoot: "/Users/a/easychamp",
+      repositoryIdentity: identity("/Users/a/easychamp"),
+    };
+    const theirs: MachineProjectInput = {
+      environmentId: m3,
+      id: "solo-m3",
+      title: "easychamp checkout",
+      workspaceRoot: "/Users/b/easychamp",
+      repositoryIdentity: identity("/Users/b/easychamp"),
+    };
+    const [row] = rowsFor([mine, theirs]);
+    const entry = row?.projects.own.find((candidate) => candidate.title === "solo-m4");
+    expect(entry?.roleLabel).toBe("Not linked · also on {machine}");
+    expect(entry?.roleValues).toEqual({ machine: "Windows" });
+    expect(entry?.alsoOn).toEqual(["Windows"]);
+    const [otherRow] = rowsFor([project("alone")]);
+    expect(otherRow?.projects.own[0]?.roleLabel).toBe("Not shared");
+  });
+
   it("puts shared copies ahead of the ones only this machine has", () => {
     const [row] = rowsFor([project("a-solo"), easyChamp(m4, "p-m4", "/Users/a/easychamp")]);
     expect(row?.projects.own.map((entry) => entry.title)).toEqual(["EasyChamp", "a-solo"]);

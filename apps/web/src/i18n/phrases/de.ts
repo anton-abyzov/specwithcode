@@ -2338,6 +2338,10 @@ export const de: PhraseCatalog = {
     "Den alten Eintrag von {name} ({host}) von diesem Gerät entfernen?\nDie Maschine ist neu beigetreten und läuft weiter; nur der tote Eintrag und seine zwischengespeicherten Threads hier verschwinden.",
   "Use 2 or 3 characters.": "Verwende 2 oder 3 Zeichen.",
   "Not shared": "Nicht geteilt",
+  "{machine} is main now, with machines not yet following it": "{machine} ist jetzt Haupt, aber einige Maschinen folgen noch nicht",
+  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.": "Diese Maschinen haben die neue Haupt noch nicht übernommen: {machines}. Sie lehnen Arbeit der alten Haupt erst ab, wenn sie es tun.",
+  "Not linked · also on {machine}": "Nicht verknüpft · auch auf {machine}",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "Diese Kopie ist nicht mit den Kopien auf {machine} verknüpft. Verknüpfe sie über das Projektmenü, um einen Koordinator zu teilen.",
   "No other machine has a copy of this project.":
     "Keine andere Maschine hat eine Kopie dieses Projekts.",
   "Connect to see its role": "Verbinden, um die Rolle zu sehen",
@@ -3161,9 +3165,6 @@ export const de: PhraseCatalog = {
   "Add to another machine…": "Auf anderem Rechner hinzufügen…",
   "Send to another machine…": "An anderen Rechner senden…",
   Link: "Verknüpfen",
-  "Link with the project on {machine}…": "Mit dem Projekt auf {machine} verknüpfen…",
-  "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
-    "Macht aus diesem Projekt und dem auf {machine} ein Projekt mit einem Koordinator. Threads und Dateien bleiben, wo sie sind.",
   "Leave this machine…": "Diesen Rechner verlassen…",
   "Another project or no project": "Anderes Projekt oder kein Projekt",
   "Rename a machine": "Rechner umbenennen",
@@ -4594,10 +4595,7 @@ export const de: PhraseCatalog = {
     "Die Installationen über npm konnten nicht gelesen werden.",
   "Installs from npm": "Installationen über npm",
   "View this project on": "Projekt ansehen auf",
-  "Move coordinator to {machine}…": "Koordinator auf {machine} verschieben…",
   "coordinator paused": "Koordinator pausiert",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
-    "{machine} hat seinen Koordinator von vorher behalten und führt jetzt nur Worker aus. Öffne es, um dieses Gespräch zu lesen oder ihn wieder zu starten.",
   "Machine access settings": "Zugriffseinstellungen der Rechner",
   "{machine} offline": "{machine} offline",
   "workers only": "nur Worker",
@@ -5306,4 +5304,74 @@ export const de: PhraseCatalog = {
   "Waiting for the install. This page updates by itself.":
     "Warte auf die Installation. Diese Seite aktualisiert sich von selbst.",
   "After it installs, choose Check again.": "Wähle nach der Installation Erneut prüfen.",
+  "{main} must be unreachable for 10 minutes before {machine} can become main. That unlocks in {minutes} min.":
+    "{main} muss 10 Minuten lang unerreichbar sein, bevor {machine} Haupt werden kann. Das wird in {minutes} Min. freigeschaltet.",
+  "in {minutes} min": "in {minutes} Min.",
+  "This window can only read {main}, so it cannot move main from there. Open SpecWithCode on {main}, or connect to it with full access, to make {machine} main.":
+    "Dieses Fenster kann {main} nur lesen und Haupt deshalb nicht von dort verschieben. Öffne SpecWithCode auf {main} oder verbinde dich mit vollem Zugriff, um {machine} zu Haupt zu machen.",
+  "read-only on {main}": "nur Lesezugriff auf {main}",
+  "Connect {machine} first to make it main.":
+    "Verbinde zuerst {machine}, um es zu Haupt zu machen.",
+  "{machine} cannot take over yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
+    "{machine} kann noch nicht übernehmen. Aktualisiere SpecWithCode dort oder verbinde dich mit der Berechtigung, Einstellungen zu ändern und Arbeit auszuführen.",
+  "not ready": "nicht bereit",
+  "Main cannot move from this machine yet.":
+    "Haupt kann von diesem Rechner noch nicht verschoben werden.",
+  "Send this project its first message here, then try again.":
+    "Sende diesem Projekt hier seine erste Nachricht und versuche es dann erneut.",
+  "{machine} cannot become main yet.": "{machine} kann noch nicht Haupt werden.",
+  "{machine} is main now": "{machine} ist jetzt Haupt",
+  "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
+    "Es startet mit dem gemeinsamen Ziel, Gedächtnis und Plan. Das Gespräch auf {main} bleibt dort als Verlauf, und {main} gibt nach, sobald es zurück ist.",
+  "{machine} did not become main": "{machine} ist nicht Haupt geworden",
+  "Retry it.": "Versuche es erneut.",
+  "the old main": "das alte Haupt",
+  "Make {machine} main?": "{machine} zu Haupt machen?",
+  "{main} has been unreachable for 10 minutes or more. {machine} becomes main and starts from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
+    "{main} ist seit 10 Minuten oder länger unerreichbar. {machine} wird Haupt und startet mit dem gemeinsamen Ziel, Gedächtnis und Plan. Das Gespräch auf {main} bleibt dort als Verlauf. Bis {main} zurück ist, kann es auf seinem eigenen Rechner noch Arbeit starten; dann gibt es nach und listet auf, was es inzwischen ausgeführt hat.",
+  "Switching…": "Wird umgeschaltet…",
+  "Make {machine} main": "{machine} zu Haupt machen",
+  "Main for {project} is {machine}. This copy takes work from there.":
+    "Haupt für {project} ist {machine}. Diese Kopie übernimmt Arbeit von dort.",
+  "Main for {project} is on another machine. This copy takes work from there.":
+    "Haupt für {project} ist auf einem anderen Rechner. Diese Kopie übernimmt Arbeit von dort.",
+  "The conversation here is kept as history.": "Das Gespräch hier bleibt als Verlauf erhalten.",
+  "Write to {machine}'s coordinator": "An den Koordinator auf {machine} schreiben",
+  "Write to main's coordinator": "An den Koordinator von Haupt schreiben",
+  "Write opens {machine}'s page for this project, where its coordinator answers. Nothing is sent from here.":
+    "Schreiben öffnet die Seite dieses Projekts auf {machine}, wo dessen Koordinator antwortet. Von hier wird nichts gesendet.",
+  "Write opens main's page for this project, where its coordinator answers. Nothing is sent from here.":
+    "Schreiben öffnet die Seite dieses Projekts auf dem Haupt-Rechner, wo dessen Koordinator antwortet. Von hier wird nichts gesendet.",
+  "{main} has been unreachable for 10 minutes or more. Making {machine} main starts from the shared goal, memory and plan; the conversation on {main} stays there as history.":
+    "{main} ist seit 10 Minuten oder länger unerreichbar. Wird {machine} zu Haupt, startet es mit dem gemeinsamen Ziel, Gedächtnis und Plan; das Gespräch auf {main} bleibt dort als Verlauf.",
+  "Making {machine} main moves the coordinator and its conversation here from {main}, which becomes a copy.":
+    "Wird {machine} zu Haupt, ziehen der Koordinator und sein Gespräch von {main} hierher um, und {main} wird eine Kopie.",
+  "{machine} became main while {main} was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
+    "{machine} wurde Haupt, während {main} unerreichbar war. Es startete mit dem gemeinsamen Ziel, Gedächtnis und Plan; das frühere Gespräch bleibt als Verlauf auf {main}.",
+  "{machine} became main while the old main was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
+    "{machine} wurde Haupt, während das alte Haupt unerreichbar war. Es startete mit dem gemeinsamen Ziel, Gedächtnis und Plan; das frühere Gespräch bleibt als Verlauf auf dem alten Rechner.",
+  "Got it": "Verstanden",
+  "{machine} kept its coordinator conversation from before as history. View it to read that conversation.":
+    "{machine} hat sein früheres Koordinator-Gespräch als Verlauf behalten. Öffne es, um dieses Gespräch zu lesen.",
+  "Makes the project on {machine} part of this one. Main does not change, and threads and files stay where they are. You confirm what {machine} gives up first.":
+    "Macht das Projekt auf {machine} zu einem Teil von diesem. Haupt ändert sich nicht, und Threads und Dateien bleiben, wo sie sind. Du bestätigst vorher, was {machine} aufgibt.",
+  "Link {machine} to this project…": "{machine} mit diesem Projekt verknüpfen…",
+  "{main} is unreachable: {machine} takes over and starts from the shared goal, memory and plan. You confirm first.":
+    "{main} ist unerreichbar: {machine} übernimmt und startet mit dem gemeinsamen Ziel, Gedächtnis und Plan. Du bestätigst vorher.",
+  "Moves the coordinator and its conversation from {main} to {machine}. {main} becomes a copy. You confirm first.":
+    "Verschiebt den Koordinator und sein Gespräch von {main} auf {machine}. {main} wird eine Kopie. Du bestätigst vorher.",
+  "Link {machine} to this project": "{machine} mit diesem Projekt verknüpfen",
+  "{machine} joins {project} as a copy. Main stays on {main}: linking does not change it.":
+    "{machine} tritt {project} als Kopie bei. Haupt bleibt auf {main}: Verknüpfen ändert das nicht.",
+  "Link {machine}": "{machine} verknüpfen",
+  "Main stays on {main}. To have main on {machine}, make {machine} main after linking.":
+    "Haupt bleibt auf {main}. Soll Haupt auf {machine} sein, mache {machine} nach dem Verknüpfen zu Haupt.",
+  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
+    "{machine} mit diesem Projekt verknüpfen. {machine} gibt sein eigenes Ziel und seine eigenen Anweisungen auf: Es folgt ab jetzt denen dieses Projekts, und seine eigenen werden ersetzt, falls es Haupt wird. Sein eigener Koordinator stoppt, und dieses Gespräch bleibt als Verlauf auf {machine}. Seine Worker laufen weiter. Haupt bleibt auf {main}. Dateien werden nicht kopiert.",
+  "Work for {project} starts on {machine}.": "Arbeit an {project} beginnt auf {machine}.",
+  "Work for {project} starts on another machine.":
+    "Arbeit an {project} beginnt auf einem anderen Rechner.",
+  "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
+    "Verbinde zuerst {main}. Dieses Fenster hat die Hauptkopie auf {main} nicht geladen und kann {machine} deshalb noch nicht zu Haupt machen.",
+  "connect {main} first": "zuerst {main} verbinden",
 };

@@ -17,6 +17,7 @@ import {
   workersOnlyProblem,
 } from "./projectCoordinatorMachine";
 import { COORDINATOR_PENDING_PROBLEM } from "./projectDomain";
+import { offlineSwitchPredecessor } from "./workersOnlyCopy";
 
 const plain = (environmentId: string, id: string) =>
   ({ environmentId, id }) as unknown as EnvironmentProject;
@@ -227,13 +228,54 @@ describe("a workers-only copy whose coordinator is on another machine", () => {
   });
 
   it("keeps the history wording only for a copy that had a conversation", () => {
-    const fresh = workersOnlyProblem("Anton's MacBook", false);
-    expect(fresh).toBe("Work starts on Anton's MacBook. This copy takes work from there.");
+    const fresh = workersOnlyProblem("Anna's MacBook", false, "Atlas");
+    expect(fresh).toBe("Main for Atlas is Anna's MacBook. This copy takes work from there.");
     expect(fresh).not.toContain("history");
-    expect(workersOnlyProblem("Anton's MacBook", true)).toBe(
-      "Work starts on Anton's MacBook. This copy takes work from there. The conversation here is kept as history.",
+    expect(workersOnlyProblem("Anna's MacBook", true, "Atlas")).toBe(
+      "Main for Atlas is Anna's MacBook. This copy takes work from there. The conversation here is kept as history.",
     );
-    expect(workersOnlyProblem(null, false)).toContain("Work starts on another machine.");
+    expect(workersOnlyProblem(null, false)).toContain(
+      "Main for this project is on another machine.",
+    );
+  });
+});
+
+describe("offlineSwitchPredecessor", () => {
+  const member = (binding: Record<string, unknown> | undefined) =>
+    ({ environmentId: "env-m5", workspaceSettings: { coordinatorBinding: binding } }) as never;
+  const old = { environmentId: "env-m4", projectId: "p", coordinatorThreadId: "c" };
+  it("names the old main only on the machine a person switched to while it was unreachable", () => {
+    expect(
+      offlineSwitchPredecessor(
+        member({ epoch: 3, state: "active", takenOverBy: "person", predecessor: old }),
+      ),
+    ).toEqual(old);
+    // A standby that took over by itself, a confirmed move, and a copy say nothing.
+    expect(
+      offlineSwitchPredecessor(
+        member({ epoch: 3, state: "active", takenOverBy: "auto", predecessor: old }),
+      ),
+    ).toBeNull();
+    expect(
+      offlineSwitchPredecessor(member({ epoch: 3, state: "active", predecessor: old })),
+    ).toBeNull();
+    expect(
+      offlineSwitchPredecessor(
+        member({ epoch: 3, state: "transferred", takenOverBy: "person", predecessor: old }),
+      ),
+    ).toBeNull();
+    expect(offlineSwitchPredecessor(member(undefined))).toBeNull();
+    // Another folder on this same machine is not another machine's conversation.
+    expect(
+      offlineSwitchPredecessor(
+        member({
+          epoch: 3,
+          state: "active",
+          takenOverBy: "person",
+          predecessor: { ...old, environmentId: "env-m5" },
+        }),
+      ),
+    ).toBeNull();
   });
 });
 

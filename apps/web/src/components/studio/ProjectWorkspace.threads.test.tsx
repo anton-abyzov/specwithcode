@@ -329,7 +329,27 @@ describe("switching the coordinator machine", () => {
     expect(state.send).not.toHaveBeenCalled();
   });
   it("keeps the coordinator, worker and draft until a confirmed move completes", async () => {
-    state.otherCheckouts = [{ id: "project", environmentId: "laptop", workspaceRoot: "/w/atlas" }];
+    // laptop is a linked copy; main is here. "Make laptop main" opens the confirmed move.
+    const logicalProject = { id: "one", title: "Atlas", coordinatorId: "c", members: [] };
+    Object.assign(state.project, {
+      workspaceSettings: { logicalProject, coordinatorBinding: { epoch: 1, state: "active" } },
+    });
+    state.otherCheckouts = [
+      {
+        id: "project",
+        environmentId: "laptop",
+        workspaceRoot: "/w/atlas",
+        workspaceSettings: {
+          logicalProject,
+          coordinatorBinding: {
+            epoch: 1,
+            state: "transferred",
+            successor: { environmentId: "host", projectId: "project" },
+          },
+        },
+      } as never,
+    ];
+    state.pairedHosts = ["laptop"];
     state.shells.push(shell("old-checkout-thread"));
     const onSelectThread = vi.fn();
     const renderOpen = () =>
@@ -345,13 +365,26 @@ describe("switching the coordinator machine", () => {
     await renderOpen();
     expect(container.querySelector('[data-native-thread="old-checkout-thread"]')).not.toBeNull();
     await openSwitcher();
-    await act(async () => menuItem("menuitem", "Move coordinator to laptop…")!.click());
-    expect(state.savedMachines).toEqual({});
-    await renderOpen();
-    expect(onSelectThread).not.toHaveBeenCalled();
-    expect(state.navigate).not.toHaveBeenCalled();
-    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-    expect(container.querySelector('[data-native-thread="old-checkout-thread"]')).not.toBeNull();
+    try {
+      expect(menuItem("menuitem", "Move coordinator to laptop…")).toBeUndefined();
+      await act(async () => menuItem("menuitem", "Make laptop main")!.click());
+      expect(state.savedMachines).toEqual({});
+      await renderOpen();
+      expect(onSelectThread).not.toHaveBeenCalled();
+      expect(state.navigate).not.toHaveBeenCalled();
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+      expect(container.querySelector('[data-native-thread="old-checkout-thread"]')).not.toBeNull();
+    } finally {
+      delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;
+    }
+  });
+  it("gives a copy that is not linked no coordinator move, only its view", async () => {
+    state.otherCheckouts = [{ id: "project", environmentId: "laptop", workspaceRoot: "/w/atlas" }];
+    await act(async () => root.render(<ProjectWorkspace projectKey="atlas" />));
+    await openSwitcher();
+    expect(menuItem("menuitemradio", "laptop")).toBeDefined();
+    expect(menuItem("menuitem", "Move coordinator to laptop…")).toBeUndefined();
+    expect(menuItem("menuitem", "Make laptop main")).toBeUndefined();
   });
 });
 

@@ -2327,6 +2327,10 @@ export const ja: PhraseCatalog = {
     "{name}（{host}）の古い記録をこのデバイスから削除しますか？\nこのマシンは新しいマシンとして再参加し、引き続き動作します。削除されるのは使われなくなった記録と、ここにキャッシュされたスレッドだけです。",
   "Use 2 or 3 characters.": "2〜3文字にしてください。",
   "Not shared": "共有なし",
+  "{machine} is main now, with machines not yet following it": "{machine} がメインになりましたが、まだ従っていないマシンがあります",
+  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.": "これらのマシンはまだ新しいメインを受け入れていません: {machines}。受け入れて初めて旧メインからの作業を拒否します。",
+  "Not linked · also on {machine}": "未リンク · {machine} にもあり",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "このコピーは {machine} 上のコピーとリンクしていません。プロジェクトメニューからリンクするとコーディネーターを共有できます。",
   "No other machine has a copy of this project.":
     "このプロジェクトのコピーは他のどのマシンにもありません。",
   "Connect to see its role": "接続すると役割が表示されます",
@@ -3147,9 +3151,6 @@ export const ja: PhraseCatalog = {
   "Add to another machine…": "別のマシンに追加…",
   "Send to another machine…": "別のマシンに送る…",
   Link: "リンク",
-  "Link with the project on {machine}…": "{machine} のプロジェクトとリンク…",
-  "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
-    "このプロジェクトと {machine} のプロジェクトを、コーディネーターが 1 つの同じプロジェクトにします。スレッドとファイルはそのまま残ります。",
   "Leave this machine…": "このマシンを離れる…",
   "Another project or no project": "別のプロジェクトまたはプロジェクトなし",
   "Rename a machine": "マシンの名前を変更",
@@ -4569,10 +4570,7 @@ export const ja: PhraseCatalog = {
   "Installs from npm could not be read.": "npm からのインストール数を読み取れませんでした。",
   "Installs from npm": "npm からのインストール",
   "View this project on": "このプロジェクトを表示するマシン",
-  "Move coordinator to {machine}…": "コーディネーターを {machine} に移動…",
   "coordinator paused": "コーディネーター一時停止中",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
-    "{machine} は以前のコーディネーターを保持しており、現在はワーカーのみを実行しています。表示してその会話を読むか、再実行できます。",
   "Machine access settings": "マシンのアクセス設定",
   "{machine} offline": "{machine} はオフライン",
   "workers only": "ワーカーのみ",
@@ -5275,4 +5273,71 @@ export const ja: PhraseCatalog = {
     "インストールを待っています。このページは自動で更新されます。",
   "After it installs, choose Check again.":
     "インストールが終わったら「もう一度確認」を選んでください。",
+  "{main} must be unreachable for 10 minutes before {machine} can become main. That unlocks in {minutes} min.":
+    "{machine} をメインにできるのは、{main} に 10 分間接続できなくなってからです。あと {minutes} 分で可能になります。",
+  "in {minutes} min": "あと {minutes} 分",
+  "This window can only read {main}, so it cannot move main from there. Open SpecWithCode on {main}, or connect to it with full access, to make {machine} main.":
+    "このウィンドウは {main} を読み取ることしかできないため、そこからメインを移動できません。{machine} をメインにするには、{main} で SpecWithCode を開くか、フルアクセスで接続してください。",
+  "read-only on {main}": "{main} は読み取り専用",
+  "Connect {machine} first to make it main.": "メインにするには、まず {machine} を接続してください。",
+  "{machine} cannot take over yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
+    "{machine} はまだ引き継げません。そのマシンの SpecWithCode を更新するか、設定の変更と作業の実行ができる権限で接続してください。",
+  "not ready": "準備未完了",
+  "Main cannot move from this machine yet.": "このマシンからはまだメインを移動できません。",
+  "Send this project its first message here, then try again.":
+    "ここでこのプロジェクトに最初のメッセージを送ってから、もう一度お試しください。",
+  "{machine} cannot become main yet.": "{machine} はまだメインにできません。",
+  "{machine} is main now": "{machine} がメインになりました",
+  "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
+    "共有の目標、メモリ、計画から始まります。{main} の会話は履歴としてそこに残り、{main} は戻ったときにメインを譲ります。",
+  "{machine} did not become main": "{machine} をメインにできませんでした",
+  "Retry it.": "もう一度お試しください。",
+  "the old main": "以前のメイン",
+  "Make {machine} main?": "{machine} をメインにしますか？",
+  "{main} has been unreachable for 10 minutes or more. {machine} becomes main and starts from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
+    "{main} に 10 分以上接続できていません。{machine} がメインになり、共有の目標、メモリ、計画から始めます。{main} の会話は履歴としてそこに残ります。{main} は戻るまで自分のマシンで作業を開始できますが、戻るとメインを譲り、その間に実行したものを一覧で示します。",
+  "Switching…": "切り替え中…",
+  "Make {machine} main": "{machine} をメインにする",
+  "Main for {project} is {machine}. This copy takes work from there.":
+    "{project} のメインは {machine} です。このコピーはそこから作業を受け取ります。",
+  "Main for {project} is on another machine. This copy takes work from there.":
+    "{project} のメインは別のマシンにあります。このコピーはそこから作業を受け取ります。",
+  "The conversation here is kept as history.": "ここの会話は履歴として残ります。",
+  "Write to {machine}'s coordinator": "{machine} のコーディネーターに書く",
+  "Write to main's coordinator": "メインのコーディネーターに書く",
+  "Write opens {machine}'s page for this project, where its coordinator answers. Nothing is sent from here.":
+    "「書く」を選ぶと、このプロジェクトの {machine} のページが開き、そこのコーディネーターが応答します。ここからは何も送信されません。",
+  "Write opens main's page for this project, where its coordinator answers. Nothing is sent from here.":
+    "「書く」を選ぶと、このプロジェクトのメインのページが開き、そこのコーディネーターが応答します。ここからは何も送信されません。",
+  "{main} has been unreachable for 10 minutes or more. Making {machine} main starts from the shared goal, memory and plan; the conversation on {main} stays there as history.":
+    "{main} に 10 分以上接続できていません。{machine} をメインにすると、共有の目標、メモリ、計画から始まり、{main} の会話は履歴としてそこに残ります。",
+  "Making {machine} main moves the coordinator and its conversation here from {main}, which becomes a copy.":
+    "{machine} をメインにすると、コーディネーターとその会話が {main} からここに移動し、{main} はコピーになります。",
+  "{machine} became main while {main} was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
+    "{main} に接続できない間に {machine} がメインになりました。共有の目標、メモリ、計画から始めており、以前の会話は履歴として {main} に残っています。",
+  "{machine} became main while the old main was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
+    "以前のメインに接続できない間に {machine} がメインになりました。共有の目標、メモリ、計画から始めており、以前の会話は履歴として元のマシンに残っています。",
+  "Got it": "了解",
+  "{machine} kept its coordinator conversation from before as history. View it to read that conversation.":
+    "{machine} は以前のコーディネーターの会話を履歴として保持しています。表示するとその会話を読めます。",
+  "Makes the project on {machine} part of this one. Main does not change, and threads and files stay where they are. You confirm what {machine} gives up first.":
+    "{machine} のプロジェクトをこのプロジェクトの一部にします。メインは変わらず、スレッドとファイルはそのまま残ります。{machine} が手放すものを先に確認します。",
+  "Link {machine} to this project…": "{machine} をこのプロジェクトにリンク…",
+  "{main} is unreachable: {machine} takes over and starts from the shared goal, memory and plan. You confirm first.":
+    "{main} に接続できません。{machine} が引き継ぎ、共有の目標、メモリ、計画から始めます。先に確認します。",
+  "Moves the coordinator and its conversation from {main} to {machine}. {main} becomes a copy. You confirm first.":
+    "コーディネーターとその会話を {main} から {machine} に移動します。{main} はコピーになります。先に確認します。",
+  "Link {machine} to this project": "{machine} をこのプロジェクトにリンク",
+  "{machine} joins {project} as a copy. Main stays on {main}: linking does not change it.":
+    "{machine} はコピーとして {project} に参加します。メインは {main} のままで、リンクしても変わりません。",
+  "Link {machine}": "{machine} をリンク",
+  "Main stays on {main}. To have main on {machine}, make {machine} main after linking.":
+    "メインは {main} のままです。{machine} をメインにしたい場合は、リンク後に {machine} をメインにしてください。",
+  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
+    "{machine} をこのプロジェクトにリンクします。{machine} は独自の目標と指示を手放し、今後はこのプロジェクトのものに従います。メインになった場合、独自のものは置き換えられます。{machine} 独自のコーディネーターは停止し、その会話は履歴として {machine} に残ります。ワーカーは動き続けます。メインは {main} のままです。ファイルはコピーされません。",
+  "Work for {project} starts on {machine}.": "{project} の作業は {machine} で始めます。",
+  "Work for {project} starts on another machine.": "{project} の作業は別のマシンで始めます。",
+  "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
+    "まず {main} を接続してください。このウィンドウは {main} のメインのコピーを読み込んでいないため、まだ {machine} をメインにできません。",
+  "connect {main} first": "先に {main} を接続",
 };

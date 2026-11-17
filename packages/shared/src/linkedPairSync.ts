@@ -43,13 +43,41 @@ const sameRef = (
 export function pendingSupersede(successor: LinkedCopy, previous: LinkedCopy): boolean {
   const binding = successor.binding;
   if (binding?.state !== "active" || !binding.predecessor || !binding.takenOverAt) return false;
-  if (!sameRef(binding.predecessor, previous)) return false;
-  return (
-    previous.logicalProjectId !== undefined &&
-    previous.logicalProjectId === successor.logicalProjectId &&
-    (previous.binding?.state ?? "active") === "active" &&
-    (previous.binding?.epoch ?? 0) < binding.epoch
-  );
+  if (
+    previous.logicalProjectId === undefined ||
+    previous.logicalProjectId !== successor.logicalProjectId ||
+    (previous.binding?.state ?? "active") !== "active"
+  )
+    return false;
+  if (sameRef(binding.predecessor, previous))
+    return (previous.binding?.epoch ?? 0) < binding.epoch;
+  return equalEpochTakeoverWins(successor, previous);
+}
+
+const refKeyOf = (copy: Pick<LinkedCopy, "environmentId" | "projectId">) =>
+  `${copy.environmentId}:${copy.projectId}`;
+
+/**
+ * Two copies that flipped main while the old main was unreachable can land on
+ * the same epoch, each naming that old main as predecessor. Neither is ahead,
+ * so the earlier takeover wins (its epoch claims reached workers first); a
+ * simultaneous flip breaks the tie by copy ref, the same on every machine.
+ */
+export function equalEpochTakeoverWins(successor: LinkedCopy, previous: LinkedCopy): boolean {
+  const binding = successor.binding;
+  const other = previous.binding;
+  if (binding?.state !== "active" || other?.state !== "active") return false;
+  if (!binding.predecessor || !other.predecessor || !binding.takenOverAt || !other.takenOverAt)
+    return false;
+  if (binding.epoch !== other.epoch || binding.epoch === 0) return false;
+  if (
+    binding.predecessor.environmentId !== other.predecessor.environmentId ||
+    binding.predecessor.projectId !== other.predecessor.projectId
+  )
+    return false;
+  if (sameRef(binding.predecessor, successor) || sameRef(binding.predecessor, previous)) return false;
+  if (binding.takenOverAt !== other.takenOverAt) return binding.takenOverAt < other.takenOverAt;
+  return refKeyOf(successor) < refKeyOf(previous);
 }
 
 /** Whether `member` keeps a replica of `coordinator`'s notes, goal and instructions. */

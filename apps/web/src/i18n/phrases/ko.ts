@@ -2305,6 +2305,10 @@ export const ko: PhraseCatalog = {
     "이 기기에서 {name}({host})의 이전 기록을 제거할까요?\n이 머신은 새 머신으로 다시 참여해 계속 작동합니다. 여기의 사용하지 않는 기록과 캐시된 스레드만 사라집니다.",
   "Use 2 or 3 characters.": "2~3자를 사용하세요.",
   "Not shared": "공유 안 함",
+  "{machine} is main now, with machines not yet following it": "{machine}이(가) 메인이 되었지만 아직 따르지 않는 머신이 있습니다",
+  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.": "이 머신들은 아직 새 메인을 받아들이지 않았습니다: {machines}. 받아들인 뒤에야 이전 메인의 작업을 거부합니다.",
+  "Not linked · also on {machine}": "연결 안 됨 · {machine}에도 있음",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "이 복사본은 {machine}의 복사본과 연결되어 있지 않습니다. 프로젝트 메뉴에서 연결하면 코디네이터를 공유할 수 있습니다.",
   "No other machine has a copy of this project.":
     "다른 어떤 머신에도 이 프로젝트의 복사본이 없습니다.",
   "Connect to see its role": "연결하면 역할이 보입니다",
@@ -3117,9 +3121,6 @@ export const ko: PhraseCatalog = {
   "Add to another machine…": "다른 컴퓨터에 추가…",
   "Send to another machine…": "다른 컴퓨터로 보내기…",
   Link: "연결",
-  "Link with the project on {machine}…": "{machine}의 프로젝트와 연결…",
-  "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
-    "이 프로젝트와 {machine}의 프로젝트를 코디네이터가 하나인 한 프로젝트로 만듭니다. 스레드와 파일은 그대로 있습니다.",
   "Leave this machine…": "이 컴퓨터 떠나기…",
   "Another project or no project": "다른 프로젝트 또는 프로젝트 없음",
   "Rename a machine": "컴퓨터 이름 변경",
@@ -4515,10 +4516,7 @@ export const ko: PhraseCatalog = {
   "Installs from npm could not be read.": "npm 설치 수를 읽지 못했습니다.",
   "Installs from npm": "npm 설치",
   "View this project on": "이 프로젝트를 볼 컴퓨터",
-  "Move coordinator to {machine}…": "코디네이터를 {machine}(으)로 이동…",
   "coordinator paused": "코디네이터 일시 중지됨",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
-    "{machine}은(는) 이전 코디네이터를 유지하고 있으며 지금은 워커만 실행합니다. 열어서 그 대화를 읽거나 다시 실행하세요.",
   "Machine access settings": "컴퓨터 접근 설정",
   "{machine} offline": "{machine} 오프라인",
   "workers only": "워커 전용",
@@ -5213,4 +5211,70 @@ export const ko: PhraseCatalog = {
   "Waiting for the install. This page updates by itself.":
     "설치를 기다리는 중입니다. 이 페이지는 자동으로 업데이트됩니다.",
   "After it installs, choose Check again.": "설치가 끝나면 다시 확인을 선택하세요.",
+  "{main} must be unreachable for 10 minutes before {machine} can become main. That unlocks in {minutes} min.":
+    "{main}에 10분 동안 연결할 수 없어야 {machine}을(를) 메인으로 만들 수 있습니다. {minutes}분 후에 가능합니다.",
+  "in {minutes} min": "{minutes}분 후",
+  "This window can only read {main}, so it cannot move main from there. Open SpecWithCode on {main}, or connect to it with full access, to make {machine} main.":
+    "이 창은 {main}을(를) 읽기만 할 수 있어 거기서 메인을 옮길 수 없습니다. {machine}을(를) 메인으로 만들려면 {main}에서 SpecWithCode를 열거나 전체 접근 권한으로 연결하세요.",
+  "read-only on {main}": "{main}은(는) 읽기 전용",
+  "Connect {machine} first to make it main.": "메인으로 만들려면 먼저 {machine}을(를) 연결하세요.",
+  "{machine} cannot take over yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
+    "{machine}은(는) 아직 넘겨받을 수 없습니다. 거기서 SpecWithCode를 업데이트하거나 설정 변경과 작업 실행 권한으로 연결하세요.",
+  "not ready": "준비 안 됨",
+  "Main cannot move from this machine yet.": "아직 이 컴퓨터에서 메인을 옮길 수 없습니다.",
+  "Send this project its first message here, then try again.": "여기서 이 프로젝트에 첫 메시지를 보낸 뒤 다시 시도하세요.",
+  "{machine} cannot become main yet.": "{machine}은(는) 아직 메인이 될 수 없습니다.",
+  "{machine} is main now": "이제 {machine}이(가) 메인입니다",
+  "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
+    "공유된 목표, 메모리, 계획에서 시작합니다. {main}의 대화는 기록으로 거기에 남고, {main}은(는) 돌아오면 메인을 넘겨줍니다.",
+  "{machine} did not become main": "{machine}이(가) 메인이 되지 못했습니다",
+  "Retry it.": "다시 시도하세요.",
+  "the old main": "이전 메인",
+  "Make {machine} main?": "{machine}을(를) 메인으로 만들까요?",
+  "{main} has been unreachable for 10 minutes or more. {machine} becomes main and starts from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
+    "{main}에 10분 이상 연결할 수 없습니다. {machine}이(가) 메인이 되어 공유된 목표, 메모리, 계획에서 시작합니다. {main}의 대화는 기록으로 거기에 남습니다. {main}은(는) 돌아올 때까지 자기 컴퓨터에서 작업을 시작할 수 있지만, 돌아오면 메인을 넘겨주고 그동안 실행한 작업을 보여 줍니다.",
+  "Switching…": "전환 중…",
+  "Make {machine} main": "{machine}을(를) 메인으로",
+  "Main for {project} is {machine}. This copy takes work from there.":
+    "{project}의 메인은 {machine}입니다. 이 복사본은 거기서 작업을 받습니다.",
+  "Main for {project} is on another machine. This copy takes work from there.":
+    "{project}의 메인은 다른 컴퓨터에 있습니다. 이 복사본은 거기서 작업을 받습니다.",
+  "The conversation here is kept as history.": "여기의 대화는 기록으로 남습니다.",
+  "Write to {machine}'s coordinator": "{machine}의 코디네이터에게 쓰기",
+  "Write to main's coordinator": "메인의 코디네이터에게 쓰기",
+  "Write opens {machine}'s page for this project, where its coordinator answers. Nothing is sent from here.":
+    "쓰기를 누르면 이 프로젝트의 {machine} 페이지가 열리고, 거기서 코디네이터가 답합니다. 여기서는 아무것도 보내지 않습니다.",
+  "Write opens main's page for this project, where its coordinator answers. Nothing is sent from here.":
+    "쓰기를 누르면 이 프로젝트의 메인 페이지가 열리고, 거기서 코디네이터가 답합니다. 여기서는 아무것도 보내지 않습니다.",
+  "{main} has been unreachable for 10 minutes or more. Making {machine} main starts from the shared goal, memory and plan; the conversation on {main} stays there as history.":
+    "{main}에 10분 이상 연결할 수 없습니다. {machine}을(를) 메인으로 만들면 공유된 목표, 메모리, 계획에서 시작하며, {main}의 대화는 기록으로 거기에 남습니다.",
+  "Making {machine} main moves the coordinator and its conversation here from {main}, which becomes a copy.":
+    "{machine}을(를) 메인으로 만들면 코디네이터와 그 대화가 {main}에서 여기로 옮겨지고, {main}은(는) 복사본이 됩니다.",
+  "{machine} became main while {main} was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
+    "{main}에 연결할 수 없는 동안 {machine}이(가) 메인이 되었습니다. 공유된 목표, 메모리, 계획에서 시작했으며, 이전 대화는 기록으로 {main}에 남아 있습니다.",
+  "{machine} became main while the old main was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
+    "이전 메인에 연결할 수 없는 동안 {machine}이(가) 메인이 되었습니다. 공유된 목표, 메모리, 계획에서 시작했으며, 이전 대화는 기록으로 이전 컴퓨터에 남아 있습니다.",
+  "Got it": "확인",
+  "{machine} kept its coordinator conversation from before as history. View it to read that conversation.":
+    "{machine}은(는) 이전 코디네이터 대화를 기록으로 보관하고 있습니다. 열어서 그 대화를 읽으세요.",
+  "Makes the project on {machine} part of this one. Main does not change, and threads and files stay where they are. You confirm what {machine} gives up first.":
+    "{machine}의 프로젝트를 이 프로젝트의 일부로 만듭니다. 메인은 바뀌지 않으며 스레드와 파일은 그대로 있습니다. {machine}이(가) 포기하는 것을 먼저 확인합니다.",
+  "Link {machine} to this project…": "{machine}을(를) 이 프로젝트에 연결…",
+  "{main} is unreachable: {machine} takes over and starts from the shared goal, memory and plan. You confirm first.":
+    "{main}에 연결할 수 없습니다. {machine}이(가) 넘겨받아 공유된 목표, 메모리, 계획에서 시작합니다. 먼저 확인합니다.",
+  "Moves the coordinator and its conversation from {main} to {machine}. {main} becomes a copy. You confirm first.":
+    "코디네이터와 그 대화를 {main}에서 {machine}(으)로 옮깁니다. {main}은(는) 복사본이 됩니다. 먼저 확인합니다.",
+  "Link {machine} to this project": "{machine}을(를) 이 프로젝트에 연결",
+  "{machine} joins {project} as a copy. Main stays on {main}: linking does not change it.":
+    "{machine}이(가) 복사본으로 {project}에 참여합니다. 메인은 {main}에 그대로 있으며, 연결해도 바뀌지 않습니다.",
+  "Link {machine}": "{machine} 연결",
+  "Main stays on {main}. To have main on {machine}, make {machine} main after linking.":
+    "메인은 {main}에 그대로 있습니다. 메인을 {machine}에 두려면 연결한 뒤 {machine}을(를) 메인으로 만드세요.",
+  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
+    "{machine}을(를) 이 프로젝트에 연결합니다. {machine}은(는) 자체 목표와 지침을 포기하고 지금부터 이 프로젝트의 것을 따르며, 메인이 되면 자체 목표와 지침은 대체됩니다. 자체 코디네이터는 멈추고 그 대화는 기록으로 {machine}에 남습니다. 워커는 계속 실행됩니다. 메인은 {main}에 그대로 있습니다. 파일은 복사되지 않습니다.",
+  "Work for {project} starts on {machine}.": "{project} 작업은 {machine}에서 시작합니다.",
+  "Work for {project} starts on another machine.": "{project} 작업은 다른 컴퓨터에서 시작합니다.",
+  "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
+    "먼저 {main}을(를) 연결하세요. 이 창은 {main}의 메인 사본을 불러오지 않아 아직 {machine}을(를) 메인으로 만들 수 없습니다.",
+  "connect {main} first": "먼저 {main} 연결",
 };
