@@ -8,6 +8,7 @@ import * as Clock from "effect/Clock";
 import * as Random from "effect/Random";
 import * as Semaphore from "effect/Semaphore";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as StorageCleanupRpc from "./storageCleanupRpc.ts";
 import * as StorageMaintenance from "./persistence/StorageMaintenance.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
@@ -849,7 +850,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(
     TemporaryProjects.make.pipe(Effect.flatMap((sweeper) => sweeper.start())),
   ).pipe(Layer.provide(Layer.merge(ProjectionStoreV2.layer, AuthSessions.layer))),
-  Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
+  // Settings > Storage's plan and "Clean up now" read the same cleanup service the
+  // sweeps run on, so a button press never starts a second, parallel sweeper.
+  StorageCleanupRpc.layerRpcHandlers.pipe(
+    Layer.provideMerge(StorageCleanup.layerStart),
     Layer.provide(ProjectionStoreV2.layer),
   ),
   // After an app update, installs missing machine tools once the machine is quiet.

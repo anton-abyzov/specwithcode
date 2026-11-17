@@ -497,12 +497,6 @@ export const ko: PhraseCatalog = {
     "GitHub 병합 및 스쿼시 메시지에서 인식된 에이전트 크레딧 줄을 제거하고 사람 공동 작성자는 유지합니다. 자동 병합도 포함됩니다. 병합 대기열, 스택 병합, 기존 커밋은 제외됩니다.",
   "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.":
     "활성 또는 보관된 스레드를 삭제할 때 사용하지 않는 워크트리를 제거합니다. 로컬 변경 사항이 있는 워크트리는 유지됩니다.",
-  "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
-    "스레드가 이 일수 동안 비활성 상태이면 그 워크트리를 제거합니다. 열려 있는 스레드의 폴더는 항상 유지됩니다. 브랜치와 스레드 기록은 유지됩니다.",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "풀 리퀘스트가 병합되고 커밋이 기본 브랜치에 포함되었거나, 병합 없이 닫히고 모든 커밋이 푸시된 워크트리를 제거합니다. 에이전트가 스레드 없이 만든 깨끗하고 푸시된 워크트리도 풀 리퀘스트가 병합되거나 닫히고 하루 동안 유휴 상태이면 제거합니다. 열려 있는 스레드의 폴더는 항상 유지됩니다.",
-  "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
-    "기본 브랜치 이후 커밋이 없는 워크트리를 제거합니다. 열려 있는 스레드의 폴더는 항상 유지됩니다.",
   Rename: "이름 바꾸기",
   "Require a second click on the inline archive action before a thread is archived.":
     "스레드를 보관하기 전에 인라인 보관 작업을 한 번 더 클릭하도록 요구합니다.",
@@ -5160,6 +5154,94 @@ export const ko: PhraseCatalog = {
   "Follow project (on)": "프로젝트 설정 따름 (켬)",
   "Follow project (off)": "프로젝트 설정 따름 (끔)",
   "Lets this thread ask a stronger model to check its work.": "이 스레드가 더 강한 모델에게 작업 검토를 요청할 수 있게 합니다.",
+  "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
+    "채팅이 해결되었거나 보관되었고 이 일수 동안 비활성인 워크트리를 삭제합니다. 브랜치와 채팅 기록은 유지됩니다.",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
+    "풀 리퀘스트가 병합되고 커밋이 기본 브랜치에 포함되었거나, 병합 없이 닫혔고 모든 커밋이 푸시된 워크트리를 삭제합니다. 아직 열려 있는 채팅은 6시간 동안 활동이 없으면 폴더를 잃습니다. 실행 중이거나 대기 중인 채팅은 항상 폴더를 유지합니다. 브랜치는 남으므로 다시 연 채팅은 폴더를 되찾습니다. 에이전트가 채팅 없이 만든 깨끗하고 푸시된 워크트리도 풀 리퀘스트가 병합되거나 닫히고 하루 동안 유휴 상태이면 삭제합니다.",
+  "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
+    "해결되었거나 보관된 채팅 중 브랜치에 기본 브랜치 이후의 커밋이 없는 워크트리를 삭제합니다.",
+  "What cleanup would remove":
+    "정리로 삭제될 항목",
+  "Chat worktrees and leftover downloads":
+    "채팅 워크트리와 다운로드 잔여 파일",
+  "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
+    "정리로 삭제될 항목과 유지될 항목, 그 이유를 보여 줍니다. 확인할 때 완료된 폴더마다 Git 호스트에 물어보므로 확인을 누를 때만 실행됩니다.",
+  "Check":
+    "확인",
+  "Clean up now":
+    "지금 정리",
+  "Cleaning up…":
+    "정리 중…",
+  "Would be removed":
+    "삭제 대상",
+  "Kept":
+    "유지",
+  "At least {size} would be freed.":
+    "최소 {size}가 확보됩니다.",
+  "Dependency folders are left out: their files are shared with the package store.":
+    "의존성 폴더는 제외됩니다. 해당 파일은 패키지 저장소와 공유됩니다.",
+  "Some folders could not be fully checked or measured.":
+    "일부 폴더는 완전히 확인하거나 측정하지 못했습니다.",
+  "Leftover files of stopped downloads":
+    "중단된 다운로드의 잔여 파일",
+  "Nothing to remove right now.":
+    "지금은 삭제할 항목이 없습니다.",
+  "Nothing was removed.":
+    "삭제된 항목이 없습니다.",
+  "Removed 1 folder, at least {size}.":
+    "폴더 1개를 삭제했습니다(최소 {size}).",
+  "Removed {count} folders, at least {size}.":
+    "폴더 {count}개를 삭제했습니다(최소 {size}).",
+  "The check could not finish.":
+    "확인을 끝내지 못했습니다.",
+  "This connection cannot change this machine's storage.":
+    "이 연결로는 이 컴퓨터의 저장 공간을 변경할 수 없습니다.",
+  "Delete worktrees of resolved chats":
+    "해결된 채팅의 워크트리 삭제",
+  "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
+    "해결되었거나 보관된 채팅의 워크트리를 그 안의 모든 내용이 커밋되고 푸시되면 삭제합니다. 브랜치는 남으므로 다시 연 채팅은 폴더를 되찾습니다.",
+  "Its pull request merged.":
+    "풀 리퀘스트가 병합되었습니다.",
+  "Its pull request closed and every commit is on the remote.":
+    "풀 리퀘스트가 닫혔고 모든 커밋이 원격에 있습니다.",
+  "Its chats are resolved or archived and everything is pushed.":
+    "채팅이 해결되었거나 보관되었고 모든 내용이 푸시되었습니다.",
+  "Its chat was deleted.":
+    "채팅이 삭제되었습니다.",
+  "Its chats are resolved or archived and it has been inactive.":
+    "채팅이 해결되었거나 보관되었고 한동안 비활성 상태였습니다.",
+  "Its branch has no commits of its own.":
+    "브랜치에 자체 커밋이 없습니다.",
+  "Leftover files of stopped downloads.":
+    "중단된 다운로드의 잔여 파일입니다.",
+  "Work in it has not finished.":
+    "그 안의 작업이 아직 끝나지 않았습니다.",
+  "A chat that is still open works in it or near it.":
+    "아직 열려 있는 채팅이 그 안이나 근처에서 작업 중입니다.",
+  "It was used less than 6 hours ago.":
+    "마지막으로 사용한 지 6시간이 지나지 않았습니다.",
+  "It has uncommitted changes.":
+    "커밋하지 않은 변경 사항이 있습니다.",
+  "It has files Git does not track.":
+    "Git이 추적하지 않는 파일이 있습니다.",
+  "It has commits that exist only on this machine.":
+    "이 컴퓨터에만 있는 커밋이 있습니다.",
+  "A stash was made on its branch.":
+    "브랜치에서 stash가 만들어졌습니다.",
+  "It has ignored files that may hold data.":
+    "데이터가 들어 있을 수 있는 무시된 파일이 있습니다.",
+  "It holds more media than is copied automatically.":
+    "자동으로 복사되는 양보다 많은 미디어가 있습니다.",
+  "Something is working in it, or it is locked.":
+    "무언가가 그 안에서 작업 중이거나 잠겨 있습니다.",
+  "Its Git registration is broken. Check it by hand.":
+    "Git 등록이 손상되었습니다. 직접 확인하세요.",
+  "Another repository or hidden changes sit inside it.":
+    "그 안에 다른 저장소나 숨은 변경 사항이 있습니다.",
+  "No cleanup rule covers it.":
+    "해당하는 정리 규칙이 없습니다.",
+  "It could not be fully checked, so it is kept.":
+    "완전히 확인할 수 없어서 유지합니다.",
   "Installed, but it does not start": "설치되었지만 시작되지 않음",
   "Install {agent} on {machine} with this command:":
     "이 명령으로 {machine}에 {agent}을(를) 설치하세요:",

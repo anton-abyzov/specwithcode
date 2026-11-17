@@ -57,6 +57,14 @@ export const StorageCleanupSettings = Schema.Struct({
    */
   removeMergedClones: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
+   * Remove the worktree of chats that are resolved or archived once everything
+   * in it is committed and pushed, without waiting for a merge. On by default:
+   * the branch stays, so a reopened chat gets its checkout back. A project
+   * whose worktree cleanup is off keeps its worktrees. Not named `worktree*`:
+   * those keys are per-project rules.
+   */
+  removeResolvedWorktrees: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
    * Warn when the app's home folder passes this many gigabytes. Null turns the
    * warning off; the size is still measured and shown in Storage settings.
    */
@@ -98,6 +106,7 @@ export const StorageCleanupSettingsPatch = Schema.Struct({
   logsAfterDays: Schema.optionalKey(StorageRetentionDays),
   scratchAfterDays: Schema.optionalKey(ScratchRetentionDays),
   removeMergedClones: Schema.optionalKey(Schema.Boolean),
+  removeResolvedWorktrees: Schema.optionalKey(Schema.Boolean),
   homeSizeWarningGb: Schema.optionalKey(HomeSizeWarningGb),
   deletedThreadHistoryAfterDays: Schema.optionalKey(StorageRetentionDays),
   archivedThreadHistoryAfterDays: Schema.optionalKey(StorageRetentionDays),

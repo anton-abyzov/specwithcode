@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.ts";
+import { EnvironmentId, IsoDateTime, NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.ts";
 import {
   LogicalProject,
   LogicalProjectMember,
@@ -438,6 +438,26 @@ export const ProjectTakeoverInput = Schema.Struct({
   predecessor: Schema.optional(LogicalProjectMember),
 });
 export type ProjectTakeoverInput = typeof ProjectTakeoverInput.Type;
+
+/**
+ * What claiming a takeover's epoch on one other member's machine came to.
+ * `claimed`: that machine now takes steering for the project only from the new
+ * coordinator. `refused`: it answered, or this machine's access to it did, and
+ * no claim stands there. `unreachable`: no answer, or this machine has no link
+ * to it. Each machine is asked once per takeover call; calling the takeover
+ * again with the same operation id asks again.
+ */
+export const ProjectTakeoverEpochClaim = Schema.Struct({
+  /** The member's machine. */
+  machine: EnvironmentId,
+  /** That machine's name on this one; absent when this machine has no link to it. */
+  label: Schema.optional(bounded(256)),
+  outcome: Schema.Literals(["claimed", "refused", "unreachable"]),
+  /** Why the claim does not stand, in the server's words. */
+  detail: Schema.optional(bounded(500)),
+});
+export type ProjectTakeoverEpochClaim = typeof ProjectTakeoverEpochClaim.Type;
+
 export const ProjectTakeoverResult = Schema.Struct({
   operationId: ProjectLinkOperationId,
   logicalProject: LogicalProject,
@@ -447,6 +467,15 @@ export const ProjectTakeoverResult = Schema.Struct({
   /** When the replica this copy started from was taken; null without one. */
   replicaFrom: Schema.NullOr(IsoDateTime),
   replayed: Schema.Boolean,
+  /**
+   * After a person's takeover: one entry per other member machine, saying
+   * whether it took the new epoch. Only machines this copy lists as members
+   * are asked. Absent from older servers, and when a copy only starts its own
+   * coordinator.
+   */
+  epochClaims: Schema.optional(
+    Schema.Array(ProjectTakeoverEpochClaim).check(Schema.isMaxLength(256)),
+  ),
 });
 export type ProjectTakeoverResult = typeof ProjectTakeoverResult.Type;
 

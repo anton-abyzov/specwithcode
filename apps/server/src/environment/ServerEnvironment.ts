@@ -330,6 +330,7 @@ export const make = Effect.gen(function* () {
       threadAutoSettlement: true,
       storageCleanup: true,
       cleanOldAppVersions: true,
+      storageCleanupPlan: true,
       projectWorktreeCleanup: true,
       threadHistoryRetention: true,
       threadHistoryHorizon: true,

@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Electron from "electron";
 
 import {
   codexAuthDeliveryUrl,
@@ -20,6 +21,8 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+import { CONNECT_SIGN_IN_STATE_CHANNEL } from "../ipc/channels.ts";
+import { clerkOAuthRedirectUrl, installClerkOAuthTransport } from "./DesktopClerkOAuthTransport.ts";
 import { clerkTokenFilePath, withOwnerOnlyTokenFile } from "./DesktopClerkTokenStorage.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -85,14 +88,16 @@ export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHos
     : __STUDIO_BUILD_CLERK_PUBLISHABLE_KEY__,
 );
 
+const desktopClerkRenderer = (isDevelopment: boolean) => ({
+  scheme: ElectronProtocol.getDesktopScheme(isDevelopment),
+  host: ElectronProtocol.DESKTOP_HOST,
+});
+
 function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean) {
   return createClerkBridge({
     storage: withOwnerOnlyTokenFile(storage({ path: stateDir }), clerkTokenFilePath(stateDir)),
     passkeys: true,
-    renderer: {
-      scheme: ElectronProtocol.getDesktopScheme(isDevelopment),
-      host: ElectronProtocol.DESKTOP_HOST,
-    },
+    renderer: desktopClerkRenderer(isDevelopment),
   });
 }
 
@@ -153,6 +158,50 @@ export const make = Effect.gen(function* () {
         yield* electronApp.quit;
         return yield* Effect.interrupt;
       }
+
+      // The SDK refuses a second sign-in while one waits for the browser and
+      // tells the window nothing. Take over that one request; the redirect
+      // URL, token storage, passkeys and the instance lock stay the SDK's.
+      // Its own callback listeners stay registered and do nothing, because
+      // its waiting slot stays empty. Released before the bridge, and safe
+      // in either order: both remove the same handler, which cannot throw.
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          installClerkOAuthTransport({
+            ipcMain: Electron.ipcMain,
+            app: {
+              on: (eventName, listener) => Electron.app.on(eventName as never, listener),
+              removeListener: (eventName, listener) =>
+                Electron.app.removeListener(eventName as never, listener),
+            },
+            openExternal: (url) =>
+              runPromise(shell.openExternal(url)).then((opened) => {
+                if (!opened) throw new Error("The system browser did not open.");
+              }),
+            focusWindow: (sender) => {
+              void runPromise(
+                electronWindow.appWindowForWebContents(sender.id).pipe(
+                  Effect.flatMap(
+                    Option.match({
+                      onNone: () => Effect.void,
+                      onSome: (window) => electronWindow.reveal(window),
+                    }),
+                  ),
+                  Effect.ignoreCause,
+                ),
+              );
+            },
+            redirectUrl: clerkOAuthRedirectUrl(desktopClerkRenderer(environment.isDevelopment)),
+            stateChannel: CONNECT_SIGN_IN_STATE_CHANNEL,
+            log: ({ event, ...fields }) => {
+              void runPromise(
+                Effect.logInfo(`Connect sign-in: ${event}`).pipe(Effect.annotateLogs(fields)),
+              );
+            },
+          }),
+        ),
+        (removeOAuthTransport) => Effect.sync(removeOAuthTransport),
+      );
 
       const startProviderAuthHandoff = (value: string | undefined) => {
         if (!value) return false;

@@ -72,6 +72,8 @@ import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
 import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
+import * as FleetTargets from "../fleet/FleetTargets.ts";
+import * as RemoteStudioMcpClient from "../fleet/RemoteStudioMcpClient.ts";
 import * as WorkerEpochStore from "../fleet/WorkerEpochStore.ts";
 import * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
@@ -101,6 +103,7 @@ import {
 } from "./ProjectLinkStandby.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
+import { makeTakeoverEpochClaims } from "./takeoverEpochClaims.ts";
 
 /**
  * Links a project with its copy on another machine, keeping one coordinator.
@@ -1411,6 +1414,13 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
     const memory = yield* LinkedMemorySync.LinkedMemorySync;
     const guard = yield* CoordinatorReleaseGuard;
     const syncState = yield* Effect.serviceOption(LinkedPeerSyncState);
+    // A person's takeover claims its epoch on the other members' machines, as an
+    // automatic one does, so the coordinator it replaced steers nothing there.
+    const epochClaims = makeTakeoverEpochClaims({
+      client: yield* RemoteStudioMcpClient.RemoteStudioMcpClient,
+      targets: yield* FleetTargets.FleetTargets,
+      selfEnvironmentId: (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId,
+    });
     // The standby this copy leases to is released, and answers, before the change is written.
     const released =
       <I, A>(
@@ -1464,7 +1474,8 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
       ),
       [WS_METHODS.projectLinkMemoryExport]: whereRulesAllow(memory.memoryExport),
       [WS_METHODS.projectLinkMemoryMerge]: whereRulesAllow(memory.memoryMerge),
-      [WS_METHODS.projectTakeover]: link.takeover,
+      [WS_METHODS.projectTakeover]: (input: ProjectTakeoverInput) =>
+        epochClaims.takeover(link.takeover(input)),
       [WS_METHODS.projectSupersede]: released(
         (input: ProjectSupersedeInput) => ({
           projectId: input.projectId,

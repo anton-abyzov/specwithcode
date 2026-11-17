@@ -497,12 +497,6 @@ export const ja: PhraseCatalog = {
     "GitHub のマージやスカッシュのメッセージから、認識したエージェントのクレジット行を削除します。人間の共同作成者は残します。自動マージも対象です。マージキュー、スタックのマージ、既存のコミットは対象外です。",
   "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.":
     "アクティブまたはアーカイブ済みのスレッドを削除したとき、使われていないワークツリーを削除します。ローカルの変更があるワークツリーは残ります。",
-  "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
-    "スレッドがこの日数のあいだ非アクティブなら、そのワークツリーを削除します。開いているスレッドのフォルダーは常に残ります。ブランチとスレッドの履歴も残ります。",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "プルリクエストがマージされ、コミットが既定のブランチに含まれているか、マージせずにクローズされすべてのコミットがプッシュ済みのワークツリーを削除します。エージェントがスレッドなしで作った、変更がなくプッシュ済みのワークツリーも、プルリクエストがマージまたはクローズされ 1 日アイドルなら削除します。開いているスレッドのフォルダーは常に残ります。",
-  "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
-    "既定のブランチより先のコミットがないワークツリーを削除します。開いているスレッドのフォルダーは常に残ります。",
   Rename: "名前を変更",
   "Require a second click on the inline archive action before a thread is archived.":
     "スレッドをアーカイブする前に、インラインのアーカイブ操作をもう一度クリックするよう求めます。",
@@ -5221,6 +5215,94 @@ export const ja: PhraseCatalog = {
   "Follow project (on)": "プロジェクトに従う (オン)",
   "Follow project (off)": "プロジェクトに従う (オフ)",
   "Lets this thread ask a stronger model to check its work.": "このスレッドが、より強力なモデルに作業の確認を頼めるようにします。",
+  "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
+    "チャットが解決済みまたはアーカイブ済みで、この日数のあいだ非アクティブなワークツリーを削除します。ブランチとチャットの履歴は残ります。",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
+    "プルリクエストがマージされ、コミットが既定のブランチに含まれているか、マージせずにクローズされすべてのコミットがプッシュ済みのワークツリーを削除します。開いたままのチャットは、6 時間動きがなければフォルダーを失います。実行中または待機中のチャットは常にフォルダーを残します。ブランチは残るので、再開したチャットはフォルダーを取り戻せます。エージェントがチャットなしで作った、変更がなくプッシュ済みのワークツリーも、プルリクエストがマージまたはクローズされ 1 日アイドルなら削除します。",
+  "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
+    "解決済みまたはアーカイブ済みのチャットのうち、ブランチに既定のブランチより先のコミットがないワークツリーを削除します。",
+  "What cleanup would remove":
+    "クリーンアップで削除されるもの",
+  "Chat worktrees and leftover downloads":
+    "チャットのワークツリーとダウンロードの残り",
+  "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
+    "クリーンアップで削除されるものと残るもの、その理由を表示します。確認では完了した各フォルダーについて Git ホストに問い合わせるため、「確認」を押したときだけ実行されます。",
+  "Check":
+    "確認",
+  "Clean up now":
+    "今すぐクリーンアップ",
+  "Cleaning up…":
+    "クリーンアップ中…",
+  "Would be removed":
+    "削除対象",
+  "Kept":
+    "残すもの",
+  "At least {size} would be freed.":
+    "少なくとも {size} が空きます。",
+  "Dependency folders are left out: their files are shared with the package store.":
+    "依存関係のフォルダーは含みません。そのファイルはパッケージストアと共有されています。",
+  "Some folders could not be fully checked or measured.":
+    "一部のフォルダーは完全に確認または計測できませんでした。",
+  "Leftover files of stopped downloads":
+    "中断したダウンロードの残りファイル",
+  "Nothing to remove right now.":
+    "今は削除するものはありません。",
+  "Nothing was removed.":
+    "何も削除されませんでした。",
+  "Removed 1 folder, at least {size}.":
+    "1 個のフォルダーを削除しました（少なくとも {size}）。",
+  "Removed {count} folders, at least {size}.":
+    "{count} 個のフォルダーを削除しました（少なくとも {size}）。",
+  "The check could not finish.":
+    "確認を完了できませんでした。",
+  "This connection cannot change this machine's storage.":
+    "この接続では、このマシンのストレージを変更できません。",
+  "Delete worktrees of resolved chats":
+    "解決済みチャットのワークツリーを削除",
+  "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
+    "解決済みまたはアーカイブ済みのチャットのワークツリーを、中身がすべてコミットされプッシュされたら削除します。ブランチは残るので、再開したチャットはフォルダーを取り戻せます。",
+  "Its pull request merged.":
+    "プルリクエストがマージされました。",
+  "Its pull request closed and every commit is on the remote.":
+    "プルリクエストがクローズされ、すべてのコミットがリモートにあります。",
+  "Its chats are resolved or archived and everything is pushed.":
+    "チャットは解決済みかアーカイブ済みで、すべてプッシュ済みです。",
+  "Its chat was deleted.":
+    "チャットが削除されました。",
+  "Its chats are resolved or archived and it has been inactive.":
+    "チャットは解決済みかアーカイブ済みで、しばらく使われていません。",
+  "Its branch has no commits of its own.":
+    "ブランチに独自のコミットがありません。",
+  "Leftover files of stopped downloads.":
+    "中断したダウンロードの残りファイルです。",
+  "Work in it has not finished.":
+    "その中の作業がまだ終わっていません。",
+  "A chat that is still open works in it or near it.":
+    "まだ開いているチャットが、その中か近くで作業しています。",
+  "It was used less than 6 hours ago.":
+    "最後に使われてから 6 時間たっていません。",
+  "It has uncommitted changes.":
+    "コミットされていない変更があります。",
+  "It has files Git does not track.":
+    "Git が追跡していないファイルがあります。",
+  "It has commits that exist only on this machine.":
+    "このマシンにしかないコミットがあります。",
+  "A stash was made on its branch.":
+    "ブランチで stash が作成されています。",
+  "It has ignored files that may hold data.":
+    "データを含む可能性のある無視ファイルがあります。",
+  "It holds more media than is copied automatically.":
+    "自動でコピーされる量を超えるメディアがあります。",
+  "Something is working in it, or it is locked.":
+    "何かがその中で動いているか、ロックされています。",
+  "Its Git registration is broken. Check it by hand.":
+    "Git の登録が壊れています。手動で確認してください。",
+  "Another repository or hidden changes sit inside it.":
+    "中に別のリポジトリまたは隠れた変更があります。",
+  "No cleanup rule covers it.":
+    "当てはまるクリーンアップのルールがありません。",
+  "It could not be fully checked, so it is kept.":
+    "すべてを確認できなかったため、残します。",
   "Installed, but it does not start": "インストール済みですが起動しません",
   "Install {agent} on {machine} with this command:":
     "このコマンドで {machine} に {agent} をインストールします:",
