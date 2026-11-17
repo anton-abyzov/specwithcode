@@ -203,10 +203,21 @@ function Page() {
   const [current, setCurrent] = useState(start);
   const viewed = copies.find((item) => item.key === current)!;
   const makeMain = (key: string) => (window.__madeMain ??= []).push(key);
-  const switcherNamed = (label: string) => (
+  // `runsOn`: the machine the chip's face names when the coordinator runs elsewhere.
+  const switcherNamed = (label: string, runsOn: string | null = null) => (
     <OrchestratorSwitcher
       identity={{ color: "teal" } as never}
       label={label}
+      runsOn={
+        runsOn === null
+          ? null
+          : {
+              label: runsOn,
+              connected: true,
+              statusDetail: "",
+              identity: { color: "rose" } as never,
+            }
+      }
       connected
       statusDetail=""
       current={current}
@@ -237,7 +248,6 @@ function Page() {
     const named = composerMachines({
       viewed: "m5",
       mainKey: `${m5Main}:p`,
-      copyOff: true,
       routes: true,
     });
     return (
@@ -293,7 +303,7 @@ function Page() {
             />
           }
           notices={null}
-          meta={switcherNamed(named.chip)}
+          meta={switcherNamed("m5", named.chip)}
           controls={
             <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
               <span className="truncate">Opus 5.5</span>

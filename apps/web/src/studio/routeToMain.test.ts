@@ -97,27 +97,31 @@ describe("routedCommand", () => {
 
 describe("composerMachines", () => {
   it("names main on the chip of a copy whose main is elsewhere, and on Send while it routes", () => {
-    expect(
-      composerMachines({ viewed: "m5", mainKey: "m4:p", copyOff: true, routes: true }),
-    ).toEqual({ chip: "m4", send: "m4" });
-    // Main unreachable: Send names no machine, the chip still says where the coordinator runs.
-    expect(
-      composerMachines({ viewed: "m5", mainKey: "m4:p", copyOff: true, routes: false }),
-    ).toEqual({ chip: "m4", send: null });
+    expect(composerMachines({ viewed: "m5", mainKey: "m4:p", routes: true })).toEqual({
+      chip: "m4",
+      send: "m4",
+    });
+    // Main unreachable, or the copy's own machine offline: Send names no machine, and the
+    // chip still says where the coordinator runs.
+    expect(composerMachines({ viewed: "m5", mainKey: "m4:p", routes: false })).toEqual({
+      chip: "m4",
+      send: null,
+    });
     // Main itself, or a page that is not a copy: both name the machine being looked at.
-    expect(
-      composerMachines({ viewed: "m4", mainKey: null, copyOff: false, routes: false }),
-    ).toEqual({ chip: "m4", send: "m4" });
+    expect(composerMachines({ viewed: "m4", mainKey: null, routes: false })).toEqual({
+      chip: "m4",
+      send: "m4",
+    });
   });
 
   it("never lets the chip and Send name two different machines", () => {
     for (const viewed of ["m5", "m4"])
-      for (const mainKey of [null, "m4:p", "m5:p", "bad"])
-        for (const copyOff of [false, true])
-          for (const routes of [false, true]) {
-            const named = composerMachines({ viewed, mainKey, copyOff, routes });
-            if (named.send !== null) expect(named.send).toBe(named.chip);
-            if (copyOff && mainKey === "m4:p") expect(named.chip).toBe("m4");
-          }
+      for (const mainKey of [null, "m4:p", "m1:mcp:d580ecec", "bad"])
+        for (const routes of [false, true]) {
+          const named = composerMachines({ viewed, mainKey, routes });
+          if (named.send !== null) expect(named.send).toBe(named.chip);
+          const main = routeTarget(mainKey)?.environmentId;
+          expect(named.chip).toBe(main ?? viewed);
+        }
   });
 });

@@ -208,8 +208,16 @@ try {
     const routedSend = page.locator(".sws-composer-card button.sws-send");
     // The chip under the box and Send name one machine: main, where the coordinator runs.
     assert.deepEqual(await page.locator(".sws-host-name").allTextContents(), ["Runs on m4"]);
-    const sendLabel = await routedSend.getAttribute("data-send-label");
-    assert.ok(sendLabel === null || sendLabel === "Send to m4", `Send names ${sendLabel}`);
+    assert.equal(await routedSend.getAttribute("data-send-label"), "Send to m4");
+    // The menu still names and acts on the copy being viewed.
+    const chip = page.locator("[data-coordinator-machine]");
+    assert.equal(await chip.getAttribute("aria-label"), "Viewing m5. Choose a machine to view");
+    await chip.click();
+    assert.ok(
+      (await page.locator('[role="menu"]').textContent()).includes("On m5"),
+      "the machine actions are the viewed copy's",
+    );
+    await page.keyboard.press("Escape");
     assert.equal(await routedSend.isDisabled(), false);
     await routedSend.click();
     await page.waitForFunction(() => (window.__routed ?? []).length === 1);

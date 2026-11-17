@@ -92,8 +92,21 @@ export function OrchestratorSwitcher({
   onLink = null,
   onLeave = null,
   identity = null,
+  runsOn = null,
 }: {
   identity?: MachineIdentity | null;
+  /**
+   * Where this page's coordinator runs when that is another machine than the viewed copy's
+   * (main's, for a copy whose main is elsewhere). Only the chip's face names it, in its color
+   * and connection state, as Send does; the menu still names and acts on the viewed copy.
+   */
+  runsOn?: {
+    readonly label: string;
+    readonly hostLabel?: string;
+    readonly connected: boolean;
+    readonly statusDetail: string;
+    readonly identity: MachineIdentity | null;
+  } | null;
   /** The viewed machine's name: its nickname, else its short host label. */
   label: string;
   /** Its full host label for the tooltip; defaults to `label`. */
@@ -137,21 +150,26 @@ export function OrchestratorSwitcher({
   // as an invisible layer that catches clicks.
   const pendingView = useRef<(() => void) | null>(null);
   const tx = useTx();
-  const runsOn = tx("Runs on {machine}", { machine: label });
+  const face = runsOn ?? { label, hostLabel, connected, statusDetail, identity };
+  const runsOnText = tx("Runs on {machine}", { machine: face.label });
   // The chip names the machine and shows its state by the dot alone, in the machine's own
   // color while connected (never a status green that reads as another machine). While it is not
   // connected, the line above the message box says so once, with what happens next.
   const status = (
     <>
-      <span className="sws-dot" data-tone={connected ? "machine" : "failed"} aria-hidden />
+      <span className="sws-dot" data-tone={face.connected ? "machine" : "failed"} aria-hidden />
       <span
         className="sws-host-name"
-        title={hostLabel && hostLabel !== label ? `${runsOn} (${hostLabel})` : runsOn}
+        title={
+          face.hostLabel && face.hostLabel !== face.label
+            ? `${runsOnText} (${face.hostLabel})`
+            : runsOnText
+        }
       >
-        {runsOn}
+        {runsOnText}
       </span>
       <span className="sr-only" data-orchestrator-status="">
-        {connected ? `, ${tx("connected")}` : `, ${tx(statusDetail)}`}
+        {face.connected ? `, ${tx("connected")}` : `, ${tx(face.statusDetail)}`}
       </span>
       {savedMachineMissing ? (
         <span aria-hidden> · {tx("Last viewed machine not listed")}</span>
@@ -166,7 +184,7 @@ export function OrchestratorSwitcher({
     return (
       <span
         className="project-muted sws-host sws-execution-control machine-chip"
-        {...machineColorProps(identity)}
+        {...machineColorProps(face.identity)}
       >
         {status}
       </span>
@@ -224,7 +242,7 @@ export function OrchestratorSwitcher({
               variant="ghost-muted"
               size="xs"
               className="min-w-0 max-w-full machine-chip"
-              {...machineColorProps(identity)}
+              {...machineColorProps(face.identity)}
               data-coordinator-machine=""
               aria-label={
                 viewable
@@ -496,10 +514,12 @@ export function ProjectOrchestratorSwitcher({
 }) {
   const navigate = useNavigate();
   // A nickname shows as typed; only a host label drops its owner.
-  const chipEnvironmentId = runsOn?.environmentId ?? project.environmentId;
-  const chipLabel = runsOn?.label ?? label;
-  const name = useMachineNickname(chipEnvironmentId, chipLabel);
-  const identity = useMachineIdentity(chipEnvironmentId, chipLabel);
+  const name = useMachineNickname(project.environmentId, label);
+  const identity = useMachineIdentity(project.environmentId, label);
+  // Where the coordinator runs, when that is another machine (`runsOn`): the chip's face.
+  const mainId = runsOn?.environmentId ?? project.environmentId;
+  const mainName = useMachineNickname(mainId, runsOn?.label ?? label);
+  const mainIdentity = useMachineIdentity(mainId, runsOn?.label ?? label);
   const [linkTarget, setLinkTarget] = useState<ProjectLinkTarget | null>(null);
   const projects = useProjects();
   const nickname = useMachineNicknames();
@@ -516,10 +536,21 @@ export function ProjectOrchestratorSwitcher({
       <OrchestratorSwitcher
         identity={identity}
         label={name}
-        hostLabel={chipLabel}
-        connected={runsOn?.connected ?? connected}
+        hostLabel={label}
+        connected={connected}
         // The line above the message box says the rest once; the chip names the state.
-        statusDetail={runsOn?.disconnectedLabel ?? disconnectedLabel}
+        statusDetail={disconnectedLabel}
+        runsOn={
+          runsOn
+            ? {
+                label: mainName,
+                hostLabel: runsOn.label,
+                connected: runsOn.connected,
+                statusDetail: runsOn.disconnectedLabel,
+                identity: mainIdentity,
+              }
+            : null
+        }
         current={current}
         copies={copies}
         unknown={unknown}
