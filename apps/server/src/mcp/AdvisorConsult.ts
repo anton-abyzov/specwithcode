@@ -533,7 +533,8 @@ export const consultAdvisor = <C, S extends { readonly advisor: AdvisorSettings 
       const task = yield* ports.wait(picked.id, prepared.waitMs);
       const result = advisorConsultResult({ task, advisor, advisorModel, consultsRemaining });
       if (result.status === "working") return (yield* endIfBlocked(about)) ?? result;
-      if (result.status === "advice" && picked.childThreadId !== null)
+      // A failed consult has ended too; only a working one keeps its child.
+      if (result.status !== "refused" && picked.childThreadId !== null)
         yield* ports.archive([picked.childThreadId]);
       if (result.status !== "advice") return result;
       // Its record turns final a moment after the child's answer: a call in
@@ -571,6 +572,6 @@ export const consultAdvisor = <C, S extends { readonly advisor: AdvisorSettings 
           advisorModel: advisor.selection,
         })) ?? result
       );
-    if (result.status === "advice") yield* ports.archive([task.childThreadId]);
+    if (result.status !== "refused") yield* ports.archive([task.childThreadId]);
     return result;
   });

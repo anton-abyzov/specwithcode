@@ -45,6 +45,7 @@ import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { THREAD_CONTENT_TOOLS } from "./studioReadOnlyTools.ts";
 
 const environmentId = EnvironmentId.make("environment-advisor-guard");
 const advisorThreadId = ThreadId.make("thread-advisor-child");
@@ -170,6 +171,8 @@ const sampleValue = (schema: unknown): unknown => {
 const argumentsFor: Record<string, Record<string, unknown>> = {
   studio_project_memory_write: { name: "project_notes.md", content: "x" },
   create_threads: { threads: [{ prompt: "Go" }] },
+  studio_threads_wait: { threads: ["thread-missing"], timeoutMs: 1 },
+  studio_thread_search: { query: "plan" },
 };
 
 const ADVISOR_UNKNOWN = "could not confirm that the calling thread is not an advisor";
@@ -264,7 +267,10 @@ it.effect(
 
         const listed = (yield* asOrdinary("tools/list", {})).match(/\{.*\}/s)![0];
         const tools = (yield* Schema.decodeUnknownEffect(ToolsListPayload)(listed)).result.tools;
-        const changing = tools.filter((tool) => tool.annotations?.readOnlyHint !== true);
+        // Tools that change something, plus read-only ones that return other threads' text.
+        const changing = tools.filter(
+          (tool) => tool.annotations?.readOnlyHint !== true || THREAD_CONTENT_TOOLS.has(tool.name),
+        );
         expect(changing.length).toBeGreaterThan(40);
 
         const refusedAdvisor: Array<string> = [];
@@ -310,6 +316,8 @@ it.effect(
           "create_threads",
           // Not read-only: reading a direct child's result acknowledges its delivery.
           "studio_thread_read",
+          // Read-only, but an advisor sees only its brief, never other threads.
+          ...THREAD_CONTENT_TOOLS,
         ])
           expect(refusedAdvisor, name).toContain(name);
         // Read-only tools such as studio_thread_list never reach the guard.

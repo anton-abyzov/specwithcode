@@ -534,14 +534,15 @@ describe("consultAdvisor", () => {
     expect(calls.archived).toEqual([["thread:child:a1"]]);
   });
 
-  it("reports a failed child, keeps it counted and archives settled children on the next consult", async () => {
+  it("reports a failed child, keeps it counted, archives it and archives settled children on the next consult", async () => {
     const { calls, ports } = fake({
       driver: "codex",
       results: [taskResult("a1", "failed", "Provider error: overloaded")],
     });
     const failed = await Effect.runPromise(consultAdvisor(ports, {}));
     expect(failed).toMatchObject({ status: "failed", taskId: "a1", consultsRemaining: 2 });
-    expect(calls.archived).toEqual([]);
+    // Ended without advice, it is settled: archived now, not left for a later consult.
+    expect(calls.archived).toEqual([["thread:child:a1"]]);
 
     const next = fake({
       driver: "codex",

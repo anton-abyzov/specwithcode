@@ -15,6 +15,8 @@ import type {
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { SUBAGENT_NO_RESULT_TEXT } from "./SubagentProjection.ts";
+
 /** The stored records a brief is built from; read with `getThreadRecords`. */
 export type AdvisorBriefRecords = Pick<
   OrchestrationV2ThreadProjection,
@@ -102,8 +104,16 @@ const ADVISOR_TOOL = /(?:^|[._])advisor$/u;
 
 const isAdvisorConsult = (subagent: OrchestrationV2Subagent) => subagent.purpose === "advisor";
 
-const delivered = (subagent: OrchestrationV2Subagent) =>
-  isAdvisorConsult(subagent) && subagent.status === "completed" && subagent.result !== null;
+/** A consult that gave advice; the app's no-answer placeholder is not advice. */
+const delivered = (subagent: OrchestrationV2Subagent) => {
+  const advice = subagent.result?.trim() ?? "";
+  return (
+    isAdvisorConsult(subagent) &&
+    subagent.status === "completed" &&
+    advice !== "" &&
+    advice !== SUBAGENT_NO_RESULT_TEXT
+  );
+};
 
 const itemTime = (item: TurnItem) => DateTime.toEpochMillis(item.startedAt ?? item.updatedAt);
 

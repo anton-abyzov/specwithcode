@@ -2,6 +2,8 @@ import type { OrchestrationV2Subagent, OrchestrationV2TurnItem } from "@specweav
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
+import { SUBAGENT_NO_RESULT_TEXT } from "./SubagentProjection.ts";
+
 import {
   type AdvisorBriefRecords,
   buildAdvisorBrief,
@@ -274,13 +276,14 @@ describe("buildAdvisorBrief", () => {
     expectWithinBudget(brief, 24_000);
   });
 
-  it("does not move the marker for a failed, cancelled or resultless consult", () => {
+  it("does not move the marker for a failed, cancelled, resultless or placeholder consult", () => {
     const items = [
       user("u1", 0, "Original task text."),
       command("c-before", 1, "git diff before-consult", "diff"),
       subagentItem("s1", 2, "advisor:failed", null),
       subagentItem("s2", 3, "advisor:cancelled", null),
       subagentItem("s3", 4, "advisor:empty", null),
+      subagentItem("s4", 4, "advisor:placeholder", null),
       command("c-after", 5, "git diff after-consult", "diff"),
     ];
     const brief = buildAdvisorBrief({
@@ -288,6 +291,7 @@ describe("buildAdvisorBrief", () => {
         consult("advisor:failed", 2, "failed", "partial"),
         consult("advisor:cancelled", 3, "cancelled", null),
         consult("advisor:empty", 4, "completed", null),
+        consult("advisor:placeholder", 4, "completed", SUBAGENT_NO_RESULT_TEXT),
       ]),
       budgetTokens: 24_000,
     });

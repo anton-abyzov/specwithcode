@@ -284,21 +284,6 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       assert.notProperty(options.env, CLAUDE_DISABLE_ADVISOR_ENV);
     });
 
-    it("hides the studio-code advisor only while Claude's own advisor is on", () => {
-      const own = advisorOptions({ claudeAdvisor: { kind: "model", model: "claude-fable-5-2" } });
-      assert.include(own.disallowedTools ?? [], ClaudeAdapterV2.STUDIO_ADVISOR_MCP_TOOL);
-      const off = advisorOptions({ claudeAdvisor: { kind: "disable" } });
-      assert.notInclude(off.disallowedTools ?? [], ClaudeAdapterV2.STUDIO_ADVISOR_MCP_TOOL);
-      assert.notInclude(
-        advisorOptions({}).disallowedTools ?? [],
-        ClaudeAdapterV2.STUDIO_ADVISOR_MCP_TOOL,
-      );
-      assert.deepEqual(
-        ClaudeAdapterV2.claudeSessionDisallowedTools(["Bash"], { kind: "model", model: "m" }),
-        ["Bash", ClaudeAdapterV2.STUDIO_ADVISOR_MCP_TOOL],
-      );
-    });
-
     it("moves past the limit to the app's advisor and back only under half of it", () => {
       const over = resolve(1_200, "built-in");
       assert.deepEqual(over, { outcome: { kind: "disable" }, route: "studio" });

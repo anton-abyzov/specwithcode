@@ -31,6 +31,7 @@ import {
   readCaller,
   unavailable,
 } from "./threadAccess.ts";
+import { THREAD_CONTENT_TOOLS } from "./studioReadOnlyTools.ts";
 import { assertThreadChangeable, workGrantOf } from "./workGrantAccess.ts";
 
 // Only the classes below assign these, from their static blocks, so nothing
@@ -324,7 +325,7 @@ const checkedHandlers = <Handlers>(declarations: Declarations<Handlers>): Handle
   Struct.map(declarations, checkedHandler);
 
 export const ADVISOR_CALLER_REFUSAL =
-  "This thread is an advisor: it may only call SpecWithCode tools that read, and this one changes something or starts work.";
+  "This thread is an advisor: it may only call SpecWithCode tools that read, and this one changes something, starts work or reads other threads.";
 
 const advisorCallerUnknown = new OrchestratorMcpFailure({
   code: "capability_denied",
@@ -376,7 +377,11 @@ export const isReadOnlyTool = (toolkit: Toolkit.Toolkit<any>, name: string): boo
   return tool !== undefined && Context.get(tool.annotations, Tool.Readonly) === true;
 };
 
-/** Puts `refuseAdvisorCaller` in front of every tool of `toolkit` that is not read-only. */
+/**
+ * Puts `refuseAdvisorCaller` in front of every tool of `toolkit` that is not
+ * read-only, and of the read-only ones that return other threads' text: an
+ * advisor sees only its brief and its working folder.
+ */
 const guardAdvisorCallers = <Tools extends Record<string, Tool.Any>>(
   toolkit: Toolkit.Toolkit<Tools>,
   handlers: Toolkit.HandlersFrom<Tools>,
@@ -385,7 +390,7 @@ const guardAdvisorCallers = <Tools extends Record<string, Tool.Any>>(
   Object.fromEntries(
     Object.entries(handlers as unknown as Record<string, AnyToolHandler>).map(([name, handler]) => [
       name,
-      isReadOnlyTool(toolkit, name)
+      isReadOnlyTool(toolkit, name) && !THREAD_CONTENT_TOOLS.has(name)
         ? handler
         : (...args: ReadonlyArray<unknown>) =>
             Effect.andThen(
