@@ -29,6 +29,7 @@ import {
   namedFallbackOrder,
 } from "./modelTiers.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
+import { namedModelElsewhere } from "./regularTrack.ts";
 export { fallbackModelOrder, fallbackSelectionKey };
 import { effectiveUsedPercent, isLiveWindow, windowAppliesToModel } from "./usageWindows.ts";
 
@@ -963,6 +964,15 @@ function resolveProviderFallbackPass(input: {
     const back = home();
     if (back !== null) return back;
   }
+  const named = chain.fromTiers
+    ? null
+    : namedModelElsewhere({
+        ...input,
+        order: chain.order,
+        excludedModels: input.rule.providerLimitExcludedModels,
+        sourceOrder: input.rule.defaultModelProviders,
+      });
+  if (named !== null) return named;
   const proven = input.proven ?? null;
   if (
     proven !== null &&
