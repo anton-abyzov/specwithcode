@@ -1,7 +1,8 @@
 /**
- * Send to another machine…: what each machine already holds of this project, and the one
- * sentence that says what the click will do, before it is clicked. Copy keeps Main where it
- * is; Move hands Main over. A machine with a copy gets that copy filled in, not a second one.
+ * Copy to another machine…: what each machine already holds of this project, where Main is,
+ * and the one sentence that says what the click will do, before it is clicked. A copy keeps
+ * Main where it is; only Git only (no files copied) and "Make X main" move it. A machine with
+ * a copy gets that copy filled in, not a second one.
  *
  * @module sendToMachine
  */
@@ -26,9 +27,22 @@ export type MachineHolding<T> =
 /** Each machine's holding, and the machine Main is on whatever the destinations hold. */
 export interface MachineHoldings<T> {
   readonly byMachine: ReadonlyMap<string, MachineHolding<T>>;
-  /** Main's machine, from the one role derivation; null when no copy is Main. */
+  /**
+   * Main's machine, from the one role derivation: a copy in sight, else the successor the
+   * source's own binding names. A source registered on its own leads itself. Null when
+   * nothing in sight names Main.
+   */
   readonly mainEnvironmentId: string | null;
 }
+
+/** Words for the dialog: an English phrase and its `{slot}` values, translated where shown. */
+export interface SendText {
+  readonly text: string;
+  readonly values?: Readonly<Record<string, string>>;
+}
+
+const keyOf = (copy: { readonly environmentId: string; readonly id: string }) =>
+  `${copy.environmentId}:${copy.id}`;
 
 /**
  * Each machine's holding, keyed by environment id. `projects` is every project this app
@@ -48,7 +62,7 @@ export function machineHoldings<T extends SendCopy>(input: {
       ? []
       : input.projects.filter((item) => item.workspaceSettings?.logicalProject?.id === logical);
   const roles = copyRoles(members, input.retired);
-  const isMain = (copy: T) => roles.get(`${copy.environmentId}:${copy.id}`)?.role === "main";
+  const isMain = (copy: T) => roles.get(keyOf(copy))?.role === "main";
   const main = members.find(isMain) ?? null;
   const byMachine = new Map<string, MachineHolding<T>>();
   for (const environmentId of input.machineIds) {
@@ -67,7 +81,37 @@ export function machineHoldings<T extends SendCopy>(input: {
         copy: found.copy,
       });
   }
-  return { byMachine, mainEnvironmentId: main?.environmentId ?? null };
+  return {
+    byMachine,
+    mainEnvironmentId:
+      main?.environmentId ??
+      roles.get(keyOf(input.source))?.mainEnvironmentId ??
+      (logical === null ? input.source.environmentId : null),
+  };
+}
+
+/**
+ * The project a destination copy belongs to when the source is not linked to it: the copy
+ * is a member of a logical project the source is no member of. `mainEnvironmentId` is that
+ * project's Main, from the same role derivation; null when no copy in sight names it.
+ * Copying files into such a copy never moves that Main and never links the two.
+ */
+export function otherProjectOf<T extends SendCopy>(input: {
+  readonly source: T;
+  /** The destination copy; null when the machine has none, or none is picked yet. */
+  readonly copy: T | null;
+  /** Every project this app sees, so the destination project's own members are in sight. */
+  readonly projects: readonly T[];
+  readonly retired?: { has(environmentId: string): boolean } | undefined;
+}): { readonly mainEnvironmentId: string | null } | null {
+  const logical = input.copy?.workspaceSettings?.logicalProject?.id;
+  if (!input.copy || logical === undefined) return null;
+  if (logical === input.source.workspaceSettings?.logicalProject?.id) return null;
+  const members = input.projects.filter(
+    (item) => item.workspaceSettings?.logicalProject?.id === logical,
+  );
+  const role = copyRoles(members, input.retired).get(keyOf(input.copy));
+  return { mainEnvironmentId: role?.mainEnvironmentId ?? null };
 }
 
 /**
@@ -84,17 +128,6 @@ export function pickedHolding<T extends { readonly id: string }>(
   return { kind: copy.id === holding.mainId ? "main" : "copy", copy };
 }
 
-/** The two choices, in the owner's words; Copy first, the default. */
-export const SEND_CHOICES: Readonly<
-  Record<SendChoice, { readonly label: (there: string) => string; readonly detail: string }>
-> = {
-  copy: { label: (there) => `Copy to ${there}`, detail: "Keep working here." },
-  move: {
-    label: (there) => `Move to ${there}`,
-    detail: "Work continues there, and this copy stops starting work.",
-  },
-};
-
 /** Said once under the machines when the chosen one already has the project. */
 export function existingCopyLine(input: {
   readonly there: string;
@@ -110,6 +143,63 @@ export function existingCopyLine(input: {
   return `${there} already has a copy, at ${folder}. Only what it is missing is copied.`;
 }
 
+/**
+ * The dialog's line under its title: where the copy comes from and where Main is afterwards.
+ * `main` is the machine Main is on now (the destination project's when the source is not
+ * linked to it); null when nothing in sight names it. A source that is not linked to the
+ * project the destination belongs to is said plainly instead.
+ */
+export function sendHeader(input: {
+  readonly source: string;
+  /** The chosen machine; null before one is picked. */
+  readonly there: string | null;
+  /** Main moves there: Git only, or a move asked for with "Make X main". */
+  readonly move: boolean;
+  readonly main: string | null;
+  /** Set when the destination copy belongs to a project the source is not linked to. */
+  readonly otherProject?: { readonly main: string | null } | null | undefined;
+}): SendText {
+  const { source, there, main } = input;
+  if (input.otherProject && there)
+    return input.otherProject.main
+      ? {
+          text: "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).",
+          values: { source, machine: there, main: input.otherProject.main },
+        }
+      : {
+          text: "From {source}. {source}'s copy is not linked to the project {machine} belongs to.",
+          values: { source, machine: there },
+        };
+  if (input.move)
+    return there
+      ? { text: "From {source}. Main moves to {machine}.", values: { source, machine: there } }
+      : { text: "From {source}. Main moves to the machine you choose.", values: { source } };
+  return main
+    ? { text: "From {source}. Main stays on {main}.", values: { source, main } }
+    : { text: "From {source}. Main stays where it is.", values: { source } };
+}
+
+/**
+ * What copying into another project's copy does and does not do, said under the machines:
+ * files only. Git only would move Main there, so it is off until the two are linked.
+ */
+export function otherProjectNote(input: {
+  readonly source: string;
+  readonly there: string;
+  readonly main: string | null;
+}): SendText {
+  const { source, there, main } = input;
+  return main
+    ? {
+        text: "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.",
+        values: { source, machine: there, main },
+      }
+    : {
+        text: "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.",
+        values: { source, machine: there },
+      };
+}
+
 const files = (count: number) =>
   count === 1 ? "1 changed local file" : `${count} changed local files`;
 const staying = (count: number) =>
@@ -117,13 +207,14 @@ const staying = (count: number) =>
 
 /**
  * The plan: exactly what the click does, in one or two sentences. `way` is how files
- * travel: the folder copy (the default), or Git only, which always moves Main.
+ * travel: the folder copy (the default), or Git only, which always moves Main. `choice` is
+ * "move" for Git only and for a move asked for with "Make X main"; a plain copy is "copy".
  */
 export function sendPlan(input: {
   readonly choice: SendChoice;
   readonly there: string;
-  /** The machine Main is on now. */
-  readonly main: string;
+  /** The machine Main is on now; null when nothing in sight names it. */
+  readonly main: string | null;
   readonly holding: MachineHolding<{ readonly workspaceRoot: string }>;
   readonly way: "copy" | "git";
   /** Uncommitted files here; null when unknown. */
@@ -134,7 +225,9 @@ export function sendPlan(input: {
   const move = input.choice === "move" && holding.kind !== "main";
   const after = move
     ? `Work continues on ${there}, and this copy stops starting work.`
-    : `Main stays on ${holding.kind === "main" ? there : input.main}.`;
+    : holding.kind === "main" || input.main
+      ? `Main stays on ${holding.kind === "main" ? there : input.main}.`
+      : "Main stays where it is.";
   const into =
     holding.kind === "none"
       ? null

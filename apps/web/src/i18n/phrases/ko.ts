@@ -5317,4 +5317,32 @@ export const ko: PhraseCatalog = {
   "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
     "먼저 {main}을(를) 연결하세요. 이 창은 {main}의 메인 사본을 불러오지 않아 아직 {machine}을(를) 메인으로 만들 수 없습니다.",
   "connect {main} first": "먼저 {main} 연결",
+  "Copy {project} to {machine}": "{project}을(를) {machine}(으)로 복사",
+  "Move {project} to {machine}": "{project}을(를) {machine}(으)로 이동",
+  "Copy {project} to another machine": "{project}을(를) 다른 기기로 복사",
+  "Move {project} to another machine": "{project}을(를) 다른 기기로 이동",
+  "Nothing on {machine} is replaced without asking.": "{machine}에 있는 것은 묻지 않고 바꾸지 않습니다.",
+  "the other machine": "다른 기기",
+  "From {source}. Main stays on {main}.": "{source}에서. 메인은 {main}에 그대로 있습니다.",
+  "From {source}. Main stays where it is.": "{source}에서. 메인은 지금 있는 곳에 그대로 있습니다.",
+  "From {source}. Main moves to {machine}.": "{source}에서. 메인이 {machine}(으)로 옮겨집니다.",
+  "From {source}. Main moves to the machine you choose.": "{source}에서. 메인이 선택한 기기로 옮겨집니다.",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
+    "{source}에서. {source}의 복사본은 {machine}이(가) 속한 프로젝트에 연결되어 있지 않습니다(메인: {main}).",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
+    "{source}에서. {source}의 복사본은 {machine}이(가) 속한 프로젝트에 연결되어 있지 않습니다.",
+  "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "{machine}의 복사본에는 파일만 복사됩니다. 메인은 {main}에 그대로 있고, {source}은(는) 그 프로젝트에 연결되지 않습니다. 하나의 프로젝트로 만들려면 기기 메뉴에서 {source}을(를) 연결하세요.",
+  "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "{machine}의 복사본에는 파일만 복사됩니다. 그 메인은 바뀌지 않고, {source}은(는) 그 프로젝트에 연결되지 않습니다. 하나의 프로젝트로 만들려면 기기 메뉴에서 {source}을(를) 연결하세요.",
+  "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
+    "여기서는 메인을 {machine}(으)로 옮길 수 없습니다. {source}은(는) {machine}이(가) 속한 프로젝트에 연결되어 있지 않습니다. 먼저 기기 메뉴에서 {source}을(를) 연결하거나 파일을 복사하세요.",
+  "Not available: that machine already has Main.": "사용할 수 없음: 그 기기에 이미 메인이 있습니다.",
+  "Not available: it would move Main into a project this copy is not linked to.":
+    "사용할 수 없음: 이 복사본이 연결되지 않은 프로젝트로 메인이 옮겨집니다.",
+  "{machine} has a copy. Main stays on {main}.": "{machine}에 복사본이 있습니다. 메인은 {main}에 그대로 있습니다.",
+  "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
+    "연결되지 않음: {machine}의 복사본은 메인이 {main}인 프로젝트에 속하며, {source}은(는) 그 일부가 아닙니다. 아무것도 연결되지 않았습니다.",
+  "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
+    "연결되지 않음: {machine}의 복사본은 다른 프로젝트에 속하며, {source}은(는) 그 일부가 아닙니다. 아무것도 연결되지 않았습니다.",
 };

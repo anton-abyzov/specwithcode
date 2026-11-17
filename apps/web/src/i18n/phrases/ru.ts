@@ -5377,4 +5377,35 @@ export const ru: PhraseCatalog = {
   "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
     "Сначала подключите {main}. Это окно не загрузило основную копию на {main}, поэтому пока не может сделать {machine} основной.",
   "connect {main} first": "сначала подключите {main}",
+  "Copy {project} to {machine}": "Скопировать {project} на {machine}",
+  "Move {project} to {machine}": "Перенести {project} на {machine}",
+  "Copy {project} to another machine": "Скопировать {project} на другую машину",
+  "Move {project} to another machine": "Перенести {project} на другую машину",
+  "Nothing on {machine} is replaced without asking.":
+    "На {machine} ничего не заменяется без вопроса.",
+  "the other machine": "другой машине",
+  "From {source}. Main stays on {main}.": "С {source}. Основная остаётся на {main}.",
+  "From {source}. Main stays where it is.": "С {source}. Основная остаётся там, где она есть.",
+  "From {source}. Main moves to {machine}.": "С {source}. Основная переходит на {machine}.",
+  "From {source}. Main moves to the machine you choose.":
+    "С {source}. Основная переходит на выбранную машину.",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
+    "С {source}. Копия на {source} не связана с проектом, к которому относится {machine} (основная: {main}).",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
+    "С {source}. Копия на {source} не связана с проектом, к которому относится {machine}.",
+  "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "В копию на {machine} копируются только файлы. Основная остаётся на {main}, а {source} не связывается с этим проектом. Чтобы это был один проект, свяжите {source} с ним через меню машин.",
+  "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "В копию на {machine} копируются только файлы. Её основная не меняется, а {source} не связывается с этим проектом. Чтобы это был один проект, свяжите {source} с ним через меню машин.",
+  "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
+    "Отсюда основную нельзя перенести на {machine}: {source} не связана с проектом, к которому относится {machine}. Сначала свяжите {source} с ним через меню машин или скопируйте файлы.",
+  "Not available: that machine already has Main.": "Недоступно: на этой машине уже основная.",
+  "Not available: it would move Main into a project this copy is not linked to.":
+    "Недоступно: основная перешла бы в проект, с которым эта копия не связана.",
+  "{machine} has a copy. Main stays on {main}.":
+    "На {machine} есть копия. Основная остаётся на {main}.",
+  "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
+    "Не связано: копия на {machine} относится к проекту, основная которого на {main}, а {source} в него не входит. Ничего не связано.",
+  "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
+    "Не связано: копия на {machine} относится к другому проекту, а {source} в него не входит. Ничего не связано.",
 };

@@ -2,6 +2,8 @@ import { ArrowRightIcon, CheckIcon, ChevronDownIcon, LaptopIcon } from "lucide-r
 import { useState, type ComponentProps, type ReactNode } from "react";
 import type { MachineHandoffRetention } from "@specweave-studio/contracts";
 import type { HandoffFolderMethod } from "../../studio/folderCopy";
+import { useTx } from "../../i18n";
+import { sendHeader } from "../../studio/sendToMachine";
 import { cn } from "../../lib/utils";
 import { MachineOptionRows, type MachineOption } from "../handoff/MachineOptionRows";
 import { Button } from "../ui/button";
@@ -12,13 +14,15 @@ import { HandoffWorkspaceSummary, type HandoffWorkspaceContext } from "./Handoff
 import { HandoffCopyActionsTarget } from "./HandoffCopyActions";
 import {
   AlongLine,
-  CoordinatorChoice,
   FilesTravelChoice,
   FolderField,
   MoreOptions,
+  moveRefusal,
   ProjectMoveDialog,
+  SendSummary,
   useProjectMoveDialog,
   WhatComesAlong,
+  type MakeMainAction,
   type MoveIntent,
   type SendFacts,
 } from "./ProjectMoveOptions";
@@ -102,7 +106,6 @@ export function MachineHandoffDialog({
   machine = null,
   onMachineChange,
   intent = "move",
-  onIntentChange,
   preview,
   phase,
   error,
@@ -129,9 +132,12 @@ export function MachineHandoffDialog({
   machinesExtra,
   sync = null,
   send = null,
+  makeMain = null,
 }: {
-  /** What the chosen machine already holds, for Copy or Move and the plan sentence. */
+  /** What the chosen machine already holds, where Main is, and the plan sentence. */
   readonly send?: SendFacts | null;
+  /** "Make {machine} main" on a finished copy's done screen; null where there is none. */
+  readonly makeMain?: MakeMainAction | null;
   /**
    * "Sync to X…": X already has this project at `folder`. The dialog copies only files into
    * that folder and says so; the coordinator stays here.
@@ -162,9 +168,11 @@ export function MachineHandoffDialog({
   /** Saves a folder on `machine` for the Git move; shown when it has none, or on Browse…. */
   readonly folderPicker?: ReactNode;
   readonly sourceChanges?: HandoffSourceChanges | null;
-  /** Move continues the project there; copy only sends files. Titles the dialog. */
+  /**
+   * Move: Main goes there (Git only, or a move asked for with "Make X main"). Copy: only
+   * files go there and Main stays. Titles the dialog; the dialog itself never asks.
+   */
   readonly intent?: MoveIntent;
-  readonly onIntentChange?: (intent: MoveIntent) => void;
   /** The machines the Git move can choose from, and the chosen one. */
   readonly machines?: ReadonlyArray<MachineOption>;
   readonly machine?: string | null;
@@ -205,6 +213,19 @@ export function MachineHandoffDialog({
     machines.find((item) => item.value === machine)?.label ?? target?.label ?? null;
   const targetLabel = target?.label ?? machineLabel ?? "the other machine";
   const [copyActionsTarget, setCopyActionsTarget] = useState<HTMLDivElement | null>(null);
+  const tx = useTx();
+  // The copy flow names its machine once one is picked; the Git move names its own.
+  const there = copying ? copyTargetLabel : machineLabel;
+  const moving = !copying || intent === "move";
+  // Main may not move to the copy that is Main, nor into a project this one is not linked to.
+  const refused = moving ? moveRefusal(send) : null;
+  const header = sendHeader({
+    source: sourceLabel,
+    there,
+    move: moving,
+    main: send?.mainLabel ?? null,
+    otherProject: there ? send?.otherProject : null,
+  });
   const close = () => {
     if (!locked) onOpenChange(false);
   };
@@ -227,6 +248,7 @@ export function MachineHandoffDialog({
             machinesExtra,
             sync: sync !== null,
             send,
+            makeMain,
           }}
         >
           <DialogHeader>
@@ -240,9 +262,17 @@ export function MachineHandoffDialog({
                   ? `Sync ${projectTitle} to ${sync.machine}`
                   : complete
                     ? `${projectTitle} is on ${targetLabel}`
-                    : copying
-                      ? `Send ${projectTitle} to ${copyTargetLabel ?? "another machine"}`
-                      : `Move ${projectTitle} to ${machineLabel ?? "another machine"}`}
+                    : there
+                      ? tx(moving ? "Move {project} to {machine}" : "Copy {project} to {machine}", {
+                          project: projectTitle,
+                          machine: there,
+                        })
+                      : tx(
+                          moving
+                            ? "Move {project} to another machine"
+                            : "Copy {project} to another machine",
+                          { project: projectTitle },
+                        )}
             </DialogTitle>
             {/* A finished copy says what happened in its own body. */}
             {!(copying && copyDoneOn) && (
@@ -251,7 +281,10 @@ export function MachineHandoffDialog({
                   ? `The coordinator now runs on ${targetLabel}.`
                   : sync && copying
                     ? `${sync.machine} already has this project at ${sync.folder}. Sync compares the two copies and adds what ${sync.machine} is missing: repositories or folders of the workspace, and files Git doesn't carry. Anything that differs there is shown to you before it changes. The coordinator stays on ${sourceLabel}.`
-                    : `From ${sourceLabel}. Nothing on ${(copying ? copyTargetLabel : machineLabel) ?? "the other machine"} is replaced without asking.`}
+                    : `${tx(header.text, header.values)} ${tx(
+                        "Nothing on {machine} is replaced without asking.",
+                        { machine: there ?? tx("the other machine") },
+                      )}`}
               </DialogDescription>
             )}
           </DialogHeader>
@@ -288,7 +321,6 @@ export function MachineHandoffDialog({
                 machine={machine}
                 machineLabel={machineLabel}
                 onMachineChange={onMachineChange}
-                onIntentChange={onIntentChange}
                 folderPicker={folderPicker}
                 sourceChanges={sourceChanges}
                 busy={busy}
@@ -377,7 +409,7 @@ export function MachineHandoffDialog({
                 {/* One primary, filled even while off: never two outline buttons side by side. */}
                 <Button
                   className="min-w-0 max-w-full shrink"
-                  disabled={busy || !target || !!target.unavailable}
+                  disabled={busy || !target || !!target.unavailable || refused !== null}
                   onClick={onReview}
                 >
                   {busy
@@ -396,8 +428,9 @@ export function MachineHandoffDialog({
 }
 
 /**
- * Screen 1 when files travel through Git only: the coordinator always moves, so choosing
- * Keep switches back to the copy. The paths and what Git leaves behind sit under Details.
+ * Screen 1 when files travel through Git only: Main always moves, and the plan says so. The
+ * way back to a plain copy is "How files travel" under Details, with the paths and what Git
+ * leaves behind.
  */
 function GitWhere({
   sourceLabel,
@@ -408,7 +441,6 @@ function GitWhere({
   machine,
   machineLabel,
   onMachineChange,
-  onIntentChange,
   folderPicker,
   sourceChanges,
   busy,
@@ -425,7 +457,6 @@ function GitWhere({
   readonly machine: string | null;
   readonly machineLabel: string | null;
   readonly onMachineChange: ((machine: string) => void) | undefined;
-  readonly onIntentChange: ((intent: MoveIntent) => void) | undefined;
   readonly folderPicker: ReactNode;
   readonly sourceChanges: HandoffSourceChanges | null;
   readonly busy: boolean;
@@ -501,14 +532,7 @@ function GitWhere({
           processes
         </AlongLine>
       </WhatComesAlong>
-      <CoordinatorChoice
-        value="move"
-        canMove
-        sourceLabel={sourceLabel}
-        targetLabel={machineLabel}
-        disabled={busy || !onIntentChange}
-        onChange={(next) => onIntentChange?.(next)}
-      />
+      <SendSummary move sourceLabel={sourceLabel} targetLabel={machineLabel} disabled={busy} />
       <MoreOptions disabled={busy}>
         {details}
         <FilesTravelChoice />

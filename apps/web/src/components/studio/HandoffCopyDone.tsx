@@ -9,6 +9,7 @@ import type {
   MachineHandoffSourceChanges,
   ProjectId,
 } from "@specweave-studio/contracts";
+import { useTx } from "../../i18n";
 import { retentionMovedText } from "./handoffRetention";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { copiedProjectFolder, copyDurationText, formatBytes } from "../../studio/folderCopy";
@@ -93,9 +94,14 @@ export function HandoffCopyDone({
   readonly onLinkDialogClose: () => void;
   readonly onLinked: () => void;
 }) {
+  const tx = useTx();
   const problem = copyProblem(copy, sourceLabel);
   // Inside the dialog its title says it; standalone, the panel does.
-  const titled = useProjectMoveDialog() !== null;
+  const dialog = useProjectMoveDialog();
+  const titled = dialog !== null;
+  // Where Main is, as the dialog's header named it; the other project's when not linked to it.
+  const other = dialog?.send?.otherProject ?? null;
+  const main = other ? other.main : (dialog?.send?.mainLabel ?? null);
   const moved = mode === "copy-and-move" && contextTransferred;
   const duration = copyDurationText(copy);
   const finished = statusProgressView(copy, sourceLabel, targetLabel);
@@ -135,7 +141,9 @@ export function HandoffCopyDone({
                   : copyAgain
                     ? "The coordinator stays here until you copy again."
                     : "Files are copied. Hand off the coordinator once work here is idle."
-              : `${targetLabel} has a copy. The coordinator stays here.`}
+              : main
+                ? tx("{machine} has a copy. Main stays on {main}.", { machine: targetLabel, main })
+                : `${targetLabel} has a copy. The coordinator stays here.`}
         </p>
         <p className="text-xs text-muted-foreground wrap-anywhere">
           In{" "}
@@ -198,6 +206,19 @@ export function HandoffCopyDone({
             </Button>
           )}
         </div>
+      )}
+      {mode === "copy-only" && other && (
+        <p className="text-muted-foreground text-xs wrap-anywhere" data-slot="copy-not-linked">
+          {other.main
+            ? tx(
+                "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.",
+                { machine: targetLabel, main: other.main, source: sourceLabel },
+              )
+            : tx(
+                "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.",
+                { machine: targetLabel, source: sourceLabel },
+              )}
+        </p>
       )}
       {mode === "copy-only" && link && (
         <p
@@ -565,8 +586,9 @@ export function HandoffCopyFailedActions({
 /**
  * The finished copy's buttons: Open on {machine} leads, unless Copy again (files changed
  * while copying or a check failed) or moving the coordinator comes first. A copy-only copy
- * offers Copy changes again, which leads to the form. Undo… sits left; the ⋯ menu holds
- * the rest.
+ * offers Copy changes again, which leads to the form, and "Make {machine} main" where the
+ * copy is linked and is not Main: the page's own switch, one click, confirmed there. Undo…
+ * sits left; the ⋯ menu holds the rest.
  */
 export function HandoffCopyDoneActions({
   copy,
@@ -610,7 +632,11 @@ export function HandoffCopyDoneActions({
   readonly onLink: () => void;
   readonly onStartNew: () => void;
 }) {
+  const tx = useTx();
   const transfer = canTransfer && !copyAgain && onTransfer !== null;
+  // The copy is in place and Main is elsewhere: the switch the machine menu has, offered here.
+  const offered = useProjectMoveDialog()?.makeMain ?? null;
+  const makeMain = mode === "copy-only" && !copyAgain ? offered : null;
   // A finished copy's next copy is one visible step away, and leads to the form.
   const changes = mode === "copy-only" && !copyAgain;
   const again = !copyAgain && canCopyAgain;
@@ -630,6 +656,21 @@ export function HandoffCopyDoneActions({
       <Button variant={copyAgain || transfer ? "outline" : "default"} onClick={onOpen}>
         Open on {targetLabel}
       </Button>
+      {makeMain && (
+        <Button
+          variant="outline"
+          data-slot="copy-make-main"
+          disabled={busy || makeMain.offer.kind === "blocked"}
+          title={
+            makeMain.offer.reason
+              ? tx(makeMain.offer.reason.text, makeMain.offer.reason.values)
+              : undefined
+          }
+          onClick={makeMain.run}
+        >
+          {tx("Make {machine} main", { machine: makeMain.offer.machine })}
+        </Button>
+      )}
       {changes && (
         <Button variant="outline" disabled={busy || startNewLocked} onClick={onStartNew}>
           Copy changes again

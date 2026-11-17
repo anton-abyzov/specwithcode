@@ -5380,4 +5380,32 @@ export const ja: PhraseCatalog = {
   "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
     "まず {main} を接続してください。このウィンドウは {main} のメインのコピーを読み込んでいないため、まだ {machine} をメインにできません。",
   "connect {main} first": "先に {main} を接続",
+  "Copy {project} to {machine}": "{project} を {machine} にコピー",
+  "Move {project} to {machine}": "{project} を {machine} に移動",
+  "Copy {project} to another machine": "{project} を別のマシンにコピー",
+  "Move {project} to another machine": "{project} を別のマシンに移動",
+  "Nothing on {machine} is replaced without asking.": "{machine} 上のものが確認なしに置き換えられることはありません。",
+  "the other machine": "別のマシン",
+  "From {source}. Main stays on {main}.": "{source} から。メインは {main} のままです。",
+  "From {source}. Main stays where it is.": "{source} から。メインは今の場所のままです。",
+  "From {source}. Main moves to {machine}.": "{source} から。メインは {machine} に移ります。",
+  "From {source}. Main moves to the machine you choose.": "{source} から。メインは選んだマシンに移ります。",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
+    "{source} から。{source} のコピーは、{machine} が属するプロジェクトにリンクされていません(メイン: {main})。",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
+    "{source} から。{source} のコピーは、{machine} が属するプロジェクトにリンクされていません。",
+  "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "{machine} のコピーにはファイルだけがコピーされます。メインは {main} のままで、{source} はそのプロジェクトにリンクされません。1 つのプロジェクトにするには、マシンメニューから {source} をリンクしてください。",
+  "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "{machine} のコピーにはファイルだけがコピーされます。そのメインは変わらず、{source} はそのプロジェクトにリンクされません。1 つのプロジェクトにするには、マシンメニューから {source} をリンクしてください。",
+  "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
+    "ここからメインを {machine} に移すことはできません。{source} は {machine} が属するプロジェクトにリンクされていません。先にマシンメニューから {source} をリンクするか、ファイルをコピーしてください。",
+  "Not available: that machine already has Main.": "利用できません: そのマシンにはすでにメインがあります。",
+  "Not available: it would move Main into a project this copy is not linked to.":
+    "利用できません: このコピーがリンクされていないプロジェクトにメインが移ってしまいます。",
+  "{machine} has a copy. Main stays on {main}.": "{machine} にコピーがあります。メインは {main} のままです。",
+  "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
+    "リンクされていません: {machine} のコピーはメインが {main} のプロジェクトに属していて、{source} はその一員ではありません。何もリンクされませんでした。",
+  "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
+    "リンクされていません: {machine} のコピーは別のプロジェクトに属していて、{source} はその一員ではありません。何もリンクされませんでした。",
 };
