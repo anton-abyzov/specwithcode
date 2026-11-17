@@ -216,8 +216,9 @@ export function CoordinatorModelPicker(props: {
               text: `Goes back to ${fallbackState.pickModel} on its own once it ${running?.setup ? "can run" : "has room"}.`,
             }
           : {
-              mode: "manual" as const,
-              text: "It does not switch back on its own.",
+              // Each message names the saved model, and the host takes it whenever it has room.
+              mode: "auto" as const,
+              text: `Goes back to ${fallbackState.pickModel} with the next message once it has room.`,
             },
         back: running?.onSwitchBack
           ? {

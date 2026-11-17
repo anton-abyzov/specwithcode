@@ -136,7 +136,9 @@ export function fallbackChain(input: {
 /**
  * The picker's fallback status. A limit fallback goes back on its own once the
  * pick has room (the server's limitFallbackReturnCommand, while the thread is
- * idle); a thread that started on a stand-in never does, so its way back is by hand.
+ * idle), and so does a thread that started on a stand-in (launchReturnCommand),
+ * once a usage reading shows its pick has room. A pick that reports no usage
+ * never shows room, so its way back is by hand.
  */
 export function fallbackStatusHeader(input: {
   readonly pick: Label;
@@ -175,8 +177,9 @@ export function fallbackStatusHeader(input: {
     : preswitched
       ? "Neared its usage limit."
       : "Hit its usage limit.";
-  const byHandOnly =
-    !launched && (roomUnknown === "unreported" || input.pickReportsNoUsage === true) && !resetLabel;
+  const noUsage = roomUnknown === "unreported" || input.pickReportsNoUsage === true;
+  // A launch fallback goes back only on a reading that shows room; a passed reset is not one.
+  const byHandOnly = noUsage && (launched || !resetLabel);
   const returns = returnBlock
     ? {
         mode: "manual" as const,
@@ -189,18 +192,10 @@ export function fallbackStatusHeader(input: {
             ? "Has room again. Goes back on its own when this thread is idle."
             : "Goes back on its own once it has room.",
         }
-      : launched || byHandOnly
+      : byHandOnly
         ? {
             mode: "manual" as const,
-            text: byHandOnly
-              ? `${hasRoom ? "Has room now, but it" : "It"} reports no usage, so it goes back only by hand.`
-              : hasRoom
-                ? "Has room now. It does not switch back on its own."
-                : roomUnknown
-                  ? "Its room is unknown. It does not switch back on its own."
-                  : resetLabel
-                    ? `Resets at ${resetLabel}. It does not switch back on its own.`
-                    : "No room yet. It does not switch back on its own.",
+            text: `${hasRoom ? "Has room now, but it" : "It"} reports no usage, so it goes back only by hand.`,
           }
         : {
             mode: "auto" as const,

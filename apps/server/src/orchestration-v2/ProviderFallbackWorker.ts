@@ -80,6 +80,7 @@ import {
   type ApiCreditOrigin,
   apiCreditOrigin,
   apiCreditReturnCommand,
+  launchReturnCommand,
   limitFallbackReturnCommand,
   limitResetAt,
   preswitchReturnBlock,
@@ -922,7 +923,13 @@ export const makeSweep = Effect.gen(function* () {
     );
   // Runs are read once per thread, latest run and instance; the rest repeats each sweep.
   const origins = yield* Ref.make(
-    new Map<string, ApiCreditOrigin | { readonly preswitch: PreswitchOrigin } | null>(),
+    new Map<
+      string,
+      | ApiCreditOrigin
+      | { readonly preswitch: PreswitchOrigin }
+      | { readonly launch: ModelSelection }
+      | null
+    >(),
   );
   // Whether a stop was its own instance's Claude plan limit, read once per stopped run.
   const planStops = yield* Ref.make(new Map<string, boolean>());
@@ -1022,7 +1029,12 @@ export const makeSweep = Effect.gen(function* () {
       // the runs show, and its origin is where the thread ran before it. On
       // per-token API credits the way off them comes first (#599).
       if (preswitch !== null && !apiCredits) found = null;
-      if (found === null) origin = preswitch === null ? null : { preswitch };
+      // A worker that started on a stand-in has neither: its thread record
+      // keeps the pick it stands in for.
+      const launch = records.thread?.launchFallbackFrom ?? null;
+      if (found === null)
+        origin =
+          preswitch !== null ? { preswitch } : launch !== null && !apiCredits ? { launch } : null;
       else {
         let resetAt = yield* stoppedResetAt(found.stoppedRunId);
         if (resetAt === undefined) return null;
@@ -1084,6 +1096,15 @@ export const makeSweep = Effect.gen(function* () {
         preswitch,
         returnCommand: (current, attempt) =>
           preswitchReturnCommand(current, preswitch, providers, rule, nowMs, attempt),
+      };
+    } else if ("launch" in origin) {
+      const home = origin.launch;
+      way = {
+        home,
+        attemptKey: `launch:${thread.id}:${home.instanceId}/${home.model}`,
+        preswitch: null,
+        returnCommand: (current, attempt) =>
+          launchReturnCommand(current, home, providers, rule, nowMs, attempt),
       };
     } else {
       const found = origin;

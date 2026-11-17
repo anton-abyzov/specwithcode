@@ -35,14 +35,21 @@ describe("fallbackStatusHeader", () => {
     );
   });
 
-  it("says a launch stand-in only returns by hand", () => {
+  it("says a launch stand-in goes back on its own once its pick has room", () => {
     const status = header({ launched: true, hasRoom: true });
     expect(status.pick?.why).toBe("Had no room when this thread started.");
     expect(status.returns).toEqual({
-      mode: "manual",
-      text: "Has room now. It does not switch back on its own.",
+      mode: "auto",
+      text: "Has room again. Goes back on its own when this thread is idle.",
     });
-    expect(status.back).toMatchObject({ label: "Return to Opus 5.5", disabledReason: null });
+    expect(status.back).toMatchObject({ label: "Return to Opus 5.5 now", disabledReason: null });
+    // A pick that reports no usage never reads as having room: back by hand, even past a reset.
+    const unreported = header({ launched: true, hasRoom: false, pickReportsNoUsage: true });
+    expect(unreported.returns).toEqual({
+      mode: "manual",
+      text: "It reports no usage, so it goes back only by hand.",
+    });
+    expect(unreported.back?.label).toBe("Return to Opus 5.5");
   });
 
   it("lets a person try the way back when room is unknown", () => {
