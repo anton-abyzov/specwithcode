@@ -5447,4 +5447,23 @@ export const de: PhraseCatalog = {
     "Nicht verknüpft: Die Kopie auf {machine} gehört zu einem Projekt, dessen Haupt {main} ist, und {source} gehört nicht dazu. Es wurde nichts verknüpft.",
   "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
     "Nicht verknüpft: Die Kopie auf {machine} gehört zu einem anderen Projekt, und {source} gehört nicht dazu. Es wurde nichts verknüpft.",
+  "Link with a project on another machine":
+    "Mit einem Projekt auf einem anderen Rechner verknüpfen",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
+    "Wähle die Kopie von {project} auf einem anderen Rechner. Jede Kopie behält ihren eigenen Koordinator; Haupt bleibt auf {main}, und du kannst es jederzeit wechseln.",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
+    "Wähle die Kopie von {project} auf einem anderen Rechner. Jede Kopie behält ihren eigenen Koordinator, und du kannst Haupt jederzeit wechseln.",
+  "Other copy": "Andere Kopie",
+  "No project on another connected machine. Add the folder on that machine first, then link it here.":
+    "Kein Projekt auf einem anderen verbundenen Rechner. Füge den Ordner zuerst auf diesem Rechner hinzu und verknüpfe ihn dann hier.",
+  "{project} on {machine}": "{project} auf {machine}",
+  "Not a copy:": "Keine Kopie:",
+  "Compared when you review the link.": "Wird beim Prüfen der Verknüpfung verglichen.",
+  "Reading folders…": "Ordner werden gelesen…",
+  "No copy of {project} was found on another machine.":
+    "Auf einem anderen Rechner wurde keine Kopie von {project} gefunden.",
+  "Other projects ({count})": "Andere Projekte ({count})",
+  "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
+    "Nach ihren Ordnern sind das keine Kopien von {project}. Wähle eines nur, wenn es eine umbenannte oder neu geklonte Kopie ist.",
+  "Review link": "Verknüpfung prüfen",
 };

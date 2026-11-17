@@ -1,4 +1,4 @@
-import { CheckIcon, LaptopIcon } from "lucide-react";
+import { CheckIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
@@ -9,13 +9,13 @@ import {
   type EnvironmentId,
   type ProjectId,
   type ProjectLinkPreview,
-  type RepositoryFingerprint,
 } from "@specweave-studio/contracts";
 import { useTx } from "../../i18n";
 import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
 import { useScratchProject } from "../../hooks/useScratchProject";
+import { bestLinkCopy, linkCandidateGroups } from "../../studio/linkCandidateGroups";
 import {
   defaultKeptSide,
   fingerprintSummary,
@@ -47,6 +47,7 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import { ProjectLinkCandidates, ProjectLinkChooseDescription } from "./ProjectLinkCandidates";
 import { useLinkMachines } from "./useLinkMachines";
 
 export interface ProjectLinkTarget {
@@ -117,8 +118,10 @@ export function ProjectLinkDialog({
   const [phase, setPhase] = useState<Phase>("choose");
   const [step, setStep] = useState<Step | null>(null);
   const [selected, setSelected] = useState("");
-  const [here, setHere] = useState<RepositoryFingerprint | null>(null);
   const [compared, setCompared] = useState<Readonly<Record<string, LinkCandidate>>>({});
+  // Every folder that could be read has been: only then is "no copy" known and a copy chosen.
+  const [scanned, setScanned] = useState(false);
+  const [othersOpen, setOthersOpen] = useState<boolean | null>(null);
   const [previews, setPreviews] = useState<{
     here: ProjectLinkPreview;
     there: ProjectLinkPreview;
@@ -139,6 +142,10 @@ export function ProjectLinkDialog({
         compared[keyOf(item)] ?? { project: item, score: null, rootMatches: null, summary: null },
     ),
   );
+  const namedKey = initialCandidate
+    ? `${initialCandidate.environmentId}:${initialCandidate.projectId}`
+    : null;
+  const groups = linkCandidateGroups({ ranked, project, namedKey });
   const target = candidates.find((item) => keyOf(item) === selected);
   const hereProblem = machines.problem(project.environmentId);
   const hereLabel = machines.label(project.environmentId);
@@ -153,6 +160,7 @@ export function ProjectLinkDialog({
     setChoices({});
     setConsent(false);
     setError(null);
+    setOthersOpen(null);
     setSelected(
       initialCandidate ? `${initialCandidate.environmentId}:${initialCandidate.projectId}` : "",
     );
@@ -160,15 +168,19 @@ export function ProjectLinkDialog({
 
   // Fingerprints rank the likely copies; any other project can still be chosen and compared.
   useEffect(() => {
+    // A closed dialog forgets its read, so the next opening never acts on the last one's.
+    setScanned(false);
     if (!open || hereProblem) return;
     let cancelled = false;
+    setCompared({});
     void (async () => {
       const own = await fingerprint({
         environmentId: project.environmentId,
         input: { projectId: project.id },
       });
-      if (cancelled || own._tag === "Failure") return;
-      setHere(own.value.fingerprint);
+      if (cancelled) return;
+      // Nothing can be compared without this folder; the lists then rest on the remotes alone.
+      if (own._tag === "Failure") return setScanned(true);
       const likely = candidates.filter(
         (item) =>
           machines.state(item.environmentId) === "ready" &&
@@ -205,6 +217,7 @@ export function ProjectLinkDialog({
           return next;
         });
       }
+      if (!cancelled) setScanned(true);
     })();
     return () => {
       cancelled = true;
@@ -212,6 +225,19 @@ export function ProjectLinkDialog({
     // Candidates change identity on every projects update; a fresh opening rescans.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, hereProblem, project.environmentId, project.id]);
+
+  // Once the folders are read, the best copy is selected, unless a caller named one or the
+  // person already picked. It is chosen once, so a row never changes under the pointer.
+  const best = scanned
+    ? bestLinkCopy(groups.copies, (environmentId) => machines.problem(environmentId) === null)
+    : null;
+  const bestKey = best ? keyOf(best.project) : null;
+  useEffect(() => {
+    if (!open || !scanned || namedKey !== null || bestKey === null) return;
+    setSelected((current) => (current === "" ? bestKey : current));
+    // The choice is made when the read finishes; later changes leave the selection alone.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, scanned]);
 
   const sides = previews
     ? kept === "here"
@@ -391,7 +417,7 @@ export function ProjectLinkDialog({
               ? "Projects linked"
               : joins
                 ? tx("Link {machine} to this project", { machine: thereLabel })
-                : "Link with a project on another machine"}
+                : tx("Link with a project on another machine")}
           </DialogTitle>
           <DialogDescription className="wrap-anywhere">
             {complete && sides
@@ -401,7 +427,8 @@ export function ProjectLinkDialog({
                     "{machine} joins {project} as a copy. Main stays on {main}: linking does not change it.",
                     { machine: thereLabel, project: logicalProjectTitle(project), main: hereLabel },
                   )
-                : `Pick the copy of ${logicalProjectTitle(project)} on another machine. One coordinator stays; the other copy runs workers.`}
+                : null}
+            {!complete && !joins && <ProjectLinkChooseDescription project={project} />}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -438,59 +465,32 @@ export function ProjectLinkDialog({
             />
           ) : (
             <fieldset disabled={busy} className="min-w-0 space-y-2">
-              <legend className="mb-2 text-sm font-medium">Other copy</legend>
+              <legend className="mb-2 text-sm font-medium">{tx("Other copy")}</legend>
               {hereProblem ? (
                 <p className="text-sm text-muted-foreground">{hereProblem}</p>
               ) : ranked.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  No project on another connected machine. Add the folder on that machine first,
-                  then link it here.
+                  {tx(
+                    "No project on another connected machine. Add the folder on that machine first, then link it here.",
+                  )}
                 </p>
               ) : (
-                <RadioGroup
-                  value={selected}
-                  onValueChange={(value) => setSelected(String(value))}
-                  aria-label="Other copy"
-                  className="gap-2"
-                >
-                  {ranked.map((candidate) => {
-                    const problem = machines.problem(candidate.project.environmentId);
-                    const key = keyOf(candidate.project);
-                    return (
-                      <label
-                        key={key}
-                        data-slot="link-candidate"
-                        className={`grid min-w-0 grid-cols-[1.125rem_1rem_minmax(0,1fr)] items-start gap-x-3 rounded-lg border p-3 ${
-                          selected === key ? "border-primary bg-accent/40" : "border-border"
-                        } ${problem ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-accent/40"}`}
-                      >
-                        <span className="flex h-5 items-center justify-center">
-                          <Radio value={key} disabled={problem !== null} />
-                        </span>
-                        <span className="flex h-5 items-center justify-center">
-                          <LaptopIcon className="size-4 shrink-0" aria-hidden />
-                        </span>
-                        <span className="min-w-0 text-sm leading-5">
-                          <span className="block wrap-anywhere font-medium">
-                            {logicalProjectTitle(candidate.project)} on{" "}
-                            {machines.label(candidate.project.environmentId)}
-                          </span>
-                          <span className="block break-all text-xs text-muted-foreground">
-                            {candidate.project.workspaceRoot}
-                          </span>
-                          <span className="mt-1 block wrap-anywhere text-xs">
-                            {problem ??
-                              (candidate.summary
-                                ? `${candidate.rootMatches === false ? "Not a copy: " : ""}${candidate.summary}`
-                                : here
-                                  ? "Compared when you review the link."
-                                  : "Reading folders…")}
-                          </span>
-                        </span>
-                      </label>
-                    );
-                  })}
-                </RadioGroup>
+                <ProjectLinkCandidates
+                  projectTitle={logicalProjectTitle(project)}
+                  groups={groups}
+                  selected={selected}
+                  onSelect={setSelected}
+                  othersOpen={othersOpen}
+                  onOthersOpen={(next) => {
+                    setOthersOpen(next);
+                    // A selected row is never hidden: closing the fold drops a pick inside it.
+                    if (!next && groups.others.some((item) => keyOf(item.project) === selected))
+                      setSelected("");
+                  }}
+                  scanned={scanned}
+                  machineLabel={machines.label}
+                  machineProblem={machines.problem}
+                />
               )}
             </fieldset>
           )}
@@ -538,7 +538,7 @@ export function ProjectLinkDialog({
                 disabled={busy || !target || machineProblem !== null}
                 onClick={() => void review()}
               >
-                {phase === "checking" ? "Checking…" : "Review link"}
+                {phase === "checking" ? tx("Checking…") : tx("Review link")}
               </Button>
             )}
           </DialogFooter>

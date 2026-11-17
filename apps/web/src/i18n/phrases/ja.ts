@@ -5408,4 +5408,21 @@ export const ja: PhraseCatalog = {
     "リンクされていません: {machine} のコピーはメインが {main} のプロジェクトに属していて、{source} はその一員ではありません。何もリンクされませんでした。",
   "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
     "リンクされていません: {machine} のコピーは別のプロジェクトに属していて、{source} はその一員ではありません。何もリンクされませんでした。",
+  "Link with a project on another machine": "別のマシンのプロジェクトとリンク",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
+    "別のマシンにある {project} のコピーを選びます。各コピーは独自のコーディネーターを持ち続けます。メインは {main} のままで、いつでも切り替えられます。",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
+    "別のマシンにある {project} のコピーを選びます。各コピーは独自のコーディネーターを持ち続け、メインはいつでも切り替えられます。",
+  "Other copy": "もう一方のコピー",
+  "No project on another connected machine. Add the folder on that machine first, then link it here.":
+    "接続中の他のマシンにプロジェクトがありません。先にそのマシンでフォルダーを追加してから、ここでリンクしてください。",
+  "{project} on {machine}": "{machine} の {project}",
+  "Not a copy:": "コピーではありません:",
+  "Compared when you review the link.": "リンクの確認時に比較します。",
+  "Reading folders…": "フォルダーを読み込んでいます…",
+  "No copy of {project} was found on another machine.": "別のマシンに {project} のコピーは見つかりませんでした。",
+  "Other projects ({count})": "その他のプロジェクト ({count})",
+  "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
+    "フォルダーを見るかぎり、{project} のコピーではありません。名前を変えたコピーやクローンし直したコピーの場合だけ選んでください。",
+  "Review link": "リンクを確認",
 };

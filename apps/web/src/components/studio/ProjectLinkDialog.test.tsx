@@ -32,6 +32,9 @@ vi.mock("../../hooks/useScratchProject", () => ({
     scratchWorkspaceRootFor: (id: string) => (id === "m1" ? "/Users/b/.scratch" : null),
   }),
 }));
+vi.mock("../settings/useReplacedMachineRecords", () => ({
+  useRetiredMachineRecords: () => new Map<string, string>(),
+}));
 vi.mock("./useLinkMachines", () => ({
   useLinkMachines: () => ({
     label: (id: string) => ({ m4: "M4", m3: "M3", m1: "M1" })[id] ?? "Machine",
@@ -203,14 +206,17 @@ it("ranks copies by fingerprint, keeps the most recent coordinator and merges no
   const candidates = [...document.querySelectorAll('[data-slot="link-candidate"]')];
   expect(candidates[0]?.textContent).toContain("EasyChamp on M3");
   expect(candidates[0]?.textContent).toContain("Same root repository; 1 of 2 repositories match");
-  // A project that looks unrelated is not fingerprinted, but can still be chosen.
-  expect(candidates[1]?.textContent).toContain("Notes on M1");
+  // A project that looks unrelated is not fingerprinted and is folded under Other projects.
+  expect(candidates).toHaveLength(1);
+  expect(button("Other projects (1)").getAttribute("aria-expanded")).toBe("false");
+  expect(text()).not.toContain("Notes on M1");
   expect(
     state.calls.filter((call) => call.tag === "projects.fingerprint").map((call) => call.input),
   ).toEqual([{ projectId: "here" }, { projectId: "there" }]);
-  expect(button("Review link").disabled).toBe(true);
+  // The one copy that matches is selected already.
+  expect(radioIn(candidates[0]!, "EasyChamp on M3").getAttribute("aria-checked")).toBe("true");
+  expect(button("Review link").disabled).toBe(false);
 
-  await click(radioIn(candidates[0]!, "EasyChamp on M3"));
   await click(button("Review link"));
   // M3's coordinator was active more recently, so it stays by default.
   expect(button("Link, keep coordinator on M3")).toBeTruthy();
@@ -319,6 +325,7 @@ it("does not offer another machine's No project folder or an archived project", 
   );
   await render();
   await settle();
+  await click(button("Other projects (1)"));
   const candidates = [...document.querySelectorAll('[data-slot="link-candidate"]')];
   expect(candidates.map((candidate) => candidate.textContent?.split(" on ")[0])).toEqual([
     "EasyChamp",

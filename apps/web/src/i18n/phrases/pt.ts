@@ -5415,4 +5415,22 @@ export const pt: PhraseCatalog = {
     "Sem vínculo: a cópia em {machine} pertence a um projeto cuja principal é {main}, e {source} não faz parte dele. Nada foi vinculado.",
   "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
     "Sem vínculo: a cópia em {machine} pertence a outro projeto, e {source} não faz parte dele. Nada foi vinculado.",
+  "Link with a project on another machine": "Vincular a um projeto em outra máquina",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
+    "Escolha a cópia de {project} em outra máquina. Cada cópia mantém seu próprio coordenador; a principal continua em {main} e você pode trocá-la quando quiser.",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
+    "Escolha a cópia de {project} em outra máquina. Cada cópia mantém seu próprio coordenador, e você pode trocar a principal quando quiser.",
+  "Other copy": "Outra cópia",
+  "No project on another connected machine. Add the folder on that machine first, then link it here.":
+    "Nenhum projeto em outra máquina conectada. Primeiro adicione a pasta nessa máquina e depois vincule-a aqui.",
+  "{project} on {machine}": "{project} em {machine}",
+  "Not a copy:": "Não é uma cópia:",
+  "Compared when you review the link.": "Comparado ao revisar o vínculo.",
+  "Reading folders…": "Lendo pastas…",
+  "No copy of {project} was found on another machine.":
+    "Nenhuma cópia de {project} foi encontrada em outra máquina.",
+  "Other projects ({count})": "Outros projetos ({count})",
+  "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
+    "Pelas pastas, não são cópias de {project}. Escolha um só se for uma cópia renomeada ou clonada de novo.",
+  "Review link": "Revisar vínculo",
 };
