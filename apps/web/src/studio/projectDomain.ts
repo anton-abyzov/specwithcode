@@ -81,46 +81,67 @@ const memberKey = (member: CoordinatedCopy) => `${member.environmentId}:${member
 const bindingOf = (member: CoordinatedCopy) => member.workspaceSettings?.coordinatorBinding;
 
 /**
- * Coordinators the link itself names as main: the checkout a copy handed main to (its
- * successor, followed along later moves), and a copy that took over from a named
- * predecessor. A coordinator started beside main (`startCoordinator`) names neither, so
- * its higher epoch alone never makes it main over the one the copies follow. A copy that
- * another coordinator took over from by name gave way: copies still pointing at it no
- * longer endorse it, even if it later starts a coordinator again. Copies on retired
- * machine records endorse nothing.
+ * Coordinators the link itself names as main, each with the epoch at which it was named:
+ * the checkout a copy handed main to (its successor, followed along later moves), named at
+ * the epoch of the binding that hands over, and a copy that took over from a named
+ * predecessor, named at its own epoch. A coordinator started beside main
+ * (`startCoordinator`) names neither, so its higher epoch alone never makes it main.
+ * A main that gave way and later started again keeps only the old epoch it was named at,
+ * so it never outranks the main that replaced it. A copy another coordinator took over
+ * from by name is not named at all, and copies on retired machine records name nothing.
  */
 export function endorsedCoordinators(
   copies: readonly CoordinatedCopy[],
   retired?: { has(environmentId: string): boolean },
-): ReadonlySet<string> {
+): ReadonlyMap<string, number> {
   const byKey = new Map(copies.map((copy) => [memberKey(copy), copy]));
-  const followed = new Set<string>();
-  const tookOver = new Set<string>();
+  const named = new Map<string, number>();
+  const name = (key: string, epoch: number) =>
+    named.set(key, Math.max(named.get(key) ?? Number.NEGATIVE_INFINITY, epoch));
   const gaveWay = new Set<string>();
+  const tookOver = new Map<string, number>();
   for (const copy of copies) {
     if (retired?.has(copy.environmentId)) continue;
     const binding = bindingOf(copy);
     if (binding?.state === "active" && binding.predecessor) {
-      tookOver.add(memberKey(copy));
-      const named = `${binding.predecessor.environmentId}:${binding.predecessor.projectId}`;
-      if (named !== memberKey(copy)) gaveWay.add(named);
+      tookOver.set(memberKey(copy), binding.epoch);
+      const predecessor = `${binding.predecessor.environmentId}:${binding.predecessor.projectId}`;
+      if (predecessor !== memberKey(copy)) gaveWay.add(predecessor);
     }
     if (binding?.state !== "transferred" || !binding.successor) continue;
     const seen = new Set([memberKey(copy)]);
     let successor = binding.successor;
+    let epoch = binding.epoch;
     for (;;) {
       const key = `${successor.environmentId}:${successor.projectId}`;
       if (seen.has(key)) break;
       seen.add(key);
       const next = bindingOf(byKey.get(key) ?? { environmentId: "", id: "" });
       if (next?.state !== "transferred" || !next.successor) {
-        followed.add(key);
+        name(key, epoch);
         break;
       }
       successor = next.successor;
+      epoch = next.epoch;
     }
   }
-  return new Set([...[...followed].filter((key) => !gaveWay.has(key)), ...tookOver]);
+  for (const key of gaveWay) named.delete(key);
+  for (const [key, epoch] of tookOver) name(key, epoch);
+  return named;
+}
+
+/** Orders live coordinators: named by the link first, at the newest naming, then epoch, then key. */
+function mainOrder<T extends CoordinatedCopy>(
+  endorsed: ReadonlyMap<string, number>,
+): (a: T, b: T) => number {
+  const epochOf = (copy: T) => bindingOf(copy)?.epoch ?? 0;
+  const rank = (copy: T) => (endorsed.has(memberKey(copy)) ? 1 : 0);
+  const namedAt = (copy: T) => endorsed.get(memberKey(copy)) ?? 0;
+  return (a, b) =>
+    rank(b) - rank(a) ||
+    namedAt(b) - namedAt(a) ||
+    epochOf(b) - epochOf(a) ||
+    (memberKey(a) < memberKey(b) ? -1 : memberKey(a) > memberKey(b) ? 1 : 0);
 }
 
 /**
@@ -131,6 +152,8 @@ export function endorsedCoordinators(
  */
 export function logicalCoordinators<T extends CoordinatedCopy>(
   members: readonly T[],
+  /** Old records of machines that joined again: they name no main. */
+  retired?: { has(environmentId: string): boolean },
 ): LogicalCoordinators<T> | null {
   const declared = members.filter((member) => member.workspaceSettings?.logicalProject);
   if (!declared.length) return null;
@@ -161,10 +184,7 @@ export function logicalCoordinators<T extends CoordinatedCopy>(
       predecessor = bindingOf(ancestor)?.predecessor;
     }
   }
-  const endorsed = endorsedCoordinators(declared);
-  const rank = (member: T) => (endorsed.has(memberKey(member)) ? 1 : 0);
-  const order = (a: T, b: T) =>
-    rank(b) - rank(a) || epochOf(b) - epochOf(a) || memberKey(a).localeCompare(memberKey(b));
+  const order = mainOrder<T>(endorsedCoordinators(declared, retired));
   const live = (member: T) => !superseded.has(memberKey(member));
   return {
     coordinators: declared
@@ -194,8 +214,9 @@ export const COORDINATOR_UNAVAILABLE_PROBLEM =
  */
 export function logicalCoordinator<T extends EnvironmentProject>(
   members: readonly T[],
+  retired?: { has(environmentId: string): boolean },
 ): { member?: T; problem: string | null } | null {
-  const found = logicalCoordinators(members);
+  const found = logicalCoordinators(members, retired);
   if (!found) return null;
   const first = found.coordinators[0];
   if (first)
@@ -235,13 +256,9 @@ export function copyRoles<T extends CoordinatedCopy>(
   copies: readonly T[],
   retired?: { has(environmentId: string): boolean },
 ): ReadonlyMap<string, CopyRoleOf<T>> {
-  const found = logicalCoordinators(copies);
+  const found = logicalCoordinators(copies, retired);
   const roles = new Map<string, CopyRoleOf<T>>();
   if (!found) return roles;
-  const epochOf = (copy: T) => bindingOf(copy)?.epoch ?? 0;
-  // The coordinator the copies follow leads; epoch only orders the rest.
-  const endorsed = endorsedCoordinators(copies, retired);
-  const rank = (copy: T) => (endorsed.has(memberKey(copy)) ? 1 : 0);
   // A linked copy with no binding recorded yet coordinates, as it always has.
   const live = new Set([
     ...found.coordinators,
@@ -250,12 +267,8 @@ export function copyRoles<T extends CoordinatedCopy>(
   // Code-unit order, not locale order, so every device picks the same main.
   const [main = null] = [...live]
     .filter((copy) => !retired?.has(copy.environmentId))
-    .toSorted(
-      (a, b) =>
-        rank(b) - rank(a) ||
-        epochOf(b) - epochOf(a) ||
-        (memberKey(a) < memberKey(b) ? -1 : memberKey(a) > memberKey(b) ? 1 : 0),
-    );
+    // The coordinator the link names leads; epoch only orders the rest.
+    .toSorted(mainOrder<T>(endorsedCoordinators(copies, retired)));
   for (const copy of copies) {
     if (!copy.workspaceSettings?.logicalProject) continue;
     const state = bindingOf(copy)?.state;

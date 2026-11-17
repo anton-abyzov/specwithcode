@@ -14,6 +14,7 @@ import {
 import { membersSyncRequests } from "../../studio/linkedMembersSync";
 import { drivenPairs } from "../../studio/serverLinkedSync";
 import { useLinkMachines } from "./useLinkMachines";
+import { useRetiredMachineRecords } from "../settings/useReplacedMachineRecords";
 import { useServerSyncCoverage } from "./useServerSyncCoverage";
 
 /** How often copies are compared while both machines are reachable. */
@@ -44,6 +45,10 @@ export function sharedGroups(projects: ReadonlyArray<EnvironmentProject>): Envir
 export function CoordinatorSync() {
   const projects = useProjects();
   const machines = useLinkMachines();
+  // Old records of machines that joined again never name the coordinator that replicates.
+  const retiredRecords = useRetiredMachineRecords();
+  const retired = useRef(retiredRecords);
+  retired.current = retiredRecords;
   const digest = useAtomCommand(projectLink.digest, { reportFailure: false });
   const preview = useAtomCommand(projectLink.preview, { reportFailure: false });
   const replicate = useAtomCommand(projectLink.replicate, { reportFailure: false });
@@ -88,7 +93,7 @@ export function CoordinatorSync() {
         // Pairs the machines' servers keep in step themselves are left to them.
         const covered = await coverage(
           groups.flatMap((members) => {
-            const coordinator = logicalCoordinator(members)?.member;
+            const coordinator = logicalCoordinator(members, retired.current)?.member;
             return [
               ...pendingSupersedes(members).map(({ successor, previous }) => ({
                 kind: "supersede" as const,
@@ -126,7 +131,7 @@ export function CoordinatorSync() {
               },
             });
           }
-          const coordinator = logicalCoordinator(members)?.member;
+          const coordinator = logicalCoordinator(members, retired.current)?.member;
           if (!coordinator || !ready(coordinator)) continue;
           // A member refuses a list it cannot trust; the next pass retries.
           for (const request of membersSyncRequests(coordinator, members, membersCapable)) {

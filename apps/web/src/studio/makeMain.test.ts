@@ -424,6 +424,19 @@ describe("makeMainPath with a coordinator started beside main", () => {
     });
   });
 
+  it("never re-crowns a main that gave way two moves ago and started again", () => {
+    // m5 took over from m4, then main moved on to m1; m4 later started its own coordinator
+    // at the newest epoch, and mini still points at m4 from before any of it.
+    const current = copy("m1", { state: "active", epoch: 2, predecessor: "m5" });
+    const movedOn = copy("m5", { state: "transferred", epoch: 1, successor: "m1" });
+    const restarted = copy("m4", { state: "active", epoch: 3 });
+    const stale = copy("mini", { state: "transferred", epoch: 0, successor: "m4" });
+    expect(makeMainPath(stale, [restarted, movedOn, current, stale], machines())).toEqual({
+      kind: "move",
+      main: current,
+    });
+  });
+
   it("ignores what a retired machine record points at", () => {
     const old = copy("m3", { state: "transferred", epoch: 0, successor: "m1" });
     const follower2 = copy("m5", { state: "transferred", epoch: 0, successor: "m4" });
