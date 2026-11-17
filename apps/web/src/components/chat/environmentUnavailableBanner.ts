@@ -11,6 +11,8 @@ import {
 
 import { englishPhrase } from "../../i18n";
 import {
+  IDENTITY_MISMATCH_STATUS,
+  identityMismatchShown,
   isThisMachineCatchingUp,
   lastSeenLabel,
   machineDetail,
@@ -44,6 +46,8 @@ export function environmentUnavailableBanner(input: {
   readonly isThisMachine: boolean;
   /** What the machine reads as now (`machineReach`); judged by phase when omitted. */
   readonly reach?: MachineReachState | undefined;
+  /** The fleet says its address now answers as a different SpecWithCode. */
+  readonly identityMismatch?: boolean | undefined;
 }): {
   /** Nothing is wrong yet: this machine is busy, or another one is reconnecting. */
   readonly calm: boolean;
@@ -79,10 +83,20 @@ export function environmentUnavailableBanner(input: {
     };
   }
   const reach = input.reach ?? reachFromPhase(connection.phase);
-  const words = machineReachWords(reach, connection.phase);
+  const words = machineReachWords(reach, connection.phase, input.identityMismatch);
   const title = englishPhrase(words.headline, { machine: label });
   if (!isMachineReachDown(reach))
     return { calm: true, variant: "info", title, status, waitsForGrace, describe: () => "" };
+  // Retrying never reaches the right machine: no retry, only the step that fixes it.
+  if (identityMismatchShown(reach, input.identityMismatch))
+    return {
+      calm: false,
+      variant: "warning",
+      title,
+      status: IDENTITY_MISMATCH_STATUS,
+      waitsForGrace,
+      describe: (lastAnsweredAt, now) => machineReachDetail(words, lastAnsweredAt, now) ?? "",
+    };
   return {
     calm: false,
     variant: connection.phase === "error" ? "error" : "warning",

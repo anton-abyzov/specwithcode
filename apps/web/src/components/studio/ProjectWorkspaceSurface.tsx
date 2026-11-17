@@ -215,7 +215,13 @@ import { offlineSwitchPredecessor } from "../../studio/workersOnlyCopy";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { useHostReach, useUnreachableHosts } from "../../studio/unreachableHosts";
+import {
+  useHostIdentityMismatch,
+  useHostReach,
+  useHostReachStates,
+  useUnreachableHosts,
+} from "../../studio/unreachableHosts";
+import { archivedHistoryNotice } from "../../studio/archivedHistoryNotice";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import {
   environmentWaitsForReconnectGrace,
@@ -627,6 +633,7 @@ export function ProjectWorkspaceSurface({
       ? project.environmentId
       : null;
   const hostReach = useHostReach(project.environmentId);
+  const hostIdentityMismatch = useHostIdentityMismatch(project.environmentId);
   const [graceElapsedEnvironmentId, setGraceElapsedEnvironmentId] = useState<string | null>(null);
   useEffect(() => {
     setGraceElapsedEnvironmentId(null);
@@ -643,6 +650,7 @@ export function ProjectWorkspaceSurface({
   const admissionContext = {
     ...hostAdmission,
     ...(hostReach === undefined ? {} : { reach: hostReach }),
+    ...(hostIdentityMismatch ? { identityMismatch: true } : {}),
     accessPending: operateAccess === "unknown",
     ...(environment?.label || machineName !== project.environmentId
       ? { machineLabel: machineName }
@@ -1687,6 +1695,16 @@ export function ProjectWorkspaceSurface({
     return ids;
   }, [paneScope]);
   const unreachableHosts = useUnreachableHosts();
+  const hostReachStates = useHostReachStates();
+  // A machine already shown as not connected says so itself; the rest are named.
+  const archivedNotice = archivedHistoryNotice({
+    failedEnvironmentIds: archived.failedEnvironmentIds,
+    reach: hostReachStates,
+    label: (environmentId) => {
+      const name = machineLabels.get(environmentId);
+      return name === undefined || name === environmentId ? null : name;
+    },
+  });
   const subagents = useThreadSubagents({
     thread: selectedThread,
     shells,
@@ -2530,9 +2548,9 @@ export function ProjectWorkspaceSurface({
                           machineFilter={machineFilter}
                         />
                       ) : null}
-                      {archived.error ? (
+                      {archivedNotice ? (
                         <p className="project-notice" role="alert">
-                          {say("Archived threads could not be loaded.")}{" "}
+                          {say(tx(archivedNotice.phrase, archivedNotice.params))}{" "}
                           <Button variant="outline" size="xs" onClick={archived.refresh}>
                             Retry resolved history
                           </Button>

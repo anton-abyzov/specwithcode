@@ -7,6 +7,7 @@ import {
   type MachineReachState,
 } from "@specweave-studio/client-runtime/connection";
 import { NETWORK_BLOCKING_HINT } from "@specweave-studio/client-runtime/errors";
+import type { StudioFleetSnapshot } from "@specweave-studio/contracts/studioFleet";
 
 import { compactAge } from "~/components/sidebar/SidebarProjectTree.logic";
 import { englishPhrase, type TranslatePhrase } from "~/i18n";
@@ -25,6 +26,8 @@ export interface MachineReachWords {
   readonly next: string | null;
   /** Shown only when the relay itself could not be reached. */
   readonly hint: string | null;
+  /** What the person must do, when waiting will not fix it. */
+  readonly action?: string | null;
 }
 
 const RETRIES_BY_ITSELF = "Retrying by itself";
@@ -69,13 +72,73 @@ const NEEDS_UPDATE: MachineReachWords = {
   ...QUIET,
 };
 
-/** The words for a reach state. A stopped connection this build cannot use asks for an update. */
+/**
+ * A saved machine whose address now answers as another SpecWithCode (the fleet
+ * says `identity-mismatch`). Retrying never fixes it, so it names the step the
+ * owner takes instead of "Retrying by itself".
+ */
+const IDENTITY_MISMATCH: MachineReachWords = {
+  headline: "{machine}'s address now answers as a different SpecWithCode",
+  short: "Different machine at address",
+  next: null,
+  hint: null,
+  action: "Open Settings > Machines to fix it.",
+};
+
+/**
+ * Whether a machine reads as answering as a different SpecWithCode: it is down
+ * and the fleet marks it `identity-mismatch`. While it is connected or only
+ * reconnecting it keeps its own words, and so does a device with no network,
+ * whose own cause comes first.
+ */
+export function identityMismatchShown(
+  state: MachineReachState | undefined,
+  identityMismatch: boolean | undefined,
+): boolean {
+  return (
+    identityMismatch === true &&
+    state !== undefined &&
+    state !== "no-network" &&
+    isMachineReachDown(state)
+  );
+}
+
+/**
+ * The words for a reach state. A stopped connection this build cannot use asks
+ * for an update; a down machine the fleet marks `identity-mismatch` says its
+ * address answers as a different SpecWithCode.
+ */
 export function machineReachWords(
   state: MachineReachState,
   phase?: EnvironmentConnectionPresentation["phase"],
+  identityMismatch = false,
 ): MachineReachWords {
+  if (identityMismatchShown(state, identityMismatch)) return IDENTITY_MISMATCH;
   return state === "stopped" && phase === "unsupported" ? NEEDS_UPDATE : REACH_WORDS[state];
 }
+
+const NO_MISMATCH: ReadonlySet<string> = new Set();
+
+/**
+ * The saved machines the fleet says now answer as a different SpecWithCode at
+ * their address, by the environment id saved for them. Empty without a fleet.
+ */
+export function identityMismatchedEnvironmentIds(
+  snapshot: Pick<StudioFleetSnapshot, "machines"> | null | undefined,
+): ReadonlySet<string> {
+  const ids = (snapshot?.machines ?? [])
+    .filter((machine) => machine.status === "identity-mismatch")
+    .map((machine) => machine.environmentId);
+  return ids.length === 0 ? NO_MISMATCH : new Set(ids);
+}
+
+/** A machine's status line once its address answers as a different SpecWithCode. */
+export const IDENTITY_MISMATCH_STATUS: MachineStatus = {
+  text: "Different machine at address. Open Settings > Machines to fix it",
+  short: "Different machine at address",
+  reason: null,
+  retryable: false,
+};
 
 /**
  * A machine's reach state judged by its phase alone, for a caller that has no
@@ -103,8 +166,16 @@ export function reachFromPhase(
   }
 }
 
-/** What a thread's row says in place of its own state while its machine is down. */
-export function hostDownWord(state: MachineReachState | undefined): string {
+/**
+ * What a thread's row says in place of its own state while its machine is
+ * down. A machine whose address answers as a different SpecWithCode says so,
+ * unless this device has no network.
+ */
+export function hostDownWord(
+  state: MachineReachState | undefined,
+  identityMismatch = false,
+): string {
+  if (identityMismatch && state !== "no-network") return "Different machine at address";
   switch (state) {
     case "not-answering":
       return "Not answering";
@@ -135,7 +206,8 @@ export function lastAnsweredLabel(
 
 /**
  * The line under a machine that is down: when it last answered, then what the
- * app does about it. Null while it is connected or still inside its grace.
+ * app does about it, or what the person must do when waiting will not help.
+ * Null while it is connected or still inside its grace.
  */
 export function machineReachDetail(
   words: MachineReachWords,
@@ -143,8 +215,11 @@ export function machineReachDetail(
   now: number,
   tx: TranslatePhrase = englishPhrase,
 ): string | null {
-  if (words.next === null) return null;
-  return [lastAnsweredLabel(lastAnsweredAt, now, tx), tx(words.next)].filter(Boolean).join(" · ");
+  const next = words.next !== null ? tx(words.next) : words.action ? tx(words.action) : null;
+  if (next === null) return null;
+  return [lastAnsweredLabel(lastAnsweredAt, now, tx), next.replace(/\.$/, "")]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 export interface MachineStatus {

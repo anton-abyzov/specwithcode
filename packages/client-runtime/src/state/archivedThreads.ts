@@ -13,6 +13,8 @@ export interface ArchivedSnapshotEntry {
 export interface ArchivedThreadSnapshotsState {
   readonly snapshots: ReadonlyArray<ArchivedSnapshotEntry>;
   readonly error: string | null;
+  /** The machines whose archive failed to load, so a caller can name them or skip one known down. */
+  readonly failedEnvironmentIds: ReadonlyArray<EnvironmentId>;
   readonly isLoading: boolean;
 }
 
@@ -47,6 +49,7 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
     Atom.make((get): ArchivedThreadSnapshotsState => {
       const snapshots: ArchivedSnapshotEntry[] = [];
       let error: string | null = null;
+      const failedEnvironmentIds: EnvironmentId[] = [];
       let isLoading = false;
 
       for (const environmentId of parseArchivedThreadsEnvironmentKey(environmentKey)) {
@@ -58,12 +61,13 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
           snapshots.push({ environmentId, snapshot });
         }
 
-        if (error === null && result._tag === "Failure") {
+        if (result._tag === "Failure") {
           error = "Failed to load archived threads.";
+          failedEnvironmentIds.push(environmentId);
         }
       }
 
-      return { snapshots, error, isLoading };
+      return { snapshots, error, failedEnvironmentIds, isLoading };
     }).pipe(Atom.withLabel(`${options.labelPrefix}:${environmentKey}`)),
   );
 }
