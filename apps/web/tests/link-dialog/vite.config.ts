@@ -14,11 +14,16 @@ const stubbed = new Set([
   app("components/studio/useLinkMachines.ts"),
   app("components/settings/useReplacedMachineRecords.ts"),
 ]);
+// Only the dialog's own two files get the stand-ins; the rest of the app keeps its modules.
+const owners = new Set([
+  app("components/studio/ProjectLinkDialog.tsx"),
+  app("components/studio/ProjectLinkCandidates.tsx"),
+]);
 const fixtureHost: Plugin = {
   name: "link-dialog-host",
   enforce: "pre",
   async resolveId(source, importer, options) {
-    if (!importer || importer === stub) return null;
+    if (!importer || !owners.has(importer)) return null;
     const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
     return resolved && stubbed.has(resolved.id) ? stub : null;
   },
