@@ -3,7 +3,7 @@ import type {
   StudioServiceUpdateState,
 } from "@specweave-studio/contracts";
 
-import { formatPauseTime } from "../serviceUpdateRunView";
+import { formatPauseTime, liveServiceUpdateRun } from "../serviceUpdateRunView";
 import {
   isServiceErrorWithRelease,
   serviceRefusalText,
@@ -56,7 +56,8 @@ export function describeServiceUpdate(
     case "downloading":
       return `${installed}. Downloading version ${next ?? "?"}.`;
     case "downloaded":
-      return preferences?.installAutomatically === false
+      // An install run under way is already what the button would start.
+      return preferences?.installAutomatically === false && liveServiceUpdateRun(state) === null
         ? `${installed}. Version ${next ?? "?"} is downloaded. Install automatically is off, so it installs only when you press Install now.`
         : `${installed}. Version ${next ?? "?"} is ready to install.`;
     case "waiting-for-quiet":

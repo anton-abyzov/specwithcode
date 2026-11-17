@@ -1,4 +1,4 @@
-import type { StudioServiceUpdateState } from "@specweave-studio/contracts";
+import type { StudioServiceUpdateRun, StudioServiceUpdateState } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { SERVICE_REQUEST_EXPIRED } from "../sidebar/SidebarRestartToUpdate.logic";
@@ -62,6 +62,33 @@ describe("UpdatePreferencesSection.logic", () => {
         installAutomatically: false,
       }),
     ).toBe("Version 0.1.4. Up to date.");
+    // An install run is under way: the button is hidden, so nothing waits for it.
+    const installing: StudioServiceUpdateRun = {
+      runId: "run-1",
+      phase: "installing",
+      terminal: false,
+      targetVersion: "0.2.0",
+      appTargetVersion: null,
+      startedAt: "2026-10-21T12:00:00.000Z",
+      deadlineAt: "2026-10-21T12:30:00.000Z",
+      lastSignAt: "2026-10-21T12:00:00.000Z",
+      noProgress: false,
+      step: null,
+      app: null,
+      message: null,
+      outcome: null,
+      endedAt: null,
+    };
+    expect(
+      describeServiceUpdate({ ...downloaded, run: installing }, { installAutomatically: false }),
+    ).toBe(ready);
+    // A run that ended leaves the update waiting for the button again.
+    expect(
+      describeServiceUpdate(
+        { ...downloaded, run: { ...installing, terminal: true } },
+        { installAutomatically: false },
+      ),
+    ).toContain("Install automatically is off");
   });
 
   it("describes each service update stage", () => {
