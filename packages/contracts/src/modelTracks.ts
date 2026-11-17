@@ -41,8 +41,8 @@ export const DEFAULT_MODEL_TRACKS: Readonly<Record<ModelTrack, ReadonlyArray<Def
   {
     daily: [
       { model: "claude-opus-5-5", name: "Claude Opus 5.5" },
+      { model: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" },
       { model: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
-      { model: "muse-wonder-1.0", name: "Muse Wonder 1.0" },
       { model: "gpt-6-luna", name: "GPT-6 Luna", free: true },
     ],
     complex: [
@@ -50,6 +50,7 @@ export const DEFAULT_MODEL_TRACKS: Readonly<Record<ModelTrack, ReadonlyArray<Def
       { model: "gpt-6-astra", name: "GPT-6 Astra" },
     ],
     review: [
+      { model: "muse-wonder-full-1.0", name: "Muse Wonder Full 1.0", effort: "xhigh" },
       { model: "muse-wonder-1.0", name: "Muse Wonder 1.0", effort: "xhigh" },
       { model: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
       { model: "gemini-4-carbon", name: "Gemini 4 Carbon" },

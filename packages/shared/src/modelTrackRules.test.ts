@@ -131,13 +131,14 @@ describe("track rows", () => {
     const rows = describeTrack({ track: "daily", saved: [], providers: all, nowMs: now });
     expect(rows.map((row) => [row.model, ids(row.sources)])).toEqual([
       ["claude-opus-5-5", ["claudeAgent", "copilot", "claude-api"]],
+      // Nothing here lists Sonnet 5.5: its row waits for a source.
+      ["claude-sonnet-5-5", []],
       ["gpt-6.1-sol", ["codex", "copilot"]],
-      ["muse-wonder-1.0", ["muse"]],
       ["gpt-6-luna", ["codex", "copilot"]],
     ]);
     expect(rows.every((row) => row.builtIn)).toBe(true);
     expect(rows.at(-1)?.free).toBe(true);
-    expect(rows[1]?.sources[0]?.status.state).toBe("limited");
+    expect(rows[2]?.sources[0]?.status.state).toBe("limited");
     // The per-token source is listed with its billing, and never started on.
     expect(rows[0]?.sources.at(-1)).toMatchObject({ hold: "per-token", used: false });
   });
@@ -211,8 +212,8 @@ describe("track rows", () => {
     const rows = describeTrack({ track: "daily", saved: [], providers: [routed], nowMs: now });
     expect(rows[0]).toMatchObject({ selection: null });
     expect(rows[0]?.sources).toMatchObject([{ hold: "per-token", used: false }]);
-    // The same source still runs the models it bills by plan.
-    expect(rows[1]?.sources[0]).toMatchObject({ hold: null, used: true });
+    // The same source still runs the models it bills by plan (Sol, after Sonnet's empty row).
+    expect(rows[2]?.sources[0]).toMatchObject({ hold: null, used: true });
   });
 
   it("flags a free model stored in Complex", () => {
@@ -307,10 +308,14 @@ describe("moves that cannot work", () => {
 });
 
 describe("built-in rows keep their effort", () => {
-  it("shows the Review row Muse Wonder at extra high, so saving the list keeps it", () => {
-    const effortful = {
+  it("shows the Review row Muse Wonder Full at extra high, so saving the list keeps it", () => {
+    const withFull = {
       ...muse,
-      models: muse.models.map((model) => ({
+      models: [{ ...muse.models[0]!, slug: "muse-wonder-full-1.0", isDefault: false }],
+    };
+    const effortful = {
+      ...withFull,
+      models: withFull.models.map((model) => ({
         ...model,
         capabilities: {
           optionDescriptors: [
@@ -330,7 +335,7 @@ describe("built-in rows keep their effort", () => {
     const rows = describeTrack({ track: "review", saved: [], providers: [effortful], nowMs: now });
     expect(rows[0]!.selection).toEqual({
       instanceId: effortful.instanceId,
-      model: "muse-wonder-1.0",
+      model: "muse-wonder-full-1.0",
       options: [{ id: "reasoningEffort", value: "xhigh" }],
     });
   });

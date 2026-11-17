@@ -147,7 +147,6 @@ describe("built-in tracks", () => {
       sel("claudeAgent", "claude-opus-5-5"),
       // Codex is on a free plan here, so Sol runs through Copilot.
       sel("copilot", "gpt-6.1-sol"),
-      sel("muse", "muse-wonder-1.0"),
       sel("codex", "gpt-6-luna"),
     ]);
     expect(defaultTrackSelections("complex", providers)).toEqual([
@@ -161,10 +160,27 @@ describe("built-in tracks", () => {
     ]);
   });
 
-  it("start Muse Wonder at extra high effort on Review when Muse offers it", () => {
-    const effortful = {
+  it("put Sonnet 5.5 after Opus 5.5 on Daily and keep Muse Wonder off it", () => {
+    const withSonnet = {
+      ...claude,
+      models: [...claude.models, { ...claude.models[0]!, slug: "claude-sonnet-5-5" }],
+    };
+    expect(
+      defaultTrackSelections("daily", [withSonnet, codexPaid, muse]).map((entry) => entry.model),
+    ).toEqual(["claude-opus-5-5", "claude-sonnet-5-5", "gpt-6.1-sol", "gpt-6-luna"]);
+  });
+
+  it("start Review on Muse Wonder Full at extra high effort when Muse offers it", () => {
+    const withFull = {
       ...muse,
-      models: muse.models.map((model) => ({
+      models: [
+        { ...muse.models[0]!, slug: "muse-wonder-full-1.0", isDefault: false },
+        ...muse.models,
+      ],
+    };
+    const effortful = {
+      ...withFull,
+      models: withFull.models.map((model) => ({
         ...model,
         capabilities: {
           optionDescriptors: [
@@ -181,10 +197,13 @@ describe("built-in tracks", () => {
         },
       })),
     };
-    expect(defaultTrackSelections("review", [effortful])[0]).toEqual({
-      ...sel("muse", "muse-wonder-1.0"),
-      options: [{ id: "reasoningEffort", value: "xhigh" }],
-    });
+    expect(defaultTrackSelections("review", [effortful]).slice(0, 2)).toEqual([
+      {
+        ...sel("muse", "muse-wonder-full-1.0"),
+        options: [{ id: "reasoningEffort", value: "xhigh" }],
+      },
+      { ...sel("muse", "muse-wonder-1.0"), options: [{ id: "reasoningEffort", value: "xhigh" }] },
+    ]);
   });
 
   it("leave out a model nothing on this machine lists", () => {
@@ -224,7 +243,6 @@ describe("the chain a limited thread follows with nothing saved", () => {
       "copilot:claude-opus-5.5",
       "codex:gpt-6.1-sol",
       "copilot:gpt-6.1-sol",
-      "muse:muse-wonder-1.0",
       "codex:gpt-6-luna",
       "copilot:gpt-6-luna",
       "claudeAgent:claude-fable-5-2",
