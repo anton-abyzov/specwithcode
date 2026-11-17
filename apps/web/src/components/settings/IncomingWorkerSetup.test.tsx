@@ -358,6 +358,27 @@ describe("incoming worker setup view", () => {
     expect(html).not.toContain("not set up yet");
     expect(html).not.toContain("Manage access is needed");
   });
+  it("shows the code m1 waits for, in place of Connect to m1 first (1327)", () => {
+    vi.mocked(useEnvironmentScope).mockReturnValue(true);
+    const waiting = renderToStaticMarkup(
+      <IncomingWorkerAction
+        here={here}
+        coordinator={coordinator}
+        hereLabel="m4"
+        coordinatorLabel="m1"
+        connected={false}
+        approvalCode="K7QX2M"
+        accountJoin
+        onGranted={vi.fn()}
+      />,
+    );
+    expect(waiting).toContain("Open SpecWithCode on m1 and type this code:");
+    expect(waiting).toMatch(/data-device-waiting-code[^>]*>K7QX2M</);
+    expect(waiting).not.toContain("Connect to m1 first.");
+    expect(waiting).toMatch(/<button[^>]* disabled=""[^>]*>Allow m1<\/button>/);
+    // Without a code it is still a plain connection problem.
+    expect(action(false)).toContain("Connect to m1 first.");
+  });
   it("enables the Allow button from this machine alone when it lists m1", () => {
     vi.mocked(useEnvironmentScope).mockImplementation((environmentId) => environmentId === here);
     const html = action(true, "m1");

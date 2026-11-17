@@ -10,6 +10,8 @@ import * as Option from "effect/Option";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
+import { txNow, useLocale } from "../i18n";
+import { translateDeviceRefusal } from "../studio/connectDevices.logic";
 import {
   environmentPresentations,
   environmentSummaries,
@@ -26,12 +28,19 @@ export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly relayManaged: boolean;
 }
 
+const deviceRefusalText = (message: string) => translateDeviceRefusal(message, txNow);
+
 function projectEnvironmentPresentation(
   environmentId: EnvironmentId,
   presentation: BaseEnvironmentPresentation,
 ): EnvironmentPresentation {
+  const error = presentation.connection.error;
   return {
     ...presentation,
+    // The device gate's refusal, in this window's language (1327).
+    ...(error
+      ? { connection: { ...presentation.connection, error: deviceRefusalText(error) } }
+      : {}),
     environmentId,
     label: presentation.entry.target.label,
     displayUrl: connectionCatalogDisplayUrl(presentation.entry),
@@ -43,13 +52,16 @@ export function useEnvironments() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const networkStatus = useAtomValue(environmentCatalog.networkStatusValueAtom);
   const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
+  // A refusal is said in the window's language, so a language change redraws it.
+  const locale = useLocale();
 
   const environments = useMemo(
     () =>
       [...presentationById.entries()].map(([environmentId, presentation]) =>
         projectEnvironmentPresentation(environmentId, presentation),
       ),
-    [presentationById],
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- locale changes the projected text
+    [presentationById, locale],
   );
 
   return {
