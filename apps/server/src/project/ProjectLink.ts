@@ -5,6 +5,7 @@ import {
 import {
   CommandId,
   compareFingerprints,
+  coordinatorMayLeave,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   noteNameCandidates,
   LOGICAL_PROJECT_MEMBER_ROOT_MAX_LENGTH,
@@ -845,7 +846,10 @@ const make = Effect.gen(function* () {
             replayed: true,
           };
         if (binding?.state === "transferring") return yield* fail("handoff_in_progress");
-        if (binding?.state !== "transferred") return yield* fail("not_linked");
+        const sideLeaves =
+          input.leaveCoordinator === true &&
+          coordinatorMayLeave(binding, identity?.members.length ?? 0);
+        if (binding?.state !== "transferred" && !sideLeaves) return yield* fail("not_linked");
         // Refuse before leaving when a note would be overwritten; nothing changes then.
         for (const note of input.notes) {
           const current = yield* workspace

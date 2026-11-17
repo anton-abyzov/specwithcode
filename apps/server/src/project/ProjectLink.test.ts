@@ -24,6 +24,7 @@ import {
   machine,
   operationId,
   removeCheckouts,
+  thirdLinkId,
   unlinkId,
   withoutRoot,
 } from "./ProjectLink.testkit.ts";
@@ -1331,6 +1332,150 @@ describe("ProjectLink", () => {
           )
         ).code,
       ).toBe("invalid");
+    });
+
+    it("lets a coordinator started beside main leave the link, only when asked to", async () => {
+      const pair = legacyPair();
+      await link(pair);
+      const started = await pair.m3.run((service) =>
+        service.startCoordinator({
+          operationId: startId,
+          projectId: pair.joining.projectId,
+          knownEpoch: 1,
+        }),
+      );
+      const leave = (env: typeof pair.m3, projectId: ProjectId, leaveCoordinator?: boolean) =>
+        env.fails(
+          env.run((service) =>
+            service.unlink({
+              side: "member",
+              operationId: unlinkId,
+              projectId,
+              notes: [],
+              ...(leaveCoordinator === undefined ? {} : { leaveCoordinator }),
+            }),
+          ),
+        );
+      // Without the flag a running coordinator is not a copy that can leave; main never can.
+      expect((await leave(pair.m3, pair.joining.projectId)).code).toBe("not_linked");
+      expect((await leave(pair.m4, pair.kept.projectId, true)).code).toBe("not_linked");
+      const left = await pair.m3.run((service) =>
+        service.unlink({
+          side: "member",
+          operationId: unlinkId,
+          projectId: pair.joining.projectId,
+          notes: [],
+          leaveCoordinator: true,
+        }),
+      );
+      expect(left.replayed).toBe(false);
+      expect(left.logicalProject.id).not.toBe(started.logicalProject.id);
+      expect(left.logicalProject.members).toEqual([pair.joining]);
+      expect(left.coordinatorBinding).toEqual({ epoch: 0, state: "active", operationId: unlinkId });
+      expect(pair.m3.ownershipModes).toEqual(["join-as-member", "start-coordinator", "unlink"]);
+      expect(
+        pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.coordinatorBinding,
+      ).toEqual({ epoch: 0, state: "active" });
+    });
+
+    it("keeps a started coordinator that took over, or is alone", async () => {
+      const pair = legacyPair();
+      await link(pair);
+      await pair.m3.run((service) =>
+        service.startCoordinator({ operationId: startId, projectId: pair.joining.projectId }),
+      );
+      const joined = pair.m3.projects.get(pair.joining.projectId)!;
+      const settings = joined.workspaceSettings!;
+      const binding = settings.coordinatorBinding!;
+      for (const next of [
+        { ...settings, coordinatorBinding: { ...binding, predecessor: pair.kept } },
+        { ...settings, logicalProject: { ...settings.logicalProject!, members: [pair.joining] } },
+      ]) {
+        pair.m3.projects.set(pair.joining.projectId, { ...joined, workspaceSettings: next });
+        expect(
+          (
+            await pair.m3.fails(
+              pair.m3.run((service) =>
+                service.unlink({
+                  side: "member",
+                  operationId: unlinkId,
+                  projectId: pair.joining.projectId,
+                  notes: [],
+                  leaveCoordinator: true,
+                }),
+              ),
+            )
+          ).code,
+        ).toBe("not_linked");
+      }
+    });
+
+    it("lets a copy leave while another names it as coordinator, as a plain unlink always has", async () => {
+      const pair = legacyPair();
+      await link(pair);
+      await pair.m3.run((service) =>
+        service.startCoordinator({ operationId: startId, projectId: pair.joining.projectId }),
+      );
+      const m1 = machine("m1");
+      const root = m1.add(
+        "easychamp-m1",
+        checkout("git@github.com:anton/sw-easychamp.git"),
+      ).workspaceRoot;
+      const joining = { ...m1.member("easychamp-m1"), workspaceRoot: root };
+      const prepared = await pair.m3.run((service) =>
+        service.prepare({ operationId: thirdLinkId, projectId: pair.joining.projectId, joining }),
+      );
+      const accepted = await m1.run((service) =>
+        service.accept({
+          operationId: thirdLinkId,
+          projectId: joining.projectId,
+          kept: prepared.kept,
+          logicalProject: prepared.logicalProject,
+          coordinatorBinding: prepared.coordinatorBinding,
+          keptFingerprint: prepared.fingerprint,
+        }),
+      );
+      await pair.m3.run((service) =>
+        service.commit({
+          operationId: thirdLinkId,
+          projectId: pair.joining.projectId,
+          joining: accepted.member,
+          notes: [],
+        }),
+      );
+      // M1 now works for M3. Neither server can see that from M3's own record: the
+      // shipped unlink of a relinquished copy (M3 after giving way) never could either.
+      expect(
+        m1.projects.get(joining.projectId)!.workspaceSettings!.coordinatorBinding,
+      ).toMatchObject({ state: "transferred", successor: { environmentId: "m3" } });
+      const started = pair.m3.projects.get(pair.joining.projectId)!;
+      const leave = (leaveCoordinator?: true) =>
+        pair.m3.run((service) =>
+          service.unlink({
+            side: "member",
+            operationId: unlinkId,
+            projectId: pair.joining.projectId,
+            notes: [],
+            ...(leaveCoordinator ? { leaveCoordinator } : {}),
+          }),
+        );
+      pair.m3.projects.set(pair.joining.projectId, {
+        ...started,
+        workspaceSettings: {
+          ...started.workspaceSettings!,
+          coordinatorBinding: {
+            epoch: 3,
+            state: "transferred",
+            operationId: "55555555-5555-4555-8555-555555555555",
+            successor: pair.kept,
+          },
+        },
+      });
+      expect((await leave()).logicalProject.members).toEqual([pair.joining]);
+      // The same holds for the coordinator started beside main; the app checks the copies
+      // it can see before it offers Unlink (ProjectMachinesSettings).
+      pair.m3.projects.set(pair.joining.projectId, started);
+      expect((await leave(true)).logicalProject.members).toEqual([pair.joining]);
     });
 
     it("is a no-op on an active coordinator and refuses copies that are not linked members", async () => {

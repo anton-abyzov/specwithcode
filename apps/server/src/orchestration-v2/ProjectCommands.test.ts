@@ -929,6 +929,30 @@ describe("explicit link ownership modes", () => {
       );
   });
 
+  it("unlinks a coordinator started beside main, never main or one alone", () => {
+    const fresh = {
+      id: "logical:fresh",
+      title: "EasyChamp",
+      coordinatorId: "coordinator:logical:fresh",
+      members: [self],
+    };
+    const active = { epoch: 0, state: "active" as const, operationId: "unlink-op" };
+    const leave = { mode: "unlink", logicalProject: fresh, coordinatorBinding: active };
+    const side = { epoch: 2, state: "active" as const, operationId: "start-op" };
+    const roster = { ...shared, members: [other, self] };
+    payloadOf(apply({ logicalProject: roster, coordinatorBinding: side }, leave));
+    // Main after a takeover or a move, main at epoch 0, and one alone are refused.
+    for (const current of [
+      { logicalProject: roster, coordinatorBinding: { ...side, predecessor: other } },
+      { logicalProject: roster, coordinatorBinding: { ...side, epoch: 0 } },
+      { logicalProject: { ...shared, members: [self] }, coordinatorBinding: side },
+    ])
+      assert.include(
+        failureText(apply(current, leave)),
+        "Only a member whose coordinator was relinquished",
+      );
+  });
+
   it("keeps a relinquished binding fenced on every path except unlink and verified handoff", () => {
     const member = {
       logicalProject: { ...shared, members: [other, self] },

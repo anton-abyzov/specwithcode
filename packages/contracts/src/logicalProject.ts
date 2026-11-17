@@ -124,6 +124,23 @@ export const ProjectCoordinatorBinding = Schema.Struct({
 });
 export type ProjectCoordinatorBinding = typeof ProjectCoordinatorBinding.Type;
 
+/** Started beside main (`startCoordinator`): active above epoch 0, with no predecessor. */
+export function coordinatorStartedBeside(binding: ProjectCoordinatorBinding | undefined): boolean {
+  return binding?.state === "active" && binding.epoch > 0 && binding.predecessor === undefined;
+}
+
+/**
+ * A coordinator started beside main may leave its shared project like a plain copy, unless it
+ * is alone in its list. Main never matches. Like a plain copy's unlink, this cannot see a
+ * copy that names it as its coordinator; the caller checks the copies it can see.
+ */
+export function coordinatorMayLeave(
+  binding: ProjectCoordinatorBinding | undefined,
+  memberCount: number,
+): boolean {
+  return coordinatorStartedBeside(binding) && memberCount > 1;
+}
+
 export function projectCoordinatorIsFenced(
   settings:
     | {

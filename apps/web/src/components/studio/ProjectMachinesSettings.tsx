@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
-import type {
-  EnvironmentId,
-  ProjectDisconnectedTurn,
-  ProjectLinkNoteWrite,
+import {
+  coordinatorMayLeave,
+  logicalProjectMemberKey,
+  type EnvironmentId,
+  type ProjectDisconnectedTurn,
+  type ProjectLinkNoteWrite,
 } from "@specweave-studio/contracts";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
 import { useProjects } from "../../state/entities";
@@ -50,6 +52,26 @@ const ROLE_TEXT: Record<LinkedCopy["role"], string> = {
   workers:
     "Runs workers. Its own coordinator is read-only history until you start a coordinator here.",
   pending: "Coordinator handoff pending.",
+};
+
+/**
+ * A coordinator started beside main may leave the link (`coordinatorMayLeave`), unless a
+ * loaded copy names it as its coordinator: that copy would be left with none.
+ */
+const mayLeave = (project: EnvironmentProject, shared: readonly EnvironmentProject[]) => {
+  const settings = project.workspaceSettings;
+  if (
+    !coordinatorMayLeave(
+      settings?.coordinatorBinding,
+      settings?.logicalProject?.members.length ?? 0,
+    )
+  )
+    return false;
+  const key = logicalProjectMemberKey(linkMemberOf(project));
+  return !shared.some((other) => {
+    const successor = other.workspaceSettings?.coordinatorBinding?.successor;
+    return successor !== undefined && logicalProjectMemberKey(successor) === key;
+  });
 };
 
 const failureMessage = (cause: unknown, fallback: string) =>
@@ -284,6 +306,7 @@ export function ProjectMachinesSettings({
     const storageKey = `${projectLinkStorageKey(keptRef, memberRef)}:unlink`;
     const memberLabel = machines.label(member.environmentId);
     const keptLabel = machines.label(coordinator.environmentId);
+    const leaving = mayLeave(member, shared);
     try {
       const operationId = readPendingOperation(storageKey) ?? randomUUID();
       writePendingOperation(storageKey, operationId);
@@ -303,9 +326,21 @@ export function ProjectMachinesSettings({
       }
       const left = await unlink({
         environmentId: member.environmentId,
-        input: { side: "member", operationId, projectId: member.id, notes },
+        input: {
+          side: "member",
+          operationId,
+          projectId: member.id,
+          notes,
+          ...(leaving ? { leaveCoordinator: true } : {}),
+        },
       });
-      if (left._tag === "Failure") throw squashAtomCommandFailure(left);
+      if (left._tag === "Failure") {
+        const cause = squashAtomCommandFailure(left);
+        // An older app there refuses a running coordinator however it is asked.
+        if (leaving && (cause as { code?: unknown }).code === "not_linked")
+          throw new Error(`Update SpecWithCode on ${memberLabel} to unlink this copy.`);
+        throw cause;
+      }
       if (!keptReady) {
         writePendingOperation(storageKey, null);
         setMessage({
@@ -490,6 +525,17 @@ export function ProjectMachinesSettings({
                     Unlink
                   </Button>
                 </div>
+              ) : copy.project !== coordinator && mayLeave(copy.project, shared) ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || problem !== null}
+                  title={problem ?? undefined}
+                  onClick={() => setConfirm(copy.project)}
+                  aria-label={`Unlink the copy on ${label}`}
+                >
+                  Unlink
+                </Button>
               ) : null
             }
           />

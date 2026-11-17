@@ -1,4 +1,5 @@
 import {
+  coordinatorMayLeave,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   logicalProjectMemberKey,
   logicalProjectTitle,
@@ -464,8 +465,9 @@ export function ownershipRejection(
         return "A joining copy relinquishes its coordinator to a listed member.";
       return undefined;
     }
-    case "unlink":
-      if (old?.state !== "transferred")
+    case "unlink": {
+      // Or a coordinator started beside main (`coordinatorMayLeave`).
+      if (old?.state !== "transferred" && !coordinatorMayLeave(old, identity?.members.length ?? 0))
         return "Only a member whose coordinator was relinquished can unlink; finish any handoff first.";
       if (
         identity?.id === incoming.id ||
@@ -482,6 +484,7 @@ export function ownershipRejection(
       )
         return "An unlinked project starts its own coordinator at epoch 0.";
       return undefined;
+    }
     case "takeover": {
       if (old?.state !== "transferred" || old.successor === undefined)
         return "Only a member that runs workers for another copy can take over its coordinator.";
