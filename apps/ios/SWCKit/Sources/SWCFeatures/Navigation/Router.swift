@@ -252,7 +252,7 @@ final class AppRouter {
       case let .chat(target):
         if let coordinator = coordinator(openedFrom: target, in: model) { return coordinator }
       case let .overview(ref):
-        return coordinator(openedFrom: model.aide?.ref == ref ? .aide(ref) : .project(ref), in: model)
+        return coordinator(openedFrom: model.isAideSeat(ref) ? .aide(ref) : .project(ref), in: model)
       default:
         return nil
       }
@@ -281,7 +281,7 @@ final class AppRouter {
     guard let projectRef = model.thread(ref)?.projectRef,
           let project = model.project(projectRef),
           !project.archived else { return nil }
-    if model.aide?.ref == project.ref { return .aide(project.ref) }
+    if model.isAideSeat(project.ref) { return .aide(project.ref) }
     if let chosen = chosenCoordinator, project.contains(chosen) { return .project(chosen) }
     if case let .project(chosen)? = root, project.contains(chosen) { return .project(chosen) }
     if let pick = coordinatorPicks?.pick(for: project) { return .project(pick) }
@@ -388,7 +388,7 @@ final class AppRouter {
   /// threads, as a project's thread lists the project's.
   private func listScope(of project: ProjectRef, aideThreads: Bool = false, in model: AppModel) -> ProjectRef? {
     guard let row = model.project(project) else { return nil }
-    if row.ref == model.aide?.ref, !aideThreads { return nil }
+    if model.isAideSeat(row.ref), !aideThreads { return nil }
     return row.ref
   }
 
@@ -479,7 +479,7 @@ final class AppRouter {
 
   static func isValid(_ target: ChatTarget, in model: AppModel) -> Bool {
     switch target {
-    case let .aide(ref): model.aide?.ref == ref && model.aide?.archived == false
+    case let .aide(ref): model.project(ref).map { model.isAideSeat(ref) && !$0.archived } ?? false
     case let .project(ref): model.projects.contains { $0.contains(ref) && !$0.archived }
     case let .thread(ref): model.machine(ref.environmentId) != nil
     }

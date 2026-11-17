@@ -187,6 +187,7 @@ public final class FixtureEngine: AppEngine {
     unreachable = [FixtureSample.travel]
     lastSeen = [FixtureSample.travel: now.addingTimeInterval(-26 * 3600)]
     model.aide = aideEnabled ? FixtureSample.aide : nil
+    model.aideSeats = aideEnabled ? [FixtureSample.aide, FixtureSample.buildBoxAide] : []
     model.projects = FixtureSample.projects
     var threads = FixtureSample.threads(now: now)
     if scenario == .threadLists {
@@ -216,6 +217,7 @@ public final class FixtureEngine: AppEngine {
       if scenario == .offlineStartup {
         model.projects = []
         model.aide = nil
+        model.aideSeats = []
         model.threadsByProject = [:]
       }
     }
@@ -308,6 +310,7 @@ public final class FixtureEngine: AppEngine {
     model.projects.removeAll { $0.ref.environmentId == id }
     model.threadsByProject = model.threadsByProject.filter { $0.key.environmentId != id }
     if model.aide?.ref.environmentId == id { model.aide = nil }
+    model.aideSeats.removeAll { $0.ref.environmentId == id }
     unreachable.remove(id)
     recompute()
   }
@@ -495,6 +498,7 @@ public final class FixtureEngine: AppEngine {
     await pause(latency)
     let ref = ProjectRef(environmentId: machine.id, projectId: "aide")
     model.aide = ProjectSummary(ref: ref, title: "Percy", icon: .symbol(name: "concierge-bell", color: "violet"), kind: .personal, machineLabel: machine.label, machineOnline: true)
+    model.aideSeats = [model.aide!]
     transcripts[.aide(ref)] = [row("a", .assistant(markdown: "Hi, I'm Percy. Ask me anything, or tell me what to start. I can open threads in any project on \(machine.label).", streaming: false))]
     recompute()
     return ref
@@ -597,6 +601,7 @@ public final class FixtureEngine: AppEngine {
       return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
     }
     if let aide = model.aide { model.aide = refreshed(aide) }
+    model.aideSeats = model.aideSeats.map(refreshed)
     // A merged row lists the same threads under each of its members.
     var seen = Set<ThreadRef>()
     let all = model.threadsByProject.values.flatMap { $0 }.filter { seen.insert($0.ref).inserted }
@@ -989,6 +994,16 @@ private enum FixtureSample {
     icon: .symbol(name: "concierge-bell", color: "violet"),
     kind: .personal,
     machineLabel: "Office Mac",
+    machineOnline: true
+  )
+
+  /// The build box's own Percy: a second seat, so the phone lists both.
+  static let buildBoxAide = ProjectSummary(
+    ref: ProjectRef(environmentId: buildBox, projectId: "aide"),
+    title: "Percy",
+    icon: .symbol(name: "concierge-bell", color: "violet"),
+    kind: .personal,
+    machineLabel: "Build box",
     machineOnline: true
   )
 

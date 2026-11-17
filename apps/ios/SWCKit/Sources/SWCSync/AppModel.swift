@@ -746,6 +746,9 @@ public final class AppModel {
   public var machines: [MachineSummary] = []
   /// The personal assistant project, if one exists on any machine.
   public var aide: ProjectSummary?
+  /// Every machine's live Percy, `aide` first. Each machine keeps its own
+  /// chats, so the phone lists them all and opens whichever is picked.
+  public var aideSeats: [ProjectSummary] = []
   /// Whether Percy is shown: true when any machine's settings turn it on.
   /// While false, `aide` is nil and Percy's chats are left out of every list.
   public var aideEnabled = false
@@ -795,9 +798,15 @@ public final class AppModel {
 
   public func machine(_ id: String) -> MachineSummary? { machines.first { $0.id == id } }
 
+  /// Whether a project is a machine's Percy.
+  public func isAideSeat(_ ref: ProjectRef) -> Bool {
+    aide?.ref == ref || aideSeats.contains { $0.ref == ref }
+  }
+
   /// The project row for a project or any machine's copy of it.
   public func project(_ ref: ProjectRef) -> ProjectSummary? {
     if aide?.ref == ref { return aide }
+    if let seat = aideSeats.first(where: { $0.ref == ref }) { return seat }
     return projects.first { $0.ref == ref } ?? projects.first { $0.contains(ref) }
   }
 
