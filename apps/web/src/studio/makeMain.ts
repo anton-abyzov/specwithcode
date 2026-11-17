@@ -254,7 +254,13 @@ export type MakeMainOutcome<P> =
   /** The confirmed move is open; main changes only when the person finishes it. */
   | { readonly status: "moving"; readonly main: P }
   /** The copy took over and is main now. `replicaFrom`: when its notes were last copied. */
-  | { readonly status: "main"; readonly previous: P; readonly replicaFrom: string | null };
+  | {
+      readonly status: "main";
+      readonly previous: P;
+      readonly replicaFrom: string | null;
+      /** Machines that did not take the new epoch (refused or unreachable), named for the person. */
+      readonly unclaimed: readonly string[];
+    };
 
 /**
  * Makes `copy` its project's main by the path `makeMainPath` picks. A failed takeover
@@ -289,7 +295,7 @@ export async function makeMain<P extends EnvironmentProject>(
   if (result._tag === "Failure") throw squashAtomCommandFailure(result);
   // A standby registered for an older main must never fire for one that gave way, so
   // each reachable standby is told to stand down. This fences nothing else: claiming the
-  // new epoch on the other machines, so they refuse the old main, lands with T-01 (#512).
+  // new epoch on the other machines, so they refuse the old main, is the server's (T-01).
   const epoch = result.value.coordinatorBinding.epoch;
   const logicalProjectId = result.value.logicalProject.id;
   for (const other of linked) {
@@ -303,7 +309,14 @@ export async function makeMain<P extends EnvironmentProject>(
       })
       .catch(() => undefined);
   }
-  return { status: "main", previous: path.main, replicaFrom: result.value.replicaFrom };
+  return {
+    status: "main",
+    previous: path.main,
+    replicaFrom: result.value.replicaFrom,
+    unclaimed: (result.value.epochClaims ?? [])
+      .filter((claim) => claim.outcome !== "claimed")
+      .map((claim) => claim.label ?? String(claim.machine)),
+  };
 }
 
 /**

@@ -29,6 +29,7 @@ import { mainOffer, type MainOffer, type MakeMainPath } from "../../src/studio/m
 import { getProjectCoordinatorComposer } from "../../src/studio/projectCoordinatorComposer";
 import type { OrchestratorCopy } from "../../src/studio/projectCoordinatorMachine";
 import { workersOnlyProblem } from "../../src/studio/workersOnlyCopy";
+import { buildMachineRows } from "../../src/components/settings/machinesSettings.logic";
 import { applyThemePalette } from "../../src/themePalette";
 import "./fixture.css";
 
@@ -89,8 +90,58 @@ declare global {
   }
 }
 
+function SettingsLabel() {
+  const tx = useTx();
+  const identity = (rootPath: string) =>
+    ({
+      canonicalKey: "github.com/example/atlas",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://github.com/example/atlas.git",
+      },
+      rootPath,
+    }) as never;
+  const rows = buildMachineRows({
+    environments: ["m4", "m3"].map((environmentId) => ({
+      environmentId: EnvironmentId.make(environmentId),
+      label: environmentId,
+      phase: "connected",
+      statusText: "Connected",
+    })),
+    primaryEnvironmentId: EnvironmentId.make("m4"),
+    fleet: null,
+    canPair: false,
+    projects: [
+      {
+        environmentId: EnvironmentId.make("m4"),
+        id: "p-m4",
+        title: PROJECT,
+        workspaceRoot: "/w/atlas",
+        repositoryIdentity: identity("/w/atlas"),
+      },
+      {
+        environmentId: EnvironmentId.make("m3"),
+        id: "p-m3",
+        title: PROJECT,
+        workspaceRoot: "/w/atlas",
+        repositoryIdentity: identity("/w/atlas"),
+      },
+    ],
+    hostBlocks: [],
+  });
+  const project = rows[0]?.projects.own[0];
+  return (
+    <div className="fixture-page" data-settings-label>
+      <p>{PROJECT}</p>
+      <p data-role-label>{project ? tx(project.roleLabel, project.roleValues) : ""}</p>
+    </div>
+  );
+}
+
 function Page() {
   const tx = useTx();
+  if (view === "settings") return <SettingsLabel />;
   const start =
     view === "switched" ? "m5:p" : `${params.get("view") ?? (view === "box" ? "m5" : "m4")}:p`;
   const [current, setCurrent] = useState(start);

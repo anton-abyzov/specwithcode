@@ -559,7 +559,8 @@ const startingProjects = new Set<string>();
 /**
  * Runs again the coordinator a linked workers-only copy kept from before, next to
  * the one that runs now; each keeps the threads it started. One start per project
- * runs at a time. Resolves true when that coordinator runs.
+ * runs at a time. Resolves true when that coordinator runs. Kept for the
+ * Settings revival path (1372 D-07); the copy's message box no longer offers it.
  */
 export function useStartCoordinator(
   members: readonly EnvironmentProject[],

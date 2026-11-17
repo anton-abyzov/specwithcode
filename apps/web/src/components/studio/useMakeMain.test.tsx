@@ -10,6 +10,8 @@ const state = vi.hoisted(() => ({
   offline: new Set<string>(),
   /** Machines this window may operate, write files and use Git on. */
   writable: new Set<string>(),
+  /** Scopes this window is denied, by name, so each required scope is checked. */
+  deniedScopes: new Set<string>(),
   /** When each unreachable machine was last seen. */
   lastSeen: new Map<string, number>(),
   takeover: vi.fn(),
@@ -40,7 +42,8 @@ vi.mock("../../state/environments", () => ({
   }),
 }));
 vi.mock("../../state/session", () => ({
-  useEnvironmentsWithScope: () => state.writable,
+  useEnvironmentsWithScope: (_environments: unknown, scope: string) =>
+    state.deniedScopes.has(scope) ? new Set<string>() : state.writable,
 }));
 vi.mock("../../lib/machineLastSeen", () => ({ useMachineLastSeenVersion: () => 0 }));
 vi.mock("../settings/useReplacedMachineRecords", () => ({
@@ -144,6 +147,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
   vi.setSystemTime(NOW);
   state.offline = new Set();
+  state.deniedScopes = new Set();
   state.writable = new Set(["m4", "m5", "mini"]);
   state.lastSeen = new Map();
   for (const mock of [state.takeover, state.acceptStandby, state.startCoordinator, state.toast])
@@ -223,6 +227,16 @@ it("refuses a move this window could only read from, with what to do instead", a
   );
 });
 
+it("refuses the move when any one of the three scopes on main is missing", async () => {
+  for (const scope of ["orchestration:operate", "filesystem:write", "source-control:write"]) {
+    state.deniedScopes = new Set([scope]);
+    await view("m5");
+    const offer = main.offers.find((item) => item.key === "m5:p")!;
+    expect(offer.kind, scope).toBe("blocked");
+    state.deniedScopes = new Set();
+  }
+});
+
 it("stays off, counting down, until the old main has been unreachable for 10 minutes", async () => {
   state.offline = new Set(["m4"]);
   state.lastSeen.set("m4", NOW - 4 * 60_000);
@@ -245,6 +259,7 @@ it("asks once, then takes over from the unreachable main and never starts a seco
       notesWritten: 0,
       replicaFrom: null,
       replayed: false,
+      epochClaims: [{ machine: "mini", label: "MINI", outcome: "unreachable" }],
     },
   });
   await view("m5");
@@ -273,6 +288,12 @@ it("asks once, then takes over from the unreachable main and never starts a seco
   expect(dialog()).toBeNull();
   expect(state.toast).toHaveBeenCalledWith(
     expect.objectContaining({ type: "success", title: "M5 is main now" }),
+  );
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "warning",
+      title: "M5 is main now, with machines not yet following it",
+    }),
   );
 });
 

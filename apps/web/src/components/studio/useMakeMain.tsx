@@ -249,6 +249,16 @@ export function useMakeMain({
             { main: previous },
           ),
         });
+        if (outcome.unclaimed.length > 0) {
+          toastManager.add({
+            type: "warning",
+            title: tx("{machine} is main now, with machines not yet following it", { machine }),
+            description: tx(
+              "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.",
+              { machines: outcome.unclaimed.join(", ") },
+            ),
+          });
+        }
       }
     } catch (cause) {
       toastManager.add({

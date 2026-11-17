@@ -212,6 +212,17 @@ try {
     file = await shot(page, `menu-unlinked-link-${theme}`);
     results.push({ theme, case: "unlinked trio", file });
     await page.close();
+
+    // Settings > Machines: an unlinked copy that exists elsewhere is Not linked.
+    page = await open(`theme=${theme}&case=settings`);
+    await page.locator("[data-settings-label]").waitFor();
+    assert.equal(
+      await page.locator("[data-role-label]").textContent(),
+      "Not linked · also on m3",
+    );
+    file = await shot(page, `settings-not-linked-${theme}`);
+    results.push({ theme, case: "Settings label", file });
+    await page.close();
   }
 
   // Every catalog has the new words: none of them falls back to English.

@@ -303,16 +303,20 @@ export function unlinkedElsewhereCopies(
 ): MachineProjectInput[] {
   const key = repositoryKeyOf(project);
   if (key === null || isSharedProject(project)) return [];
-  return projects.filter(
-    (candidate) =>
-      candidate.environmentId !== project.environmentId &&
-      !(
-        candidate.workspaceSettings?.logicalProject?.id !== undefined &&
-        candidate.workspaceSettings.logicalProject.id ===
-          project.workspaceSettings?.logicalProject?.id
-      ) &&
-      repositoryKeyOf(candidate) === key,
-  );
+  const seenMachines = new Set<string>();
+  return projects.filter((candidate) => {
+    if (candidate.environmentId === project.environmentId) return false;
+    if (seenMachines.has(candidate.environmentId)) return false;
+    if (
+      candidate.workspaceSettings?.logicalProject?.id !== undefined &&
+      candidate.workspaceSettings.logicalProject.id ===
+        project.workspaceSettings?.logicalProject?.id
+    )
+      return false;
+    if (repositoryKeyOf(candidate) !== key) return false;
+    seenMachines.add(candidate.environmentId);
+    return true;
+  });
 }
 
 function workerGrant(machine: StudioFleetMachine): MachineWorkerGrant | null {

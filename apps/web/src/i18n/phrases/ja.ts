@@ -2327,6 +2327,8 @@ export const ja: PhraseCatalog = {
     "{name}（{host}）の古い記録をこのデバイスから削除しますか？\nこのマシンは新しいマシンとして再参加し、引き続き動作します。削除されるのは使われなくなった記録と、ここにキャッシュされたスレッドだけです。",
   "Use 2 or 3 characters.": "2〜3文字にしてください。",
   "Not shared": "共有なし",
+  "{machine} is main now, with machines not yet following it": "{machine} がメインになりましたが、まだ従っていないマシンがあります",
+  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.": "これらのマシンはまだ新しいメインを受け入れていません: {machines}。受け入れて初めて旧メインからの作業を拒否します。",
   "Not linked · also on {machine}": "未リンク · {machine} にもあり",
   "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "このコピーは {machine} 上のコピーとリンクしていません。プロジェクトメニューからリンクするとコーディネーターを共有できます。",
   "No other machine has a copy of this project.":

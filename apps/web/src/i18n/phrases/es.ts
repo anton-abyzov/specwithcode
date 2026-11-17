@@ -2339,6 +2339,8 @@ export const es: PhraseCatalog = {
     "¿Quitar de este dispositivo el registro antiguo de {name} ({host})?\nLa máquina se unió de nuevo como una nueva y sigue funcionando; solo se van el registro muerto y sus hilos en caché aquí.",
   "Use 2 or 3 characters.": "Usa 2 o 3 caracteres.",
   "Not shared": "No compartido",
+  "{machine} is main now, with machines not yet following it": "{machine} ya es la principal, pero algunas máquinas aún no la siguen",
+  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.": "Estas máquinas aún no aceptaron la nueva principal: {machines}. Solo rechazarán el trabajo de la anterior cuando lo hagan.",
   "Not linked · also on {machine}": "No vinculada · también en {machine}",
   "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "Esta copia no está vinculada a las copias en {machine}. Vincúlalas desde el menú del proyecto para compartir un coordinador.",
   "No other machine has a copy of this project.":

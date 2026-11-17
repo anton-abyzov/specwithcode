@@ -255,6 +255,7 @@ function CoordinatorComposerForm(props: {
           if (e.dataTransfer.types.includes("Files")) e.preventDefault();
         }}
         onDrop={(e) => {
+          if (inert) return;
           if (!e.dataTransfer.types.includes("Files")) return;
           // Every dropped file is answered: attached, or told why not.
           e.preventDefault();
