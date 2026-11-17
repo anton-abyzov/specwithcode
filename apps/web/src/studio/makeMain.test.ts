@@ -258,6 +258,7 @@ describe("makeMain", () => {
       status: "main",
       previous: m4,
       replicaFrom: "2026-11-16T10:00:00.000Z",
+      unclaimed: [],
     });
     expect(calls.takeover).toHaveBeenCalledWith({
       environmentId: "m5",
