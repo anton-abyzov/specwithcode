@@ -26,6 +26,7 @@ import {
   startServiceUpdateProgress,
   describeInstallOutcome,
   getRestartToUpdateView,
+  SERVICE_UPDATE_WAITS_FOR_BUTTON,
   isAppUpdateReady,
   isServiceUpdateReady,
   canPressUpdateAgain,
@@ -102,6 +103,41 @@ describe("restart to update", () => {
         { ...serviceUpToDate, status: "downloading", availableVersion: "0.2.5" },
       ),
     ).toBeNull();
+  });
+
+  it("says a downloaded service update waits for the button when automatic installs are off", () => {
+    const downloaded = { ...serviceWaiting, status: "downloaded" as const };
+    const off = getRestartToUpdateView(appIdle, downloaded, { installAutomatically: false });
+    expect(off?.label).toBe("Update now");
+    expect(off?.description).toBe(
+      `SpecWithCode 0.2.5 is downloaded. ${SERVICE_UPDATE_WAITS_FOR_BUTTON} ${SERVICE_UPDATE_NOW_DESCRIPTION}`,
+    );
+    expect(SERVICE_UPDATE_WAITS_FOR_BUTTON).toContain("Install automatically is off");
+    expect(SERVICE_UPDATE_WAITS_FOR_BUTTON).toContain("until you press Update now");
+
+    // Only a known "off" is said: on, not read yet, or no desktop bridge keep the old text.
+    for (const options of [{ installAutomatically: true }, { installAutomatically: null }, {}]) {
+      expect(getRestartToUpdateView(appIdle, downloaded, options)?.description).toBe(
+        `SpecWithCode 0.2.5 is downloaded. ${SERVICE_UPDATE_NOW_DESCRIPTION}`,
+      );
+    }
+    // The agent is already waiting to install it: nothing is stuck.
+    expect(
+      getRestartToUpdateView(appIdle, serviceWaiting, { installAutomatically: false })?.description,
+    ).not.toContain(SERVICE_UPDATE_WAITS_FOR_BUTTON);
+    // Only the app has an update: the switch says nothing about the service.
+    expect(
+      getRestartToUpdateView(
+        appDownloaded,
+        { ...serviceUpToDate, installedVersion: "0.2.5" },
+        { installAutomatically: false },
+      )?.description,
+    ).not.toContain(SERVICE_UPDATE_WAITS_FOR_BUTTON);
+    // The service is behind the app with nothing on disk for it.
+    expect(
+      getRestartToUpdateView(appDownloaded, serviceUpToDate, { installAutomatically: false })
+        ?.description,
+    ).not.toContain(SERVICE_UPDATE_WAITS_FOR_BUTTON);
   });
 
   it("restarts the app for a downloaded app update", () => {

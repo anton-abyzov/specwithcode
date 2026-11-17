@@ -72,6 +72,7 @@ import {
   SERVICE_UPDATE_NOW_DESCRIPTION,
   serviceInstallTarget,
   serviceUpdateButtonLabel,
+  UPDATE_PREFERENCES_CHANGED,
 } from "./SidebarRestartToUpdate.logic";
 
 // An accepted install quits the app; if it is still open after this long,
@@ -125,6 +126,8 @@ function SidebarRestartToUpdateButton() {
   const service = useServiceUpdateFlow(serviceState);
   const [pending, setPending] = useState(false);
   const [installOnQuit, setInstallOnQuit] = useState(false);
+  // Null until read: only a known "off" is said beside Update now.
+  const [installAutomatically, setInstallAutomatically] = useState<boolean | null>(null);
   const [downloadsInBackground, setDownloadsInBackground] = useState(false);
   // The user chose to let running work finish: restart once nothing runs, or
   // once the hold window from Settings has passed, whichever comes first.
@@ -148,7 +151,10 @@ function SidebarRestartToUpdateButton() {
   const navigate = useNavigate();
   const environmentId = usePrimaryEnvironmentId();
   const watchdog = useRef<number | null>(null);
-  const view = getRestartToUpdateView(appState, serviceState, { installOnQuit });
+  const view = getRestartToUpdateView(appState, serviceState, {
+    installOnQuit,
+    installAutomatically,
+  });
   // An update of the app or the service waits here; the wait for quiet covers both.
   const hasUpdate = Boolean(view?.app || view?.service);
   // An Update now run (0988): this window only follows it, in one toast.
@@ -231,19 +237,25 @@ function SidebarRestartToUpdateButton() {
 
   useEffect(() => {
     let active = true;
-    void window.desktopBridge
-      ?.getUpdatePreferences?.()
-      .then((preferences) => {
-        if (active) {
-          const allowed = preferences.automaticUpdatesAllowed !== false;
-          setInstallOnQuit(preferences.installAutomatically && allowed);
-          setDownloadsInBackground(preferences.downloadAutomatically && allowed);
-          setHoldMinutes(forceInstallAfterMinutes(preferences));
-        }
-      })
-      .catch(() => undefined);
+    const read = () =>
+      void window.desktopBridge
+        ?.getUpdatePreferences?.()
+        .then((preferences) => {
+          if (active) {
+            const allowed = preferences.automaticUpdatesAllowed !== false;
+            setInstallOnQuit(preferences.installAutomatically && allowed);
+            setInstallAutomatically(preferences.installAutomatically);
+            setDownloadsInBackground(preferences.downloadAutomatically && allowed);
+            setHoldMinutes(forceInstallAfterMinutes(preferences));
+          }
+        })
+        .catch(() => undefined);
+    read();
+    // Settings saved the switches: what is said beside the button follows at once.
+    window.addEventListener(UPDATE_PREFERENCES_CHANGED, read);
     return () => {
       active = false;
+      window.removeEventListener(UPDATE_PREFERENCES_CHANGED, read);
     };
   }, []);
 

@@ -39,6 +39,31 @@ describe("UpdatePreferencesSection.logic", () => {
     expect(Math.min(...PAUSE_WORK_AFTER_OPTIONS)).toBe(10);
   });
 
+  it("says a downloaded update waits for the button when automatic installs are off", () => {
+    const downloaded = state({ status: "downloaded", downloadedVersion: "0.2.0" });
+    expect(describeServiceUpdate(downloaded, { installAutomatically: false })).toBe(
+      "Version 0.1.4. Version 0.2.0 is downloaded. Install automatically is off, so it installs only when you press Install now.",
+    );
+    // On, not read yet, or no desktop preferences at all: the line is unchanged.
+    const ready = "Version 0.1.4. Version 0.2.0 is ready to install.";
+    expect(describeServiceUpdate(downloaded, { installAutomatically: true })).toBe(ready);
+    expect(describeServiceUpdate(downloaded, null)).toBe(ready);
+    expect(describeServiceUpdate(downloaded)).toBe(ready);
+    // The switch changes no other stage, and never a version the service already runs.
+    expect(
+      describeServiceUpdate(state({ status: "waiting-for-quiet", downloadedVersion: "0.2.0" }), {
+        installAutomatically: false,
+      }),
+    ).toBe(
+      "Version 0.1.4. Version 0.2.0 installs once running work finishes, or press Update now.",
+    );
+    expect(
+      describeServiceUpdate(state({ status: "downloaded", downloadedVersion: "0.1.4" }), {
+        installAutomatically: false,
+      }),
+    ).toBe("Version 0.1.4. Up to date.");
+  });
+
   it("describes each service update stage", () => {
     expect(describeServiceUpdate(state({}))).toBe("Version 0.1.4. Up to date.");
     expect(
