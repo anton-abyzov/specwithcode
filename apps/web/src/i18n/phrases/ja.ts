@@ -5483,4 +5483,16 @@ export const ja: PhraseCatalog = {
     "{device} が申請しています。{hub} 経由でペアリングされています。",
   "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
     "{machine} がこのデバイスを拒否しました。明日もう一度申請するか、{machine} の SpecWithCode で承認してください。",
+  "Different machine at address":
+    "アドレスに別のマシン",
+  "{machine}'s address now answers as a different SpecWithCode":
+    "{machine} のアドレスは現在、別の SpecWithCode として応答しています",
+  "This host's address now answers as a different SpecWithCode":
+    "このホストのアドレスは現在、別の SpecWithCode として応答しています",
+  "Open Settings > Machines to fix it.":
+    "修正するには「設定 > マシン」を開いてください。",
+  "Resolved history from {machines} could not be loaded.":
+    "{machines} の解決済み履歴を読み込めませんでした。",
+  "Resolved history from another machine could not be loaded.":
+    "別のマシンの解決済み履歴を読み込めませんでした。",
 };

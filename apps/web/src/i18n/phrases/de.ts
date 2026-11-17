@@ -5520,4 +5520,16 @@ export const de: PhraseCatalog = {
     "{device} fragt an. Es wurde über {hub} gekoppelt.",
   "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
     "{machine} hat dieses Gerät abgewiesen. Frag morgen erneut an oder gib es in SpecWithCode auf {machine} frei.",
+  "Different machine at address":
+    "Anderer Rechner unter der Adresse",
+  "{machine}'s address now answers as a different SpecWithCode":
+    "Unter der Adresse von {machine} antwortet jetzt ein anderes SpecWithCode",
+  "This host's address now answers as a different SpecWithCode":
+    "Unter der Adresse dieses Hosts antwortet jetzt ein anderes SpecWithCode",
+  "Open Settings > Machines to fix it.":
+    "Öffne Einstellungen > Rechner, um das zu beheben.",
+  "Resolved history from {machines} could not be loaded.":
+    "Erledigter Verlauf von {machines} konnte nicht geladen werden.",
+  "Resolved history from another machine could not be loaded.":
+    "Erledigter Verlauf von einem anderen Rechner konnte nicht geladen werden.",
 };
