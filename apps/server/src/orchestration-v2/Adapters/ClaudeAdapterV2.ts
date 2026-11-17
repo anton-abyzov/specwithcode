@@ -8257,11 +8257,15 @@ export function makeClaudeAdapterV2(
             claudeInChromeRefused,
           ]);
           const projectAdditionalDirectories = turnInput.projectAdditionalDirectories ?? [];
+          // The coordinator role is a tool change, not launch context: a
+          // process running background work is refused rather than reused
+          // when the thread gains or loses the role.
+          const roleContext = { isCoordinator: turnInput.runtimePolicy.isCoordinator };
           const queryCoreBaseKey = stringifyJson(
-            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides),
+            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides, roleContext),
           );
           const queryCoreKey = stringifyJson([
-            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides),
+            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides, roleContext),
             projectAdditionalDirectories,
           ]);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);

@@ -3446,6 +3446,56 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("refuses to reuse a background worker's process after it becomes coordinator", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, isCoordinator: boolean) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-role-change:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            modelSelection: {
+              instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+              model: "claude-opus-5-5",
+            },
+            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, isCoordinator },
+          });
+        yield* harness.runtime.startTurn(turn(1, false));
+        const workerOptions = harness.getOpenedOptions();
+        assert.notInclude(workerOptions?.disallowedTools ?? [], "Bash");
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        // The thread became its project's coordinator while a background
+        // shell runs: the worker process (native tools, worker prompt) must
+        // not take the coordinator's turn.
+        const promoted = yield* harness.runtime.startTurn(turn(2, true)).pipe(Effect.flip);
+        assert.instanceOf(
+          promoted.cause,
+          ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
+        );
+        assert.strictEqual(harness.getOpenedOptions(), workerOptions);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        // Once the work ends, the next turn opens a coordinator process.
+        yield* harness.offerAndWait(wakeNotification);
+        yield* harness.runtime.startTurn(turn(3, true));
+        const coordinatorOptions = harness.getOpenedOptions();
+        assert.notStrictEqual(coordinatorOptions, workerOptions);
+        assert.include(coordinatorOptions?.disallowedTools ?? [], "Bash");
+        assert.include(coordinatorOptions?.disallowedTools ?? [], "Workflow");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("keeps a background worker's process when project folders are only added", () =>
     Effect.scoped(
       Effect.gen(function* () {
