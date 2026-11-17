@@ -698,6 +698,8 @@ export function ProjectWorkspaceSurface({
     routes,
   });
   const chipEnvironment = useEnvironment(named.chip as EnvironmentId);
+  // Main's name, one fallback chain for the chip and the header tag.
+  const mainName = chipEnvironment?.label ?? coordinatorElsewhere?.machine ?? named.chip;
   // Files were attached on this machine; a routed message carries text only.
   const draftHasFiles = useSyncExternalStore(
     composer.subscribe,
@@ -1859,7 +1861,7 @@ export function ProjectWorkspaceSurface({
                   <Tip
                     label={
                       coordinatorElsewhere
-                        ? `Copy on ${machineName}, not this computer. Its coordinator runs on ${coordinatorElsewhere.machine}`
+                        ? `Copy on ${machineName}, not this computer. Its coordinator runs on ${mainName}`
                         : `Runs on ${machineName}, not this computer`
                     }
                   >
@@ -2217,13 +2219,15 @@ export function ProjectWorkspaceSurface({
                           ? null
                           : {
                               environmentId: named.chip as EnvironmentId,
-                              label:
-                                chipEnvironment?.label ??
-                                coordinatorElsewhere?.machine ??
-                                named.chip,
+                              label: mainName,
                               connected: chipEnvironment?.connection.phase === "connected",
                               // Main's own connection, not this page's machine's context.
-                              disconnectedLabel: hostDisconnectedLabel(chipEnvironment?.connection),
+                              disconnectedLabel: hostDisconnectedLabel(
+                                chipEnvironment?.connection,
+                                named.chip === primaryEnvironmentId
+                                  ? { isThisDevice: true, graceElapsed: true }
+                                  : undefined,
+                              ),
                             }
                       }
                       current={`${project.environmentId}:${project.id}`}

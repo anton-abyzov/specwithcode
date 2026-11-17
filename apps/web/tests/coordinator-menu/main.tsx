@@ -248,7 +248,8 @@ function Page() {
     const named = composerMachines({
       viewed: "m5",
       mainKey: `${m5Main}:p`,
-      routes: true,
+      // `&main=lost`: m4 is unreachable, so Send cannot route and names no machine.
+      routes: params.get("main") !== "lost",
     });
     return (
       <div
@@ -265,9 +266,10 @@ function Page() {
         <CoordinatorComposer
           composer={getProjectCoordinatorComposer(EnvironmentId.make("m5"), "atlas-m5")}
           threadRef={null}
-          environmentId={EnvironmentId.make(named.send ?? "m5")}
+          // The page's formula (ProjectWorkspaceSurface): main's machine on a copy.
+          environmentId={EnvironmentId.make(named.send ?? named.chip)}
           cwd="/w/atlas"
-          sendBlocked={false}
+          sendBlocked={named.send === null}
           missingModel={null}
           canAttach={false}
           uploadsSupported
@@ -277,7 +279,7 @@ function Page() {
             project: PROJECT,
             machine: m5Main,
           })}
-          writesElsewhere={false}
+          writesElsewhere={named.send === null}
           hostReachable
           promptLabel="Message the project coordinator"
           keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
@@ -299,7 +301,7 @@ function Page() {
               onOpen={() => {}}
               mainOffer={m5Offer}
               onMakeMain={makeMain}
-              routesToMain
+              routesToMain={named.send !== null}
             />
           }
           notices={null}

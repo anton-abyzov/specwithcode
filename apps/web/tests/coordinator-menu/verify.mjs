@@ -229,6 +229,15 @@ try {
     results.push({ theme, case: "m5 state, routed send and move from m4", file });
     await page.close();
 
+    // m4 unreachable: Send cannot route and names no machine; the chip still names m4.
+    page = await open(`theme=${theme}&case=m5&main=lost`, { width: 760, height: 560 });
+    await page.locator("[data-workers-only]").waitFor();
+    assert.deepEqual(await page.locator(".sws-host-name").allTextContents(), ["Runs on m4"]);
+    const offSend = page.locator(".sws-composer-card button.sws-send");
+    assert.equal(await offSend.getAttribute("data-send-label"), null);
+    assert.equal(await offSend.isDisabled(), true);
+    await page.close();
+
     // After an offline switch: the new main says where the earlier conversation is.
     page = await open(`theme=${theme}&case=switched`, { width: 720, height: 520 });
     const said = page.locator("[data-offline-switch]");
