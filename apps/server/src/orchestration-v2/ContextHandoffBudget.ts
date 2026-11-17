@@ -207,6 +207,17 @@ export function historicalMessage(
     providerThreadId: item.providerThreadId,
     status: item.status,
     kind: item.type,
+    ...(item.type === "thread_created"
+      ? { worker: { key: item.targetThreadId, origin: "app_owned", status: "created" } }
+      : item.type === "subagent"
+        ? {
+            worker: {
+              key: item.childThreadId ?? item.subagentId,
+              origin: item.origin,
+              status: item.status,
+            },
+          }
+        : {}),
   };
 }
 
@@ -283,17 +294,48 @@ export function selectHistory(input: {
     selected.add(index);
     remaining -= cost;
   };
-  // Prioritize the latest request and partial answer, then original constraints.
-  // Oversized items are omitted whole and remain available through thread_read.
-  tryAdd(messages.findLastIndex((message) => message.role === "user"));
-  // Preserve worker identity before recent prose can consume the allowance.
+  // Conversational anchors outrank activity. A tool/question is attributed to
+  // the assistant, but is not its answer. Oversized entries remain retrievable.
+  tryAdd(messages.findLastIndex((message) => message.kind === "user_message"));
+  tryAdd(messages.findLastIndex((message) => message.kind === "assistant_message"));
+  tryAdd(messages.findIndex((message) => message.kind === "user_message"));
+  const isWorker = (message: OrchestrationV2HistoricalMessage) =>
+    message.kind === "thread_created" || message.kind === "subagent";
+  const workers = new Map<string, number>();
+  // Newest record wins per child; a subagent state supersedes its launch record.
   for (let index = messages.length - 1; index >= 0; index--) {
-    if (messages[index]?.kind === "thread_created" || messages[index]?.kind === "subagent")
-      tryAdd(index);
+    const message = messages[index]!;
+    if (!isWorker(message)) continue;
+    const key = message.worker?.key ?? message.itemId;
+    const existing = workers.get(key);
+    if (
+      existing === undefined ||
+      (messages[existing]?.kind === "thread_created" && message.kind === "subagent")
+    )
+      workers.set(key, index);
   }
-  tryAdd(messages.findLastIndex((message) => message.role === "assistant"));
-  tryAdd(messages.findIndex((message) => message.role === "user"));
-  for (let index = messages.length - 1; index >= 0; index--) tryAdd(index);
+  const workerRank = (index: number) => {
+    const worker = messages[index]!.worker;
+    return (
+      (worker?.origin === "app_owned" ? 0 : 2) +
+      (["running", "pending", "starting", "waiting"].includes(worker?.status ?? "") ? 0 : 1)
+    );
+  };
+  // Eight identities at most, even on the later tail pass. Unselected records
+  // remain in the omission count and can be recovered from the activity view.
+  for (const index of [...workers.values()]
+    .sort((a, b) => workerRank(a) - workerRank(b) || b - a)
+    .slice(0, 8))
+    tryAdd(index);
+  const isTool = (message: OrchestrationV2HistoricalMessage) => message.kind === "dynamic_tool";
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!;
+    if (!isWorker(message) && !isTool(message)) tryAdd(index);
+  }
+  // Tool receipts are retrieval pointers, not conversational anchors.
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (isTool(messages[index]!)) tryAdd(index);
+  }
   return {
     messages: messages.filter((_, index) => selected.has(index)),
     omittedItemIds: messages

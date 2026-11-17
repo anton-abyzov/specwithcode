@@ -450,7 +450,10 @@ it.effect.each(["sqlite", "memory"] as const)(
       assert.notInclude(replay, "do not replay");
       assert.notInclude(replay, "do not inject raw output");
       assert.include(replay, "Counts cover eligible history records, not the whole timeline");
-      assert.equal(selectedHistory.omittedItems, 0);
+      // The launch is collapsed into the newer child-state reference, and
+      // remains explicitly accounted for rather than silently disappearing.
+      assert.equal(selectedHistory.omittedItems, 1);
+      assert.deepEqual(selectedHistory.omittedItemIds, [TurnItemId.make("launch")]);
       const other = ThreadId.make("other");
       yield* putThread({ ...thread, id: other });
       assert.deepEqual((yield* store.getTurnStartContext(other, runId)).messages, []);

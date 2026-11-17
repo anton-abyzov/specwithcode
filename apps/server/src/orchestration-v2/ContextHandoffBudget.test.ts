@@ -150,33 +150,6 @@ describe("handoff budget", () => {
     assert.equal(historyResponseItems([command!], "Activity")[1]?.type, "message");
   });
 
-  it("keeps worker identity ahead of recent prose within a bounded handoff", () => {
-    const worker = {
-      ...messages[0]!,
-      role: "assistant" as const,
-      itemId: TurnItemId.make("worker-reference"),
-      kind: "thread_created",
-      text: "Created worker thread worker:migration; retrieve its current status.",
-    };
-    const prose = {
-      ...messages[1]!,
-      itemId: TurnItemId.make("recent-prose"),
-      text: "I launched the migration worker. " + "detail ".repeat(120),
-    };
-    const selected = selectHistory({
-      messages: [messages[0]!, worker, prose],
-      coverage: "History",
-      budget: 1_700,
-    });
-    assert.include(
-      selected.messages.map((message) => message.itemId),
-      worker.itemId,
-    );
-    assert.equal(selected.omittedItems, 1);
-    assert.isAtMost(historyCost(selected.messages, selected.context), 1_700);
-    assert.include(selected.context, "Counts cover eligible history records");
-  });
-
   it("retains short conversations verbatim in role and order", () => {
     const selected = selectHistory({ messages, coverage: "History", budget: 16_000 });
     assert.deepEqual(selected.messages, messages);
