@@ -5,6 +5,8 @@ import type {
   ConnectDevicesSnapshot,
 } from "@specweave-studio/contracts/connectDevices";
 
+import { isReservedDeviceName } from "@specweave-studio/shared/reservedDeviceNames";
+
 import { englishPhrase, type TranslatePhrase } from "../i18n";
 
 export type { ConnectDevice, ConnectDeviceRequest, ConnectDevicesSnapshot };
@@ -25,12 +27,6 @@ const SHARED_LABELS: ReadonlySet<string> = new Set([
 ]);
 
 /** Words the list uses for the owner and the update; never a device's own name. */
-const RESERVED_NAMES: ReadonlySet<string> = new Set([
-  "this machine",
-  "the update",
-  "another device",
-]);
-
 type DeviceFacts = Pick<ConnectDevice, "label" | "kind" | "deviceType" | "named" | "system">;
 
 /** The English stand-in for a device that gave no name; each window translates it. */
@@ -64,7 +60,7 @@ export function connectDeviceName(device: DeviceFacts, tx: TranslatePhrase = eng
     device.named !== false &&
     label.length > 0 &&
     !SHARED_LABELS.has(label) &&
-    !RESERVED_NAMES.has(label.toLowerCase());
+    !isReservedDeviceName(label);
   return own ? label : tx(standInDeviceName(device));
 }
 
