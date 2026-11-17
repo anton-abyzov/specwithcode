@@ -29,7 +29,7 @@ import {
   namedFallbackOrder,
 } from "./modelTiers.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
-import { namedModelElsewhere } from "./regularTrack.ts";
+import { namedModelElsewhere, type RegularTrackRule, reviewOnlyModel } from "./regularTrack.ts";
 export { fallbackModelOrder, fallbackSelectionKey };
 import { effectiveUsedPercent, isLiveWindow, windowAppliesToModel } from "./usageWindows.ts";
 
@@ -64,6 +64,8 @@ export interface ProviderFallbackRule {
   readonly defaultModelProviders?: ReadonlyArray<ProviderInstanceId> | undefined;
   /** The ranked model tiers: the fallback chain when no explicit order is set (see `modelTiers`). */
   readonly modelLanes?: ModelLanes | null | undefined;
+  /** The Review track (`reviewers`): regular work never falls back to it (see `reviewOnlyModel`). */
+  readonly adversarialReview?: RegularTrackRule["adversarialReview"];
 }
 
 /** A model the user keeps out of automatic limit continuation. */
@@ -756,10 +758,13 @@ function resolveProviderFallbackPass(input: {
     | "defaultModelSelection"
     | "defaultModelProviders"
     | "modelLanes"
+    | "adversarialReview"
   >;
   readonly nowMs: number;
   readonly belowPercent?: number | null;
   readonly anyReady?: boolean;
+  /** Review work may fall back to the Review track; regular work never does. */
+  readonly review?: boolean;
   /** Instances known to be limited whatever their usage read says (a current limit stop). */
   readonly limitedInstanceIds?: ReadonlySet<string>;
   /**
@@ -785,6 +790,7 @@ function resolveProviderFallbackPass(input: {
   readonly verifiedOnly?: boolean;
 }): ModelSelection | null {
   const verifiedOnly = input.verifiedOnly === true;
+  const reviewOnly = input.review === true ? () => false : reviewOnlyModel(input.rule);
   // Every step below skips what this stop already tried, not only the user's order,
   // and every target whose window cannot hold the thread.
   const excluded = (instanceId: ProviderInstanceId, model: string | undefined) =>
@@ -976,6 +982,7 @@ function resolveProviderFallbackPass(input: {
   const proven = input.proven ?? null;
   if (
     proven !== null &&
+    !reviewOnly(proven) &&
     proven.instanceId !== input.currentInstanceId &&
     !excluded(proven.instanceId, proven.model)
   ) {
@@ -1014,6 +1021,7 @@ function resolveProviderFallbackPass(input: {
     const ranked = firstAvailable(
       (selection) =>
         orderChain.builtIn.has(fallbackSelectionKey(selection)) &&
+        !reviewOnly(selection) &&
         selection.instanceId !== input.currentInstanceId &&
         (perTokenHome === null || !isReportsNoUsage(selection)),
     );
@@ -1055,7 +1063,8 @@ function resolveProviderFallbackPass(input: {
         (perTokenHome === null || !reportsNoUsage(provider)) &&
         !isPaidModelOn(provider, candidateModel(provider)) &&
         !isUnknownBillingAgent(provider, candidateModel(provider)) &&
-        !excluded(provider.instanceId, candidateModel(provider)),
+        !excluded(provider.instanceId, candidateModel(provider)) &&
+        !reviewOnly({ model: candidateModel(provider) ?? "" }),
     )
     .map((provider, order) => ({ provider, order, rank: rank(provider) }))
     .sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.order - b.order);
@@ -1129,6 +1138,8 @@ export function resolveWorkerLaunchSelection(input: {
   readonly rule: ProviderFallbackRule;
   readonly nowMs: number;
   readonly limitedInstanceIds?: ReadonlySet<string>;
+  /** A review worker may start on the Review track; regular work never does. */
+  readonly review?: boolean;
 }): { readonly selection: ModelSelection; readonly reason: WorkerLaunchSelectionReason } {
   const threshold = input.rule.providerLimitSwitchAtPercent ?? 100;
   const limited = input.limitedInstanceIds ?? new Set<string>();
@@ -1176,7 +1187,12 @@ export function resolveWorkerLaunchSelection(input: {
       });
   if (same !== null) return { selection: same, reason: "same-model" };
   const coordinator = input.coordinator;
-  if (!listOnly && coordinator !== null && coordinator.instanceId !== preferred.instanceId) {
+  if (
+    !listOnly &&
+    coordinator !== null &&
+    coordinator.instanceId !== preferred.instanceId &&
+    (input.review === true || !reviewOnlyModel(input.rule)(coordinator))
+  ) {
     const provider = input.providers.find((entry) => entry.instanceId === coordinator.instanceId);
     if (
       provider !== undefined &&
@@ -1217,7 +1233,9 @@ export function resolveWorkerLaunchSelection(input: {
       defaultModelSelection: null,
       defaultModelProviders: input.rule.defaultModelProviders,
       modelLanes: input.rule.modelLanes,
+      adversarialReview: input.rule.adversarialReview,
     },
+    ...(input.review === true ? { review: true } : {}),
     nowMs: input.nowMs,
     belowPercent: threshold,
     anyReady: true,
@@ -1484,7 +1502,13 @@ export function resolveCoordinatorTurnSelection(input: {
   )
     return { selection: input.saved, reason: "saved-resets-soon" };
   const thread = input.thread;
-  if (thread !== null && thread.instanceId !== input.saved.instanceId) {
+  // The coordinator does regular work: it never stays on a Review-track model
+  // a move put it on. A pick by hand saves the model, so `saved` is never one.
+  if (
+    thread !== null &&
+    thread.instanceId !== input.saved.instanceId &&
+    !reviewOnlyModel(input.rule)(thread)
+  ) {
     const current = input.providers.find((provider) => provider.instanceId === thread.instanceId);
     // Gemini/Vertex never continue as an automatic fallback, including one
     // selected before this guard, nor does a model a paid router or API bills.

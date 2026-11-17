@@ -6,12 +6,15 @@
  *
  * @module regularTrack
  */
-import type {
-  ModelSelection,
-  ProviderInstanceId,
-  ServerProvider,
+import {
+  DEFAULT_MODEL_TRACKS,
+  type ModelLanes,
+  type ModelSelection,
+  type ProviderInstanceId,
+  type ServerProvider,
 } from "@specweave-studio/contracts";
-import { fallbackSelectionKey } from "./modelTiers.ts";
+import { isSameModel } from "./modelIdentity.ts";
+import { fallbackSelectionKey, modelFamily } from "./modelTiers.ts";
 import {
   type ContextFitRequirement,
   type ExcludedFallbackModel,
@@ -84,4 +87,73 @@ export function namedModelElsewhere(input: {
     if (elsewhere !== null) return elsewhere;
   }
   return null;
+}
+
+/**
+ * A model's line: its family stem without the version and without a size
+ * variant, so `muse-wonder-1.0` and `muse-wonder-full-1.0` are both the Muse
+ * Wonder line, while `claude-opus-5-5` and `claude-sonnet-5-5` stay apart.
+ */
+export function modelLine(slug: string): string {
+  const key = slug
+    .trim()
+    .toLowerCase()
+    .replace(/\[[^\]]*\]$/, "")
+    .replace(/^.*\//, "")
+    .replace(/[\s_]+/g, "-");
+  const stem = modelFamily(key)?.stem ?? key.replace(/-?\d[\d.-]*/g, "-");
+  return stem
+    .split("-")
+    .filter((part) => part.length > 0 && !LINE_VARIANTS.has(part))
+    .join("-");
+}
+
+/** Words that name a size or build of one model line, not another line. */
+const LINE_VARIANTS: ReadonlySet<string> = new Set(["full", "latest", "preview"]);
+
+/** What `reviewOnlyModel` reads of the project settings. */
+export interface RegularTrackRule {
+  readonly adversarialReview?: { readonly reviewers?: ReadonlyArray<ModelSelection> } | undefined;
+  readonly modelLanes?: ModelLanes | null | undefined;
+  readonly providerLimitFallbackModels?: ReadonlyArray<ModelSelection> | undefined;
+  readonly providerLimitFallbackModelSelection?: ModelSelection | null | undefined;
+  readonly defaultModelSelection?: ModelSelection | null | undefined;
+}
+
+/**
+ * Whether `model` belongs only to the Review track, so regular work never
+ * falls back to it. The Review track is the person's reviewers, else the
+ * built-in Review order; a model is Review-only when its line (`modelLine`)
+ * is on that track and the model itself is not on the Regular side: the
+ * Daily and Complex tracks (the person's, else the built-in ones), their
+ * fallback list, or the project's default model. The whole line is held
+ * back because a provider's default can be a sibling of the reviewer (Muse
+ * Wonder 1.0 next to the Muse Wonder Full reviewer); a model named on the
+ * Regular side still counts, by its own identity.
+ */
+export function reviewOnlyModel(
+  rule: RegularTrackRule,
+): (selection: Pick<ModelSelection, "model">) => boolean {
+  const reviewers = rule.adversarialReview?.reviewers ?? [];
+  const reviewLines = new Set(
+    (reviewers.length > 0
+      ? reviewers.map((entry) => entry.model)
+      : DEFAULT_MODEL_TRACKS.review.map((entry) => entry.model)
+    ).map(modelLine),
+  );
+  const lane = (saved: ReadonlyArray<ModelSelection> | undefined, track: "daily" | "complex") =>
+    saved !== undefined && saved.length > 0
+      ? saved.map((entry) => entry.model)
+      : DEFAULT_MODEL_TRACKS[track].map((entry) => entry.model);
+  const regular = [
+    ...lane(rule.modelLanes?.routine, "daily"),
+    ...lane(rule.modelLanes?.complex, "complex"),
+    ...(rule.providerLimitFallbackModels ?? []).map((entry) => entry.model),
+    ...[rule.providerLimitFallbackModelSelection, rule.defaultModelSelection].flatMap((entry) =>
+      entry == null ? [] : [entry.model],
+    ),
+  ];
+  return ({ model }) =>
+    reviewLines.has(modelLine(model)) &&
+    !regular.some((named) => isSameModel({ slug: named }, { slug: model }));
 }

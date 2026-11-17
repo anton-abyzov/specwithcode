@@ -19,8 +19,9 @@ import {
   type ProviderFallbackRule,
   resolveCoordinatorTurnSelection,
   resolveProviderFallback,
+  resolveWorkerLaunchSelection,
 } from "./providerFallback.ts";
-import { limitStopIsAccountWide } from "./regularTrack.ts";
+import { limitStopIsAccountWide, modelLine, reviewOnlyModel } from "./regularTrack.ts";
 
 const now = Date.parse("2026-11-17T04:58:00.000Z");
 const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
@@ -119,6 +120,7 @@ const providers = [claude, codex, copilot, copilotEnterprise, muse];
 const fable = { instanceId: id("claudeAgent"), model: FABLE };
 const opus = { instanceId: id("claudeAgent"), model: OPUS };
 const opusOnEnterprise = { instanceId: id("acpRegistry_copilot"), model: "claude-opus-5.5" };
+const museWonder = { instanceId: id("muse"), model: "muse-wonder-1.0" };
 const rule: ProviderFallbackRule = {
   providerLimitAction: "switch",
   providerLimitFallbackModelSelection: null,
@@ -183,6 +185,32 @@ describe("the coordinator turn after a Fable-only stop", () => {
   });
 });
 
+describe("a worker launch while Fable is out of room", () => {
+  it("takes Opus on the Claude account, not the coordinator's Muse", () => {
+    expect(
+      resolveWorkerLaunchSelection({
+        preferred: fable,
+        coordinator: museWonder,
+        providers,
+        rule,
+        nowMs: now,
+      }),
+    ).toEqual({ selection: opus, reason: "fallback" });
+  });
+
+  it("takes Opus on Copilot Enterprise when the Claude account is spent", () => {
+    expect(
+      resolveWorkerLaunchSelection({
+        preferred: fable,
+        coordinator: museWonder,
+        providers: [claudeSpent, codex, copilot, copilotEnterprise, muse],
+        rule,
+        nowMs: now,
+      }).selection,
+    ).toEqual(opusOnEnterprise);
+  });
+});
+
 describe("the limit-stop fallback of a Fable thread", () => {
   const stop = {
     currentInstanceId: claude.instanceId,
@@ -204,5 +232,111 @@ describe("the limit-stop fallback of a Fable thread", () => {
         providers: [claudeSpent, codex, copilot, copilotEnterprise, muse],
       }),
     ).toEqual(opusOnEnterprise);
+  });
+});
+
+describe("regular work never falls back to a Review-track model", () => {
+  // Nothing on the person's list or the Daily track has room; only Muse does.
+  const onlyMuse = [claudeSpent, codex, copilot, muse];
+  const limited = new Set([claude.instanceId]);
+
+  it("reads Muse Wonder and Muse Wonder Full as one line, Opus and Sonnet as two", () => {
+    expect(modelLine("muse-wonder-1.0")).toBe(modelLine("muse-wonder-full-1.0"));
+    expect(modelLine("claude-opus-5-5")).toBe(modelLine("claude-opus-5.5"));
+    expect(modelLine("claude-opus-5-5")).not.toBe(modelLine("claude-sonnet-5-5"));
+    expect(modelLine("gpt-6.1-sol")).toBe("gpt-sol");
+  });
+
+  it("holds back the Muse Wonder line, never a model on the Regular side", () => {
+    const reviewOnly = reviewOnlyModel(rule);
+    expect(reviewOnly({ model: "muse-wonder-1.0" })).toBe(true);
+    expect(reviewOnly({ model: "muse-wonder-full-1.0" })).toBe(true);
+    // Sol is on both built-in tracks: Daily keeps it on the Regular side.
+    expect(reviewOnly({ model: "gpt-6.1-sol" })).toBe(false);
+    expect(reviewOnly({ model: OPUS })).toBe(false);
+    // The person's own Review track decides which line is held back.
+    const own = reviewOnlyModel({
+      ...rule,
+      adversarialReview: { reviewers: [{ instanceId: id("codex"), model: "gpt-6-astra" }] },
+    });
+    expect(own({ model: "muse-wonder-1.0" })).toBe(false);
+    // Complex names Astra: it stays on the Regular side.
+    expect(own({ model: "gpt-6-astra" })).toBe(false);
+  });
+
+  it("waits on the saved model instead of guessing Muse for the coordinator", () => {
+    expect(
+      resolveCoordinatorTurnSelection({
+        saved: fable,
+        thread: fable,
+        providers: onlyMuse,
+        rule,
+        nowMs: now,
+        limitedInstanceIds: limited,
+      }),
+    ).toEqual({ selection: fable, reason: "no-fallback" });
+  });
+
+  it("does not keep a coordinator on Muse that a move put there", () => {
+    const result = resolveCoordinatorTurnSelection({
+      saved: fable,
+      thread: museWonder,
+      providers,
+      rule,
+      nowMs: now,
+    });
+    expect(result).toEqual({ selection: opus, reason: "fallback" });
+  });
+
+  it("starts a worker on its pick with no room rather than on Muse", () => {
+    expect(
+      resolveWorkerLaunchSelection({
+        preferred: fable,
+        coordinator: museWonder,
+        providers: onlyMuse,
+        rule,
+        nowMs: now,
+        limitedInstanceIds: limited,
+      }),
+    ).toEqual({ selection: fable, reason: "no-room" });
+  });
+
+  it("leaves a limit-stopped thread waiting rather than on Muse", () => {
+    expect(
+      resolveProviderFallback({
+        providers: onlyMuse,
+        currentInstanceId: claude.instanceId,
+        currentModel: FABLE,
+        rule,
+        nowMs: now,
+        anyReady: true,
+        limitedInstanceIds: limited,
+      }),
+    ).toBeNull();
+  });
+
+  it("still lets review work and a Muse model the person listed reach Muse", () => {
+    expect(
+      resolveWorkerLaunchSelection({
+        preferred: fable,
+        coordinator: museWonder,
+        providers: onlyMuse,
+        rule,
+        nowMs: now,
+        limitedInstanceIds: limited,
+        review: true,
+      }),
+    ).toEqual({ selection: museWonder, reason: "coordinator" });
+    expect(
+      resolveProviderFallback({
+        providers: onlyMuse,
+        currentInstanceId: claude.instanceId,
+        currentModel: FABLE,
+        rule: { ...rule, providerLimitFallbackModels: [opus, museWonder] },
+        nowMs: now,
+        anyReady: true,
+        limitedInstanceIds: limited,
+      }),
+    ).toEqual(museWonder);
   });
 });
