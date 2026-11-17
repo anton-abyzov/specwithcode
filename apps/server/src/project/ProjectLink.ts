@@ -6,7 +6,6 @@ import {
   CommandId,
   compareFingerprints,
   coordinatorMayLeave,
-  coordinatorStartedBeside,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   noteNameCandidates,
   LOGICAL_PROJECT_MEMBER_ROOT_MAX_LENGTH,
@@ -206,12 +205,6 @@ export interface ReplicateFromMemberInput {
 
 const fail = (code: ProjectLinkError["code"], detail?: string) =>
   Effect.fail(new ProjectLinkError({ code, ...(detail ? { detail } : {}) }));
-
-/** The kept side's binding after a join; one started beside main remembers it (`keptForJoin`). */
-const keptFor = (binding: ProjectCoordinatorBinding | undefined): ProjectCoordinatorBinding =>
-  coordinatorStartedBeside(binding)
-    ? { ...binding!, keptForJoin: true }
-    : (binding ?? { epoch: 0, state: "active" });
 
 /** A personal assistant is never linked, taken over, started or superseded from another machine. */
 const refusePersonal = (project: Pick<Project, "workspaceSettings">) =>
@@ -760,7 +753,10 @@ const make = Effect.gen(function* () {
           {
             mode: "link-member",
             logicalProject,
-            coordinatorBinding: keptFor(project.workspaceSettings?.coordinatorBinding),
+            coordinatorBinding: project.workspaceSettings?.coordinatorBinding ?? {
+              epoch: 0,
+              state: "active",
+            },
           },
         );
         return { operationId: input.operationId, logicalProject, notesWritten, replayed: false };

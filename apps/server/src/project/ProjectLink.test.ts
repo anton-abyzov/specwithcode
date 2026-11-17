@@ -1378,7 +1378,7 @@ describe("ProjectLink", () => {
       ).toEqual({ epoch: 0, state: "active" });
     });
 
-    it("keeps a started coordinator that took over, was kept for a join, or is alone", async () => {
+    it("keeps a started coordinator that took over, or is alone", async () => {
       const pair = legacyPair();
       await link(pair);
       await pair.m3.run((service) =>
@@ -1389,7 +1389,6 @@ describe("ProjectLink", () => {
       const binding = settings.coordinatorBinding!;
       for (const next of [
         { ...settings, coordinatorBinding: { ...binding, predecessor: pair.kept } },
-        { ...settings, coordinatorBinding: { ...binding, keptForJoin: true as const } },
         { ...settings, logicalProject: { ...settings.logicalProject!, members: [pair.joining] } },
       ]) {
         pair.m3.projects.set(pair.joining.projectId, { ...joined, workspaceSettings: next });
@@ -1411,7 +1410,7 @@ describe("ProjectLink", () => {
       }
     });
 
-    it("remembers that a started coordinator was kept for a join, and then never leaves", async () => {
+    it("lets a copy leave while another names it as coordinator, as a plain unlink always has", async () => {
       const pair = legacyPair();
       await link(pair);
       await pair.m3.run((service) =>
@@ -1444,28 +1443,39 @@ describe("ProjectLink", () => {
           notes: [],
         }),
       );
-      const binding = pair.m3.projects.get(pair.joining.projectId)!.workspaceSettings!
-        .coordinatorBinding!;
-      expect(binding).toMatchObject({ state: "active", keptForJoin: true });
+      // M1 now works for M3. Neither server can see that from M3's own record: the
+      // shipped unlink of a relinquished copy (M3 after giving way) never could either.
       expect(
-        (
-          await pair.m3.fails(
-            pair.m3.run((service) =>
-              service.unlink({
-                side: "member",
-                operationId: unlinkId,
-                projectId: pair.joining.projectId,
-                notes: [],
-                leaveCoordinator: true,
-              }),
-            ),
-          )
-        ).code,
-      ).toBe("not_linked");
-      // Main keeps a binding with no such mark when it is kept.
-      expect(
-        pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.coordinatorBinding,
-      ).toEqual({ epoch: 0, state: "active" });
+        m1.projects.get(joining.projectId)!.workspaceSettings!.coordinatorBinding,
+      ).toMatchObject({ state: "transferred", successor: { environmentId: "m3" } });
+      const started = pair.m3.projects.get(pair.joining.projectId)!;
+      const leave = (leaveCoordinator?: true) =>
+        pair.m3.run((service) =>
+          service.unlink({
+            side: "member",
+            operationId: unlinkId,
+            projectId: pair.joining.projectId,
+            notes: [],
+            ...(leaveCoordinator ? { leaveCoordinator } : {}),
+          }),
+        );
+      pair.m3.projects.set(pair.joining.projectId, {
+        ...started,
+        workspaceSettings: {
+          ...started.workspaceSettings!,
+          coordinatorBinding: {
+            epoch: 3,
+            state: "transferred",
+            operationId: "55555555-5555-4555-8555-555555555555",
+            successor: pair.kept,
+          },
+        },
+      });
+      expect((await leave()).logicalProject.members).toEqual([pair.joining]);
+      // The same holds for the coordinator started beside main; the app checks the copies
+      // it can see before it offers Unlink (ProjectMachinesSettings).
+      pair.m3.projects.set(pair.joining.projectId, started);
+      expect((await leave(true)).logicalProject.members).toEqual([pair.joining]);
     });
 
     it("is a no-op on an active coordinator and refuses copies that are not linked members", async () => {

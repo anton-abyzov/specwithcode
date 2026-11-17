@@ -121,11 +121,6 @@ export const ProjectCoordinatorBinding = Schema.Struct({
       Schema.isMaxLength(256),
     ),
   ),
-  /**
-   * A coordinator started beside main was kept for a later join: a copy names it as its
-   * coordinator, so it never leaves the link (`coordinatorMayLeave`).
-   */
-  keptForJoin: Schema.optional(Schema.Literal(true)),
 });
 export type ProjectCoordinatorBinding = typeof ProjectCoordinatorBinding.Type;
 
@@ -135,14 +130,15 @@ export function coordinatorStartedBeside(binding: ProjectCoordinatorBinding | un
 }
 
 /**
- * A coordinator started beside main may leave its shared project like a plain copy, unless
- * a copy joined under it or it is alone in its list. Main never matches.
+ * A coordinator started beside main may leave its shared project like a plain copy, unless it
+ * is alone in its list. Main never matches. Like a plain copy's unlink, this cannot see a
+ * copy that names it as its coordinator; the caller checks the copies it can see.
  */
 export function coordinatorMayLeave(
   binding: ProjectCoordinatorBinding | undefined,
   memberCount: number,
 ): boolean {
-  return coordinatorStartedBeside(binding) && binding?.keptForJoin !== true && memberCount > 1;
+  return coordinatorStartedBeside(binding) && memberCount > 1;
 }
 
 export function projectCoordinatorIsFenced(

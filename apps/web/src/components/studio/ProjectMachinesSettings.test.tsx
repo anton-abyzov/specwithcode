@@ -451,9 +451,6 @@ it("offers no Unlink on a side coordinator another copy works for, or one alone"
       .filter((node) => node.textContent?.trim() === "Unlink")
       .map((node) => node.getAttribute("aria-label"));
   expect(labels()).not.toContain("Unlink the copy on M1");
-  const kept = copy("m1", "side", roster, "active", { epoch: 2, keptForJoin: true });
-  await render([main, copy("m4", "joined", roster, "transferred"), kept]);
-  expect(labels()).not.toContain("Unlink the copy on M1");
   const alone = copy("m1", "side", identity("logical:1", [ref("m1", "side")]), "active", {
     epoch: 2,
   });

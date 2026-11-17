@@ -929,7 +929,7 @@ describe("explicit link ownership modes", () => {
       );
   });
 
-  it("unlinks a coordinator started beside main only while no copy joined under it", () => {
+  it("unlinks a coordinator started beside main, never main or one alone", () => {
     const fresh = {
       id: "logical:fresh",
       title: "EasyChamp",
@@ -941,10 +941,9 @@ describe("explicit link ownership modes", () => {
     const side = { epoch: 2, state: "active" as const, operationId: "start-op" };
     const roster = { ...shared, members: [other, self] };
     payloadOf(apply({ logicalProject: roster, coordinatorBinding: side }, leave));
-    // Main after a takeover or a move, a copy kept for a join, and one alone are refused.
+    // Main after a takeover or a move, main at epoch 0, and one alone are refused.
     for (const current of [
       { logicalProject: roster, coordinatorBinding: { ...side, predecessor: other } },
-      { logicalProject: roster, coordinatorBinding: { ...side, keptForJoin: true as const } },
       { logicalProject: roster, coordinatorBinding: { ...side, epoch: 0 } },
       { logicalProject: { ...shared, members: [self] }, coordinatorBinding: side },
     ])
@@ -952,32 +951,6 @@ describe("explicit link ownership modes", () => {
         failureText(apply(current, leave)),
         "Only a member whose coordinator was relinquished",
       );
-    // Kept for a join, it remembers so; main's binding stays exactly as it is.
-    const third = { ...other, projectId: ProjectId.make("third") };
-    const linked = { ...shared, members: [other, self, third] };
-    const kept = payloadOf(
-      apply(
-        { logicalProject: roster, coordinatorBinding: side },
-        {
-          mode: "link-member",
-          logicalProject: linked,
-          coordinatorBinding: { ...side, keptForJoin: true },
-        },
-      ),
-    );
-    assert.deepInclude(kept.workspaceSettings, {
-      coordinatorBinding: { ...side, keptForJoin: true },
-    });
-    failureOf(
-      apply(
-        { logicalProject: roster, coordinatorBinding: { ...side, epoch: 0 } },
-        {
-          mode: "link-member",
-          logicalProject: linked,
-          coordinatorBinding: { ...side, epoch: 0, keptForJoin: true },
-        },
-      ),
-    );
   });
 
   it("keeps a relinquished binding fenced on every path except unlink and verified handoff", () => {
