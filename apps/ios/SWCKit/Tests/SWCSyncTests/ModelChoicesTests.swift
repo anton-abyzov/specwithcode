@@ -56,6 +56,21 @@ import SWCWire
     #expect(sonnet.traits(for: sonnet.selection) == nil)
   }
 
+  @Test func matchesAContextWindowVariantOfTheSameModel() throws {
+    let choices = ModelChoice.available(providers: try Self.providers(), current: ModelSelection(instanceId: "claudeAgent", model: "claude-opus-5-5[1m]"))
+    #expect(choices.first { $0.matches(ModelSelection(instanceId: "claudeAgent", model: "claude-opus-5-5[1m]")) }?.slug == "claude-opus-5-5")
+    #expect(ModelChoice.sameModel(ModelSelection(instanceId: "claudeAgent", model: "claude-opus-5-5[1m]"), ModelSelection(instanceId: "claudeAgent", model: "claude-opus-5-5")))
+  }
+
+  @Test func twoInstancesOfOneHarnessAreToldApart() throws {
+    let providers = [
+      ServerProviderSummary(instanceId: "claudeAgent", driver: "claudeAgent", models: [ServerProviderModel(slug: "claude-opus-5-5", name: "Opus 5.5")]),
+      ServerProviderSummary(instanceId: "claudeMax", driver: "claudeAgent", displayName: "Claude Max", models: [ServerProviderModel(slug: "claude-opus-5-5", name: "Opus 5.5")]),
+    ]
+    let groups = ModelChoice.grouped(ModelChoice.available(providers: providers, current: ModelSelection(instanceId: "claudeAgent", model: "claude-opus-5-5")))
+    #expect(groups.map(\.provider) == ["Claude Code (claudeAgent)", "Claude Max"])
+  }
+
   @Test func threadSummaryCarriesItsChoicesAndModel() throws {
     var thread = try TestData.thread()
     thread.modelSelection = ModelSelection(instanceId: "grok", model: "grok-4.7")

@@ -36,7 +36,19 @@ public struct ModelChoice: Hashable, Sendable, Identifiable {
 
   /// Whether this is the model a selection names (by slug or alias).
   public func matches(_ selection: ModelSelection) -> Bool {
-    instanceId == selection.instanceId && (slug == selection.model || aliases.contains(selection.model))
+    let model = Self.baseSlug(selection.model)
+    return instanceId == selection.instanceId && (Self.baseSlug(slug) == model || aliases.map(Self.baseSlug).contains(model))
+  }
+
+  /// Whether two selections name the same model, options aside.
+  public static func sameModel(_ a: ModelSelection, _ b: ModelSelection) -> Bool {
+    a.instanceId == b.instanceId && baseSlug(a.model) == baseSlug(b.model)
+  }
+
+  /// A slug without a variant suffix such as "[1m]" (the context window).
+  static func baseSlug(_ slug: String) -> String {
+    guard slug.hasSuffix("]"), let open = slug.lastIndex(of: "[") else { return slug }
+    return String(slug[..<open])
   }
 
   /// The models a thread may switch to: every model of each provider on its
@@ -44,9 +56,16 @@ public struct ModelChoice: Hashable, Sendable, Identifiable {
   /// model even when its provider is not ready, so the menu can show it.
   public static func available(providers: [ServerProviderSummary], current: ModelSelection) -> [ModelChoice] {
     var choices: [ModelChoice] = []
+    let harness = Dictionary(providers.map { ($0.instanceId, ThreadIdentity(selection: ModelSelection(instanceId: $0.instanceId, model: ""), providers: [$0]).provider) }, uniquingKeysWith: { a, _ in a })
     for provider in providers {
       let ready = provider.enabled && provider.installed && provider.status == "ready"
-      let name = ThreadIdentity(selection: ModelSelection(instanceId: provider.instanceId, model: ""), providers: [provider]).provider
+      // Two instances of one harness ("Claude Code" twice) are told apart by
+      // the name the person gave each, else by their id.
+      var name = harness[provider.instanceId] ?? provider.instanceId
+      if harness.values.filter({ $0 == name }).count > 1 {
+        let given = provider.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        name = given.isEmpty || given == name ? "\(name) (\(provider.instanceId))" : given
+      }
       for model in provider.models {
         let choice = ModelChoice(
           instanceId: provider.instanceId,

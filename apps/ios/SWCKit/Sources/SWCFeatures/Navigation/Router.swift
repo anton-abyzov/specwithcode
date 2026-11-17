@@ -169,6 +169,9 @@ final class AppRouter {
   var optionDrafts: [ChatTarget: [ModelOption]] = [:]
   /// A model picked in each chat's composer, sent with its next message.
   var modelDrafts: [ChatTarget: ModelSelection] = [:]
+  /// A model each chat sent that its thread does not run on yet (a queued
+  /// message switches it when its run starts), so later messages keep it.
+  var sentModels: [ChatTarget: ModelSelection] = [:]
   private(set) var pendingPhotoBatches: [ChatTarget: Int] = [:]
 
   func beginPhotoBatch(for target: ChatTarget) {

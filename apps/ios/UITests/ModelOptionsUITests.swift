@@ -53,6 +53,14 @@ final class ModelOptionsUITests: SWCUITestCase {
     XCTAssertFalse(chip.label.contains("High"), "Opus's options do not carry over to Codex: \(chip.label)")
     attachScreenshot("GPT-5.5 picked")
 
+    // Sending runs the message on the picked model; the chip keeps naming it.
+    tap(composer)
+    composer.typeText("Try this on Codex")
+    hittableButton("Send").tap()
+    settle()
+    XCTAssertTrue(waitUntil { chip.label.contains("GPT-5.5") }, "After sending the chip still names GPT-5.5: \(chip.label)")
+    attachScreenshot("Sent on GPT-5.5")
+
     chip.tap()
     settle()
     tap(modelSubmenu)
