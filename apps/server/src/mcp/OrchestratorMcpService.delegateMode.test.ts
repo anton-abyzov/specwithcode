@@ -117,23 +117,29 @@ describe("delegate_task on a provider without the asked mode", () => {
       subagents,
     }) as unknown as OrchestrationV2ThreadProjection;
 
-  const childProjection = {
-    thread: { id: childThreadId },
-    runs: [],
-    contextTransfers: [],
-    messages: [],
-    subagents: [],
-    providerThreads: [],
-    turnItems: [],
-  } as unknown as OrchestrationV2ThreadProjection;
+  const childProjection = (runtimeMode: RuntimeMode) =>
+    ({
+      thread: { id: childThreadId, runtimeMode },
+      runs: [],
+      contextTransfers: [],
+      messages: [],
+      subagents: [],
+      providerThreads: [],
+      turnItems: [],
+    }) as unknown as OrchestrationV2ThreadProjection;
 
   const delegate = (input: {
     readonly parentMode: RuntimeMode;
     readonly runtimeMode?: RuntimeMode;
     readonly instanceId: ProviderInstanceId;
     readonly model: string;
+    /** The child as stored, when dispatch replays an earlier round's child. */
+    readonly storedChildMode?: RuntimeMode;
+    /** What the registry lists before its first refresh. */
+    readonly staleProviders?: ReadonlyArray<ServerProvider>;
   }) =>
     Effect.gen(function* () {
+      let providerReads = 0;
       const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const task = {
         id: taskId,
@@ -163,7 +169,7 @@ describe("delegate_task on a provider without the asked mode", () => {
             Effect.succeed(
               threadId === parentThreadId
                 ? parentProjection(delegated ? [task] : [], input.parentMode)
-                : childProjection,
+                : childProjection(input.storedChildMode ?? input.runtimeMode ?? input.parentMode),
             ),
           dispatch: (command) =>
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
@@ -185,7 +191,11 @@ describe("delegate_task on a provider without the asked mode", () => {
             ),
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
-          getProviders: Effect.succeed(providers),
+          getProviders: Effect.sync(() =>
+            providerReads++ === 0 && input.staleProviders !== undefined
+              ? input.staleProviders
+              : providers,
+          ),
           refreshInstance: () => Effect.succeed(providers),
         }),
         Layer.succeed(
@@ -255,6 +265,32 @@ describe("delegate_task on a provider without the asked mode", () => {
         model: "claude-opus",
       });
       assert.equal(result.warning, undefined);
+    }),
+  );
+
+  it.effect("warns from the provider list the target resolved against, not a stale one", () =>
+    Effect.gen(function* () {
+      const { result } = yield* delegate({
+        parentMode: "full-access",
+        runtimeMode: "auto",
+        instanceId: museInstanceId,
+        model: "muse-wonder-full-1.0",
+        staleProviders: providers.filter((provider) => provider.instanceId !== museInstanceId),
+      });
+      assert.include(result.warning ?? "", "Muse Code has no Auto mode");
+    }),
+  );
+
+  it.effect("warns from the replayed child's stored mode on a retry", () =>
+    Effect.gen(function* () {
+      const { result } = yield* delegate({
+        parentMode: "full-access",
+        runtimeMode: "full-access",
+        storedChildMode: "auto",
+        instanceId: museInstanceId,
+        model: "muse-wonder-full-1.0",
+      });
+      assert.include(result.warning ?? "", "Muse Code has no Auto mode");
     }),
   );
 });

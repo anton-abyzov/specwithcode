@@ -3727,20 +3727,8 @@ const make = Effect.gen(function* () {
             writeLaunchBinding(deriveDelegatedTaskThread({ commandId }), seeded),
           );
         }
-        const launchFields = launchIncrementFields(increment);
-        const warning = joinLaunchWarnings(
-          launchFields.warning,
-          delegatedRuntimeModeWarning({
-            requested: runtimeMode,
-            parentMode: parent.thread.runtimeMode,
-            provider: providers.find(
-              (provider) => provider.instanceId === target.modelSelection.instanceId,
-            ),
-          }),
-        );
         const incrementFields = {
-          ...launchFields,
-          ...(warning === undefined ? {} : { warning }),
+          ...launchIncrementFields(increment),
           ...(review === null || review.kind === "none"
             ? {}
             : { review: reviewResultFields(review, reviewPolicy) }),
@@ -3796,9 +3784,34 @@ const make = Effect.gen(function* () {
           );
         }
         const taskId = taskEvent.event.payload.id;
+        // A provider without the asked mode runs the child Supervised
+        // (RuntimePolicy providerRuntimeMode), so say so. Read the child that
+        // dispatch created or replayed and the providers as they are now: a
+        // retry replays the first child, and the target may have resolved
+        // against a list refreshed after the one loaded above.
+        const withModeWarning = <
+          Task extends { readonly childThreadId: ThreadId; readonly providerInstanceId: string },
+        >(
+          task: Task,
+        ) =>
+          Effect.gen(function* () {
+            const child = yield* threadManagement
+              .getThreadRecords(task.childThreadId, [])
+              .pipe(Effect.option);
+            const current = yield* loadProviders;
+            const warning = joinLaunchWarnings(
+              incrementFields.warning,
+              delegatedRuntimeModeWarning({
+                requested: Option.isSome(child) ? child.value.thread.runtimeMode : runtimeMode,
+                parentMode: parent.thread.runtimeMode,
+                provider: current.find((provider) => provider.instanceId === task.providerInstanceId),
+              }),
+            );
+            return { ...task, ...incrementFields, ...(warning === undefined ? {} : { warning }) };
+          });
 
         if (input.mode !== "wait") {
-          return { ...(yield* readTask(scope, taskId, false, true)), ...incrementFields };
+          return yield* withModeWarning(yield* readTask(scope, taskId, false, true));
         }
         const timeoutMs = Math.min(
           MAX_WAIT_TIMEOUT_MS,
@@ -3852,9 +3865,9 @@ const make = Effect.gen(function* () {
           ),
         );
         if (Option.isSome(waited)) {
-          return { ...waited.value, ...incrementFields };
+          return yield* withModeWarning(waited.value);
         }
-        return { ...(yield* readTask(scope, taskId, true, true)), ...incrementFields };
+        return yield* withModeWarning(yield* readTask(scope, taskId, true, true));
       }),
     consultAdvisor: (callerScope, input) => consultAdvisor(advisorPorts(callerScope), input),
     taskStatus: (callerScope, taskId) =>
