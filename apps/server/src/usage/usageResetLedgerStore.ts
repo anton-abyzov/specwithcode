@@ -17,10 +17,11 @@ import {
   closedReset,
   isLedgerWindow,
   ledgerWindowLengthMs,
+  resetPeriods,
 } from "@specweave-studio/shared/usageResetLedger";
 import { windowModelScope } from "@specweave-studio/shared/usageWindows";
 
-import { type HistoryReading, isoAt } from "./usageLimitHistoryStore.ts";
+import { type HistoryReading, type HistoryState, isoAt } from "./usageLimitHistoryStore.ts";
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -174,6 +175,93 @@ export function advanceLedger(state: LedgerState, reading: LedgerReading): Ledge
   return closedPeriods;
 }
 
+/**
+ * The model family a history series is limited to. History keeps no labels,
+ * so the id decides: Claude names model windows `seven_day_<family>`, Codex
+ * names extra buckets `<bucket>:<position>`. A live cursor knows better.
+ */
+function historyModelScope(windowId: string): string | null {
+  const claude = /^seven_day_(?!overage_included$)(.+)$/.exec(windowId);
+  if (claude) return claude[1]!;
+  const colon = windowId.indexOf(":");
+  return colon > 0 ? windowId.slice(0, colon) : null;
+}
+
+/**
+ * Adds the periods that closed inside the quota history (fourteen days of
+ * reads) and are not in the ledger yet, so a new ledger starts with the last
+ * two weeks instead of nothing. A period already recorded, from this history
+ * or a live read, is one whose span from last read to reset overlaps the new
+ * one in the same window. Returns how many periods and cursor starts it
+ * added, so the caller knows to save.
+ */
+export function backfillLedger(state: LedgerState, history: HistoryState): number {
+  const added: LedgerPeriod[] = [];
+  let dated = 0;
+  for (const series of history.values()) {
+    if (!isLedgerWindow(series.windowKind, series.windowDurationMins)) continue;
+    const key = cursorKey(series.accountKey, series.windowKind, series.windowId);
+    const cursor = state.cursors.get(key);
+    const modelScope = cursor ? cursor.modelScope : historyModelScope(series.windowId);
+    const lengthMs = ledgerWindowLengthMs(series.windowKind, series.windowDurationMins);
+    const samples = series.samples.toSorted((left, right) => left.at - right.at);
+    const known = state.periods.filter(
+      (period) =>
+        period.accountKey === series.accountKey &&
+        period.windowKind === series.windowKind &&
+        period.windowId === series.windowId,
+    );
+    let lastEnded: number | null = null;
+    for (const period of resetPeriods(series.accountKey, series.windowId, samples, lengthMs)) {
+      lastEnded = period.endedAt;
+      const overlaps = [...known, ...added].some(
+        (other) =>
+          other.accountKey === series.accountKey &&
+          other.windowKind === series.windowKind &&
+          other.windowId === series.windowId &&
+          // The same record again (its span may be a single instant), or one whose span
+          // from last read to reset overlaps: another read of the same reset.
+          ((other.endedAt === period.endedAt && other.lastReadAt === period.lastReadAt) ||
+            (period.lastReadAt < other.endedAt && other.lastReadAt < period.endedAt)),
+      );
+      if (overlaps) continue;
+      added.push({
+        accountKey: series.accountKey,
+        driver: series.driver,
+        windowId: series.windowId,
+        windowKind: series.windowKind,
+        windowDurationMins: series.windowDurationMins,
+        modelScope,
+        startedAt: period.startedAt,
+        endedAt: period.endedAt,
+        lastReadAt: period.lastReadAt,
+        usedPercentAtReset: period.usedPercentAtReset,
+        lostPercent: period.lostPercent,
+        cause: period.cause,
+      });
+    }
+    // The running period began at the last reset the history saw, when the cursor's last
+    // read is still inside that period: past a whole window, another reset came unread.
+    if (
+      cursor &&
+      cursor.startedAt === null &&
+      lastEnded !== null &&
+      lastEnded <= cursor.at &&
+      lengthMs !== null &&
+      cursor.at - lastEnded < lengthMs
+    ) {
+      cursor.startedAt = lastEnded;
+      dated += 1;
+    }
+  }
+  if (added.length > 0) {
+    state.periods = [...state.periods, ...added].toSorted(
+      (left, right) => left.endedAt - right.endedAt,
+    );
+  }
+  return added.length + dated;
+}
+
 /** Drops periods past a year, the oldest past the cap, and cursors of windows long unread. */
 export function pruneLedger(state: LedgerState, now: number): boolean {
   let changed = false;
@@ -291,7 +379,11 @@ export function decodeLedgerFile(raw: string): LedgerState {
       startedAt,
       credits: isFiniteNumber(credits) ? credits : null,
       // A file written before `creditSpentAt` only says a credit was spent: date it at the last read.
-      creditSpentAt: isFiniteNumber(creditSpentAt) ? creditSpentAt : creditSpent === true ? at : null,
+      creditSpentAt: isFiniteNumber(creditSpentAt)
+        ? creditSpentAt
+        : creditSpent === true
+          ? at
+          : null,
     });
   }
   for (const entry of Array.isArray(parsed.periods) ? parsed.periods : []) {

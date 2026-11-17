@@ -31,7 +31,8 @@ export function mergeLedgers(
       return [
         {
           accountKey: wire.accountKey,
-          windowId: wire.windowId,
+          // Codex's `primary` is weekly on one plan and monthly on another: one id, two windows.
+          windowId: `${wire.windowKind}:${wire.windowId}`,
           startedAt: startedAt !== null && Number.isFinite(startedAt) ? startedAt : null,
           endedAt,
           lastReadAt,
@@ -70,6 +71,7 @@ const NO_LEDGER: Ledger = { periods: [], accounts: [] };
 export function useUsageResetLedger(
   environmentIds: readonly EnvironmentId[],
   refreshKey: number,
+  sinceDays: number = LEDGER_DAYS,
 ): UsageResetLedgerView | null {
   const read = useAtomCommand(serverEnvironment.usageResetLedger, {
     reportFailure: false,
@@ -96,7 +98,7 @@ export function useUsageResetLedger(
     const ids = environmentsKey === "" ? [] : (environmentsKey.split("\n") as EnvironmentId[]);
     void Promise.all(
       ids.map((environmentId): Promise<Ledger> =>
-        Promise.resolve(read({ environmentId, input: { sinceDays: LEDGER_DAYS } }))
+        Promise.resolve(read({ environmentId, input: { sinceDays } }))
           .then((result) =>
             result?._tag === "Success"
               ? { periods: result.value.periods, accounts: result.value.openAccounts ?? [] }
@@ -115,6 +117,6 @@ export function useUsageResetLedger(
       cancelled = true;
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- refreshKey re-reads on refresh.
-  }, [environmentsKey, read, refreshKey]);
+  }, [environmentsKey, read, refreshKey, sinceDays]);
   return view;
 }
