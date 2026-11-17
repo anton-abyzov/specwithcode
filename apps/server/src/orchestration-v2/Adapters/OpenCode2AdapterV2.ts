@@ -3298,7 +3298,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           responseStyle: turnInput.runtimePolicy.responseStyle,
           agentInstructions: turnInput.runtimePolicy.agentInstructions,
         }),
-        studioOrchestrationSystemPrompt(state.mcp !== undefined),
+        studioOrchestrationSystemPrompt(
+          state.mcp !== undefined,
+          turnInput.runtimePolicy.isCoordinator,
+        ),
       ]
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");

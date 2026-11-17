@@ -993,7 +993,10 @@ export function makeOpenCodeAdapterV2(
           mcpSession !== undefined &&
           !connection.external &&
           !isLocalModelSlug(input.modelSelection.model);
-        const orchestrationSystemPrompt = studioOrchestrationSystemPrompt(hasStudioMcp);
+        const orchestrationSystemPrompt = studioOrchestrationSystemPrompt(
+          hasStudioMcp,
+          input.runtimePolicy.isCoordinator,
+        );
         if (hasStudioMcp) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({

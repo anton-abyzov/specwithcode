@@ -4,6 +4,7 @@ import { Tool } from "effect/ai";
 import {
   STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
   studioAcpPromptWithInstructions,
+  studioOrchestrationInstructionsForRole,
   studioOrchestrationPromptForFirstRun,
   studioOrchestrationSystemPrompt,
 } from "./StudioOrchestrationInstructions.ts";
@@ -192,6 +193,40 @@ describe("SpecWithCode orchestration provider instructions", () => {
       studioOrchestrationPromptForFirstRun({ prompt, runOrdinal: 1, hasStudioMcp: false }),
       prompt,
     );
+  });
+
+  it("routes a coordinator's real work to a worker thread, not native subagents", () => {
+    const coordinator = studioOrchestrationInstructionsForRole(true);
+    assert.include(coordinator, "you route work, you do not do it");
+    assert.include(coordinator, "`delegate_task` in mode async");
+    assert.include(coordinator, "Never use native subagents, native workflows");
+    assert.include(coordinator, "recording delivery for an answer-only task");
+    assert.include(coordinator, "forwarding a user's answer to its owning worker");
+    assert.notInclude(coordinator, "use your native subagent tool when it supports");
+    assert.notInclude(coordinator, "only when the user asks for separate threads");
+    // A non-trivial ask reaches the coordinator as this prompt: it must not
+    // carry an instruction to execute it in the coordinator thread.
+    const injected = studioOrchestrationPromptForFirstRun({
+      prompt: "Investigate why M5 cannot start work and fix it.",
+      runOrdinal: 1,
+      hasStudioMcp: true,
+      isCoordinator: true,
+    });
+    assert.include(injected, "you route work, you do not do it");
+    assert.equal(studioOrchestrationSystemPrompt(true, true), coordinator);
+    assert.include(
+      studioAcpPromptWithInstructions({
+        prompt: "Fix it.",
+        state: { interactionMode: "default", hasStudioMcp: true, isCoordinator: true },
+      }),
+      "you route work, you do not do it",
+    );
+  });
+
+  it("keeps the worker subagent line for non-coordinator threads", () => {
+    assert.equal(studioOrchestrationInstructionsForRole(false), STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS);
+    assert.equal(studioOrchestrationInstructionsForRole(undefined), STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS);
+    assert.equal(studioOrchestrationSystemPrompt(true), STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS);
   });
 
   it("only exposes the system prompt when the SpecWithCode MCP server is attached", () => {

@@ -6,6 +6,12 @@ import type { ProviderInteractionMode } from "@specweave-studio/contracts";
  * rounds, PR watching), so it is not repeated here. The headless rule comes
  * with the runtime instructions every provider receives.
  */
+const WORKER_SUBAGENT_LINE =
+  "- Subagents: use your native subagent tool when it supports the model you need, otherwise `delegate_task` (any provider or model listed by `orchestrator_capabilities`). Start top-level threads with `studio_thread_launch` or `create_threads` only when the user asks for separate threads.";
+
+const COORDINATOR_SUBAGENT_LINE =
+  "- You are this project's coordinator: you route work, you do not do it. For any real work (research, reading files, settings or logs, running commands, verification, fixes, web or external-service lookups), your next call starts a worker with `delegate_task` in mode async (or `studio_thread_launch` where this project runs its workers), then one line naming where it went with its thread link. Never use native subagents, native workflows, or your own file, shell, edit or web tools for that work, however small it looks. Stay here only for a truly simple answer from this chat, memory or the thread list, summarizing or outputting a result, forwarding a user's answer to its owning worker, recording delivery for an answer-only task, and one-line acknowledgements.";
+
 export const STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS = `
 
 ## SpecWithCode orchestration
@@ -51,9 +57,25 @@ const STUDIO_CODE_ACP_PLAN_MODE_INSTRUCTIONS = `## SpecWithCode interaction mode
 
 Investigate with read-only actions and do not edit files or otherwise execute the implementation. Resolve discoverable facts before asking questions. When the requirements are decision complete, return a concrete implementation plan and do not start implementing it. Treat this mode as active until SpecWithCode supplies a different interaction-mode instruction.`;
 
+/**
+ * The orchestration instructions for a thread: a project's coordinator gets
+ * the coordinator line instead of the worker subagent line, because the
+ * worker line told coordinators to run work with native subagents in their
+ * own thread (November 17, 2026: an EU1 migration ran as a workflow inside
+ * the coordinator, with no thread link to give the user).
+ */
+export function studioOrchestrationInstructionsForRole(
+  isCoordinator: boolean | undefined,
+): string {
+  return isCoordinator === true
+    ? STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.replace(WORKER_SUBAGENT_LINE, COORDINATOR_SUBAGENT_LINE)
+    : STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS;
+}
+
 export interface StudioAcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasStudioMcp: boolean;
+  readonly isCoordinator?: boolean | undefined;
 }
 
 /**
@@ -69,7 +91,8 @@ export function studioAcpPromptWithInstructions(input: {
   if (input.prompt.trimStart().startsWith("/")) return input.prompt;
   if (
     input.previousState?.interactionMode === input.state.interactionMode &&
-    input.previousState.hasStudioMcp === input.state.hasStudioMcp
+    input.previousState.hasStudioMcp === input.state.hasStudioMcp &&
+    input.previousState.isCoordinator === input.state.isCoordinator
   ) {
     return input.prompt;
   }
@@ -80,7 +103,7 @@ export function studioAcpPromptWithInstructions(input: {
     ...(input.state.hasStudioMcp
       ? [
           STUDIO_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
-          STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
+          studioOrchestrationInstructionsForRole(input.state.isCoordinator).trim(),
           STUDIO_CODE_ACP_FALLBACK_INSTRUCTIONS,
         ]
       : []),
@@ -93,20 +116,27 @@ export function studioAcpPromptWithInstructions(input: {
  * context in the first prompt. Keep the wrapper explicit so it cannot be
  * mistaken for text authored by the user.
  */
-function prependStudioOrchestrationInstructions(prompt: string): string {
-  return `<studio_code_orchestration_instructions>${STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.trim()}</studio_code_orchestration_instructions>\n\n<user_request>\n${prompt}\n</user_request>`;
+function prependStudioOrchestrationInstructions(
+  prompt: string,
+  isCoordinator: boolean | undefined,
+): string {
+  return `<studio_code_orchestration_instructions>${studioOrchestrationInstructionsForRole(isCoordinator).trim()}</studio_code_orchestration_instructions>\n\n<user_request>\n${prompt}\n</user_request>`;
 }
 
 export function studioOrchestrationPromptForFirstRun(input: {
   readonly prompt: string;
   readonly runOrdinal: number;
   readonly hasStudioMcp: boolean;
+  readonly isCoordinator?: boolean | undefined;
 }): string {
   return input.runOrdinal === 1 && input.hasStudioMcp
-    ? prependStudioOrchestrationInstructions(input.prompt)
+    ? prependStudioOrchestrationInstructions(input.prompt, input.isCoordinator)
     : input.prompt;
 }
 
-export function studioOrchestrationSystemPrompt(hasStudioMcp: boolean): string | undefined {
-  return hasStudioMcp ? STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS : undefined;
+export function studioOrchestrationSystemPrompt(
+  hasStudioMcp: boolean,
+  isCoordinator?: boolean | undefined,
+): string | undefined {
+  return hasStudioMcp ? studioOrchestrationInstructionsForRole(isCoordinator) : undefined;
 }

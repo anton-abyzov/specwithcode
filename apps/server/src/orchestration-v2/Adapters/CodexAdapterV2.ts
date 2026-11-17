@@ -799,6 +799,7 @@ export function buildCodexTurnStartParams(input: {
               reasoningEffort: effort ?? "medium",
               responseStyle: input.runtimePolicy.responseStyle,
               agentInstructions: input.runtimePolicy.agentInstructions,
+              isCoordinator: input.runtimePolicy.isCoordinator,
             },
             {
               browser: input.browserToolsAvailable ?? true,

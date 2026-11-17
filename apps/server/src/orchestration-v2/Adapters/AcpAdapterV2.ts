@@ -7158,6 +7158,7 @@ export function makeAcpAdapterV2(
           const instructionState = {
             interactionMode: turnInput.runtimePolicy.interactionMode,
             hasStudioMcp: acpMcpServers(turnInput.threadId, self).length > 0,
+            isCoordinator: turnInput.runtimePolicy.isCoordinator,
           } satisfies StudioAcpInstructionState;
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
           const messageText = providerMessageTextWithAttachmentPaths({

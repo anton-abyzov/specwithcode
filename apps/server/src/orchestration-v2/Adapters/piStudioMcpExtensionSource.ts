@@ -8,7 +8,7 @@
  * Do not import studio modules from the string body. The Pi process resolves
  * `@earendil-works/pi-coding-agent` and `typebox` from the user's pi install.
  */
-import { STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/StudioOrchestrationInstructions.ts";
+import { studioOrchestrationInstructionsForRole } from "../../provider/StudioOrchestrationInstructions.ts";
 import {
   STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS,
@@ -23,6 +23,8 @@ export const STUDIO_MCP_BEARER_ENV = "STUDIO_MCP_BEARER_TOKEN";
 export const STUDIO_PI_RUNTIME_MODE_ENV = "STUDIO_PI_RUNTIME_MODE";
 /** The response style chosen for this session: "concise" (default) or "detailed". */
 export const STUDIO_PI_RESPONSE_STYLE_ENV = "STUDIO_PI_RESPONSE_STYLE";
+/** "1" when this session is its project's coordinator and must route work to workers. */
+export const STUDIO_PI_COORDINATOR_ENV = "STUDIO_PI_COORDINATOR";
 
 /**
  * Pi tools whose confirmations the bridge raises as file-change approvals.
@@ -38,7 +40,9 @@ import { Type } from "typebox";
 const URL_ENV = ${JSON.stringify(STUDIO_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(STUDIO_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(STUDIO_PI_RUNTIME_MODE_ENV)};
-const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
+const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(studioOrchestrationInstructionsForRole(false).trim())};
+const COORDINATOR_ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(studioOrchestrationInstructionsForRole(true).trim())};
+const COORDINATOR_ENV = ${JSON.stringify(STUDIO_PI_COORDINATOR_ENV)};
 const RESPONSE_STYLE_ENV = ${JSON.stringify(STUDIO_PI_RESPONSE_STYLE_ENV)};
 const CONCISE_RESPONSE_STYLE = ${JSON.stringify(STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS)};
 const DETAILED_RESPONSE_STYLE = ${JSON.stringify(STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS)};
@@ -288,7 +292,9 @@ export default async function studioMcpExtension(pi: ExtensionAPI) {
       responseStyleInstructions(),
       MEDIA_INSTRUCTIONS,
       HEADLESS_INSTRUCTIONS,
-      ...(hasStudioMcp ? [ORCHESTRATION_INSTRUCTIONS] : []),
+      ...(hasStudioMcp
+        ? [env(COORDINATOR_ENV) === "1" ? COORDINATOR_ORCHESTRATION_INSTRUCTIONS : ORCHESTRATION_INSTRUCTIONS]
+        : []),
     ].join("\\n\\n"),
   }));
 

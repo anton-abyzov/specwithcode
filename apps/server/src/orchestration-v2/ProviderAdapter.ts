@@ -74,6 +74,8 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
    * switches in that folder's clones instead. Absent means no guard.
    */
   manualWorktreesBlocked: Schema.optional(Schema.Union([Schema.Boolean, Schema.String])),
+  /** The thread is its project's coordinator: it routes work instead of doing it. */
+  isCoordinator: Schema.optional(Schema.Boolean),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 
