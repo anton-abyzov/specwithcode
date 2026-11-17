@@ -34,7 +34,7 @@ import {
   type MainOffer,
   type MakeMainPath,
 } from "../../src/studio/makeMain";
-import { routeTarget } from "../../src/studio/routeToMain";
+import { composerMachines, routeTarget } from "../../src/studio/routeToMain";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { getProjectCoordinatorComposer } from "../../src/studio/projectCoordinatorComposer";
 import type { OrchestratorCopy } from "../../src/studio/projectCoordinatorMachine";
@@ -203,10 +203,21 @@ function Page() {
   const [current, setCurrent] = useState(start);
   const viewed = copies.find((item) => item.key === current)!;
   const makeMain = (key: string) => (window.__madeMain ??= []).push(key);
-  const switcher = (
+  // `runsOn`: the machine the chip's face names when the coordinator runs elsewhere.
+  const switcherNamed = (label: string, runsOn: string | null = null) => (
     <OrchestratorSwitcher
       identity={{ color: "teal" } as never}
-      label={viewed.machine}
+      label={label}
+      runsOn={
+        runsOn === null
+          ? null
+          : {
+              label: runsOn,
+              connected: true,
+              statusDetail: "",
+              identity: { color: "rose" } as never,
+            }
+      }
       connected
       statusDetail=""
       current={current}
@@ -230,8 +241,16 @@ function Page() {
       onLink={view === "unlinked" ? () => {} : null}
     />
   );
+  const switcher = switcherNamed(viewed.machine);
   if (view === "m5") {
     const routed = routeTarget(`${m5Main}:p`);
+    // The page's own rule names the chip and Send (`composerMachines`), as on the M5.
+    const named = composerMachines({
+      viewed: "m5",
+      mainKey: `${m5Main}:p`,
+      // `&main=lost`: m4 is unreachable, so Send cannot route and names no machine.
+      routes: params.get("main") !== "lost",
+    });
     return (
       <div
         className="fixture-page fixture-column"
@@ -247,9 +266,10 @@ function Page() {
         <CoordinatorComposer
           composer={getProjectCoordinatorComposer(EnvironmentId.make("m5"), "atlas-m5")}
           threadRef={null}
-          environmentId={EnvironmentId.make(m5Main)}
+          // The page's formula (ProjectWorkspaceSurface): main's machine on a copy.
+          environmentId={EnvironmentId.make(named.send ?? named.chip)}
           cwd="/w/atlas"
-          sendBlocked={false}
+          sendBlocked={named.send === null}
           missingModel={null}
           canAttach={false}
           uploadsSupported
@@ -259,7 +279,7 @@ function Page() {
             project: PROJECT,
             machine: m5Main,
           })}
-          writesElsewhere={false}
+          writesElsewhere={named.send === null}
           hostReachable
           promptLabel="Message the project coordinator"
           keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
@@ -281,14 +301,14 @@ function Page() {
               onOpen={() => {}}
               mainOffer={m5Offer}
               onMakeMain={makeMain}
-              routesToMain
+              routesToMain={named.send !== null}
             />
           }
           notices={null}
-          meta={switcher}
+          meta={switcherNamed("m5", named.chip)}
           controls={
             <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-              <span className="truncate">Runs on m5</span>
+              <span className="truncate">Opus 5.5</span>
             </span>
           }
           modelFallback={false}

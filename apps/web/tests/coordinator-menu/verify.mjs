@@ -206,6 +206,18 @@ try {
     await routedPrompt.fill("time now?");
     file = await shot(page, `m5-routes-to-m4-${theme}`);
     const routedSend = page.locator(".sws-composer-card button.sws-send");
+    // The chip under the box and Send name one machine: main, where the coordinator runs.
+    assert.deepEqual(await page.locator(".sws-host-name").allTextContents(), ["Runs on m4"]);
+    assert.equal(await routedSend.getAttribute("data-send-label"), "Send to m4");
+    // The menu still names and acts on the copy being viewed.
+    const chip = page.locator("[data-coordinator-machine]");
+    assert.equal(await chip.getAttribute("aria-label"), "Viewing m5. Choose a machine to view");
+    await chip.click();
+    assert.ok(
+      (await page.locator('[role="menu"]').textContent()).includes("On m5"),
+      "the machine actions are the viewed copy's",
+    );
+    await page.keyboard.press("Escape");
     assert.equal(await routedSend.isDisabled(), false);
     await routedSend.click();
     await page.waitForFunction(() => (window.__routed ?? []).length === 1);
@@ -215,6 +227,15 @@ try {
     await page.locator("[data-make-main]").click();
     assert.deepEqual(await madeMain(page), ["m5:p"]);
     results.push({ theme, case: "m5 state, routed send and move from m4", file });
+    await page.close();
+
+    // m4 unreachable: Send cannot route and names no machine; the chip still names m4.
+    page = await open(`theme=${theme}&case=m5&main=lost`, { width: 760, height: 560 });
+    await page.locator("[data-workers-only]").waitFor();
+    assert.deepEqual(await page.locator(".sws-host-name").allTextContents(), ["Runs on m4"]);
+    const offSend = page.locator(".sws-composer-card button.sws-send");
+    assert.equal(await offSend.getAttribute("data-send-label"), null);
+    assert.equal(await offSend.isDisabled(), true);
     await page.close();
 
     // After an offline switch: the new main says where the earlier conversation is.

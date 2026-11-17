@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { canRouteToMain, routeTarget, routedCommand } from "./routeToMain";
+import { canRouteToMain, composerMachines, routeTarget, routedCommand } from "./routeToMain";
 
 describe("routeTarget", () => {
   it("splits main's checkout key, keeping a project id that holds a colon", () => {
@@ -92,5 +92,36 @@ describe("routedCommand", () => {
     // Edited text or another main is a new message.
     expect(routedCommand(first, "m4:p", "time now, please?", mint).commandId).toBe("id-2");
     expect(routedCommand(first, "m1:p", "time now?", mint).commandId).toBe("id-3");
+  });
+});
+
+describe("composerMachines", () => {
+  it("names main on the chip of a copy whose main is elsewhere, and on Send while it routes", () => {
+    expect(composerMachines({ viewed: "m5", mainKey: "m4:p", routes: true })).toEqual({
+      chip: "m4",
+      send: "m4",
+    });
+    // Main unreachable, or the copy's own machine offline: Send names no machine, and the
+    // chip still says where the coordinator runs.
+    expect(composerMachines({ viewed: "m5", mainKey: "m4:p", routes: false })).toEqual({
+      chip: "m4",
+      send: null,
+    });
+    // Main itself, or a page that is not a copy: both name the machine being looked at.
+    expect(composerMachines({ viewed: "m4", mainKey: null, routes: false })).toEqual({
+      chip: "m4",
+      send: "m4",
+    });
+  });
+
+  it("never lets the chip and Send name two different machines", () => {
+    for (const viewed of ["m5", "m4"])
+      for (const mainKey of [null, "m4:p", "m1:mcp:d580ecec", "bad"])
+        for (const routes of [false, true]) {
+          const named = composerMachines({ viewed, mainKey, routes });
+          if (named.send !== null) expect(named.send).toBe(named.chip);
+          const main = routeTarget(mainKey)?.environmentId;
+          expect(named.chip).toBe(main ?? viewed);
+        }
   });
 });

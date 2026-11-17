@@ -48,6 +48,7 @@ import {
   CommandId,
   logicalProjectTitle,
   type ChatAttachment,
+  type EnvironmentId,
   type ModelSelection,
   type ProjectStarterSuggestion,
   type ThreadId,
@@ -203,7 +204,7 @@ import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
 import { CoordinatorBlockedNotice, OfflineSwitchNotice } from "./CoordinatorBlockedNotice";
 import { useMakeMain } from "./useMakeMain";
 import { useRouteToMain } from "./useRouteToMain";
-import { ROUTED_FILES_MESSAGE } from "../../studio/routeToMain";
+import { composerMachines, ROUTED_FILES_MESSAGE } from "../../studio/routeToMain";
 import { ProjectComposerHostStatus } from "./ComposerHostStatus";
 import { useTx } from "../../i18n";
 import {
@@ -689,6 +690,16 @@ export function ProjectWorkspaceSurface({
     onOpen: onCheckout,
   });
   const routes = route.ready;
+  // One rule names the machine on the chip under the box and on Send: on a copy whose main
+  // is elsewhere both say main, never the copy's machine beside main's.
+  const named = composerMachines({
+    viewed: project.environmentId,
+    mainKey: coordinatorElsewhere?.key ?? null,
+    routes,
+  });
+  const chipEnvironment = useEnvironment(named.chip as EnvironmentId);
+  // Main's name, one fallback chain for the chip and the header tag.
+  const mainName = chipEnvironment?.label ?? coordinatorElsewhere?.machine ?? named.chip;
   // Files were attached on this machine; a routed message carries text only.
   const draftHasFiles = useSyncExternalStore(
     composer.subscribe,
@@ -1845,8 +1856,15 @@ export function ProjectWorkspaceSurface({
                   <h1>{projectTitle}</h1>
                 </Tip>
                 {primaryEnvironmentId !== null && project.environmentId !== primaryEnvironmentId ? (
-                  // Another machine runs this project: its coordinator, workers and sign-ins.
-                  <Tip label={`Runs on ${machineName}, not this computer`}>
+                  // Another machine holds this copy: its workers and sign-ins. On a copy whose main
+                  // is elsewhere the coordinator runs on main, which the composer chip names.
+                  <Tip
+                    label={
+                      coordinatorElsewhere
+                        ? `Copy on ${machineName}, not this computer. Its coordinator runs on ${mainName}`
+                        : `Runs on ${machineName}, not this computer`
+                    }
+                  >
                     <span
                       className="sws-tag sws-project-machine machine-chip"
                       data-project-machine
@@ -1857,7 +1875,9 @@ export function ProjectWorkspaceSurface({
                       ) : (
                         <LaptopIcon aria-hidden />
                       )}
-                      <span className="sr-only">Runs on </span>
+                      <span className="sr-only">
+                        {coordinatorElsewhere ? "Copy on " : "Runs on "}
+                      </span>
                       {machineName}
                     </span>
                   </Tip>
@@ -2036,9 +2056,8 @@ export function ProjectWorkspaceSurface({
                 composer={composer}
                 // A viewer showing the coordinator borrows this composer.
                 threadRef={coordinatorRef}
-                environmentId={
-                  routes && route.environmentId ? route.environmentId : project.environmentId
-                }
+                // Main's machine on a copy, so the box wears the machine the chip names.
+                environmentId={(named.send ?? named.chip) as EnvironmentId}
                 cwd={project.workspaceRoot}
                 sendBlocked={
                   routes
@@ -2055,7 +2074,7 @@ export function ProjectWorkspaceSurface({
                     ? missingModelMessage(modelsLoading, machinePrivate)
                     : null)
                 }
-                canAttach={canOperate && connected && !routes}
+                canAttach={canOperate && connected && named.send === project.environmentId}
                 uploadsSupported={uploadsSupported}
                 maxFileBytes={maxFileBytes}
                 sending={sending}
@@ -2194,6 +2213,23 @@ export function ProjectWorkspaceSurface({
                         environment?.connection,
                         admissionContext,
                       )}
+                      // A copy whose main is elsewhere: its coordinator runs on main.
+                      runsOn={
+                        named.chip === project.environmentId
+                          ? null
+                          : {
+                              environmentId: named.chip as EnvironmentId,
+                              label: mainName,
+                              connected: chipEnvironment?.connection.phase === "connected",
+                              // Main's own connection, not this page's machine's context.
+                              disconnectedLabel: hostDisconnectedLabel(
+                                chipEnvironment?.connection,
+                                named.chip === primaryEnvironmentId
+                                  ? { isThisDevice: true, graceElapsed: true }
+                                  : undefined,
+                              ),
+                            }
+                      }
                       current={`${project.environmentId}:${project.id}`}
                       copies={checkouts}
                       unknown={unknownMachines}
