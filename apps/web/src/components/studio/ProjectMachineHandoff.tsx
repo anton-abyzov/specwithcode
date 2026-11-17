@@ -1056,6 +1056,7 @@ export function ProjectMachineHandoff({
         copyTargetLabel={machines.find((item) => item.id === copyMachine)?.label ?? null}
         send={send}
         makeMain={makeMain}
+        mainLabel={machineLabelOf(holdings.mainEnvironmentId)}
         copyFlow={
           method === "folder" ? undefined : (
             <HandoffFolderCopy

@@ -193,9 +193,13 @@ try {
     }
     await shot(page, `copy-dialog-${name}`);
     if (name === "done-make-main") {
+      // The switch opens the move to that copy: its setup, not the finished copy again.
       await makeMain.click();
-      await page.getByRole("dialog").waitFor({ state: "detached" });
+      await page.getByRole("heading", { name: "Move specweave to m5", exact: true }).waitFor();
       NodeAssert.equal(await page.evaluate(() => document.body.dataset.madeMain), "m5:m5");
+      await footer.getByRole("button", { name: "Copy and move to m5", exact: true }).waitFor();
+      NodeAssert.equal(await page.locator('[data-slot="copy-make-main"]').count(), 0);
+      await shot(page, "copy-dialog-after-make-main");
     }
     await page.close();
   }

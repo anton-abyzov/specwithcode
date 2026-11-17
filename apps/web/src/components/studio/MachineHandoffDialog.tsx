@@ -133,11 +133,14 @@ export function MachineHandoffDialog({
   sync = null,
   send = null,
   makeMain = null,
+  mainLabel = null,
 }: {
   /** What the chosen machine already holds, where Main is, and the plan sentence. */
   readonly send?: SendFacts | null;
   /** "Make {machine} main" on a finished copy's done screen; null where there is none. */
   readonly makeMain?: MakeMainAction | null;
+  /** The machine Main is on now, for the header before a machine is picked; null when unknown. */
+  readonly mainLabel?: string | null;
   /**
    * "Sync to X…": X already has this project at `folder`. The dialog copies only files into
    * that folder and says so; the coordinator stays here.
@@ -223,7 +226,7 @@ export function MachineHandoffDialog({
     source: sourceLabel,
     there,
     move: moving && refused !== "main",
-    main: send?.mainLabel ?? null,
+    main: send?.mainLabel ?? mainLabel,
     otherProject: there ? send?.otherProject : null,
   });
   const close = () => {

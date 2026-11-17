@@ -693,6 +693,12 @@ describe("handoff file method and intent", () => {
       expect(description()).toBe(
         "From MacBook M4. Main stays on m4. Nothing on m5 is replaced without asking.",
       );
+      // Before a machine is picked there are no send facts: Main is named all the same.
+      await copyTo({ send: null, copyTargetLabel: null, mainLabel: "m4" });
+      expect(description()).toBe(
+        "From MacBook M4. Main stays on m4. Nothing on the other machine is replaced without asking.",
+      );
+      await copyTo({ mainLabel: null });
       // Nothing in sight names Main: it says so without guessing the source.
       await copyTo({ send: facts({ mainLabel: null }) });
       expect(description()).toBe(

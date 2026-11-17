@@ -118,15 +118,16 @@ function Fixture() {
   const [intent, setIntent] = useState<"move" | "copy">(moveAsked ? "move" : "copy");
   const [doneOn, setDoneOn] = useState<string | null>(null);
   const [doneAt, setDoneAt] = useState<string | null>(null);
+  // As "Make X main" does when the move needs the copy flow: a fresh flow, set to move.
+  const askMove = () => {
+    setMoveAsked(true);
+    setIntent("move");
+    setRun((value) => value + 1);
+    setOpen(true);
+  };
   useEffect(() => {
-    // As "Make X main" does when the move needs the copy flow: a fresh flow, set to move.
-    const ask = () => {
-      setMoveAsked(true);
-      setIntent("move");
-      setRun((value) => value + 1);
-    };
-    window.addEventListener("fixture-move", ask);
-    return () => window.removeEventListener("fixture-move", ask);
+    window.addEventListener("fixture-move", askMove);
+    return () => window.removeEventListener("fixture-move", askMove);
   }, []);
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
@@ -181,9 +182,11 @@ function Fixture() {
                       : null,
                   note: null,
                 },
+                // The page's switch: this dialog steps aside, then the move opens in it.
                 run: () => {
                   document.body.dataset.madeMain = "m5:m5";
                   setOpen(false);
+                  askMove();
                 },
               }
             : null
@@ -205,6 +208,8 @@ function Fixture() {
             method={METHOD}
             machines={MACHINES}
             preferredMachine={(params.has("short") ? "m5" : "linux") as never}
+            // A move names its machine, as "Make X main" does.
+            machineRequested={moveAsked}
             savedFolder={() =>
               holding.kind === "main" || holding.kind === "copy"
                 ? holding.copy.workspaceRoot

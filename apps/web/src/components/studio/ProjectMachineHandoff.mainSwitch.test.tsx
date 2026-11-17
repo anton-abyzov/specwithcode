@@ -191,6 +191,8 @@ it.each([
 
 it("names the project's real Main for a linked source that is not Main", async () => {
   await open(copyOn("m1", "own", "L"), [main, linked]);
+  // Known before a machine is picked, for the header.
+  expect(props().mainLabel).toBe("m4");
   await choose("m5");
   expect(props().send).toMatchObject({ mainLabel: "m4", otherProject: null });
 });

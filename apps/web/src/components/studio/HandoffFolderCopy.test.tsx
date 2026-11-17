@@ -14,6 +14,7 @@ import {
   newRow,
   noSecrets,
   onBusyChange,
+  onChoices,
   openMore,
   onDialogClose,
   onOpenProject,
@@ -174,6 +175,10 @@ it("measures, previews and applies a copy that leaves the coordinator on the sou
     joining: { environmentId: "m3", projectId: "copied" },
   });
   expect(container.textContent).toContain("Linked: M4 can send work to the copy on M3.");
+  // The dialog learns which copy was filled: that is the copy "Make M3 main" would switch to.
+  expect(onChoices).toHaveBeenLastCalledWith(
+    expect.objectContaining({ mode: "copy-only", machine: "m3", done: true, projectId: "copied" }),
+  );
   await click("Open on M3");
   expect(onOpenProject).toHaveBeenCalledExactlyOnceWith({
     environmentId: "m3",
