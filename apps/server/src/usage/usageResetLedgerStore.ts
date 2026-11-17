@@ -192,10 +192,12 @@ function historyModelScope(windowId: string): string | null {
  * reads) and are not in the ledger yet, so a new ledger starts with the last
  * two weeks instead of nothing. A period already recorded, from this history
  * or a live read, is one whose span from last read to reset overlaps the new
- * one in the same window. Returns how many were added.
+ * one in the same window. Returns how many periods and cursor starts it
+ * added, so the caller knows to save.
  */
 export function backfillLedger(state: LedgerState, history: HistoryState): number {
   const added: LedgerPeriod[] = [];
+  let dated = 0;
   for (const series of history.values()) {
     if (!isLedgerWindow(series.windowKind, series.windowDurationMins)) continue;
     const key = cursorKey(series.accountKey, series.windowKind, series.windowId);
@@ -217,8 +219,10 @@ export function backfillLedger(state: LedgerState, history: HistoryState): numbe
           other.accountKey === series.accountKey &&
           other.windowKind === series.windowKind &&
           other.windowId === series.windowId &&
-          period.lastReadAt < other.endedAt &&
-          other.lastReadAt < period.endedAt,
+          // The same record again (its span may be a single instant), or one whose span
+          // from last read to reset overlaps: another read of the same reset.
+          ((other.endedAt === period.endedAt && other.lastReadAt === period.lastReadAt) ||
+            (period.lastReadAt < other.endedAt && other.lastReadAt < period.endedAt)),
       );
       if (overlaps) continue;
       added.push({
@@ -236,9 +240,18 @@ export function backfillLedger(state: LedgerState, history: HistoryState): numbe
         cause: period.cause,
       });
     }
-    // The running period began at the last reset the history saw.
-    if (cursor && cursor.startedAt === null && lastEnded !== null && lastEnded <= cursor.at) {
+    // The running period began at the last reset the history saw, when the cursor's last
+    // read is still inside that period: past a whole window, another reset came unread.
+    if (
+      cursor &&
+      cursor.startedAt === null &&
+      lastEnded !== null &&
+      lastEnded <= cursor.at &&
+      lengthMs !== null &&
+      cursor.at - lastEnded < lengthMs
+    ) {
       cursor.startedAt = lastEnded;
+      dated += 1;
     }
   }
   if (added.length > 0) {
@@ -246,7 +259,7 @@ export function backfillLedger(state: LedgerState, history: HistoryState): numbe
       (left, right) => left.endedAt - right.endedAt,
     );
   }
-  return added.length;
+  return added.length + dated;
 }
 
 /** Drops periods past a year, the oldest past the cap, and cursors of windows long unread. */

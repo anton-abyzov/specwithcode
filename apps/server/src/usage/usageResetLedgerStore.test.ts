@@ -350,4 +350,32 @@ describe("backfillLedger", () => {
     backfillLedger(state, history(series("seven_day", "weekly", twoResets)));
     expect([...state.cursors.values()][0]?.startedAt).toBe(reset2);
   });
+
+  it("adds a reset read at its own reset time once, across restarts", () => {
+    const state = emptyLedger();
+    const past = history(
+      series("seven_day", "weekly", [
+        [reset1, 90, reset1],
+        [reset1 + HOUR, 2, reset2],
+      ]),
+    );
+    expect(backfillLedger(state, past)).toBe(1);
+    expect(state.periods[0]).toMatchObject({ lastReadAt: reset1, endedAt: reset1 });
+    expect(backfillLedger(state, past)).toBe(0);
+    expect(backfillLedger(state, past)).toBe(0);
+    expect(state.periods).toHaveLength(1);
+  });
+
+  it("leaves a cursor undated when a whole window went unread since the history's last reset", () => {
+    const state = emptyLedger();
+    advanceLedger(state, {
+      accountKey: "claude:max@example.com",
+      driver: claude,
+      checkedAt: reset2 + 2 * WEEK,
+      windows: [{ ...weekly(4, reset2 + 3 * WEEK), id: "seven_day" }],
+      resetCredits: null,
+    });
+    backfillLedger(state, history(series("seven_day", "weekly", twoResets)));
+    expect([...state.cursors.values()][0]?.startedAt).toBeNull();
+  });
 });

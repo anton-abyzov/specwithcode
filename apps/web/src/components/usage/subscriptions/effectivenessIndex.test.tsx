@@ -129,7 +129,18 @@ describe("effectivenessIndex", () => {
     expect(grokRow).toMatchObject({ driver: grok, usedPercent: null, resets: 0 });
     expect(grokRow.nextReset?.at).toBe(now + DAY);
     expect(grokRow.nextReset?.projectedLeftPercent).toBeCloseTo(72 - (28 / 6) * 1);
-    expect(grokRow.projectedUsedPercent).toBeCloseTo(100 - grokRow.nextReset!.projectedLeftPercent);
+    expect(grokRow.projectedUsedPercent).toBeCloseTo(100 - (grokRow.nextReset?.projectedLeftPercent ?? 0));
+  });
+
+  it("projects nothing without a reset time, or before the week has run a day", () => {
+    const noTime = effectivenessIndex([row(grok, 30, null)], [], now);
+    expect(noTime.providers).toEqual([]);
+    // An hour into the week with 5% spent: the reset is named, the pace is not guessed.
+    const early = effectivenessIndex([row(grok, 95, now + 7 * DAY - HOUR)], [], now);
+    expect(early.providers[0]).toMatchObject({
+      projectedUsedPercent: null,
+      nextReset: { at: now + 7 * DAY - HOUR, projectedLeftPercent: null },
+    });
   });
 
   it("leaves out an offline account's projection and a provider with neither", () => {
@@ -163,7 +174,9 @@ describe("EffectivenessSummaryView", () => {
     }
     expect(rows[2]?.textContent).toContain("new");
     expect(rows[2]?.textContent).toContain("today");
-    expect(rows[2]?.getAttribute("aria-label")).toContain("Grok: no reset recorded yet");
+    expect(rows[2]?.querySelector(".sr-only")?.textContent).toBe(
+      "Last two weeks no reset, then no reset; this week on pace for 29%.",
+    );
     await act(async () => root.unmount());
     container.remove();
   });

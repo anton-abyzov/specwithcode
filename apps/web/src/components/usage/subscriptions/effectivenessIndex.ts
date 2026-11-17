@@ -16,6 +16,8 @@ import type { SubscriptionRow } from "./subscriptionRows";
 const DAY = 24 * 60 * 60_000;
 /** The index looks back four weeks: long enough to average, short enough to act on. */
 export const INDEX_DAYS = 28;
+/** A window younger than this has no pace worth projecting. */
+const MIN_PACE_MS = DAY;
 
 export interface IndexWeek {
   /** Monday of the week, local time. */
@@ -26,8 +28,8 @@ export interface IndexWeek {
 
 export interface IndexNextReset {
   readonly at: number;
-  /** What the pace so far leaves unused at that reset. */
-  readonly projectedLeftPercent: number;
+  /** What the pace so far leaves unused at that reset; null before the window has run a day. */
+  readonly projectedLeftPercent: number | null;
 }
 
 export interface IndexProvider {
@@ -39,7 +41,7 @@ export interface IndexProvider {
   readonly lastResetAt: number | null;
   /** The two weeks before this one, oldest first. */
   readonly pastWeeks: readonly [IndexWeek, IndexWeek];
-  /** This week's projected use at its reset; null when no weekly or monthly window reports one. */
+  /** This week's projected use at its reset; null when no window has a pace yet. */
   readonly projectedUsedPercent: number | null;
   readonly nextReset: IndexNextReset | null;
 }
@@ -90,32 +92,34 @@ export function effectivenessIndex(
           .map((period) => period.usedPercent),
       ),
     });
+    // Only a window with a reset time and a length has a pace, and not before it has run a
+    // day: an hour into a week, one busy hour would project the whole quota spent.
     const live = rows
       .filter((row) => row.driver === driver && !row.offline)
       .flatMap((row) => {
         const window = mainWindow(row);
-        if (!window) return [];
+        if (!window || window.resetsAt === null || window.resetsAt <= now) return [];
+        const elapsed =
+          window.durationMs === null ? null : window.durationMs - (window.resetsAt - now);
         return [
           {
             resetsAt: window.resetsAt,
-            left: projectedUnusedPercent(
-              {
-                leftPercent: window.leftPercent,
-                resetsAt: window.resetsAt,
-                durationMs: window.durationMs,
-              },
-              now,
-            ),
+            left:
+              elapsed === null || elapsed < MIN_PACE_MS
+                ? null
+                : projectedUnusedPercent(
+                    {
+                      leftPercent: window.leftPercent,
+                      resetsAt: window.resetsAt,
+                      durationMs: window.durationMs,
+                    },
+                    now,
+                  ),
           },
         ];
       });
-    const soonest = live
-      .filter(
-        (entry): entry is { resetsAt: number; left: number } =>
-          entry.resetsAt !== null && entry.resetsAt > now,
-      )
-      .toSorted((left, right) => left.resetsAt - right.resetsAt)[0];
-    const projectedLeft = mean(live.map((entry) => entry.left));
+    const soonest = live.toSorted((left, right) => left.resetsAt - right.resetsAt)[0];
+    const projectedLeft = mean(live.flatMap((entry) => (entry.left === null ? [] : [entry.left])));
     return {
       driver,
       usedPercent: mean(recent.map((period) => period.usedPercent)),
@@ -133,7 +137,7 @@ export function effectivenessIndex(
     resets: recent.length,
     // Most recorded resets first, then the soonest reset: the rows worth reading lead.
     providers: providers
-      .filter((provider) => provider.resets > 0 || provider.projectedUsedPercent !== null)
+      .filter((provider) => provider.resets > 0 || provider.nextReset !== null)
       .toSorted(
         (left, right) =>
           right.resets - left.resets ||

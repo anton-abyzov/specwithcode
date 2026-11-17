@@ -15,6 +15,7 @@ import { ProviderInstanceIcon } from "../../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../../settings/providerDriverMeta";
 import {
   type EffectivenessIndex,
+  INDEX_DAYS,
   type IndexProvider,
   effectivenessIndex,
 } from "./effectivenessIndex";
@@ -100,17 +101,20 @@ function Spark({ provider }: { readonly provider: IndexProvider }) {
 
 function subline(provider: IndexProvider, now: number): string {
   if (provider.nextReset === null) {
-    if (provider.projectedUsedPercent !== null) return "no reset time reported";
     return provider.lastResetAt === null
-      ? "no live limit"
+      ? "no reset time reported"
       : `last reset ${dayFormat.format(provider.lastResetAt)}`;
   }
-  const left = Math.round(provider.nextReset.projectedLeftPercent);
   const when = resetWhen(provider.nextReset.at, now);
-  return left > 0 ? `${when} · leaves ~${left}%` : `${when} · on pace to use it all`;
+  const left = provider.nextReset.projectedLeftPercent;
+  if (left === null) return `resets ${when}`;
+  return Math.round(left) > 0
+    ? `${when} · leaves ~${Math.round(left)}%`
+    : `${when} · on pace to use it all`;
 }
 
-function rowLabel(provider: IndexProvider, name: string): string {
+/** The chart in words, for screen readers: the bars themselves are hidden from them. */
+function trendText(provider: IndexProvider): string {
   const weeks = provider.pastWeeks
     .map((week) => (week.usedPercent === null ? "no reset" : `${percent(week.usedPercent)} used`))
     .join(", then ");
@@ -118,11 +122,7 @@ function rowLabel(provider: IndexProvider, name: string): string {
     provider.projectedUsedPercent === null
       ? ""
       : `; this week on pace for ${percent(provider.projectedUsedPercent)}`;
-  const average =
-    provider.usedPercent === null
-      ? "no reset recorded yet"
-      : `${percent(provider.usedPercent)} used before reset over ${provider.resets} ${provider.resets === 1 ? "reset" : "resets"}`;
-  return `${name}: ${average}. Last two weeks ${weeks}${now}.`;
+  return `Last two weeks ${weeks}${now}.`;
 }
 
 export function EffectivenessSummaryView({
@@ -158,7 +158,6 @@ export function EffectivenessSummaryView({
               <li
                 key={provider.driver}
                 className="grid grid-cols-[1rem_minmax(0,1fr)_3rem_2.5rem] items-center gap-x-2 rounded-md px-1 py-1"
-                aria-label={rowLabel(provider, name)}
                 data-effectiveness-provider={provider.driver}
               >
                 <ProviderInstanceIcon
@@ -176,6 +175,7 @@ export function EffectivenessSummaryView({
                   </div>
                 </div>
                 <Spark provider={provider} />
+                <span className="sr-only">{trendText(provider)}</span>
                 <span
                   className={
                     provider.usedPercent === null
@@ -213,7 +213,8 @@ export function EffectivenessSummary({ now }: { readonly now: number }) {
         .map(([environmentId]) => environmentId),
     [presentations],
   );
-  const ledger = useUsageResetLedger(connected, now);
+  // Five weeks covers the four-week index and the week bucket the oldest reset falls in.
+  const ledger = useUsageResetLedger(connected, now, INDEX_DAYS + 7);
   const index = useMemo(
     () =>
       effectivenessIndex(
