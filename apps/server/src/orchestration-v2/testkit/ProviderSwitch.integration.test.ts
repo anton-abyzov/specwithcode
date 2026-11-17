@@ -42,6 +42,7 @@ import {
 } from "../Adapters/CodexAdapterV2.ts";
 import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
 import { CursorProviderCapabilitiesV2 } from "../Adapters/CursorAdapterV2.ts";
+import * as SpecweaveCheckpoint from "../SpecweaveCheckpoint.ts";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
@@ -736,7 +737,7 @@ describe("orchestration v2 provider switching", () => {
             assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.driver, CLAUDE_DRIVER);
             if (scenario.includes("small")) {
               const delivered = yield* encodeJson(yield* Ref.get(injectedHistory));
-              assert.include(delivered, "Selected 0 intact items");
+              assert.include(delivered, "Selected 0 history entries");
               assert.include(delivered, "studio_thread_read");
             }
             return;
@@ -905,7 +906,12 @@ describe("orchestration v2 provider switching", () => {
       }),
     ),
   );
-  it.live.each(["turn-start", "injection", "large-missed-request"] as const)(
+  it.live.each([
+    "turn-start",
+    "injection",
+    "large-missed-request",
+    "interrupted-tool-only",
+  ] as const)(
     "recovers %s failure without duplicating history in the same native thread",
     (failure) =>
       Effect.scoped(
@@ -1002,6 +1008,51 @@ describe("orchestration v2 provider switching", () => {
               failedHandoff.delivery?.status,
               failure !== "injection" ? "injected" : "pending",
             );
+            let checkpointRead: ReturnType<typeof vi.spyOn> | undefined;
+            if (failure === "interrupted-tool-only") {
+              // A recovered interrupted run can have only tool activity in the
+              // retained projection. Replace its message item with that shape.
+              const prior = failed.turnItems.find(
+                (item) => item.runId === failed.runs.at(-1)!.id && item.type === "user_message",
+              )!;
+              if (prior.type !== "user_message") throw new Error("Expected retained user message");
+              const sink = yield* EventSink.EventSinkV2;
+              yield* sink.write({
+                events: [
+                  {
+                    id: EventId.make("retry:tool-only"),
+                    type: "turn-item.updated",
+                    threadId,
+                    runId: failed.runs.at(-1)!.id,
+                    occurredAt: yield* DateTime.now,
+                    payload: {
+                      ...prior,
+                      type: "dynamic_tool",
+                      toolName: "inspect_worker",
+                      input: {},
+                      output: { result: "foreign tool result must not be replayed" },
+                    },
+                  },
+                ],
+              });
+              const missed = failed.runs.at(-1)!;
+              yield* sink.write({
+                events: [
+                  {
+                    id: EventId.make("retry:interrupted-source"),
+                    type: "run.updated",
+                    threadId,
+                    runId: missed.id,
+                    occurredAt: yield* DateTime.now,
+                    payload: { ...missed, status: "interrupted" },
+                  },
+                ],
+              });
+              checkpointRead = vi
+                .spyOn(SpecweaveCheckpoint, "readSpecweaveCheckpointPreface")
+                .mockReturnValue(Effect.succeed("Checkpoint for tool-only recovery"));
+              yield* Effect.addFinalizer(() => Effect.sync(() => checkpointRead?.mockRestore()));
+            }
             const historyBeforeRetry = (yield* Ref.get(injectedHistory)).length;
             const retryText =
               failure === "large-missed-request" ? "y".repeat(10_000) : "Retry target request";
@@ -1022,6 +1073,12 @@ describe("orchestration v2 provider switching", () => {
                 const delivery = retried.contextHandoffs.at(-1)!.delivery!;
                 assert.include(delivery.omittedItemIds ?? [], missedRequest.id);
                 assert.notInclude(delivery.itemIds, missedRequest.id);
+              } else if (failure === "interrupted-tool-only") {
+                assert.include(delta, "Historical tool inspect_worker");
+                assert.include(delta, "Checkpoint for tool-only recovery");
+                assert.notInclude(delta, "foreign tool result must not be replayed");
+                assert.notInclude(delta, "First target request");
+                assert.equal(checkpointRead?.mock.calls.length, 1);
               } else assert.include(delta, "First target request");
               assert.notInclude(delta, "Original request with constraints");
               assert.notInclude(delta, "Original partial work");
