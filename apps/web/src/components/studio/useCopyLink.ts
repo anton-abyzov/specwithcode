@@ -7,12 +7,15 @@ import { randomUUID } from "../../lib/utils";
 import type { PendingCopy } from "./handoffFolderCopyPending";
 import type { CopyStage } from "./handoffCopySteps";
 import { messageOf } from "./useCoordinatorTransfer";
+import { useProjectMoveDialog } from "./ProjectMoveOptions";
 
 export type CopyLinkState = CopyLinkOutcome | { readonly status: "linking" } | null;
 
 /**
  * "Copy files only" ends with the copy linked as a member that runs workers; the
  * coordinator stays here. The link runs once the copy is done, and the pointer records it.
+ * A copy that belongs to a project this one is not linked to is left alone: copying files
+ * into it never relinks it, and the done screen says nothing was linked.
  */
 export function useCopyLink({
   project,
@@ -40,6 +43,7 @@ export function useCopyLink({
   const accept = useAtomCommand(projectLink.accept, { reportFailure: false });
   const commit = useAtomCommand(projectLink.commit, { reportFailure: false });
   const [link, setLink] = useState<CopyLinkState>(null);
+  const otherProject = useProjectMoveDialog()?.send?.otherProject ?? null;
 
   /** Records the link on the copy's pointer, so a reopen does not link it again. */
   const markLinked = (operationId: string | undefined) => {
@@ -69,7 +73,9 @@ export function useCopyLink({
     }
   };
   const linkTarget =
-    stage === "done" && mode === "copy-only" && copyProjectId ? copyProjectId : null;
+    stage === "done" && mode === "copy-only" && copyProjectId && !otherProject
+      ? copyProjectId
+      : null;
   useEffect(() => {
     if (linkTarget && machine && link === null) void linkCopy(machine, linkTarget);
   }, [linkTarget, machine]);

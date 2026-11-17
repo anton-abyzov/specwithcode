@@ -3,7 +3,7 @@ import { ProgressGallery } from "./progressGallery";
 import { ToastGallery } from "./toastGallery";
 import { MotionScene } from "./motionScene";
 import { createRoot } from "react-dom/client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { HandoffFolderCopy } from "../../src/components/studio/HandoffFolderCopy";
 import { MachineHandoffDialog } from "../../src/components/studio/MachineHandoffDialog";
 import "../machine-handoff/fixture.css";
@@ -54,7 +54,6 @@ function GitFixture() {
         machine="m5"
         method="folder"
         onMethodChange={() => {}}
-        onIntentChange={() => {}}
         sourceChanges={{
           state: "dirty",
           fileCount: 18,
@@ -76,8 +75,16 @@ function GitFixture() {
 }
 /**
  * `?holding=copy|main|several|several-main|none`: what the chosen machine already holds, as
- * Send to another machine… reads it. Main is on m4 (this machine) unless m5 holds it.
+ * Copy to another machine… reads it. Main is on m4 (this machine) unless m5 holds it.
+ * `?unlinked=1`: opened from m1, whose copy is not linked to the project m5's copy belongs
+ * to (Main: m4). `?makemain=1|blocked`: the done screen offers the page's Make main switch.
+ * `?move=1`, or a `fixture-move` event: a move asked for with "Make X main".
  */
+// `?method=clone`: the method the real dialog opens on, so Details starts closed.
+const METHOD = params.get("method") === "clone" ? ("clone" as const) : ("copy" as const);
+const UNLINKED = params.has("unlinked");
+const MAKE_MAIN = params.get("makemain");
+const SOURCE = UNLINKED ? "m1" : params.has("short") ? "m4" : "MacBook M4";
 const HOLDING = params.get("holding");
 const at = (id: string, workspaceRoot: string) => ({ id, workspaceRoot });
 // A copy sits at the same place in its umbrella checkout as the project sent from.
@@ -106,9 +113,22 @@ function Fixture() {
   const [target, setTarget] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [locked, setLocked] = useState(false);
-  const [intent, setIntent] = useState<"move" | "copy">("copy");
+  const [moveAsked, setMoveAsked] = useState(params.has("move"));
+  const [run, setRun] = useState(0);
+  const [intent, setIntent] = useState<"move" | "copy">(moveAsked ? "move" : "copy");
   const [doneOn, setDoneOn] = useState<string | null>(null);
   const [doneAt, setDoneAt] = useState<string | null>(null);
+  // As "Make X main" does when the move needs the copy flow: a fresh flow, set to move.
+  const askMove = () => {
+    setMoveAsked(true);
+    setIntent("move");
+    setRun((value) => value + 1);
+    setOpen(true);
+  };
+  useEffect(() => {
+    window.addEventListener("fixture-move", askMove);
+    return () => window.removeEventListener("fixture-move", askMove);
+  }, []);
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
       {/* Reopening remounts the copy flow, as closing and reopening the real dialog does. */}
@@ -120,12 +140,12 @@ function Fixture() {
       <MachineHandoffDialog
         open={open}
         onOpenChange={setOpen}
-        sourceLabel={params.has("short") ? "m4" : "MacBook M4"}
+        sourceLabel={SOURCE}
         projectTitle={params.has("short") ? "specweave" : "SpecWeave"}
         destinations={[]}
         selected=""
         onSelect={() => {}}
-        method="copy"
+        method={METHOD}
         onMethodChange={() => {}}
         intent={intent}
         copyBusy={busy}
@@ -139,14 +159,41 @@ function Fixture() {
                 holding,
                 picked,
                 onPick: setPicked,
-                mainLabel:
-                  holding.kind === "main" ? "m5" : params.has("short") ? "m4" : "MacBook M4",
+                mainLabel: holding.kind === "main" ? "m5" : SOURCE,
+                otherProject: UNLINKED ? { main: "m4" } : null,
                 localFiles: params.has("uncommitted") ? Number(params.get("uncommitted")) : null,
+              }
+            : null
+        }
+        makeMain={
+          MAKE_MAIN && doneOn && !UNLINKED
+            ? {
+                offer: {
+                  key: "m5:m5",
+                  machine: doneOn,
+                  main: SOURCE,
+                  kind: MAKE_MAIN === "blocked" ? "blocked" : "move",
+                  reason:
+                    MAKE_MAIN === "blocked"
+                      ? {
+                          text: "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.",
+                          values: { machine: doneOn, main: SOURCE },
+                        }
+                      : null,
+                  note: null,
+                },
+                // The page's switch: this dialog steps aside, then the move opens in it.
+                run: () => {
+                  document.body.dataset.madeMain = "m5:m5";
+                  setOpen(false);
+                  askMove();
+                },
               }
             : null
         }
         copyFlow={
           <HandoffFolderCopy
+            key={run}
             project={
               {
                 id: "source",
@@ -157,10 +204,12 @@ function Fixture() {
               } as never
             }
             coordinatorId={"coordinator" as never}
-            sourceLabel={params.has("short") ? "m4" : "MacBook M4"}
-            method="copy"
+            sourceLabel={SOURCE}
+            method={METHOD}
             machines={MACHINES}
             preferredMachine={(params.has("short") ? "m5" : "linux") as never}
+            // A move names its machine, as "Make X main" does.
+            machineRequested={moveAsked}
             savedFolder={() =>
               holding.kind === "main" || holding.kind === "copy"
                 ? holding.copy.workspaceRoot
@@ -171,7 +220,7 @@ function Fixture() {
             chooseCopyFirst={holding.kind === "several" && picked === null}
             canMove
             uncommittedFiles={params.has("uncommitted") ? Number(params.get("uncommitted")) : null}
-            defaultMode="copy-only"
+            defaultMode={moveAsked ? "copy-and-move" : "copy-only"}
             onChoicesChange={({ mode, machine, done, doneAt }) => {
               setDoneAt(doneAt ?? null);
               setIntent(mode === "copy-and-move" ? "move" : "copy");

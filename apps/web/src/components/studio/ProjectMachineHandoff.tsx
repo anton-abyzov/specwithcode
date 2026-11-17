@@ -53,7 +53,9 @@ import { toastManager } from "../ui/toast";
 import { HandoffFolderCopy, folderCopyStorageKey } from "./HandoffFolderCopy";
 import { repositoryKeyOf } from "@specweave-studio/shared/existingCopy";
 import { useRetiredMachineRecords } from "../settings/useReplacedMachineRecords";
-import { machineHoldings, pickedHolding } from "../../studio/sendToMachine";
+import { machineHoldings, otherProjectOf, pickedHolding } from "../../studio/sendToMachine";
+import { moveRefusal } from "./ProjectMoveOptions";
+import type { MainSwitch } from "./useMakeMain";
 import {
   copyActivityKey,
   registerCopyOpener,
@@ -147,7 +149,10 @@ export function ProjectMachineHandoff({
   openRequest = null,
   onRequestHandled,
   showTrigger = true,
+  mainSwitch = null,
 }: {
+  /** The page's "Make X main" (`useMakeMain`), offered on a finished copy's done screen. */
+  readonly mainSwitch?: Pick<MainSwitch, "offers" | "run"> | null;
   readonly project: EnvironmentProject;
   readonly coordinatorId: ThreadId | null;
   readonly onOpenChange?: (open: boolean) => void;
@@ -228,8 +233,13 @@ export function ProjectMachineHandoff({
   const [canRestart, setCanRestart] = useState(false);
   // A machine that has the project updates through Git; a copy is for one that does not.
   const [method, setMethod] = useState<HandoffFolderMethod>(DEFAULT_COPY_METHOD);
-  // Opening the dialog means moving the project; "Copy files only" is the other choice.
+  // Move: Main goes there (Git only, "Make X main", an unfinished move). Copy: files only.
+  // The dialog never asks; how it was opened and how files travel decide.
   const [intent, setIntent] = useState<MoveIntent>("move");
+  // Opened to move Main ("Make X main"): leaving Git only keeps the move.
+  const [moveAsked, setMoveAsked] = useState(false);
+  // A move asked for while a copy's done screen is up starts the copy flow afresh.
+  const [copyFlowRun, setCopyFlowRun] = useState(0);
   // "Sync to X…": X already has this project, so only files travel, into its own folder.
   const [syncKey, setSyncKey] = useState<string | null>(null);
   // The copy flow's machine, so switching to Git keeps it.
@@ -238,6 +248,7 @@ export function ProjectMachineHandoff({
   const [pickedCopies, setPickedCopies] = useState<Readonly<Record<string, string>>>({});
   const [copyDone, setCopyDone] = useState(false);
   const [copyDoneAt, setCopyDoneAt] = useState<string | null>(null);
+  const [copyDoneProject, setCopyDoneProject] = useState<string | null>(null);
   const [copyBusy, setCopyBusyState] = useState(false);
   const [copyLocked, setCopyLocked] = useState(false);
   // Sharing is what the dialog opens on; moving and copying files start from it.
@@ -488,6 +499,8 @@ export function ProjectMachineHandoff({
       (item) => `${item.environmentId}:${item.id}` === requestedTarget,
     );
     setIntent("move");
+    setMoveAsked(true);
+    setCopyFlowRun((run) => run + 1);
     setSyncKey(null);
     setMethod(
       existing && ownCheckout(project) && ownCheckout(existing) ? "folder" : DEFAULT_COPY_METHOD,
@@ -558,7 +571,8 @@ export function ProjectMachineHandoff({
   };
 
   const review = async () => {
-    if (running.current || !target || !sourceReady) return;
+    // Never into the copy that is Main, nor into a project this copy is not linked to.
+    if (running.current || !target || !sourceReady || moveRefusal(send)) return;
     running.current = true;
     setError(null);
     setCanRestart(false);
@@ -824,13 +838,21 @@ export function ProjectMachineHandoff({
       : method === "folder" && target?.environmentId === sendMachine
         ? target.id
         : (pickedCopies[sendMachine] ?? null);
-  const mainLabel =
-    machines.find((item) => item.id === holdings.mainEnvironmentId)?.label ??
-    source?.label ??
-    "this machine";
+  // Named from every saved machine, the source included; never guessed as the source.
+  const machineLabelOf = (environmentId: string | null) =>
+    environments.find((item) => item.environmentId === environmentId)?.label ?? null;
+  const sendCopy = sendHolding ? pickedHolding(sendHolding, sendPicked) : null;
+  // The destination copy belongs to a project this copy is not linked to: files only.
+  const sendOther = otherProjectOf({
+    source: project,
+    copy: sendCopy?.kind === "copy" || sendCopy?.kind === "main" ? sendCopy.copy : null,
+    projects,
+    retired,
+  });
   const send =
     sendMachine && sendHolding
       ? {
+          otherProject: sendOther ? { main: machineLabelOf(sendOther.mainEnvironmentId) } : null,
           holding: sendHolding,
           picked: sendPicked,
           onPick: (id: string) => {
@@ -838,8 +860,24 @@ export function ProjectMachineHandoff({
             // In the Git move the picked copy is its destination folder.
             if (method === "folder") setSelected(`${sendMachine}:${id}`);
           },
-          mainLabel,
+          mainLabel: machineLabelOf(holdings.mainEnvironmentId),
           localFiles: sourceChanges?.state === "dirty" ? sourceChanges.fileCount : null,
+        }
+      : null;
+  // A finished copy into a linked copy offers the page's own switch for that copy.
+  const doneOffer =
+    copyDone && copyMachine && copyDoneProject && !sendOther && method !== "folder"
+      ? mainSwitch?.offers.find((offer) => offer.key === `${copyMachine}:${copyDoneProject}`)
+      : undefined;
+  const makeMain =
+    doneOffer && mainSwitch?.run
+      ? {
+          offer: doneOffer,
+          run: () => {
+            // The switch has its own confirmed move or takeover; this dialog steps aside.
+            changeOpen(false);
+            mainSwitch.run?.(doneOffer.key);
+          },
         }
       : null;
   /** The folder the copy fills on a machine: its one copy, or the copy picked among several. */
@@ -852,7 +890,7 @@ export function ProjectMachineHandoff({
 
   /**
    * Opens the dialog. Every request but an unfinished Git handoff starts on the copy, with
-   * the coordinator kept here; "move" starts with it moving.
+   * Main kept where it is; "move" starts with it moving.
    */
   const openDialog = (
     mode: MachineHandoffOpenRequest["mode"],
@@ -871,6 +909,7 @@ export function ProjectMachineHandoff({
     }
     const machine = syncCandidate?.environmentId ?? requestedMachineId;
     changeOpen(true);
+    setMoveAsked(mode === "move");
     setSyncKey(syncCandidate ? syncTarget! : null);
     if (syncCandidate) setCopyMachine(null);
     // An unfinished Git handoff wins over the menu's Copy: it may already be published.
@@ -983,12 +1022,6 @@ export function ProjectMachineHandoff({
           chooseGitMachine(environmentId as EnvironmentId);
         }}
         intent={method === "folder" ? "move" : intent}
-        onIntentChange={(next) => {
-          // Git always continues the project there; copying files only uses the copy flow.
-          if (next !== "copy" || discardPreview() === "failed") return;
-          setIntent("copy");
-          setMethod(DEFAULT_COPY_METHOD);
-        }}
         sourceChanges={sourceChanges}
         leftBehind={
           open ? (
@@ -1005,8 +1038,12 @@ export function ProjectMachineHandoff({
         onMethodChange={(next) => {
           if (discardPreview() === "failed") return;
           if (next === "folder") {
+            // Git only always moves Main there.
             setIntent("move");
             if (method !== "folder" && copyMachine) chooseGitMachine(copyMachine);
+          } else if (method === "folder") {
+            // Back to a folder copy: Main stays, unless the dialog was opened to move it.
+            setIntent(moveAsked ? "move" : "copy");
           }
           setMethod(next);
         }}
@@ -1018,9 +1055,12 @@ export function ProjectMachineHandoff({
         copyDoneAt={copyDone ? copyDoneAt : null}
         copyTargetLabel={machines.find((item) => item.id === copyMachine)?.label ?? null}
         send={send}
+        makeMain={makeMain}
+        mainLabel={machineLabelOf(holdings.mainEnvironmentId)}
         copyFlow={
           method === "folder" ? undefined : (
             <HandoffFolderCopy
+              key={copyFlowRun}
               project={project}
               coordinatorId={coordinatorId}
               workspaceContext={workspaceContext}
@@ -1056,12 +1096,13 @@ export function ProjectMachineHandoff({
               // Requested, so a saved draft or last copy cannot swap the machine or its folder.
               machineRequested={requestedMachine !== null || syncCopy !== undefined}
               defaultMode={intent === "move" ? "copy-and-move" : "copy-only"}
-              onChoicesChange={({ mode, machine, done, review, doneAt }) => {
+              onChoicesChange={({ mode, machine, done, review, doneAt, projectId }) => {
                 copyAtReview.current = review === true;
                 setIntent(mode === "copy-and-move" ? "move" : "copy");
                 setCopyMachine(machine);
                 setCopyDone(done);
                 setCopyDoneAt(doneAt ?? null);
+                setCopyDoneProject(done ? (projectId ?? null) : null);
                 if (done && machine) rememberMachine(machine);
               }}
               savedProject={(environmentId, folder) =>

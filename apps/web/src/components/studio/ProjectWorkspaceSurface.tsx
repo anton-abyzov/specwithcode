@@ -2227,6 +2227,7 @@ export function ProjectWorkspaceSurface({
                         project={project}
                         coordinatorId={mainCoordinatorId}
                         requestedTarget={handoffTarget}
+                        mainSwitch={mainSwitch}
                         openRequest={handoff.request}
                         onRequestHandled={handoff.handled}
                         // The machine menu above opens it: one control for Add, Move and Leave.

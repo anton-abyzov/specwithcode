@@ -76,6 +76,8 @@ export const noSecrets = { ...summary, secretFiles: [] };
 
 export const onOpenProject: Mock = vi.fn();
 export const onBusyChange: Mock = vi.fn();
+/** What the flow reports to its dialog: mode, machine, done and the finished copy's project. */
+export const onChoices: Mock = vi.fn();
 export const onDialogClose: Mock = vi.fn();
 export const stepState = () =>
   [...document.querySelectorAll('[data-slot="copy-step"]')].map(
@@ -171,6 +173,9 @@ export const copyHandlers = ({
   }),
 });
 
+/** Opened to move Main ("Make X main"): the copy flow no longer asks, the dialog says. */
+export const MOVE = { defaultMode: "copy-and-move" } as const;
+
 export interface FixtureOptions {
   coordinatorId?: string | null;
   canMove?: boolean;
@@ -226,12 +231,11 @@ export function CopyFixture(overrides: FixtureOptions) {
       onBusyChange={overrides.dialog ? updateBusy : onBusyChange}
       onCloseLockChange={setLocked}
       onOpenProject={onOpenProject}
-      {...(overrides.dialog
-        ? {
-            onChoicesChange: ({ machine, done }: { machine: string | null; done: boolean }) =>
-              setDoneOn(done ? (machine === "m1" ? "M1" : "M3") : null),
-          }
-        : {})}
+      onChoicesChange={(choices) => {
+        onChoices(choices);
+        if (overrides.dialog)
+          setDoneOn(choices.done ? (choices.machine === "m1" ? "M1" : "M3") : null);
+      }}
     />
   );
   return overrides.dialog ? (

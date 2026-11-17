@@ -5174,4 +5174,32 @@ export const zh: PhraseCatalog = {
   "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
     "请先连接 {main}。此窗口尚未加载 {main} 上的主副本，因此还不能将 {machine} 设为主副本。",
   "connect {main} first": "请先连接 {main}",
+  "Copy {project} to {machine}": "将 {project} 复制到 {machine}",
+  "Move {project} to {machine}": "将 {project} 移到 {machine}",
+  "Copy {project} to another machine": "将 {project} 复制到另一台机器",
+  "Move {project} to another machine": "将 {project} 移到另一台机器",
+  "Nothing on {machine} is replaced without asking.": "{machine} 上的内容不会未经询问就被替换。",
+  "the other machine": "另一台机器",
+  "From {source}. Main stays on {main}.": "来自 {source}。主副本仍在 {main}。",
+  "From {source}. Main stays where it is.": "来自 {source}。主副本留在原处。",
+  "From {source}. Main moves to {machine}.": "来自 {source}。主副本移到 {machine}。",
+  "From {source}. Main moves to the machine you choose.": "来自 {source}。主副本移到你选择的机器。",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
+    "来自 {source}。{source} 的副本未关联到 {machine} 所属的项目(主副本:{main})。",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
+    "来自 {source}。{source} 的副本未关联到 {machine} 所属的项目。",
+  "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "只把文件复制到 {machine} 的副本。主副本仍在 {main},{source} 不会关联到该项目。若要合为一个项目,请在机器菜单中关联 {source}。",
+  "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "只把文件复制到 {machine} 的副本。它的主副本不变,{source} 不会关联到该项目。若要合为一个项目,请在机器菜单中关联 {source}。",
+  "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
+    "无法从这里把主副本移到 {machine}:{source} 未关联到 {machine} 所属的项目。请先在机器菜单中关联 {source},或改为复制文件。",
+  "Not available: that machine already has Main.": "不可用:那台机器已有主副本。",
+  "Not available: it would move Main into a project this copy is not linked to.":
+    "不可用:这会把主副本移入此副本未关联的项目。",
+  "{machine} has a copy. Main stays on {main}.": "{machine} 已有副本。主副本仍在 {main}。",
+  "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
+    "未关联:{machine} 上的副本属于主副本在 {main} 的项目,{source} 不在其中。未关联任何内容。",
+  "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
+    "未关联:{machine} 上的副本属于另一个项目,{source} 不在其中。未关联任何内容。",
 };

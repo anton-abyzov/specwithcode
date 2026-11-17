@@ -5425,4 +5425,36 @@ export const fr: PhraseCatalog = {
   "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
     "Connectez d’abord {main}. Cette fenêtre n’a pas chargé la copie principale sur {main} : elle ne peut donc pas encore faire de {machine} la principale.",
   "connect {main} first": "connectez d’abord {main}",
+  "Copy {project} to {machine}": "Copier {project} vers {machine}",
+  "Move {project} to {machine}": "Déplacer {project} vers {machine}",
+  "Copy {project} to another machine": "Copier {project} vers une autre machine",
+  "Move {project} to another machine": "Déplacer {project} vers une autre machine",
+  "Nothing on {machine} is replaced without asking.":
+    "Rien n’est remplacé sur {machine} sans votre accord.",
+  "the other machine": "l’autre machine",
+  "From {source}. Main stays on {main}.": "Depuis {source}. La principale reste sur {main}.",
+  "From {source}. Main stays where it is.": "Depuis {source}. La principale reste où elle est.",
+  "From {source}. Main moves to {machine}.": "Depuis {source}. La principale passe sur {machine}.",
+  "From {source}. Main moves to the machine you choose.":
+    "Depuis {source}. La principale passe sur la machine que vous choisissez.",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
+    "Depuis {source}. La copie de {source} n’est pas liée au projet auquel {machine} appartient (principale : {main}).",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
+    "Depuis {source}. La copie de {source} n’est pas liée au projet auquel {machine} appartient.",
+  "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "Seuls les fichiers sont copiés dans la copie de {machine}. La principale reste sur {main}, et {source} n’est pas lié à ce projet. Pour n’en faire qu’un seul projet, liez {source} depuis le menu des machines.",
+  "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "Seuls les fichiers sont copiés dans la copie de {machine}. Sa principale ne change pas, et {source} n’est pas lié à ce projet. Pour n’en faire qu’un seul projet, liez {source} depuis le menu des machines.",
+  "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
+    "La principale ne peut pas passer sur {machine} d’ici : {source} n’est pas lié au projet auquel {machine} appartient. Liez d’abord {source} depuis le menu des machines, ou copiez les fichiers.",
+  "Not available: that machine already has Main.":
+    "Indisponible : cette machine a déjà la principale.",
+  "Not available: it would move Main into a project this copy is not linked to.":
+    "Indisponible : cela déplacerait la principale dans un projet auquel cette copie n’est pas liée.",
+  "{machine} has a copy. Main stays on {main}.":
+    "{machine} a une copie. La principale reste sur {main}.",
+  "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
+    "Non liée : la copie sur {machine} appartient à un projet dont la principale est {main}, et {source} n’en fait pas partie. Rien n’a été lié.",
+  "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
+    "Non liée : la copie sur {machine} appartient à un autre projet, et {source} n’en fait pas partie. Rien n’a été lié.",
 };

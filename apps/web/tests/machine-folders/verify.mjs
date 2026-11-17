@@ -58,21 +58,18 @@ try {
     page.on("pageerror", (e) => errors.push(e.message));
     await page.goto(`http://127.0.0.1:${server.address().port}/?theme=${theme}`);
     await page.getByRole("dialog").waitFor();
-    // Screen 1: title, helper, the coordinator question, machine rows, the folder, Details.
+    // Screen 1: title, helper naming where Main goes, machine rows, the folder, Details.
     assert.match(
       await page.getByRole("dialog").getByRole("heading").first().textContent(),
       /^Move EasyChamp to /,
     );
     await page
-      .getByText(/^From MacBook Pro M4\. Nothing on .+ is replaced without asking\.$/)
+      .getByText(
+        /^From MacBook Pro M4\. Main moves to .+\. Nothing on .+ is replaced without asking\.$/,
+      )
       .waitFor();
-    assert.match(
-      await page
-        .locator('[data-slot="handoff-coordinator"] [role="radio"][aria-checked="true"]')
-        .first()
-        .evaluate((radio) => radio.closest("label")?.textContent ?? ""),
-      /^Move to /,
-    );
+    // Git only always moves Main: nothing asks Copy or move.
+    assert.equal(await page.locator('[data-slot="handoff-coordinator"]').count(), 0);
     assert.equal(await page.locator('[data-slot="machine-option"]').count(), 3);
     assert.equal(
       await page.getByRole("radio", { name: /^MacBook Pro M3/ }).getAttribute("aria-checked"),

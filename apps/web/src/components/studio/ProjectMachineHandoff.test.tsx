@@ -971,23 +971,20 @@ it("remembers the copy flow's machine once its copy is done", async () => {
   });
 });
 
-it("opens as a move, and switching the Git move to files only uses the copy flow", async () => {
+it("moves Main with Git only, and a folder copy picked instead keeps Main where it is", async () => {
   state.environments = machineEnvironments;
   await mount();
   expect(props().intent).toBe("move");
   expect(props().method).toBe("folder");
+  // Nothing in the dialog asks Copy or move: the method alone decides.
+  expect("onIntentChange" in props()).toBe(false);
   await act(async () => props().onMethodChange!("copy"));
-  expect((props().copyFlow as { props: Record<string, unknown> }).props.defaultMode).toBe(
-    "copy-and-move",
-  );
-  await act(async () => props().onMethodChange!("folder"));
-  expect(props().intent).toBe("move");
-  await act(async () => props().onIntentChange!("copy"));
-  expect(props().method).toBe("clone");
   expect(props().intent).toBe("copy");
   expect((props().copyFlow as { props: Record<string, unknown> }).props.defaultMode).toBe(
     "copy-only",
   );
+  await act(async () => props().onMethodChange!("folder"));
+  expect(props().intent).toBe("move");
 });
 
 it("chooses a machine's saved folder, or the folder picker when it has none", async () => {

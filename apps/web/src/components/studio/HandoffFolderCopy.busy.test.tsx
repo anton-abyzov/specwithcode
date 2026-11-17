@@ -2,7 +2,13 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { copyHandlers, CopyFixture, copyStatus, findButton } from "./HandoffFolderCopy.testkit";
+import {
+  copyHandlers,
+  CopyFixture,
+  copyStatus,
+  findButton,
+  MOVE,
+} from "./HandoffFolderCopy.testkit";
 
 // A move a busy machine refused: the threads it named, each opening that thread, and what
 // to do about them. Older machines name none and keep the plain notice.
@@ -102,13 +108,8 @@ const click = async (label: string) => {
   await settle();
 };
 const handOff = async () => {
-  await act(async () => root.render(<CopyFixture />));
+  await act(async () => root.render(<CopyFixture {...MOVE} />));
   await settle();
-  await act(async () => {
-    [...container.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]')]
-      .find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!
-      .click();
-  });
   await click("Copy and move to M3");
   await click("Copy and move to M3");
 };
