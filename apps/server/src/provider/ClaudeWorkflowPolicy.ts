@@ -146,9 +146,32 @@ export const CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS = [
   "mcp__claude_ai_Claude_Docs__delete",
 ] as const;
 
+/**
+ * Native tools a project coordinator never gets: it routes work to worker
+ * threads with the Studio MCP tools, which stay available. Without this a
+ * coordinator ran a whole migration as a native workflow in its own thread
+ * and had no thread link to give the user (November 17, 2026).
+ */
+export const CLAUDE_COORDINATOR_DISALLOWED_TOOLS = [
+  "Agent",
+  "Task",
+  "Workflow",
+  "Bash",
+  "Read",
+  "Edit",
+  "Write",
+  "Glob",
+  "Grep",
+  "WebFetch",
+  "WebSearch",
+  "NotebookEdit",
+] as const;
+
 /** Native orchestration and reasoning effort are independent session choices. */
 export function compileClaudeWorkflowPolicy(input: {
   readonly mode?: ClaudeWorkflowMode | undefined;
+  /** The thread is its project's coordinator: workflows off, no hands-on native tools. */
+  readonly coordinator?: boolean | undefined;
   /** The thread's Ultracode toggle; unset follows the mode. */
   readonly ultracode?: boolean | undefined;
   readonly agentInstructions?: string | undefined;
@@ -160,7 +183,7 @@ export function compileClaudeWorkflowPolicy(input: {
   readonly disallowedTools?: ReadonlyArray<string> | undefined;
   readonly environment: NodeJS.ProcessEnv;
 }) {
-  const mode = input.mode ?? "on-request";
+  const mode = input.coordinator === true ? "disabled" : (input.mode ?? "on-request");
   if (
     input.extraArgs?.["append-subagent-system-prompt-file"] !== undefined &&
     input.subagentPromptFileContents === undefined
@@ -196,12 +219,18 @@ export function compileClaudeWorkflowPolicy(input: {
   const environment = { ...input.environment };
   if (mode === "disabled") environment.CLAUDE_CODE_DISABLE_WORKFLOWS = "1";
   const allowedTools = input.allowedTools?.filter(
-    (tool) => mode !== "disabled" || !/^Workflow(?:\(|$)/.test(tool),
+    (tool) =>
+      (mode !== "disabled" || !/^Workflow(?:\(|$)/.test(tool)) &&
+      (input.coordinator !== true ||
+        !CLAUDE_COORDINATOR_DISALLOWED_TOOLS.some(
+          (blocked) => tool === blocked || tool.startsWith(`${blocked}(`),
+        )),
   );
   const disallowedTools = [
     ...new Set([
       ...(input.disallowedTools ?? []),
       ...(mode === "disabled" ? ["Workflow"] : []),
+      ...(input.coordinator === true ? CLAUDE_COORDINATOR_DISALLOWED_TOOLS : []),
       ...CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS,
     ]),
   ];

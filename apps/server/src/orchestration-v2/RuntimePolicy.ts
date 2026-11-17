@@ -212,9 +212,12 @@ export const layerFromProjectStore: Layer.Layer<
                 !isInsideFolder(threadFolderProject.workspaceRoot, worktreePath)
               ? threadFolderProject.workspaceRoot
               : false;
+        const coordinatorProject = localProject ?? threadFolderProject;
         return ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
+          isCoordinator:
+            coordinatorProject?.workspaceSettings?.coordinatorThreadId === input.thread.id,
           cwd,
           agentInstructions: withServiceInstructions(
             resolveAgentInstructions({
