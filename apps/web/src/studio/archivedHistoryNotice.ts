@@ -32,11 +32,11 @@ function shownNotConnected(state: MachineReachState | undefined): boolean {
  * machines that failed; one with no name to show reads as "another machine",
  * never its raw id.
  */
-export function archivedHistoryNotice(input: {
-  readonly failedEnvironmentIds: ReadonlyArray<string>;
+export function archivedHistoryNotice<Id extends string>(input: {
+  readonly failedEnvironmentIds: ReadonlyArray<Id>;
   readonly reach: ReadonlyMap<string, MachineReachState>;
   /** The machine's name, or null when the app has none to show. */
-  readonly label: (environmentId: string) => string | null;
+  readonly label: (environmentId: Id) => string | null;
 }): ArchivedHistoryNotice | null {
   const failed = [...new Set(input.failedEnvironmentIds)].filter(
     (environmentId) => !shownNotConnected(input.reach.get(environmentId)),
