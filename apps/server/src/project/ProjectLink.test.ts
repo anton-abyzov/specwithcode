@@ -24,6 +24,7 @@ import {
   machine,
   operationId,
   removeCheckouts,
+  thirdLinkId,
   unlinkId,
   withoutRoot,
 } from "./ProjectLink.testkit.ts";
@@ -1372,6 +1373,96 @@ describe("ProjectLink", () => {
       expect(left.logicalProject.members).toEqual([pair.joining]);
       expect(left.coordinatorBinding).toEqual({ epoch: 0, state: "active", operationId: unlinkId });
       expect(pair.m3.ownershipModes).toEqual(["join-as-member", "start-coordinator", "unlink"]);
+      expect(
+        pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.coordinatorBinding,
+      ).toEqual({ epoch: 0, state: "active" });
+    });
+
+    it("keeps a started coordinator that took over, was kept for a join, or is alone", async () => {
+      const pair = legacyPair();
+      await link(pair);
+      await pair.m3.run((service) =>
+        service.startCoordinator({ operationId: startId, projectId: pair.joining.projectId }),
+      );
+      const joined = pair.m3.projects.get(pair.joining.projectId)!;
+      const settings = joined.workspaceSettings!;
+      const binding = settings.coordinatorBinding!;
+      for (const next of [
+        { ...settings, coordinatorBinding: { ...binding, predecessor: pair.kept } },
+        { ...settings, coordinatorBinding: { ...binding, keptForJoin: true as const } },
+        { ...settings, logicalProject: { ...settings.logicalProject!, members: [pair.joining] } },
+      ]) {
+        pair.m3.projects.set(pair.joining.projectId, { ...joined, workspaceSettings: next });
+        expect(
+          (
+            await pair.m3.fails(
+              pair.m3.run((service) =>
+                service.unlink({
+                  side: "member",
+                  operationId: unlinkId,
+                  projectId: pair.joining.projectId,
+                  notes: [],
+                  leaveCoordinator: true,
+                }),
+              ),
+            )
+          ).code,
+        ).toBe("not_linked");
+      }
+    });
+
+    it("remembers that a started coordinator was kept for a join, and then never leaves", async () => {
+      const pair = legacyPair();
+      await link(pair);
+      await pair.m3.run((service) =>
+        service.startCoordinator({ operationId: startId, projectId: pair.joining.projectId }),
+      );
+      const m1 = machine("m1");
+      const root = m1.add(
+        "easychamp-m1",
+        checkout("git@github.com:anton/sw-easychamp.git"),
+      ).workspaceRoot;
+      const joining = { ...m1.member("easychamp-m1"), workspaceRoot: root };
+      const prepared = await pair.m3.run((service) =>
+        service.prepare({ operationId: thirdLinkId, projectId: pair.joining.projectId, joining }),
+      );
+      const accepted = await m1.run((service) =>
+        service.accept({
+          operationId: thirdLinkId,
+          projectId: joining.projectId,
+          kept: prepared.kept,
+          logicalProject: prepared.logicalProject,
+          coordinatorBinding: prepared.coordinatorBinding,
+          keptFingerprint: prepared.fingerprint,
+        }),
+      );
+      await pair.m3.run((service) =>
+        service.commit({
+          operationId: thirdLinkId,
+          projectId: pair.joining.projectId,
+          joining: accepted.member,
+          notes: [],
+        }),
+      );
+      const binding = pair.m3.projects.get(pair.joining.projectId)!.workspaceSettings!
+        .coordinatorBinding!;
+      expect(binding).toMatchObject({ state: "active", keptForJoin: true });
+      expect(
+        (
+          await pair.m3.fails(
+            pair.m3.run((service) =>
+              service.unlink({
+                side: "member",
+                operationId: unlinkId,
+                projectId: pair.joining.projectId,
+                notes: [],
+                leaveCoordinator: true,
+              }),
+            ),
+          )
+        ).code,
+      ).toBe("not_linked");
+      // Main keeps a binding with no such mark when it is kept.
       expect(
         pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.coordinatorBinding,
       ).toEqual({ epoch: 0, state: "active" });

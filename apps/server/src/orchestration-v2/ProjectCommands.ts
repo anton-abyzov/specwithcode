@@ -1,4 +1,6 @@
 import {
+  coordinatorMayLeave,
+  coordinatorStartedBeside,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   logicalProjectMemberKey,
   logicalProjectTitle,
@@ -398,7 +400,13 @@ export function ownershipRejection(
       return undefined;
     case "link-member":
       if (!keepsIdentity()) return "Linking keeps the coordinator's shared identity as it is.";
-      if (!keepsActiveBinding())
+      // One started beside main may also remember that it was kept (`keptForJoin`).
+      if (
+        !keepsActiveBinding() &&
+        !(
+          coordinatorStartedBeside(old) && sameRecord(next, { ...old!, keptForJoin: true as const })
+        )
+      )
         return "Only the active coordinator can add members, and its binding stays as it is.";
       if (
         !includesAll(incoming.members, identity!.members) ||
@@ -465,13 +473,8 @@ export function ownershipRejection(
       return undefined;
     }
     case "unlink": {
-      // Or a coordinator started beside main (no predecessor, above epoch 0) that leaves with it.
-      const startedBeside =
-        old?.state === "active" &&
-        old.epoch > 0 &&
-        !old.predecessor &&
-        (identity?.members.length ?? 0) > 1;
-      if (old?.state !== "transferred" && !startedBeside)
+      // Or a coordinator started beside main that no copy joined under (`coordinatorMayLeave`).
+      if (old?.state !== "transferred" && !coordinatorMayLeave(old, identity?.members.length ?? 0))
         return "Only a member whose coordinator was relinquished can unlink; finish any handoff first.";
       if (
         identity?.id === incoming.id ||

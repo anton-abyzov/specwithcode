@@ -5,6 +5,8 @@ import {
 import {
   CommandId,
   compareFingerprints,
+  coordinatorMayLeave,
+  coordinatorStartedBeside,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   noteNameCandidates,
   LOGICAL_PROJECT_MEMBER_ROOT_MAX_LENGTH,
@@ -204,6 +206,12 @@ export interface ReplicateFromMemberInput {
 
 const fail = (code: ProjectLinkError["code"], detail?: string) =>
   Effect.fail(new ProjectLinkError({ code, ...(detail ? { detail } : {}) }));
+
+/** The kept side's binding after a join; one started beside main remembers it (`keptForJoin`). */
+const keptFor = (binding: ProjectCoordinatorBinding | undefined): ProjectCoordinatorBinding =>
+  coordinatorStartedBeside(binding)
+    ? { ...binding!, keptForJoin: true }
+    : (binding ?? { epoch: 0, state: "active" });
 
 /** A personal assistant is never linked, taken over, started or superseded from another machine. */
 const refusePersonal = (project: Pick<Project, "workspaceSettings">) =>
@@ -752,10 +760,7 @@ const make = Effect.gen(function* () {
           {
             mode: "link-member",
             logicalProject,
-            coordinatorBinding: project.workspaceSettings?.coordinatorBinding ?? {
-              epoch: 0,
-              state: "active",
-            },
+            coordinatorBinding: keptFor(project.workspaceSettings?.coordinatorBinding),
           },
         );
         return { operationId: input.operationId, logicalProject, notesWritten, replayed: false };
@@ -845,10 +850,9 @@ const make = Effect.gen(function* () {
             replayed: true,
           };
         if (binding?.state === "transferring") return yield* fail("handoff_in_progress");
-        // A coordinator started beside main (no predecessor, above epoch 0) may leave too.
-        const side = binding?.state === "active" && binding.epoch > 0 && !binding.predecessor;
         const sideLeaves =
-          input.leaveCoordinator === true && side && (identity?.members.length ?? 0) > 1;
+          input.leaveCoordinator === true &&
+          coordinatorMayLeave(binding, identity?.members.length ?? 0);
         if (binding?.state !== "transferred" && !sideLeaves) return yield* fail("not_linked");
         // Refuse before leaving when a note would be overwritten; nothing changes then.
         for (const note of input.notes) {

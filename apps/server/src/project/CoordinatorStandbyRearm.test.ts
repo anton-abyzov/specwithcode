@@ -1245,6 +1245,8 @@ describe("the wire stays as it was", () => {
         "standby",
         // Optional, added by member list sync, not by re-arm; older peers ignore it.
         "removedMembers",
+        // Optional, set on a coordinator started beside main when a join keeps it; older peers ignore it.
+        "keptForJoin",
       ].toSorted(),
     );
     expect(fieldsOf(ProjectCoordinatorStandby)).toEqual(
