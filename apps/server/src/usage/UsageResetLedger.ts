@@ -35,6 +35,8 @@ import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as UsageLimitSources from "./UsageLimitSources.ts";
 import {
+  USAGE_LIMIT_HISTORY_FILE,
+  decodeHistoryFile,
   isoAt,
   readingsFromProviders,
   readingsFromSources,
@@ -42,6 +44,7 @@ import {
 import {
   type LedgerReading,
   advanceLedger,
+  backfillLedger,
   decodeLedgerFile,
   encodeLedgerFile,
   ledgerAccounts,
@@ -111,6 +114,13 @@ export const make = Effect.gen(function* () {
   // worth a write: a lost cursor move costs at most the reads since the last save.
   let version = 0;
   let savedVersion = 0;
+  // Resets the quota history saw before the ledger did: a new ledger starts with two weeks.
+  const history = decodeHistoryFile(
+    yield* fs
+      .readFileString(path.join(config.stateDir, USAGE_LIMIT_HISTORY_FILE))
+      .pipe(Effect.orElseSucceed(() => "")),
+  );
+  if (backfillLedger(state, history) > 0) version += 1;
 
   const record = (readings: readonly LedgerReading[]) =>
     Effect.sync(() => {

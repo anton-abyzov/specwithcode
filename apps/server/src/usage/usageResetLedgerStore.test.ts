@@ -1,11 +1,12 @@
 import { ProviderDriverKind, type ServerProviderUsageWindow } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isoAt } from "./usageLimitHistoryStore.ts";
+import { type HistorySeries, type HistoryState, isoAt } from "./usageLimitHistoryStore.ts";
 import {
   type LedgerReading,
   LEDGER_RETENTION_MS,
   advanceLedger,
+  backfillLedger,
   decodeLedgerFile,
   emptyLedger,
   encodeLedgerFile,
@@ -125,9 +126,9 @@ describe("advanceLedger", () => {
     advanceLedger(state, reading(t0, [weekly(100, null)]));
     expect(advanceLedger(state, reading(t0 + 8 * DAY, [weekly(100, null)]))).toEqual([]);
     // The period after the gap has no known start.
-    expect(
-      advanceLedger(state, reading(t0 + 8 * DAY + HOUR, [weekly(4, null)])),
-    ).toMatchObject([{ startedAt: null, usedPercentAtReset: 100, lostPercent: 0 }]);
+    expect(advanceLedger(state, reading(t0 + 8 * DAY + HOUR, [weekly(4, null)]))).toMatchObject([
+      { startedAt: null, usedPercentAtReset: 100, lostPercent: 0 },
+    ]);
   });
 
   it("ignores a kept read restamped after its own reset time, and older reads", () => {
@@ -135,9 +136,9 @@ describe("advanceLedger", () => {
     advanceLedger(state, reading(reset1 - HOUR, [weekly(59, reset1)]));
     expect(advanceLedger(state, reading(reset1 + 3 * HOUR, [weekly(59, reset1)]))).toEqual([]);
     expect(advanceLedger(state, reading(reset1 - 2 * HOUR, [weekly(10, reset1)]))).toEqual([]);
-    expect(
-      advanceLedger(state, reading(reset1 + 4 * HOUR, [weekly(3, reset2)])),
-    ).toMatchObject([{ usedPercentAtReset: 59, lastReadAt: reset1 - HOUR }]);
+    expect(advanceLedger(state, reading(reset1 + 4 * HOUR, [weekly(3, reset2)]))).toMatchObject([
+      { usedPercentAtReset: 59, lastReadAt: reset1 - HOUR },
+    ]);
   });
 });
 
@@ -217,5 +218,136 @@ describe("ledger accounts and older files", () => {
     expect(
       advanceLedger(restored, reading(t0 + HOUR, [weekly(0, t0 + HOUR + WEEK)], 1)),
     ).toMatchObject([{ cause: "redeemed" }]);
+  });
+});
+
+describe("backfillLedger", () => {
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const series = (
+    windowId: string,
+    windowKind: HistorySeries["windowKind"],
+    samples: Array<[number, number, number | null]>,
+    accountKey = "claude:max@example.com",
+  ): HistorySeries => ({
+    accountKey,
+    driver: accountKey.startsWith("codex") ? codex : claude,
+    windowId,
+    windowKind,
+    windowDurationMins: windowKind === "session" ? 300 : undefined,
+    samples: samples.map(([at, usedPercent, resetsAt]) => ({ at, usedPercent, resetsAt })),
+  });
+  const history = (...all: HistorySeries[]): HistoryState =>
+    new Map(
+      all.map((entry) => [`${entry.accountKey}|${entry.windowKind}:${entry.windowId}`, entry]),
+    );
+  const twoResets: Array<[number, number, number | null]> = [
+    [t0, 40, reset1],
+    [reset1 - HOUR, 97, reset1],
+    [reset1 + HOUR, 3, reset2],
+    [reset2 - 2 * HOUR, 69, reset2],
+    [reset2 + HOUR, 1, reset2 + WEEK],
+  ];
+
+  it("adds the resets the history saw, with the model scope from the window id", () => {
+    const state = emptyLedger();
+    const added = backfillLedger(
+      state,
+      history(
+        series("seven_day", "weekly", twoResets),
+        series("seven_day_opus", "weekly", twoResets),
+        series("five_hour", "session", [
+          [t0, 80, t0 + HOUR],
+          [t0 + 2 * HOUR, 5, t0 + 6 * HOUR],
+        ]),
+      ),
+    );
+    expect(added).toBe(4);
+    expect(
+      state.periods.map((period) => [
+        period.windowId,
+        period.modelScope,
+        period.usedPercentAtReset,
+      ]),
+    ).toEqual([
+      ["seven_day", null, 97],
+      ["seven_day_opus", "opus", 97],
+      ["seven_day", null, 69],
+      ["seven_day_opus", "opus", 69],
+    ]);
+    expect(state.periods[2]).toMatchObject({
+      startedAt: reset1,
+      endedAt: reset2,
+      cause: "scheduled",
+    });
+  });
+
+  it("adds nothing twice, whether from an earlier backfill or a live read", () => {
+    const state = emptyLedger();
+    advanceLedger(state, {
+      accountKey: "codex:pro@example.com",
+      driver: codex,
+      checkedAt: reset1 - HOUR,
+      windows: [weekly(97, reset1)],
+      resetCredits: null,
+    });
+    advanceLedger(state, {
+      accountKey: "codex:pro@example.com",
+      driver: codex,
+      checkedAt: reset1 + 30 * MINUTE,
+      windows: [weekly(2, reset2)],
+      resetCredits: null,
+    });
+    expect(state.periods).toHaveLength(1);
+    const past = history(series("secondary", "weekly", twoResets, "codex:pro@example.com"));
+    expect(backfillLedger(state, past)).toBe(1);
+    expect(backfillLedger(state, past)).toBe(0);
+    expect(state.periods.map((period) => period.endedAt)).toEqual([reset1, reset2]);
+  });
+
+  it("keeps a weekly and a monthly window with one id apart, and scopes Codex buckets", () => {
+    const state = emptyLedger();
+    const monthReset = t0 + 20 * DAY;
+    backfillLedger(
+      state,
+      history(
+        series("primary", "weekly", twoResets, "codex:pro@example.com"),
+        series(
+          "primary",
+          "monthly",
+          [
+            [t0, 50, monthReset],
+            [monthReset - HOUR, 88, monthReset],
+            [monthReset + HOUR, 0, monthReset + 30 * DAY],
+          ],
+          "codex:pro@example.com",
+        ),
+        series("gpt-5-codex:secondary", "weekly", twoResets, "codex:pro@example.com"),
+      ),
+    );
+    expect(
+      state.periods
+        .filter((period) => period.windowId === "primary")
+        .map((period) => [period.windowKind, period.usedPercentAtReset]),
+    ).toEqual([
+      ["weekly", 97],
+      ["weekly", 69],
+      ["monthly", 88],
+    ]);
+    expect(state.periods.find((period) => period.windowId.includes(":"))?.modelScope).toBe(
+      "gpt-5-codex",
+    );
+  });
+
+  it("dates the running period from the last reset the history saw", () => {
+    const state = emptyLedger();
+    advanceLedger(state, {
+      accountKey: "claude:max@example.com",
+      driver: claude,
+      checkedAt: reset2 + 2 * HOUR,
+      windows: [{ ...weekly(4, reset2 + WEEK), id: "seven_day" }],
+      resetCredits: null,
+    });
+    backfillLedger(state, history(series("seven_day", "weekly", twoResets)));
+    expect([...state.cursors.values()][0]?.startedAt).toBe(reset2);
   });
 });
