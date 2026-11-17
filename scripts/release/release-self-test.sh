@@ -1354,13 +1354,15 @@ verify_fail_ok() {
 }
 check 'a failed verify stops the release before helpers and drafts' verify_fail_ok
 stub_set RELEASE_STUB_FAIL=
+# A stubbed call that fails logs twice (the call and its FAILED line), so the
+# labels below show one failed attempt as two entries with the same label.
 VR="$WORK/verify-retry"
 make_machine "$VR"
 use_machine "$VR" 1.7.4
 stub_set RELEASE_STUB_FAIL_ONCE=verify:verify-app
 verify_retry_ok() {
   run 0 1.7.4 --stop-after verify || return 1
-  has 'retrying it once' && [ "$(labels_of verify)" = "verify-prev-app verify-prev-app-sums verify-app verify-app " ]
+  has 'retrying it once' && [ "$(labels_of verify)" = "verify-prev-app verify-prev-app-sums verify-app verify-app verify-app " ]
 }
 check 'a verify that fails once is retried once and the release continues' verify_retry_ok
 VB="$WORK/bump-retry"
@@ -1369,8 +1371,7 @@ use_machine "$VB" 1.7.5
 stub_set RELEASE_STUB_FAIL_ONCE=bump:clean
 bump_clean_retry_ok() {
   run 0 1.7.5 --stop-after bump || return 1
-  has 'retrying with -ff' && [ "$(labels_of bump)" = "fetch-main local-release-branch release-branch clean clean-force install bump-unchanged " ] || \
-    [ "$(labels_of bump)" = "fetch-main local-release-branch release-branch clean clean-force install bump " ]
+  has 'retrying with -ff' && [ "$(labels_of bump)" = "fetch-main release-branch clean clean clean-force install bump " ]
 }
 check 'a bump clean that fails once retries with -ff and continues' bump_clean_retry_ok
 stub_set RELEASE_STUB_FAIL_ONCE=
