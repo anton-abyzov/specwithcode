@@ -268,6 +268,10 @@ private struct ChatScreen: View {
       if isNearBottom, distance > 200 { isNearBottom = false }
       else if !isNearBottom, distance < 80 { isNearBottom = true }
     }
+    .onChange(of: threadSummary?.modelSelection) {
+      // The thread's model changed: a sent model is now either applied or overruled.
+      router.sentModels[target] = nil
+    }
     .onChange(of: tailSignature) {
       guard isNearBottom else { return }
       withAnimation(.easeOut(duration: 0.2)) { position.scrollTo(edge: .bottom) }
@@ -1082,9 +1086,8 @@ private struct ChatScreen: View {
   /// message switches the thread only when its run starts. Later messages keep
   /// naming it until the thread's own selection catches up.
   private var sentModel: ModelSelection? {
-    guard let sent = router.sentModels[target] else { return nil }
-    if let current = threadSummary?.modelSelection, ModelChoice.sameModel(current, sent) { return nil }
-    return sent
+    guard let sent = router.sentModels[target], threadSummary?.modelSelection == sent.threadWas else { return nil }
+    return sent.selection
   }
 
   /// The selection the next message builds on, without this composer's
@@ -1137,6 +1140,9 @@ private struct ChatScreen: View {
     router.optionDrafts[target] = nil
     if let base = baseSelection, choice.matches(base) {
       router.modelDrafts[target] = nil
+    } else if let own = threadSummary?.modelSelection, choice.matches(own) {
+      // Back to the thread's own model while a sent one is on its way: keep its options.
+      router.modelDrafts[target] = own
     } else {
       router.modelDrafts[target] = choice.selection
     }
@@ -1172,8 +1178,13 @@ private struct ChatScreen: View {
     } else {
       chosen.isEmpty ? nil : threadSummary?.traits.map { ModelTraits.merging($0.selection, with: chosen) }
     }
+    if sentModel == nil { router.sentModels[target] = nil }
     let previousSent = router.sentModels[target]
-    if modelBase != nil, let selection { router.sentModels[target] = selection }
+    var sent: SentModel?
+    if modelBase != nil, let selection {
+      sent = SentModel(selection: selection, threadWas: threadSummary?.modelSelection)
+      router.sentModels[target] = sent
+    }
     router.optionDrafts[target] = nil
     router.modelDrafts[target] = nil
     session.lastError = nil
@@ -1183,7 +1194,8 @@ private struct ChatScreen: View {
       do {
         try await model.engine.send(text, images: images, modelSelection: selection, to: target)
       } catch {
-        if let selection, router.sentModels[target] == selection { router.sentModels[target] = previousSent }
+        // Only this send's own record is undone; a later send's stays.
+        if let sent, router.sentModels[target]?.id == sent.id { router.sentModels[target] = previousSent }
         // A pick or options made while the send ran win over the failed ones.
         if router.modelDrafts[target] == nil { router.modelDrafts[target] = picked }
         if router.optionDrafts[target] == nil, !chosen.isEmpty, router.modelDrafts[target] == picked { router.optionDrafts[target] = chosen }

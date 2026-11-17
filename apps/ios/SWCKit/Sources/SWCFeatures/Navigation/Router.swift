@@ -171,7 +171,7 @@ final class AppRouter {
   var modelDrafts: [ChatTarget: ModelSelection] = [:]
   /// A model each chat sent that its thread does not run on yet (a queued
   /// message switches it when its run starts), so later messages keep it.
-  var sentModels: [ChatTarget: ModelSelection] = [:]
+  var sentModels: [ChatTarget: SentModel] = [:]
   private(set) var pendingPhotoBatches: [ChatTarget: Int] = [:]
 
   func beginPhotoBatch(for target: ChatTarget) {
@@ -647,4 +647,13 @@ final class AppRouter {
     if isValid(target, in: model) { return .ready }
     return model.isLoading ? .waiting : .gone
   }
+}
+
+/// A model a chat sent, and the thread's own selection when it did. It only
+/// counts while the thread still has that selection: once the queued run
+/// switches the thread, or anyone else changes its model, it is spent.
+struct SentModel: Equatable {
+  let id = UUID()
+  var selection: ModelSelection
+  var threadWas: ModelSelection?
 }
