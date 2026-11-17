@@ -38,7 +38,20 @@ export interface RestartToUpdateOptions {
   readonly serviceRequestedVersion?: string | null;
   /** The app also installs a downloaded update when it quits. */
   readonly installOnQuit?: boolean;
+  /**
+   * This desktop app's "Install automatically" switch, once read. False means
+   * the update agent keeps a downloaded service release on disk and never
+   * installs it on its own; null or absent means not known.
+   */
+  readonly installAutomatically?: boolean | null;
 }
+
+/** Fired on `window` after Settings saves the update switches, so open views read them again. */
+export const UPDATE_PREFERENCES_CHANGED = "specwithcode:update-preferences-changed";
+
+/** Said beside "Update now" when nothing but that button will install the downloaded service update. */
+export const SERVICE_UPDATE_WAITS_FOR_BUTTON =
+  "Install automatically is off on this machine, so it stays downloaded until you press Update now.";
 
 /**
  * The app has a downloaded update. A background check keeps the download
@@ -316,11 +329,20 @@ export function getRestartToUpdateView(
       ? `SpecWithCode ${version ?? "update"} is downloaded.`
       : `The SpecWithCode service on this machine still runs ${serviceState.installedVersion}; this installs ${version ?? "the update"}.`;
 
+  // The agent stops at "downloaded" only while automatic installs are off;
+  // a release it is waiting to install says "waiting-for-quiet" instead.
+  const waitsForButton =
+    service &&
+    ready &&
+    serviceState?.status === "downloaded" &&
+    options.installAutomatically === false;
+
   const parts = service
     ? [
         failure ? `The last install failed: ${failure}` : null,
         serviceFailure,
         what,
+        waitsForButton ? SERVICE_UPDATE_WAITS_FOR_BUTTON : null,
         SERVICE_UPDATE_NOW_DESCRIPTION,
         app ? "The service updates first, then the app restarts on its own." : null,
       ]

@@ -34,7 +34,7 @@ The \`studio-code\` MCP server's tools describe their own use; read a tool's des
 `;
 
 /** Only ACP agents get the terminal bridge, so only they are told about it. */
-const STUDIO_CODE_ACP_FALLBACK_INSTRUCTIONS = `ACP fallback: when the SpecWithCode tools are absent and \`STUDIO_ACP_MCP_NODE\` is set, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$STUDIO_ACP_MCP_NODE" \${STUDIO_ACP_MCP_ENTRYPOINT:+"$STUDIO_ACP_MCP_ENTRYPOINT"} acp-mcp-call <tool> '<json arguments>'\`, for example \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`.`;
+const STUDIO_CODE_ACP_FALLBACK_INSTRUCTIONS = `ACP fallback: when the SpecWithCode tools are absent and \`STUDIO_ACP_MCP_NODE\` is set, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$STUDIO_ACP_MCP_NODE" \${STUDIO_ACP_MCP_ENTRYPOINT:+"$STUDIO_ACP_MCP_ENTRYPOINT"} acp-mcp-call <tool> '<json arguments>'\`, for example \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. If that call is denied or blocked by your sandbox (for example \`approval prompts are disabled\` or \`connect EPERM\`), restarting this session, the app or the machine does not fix it, so never ask for a restart: quote the denial exactly and tell the user that the thread's access mode decides it (on Full access the call normally runs unasked; on Supervised they are normally asked to approve it).`;
 
 export const STUDIO_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 
