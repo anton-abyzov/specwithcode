@@ -172,6 +172,9 @@ final class AppRouter {
   /// A model each chat sent that its thread does not run on yet (a queued
   /// message switches it when its run starts), so later messages keep it.
   var sentModels: [ChatTarget: SentModel] = [:]
+  /// The latest send from each chat, so a failed earlier send does not put
+  /// its drafts back over a later one.
+  var lastSendIds: [ChatTarget: UUID] = [:]
   private(set) var pendingPhotoBatches: [ChatTarget: Int] = [:]
 
   func beginPhotoBatch(for target: ChatTarget) {
@@ -649,11 +652,12 @@ final class AppRouter {
   }
 }
 
-/// A model a chat sent, and the thread's own selection when it did. It only
-/// counts while the thread still has that selection: once the queued run
-/// switches the thread, or anyone else changes its model, it is spent.
+/// A model a chat sent, with the thread's selection and latest run start when
+/// it did. It counts only while both are unchanged: once a queued run starts,
+/// or anyone changes the thread's model, it is spent for good.
 struct SentModel: Equatable {
   let id = UUID()
   var selection: ModelSelection
   var threadWas: ModelSelection?
+  var runStartedBefore: Date?
 }

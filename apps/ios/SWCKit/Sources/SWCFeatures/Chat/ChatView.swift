@@ -1086,8 +1086,19 @@ private struct ChatScreen: View {
   /// message switches the thread only when its run starts. Later messages keep
   /// naming it until the thread's own selection catches up.
   private var sentModel: ModelSelection? {
-    guard let sent = router.sentModels[target], threadSummary?.modelSelection == sent.threadWas else { return nil }
+    guard let sent = router.sentModels[target],
+          ModelChoice.sameSelection(threadSummary?.modelSelection, sent.threadWas),
+          !Self.runStarted(threadSummary?.latestRunStartedAt, after: sent.runStartedBefore)
+    else { return nil }
     return sent.selection
+  }
+
+  /// A run started after the send. A queued run counts as latest before it
+  /// starts, with no start time, so only a later start time spends it.
+  static func runStarted(_ latest: Date?, after before: Date?) -> Bool {
+    guard let latest else { return false }
+    guard let before else { return true }
+    return latest > before
   }
 
   /// The selection the next message builds on, without this composer's
@@ -1182,11 +1193,13 @@ private struct ChatScreen: View {
     let previousSent = router.sentModels[target]
     var sent: SentModel?
     if modelBase != nil, let selection {
-      sent = SentModel(selection: selection, threadWas: threadSummary?.modelSelection)
+      sent = SentModel(selection: selection, threadWas: threadSummary?.modelSelection, runStartedBefore: threadSummary?.latestRunStartedAt)
       router.sentModels[target] = sent
     }
     router.optionDrafts[target] = nil
     router.modelDrafts[target] = nil
+    let sendId = UUID()
+    router.lastSendIds[target] = sendId
     session.lastError = nil
     isNearBottom = true
     let target = target
@@ -1196,9 +1209,11 @@ private struct ChatScreen: View {
       } catch {
         // Only this send's own record is undone; a later send's stays.
         if let sent, router.sentModels[target]?.id == sent.id { router.sentModels[target] = previousSent }
-        // A pick or options made while the send ran win over the failed ones.
-        if router.modelDrafts[target] == nil { router.modelDrafts[target] = picked }
-        if router.optionDrafts[target] == nil, !chosen.isEmpty, router.modelDrafts[target] == picked { router.optionDrafts[target] = chosen }
+        // A pick or options made while the send ran, or a later send, win over the failed ones.
+        if router.lastSendIds[target] == sendId {
+          if router.modelDrafts[target] == nil { router.modelDrafts[target] = picked }
+          if router.optionDrafts[target] == nil, !chosen.isEmpty, router.modelDrafts[target] == picked { router.optionDrafts[target] = chosen }
+        }
         // Whatever was added while the upload ran stays, after what failed to send.
         let added = router.drafts[target] ?? ""
         router.drafts[target] = added.isEmpty ? original : "\(original)\n\(added)"

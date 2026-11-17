@@ -45,6 +45,13 @@ public struct ModelChoice: Hashable, Sendable, Identifiable {
     a.instanceId == b.instanceId && baseSlug(a.model) == baseSlug(b.model)
   }
 
+  /// Whether two selections are the same model with the same options, in any order.
+  public static func sameSelection(_ a: ModelSelection?, _ b: ModelSelection?) -> Bool {
+    guard let a, let b else { return a == nil && b == nil }
+    let sorted = { (s: ModelSelection) in (s.options ?? []).sorted { $0.id < $1.id } }
+    return a.instanceId == b.instanceId && a.model == b.model && sorted(a) == sorted(b)
+  }
+
   /// A slug without a variant suffix such as "[1m]" (the context window).
   static func baseSlug(_ slug: String) -> String {
     guard slug.hasSuffix("]"), let open = slug.lastIndex(of: "[") else { return slug }
