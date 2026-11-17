@@ -38,7 +38,7 @@
  * @module ConnectDeviceTrust
  */
 // @effect-diagnostics-next-line nodeBuiltinImport:off - codes need constant-time comparison and synchronous random bytes, as in DeviceSignInRequests.
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -460,12 +460,12 @@ export const RequestDevice = Context.Reference<string | null>(
 );
 
 const hashCode = (code: string) =>
-  createHash("sha256").update(normalizeDeviceSignInCode(code), "utf8").digest("hex");
+  NodeCrypto.createHash("sha256").update(normalizeDeviceSignInCode(code), "utf8").digest("hex");
 
 const codeMatches = (code: string, hash: string) => {
   const presented = Buffer.from(hashCode(code), "hex");
   const stored = Buffer.from(hash, "hex");
-  return presented.length === stored.length && timingSafeEqual(presented, stored);
+  return presented.length === stored.length && NodeCrypto.timingSafeEqual(presented, stored);
 };
 
 const approvalOf = (device: DeviceRecord) => device.approvalId ?? device.approvedAt;
@@ -490,7 +490,7 @@ export const makeWith = (options: MakeOptions = {}) =>
     const sessions = yield* SessionStore.SessionStore;
     // The CLI's auth layer runs without the full environment; it never shows a device the name.
     const environment = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment);
-    const random = options.random ?? randomBytes;
+    const random = options.random ?? NodeCrypto.randomBytes;
     const filePath = path.join(config.stateDir, FILE_NAME);
     const markerPath = path.join(config.stateDir, MARKER_NAME);
     const lock = yield* Semaphore.make(1);
