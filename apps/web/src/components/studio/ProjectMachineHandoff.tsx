@@ -23,6 +23,7 @@ import {
   type MachineHandoffReceiveResult,
   type MachineHandoffBundle,
   type MachineHandoffBusyThreads,
+  type MachineHandoffUpdateSkipped,
   type EnvironmentId,
   type ProjectId,
   ThreadId,
@@ -217,6 +218,12 @@ export function ProjectMachineHandoff({
   const [previewCheckout, setPreviewCheckout] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<MachineHandoffReceiveResult | null>(null);
   const [consent, setConsent] = useState(false);
+  // A Git move into an existing copy that cannot fast-forward: why, and whether the person
+  // chose to move anyway on its older commits. The move refuses until they do.
+  const [staleCopy, setStaleCopy] = useState<{
+    readonly skipped: MachineHandoffUpdateSkipped;
+    readonly accepted: boolean;
+  } | null>(null);
   const [phase, setPhase] = useState<
     "choose" | "checking" | "review" | "transferring" | "complete"
   >("choose");
@@ -576,6 +583,7 @@ export function ProjectMachineHandoff({
     running.current = true;
     setError(null);
     setCanRestart(false);
+    setStaleCopy(null);
     setPhase("checking");
     let at: EnvironmentId = project.environmentId;
     try {
@@ -683,6 +691,11 @@ export function ProjectMachineHandoff({
       }
       setSnapshot(prepared.value);
       setPreviewCheckout(checked.value.workspacePath);
+      setStaleCopy(
+        checked.value.updateSkipped
+          ? { skipped: checked.value.updateSkipped, accepted: false }
+          : null,
+      );
       if (checked.value.phase === "started" && checked.value.coordinatorThreadId) {
         await complete(checked.value, prepared.value.bundle);
       } else setPhase("review");
@@ -758,9 +771,31 @@ export function ProjectMachineHandoff({
           operationId,
           mode: "start",
           bundle: published.value.bundle,
+          // Only fast-forward the copy there; stop with the reason unless the person chose
+          // to move anyway on its older commits.
+          ...(published.value.bundle.destination?.transport === "git-sync"
+            ? { staleCopy: staleCopy?.accepted ? ("accept" as const) : ("refuse" as const) }
+            : {}),
         },
       });
-      if (started._tag === "Failure") throw squashAtomCommandFailure(started);
+      if (started._tag === "Failure") {
+        const failure = squashAtomCommandFailure(started);
+        // The copy changed since the check: show why on the review, not as a failure.
+        if (
+          failure &&
+          typeof failure === "object" &&
+          "updateSkipped" in failure &&
+          failure.updateSkipped
+        ) {
+          setStaleCopy({
+            skipped: failure.updateSkipped as MachineHandoffUpdateSkipped,
+            accepted: false,
+          });
+          setPhase("review");
+          return;
+        }
+        throw failure;
+      }
       if (started.value.phase !== "started" || !started.value.coordinatorThreadId)
         throw new Error(
           "The files are saved, but the coordinator has not started. Try the handoff again.",
@@ -1178,6 +1213,16 @@ export function ProjectMachineHandoff({
         }
         consent={consent}
         onConsent={setConsent}
+        staleCopy={
+          staleCopy
+            ? {
+                skipped: staleCopy.skipped,
+                accepted: staleCopy.accepted,
+                onAccept: (accepted: boolean) =>
+                  setStaleCopy((current) => (current ? { ...current, accepted } : current)),
+              }
+            : null
+        }
         onReview={() => void review()}
         onContinue={() => void transfer()}
         onOpenDestination={() => {

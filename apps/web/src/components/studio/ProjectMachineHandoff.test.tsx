@@ -1516,3 +1516,47 @@ describe("Send to another machine", () => {
     expect(props().send?.mainLabel).toBe("M4");
   });
 });
+
+it("only fast-forwards the copy there, and holds the move on its reason until the person says anyway", async () => {
+  const syncBundle = { ...bundle, destination: { ...bundle.destination, transport: "git-sync" } };
+  const skipped = {
+    reason: "local-commits",
+    message: "The copy there was not updated to this machine's commits.",
+    repository: "repositories/anton-abyzov/specwithcode",
+  };
+  state.prepare.mockImplementation(async ({ input }) => ({
+    _tag: "Success",
+    value: {
+      bundle: syncBundle,
+      publication: input.publish ? "published" : "unpublished",
+      messageCount: 5,
+    },
+  }));
+  let refuse = true;
+  state.receive.mockImplementation(async ({ input }) => {
+    if (input.mode === "preview") return { _tag: "Success", value: ready };
+    if (input.staleCopy === "refuse" && refuse)
+      return {
+        _tag: "Failure",
+        error: Object.assign(new Error(skipped.message), {
+          code: "git_refused",
+          updateSkipped: skipped,
+        }),
+      };
+    return { _tag: "Success", value: started };
+  });
+  await mount();
+  await review();
+  await consent();
+  await transfer();
+  const starts = () => state.receive.mock.calls.filter((call) => call[0].input.mode === "start");
+  expect(starts().at(-1)?.[0].input.staleCopy).toBe("refuse");
+  // Refused: the review stays and names why; nothing moved.
+  expect(props().phase).toBe("review");
+  expect(props().staleCopy).toMatchObject({ skipped, accepted: false });
+  await act(async () => props().staleCopy!.onAccept(true));
+  refuse = false;
+  await transfer();
+  expect(starts().at(-1)?.[0].input.staleCopy).toBe("accept");
+  expect(props().phase).toBe("complete");
+});

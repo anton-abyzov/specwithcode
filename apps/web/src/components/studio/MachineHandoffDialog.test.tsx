@@ -585,12 +585,66 @@ describe("handoff file method and intent", () => {
     expect(onMethodChange).toHaveBeenLastCalledWith("clone");
   });
 
-  it("promises no push for a move the destination takes from origin", async () => {
+  it("says the copy there fast-forwards to the commits this machine pushes", async () => {
+    // Since 1326 a Git move into an existing copy publishes its commits, and the copy there
+    // fast-forwards to exactly them in every repository.
     await handoff({ phase: "review", preview: { ...preview, gitSync: true } });
     const review = document.querySelector('[data-slot="handoff-git-review"]')!;
-    expect(review.textContent).toContain("Continue the project on MacBook Pro. Nothing is pushed.");
-    expect(review.textContent).toContain("Unpushed commits, uncommitted files");
-    expect(review.textContent).not.toContain("Push these commits");
+    expect(review.textContent).toContain(
+      "MacBook M4 pushes its commits, and MacBook Pro's copy fast-forwards to them in every repository.",
+    );
+    expect(review.textContent).toContain(
+      "Push these commits and continue the project on MacBook Pro.",
+    );
+    expect(review.textContent).not.toContain("Nothing is pushed");
+    expect(document.querySelector('[data-slot="handoff-stale-copy"]')).toBeNull();
+  });
+
+  it("holds the move when the copy there cannot fast-forward, until the person says anyway", async () => {
+    const onAccept = vi.fn();
+    await handoff({
+      phase: "review",
+      preview: { ...preview, gitSync: true },
+      consent: true,
+      staleCopy: {
+        skipped: {
+          reason: "local-commits",
+          message: "The copy there was not updated to this machine's commits.",
+          repository: "repositories/anton-abyzov/specwithcode",
+        },
+        accepted: false,
+        onAccept,
+      },
+    });
+    const alert = document.querySelector('[data-slot="handoff-stale-copy"]')!;
+    expect(alert.getAttribute("role")).toBe("alert");
+    expect(alert.textContent).toContain(
+      "MacBook Pro's copy will not be updated to MacBook M4's latest commits",
+    );
+    expect(alert.textContent).toContain(
+      "repositories/anton-abyzov/specwithcode on MacBook Pro has commits MacBook M4 does not have, so it cannot fast-forward.",
+    );
+    expect(alert.textContent).toContain("Nothing on MacBook Pro is overwritten");
+    const primary = [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) =>
+      /^(Move project to|Make) /.test(node.textContent ?? ""),
+    )!;
+    expect(primary.disabled).toBe(true);
+    await click(alert.querySelector<HTMLElement>('[role="checkbox"]')!);
+    expect(onAccept).toHaveBeenCalledWith(true);
+    await handoff({
+      phase: "review",
+      preview: { ...preview, gitSync: true },
+      consent: true,
+      staleCopy: {
+        skipped: { reason: "dirty", message: "x" },
+        accepted: true,
+        onAccept,
+      },
+    });
+    const again = [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) =>
+      /^(Move project to|Make) /.test(node.textContent ?? ""),
+    )!;
+    expect(again.disabled).toBe(false);
   });
 
   it("titles a copy Copy and a Git only move Move, and keeps Git only on offer", async () => {
