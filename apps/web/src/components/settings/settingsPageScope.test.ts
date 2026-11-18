@@ -31,6 +31,29 @@ describe("settingsPageScope", () => {
     expect(effectiveSettingsSearch("/settings/providers", search)).toEqual({ machine: "m4" });
   });
 
+  it("sets up Integrations machine by machine, except the app-window tab", () => {
+    for (const tab of ["access", "mcp", "devices"]) {
+      const path = `/settings/integrations/${tab}`;
+      expect(settingsPageScope(path)).toBe("machine");
+      expect(settingsPageScopeOptions(path)).toEqual({
+        singleMachine: true,
+        wording: "set-up-machine",
+      });
+      expect(effectiveSettingsSearch(path, search)).toEqual({ machine: "m4" });
+    }
+    expect(settingsPageScopeOptions("/settings/integrations/preview")).toEqual({
+      singleMachine: false,
+      wording: "applying",
+    });
+    // Providers and Models keep the sentence they had.
+    for (const page of ["providers", "models"]) {
+      expect(settingsPageScopeOptions(`/settings/${page}`)).toEqual({
+        singleMachine: true,
+        wording: "applying",
+      });
+    }
+  });
+
   it("keeps the project only on Project pages", () => {
     expect(effectiveSettingsSearch("/settings/projects", search)).toEqual(search);
   });

@@ -41,6 +41,7 @@ import {
 import { searchableSetting } from "../settingsSearch";
 import { BrowserLinkTargetSetting } from "../BrowserLinkTargetSetting";
 import { BrowserProfilesSetting } from "./BrowserProfilesSetting";
+import { IntegrationsTabPanel } from "./IntegrationsTabStrip";
 
 const FILL_VALUE = "fill";
 const RESPONSIVE_VALUE = "responsive";
@@ -478,7 +479,7 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
   );
 }
 
-export function PreviewRecordingSettings() {
+function PreviewRecordingSettings() {
   const tx = useTx();
   // Client-local preview defaults are editable only where the preview exists.
   const previewDefaultsDisabled = !isElectron;
@@ -505,5 +506,14 @@ export function PreviewRecordingSettings() {
         previewDefaults
       )}
     </SettingsSection>
+  );
+}
+
+/** Preview, recording and link defaults. They are saved in this app window, not on a machine. */
+export function PreviewRecordingTab() {
+  return (
+    <IntegrationsTabPanel tab="preview">
+      <PreviewRecordingSettings />
+    </IntegrationsTabPanel>
   );
 }

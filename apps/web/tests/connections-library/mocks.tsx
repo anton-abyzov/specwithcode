@@ -6,10 +6,15 @@ import {
 } from "@specweave-studio/contracts";
 let mode = "ready";
 let project = false;
+let machine = "mac";
 const listeners = new Set<() => void>();
 export const requests: string[] = [];
 export function setFixture(next: string) {
   mode = next;
+  for (const notify of listeners) notify();
+}
+export function setMachine(next: string) {
+  machine = next;
   for (const notify of listeners) notify();
 }
 export function setProject(next: boolean) {
@@ -24,28 +29,33 @@ function useFixture() {
         listeners.delete(callback);
       };
     },
-    () => `${mode}:${project}`,
+    () => `${mode}:${project}:${machine}`,
   );
 }
 const environments = ["mac", "remote"].map((id) => ({
   environmentId: EnvironmentId.make(id),
   label: `${id === "mac" ? "Mac" : "Remote"} fixture`,
 }));
+/** Settings > Integrations is set up one machine at a time and never takes a project. */
 export function useSettingsScope() {
   useFixture();
+  const environment = environments.find((e) => e.environmentId === machine)!;
   return {
-    scope: project
-      ? {
-          kind: "project",
-          members: environments.map((e) => ({
-            id: ProjectId.make(`project-${e.environmentId}`),
-            environmentId: e.environmentId,
-            workspaceRoot: `/fixture/${e.environmentId}`,
-          })),
-        }
-      : { kind: "all" },
-    search: project ? { project: "fixture-project" } : {},
+    scope: {
+      kind: "environment",
+      environmentId: environment.environmentId,
+      label: environment.label,
+    },
+    search: { machine },
     environments,
+  };
+}
+/** The project a checkout on the picked machine belongs to, as the Project page passes it. */
+export function useFixtureTarget() {
+  useFixture();
+  return {
+    environmentId: EnvironmentId.make(machine),
+    projectId: ProjectId.make(`project-${machine}`),
   };
 }
 export function useEnvironments() {
@@ -61,6 +71,14 @@ export function useEnvironments() {
 export function useEnvironment() {
   useFixture();
   return { connection: { phase: mode === "offline" ? "offline" : "connected" } };
+}
+/** Imported by modules the fixture bundles but never runs. */
+export const environmentSession = {};
+export const readEnvironmentScope = () => mode !== "denied";
+export const awaitEnvironmentScope = async () => mode !== "denied";
+export function useEnvironmentScopeAccess() {
+  useFixture();
+  return mode === "denied" ? "denied" : "granted";
 }
 export function useEnvironmentScope() {
   useFixture();

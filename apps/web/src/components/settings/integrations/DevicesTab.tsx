@@ -28,8 +28,9 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { SettingResetButton, SettingsRow, SettingsSection } from "../settingsLayout";
 import { searchableSetting } from "../settingsSearch";
 import { useSettingsScope } from "../SettingsScopeContext";
+import { IntegrationsMachineState, IntegrationsTabPanel } from "./IntegrationsTabStrip";
 
-export function DeviceIntegrationSettings() {
+function DeviceIntegrationSettings() {
   const { search, environment: selected } = useSettingsScope();
   const settings = useScopedSettings();
   const connected = selected?.connection.phase === "connected" && selected.serverConfig !== null;
@@ -364,5 +365,16 @@ function MaxBootedDevicesSetting({ disabled }: { readonly disabled: boolean }) {
         </Select>
       }
     />
+  );
+}
+
+/** Simulators and emulators on the selected machine, and what agents may do with them. */
+export function DevicesTab() {
+  return (
+    <IntegrationsTabPanel tab="devices">
+      <IntegrationsMachineState>
+        <DeviceIntegrationSettings />
+      </IntegrationsMachineState>
+    </IntegrationsTabPanel>
   );
 }

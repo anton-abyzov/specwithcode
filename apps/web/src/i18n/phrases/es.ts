@@ -1261,10 +1261,6 @@ export const es: PhraseCatalog = {
   "Retrying…": "Reintentando…",
   "Retry now": "Reintentar ahora",
   "Show less": "Mostrar menos",
-  "Connections execution machine": "Equipo de ejecución de conexiones",
-  "Select a machine": "Selecciona un equipo",
-  "The selected machine or project is no longer in this scope.":
-    "El equipo o proyecto seleccionado ya no está en este ámbito.",
   "Connect a machine to see its MCP servers.": "Conecta un equipo para ver sus servidores MCP.",
   "Granted scopes": "Permisos concedidos",
   "Pairing link scopes": "Permisos del enlace de vinculación",
@@ -5635,4 +5631,19 @@ export const es: PhraseCatalog = {
   "No skills found in this repo.": "No se encontraron skills en este repositorio.",
   "This repo holds more skills than are listed here.":
     "Este repositorio tiene más skills de las que se muestran aquí.",
+  "Agent access": "Acceso de agentes",
+  "MCP servers": "Servidores MCP",
+  "Preview and recording": "Vista previa y grabación",
+  "Integrations sections": "Secciones de Integraciones",
+  "Set up on {machine}": "Configurar en {machine}",
+  "Only in this app window": "Solo en esta ventana de la app",
+  "Saved in the app on this computer. Other machines and your phone keep their own.":
+    "Se guarda en la app de este equipo. Los demás equipos y tu teléfono tienen los suyos.",
+  "Its settings show when it reconnects. Pick another machine above to set that one up.":
+    "Su configuración aparecerá cuando vuelva a conectarse. Elige otro equipo arriba para configurarlo.",
+  "Needs an app update": "Hay que actualizar la app",
+  "No permission": "Sin permiso",
+  "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
+    "Los agentes usan tu Chrome con la sesión iniciada mediante la extensión de SpecWithCode. Tiene su propia página de ajustes.",
+  "Open Chrome settings": "Abrir ajustes de Chrome",
 };

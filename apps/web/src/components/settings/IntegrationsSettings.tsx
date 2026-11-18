@@ -1,16 +1,27 @@
-import { ConnectionsLibrarySettings } from "./ConnectionsLibrarySettings";
+import { Outlet, useLocation } from "@tanstack/react-router";
+
+import { IntegrationsTabStrip } from "./integrations/IntegrationsTabStrip";
+import { integrationsTabForPath } from "./integrations/integrationsTabs";
+import { SettingsPageContainer } from "./settingsLayout";
+
 /**
- * Integrations settings - preferences for surfaces SpecWithCode embeds rather than
- * owns. Browser is the first section: the defaults a preview tab opens at,
- * applied to both hand-opened tabs and agent `preview_open` calls that don't
- * state their own size.
+ * Settings > Integrations: what agents may reach on a machine and the tools
+ * SpecWithCode embeds rather than owns. The page is four tabs, each a route
+ * under this one, so the tab strip and the scope line stay in place while the
+ * rows change.
  *
  * @module IntegrationsSettings
  */
-import { SettingsPageContainer } from "./settingsLayout";
-import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
-import { DeviceIntegrationSettings } from "./integrations/DevicesTab";
-import { PreviewRecordingSettings } from "./integrations/PreviewRecordingTab";
+export function IntegrationsSettingsPanel() {
+  const pathname = useLocation({ select: (location) => location.pathname });
+  return (
+    <SettingsPageContainer
+      header={<IntegrationsTabStrip current={integrationsTabForPath(pathname)?.id ?? null} />}
+    >
+      <Outlet />
+    </SettingsPageContainer>
+  );
+}
 
 export {
   browserProfileRemovalAvailable,
@@ -19,16 +30,3 @@ export {
   type ServerProfileData,
 } from "./integrations/BrowserProfilesSetting";
 export { DeviceIntegrationControls } from "./integrations/DevicesTab";
-
-export function IntegrationsSettingsPanel() {
-  return (
-    <SettingsPageContainer>
-      {/* Server-authoritative agent access is scoped by the header selection;
-          the preview defaults below are device-local and ignore it. */}
-      <ProjectDefaultsSettings category="integrations" />
-      <ConnectionsLibrarySettings />
-      <PreviewRecordingSettings />
-      <DeviceIntegrationSettings />
-    </SettingsPageContainer>
-  );
-}
