@@ -18,7 +18,7 @@ import {
 import { modelSelectionEffortValue } from "@specweave-studio/shared/effortLevel";
 import { createModelSelection } from "@specweave-studio/shared/model";
 import { ChevronRightIcon, Code2Icon, ZapIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useRef } from "react";
 
 import { cn } from "~/lib/utils";
 import type { ProviderInstanceEntry } from "../../../providerInstances";
@@ -31,7 +31,7 @@ import type { ModelEsque } from "../../chat/providerIconUtils";
 import { useTraitsEffortControl } from "../../chat/TraitsPicker";
 import { MachineChip } from "../../MachineChip";
 import { toastManager } from "../../ui/toast";
-import { carriedProjectModelSelection } from "../projectModelCarry";
+import { carriedProjectModelSelection, type HeldProjectModelOptions } from "../projectModelCarry";
 
 /** The model new threads start on, as the project saves it. */
 export interface ProjectThreadModel {
@@ -139,6 +139,8 @@ export function ProjectModelsPopover(props: {
         }
       : null,
   );
+  // Options a model along the way could not run, kept so going back restores them.
+  const heldOptions = useRef<HeldProjectModelOptions | null>(null);
   // Another model keeps the effort, Ultracode and context window it can run; the rest are named.
   const pickThreadModel = (instanceId: ProviderInstanceId, model: string) => {
     if (locked) return;
@@ -148,7 +150,9 @@ export function ProjectModelsPopover(props: {
       model,
       entries: props.entries,
       planModeEnabled: props.planModeEnabled,
+      held: heldOptions.current,
     });
+    heldOptions.current = carried.held;
     threads.onChange(carried.selection);
     if (carried.note)
       toastManager.add({ type: "info", title: "Model options", description: carried.note });

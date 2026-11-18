@@ -12,12 +12,14 @@ import type {
   ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderOptionSelection,
   ServerProviderModel,
 } from "@specweave-studio/contracts";
 import { createModelSelection, resolveSelectableModel } from "@specweave-studio/shared/model";
 import {
   carryModelOptions,
   describeCarriedOptions,
+  heldModelOptions,
 } from "@specweave-studio/shared/modelOptionCarry";
 
 import { getProviderModelCapabilities } from "../../providerModels";
@@ -30,10 +32,34 @@ export interface ModelCarryEntry {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
+/**
+ * Options a model along the way could not run, remembered by the picker so
+ * going back (Fable with Ultracode → a model without it → Fable) restores them.
+ */
+export interface HeldProjectModelOptions {
+  /** The selection the picker produced; the options apply only while it is still the saved one. */
+  readonly after: ModelSelection;
+  readonly options: ReadonlyArray<ProviderOptionSelection>;
+}
+
 export interface CarriedProjectModel {
   readonly selection: ModelSelection;
   /** One sentence naming what the new model could not keep, or null when nothing was lost. */
   readonly note: string | null;
+  /** What the picker keeps for the next change. */
+  readonly held: HeldProjectModelOptions;
+}
+
+/** The same provider, model and option values, in any order. */
+function sameSelection(left: ModelSelection, right: ModelSelection): boolean {
+  const a = left.options ?? [];
+  const b = right.options ?? [];
+  return (
+    left.instanceId === right.instanceId &&
+    left.model === right.model &&
+    a.length === b.length &&
+    a.every((option) => b.some((other) => other.id === option.id && other.value === option.value))
+  );
 }
 
 /**
@@ -75,23 +101,34 @@ export function carriedProjectModelSelection(input: {
   readonly model: string;
   readonly entries: ReadonlyArray<ModelCarryEntry>;
   readonly planModeEnabled?: boolean;
+  /** What the last change through this picker returned as `held`, if any. */
+  readonly held?: HeldProjectModelOptions | null;
 }): CarriedProjectModel {
   const { previous, instanceId, model, entries } = input;
   const planModeEnabled = input.planModeEnabled ?? true;
-  if (!previous || (previous.options ?? []).length === 0)
-    return { selection: createModelSelection(instanceId, model), note: null };
+  const previousDescriptors = previous
+    ? descriptorsFor(entries, previous.instanceId, previous.model, planModeEnabled)
+    : undefined;
+  const current = previous?.options ?? [];
+  // Held options belong to the choice this picker made; a choice saved elsewhere starts clean.
+  const held =
+    previous && input.held && sameSelection(input.held.after, previous)
+      ? heldModelOptions(input.held.options, current, previousDescriptors)
+      : [];
+  const options = [...current, ...held];
+  if (options.length === 0) {
+    const selection = createModelSelection(instanceId, model);
+    return { selection, note: null, held: { after: selection, options } };
+  }
   const carried = carryModelOptions({
-    previous: previous.options,
-    previousDescriptors: descriptorsFor(
-      entries,
-      previous.instanceId,
-      previous.model,
-      planModeEnabled,
-    ),
+    previous: options,
+    previousDescriptors,
     nextDescriptors: descriptorsFor(entries, instanceId, model, planModeEnabled),
   });
+  const selection = createModelSelection(instanceId, model, carried.options);
   return {
-    selection: createModelSelection(instanceId, model, carried.options),
+    selection,
     note: describeCarriedOptions(carried, modelName(entries, instanceId, model)),
+    held: { after: selection, options },
   };
 }

@@ -38,7 +38,7 @@ import { MachineLimitsButton, MachineLimitsPanel } from "./ProjectUsageIndicator
 import { ProjectModelsPopover, type ProjectThreadModel } from "./ProjectModelsPopover";
 import { ModelBadge } from "./ModelBadge";
 import { toastManager } from "../../ui/toast";
-import { carriedProjectModelSelection } from "../projectModelCarry";
+import { carriedProjectModelSelection, type HeldProjectModelOptions } from "../projectModelCarry";
 import { useCoordinatorModelsLoading } from "./useCoordinatorModelsLoading";
 
 function CoordinatorProviderRecovery(props: {
@@ -278,6 +278,8 @@ export function CoordinatorModelPicker(props: {
     if (!running.onSwitchBack) return "Switching back isn't available here";
     return running.switching ? "Switching models…" : null;
   };
+  // Options a model along the way could not run, kept so going back restores them.
+  const heldOptions = useRef<HeldProjectModelOptions | null>(null);
   const changeModel = (id: ProviderInstanceId, model: string) => {
     if (props.disabled || props.saving || getModelDisabledReason(id, model)) return;
     if (isSaved(id, model)) {
@@ -294,7 +296,9 @@ export function CoordinatorModelPicker(props: {
       model,
       entries,
       planModeEnabled: settings.planModeEnabled,
+      held: heldOptions.current,
     });
+    heldOptions.current = carried.held;
     props.onChange(carried.selection);
     if (carried.note)
       toastManager.add({ type: "info", title: "Model options", description: carried.note });

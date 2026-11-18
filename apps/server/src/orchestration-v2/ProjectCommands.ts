@@ -104,6 +104,8 @@ export interface ProjectMetaUpdateCommand {
   readonly defaultModelSelection?: ModelSelection | null;
   /** Internal automatic initialization must not replace a concurrent user choice. */
   readonly onlyIfDefaultModelUnset?: boolean;
+  /** An approved replacement applies only to the model the approval was read against. */
+  readonly expectedDefaultModelSelection?: ModelSelection | null;
   readonly defaultThreadEnvMode?: ThreadEnvMode | null;
   readonly autoPull?: boolean;
   readonly faviconPath?: string | null;
@@ -718,6 +720,12 @@ export function planProjectCommand(input: {
         );
       }
       if (command.onlyIfDefaultModelUnset && project.defaultModelSelection !== null) {
+        return Result.fail(new ProjectDefaultModelConflictError({ projectId: command.projectId }));
+      }
+      if (
+        command.expectedDefaultModelSelection !== undefined &&
+        !sameRecord(command.expectedDefaultModelSelection, project.defaultModelSelection)
+      ) {
         return Result.fail(new ProjectDefaultModelConflictError({ projectId: command.projectId }));
       }
       if (

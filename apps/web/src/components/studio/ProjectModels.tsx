@@ -22,8 +22,9 @@ import {
 } from "../../providerInstances";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { useRef } from "react";
 import { toastManager } from "../ui/toast";
-import { carriedProjectModelSelection } from "./projectModelCarry";
+import { carriedProjectModelSelection, type HeldProjectModelOptions } from "./projectModelCarry";
 
 /** Choose from this host's actual model catalog; never invent a coordinator default. */
 export function ProjectModels({
@@ -66,6 +67,8 @@ export function ProjectModels({
   const active = entries.find((p) => p.instanceId === value?.instanceId);
   // The searchable list only fills for a ready provider; the plain list below covers the rest.
   const firstAvailable = entries.find(isProviderInstancePickerReady);
+  // Options a model along the way could not run, kept so going back restores them.
+  const heldOptions = useRef<HeldProjectModelOptions | null>(null);
   // Another model keeps the effort, Ultracode and context window it can run; the rest are named.
   const pickModel = (instanceId: ProviderInstanceId, model: string) => {
     const carried = carriedProjectModelSelection({
@@ -74,7 +77,9 @@ export function ProjectModels({
       model,
       entries,
       planModeEnabled: settings.planModeEnabled,
+      held: heldOptions.current,
     });
+    heldOptions.current = carried.held;
     onChange(carried.selection);
     if (carried.note)
       toastManager.add({ type: "info", title: "Model options", description: carried.note });

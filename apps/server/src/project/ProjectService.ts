@@ -117,6 +117,11 @@ export interface ProjectUpdateInput extends ProjectUpdatePayload {
   readonly ownership?: ProjectOwnershipUpdate;
   /** Internal automatic initialization, checked under the project command lock. */
   readonly onlyIfDefaultModelUnset?: boolean;
+  /**
+   * Internal, with `defaultModelSelection`: the write applies only while the
+   * project's saved model is still this one, so a save made meanwhile wins.
+   */
+  readonly expectedDefaultModelSelection?: ModelSelection | null;
   /** Internal coordinator binding, never accepted from a client settings patch. */
   readonly coordinatorThreadId?: ThreadId;
   /**
@@ -915,6 +920,9 @@ export const make = Effect.gen(function* () {
         ...(input.onlyIfDefaultModelUnset === undefined
           ? {}
           : { onlyIfDefaultModelUnset: input.onlyIfDefaultModelUnset }),
+        ...(input.expectedDefaultModelSelection === undefined
+          ? {}
+          : { expectedDefaultModelSelection: input.expectedDefaultModelSelection }),
         ...(input.autoPull === undefined ? {} : { autoPull: input.autoPull }),
         ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
         ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),

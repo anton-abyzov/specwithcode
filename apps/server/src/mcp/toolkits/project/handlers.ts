@@ -45,8 +45,10 @@ import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
 import {
   describeModelSelection,
+  duplicateOptionIds,
   type ProjectModelRole,
   sameModelSelection,
+  savedProjectModel,
 } from "../../../project/projectModelChange.ts";
 import * as ProjectLink from "../../../project/ProjectLink.ts";
 import * as Project from "../../../project/ProjectService.ts";
@@ -150,6 +152,9 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
         "Only an agent in a SpecWithCode thread can ask for this. Ask the user to do it in the project's settings.",
     });
   const projectId = yield* resolveProjectId(context, input.projectId);
+  // Another machine's work asks only about projects its grant covers, as when it
+  // reads or updates one; this does nothing for this machine's own threads.
+  yield* assertProjectReadable(context, projectId);
   // The card names models the way this machine lists them, and a model it does
   // not list is refused before the user is asked. Another machine's work asks
   // only for a sign-in its grant allows, as when it sets a thread's model.
@@ -1006,7 +1011,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
               message:
-                "A project started from its title takes only a title; set scripts or its first defaultModelSelection afterwards with studio_project_update.",
+                "A project started from its title takes only a title and starts on this machine's default model. Set scripts afterwards with studio_project_update; to give it another model, ask the user with studio_project_request action change_model.",
             });
           // A title-only project is a new repository for the person; a check brings its own folder.
           if (input.origin === "automated")
@@ -1075,7 +1080,17 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           });
         const commandId = yield* newCommandId();
         return yield* projects
-          .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
+          .create({
+            ...input,
+            workspaceRoot,
+            commandId,
+            projectId: ProjectId.make(commandId),
+            // The model the caller named is the new project's own: saved with the
+            // creation, so no default is seeded over it and no later update is needed.
+            ...(input.defaultModelSelection == null
+              ? {}
+              : { initialWorkerModelSelection: input.defaultModelSelection }),
+          })
           .pipe(
             // A folder that is already a project returns that project; nothing is made.
             Effect.catch((error) =>
@@ -1182,27 +1197,38 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       // where none is saved; replacing or clearing a saved one is theirs to approve.
       const coordinatorModel = lifecycle?.coordinatorModelSelection;
       if (input.defaultModelSelection !== undefined || coordinatorModel !== undefined) {
-        const saved = Option.getOrUndefined(
+        const project = Option.getOrUndefined(
           yield* projects.getById(input.projectId).pipe(Effect.mapError(unavailable)),
         );
-        const replaced = (
-          [
-            ["threads", input.defaultModelSelection],
-            ["coordinator", coordinatorModel],
-          ] as const
-        ).find(([role, next]) => {
-          if (next === undefined || saved === undefined) return false;
-          const current = ProjectActionRequests.savedProjectModel(saved, role);
-          return current !== null && !sameModelSelection(current, next);
-        });
-        if (replaced !== undefined && saved !== undefined) {
-          const [role] = replaced;
-          const what =
-            role === "coordinator" ? "The coordinator model" : "The model new threads start on";
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message: `${what} of "${saved.title}" is the user's saved choice (${describeModelSelection(ProjectActionRequests.savedProjectModel(saved, role), [])}), so an agent cannot replace or clear it. To change it, call studio_project_request with action change_model, role "${role}" and modelSelection, naming every option to keep (effort, Ultracode, context window): the user approves it in a card. Clearing it is the user's to do in project settings.`,
-          });
+        // A Project settings override is the person's saved thread model too, and a
+        // write to the project's field would remove it.
+        const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+        const settings = Option.isNone(settingsService)
+          ? null
+          : Option.getOrNull(yield* settingsService.value.getSettings.pipe(Effect.option));
+        for (const [role, next] of [
+          ["threads", input.defaultModelSelection],
+          ["coordinator", coordinatorModel],
+        ] as const) {
+          if (next === undefined || project === undefined) continue;
+          const current = savedProjectModel(project, role, settings);
+          if (current.saved && !sameModelSelection(current.model, next)) {
+            const what =
+              role === "coordinator" ? "The coordinator model" : "The model new threads start on";
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: `${what} of "${project.title}" is the user's saved choice (${describeModelSelection(current.model, [])}), so an agent cannot replace or clear it. To change it, call studio_project_request with action change_model, role "${role}" and modelSelection, naming every option to keep (effort, Ultracode, context window): the user approves it in a card. Clearing it is the user's to do in project settings.`,
+            });
+          }
+          if (next === null) continue;
+          // A first model: on a sign-in the caller's grant allows, one value per option.
+          if (work !== undefined) yield* assertAccountInGrant(work, next.instanceId);
+          const repeated = duplicateOptionIds(next);
+          if (repeated.length > 0)
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: `Name each model option once; ${repeated.join(", ")} is repeated.`,
+            });
         }
       }
       return yield* projects

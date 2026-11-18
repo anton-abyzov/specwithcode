@@ -50,12 +50,15 @@ import {
   resolveProjectEnvironment,
 } from "./ProjectEnvironmentPaths.ts";
 import * as ProjectService from "./ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   describeModelSelection,
   modelChangeCardText,
   modelSelectionProblem,
   ProjectModelRole,
+  projectThreadsUseTracks,
   sameModelSelection,
+  savedProjectModel,
 } from "./projectModelChange.ts";
 import { PROJECT_ACTION_REQUEST_PREFIX } from "./projectActionRequestId.ts";
 
@@ -223,13 +226,6 @@ export function folderThreadsText(input: {
   ].join(" ");
 }
 
-/** The model a project has saved for a role, or null when it follows the defaults. */
-export function savedProjectModel(project: Project, role: ProjectModelRole): ModelSelection | null {
-  return role === "coordinator"
-    ? (project.workspaceSettings?.coordinatorModelSelection ?? null)
-    : project.defaultModelSelection;
-}
-
 /** The other projects found in or around the new folder, or null when there are none. */
 export function nestedProjectsText(
   check: Pick<ProjectFolderCheck, "nestedProjects" | "targetRoot">,
@@ -277,6 +273,16 @@ export const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  /**
+   * This machine's settings, read where the request runs: a Project settings
+   * override is part of what the person saved. Absent only in a test world.
+   */
+  const readSettings = Effect.gen(function* () {
+    const service = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+    if (Option.isNone(service)) return null;
+    return Option.getOrNull(yield* service.value.getSettings.pipe(Effect.option));
+  });
 
   const countThreads = (projectId: ProjectId) =>
     threads.getShellSnapshot().pipe(
@@ -433,7 +439,13 @@ export const make = Effect.gen(function* () {
         const providers = input.providers ?? [];
         const problem = modelSelectionProblem(selection, providers);
         if (problem !== null) return yield* failure(problem);
-        const previous = savedProjectModel(project, role);
+        const settings = yield* readSettings;
+        // On Tracks the track for the task picks the model; saving one here would change nothing.
+        if (role === "threads" && projectThreadsUseTracks(project, settings))
+          return yield* failure(
+            `New threads in ${name} start from its model tracks, so no single saved model applies. The user edits the tracks in project settings.`,
+          );
+        const previous = savedProjectModel(project, role, settings).model;
         if (sameModelSelection(previous, selection))
           return yield* failure(
             `The project ${name} already has that model saved with those options. Nothing to change.`,
@@ -660,7 +672,12 @@ export const make = Effect.gen(function* () {
         const project = yield* projects.getById(projectId);
         if (Option.isNone(project)) return yield* failure(`The project ${name} no longer exists.`);
         // The person approved replacing the model the card named, not whatever is saved now.
-        const current = savedProjectModel(project.value, role);
+        const settings = yield* readSettings;
+        if (role === "threads" && projectThreadsUseTracks(project.value, settings))
+          return yield* failure(
+            `New threads in ${name} now start from its model tracks, so no single saved model applies.`,
+          );
+        const current = savedProjectModel(project.value, role, settings).model;
         if (!sameModelSelection(current, params.previousModelSelection ?? null))
           return yield* failure(
             `The saved model of ${name} changed after this card was shown (it is now ${describeModelSelection(current, [])}). Ask again if the change is still wanted.`,
@@ -676,7 +693,14 @@ export const make = Effect.gen(function* () {
                   coordinatorModelSelection: selection,
                 },
               }
-            : { commandId, projectId, approvalRequestId, defaultModelSelection: selection },
+            : {
+                commandId,
+                projectId,
+                approvalRequestId,
+                defaultModelSelection: selection,
+                // A save landing between the check above and this write wins.
+                expectedDefaultModelSelection: project.value.defaultModelSelection,
+              },
         );
         const what =
           role === "coordinator" ? "The coordinator model" : "The model new threads start on";

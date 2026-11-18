@@ -127,8 +127,64 @@ describe("carriedProjectModelSelection", () => {
           model: "claude-fable-5-2",
           entries,
         }),
-      ).toEqual({ selection: { instanceId: claude, model: "claude-fable-5-2" }, note: null });
+      ).toMatchObject({ selection: { instanceId: claude, model: "claude-fable-5-2" }, note: null });
     }
+  });
+
+  it("brings Ultracode, 1M context and Fast mode back on the way home through a model without them", () => {
+    const away = carriedProjectModelSelection({
+      previous: opusWithUltracode,
+      instanceId: copilot,
+      model: "gpt-6.1-sol",
+      entries,
+    });
+    const home = carriedProjectModelSelection({
+      previous: away.selection,
+      instanceId: claude,
+      model: "claude-opus-5-5",
+      entries,
+      held: away.held,
+    });
+    expect([...(home.selection.options ?? [])].sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: "contextWindow", value: "1m" },
+      { id: "effort", value: "high" },
+      { id: "fastMode", value: true },
+      { id: "thinking", value: true },
+      { id: "ultracode", value: true },
+    ]);
+    expect(home.note).toBeNull();
+    // Without the picker's memory the way home has only what the middle model could run.
+    expect(
+      carriedProjectModelSelection({
+        previous: away.selection,
+        instanceId: claude,
+        model: "claude-opus-5-5",
+        entries,
+      }).selection.options,
+    ).toEqual([{ id: "effort", value: "high" }]);
+  });
+
+  it("does not put held options on a choice that was saved somewhere else", () => {
+    const away = carriedProjectModelSelection({
+      previous: opusWithUltracode,
+      instanceId: copilot,
+      model: "gpt-6.1-sol",
+      entries,
+    });
+    // Another project, or another window, saved the same model at Low: not this picker's choice.
+    const elsewhere: ModelSelection = {
+      instanceId: copilot,
+      model: "gpt-6.1-sol",
+      options: [{ id: "reasoning_effort", value: "low" }],
+    };
+    const next = carriedProjectModelSelection({
+      previous: elsewhere,
+      instanceId: claude,
+      model: "claude-opus-5-5",
+      entries,
+      held: away.held,
+    });
+    expect(next.selection.options).toEqual([{ id: "effort", value: "low" }]);
   });
 
   it("says so when the new model has not listed its options", () => {

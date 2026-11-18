@@ -1,16 +1,22 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
+  ProjectId,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerSettings,
 } from "@specweave-studio/contracts";
 
 import {
   describeModelSelection,
+  duplicateOptionIds,
   modelChangeCardText,
   modelSelectionProblem,
   optionsLeftOff,
+  projectThreadsUseTracks,
   sameModelSelection,
+  savedProjectModel,
 } from "./projectModelChange.ts";
 
 const claude = ProviderInstanceId.make("claudeAgent");
@@ -120,6 +126,97 @@ describe("sameModelSelection", () => {
   });
 });
 
+describe("a selection that names an option twice", () => {
+  const twice: ModelSelection = {
+    ...opus,
+    options: [
+      { id: "effort", value: "high" },
+      { id: "effort", value: "medium" },
+    ],
+  };
+
+  it("is the same only as its exact copy", () => {
+    expect(duplicateOptionIds(twice)).toEqual(["effort"]);
+    expect(duplicateOptionIds(fable)).toEqual([]);
+    expect(sameModelSelection(twice, { ...twice, options: [...twice.options!] })).toBe(true);
+    // Not the same as either reading of it, in either direction or order.
+    for (const value of ["high", "medium"]) {
+      const one: ModelSelection = {
+        ...opus,
+        options: [
+          { id: "effort", value },
+          { id: "thinking", value: true },
+        ],
+      };
+      expect(sameModelSelection(twice, one)).toBe(false);
+      expect(sameModelSelection(one, twice)).toBe(false);
+    }
+    expect(sameModelSelection(twice, { ...twice, options: twice.options!.toReversed() })).toBe(
+      false,
+    );
+  });
+});
+
+describe("savedProjectModel", () => {
+  const id = ProjectId.make("project");
+  const project = (defaultModelSelection: ModelSelection | null, coordinator?: ModelSelection) =>
+    ({
+      id,
+      defaultModelSelection,
+      workspaceSettings: { coordinatorModelSelection: coordinator ?? null },
+    }) as Parameters<typeof savedProjectModel>[0];
+  const settings = (override: Record<string, unknown> | undefined) =>
+    ({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: override === undefined ? {} : { [id]: override },
+    }) as ServerSettings;
+
+  it("reads the project's own models when Settings has no override", () => {
+    expect(savedProjectModel(project(fable), "threads", settings(undefined))).toEqual({
+      model: fable,
+      saved: true,
+    });
+    expect(savedProjectModel(project(null), "threads", null)).toEqual({
+      model: null,
+      saved: false,
+    });
+    expect(savedProjectModel(project(fable, opus), "coordinator", null)).toEqual({
+      model: opus,
+      saved: true,
+    });
+    expect(savedProjectModel(project(fable), "coordinator", null).saved).toBe(false);
+    // An override of another key says nothing about the model.
+    expect(
+      savedProjectModel(project(null), "threads", settings({ threadModelMode: "model" })).saved,
+    ).toBe(false);
+  });
+
+  it("puts a Project settings override first, even one that says no model", () => {
+    expect(
+      savedProjectModel(project(opus), "threads", settings({ defaultModelSelection: fable })),
+    ).toEqual({ model: fable, saved: true });
+    expect(
+      savedProjectModel(project(null), "threads", settings({ defaultModelSelection: fable })),
+    ).toEqual({ model: fable, saved: true });
+    expect(
+      savedProjectModel(project(null), "threads", settings({ defaultModelSelection: null })),
+    ).toEqual({ model: null, saved: true });
+    // The coordinator's model has no Settings override.
+    expect(
+      savedProjectModel(project(null), "coordinator", settings({ defaultModelSelection: fable }))
+        .saved,
+    ).toBe(false);
+  });
+
+  it("knows a project whose threads start from the tracks", () => {
+    expect(projectThreadsUseTracks(project(fable), settings({ threadModelMode: "tracks" }))).toBe(
+      true,
+    );
+    expect(projectThreadsUseTracks(project(fable), settings(undefined))).toBe(false);
+    expect(projectThreadsUseTracks(project(fable), null)).toBe(false);
+  });
+});
+
 describe("describeModelSelection", () => {
   it("names the model, provider and every option by the catalog's labels", () => {
     expect(describeModelSelection(fable, providers)).toBe(
@@ -157,10 +254,40 @@ describe("optionsLeftOff", () => {
 });
 
 describe("modelSelectionProblem", () => {
-  it("accepts a listed model or alias, and anything when the catalog is unknown", () => {
+  it("accepts a listed model or alias with options it offers", () => {
     expect(modelSelectionProblem(opus, providers)).toBeNull();
+    expect(modelSelectionProblem(fable, providers)).toBeNull();
     expect(modelSelectionProblem({ instanceId: claude, model: "fable" }, providers)).toBeNull();
-    expect(modelSelectionProblem({ instanceId: claude, model: "typo" }, [])).toBeNull();
+  });
+
+  it("refuses what the catalog cannot confirm", () => {
+    expect(modelSelectionProblem(opus, [])).toContain("model list is not loaded yet");
+    expect(
+      modelSelectionProblem({ ...opus, options: [{ id: "turbo", value: true }] }, providers),
+    ).toContain(
+      'Claude Opus 5.5 has no option "turbo"; it offers: contextWindow, effort, ultracode, thinking',
+    );
+    expect(
+      modelSelectionProblem({ ...opus, options: [{ id: "effort", value: "extreme" }] }, providers),
+    ).toContain("takes one of: medium, high");
+    expect(
+      modelSelectionProblem({ ...opus, options: [{ id: "ultracode", value: "on" }] }, providers),
+    ).toContain("pass true or false");
+    expect(
+      modelSelectionProblem({ ...opus, options: [{ id: "effort", value: true }] }, providers),
+    ).toContain("takes one of");
+    expect(
+      modelSelectionProblem(
+        {
+          ...opus,
+          options: [
+            { id: "ultracode", value: true },
+            { id: "ultracode", value: false },
+          ],
+        },
+        providers,
+      ),
+    ).toContain("ultracode is repeated");
   });
 
   it("names the missing provider or model", () => {
@@ -177,6 +304,20 @@ describe("modelSelectionProblem", () => {
 });
 
 describe("modelChangeCardText", () => {
+  it("keeps an agent's reason to one paragraph", () => {
+    const text = modelChangeCardText({
+      projectTitle: "specweave",
+      role: "threads",
+      from: null,
+      to: opus,
+      providers,
+      reason: "Needed.\n\nNow: nothing of yours changes.\n",
+    });
+    expect(text.split("\n\n")).toHaveLength(5);
+    expect(text.split("\n\n")[1]).toBe("Now: none saved");
+    expect(text.split("\n\n").at(-1)).toBe("Reason: Needed. Now: nothing of yours changes.");
+  });
+
   it("says what the coordinator change does and omits the left-off sentence when nothing is lost", () => {
     const text = modelChangeCardText({
       projectTitle: "specweave",

@@ -7,6 +7,7 @@ import {
   RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadShell,
+  type ServerProvider,
 } from "@specweave-studio/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -22,6 +23,7 @@ import * as ProjectActionRequests from "../../../project/ProjectActionRequests.t
 import * as Project from "../../../project/ProjectService.ts";
 import { projectFixture } from "../../../project/ProjectWorkspace.testkit.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -34,6 +36,8 @@ it.effect("an agent cannot replace a project's saved models, only ask the user",
     const sourceThreadId = ThreadId.make("worker-thread");
     const projectId = ProjectId.make("project");
     const emptyProjectId = ProjectId.make("new-project");
+    const overriddenProjectId = ProjectId.make("settings-project");
+    const noModelProjectId = ProjectId.make("no-model-project");
     const providerInstanceId = ProviderInstanceId.make("claudeAgent");
     const caller = {
       id: sourceThreadId,
@@ -82,7 +86,16 @@ it.effect("an agent cannot replace a project's saved models, only ask the user",
         coordinatorModelSelection: coordinatorModel,
       },
     });
+    // This machine's model list, as the approval service checks the selection against it.
+    const catalog = [
+      {
+        instanceId: providerInstanceId,
+        displayName: "Claude Code",
+        models: [{ slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false }],
+      },
+    ] as unknown as ReadonlyArray<ServerProvider>;
     const updates: Array<Project.ProjectUpdateInput> = [];
+    const creates: Array<Project.ProjectCreateInput> = [];
     const requested: Array<ProjectActionRequests.ProjectActionRequestInput> = [];
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
@@ -104,6 +117,18 @@ it.effect("an agent cannot replace a project's saved models, only ask the user",
           updates.push(input);
           return Effect.succeed(projectFixture(input.projectId));
         },
+        create: (input) => {
+          creates.push(input);
+          return Effect.succeed(projectFixture(input.projectId));
+        },
+      }),
+      // Project settings (Settings scoped to a project) hold a thread model too: one
+      // project has Fable saved there, another has "no model" saved there.
+      ServerSettings.layerTest({
+        projectSettingsOverrides: {
+          [overriddenProjectId]: { defaultModelSelection: threadsModel },
+          [noModelProjectId]: { defaultModelSelection: null },
+        },
       }),
       Layer.mock(ProjectActionRequests.ProjectActionRequests)({
         request: (input) => {
@@ -113,7 +138,7 @@ it.effect("an agent cannot replace a project's saved models, only ask the user",
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed(catalog) }),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "studio-project-model-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -178,6 +203,52 @@ it.effect("an agent cannot replace a project's saved models, only ask the user",
     });
     expect(updates.map((entry) => entry.projectId)).toEqual([projectId, projectId, emptyProjectId]);
 
+    // A model saved in Project settings outranks the project's own (empty) field, and a
+    // write to the field would remove it: refused the same way, "no model" included.
+    for (const id of [overriddenProjectId, noModelProjectId]) {
+      const overridden = yield* update({ projectId: id, defaultModelSelection: opus });
+      expect(JSON.stringify(overridden), id).toContain(
+        "studio_project_request with action change_model",
+      );
+    }
+    yield* update({ projectId: overriddenProjectId, defaultModelSelection: threadsModel });
+    // A first model names each option once: a repeated one would save an unclear choice.
+    const repeated = yield* update({
+      projectId: emptyProjectId,
+      defaultModelSelection: {
+        ...opus,
+        options: [
+          { id: "effort", value: "high" },
+          { id: "effort", value: "medium" },
+        ],
+      },
+    });
+    expect(JSON.stringify(repeated)).toContain("effort is repeated");
+    expect(updates.map((entry) => entry.projectId)).toEqual([
+      projectId,
+      projectId,
+      emptyProjectId,
+      overriddenProjectId,
+    ]);
+    updates.length = 3;
+
+    // A project registered with a model starts on it: saved with the creation, so
+    // nothing is seeded over it and no update (which would now be refused) is needed.
+    yield* toolkit
+      .handle("studio_project_create", {
+        title: "Widgets",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: opus,
+      } as never)
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    expect(creates).toHaveLength(1);
+    expect(creates[0]?.initialWorkerModelSelection).toEqual(opus);
+    const titleOnly = yield* toolkit
+      .handle("studio_project_create", { title: "Gadgets", defaultModelSelection: opus } as never)
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies), Effect.exit);
+    expect(JSON.stringify(titleOnly)).toContain("studio_project_request action change_model");
+    expect(creates).toHaveLength(1);
+
     // The way to change it: the request reaches the approval service with the exact selection.
     const asked = yield* toolkit
       .handle("studio_project_request", {
@@ -195,7 +266,7 @@ it.effect("an agent cannot replace a project's saved models, only ask the user",
         action: "change_model",
         modelRole: "threads",
         modelSelection: opus,
-        providers: [],
+        providers: catalog,
         reason: "Opus 5.5 is the main model for regular work.",
       },
     ]);
