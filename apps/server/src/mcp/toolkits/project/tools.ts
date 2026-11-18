@@ -36,6 +36,10 @@ import {
   SourceControlCloneRepositoryResult,
   OrchestratorMcpModelPreferenceInput,
   OrchestratorMcpModelPreferenceResult,
+  RequestSpecweaveSetupInput,
+  RequestSpecweaveSetupResult,
+  SPECWEAVE_SETUP_INSTRUCTION,
+  SpecweaveState,
 } from "@specweave-studio/contracts";
 import {
   AgentCopyReceiveInput,
@@ -92,8 +96,13 @@ const ProjectListTool = Tool.make("studio_project_list", {
 const ProjectReadTool = Tool.make("studio_project_read", {
   ...shared,
   description:
-    "Read a registered project in this environment, including its workspace and saved scripts.",
+    "Read a registered project in this environment, including its workspace and saved scripts. specweaveState says whether SpecWeave is on, unfinished (plans written before setup) or off; for a plan in a project that is not on, call request_specweave_setup.",
   parameters: Schema.Struct({ projectId: ProjectId }),
+  success: Schema.Struct({
+    ...Project.fields,
+    /** 1396: on, unfinished or off; older machines leave it out. */
+    specweaveState: Schema.optional(SpecweaveState),
+  }),
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
@@ -307,7 +316,10 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
   ...shared,
   description:
     'Create an ordinary TOP-LEVEL thread with an explicit workspace binding before its agent starts. Use this when the user requests independent work or a new thread; use delegate_task for child subagents. Omit workspaceStrategy so the project\'s Use worktrees setting decides; working or committing on a branch does not need a worktree: tell the agent which branch to use in message. Only when Use worktrees is on, set workspaceStrategy to {type:"worktree",baseRef:"parent-branch",branch:"new-branch",startFromOrigin:false} for a new worktree based on local commits, or {type:"existing_worktree",worktreePath:"/absolute/path",branch:"existing-branch"} to use an existing checkout. For upstream commits, set startFromOrigin:true. When the project holds nested repositories, add repository (an id from the project\'s environment repositories, or that checkout\'s absolute path) so git runs in that repository instead of the project root; a baseRef missing there fails rather than falling back to another branch. Omitted workspaceStrategy means the project root, NOT the caller\'s worktree; when the project\'s Use worktrees setting is on, it means a new worktree off the project\'s checked-out branch instead. Pass {type:"root"} to work in the project root anyway. Pass effort when the user names one ("extra high" is xhigh). Pass provider (and tier frontier for the strongest model) when the user names a provider but no model. Omit projectId/modelSelection/modes to inherit those settings from the calling thread (a project coordinator uses the project worker model, else this host\'s default worker model); a caller outside a SpecWithCode thread must pass projectId and gets the project\'s default model. Set scratch:true instead of projectId for a thread without a project: it runs in a fresh folder of its own, outside any repository. A thread in a project starts its threads in that project; scratch from there also needs projectless:true, and only when the user asked for a chat outside any project. Put the task in message. Do not ask the agent to create its own worktree via shell: that does not update the thread binding. Each call creates a new launch with no retry key; retain threadId and use studio_thread_read/studio_thread_wait to follow preparation. Called from a thread, each run of the new thread that completes or fails wakes the caller, on this machine too, so end the turn instead of polling. After errors or lost responses, inspect studio_thread_list before retrying. Attachments must be pending uploads. The new thread may not run with broader runtime or interaction modes than the caller: the calling SpecWithCode thread\'s own modes, or the permission mode an outside agent was approved with. ' +
-    INCREMENT_LAUNCH_INSTRUCTION,
+    INCREMENT_LAUNCH_INSTRUCTION +
+    " " +
+    SPECWEAVE_SETUP_INSTRUCTION +
+    ' With increment "new" there it starts no thread and fails with that instruction.',
   parameters: Schema.Struct({
     machine: Schema.optional(
       OrchestratorMcpMachineTarget.annotate({
@@ -569,8 +581,22 @@ const ModelPreferenceTool = Tool.make("studio_model_preference", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, false);
 
+const RequestSpecweaveSetupTool = Tool.make("request_specweave_setup", {
+  description:
+    'Show the user one "Set up SpecWeave" card in this thread, for a project where SpecWeave is not set up: call it when the user asks for a plan, a spec or an increment there, or when `specweave create-increment` refused the folder, then end your turn; the user\'s answer wakes you. It explains what setup adds, sets up Git too in a folder without it, and offers "Plan without it". One card per project: a second call returns the open one. In a project that is already set up it raises nothing and says so. After the user chose "Plan without it" it raises nothing unless askedByUser is true because the user asked for a plan again. Never run `specweave create-increment` in a project without SpecWeave.',
+  parameters: RequestSpecweaveSetupInput,
+  success: RequestSpecweaveSetupResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [...shared.dependencies, ServerConfig.ServerConfig],
+})
+  .annotate(Tool.Title, "Ask the user to set up SpecWeave")
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, false);
+
 export const ProjectToolkit = Toolkit.make(
   ThreadLaunchTool,
+  RequestSpecweaveSetupTool,
   ProjectListTool,
   ProjectReadTool,
   ProjectCreateTool,

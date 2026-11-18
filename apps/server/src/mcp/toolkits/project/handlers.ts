@@ -122,6 +122,15 @@ import {
   WORKTREE_OFF_NOTICE,
 } from "./launchWorkspace.ts";
 import { ProjectToolkit } from "./tools.ts";
+import * as ServerConfig from "../../../config.ts";
+import { specweaveState as readSpecweaveState } from "../../../project/ThreadIncrementProgress.ts";
+import {
+  launchPlansWithoutSpecweave,
+  raiseSetupCardBeside,
+  requestSpecweaveSetup,
+  setupTargetOf,
+  specweaveNeededLaunch,
+} from "../orchestrator/requestSpecweaveSetup.ts";
 
 function projectFailure(error: Project.ProjectServiceError) {
   if (error._tag === "ProjectOperationError") return unavailable();
@@ -433,6 +442,25 @@ const access = Effect.gen(function* () {
   return yield* Project.ProjectService;
 });
 export const layer = McpToolAccess.toLayer(ProjectToolkit, {
+  request_specweave_setup: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const context = yield* readCaller();
+      const projectId = yield* resolveProjectId(context, input.projectId);
+      const projects = yield* Project.ProjectService;
+      const project = Option.getOrUndefined(
+        yield* projects.getById(projectId).pipe(Effect.mapError(unavailable)),
+      );
+      if (project === undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "The project was not found.",
+        });
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      return yield* Effect.promise(() =>
+        requestSpecweaveSetup(setupTargetOf(project, context.caller, stateDir), input),
+      );
+    }),
+  ),
   studio_thread_launch: McpToolAccess.startsThreads(
     (input) => input,
     (input, { runtimeMode, interactionMode }) =>
@@ -631,10 +659,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // the project lacks is looked up in the caller's own worktree, as
         // delegate_task and create_threads do. A bad ref launches nothing.
         const strategy = input.workspaceStrategy;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
         const incrementResolution =
           project === undefined
             ? ({ ok: true, value: {} } as const)
-            : yield* Effect.promise(() =>
+            : yield* Effect.promise(async () =>
                 resolveLaunchIncrement({
                   workspaceRoot: project.workspaceRoot,
                   worktreePath:
@@ -654,6 +683,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                           worktreePath: caller.worktreePath,
                         },
                   isCoordinator,
+                  specweaveDeclined: await launchPlansWithoutSpecweave(
+                    setupTargetOf(project, caller, stateDir),
+                  ),
                 }),
               );
         if (!incrementResolution.ok)
@@ -662,6 +694,18 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message: incrementResolution.message,
           });
         const increment = incrementResolution.value;
+        // "new" without SpecWeave: a card for the user instead of a thread (1396).
+        if (project !== undefined && increment.needsSpecweave === true)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: (yield* Effect.promise(() =>
+              specweaveNeededLaunch(setupTargetOf(project, caller, stateDir)),
+            )).message,
+          });
+        if (project !== undefined && increment.raiseSetupCard === true)
+          yield* Effect.promise(() =>
+            raiseSetupCardBeside(setupTargetOf(project, caller, stateDir)),
+          );
         // A provider named without a model starts on its tier model; an
         // explicit model wins, and naming neither keeps the picks below.
         const namedSelection =
@@ -941,7 +985,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           message: "The project was not found.",
         });
       yield* assertProjectInGrant(yield* workGrantOf(yield* readCaller()), result.value);
-      return result.value;
+      const specweaveState = yield* Effect.promise(() =>
+        readSpecweaveState(result.value.workspaceRoot, {
+          personal: result.value.workspaceSettings?.kind === "personal",
+        }),
+      ).pipe(Effect.timeoutOption("3 seconds"));
+      return Option.isSome(specweaveState)
+        ? { ...result.value, specweaveState: specweaveState.value }
+        : result.value;
     }),
   ),
   studio_project_create: McpToolAccess.writesEnvironment(

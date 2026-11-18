@@ -134,6 +134,7 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import * as ServerConfig from "../config.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type { ProjectionRecordField } from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -923,14 +924,16 @@ function taskPrompt(
  * coordinator's missing one under `enforce`, fails the launch.
  */
 function launchIncrementFor(
-  project: Pick<Project, "workspaceRoot" | "workspaceSettings">,
+  project: Pick<Project, "id" | "workspaceRoot" | "workspaceSettings">,
   caller: Pick<
     OrchestrationV2ThreadProjection["thread"],
     "id" | "title" | "branch" | "worktreePath"
   >,
   input: { readonly ref: string | undefined },
+  /** The state folder of the project's SpecWeave facts (1396); none in tests without a config. */
+  stateDir?: string,
 ): Effect.Effect<LaunchIncrementOutcome, OrchestratorMcpFailure> {
-  return Effect.promise(() =>
+  return Effect.promise(async () =>
     resolveLaunchIncrement({
       workspaceRoot: project.workspaceRoot,
       worktreePath: caller.worktreePath ?? null,
@@ -942,6 +945,10 @@ function launchIncrementFor(
         worktreePath: caller.worktreePath ?? null,
       },
       isCoordinator: project.workspaceSettings?.coordinatorThreadId === caller.id,
+      specweaveDeclined:
+        stateDir === undefined
+          ? project.workspaceSettings?.kind === "personal"
+          : await launchPlansWithoutSpecweave(setupTargetOf(project, null, stateDir)),
     }),
   ).pipe(
     Effect.flatMap((resolved) =>
@@ -1211,6 +1218,12 @@ import {
   withIncrementBrief,
   type LaunchIncrementOutcome,
 } from "../project/launchIncrement.ts";
+import {
+  launchPlansWithoutSpecweave,
+  raiseSetupCardBeside,
+  setupTargetOf,
+  specweaveNeededLaunch,
+} from "./toolkits/orchestrator/requestSpecweaveSetup.ts";
 import { writeLaunchBinding } from "../project/ThreadIncrementProgress.ts";
 import { delegatedRuntimeModeWarning, joinLaunchWarnings } from "./delegatedRuntimeMode.ts";
 import { deriveDelegatedTaskThread } from "../orchestration-v2/IdAllocator.ts";
@@ -1317,6 +1330,10 @@ const effortField = (selection: Pick<ModelSelection, "options"> | undefined) => 
 };
 
 const make = Effect.gen(function* () {
+  // Where the projects' SpecWeave facts and setup cards are kept (1396).
+  const stateDir = Option.getOrUndefined(
+    Option.map(yield* Effect.serviceOption(ServerConfig.ServerConfig), (config) => config.stateDir),
+  );
   const crypto = yield* Crypto.Crypto;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -3565,7 +3582,7 @@ const make = Effect.gen(function* () {
         // another family than the author's (review/reviewDelegation.ts).
         const reviewTask = input.role === "review" || input.taskClass === "review";
         const reviewIncrement = reviewTask
-          ? yield* launchIncrementFor(project, parent.thread, { ref: input.increment })
+          ? yield* launchIncrementFor(project, parent.thread, { ref: input.increment }, stateDir)
           : undefined;
         const reviewPolicy =
           reviewIncrement?.increment === undefined
@@ -3718,9 +3735,17 @@ const make = Effect.gen(function* () {
         // The child runs in the parent's checkout; a bad ref dispatches nothing.
         const increment =
           reviewIncrement ??
-          (yield* launchIncrementFor(project, parent.thread, {
-            ref: input.increment,
-          }));
+          (yield* launchIncrementFor(project, parent.thread, { ref: input.increment }, stateDir));
+        // "new" without SpecWeave: a card for the user instead of a worker (1396).
+        const setupTarget =
+          stateDir === undefined ? null : setupTargetOf(project, parent.thread, stateDir);
+        if (increment.needsSpecweave === true && setupTarget !== null)
+          return yield* failure(
+            "invalid_request",
+            (yield* Effect.promise(() => specweaveNeededLaunch(setupTarget))).message,
+          );
+        if (increment.raiseSetupCard === true && setupTarget !== null)
+          yield* Effect.promise(() => raiseSetupCardBeside(setupTarget));
         if (increment.increment !== undefined) {
           const seeded = increment.increment;
           yield* Effect.promise(() =>
@@ -4044,10 +4069,20 @@ const make = Effect.gen(function* () {
         if (work !== undefined) yield* refuseRevoked(work);
         // Every entry's increment resolves before any thread exists: a bad ref creates none.
         const increments = yield* Effect.forEach(input.threads, (request) =>
-          launchIncrementFor(project, parent.thread, {
-            ref: request.increment,
-          }),
+          launchIncrementFor(project, parent.thread, { ref: request.increment }, stateDir),
         );
+        // Any entry with "new" in a project without SpecWeave: none is created (1396).
+        if (stateDir !== undefined && increments.some((entry) => entry.needsSpecweave === true))
+          return yield* failure(
+            "invalid_request",
+            (yield* Effect.promise(() =>
+              specweaveNeededLaunch(setupTargetOf(project, parent.thread, stateDir)),
+            )).message,
+          );
+        if (stateDir !== undefined && increments.some((entry) => entry.raiseSetupCard === true))
+          yield* Effect.promise(() =>
+            raiseSetupCardBeside(setupTargetOf(project, parent.thread, stateDir)),
+          );
         const created = yield* Effect.forEach(
           input.threads,
           (request, index) =>
