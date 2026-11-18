@@ -5526,4 +5526,11 @@ export const zh: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "请重新登录，以便通过 SpecWithCode Connect 访问你的机器。",
   "Sign in again": "重新登录",
+  "first": "优先",
+  "None of the ready agents runs a model on this list.": "已就绪的智能体都没有使用此列表中的模型。",
+  "No reviewer yet.": "还没有审查者。",
+  "A review needs a model from a second family, such as {first} or {second}.": "审查需要另一系列的模型，例如 {first} 或 {second}。",
+  "Add one": "添加一个",
+  "+{n} more": "另外 {n} 个",
+  "Ready once an agent is signed in.": "智能体登录后即可使用。",
 };

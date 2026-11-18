@@ -5771,4 +5771,11 @@ export const ja: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "SpecWithCode Connect 経由でマシンにアクセスするには、もう一度サインインしてください。",
   "Sign in again": "もう一度サインイン",
+  "first": "最初",
+  "None of the ready agents runs a model on this list.": "準備できたエージェントのどれも、このリストのモデルを使っていません。",
+  "No reviewer yet.": "レビュー担当はまだいません。",
+  "A review needs a model from a second family, such as {first} or {second}.": "レビューには、{first} や {second} など別系統のモデルが必要です。",
+  "Add one": "追加する",
+  "+{n} more": "ほか {n} 件",
+  "Ready once an agent is signed in.": "エージェントがサインインすると使えます。",
 };
