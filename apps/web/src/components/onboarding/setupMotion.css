@@ -1,0 +1,275 @@
+/* First-run setup motion (1387). One system, CSS only: a soft spring for things
+   that move (560 ms, about 4% overshoot), a firmer one for small marks (8%),
+   and a quick ease for leaving, which is also how a step seen before comes
+   back. Everything that moves here is marked `data-motion="setup"`, changes
+   only transform, opacity, an SVG stroke's dash offset or a row's own height,
+   plays once and never loops. With reduced motion nothing moves. */
+:root {
+  --motion-soft: linear(
+    0, 0.033, 0.115, 0.224, 0.346, 0.468, 0.583, 0.687, 0.776, 0.849, 0.908, 0.954, 0.987, 1.011,
+    1.026, 1.034, 1.038, 1.038, 1.036, 1.032, 1.028, 1.023, 1.018, 1.014, 1.01, 1.007, 1.005, 1.003, 1
+  );
+  --motion-soft-duration: 560ms;
+  --motion-firm: linear(
+    0, 0.044, 0.153, 0.297, 0.452, 0.602, 0.736, 0.848, 0.937, 1.001, 1.045, 1.071, 1.082, 1.083,
+    1.077, 1.066, 1.053, 1.041, 1.028, 1.018, 1.009, 1.003, 0.998, 0.995, 0.994, 0.993, 0.993, 0.994, 1
+  );
+  --motion-firm-duration: 480ms;
+  --motion-leave: cubic-bezier(0.4, 0, 1, 0.6);
+  --motion-leave-duration: 150ms;
+  --setup-fall-x: 14px;
+}
+[dir="rtl"] {
+  --setup-fall-x: -14px;
+}
+@keyframes setup-fall {
+  from {
+    opacity: 0;
+    transform: translate3d(var(--setup-fall-x), 6px, 0);
+  }
+}
+@keyframes setup-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The frame: a steady height, so a row that opens moves only what is below
+   it, and room for the picture beside the step. */
+[data-slot="dialog-viewport"]:has(> [data-setup-frame]) {
+  grid-template-rows: 1fr minmax(0, 46rem) 1fr;
+}
+[data-slot="dialog-popup"][data-setup-frame] {
+  height: 100%;
+}
+[data-slot="dialog-popup"][data-setup-frame][data-setup-picture] {
+  max-width: 60rem;
+}
+[data-slot="setup-body"] {
+  container: first-run / inline-size;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+[data-slot="setup-layout"] {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+/* Below 620 px of dialog there is no picture; up to 880 px it sits above the
+   step, at most 112 px tall; from 880 px it sits beside it. */
+[data-slot="setup-picture"] {
+  display: none;
+}
+@container first-run (width >= 620px) {
+  [data-slot="setup-picture"] {
+    display: grid;
+    flex: none;
+    place-items: center;
+    height: 112px;
+    padding: 8px 16px;
+    border-block-end: 1px solid var(--border);
+    background: var(--muted);
+    overflow: hidden;
+  }
+  [data-slot="setup-picture"] svg {
+    width: auto;
+    max-width: 100%;
+    height: 96px;
+  }
+}
+@container first-run (width >= 880px) {
+  [data-slot="setup-layout"] {
+    flex-direction: row;
+  }
+  [data-slot="setup-picture"] {
+    order: 2;
+    width: 216px;
+    height: auto;
+    padding: 10px;
+    border-block-end: 0;
+    border-inline-start: 1px solid var(--border);
+  }
+  [data-slot="setup-picture"] svg {
+    width: 100%;
+    max-width: 196px;
+    height: auto;
+    max-height: 100%;
+  }
+}
+
+/* A step's entrance the first time it is shown: its parts fall into place in
+   reading order, and the Access rows follow their heading 40 ms apart, all
+   started within 300 ms. A step seen before fades in quickly. */
+@media (prefers-reduced-motion: no-preference) {
+  [data-setup-entry="first"][data-slot="setup-step"] > * {
+    animation: setup-fall var(--motion-soft-duration) var(--motion-soft) backwards;
+  }
+  [data-setup-entry="first"][data-slot="setup-step"] > :nth-child(2) {
+    animation-delay: 40ms;
+  }
+  [data-setup-entry="first"][data-slot="setup-step"] > :nth-child(3) {
+    animation-delay: 80ms;
+  }
+  [data-setup-entry="first"][data-slot="setup-step"] > :nth-child(n + 4) {
+    animation-delay: 120ms;
+  }
+  [data-setup-entry="first"][data-slot="setup-step"] > [data-slot="access-rows"] {
+    animation: none;
+  }
+  [data-setup-entry="first"] [data-slot="access-rows"] > [data-access-row] {
+    animation: setup-fall var(--motion-soft-duration) var(--motion-soft) backwards;
+    animation-delay: 80ms;
+  }
+  [data-setup-entry="first"] [data-slot="access-rows"] > [data-access-row]:nth-child(2) {
+    animation-delay: 120ms;
+  }
+  [data-setup-entry="first"] [data-slot="access-rows"] > [data-access-row]:nth-child(3) {
+    animation-delay: 160ms;
+  }
+  [data-setup-entry="first"] [data-slot="access-rows"] > [data-access-row]:nth-child(4) {
+    animation-delay: 200ms;
+  }
+  [data-setup-entry="first"] [data-slot="access-rows"] > [data-access-row]:nth-child(5) {
+    animation-delay: 240ms;
+  }
+  [data-setup-entry="first"] [data-slot="access-rows"] > [data-access-row]:nth-child(n + 6) {
+    animation-delay: 280ms;
+  }
+  [data-setup-entry="again"][data-slot="setup-step"],
+  [data-setup-entry="again"][data-slot="setup-picture"] > * {
+    animation: setup-fade var(--motion-leave-duration) var(--motion-leave) backwards;
+  }
+  [data-setup-entry="first"][data-slot="setup-picture"] > * {
+    animation: setup-fade var(--motion-soft-duration) var(--motion-soft) backwards;
+  }
+}
+
+/* An Access row's body opens by its own height; closing is immediate. */
+[data-slot="access-row-body"]:not([hidden]) {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--motion-soft-duration) var(--motion-soft);
+}
+@starting-style {
+  [data-slot="access-row-body"]:not([hidden]) {
+    grid-template-rows: 0fr;
+  }
+}
+[data-slot="access-row-body-clip"] {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The stage bar: one thread, a knot per stage. */
+[data-slot="setup-stage-bar"] {
+  position: relative;
+}
+[data-slot="setup-rail"] {
+  position: absolute;
+  inset-inline: calc(50% / var(--setup-stages, 4));
+  top: 6px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--border);
+}
+[data-slot="setup-rail"] > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  transform: scaleX(var(--setup-progress, 0));
+  transform-origin: 0 50%;
+  transition: transform var(--motion-soft-duration) var(--motion-soft);
+}
+[dir="rtl"] [data-slot="setup-rail"] > i {
+  transform-origin: 100% 50%;
+}
+[data-slot="setup-knot"] {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--background);
+  box-shadow: inset 0 0 0 2px var(--border);
+  transition: transform var(--motion-firm-duration) var(--motion-firm);
+}
+[data-slot="setup-knot"]::before,
+[data-slot="setup-knot"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+}
+[data-slot="setup-knot"]::before {
+  background: var(--primary);
+  transform: scale(0);
+  transition: transform var(--motion-firm-duration) var(--motion-firm);
+}
+[data-slot="setup-knot"]::after {
+  box-shadow: inset 0 0 0 2px var(--primary);
+  opacity: 0;
+  transition: opacity var(--motion-firm-duration) var(--motion-firm);
+}
+[data-state="done"] > [data-slot="setup-knot"]::before {
+  transform: scale(1);
+}
+[data-state="now"] > [data-slot="setup-knot"] {
+  transform: scale(1.28);
+}
+[data-state="now"] > [data-slot="setup-knot"]::after {
+  opacity: 1;
+}
+
+/* The step pictures: a thread draws once when what it stands for is allowed,
+   and the slack line it replaces goes. The dash is longer than the path, so the
+   spring's overshoot never opens a gap at the thread's start. */
+[data-slot="step-picture"] {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--muted-foreground);
+}
+[data-setup-thread] {
+  stroke: var(--primary);
+  stroke-width: 1.8;
+  stroke-dasharray: 1.2 1.4;
+  stroke-dashoffset: 1.3;
+  transition: stroke-dashoffset var(--motion-soft-duration) var(--motion-soft);
+}
+[data-setup-thread][data-lit] {
+  stroke-dashoffset: 0.1;
+}
+[data-setup-slack] {
+  stroke: var(--border);
+  stroke-width: 1.8;
+  stroke-dasharray: 3 5;
+  transition: opacity var(--motion-leave-duration) var(--motion-leave);
+}
+[data-setup-slack][data-lit] {
+  opacity: 0;
+}
+[data-setup-glow] {
+  color: var(--primary);
+  opacity: 0;
+  transition: opacity var(--motion-firm-duration) var(--motion-firm);
+}
+[data-setup-glow][data-lit] {
+  opacity: 1;
+}
+[data-setup-mark] {
+  color: var(--primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-motion="setup"],
+  [data-motion="setup"]::before,
+  [data-motion="setup"]::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

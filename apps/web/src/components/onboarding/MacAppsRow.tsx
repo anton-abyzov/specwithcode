@@ -1,5 +1,5 @@
 import type { ComputerUsePermissions } from "@specweave-studio/contracts";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 import { useTx } from "../../i18n";
 import {
@@ -114,9 +114,12 @@ export function MacAppsRow({
   open,
   onOpenChange,
   onBeforeRelaunch,
+  onDoneChange,
 }: AccessRowOpen & {
   /** Notes where setup is before Quit & Reopen. */
   readonly onBeforeRelaunch?: (() => Promise<unknown>) | undefined;
+  /** Told whether both permissions are allowed, for the step's picture. */
+  readonly onDoneChange?: ((done: boolean) => void) | undefined;
 }) {
   const permissions = useComputerUsePermissions();
   const state = macAppsRowState({
@@ -124,6 +127,10 @@ export function MacAppsRow({
     error: permissions.error,
     screenRecordingRequested: permissions.requested.has("screen-recording"),
   });
+  const done = state.kind === "allowed";
+  useEffect(() => {
+    onDoneChange?.(done);
+  }, [done, onDoneChange]);
   return (
     <MacAppsRowView
       state={state}

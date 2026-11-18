@@ -24,6 +24,7 @@ import { teamRulesFromSummary } from "../../teamRules/teamRulesView";
 import { AccessStep } from "./AccessStep";
 import { ChromeAccessRow } from "./ChromeAccessRow";
 import { MacAppsRow } from "./MacAppsRow";
+import { StepPicture } from "./StepPicture";
 import { SignInFirstStep } from "./SignInFirstStep";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useProjectScans } from "../../onboarding/useProjectScans";
@@ -188,6 +189,19 @@ export function WelcomeWizard({
     }),
   });
   const filesMachineIds = rows.find((row) => row.id === "files")?.machineIds ?? [];
+  // The rows allowed or set up, which the Access picture draws a thread to.
+  const [rowsDone, setRowsDone] = useState<ReadonlySet<"browser" | "mac-apps">>(new Set());
+  const rowDone = useCallback((id: "browser" | "mac-apps", done: boolean) => {
+    setRowsDone((current) => {
+      if (current.has(id) === done) return current;
+      const next = new Set(current);
+      if (done) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+  const browserDone = useCallback((done: boolean) => rowDone("browser", done), [rowDone]);
+  const macAppsDone = useCallback((done: boolean) => rowDone("mac-apps", done), [rowDone]);
   // Once in the bar, the stage stays for the rest of this run, whatever loads later.
   const [accessStageShown, setAccessStageShown] = useState(false);
   if (rows.length > 0 && !accessStageShown) setAccessStageShown(true);
@@ -349,6 +363,19 @@ export function WelcomeWizard({
       canClose={canClose}
       onLeave={leaveSetup}
       holdHeight={isLoadingProjects}
+      picture={
+        <StepPicture
+          step={STAGE_OF_STEP[step]}
+          lit={
+            step === "access"
+              ? [...(accessAnswer?.accepted != null ? ["files"] : []), ...rowsDone]
+              : STAGE_OF_STEP[step] === "connect" && environments.length > 1
+                ? ["machine"]
+                : []
+          }
+          rows={rows.map((row) => row.id)}
+        />
+      }
       after={<ChatGptWelcomeCoordinator />}
     >
       {step === "start" ? (
@@ -409,11 +436,13 @@ export function WelcomeWizard({
               <ChromeAccessRow
                 environmentId={primaryEnvironmentId}
                 machine={primaryEnvironment?.label ?? machineNoun}
+                onDoneChange={browserDone}
                 {...open}
               />
             ) : id === "mac-apps" ? (
               <MacAppsRow
                 {...open}
+                onDoneChange={macAppsDone}
                 onBeforeRelaunch={() =>
                   saveFirstRunResume(
                     primaryEnvironmentId,

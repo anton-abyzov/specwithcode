@@ -186,7 +186,13 @@ export function ChromeAccessRow({
   machine,
   open,
   onOpenChange,
-}: AccessRowOpen & { readonly environmentId: EnvironmentId; readonly machine: string }) {
+  onDoneChange,
+}: AccessRowOpen & {
+  readonly environmentId: EnvironmentId;
+  readonly machine: string;
+  /** Told whether a profile is paired, for the step's picture. */
+  readonly onDoneChange?: ((done: boolean) => void) | undefined;
+}) {
   const environment = useEnvironment(environmentId);
   const online = environment?.connection.phase === "connected";
   const canRead = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
@@ -211,6 +217,10 @@ export function ChromeAccessRow({
     codeHandedOut: pairing.handedOut,
   });
 
+  const done = state.kind === "paired";
+  useEffect(() => {
+    onDoneChange?.(done);
+  }, [done, onDoneChange]);
   // While open, read every 3 s, so the row turns Paired within 3 s of a profile connecting.
   const refresh = query.refresh;
   useEffect(() => {

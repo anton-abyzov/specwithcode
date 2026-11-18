@@ -62,7 +62,7 @@ export function AccessRow({
         {state ? (
           <div
             data-slot="access-row-state"
-            className="text-[13px] leading-snug text-muted-foreground"
+            className="text-compact leading-snug text-muted-foreground"
           >
             {state}
           </div>
@@ -84,8 +84,11 @@ export function AccessRow({
         className="col-span-full min-w-0"
       >
         {open ? (
-          <div className="mt-0.5 rounded-lg bg-muted px-3 py-2.5 text-[13px] leading-relaxed text-foreground">
-            {children}
+          // Opens by its own height (setupMotion.css): the clip has no padding, so the track can start at 0.
+          <div data-slot="access-row-body-clip">
+            <div className="mt-0.5 rounded-lg bg-muted px-3 py-2.5 text-compact leading-relaxed text-foreground">
+              {children}
+            </div>
           </div>
         ) : null}
       </div>
