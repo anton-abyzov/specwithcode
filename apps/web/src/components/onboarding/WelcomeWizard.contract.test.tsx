@@ -305,19 +305,21 @@ it("offers no neutral action while this machine's link is still being read", asy
   expect(contract().neutral).toHaveLength(0);
 });
 
-it("has no enabled neutral control while the Access step saves", async () => {
+it("keeps Continue as the Access step's one neutral control, also while an answer saves", async () => {
   let finish = (_: unknown) => {};
   world.accept.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
   await render();
   await act(async () => contract().neutral[0]!.click());
   await act(async () => contract().neutral[0]!.click());
   expect(contract().step).toBe("access");
-  expect(contract().neutral.map((element) => element.textContent?.trim())).toEqual([
-    "Keep Supervised",
-  ]);
+  expect(contract().neutral.map((element) => element.textContent?.trim())).toEqual(["Continue"]);
+  // A row's answer is not the step's: it saves in place and Continue stays.
   await act(async () => button("Use Full access")!.click());
-  expect(contract().neutral).toHaveLength(0);
+  expect(contract().step).toBe("access");
+  expect(contract().neutral.map((element) => element.textContent?.trim())).toEqual(["Continue"]);
   await act(async () => finish(new Map([["test-env", "approval-required"]])));
+  expect(contract().step).toBe("access");
+  await act(async () => contract().neutral[0]!.click());
   expect(contract().step).toBe("import");
 });
 

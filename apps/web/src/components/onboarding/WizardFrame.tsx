@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   type KeyboardEvent,
   type ReactNode,
@@ -72,7 +73,10 @@ export function StepShell({
 }) {
   return (
     <>
-      <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+      {/* Focus lands here while the step's neutral action is busy (see `useStepChangeFocus`). */}
+      <h1 tabIndex={-1} className="text-2xl font-semibold tracking-tight text-foreground">
+        {title}
+      </h1>
       {description ? (
         <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">{description}</p>
       ) : null}
@@ -93,6 +97,63 @@ export function useHeldFor(active: boolean, delayMs: number) {
     };
   }, [active, delayMs]);
   return active && elapsed;
+}
+
+const SETUP_DIALOG = '[data-slot="dialog-popup"][data-wizard-step]';
+
+/** Where a step starts after a step change: a field it needs, else its enabled neutral action. */
+function stepChangeTarget(popup: Element): HTMLElement | null {
+  return (
+    popup.querySelector<HTMLElement>(
+      '[data-slot="dialog-panel"] :is(input, textarea, select):required:not(:disabled)',
+    ) ?? popup.querySelector<HTMLElement>("[data-wizard-neutral]:not(:disabled)")
+  );
+}
+
+/**
+ * On every step change focus moves to the new step's neutral action, so Enter
+ * goes on without choosing anything. While that action is off because the step
+ * is busy, focus waits on the step's heading and moves to the action once it is
+ * enabled, unless the person has moved focus since. The first step keeps the
+ * dialog's own initial focus.
+ */
+export function useStepChangeFocus(stepId: string | undefined, footerReady: boolean) {
+  const shownStep = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!footerReady) return;
+    const previous = shownStep.current;
+    shownStep.current = stepId;
+    if (previous === undefined || previous === stepId) return;
+    const popup = document.querySelector(SETUP_DIALOG);
+    if (popup === null) return;
+    const target = stepChangeTarget(popup);
+    if (target !== null) {
+      target.focus();
+      return;
+    }
+    const heading = popup.querySelector<HTMLElement>('[data-slot="dialog-panel"] h1');
+    if (heading === null) return;
+    if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+    heading.focus();
+    const observer = new MutationObserver(() => {
+      if (document.activeElement !== heading) {
+        observer.disconnect();
+        return;
+      }
+      const ready = stepChangeTarget(popup);
+      if (ready !== null) {
+        observer.disconnect();
+        ready.focus();
+      }
+    });
+    observer.observe(popup, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["disabled", "data-wizard-neutral"],
+    });
+    return () => observer.disconnect();
+  }, [stepId, footerReady]);
 }
 
 /** Undefined outside the frame; null inside it until the slot is in the page. */
@@ -312,6 +373,7 @@ export function FirstRunFrame<Id extends string>({
 }) {
   const t = useT();
   const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null);
+  useStepChangeFocus(stepId, footerSlot !== null);
   return (
     <Dialog
       open

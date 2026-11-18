@@ -3,6 +3,7 @@ import {
   type EnvironmentId,
   type ScopedProjectRef,
 } from "@specweave-studio/contracts";
+import { isMacPlatform } from "@specweave-studio/shared/keybindings";
 import { teamRulesModeAllowed } from "@specweave-studio/shared/teamRules";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
@@ -12,6 +13,7 @@ import {
   type AcceptedFullAccess,
 } from "../../onboarding/accessRecommendation";
 import { shouldRecommendFullAccess } from "../../onboarding/accessRecommendation.logic";
+import { accessRows } from "../../onboarding/accessRows.logic";
 import { teamRulesFromSummary } from "../../teamRules/teamRulesView";
 import { AccessStep } from "./AccessStep";
 import { SignInFirstStep } from "./SignInFirstStep";
@@ -113,38 +115,75 @@ export function WelcomeWizard({
   const accessMachineIds = [
     ...new Set([...(primaryEnvironmentId ? [primaryEnvironmentId] : []), ...setupIds]),
   ];
-  const accessMachines = accessMachineIds.map(
-    (id) => environments.find((environment) => environment.environmentId === id)?.serverConfig,
+  const accessEnvironments = accessMachineIds.map((id) =>
+    environments.find((environment) => environment.environmentId === id),
   );
-  // Decide only once every machine's settings and rules have loaded; a guess
-  // made before that could show the stage and then take it away.
-  const accessMachinesKnown =
-    accessMachines.length > 0 && accessMachines.every((config) => config != null);
+  const accessMachines = accessEnvironments.map((environment) => environment?.serverConfig);
   const startingMode =
     accessMachines
       .map((config) => config?.settings.defaultRuntimeMode ?? DEFAULT_RUNTIME_MODE)
       .find((mode) => mode !== "full-access") ?? "full-access";
-  // Answered on this run: the stage keeps its place, and going back to it can change the answer.
+  // Answered on this run: the row keeps its place, and Change can take the answer back.
   const [accessAnswer, setAccessAnswer] = useState<{
     readonly accepted: AcceptedFullAccess | null;
   } | null>(null);
-  const recommendAccess = shouldRecommendFullAccess({
-    answer: fullAccess.answer,
-    settingsKnown: fullAccess.hydrated && accessMachinesKnown,
-    machineRole: fullAccess.machineRole,
-    mode: startingMode,
-    projectSetsMode: false,
-    fullAccessAllowed: accessMachines.every((config) =>
-      teamRulesModeAllowed(teamRulesFromSummary(config?.teamRules).state, "full-access"),
-    ),
-    fullAccessOffered: true,
-    chatStarted: false,
+  // Each machine is decided once its own settings and rules have loaded; a
+  // guess made before that could show the row and then take it away.
+  const recommendedNow = accessMachineIds.filter((_id, index) => {
+    const config = accessMachines[index];
+    return shouldRecommendFullAccess({
+      answer: fullAccess.answer,
+      settingsKnown: fullAccess.hydrated && config != null,
+      machineRole: fullAccess.machineRole,
+      mode: config?.settings.defaultRuntimeMode ?? DEFAULT_RUNTIME_MODE,
+      projectSetsMode: false,
+      fullAccessAllowed: teamRulesModeAllowed(
+        teamRulesFromSummary(config?.teamRules).state,
+        "full-access",
+      ),
+      fullAccessOffered: true,
+      chatStarted: false,
+    });
   });
+  // Once recommended on this run, a machine keeps its place in the row, even
+  // after an answer turns the recommendation off.
+  const [recommendedIds, setRecommendedIds] = useState<ReadonlySet<EnvironmentId>>(new Set());
+  if (recommendedNow.some((id) => !recommendedIds.has(id))) {
+    setRecommendedIds(new Set([...recommendedIds, ...recommendedNow]));
+  }
+  // Before the machines are picked, this one is set up by default, so the bar
+  // does not grow a stage once the person goes on.
+  const desktopApp = typeof window !== "undefined" && window.desktopBridge !== undefined;
+  const ownSetUp =
+    primaryEnvironmentId !== null &&
+    (setupIds.length === 0 || setupIds.includes(primaryEnvironmentId));
+  // `useComputerUsePermissionsAreLocal` for this window's own machine: the desktop app can read them.
+  const computerUseLocal =
+    typeof window !== "undefined" && window.desktopBridge?.getComputerUsePermissions != null;
+  // 1386's rule for its first-run item (`useCanOpenSettingsFor`): the desktop app on this Mac.
+  const fullDiskAccessLocal =
+    typeof window !== "undefined" &&
+    isMacPlatform(window.navigator.platform) &&
+    window.desktopBridge?.openSystemSettings !== undefined;
+  const rows = accessRows({
+    desktopApp,
+    machines: accessMachineIds.map((id, index) => {
+      const own = ownSetUp && id === primaryEnvironmentId;
+      return {
+        id,
+        own,
+        platform: accessEnvironments[index]?.serverConfig?.environment?.platform?.os ?? null,
+        recommended: recommendedIds.has(id) || recommendedNow.includes(id),
+        computerUseLocal: own && computerUseLocal,
+        fullDiskAccessLocal: own && fullDiskAccessLocal,
+      };
+    }),
+  });
+  const filesMachineIds = rows.find((row) => row.id === "files")?.machineIds ?? [];
   // Once in the bar, the stage stays for the rest of this run, whatever loads later.
   const [accessStageShown, setAccessStageShown] = useState(false);
-  if (recommendAccess && !accessStageShown) setAccessStageShown(true);
-  const showAccess =
-    accessStageShown || recommendAccess || accessAnswer !== null || step === "access";
+  if (rows.length > 0 && !accessStageShown) setAccessStageShown(true);
+  const showAccess = accessStageShown || rows.length > 0 || step === "access";
   // The whole bar, in order. A stage that does not apply sets `when: false` and
   // drops out of the bar, of Back and of Continue.
   const stages: readonly WizardStage<WizardStageId>[] = [
@@ -324,32 +363,48 @@ export function WelcomeWizard({
         />
       ) : step === "access" ? (
         <AccessStep
-          keepsSupervised={
-            (accessAnswer?.accepted != null
-              ? [...accessAnswer.accepted.values()][0]
-              : startingMode) === "approval-required"
+          title={
+            desktopApp && ownSetUp
+              ? tx("What agents can use on this {machine}", { machine: machineNoun })
+              : tx("What agents can use")
           }
+          rows={rows}
+          files={{
+            machineNames: filesMachineIds.map(
+              (id) =>
+                environments.find((environment) => environment.environmentId === id)?.label ?? id,
+            ),
+            keepsSupervised:
+              (accessAnswer?.accepted != null
+                ? [...accessAnswer.accepted.values()][0]
+                : startingMode) === "approval-required",
+            answer:
+              accessAnswer === null
+                ? null
+                : accessAnswer.accepted !== null
+                  ? "accepted"
+                  : "declined",
+            onAccept: async () => {
+              const accepted = await fullAccess.accept(filesMachineIds);
+              if (accepted === null) return t("wizard.access.saveFailed");
+              // Accepting again after an earlier accept on this run keeps the first access to undo.
+              setAccessAnswer((current) => ({ accepted: current?.accepted ?? accepted }));
+              return null;
+            },
+            onKeep: async () => {
+              // After an accept on this run, Keep puts the earlier access back.
+              const accepted = accessAnswer?.accepted;
+              if (accepted != null) {
+                if (!(await fullAccess.undo(accepted))) return t("wizard.access.undoFailed");
+              } else {
+                await fullAccess.decline();
+              }
+              setAccessAnswer({ accepted: null });
+              return null;
+            },
+          }}
           onBack={() => goToStage(stageBefore(stages, "access"))}
-          onAccept={async () => {
-            const accepted = await fullAccess.accept(accessMachineIds);
-            if (accepted === null) return t("wizard.access.saveFailed");
-            // Accepting again after an earlier accept on this run keeps the first access to undo.
-            setAccessAnswer((current) => ({ accepted: current?.accepted ?? accepted }));
-            goToStage(stageAfter(stages, "access"));
-            return null;
-          }}
-          onDecline={async () => {
-            // Back on this step after accepting: Keep puts the earlier access back.
-            const accepted = accessAnswer?.accepted;
-            if (accepted != null) {
-              if (!(await fullAccess.undo(accepted))) return t("wizard.access.undoFailed");
-            } else {
-              await fullAccess.decline();
-            }
-            setAccessAnswer({ accepted: null });
-            goToStage(stageAfter(stages, "access"));
-            return null;
-          }}
+          onContinue={() => goToStage(stageAfter(stages, "access"))}
         />
       ) : (
         <ImportStep
