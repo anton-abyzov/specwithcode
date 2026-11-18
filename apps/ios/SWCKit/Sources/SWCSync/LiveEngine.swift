@@ -531,6 +531,7 @@ public final class LiveEngine: AppEngine {
       ShellSummaries.Machine(environmentId: entry.environmentId, label: entry.label, online: entry.isOnline, settling: entry.isSettling(at: now), snapshot: entry.snapshot ?? entry.cachedSnapshot, projectOrder: entry.settings?.sidebarProjectOrder, scratchWorkspaceRoot: entry.config?.scratchWorkspaceRoot, lastSeenAt: entry.lastSeenAt, providers: entry.config?.providers ?? [])
     }, names: fleetNames, nicknames: nicknames, home: fleetHome, includeAide: aideEnabled, cache: summaryCache)
     assign(model, \.aide, output.aide)
+    assign(model, \.aideSeats, output.aideSeats)
     assign(model, \.projects, output.projects)
     assign(model, \.threadsByProject, output.threadsByProject)
     assign(model, \.recentThreads, output.recentThreads)
