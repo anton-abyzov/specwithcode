@@ -1,4 +1,9 @@
-import type { EnvironmentId, ProjectId, ProjectSkillsSnapshot } from "@specweave-studio/contracts";
+import type {
+  EnvironmentId,
+  ProjectId,
+  ProjectSkillsSnapshot,
+  ThreadId,
+} from "@specweave-studio/contracts";
 
 import { SkillUpdateCenter } from "./SkillUpdateCenter";
 
@@ -7,6 +12,9 @@ export interface SkillsManagementSlotProps {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly userLevel: boolean;
+  /** The thread's folder when the page was opened from a thread; installs and updates go there. */
+  readonly cwd?: string | undefined;
+  readonly threadId?: ThreadId | undefined;
   readonly machineName: string;
   /** That machine's skills, as the page shows them; null while it scans. */
   readonly snapshot: ProjectSkillsSnapshot | null;
@@ -28,6 +36,8 @@ export function SkillsManagementSlot(props: SkillsManagementSlotProps) {
       environmentId={props.environmentId}
       projectId={props.projectId}
       userLevel={props.userLevel}
+      cwd={props.cwd}
+      threadId={props.threadId}
       onChanged={props.onChanged}
     />
   );

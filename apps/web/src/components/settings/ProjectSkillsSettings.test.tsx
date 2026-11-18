@@ -13,6 +13,7 @@ import {
 
 const state = vi.hoisted(() => ({
   latest: new Map<string, string>() as ReadonlyMap<string, string>,
+  latestScopes: [] as unknown[],
   data: null as unknown,
   error: null as string | null,
   isPending: false,
@@ -128,14 +129,27 @@ vi.mock("~/hooks/useCopyToClipboard", () => ({
   }),
 }));
 vi.mock("../skills/SkillsManagementSlot", () => ({
-  SkillsManagementSlot: (props: { machineName: string; userLevel: boolean }) => (
-    <div data-testid="skills-management-slot" data-machine={props.machineName}>
+  SkillsManagementSlot: (props: {
+    machineName: string;
+    userLevel: boolean;
+    cwd?: string;
+    threadId?: string;
+  }) => (
+    <div
+      data-testid="skills-management-slot"
+      data-machine={props.machineName}
+      data-cwd={props.cwd ?? ""}
+      data-thread={props.threadId ?? ""}
+    >
       {String(props.userLevel)}
     </div>
   ),
 }));
 vi.mock("../skills/SkillUpdateLatest", () => ({
-  useSkillLatestVersions: () => state.latest,
+  useSkillLatestVersions: (scope: unknown) => {
+    state.latestScopes.push(scope);
+    return state.latest;
+  },
 }));
 vi.mock("./settingsLayout", () => ({
   SettingsSection: (props: { id?: string; title: string; children: unknown }) => (
@@ -226,6 +240,7 @@ beforeEach(() => {
   state.actions = [];
   state.toasts = [];
   state.search = {};
+  state.latestScopes = [];
   state.navigations = [];
   state.skillsInputs = [];
   state.versionInputs = [];
@@ -486,6 +501,11 @@ describe("ProjectSkillsView", () => {
       outdated: { latest: "1.3.0", updateAvailable: true, pinned: true, pinnedVersion: "1.2.0" },
     };
     await render();
+    // Search, installs and updates in the slot target the same thread folder as the list.
+    const slot = container.querySelector<HTMLElement>("[data-testid=skills-management-slot]")!;
+    expect(slot.dataset.cwd).toBe("/work/thread");
+    expect(slot.dataset.thread).toBe("thread-1");
+    expect(state.latestScopes.at(-1)).toMatchObject({ cwd: "/work/thread", threadId: "thread-1" });
     await act(async () =>
       container.querySelector<HTMLElement>("button[aria-label='Show details for deploy']")!.click(),
     );

@@ -827,7 +827,12 @@ function ScopedProjectSkillsView({
   );
   const [updates, setUpdates] = useState<Readonly<Record<string, string | null>>>({});
   // Newer versions in each skill's own source, for the "Update available" chips.
-  const latestVersions = useSkillLatestVersions({ environmentId, projectId, userLevel });
+  const latestVersions = useSkillLatestVersions({
+    environmentId,
+    projectId,
+    userLevel,
+    ...threadFolder,
+  });
   const openWith = useCallback((name: string, focus?: SkillSheetFocus) => {
     setEditError(null);
     setOpenSkill(name);
@@ -1041,6 +1046,7 @@ function ScopedProjectSkillsView({
               environmentId={environmentId}
               projectId={projectId}
               userLevel={userLevel}
+              {...threadFolder}
               machineName={machineName}
               snapshot={snapshot ?? null}
               onChanged={query.refresh}

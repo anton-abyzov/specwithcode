@@ -153,6 +153,7 @@ function cellFor(
  */
 export function buildSkillMatrix(
   machines: ReadonlyArray<SkillMatrixMachine>,
+  /** Newer versions in the current machine's sources; applied to its column only. */
   options: { readonly latest?: ReadonlyMap<string, string> } = {},
 ): SkillMatrix {
   const states = machines.map(columnState);
@@ -179,7 +180,15 @@ export function buildSkillMatrix(
       name,
       builtIn: kind.builtIn,
       cells: machines.map((machine, index) =>
-        cellFor(machine, states[index]!, name, kind.claudeAi, options.latest?.get(name)),
+        cellFor(
+          machine,
+          states[index]!,
+          name,
+          kind.claudeAi,
+          // The versions come from this machine's own sources; another machine may track
+          // a different repo or a pin, so its column never borrows them.
+          machine.current ? options.latest?.get(name) : undefined,
+        ),
       ),
     }));
   return {

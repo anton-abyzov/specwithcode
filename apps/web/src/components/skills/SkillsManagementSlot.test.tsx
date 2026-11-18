@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@specweave-studio/contracts";
 
 const seen = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
 vi.mock("./SkillUpdateCenter", () => ({
@@ -45,6 +45,27 @@ describe("skills management slot", () => {
       userLevel: true,
       onChanged,
     });
+  });
+
+  it("sends installs and updates to the thread's folder when the page has one", async () => {
+    const host = document.createElement("div");
+    root = createRoot(host);
+    await act(async () =>
+      root!.render(
+        <SkillsManagementSlot
+          environmentId={EnvironmentId.make("desk")}
+          projectId={ProjectId.make("p1")}
+          userLevel={false}
+          cwd="/worktrees/feature"
+          threadId={ThreadId.make("t1")}
+          machineName="Desk"
+          snapshot={null}
+          onChanged={() => {}}
+          onOpen={() => {}}
+        />,
+      ),
+    );
+    expect(seen.props).toMatchObject({ cwd: "/worktrees/feature", threadId: "t1" });
   });
 });
 

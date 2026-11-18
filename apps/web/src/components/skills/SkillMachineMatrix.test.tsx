@@ -132,7 +132,8 @@ describe("SkillMachineMatrix", () => {
 
     const notes = cells(view, "notes")!;
     expect(notes[0]!.textContent).toBe("On this machinev1.2.0Update available 1.3.0");
-    expect(notes[1]!.textContent).toBe("v1.1.0Update available 1.3.0");
+    // Another machine may track a different source or a pin, so it gets no chip.
+    expect(notes[1]!.textContent).toBe("v1.1.0");
     expect(notes[2]!.textContent).toBe("Offline");
     expect(notes[3]!.textContent).toBe("Not checked");
 
