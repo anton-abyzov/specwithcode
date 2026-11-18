@@ -180,12 +180,13 @@ export function firstRunModels(input: {
   // Names come from every listed agent: a saved entry may name an agent that is not ready.
   const listed = input.providers ?? [];
   const lists = modelTrackLists(input.settings, ready);
-  const shown = Object.fromEntries(
-    MODEL_TRACKS.map((track) => [
-      track,
-      lists[track].filter((selection) => runsOnReady(selection, ready)),
-    ]),
-  ) as Record<ModelTrack, ReadonlyArray<ModelSelection>>;
+  const fit = (list: ReadonlyArray<ModelSelection>) =>
+    list.filter((selection) => runsOnReady(selection, ready));
+  const shown: Readonly<Record<ModelTrack, ReadonlyArray<ModelSelection>>> = {
+    daily: fit(lists.daily),
+    complex: fit(lists.complex),
+    review: fit(lists.review),
+  };
   const families = new Set(
     MODEL_TRACKS.flatMap((track) => shown[track].map((selection) => familyOf(selection, listed))),
   );
