@@ -266,6 +266,22 @@ describe("firstRunModels", () => {
     expect(lineOf(alone, "review")?.kind).toBe("no-reviewer");
   });
 
+  it("treats models of no known family as the runtime does: each only matches itself", () => {
+    const qwen = agent("qwen", "acpRegistry", [["qwen-4-coder", "Qwen 4 Coder"]]);
+    const deepseek = agent("deepseek", "acpRegistry", [["deepseek-v5", "DeepSeek V5"]]);
+    const saved: ModelTrackSettings = {
+      modelLanes: { routine: [sel("qwen", "qwen-4-coder")], complex: [] },
+      adversarialReview: { reviewers: [sel("deepseek", "deepseek-v5")] },
+    };
+    const both = firstRunModels({ settings: saved, providers: [qwen, deepseek] });
+    expect(names(lineOf(both, "review"))).toEqual(["DeepSeek V5"]);
+    const ownReviewer = firstRunModels({
+      settings: { ...saved, adversarialReview: { reviewers: [sel("qwen", "qwen-4-coder")] } },
+      providers: [qwen],
+    });
+    expect(lineOf(ownReviewer, "review")?.kind).toBe("no-reviewer");
+  });
+
   it("shows a saved same-family reviewer while a second family is ready", () => {
     const result = firstRunModels({
       settings: { adversarialReview: { reviewers: [sel("claudeAgent", "claude-fable-5-2")] } },

@@ -16,7 +16,7 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
 } from "@specweave-studio/contracts";
-import { describeModel, sameModelOn } from "@specweave-studio/shared/modelIdentity";
+import { describeModel, isSameModel, sameModelOn } from "@specweave-studio/shared/modelIdentity";
 import {
   defaultTrackSelections,
   effectiveModelLanes,
@@ -201,28 +201,32 @@ export function firstRunModels(input: {
     complex: fit(lists.complex),
     review: fit(lists.review),
   };
-  const familyOf = (selection: ModelSelection) =>
-    modelFamily(namesOf(selection, listed, ready));
-  // The family that does the everyday work: the first Daily model's, else the first ready agent's.
+  // The everyday work: the first Daily model, else the first Complex one, else the first
+  // model a ready agent lists.
   const first = shown.daily[0] ?? shown.complex[0];
-  const firstFamily =
+  const firstNames =
     first === undefined
-      ? (ready.flatMap((provider) => provider.models.map((model) => modelFamily(model)))[0] ??
-        null)
-      : familyOf(first);
-  // A second family is ready when a ready agent runs a model outside the everyday family.
+      ? (ready.flatMap((provider) => provider.models)[0] ?? null)
+      : namesOf(first, listed, ready);
+  const firstFamily = firstNames === null ? null : modelFamily(firstNames);
+  // The runtime's family rule (`resolveReviewer`): a known family matches by family; a model
+  // of no known family matches only itself.
+  const sameAsFirst = (names: { readonly slug: string; readonly name?: string | undefined }) =>
+    firstNames === null
+      ? false
+      : firstFamily === "other"
+        ? isSameModel(firstNames, names)
+        : modelFamily(names) === firstFamily;
   const secondFamilyReady = ready.some((provider) =>
-    provider.models.some((model) => {
-      const family = modelFamily(model);
-      return family !== "other" && family !== firstFamily;
-    }),
+    provider.models.some((model) => !sameAsFirst(model)),
   );
   // No reviewer: nothing ready reviews, or every reviewer is of the everyday family and no
   // second family is ready. A saved same-family reviewer with a second family ready stays a
   // list, as Settings > Models shows it with its own warning.
   const noReviewer =
     shown.review.length === 0 ||
-    (!secondFamilyReady && shown.review.every((selection) => familyOf(selection) === firstFamily));
+    (!secondFamilyReady &&
+      shown.review.every((selection) => sameAsFirst(namesOf(selection, listed, ready))));
   const lines = MODEL_TRACKS.map((track): ModelLine => {
     const list = shown[track];
     if (track === "review" && noReviewer) {
