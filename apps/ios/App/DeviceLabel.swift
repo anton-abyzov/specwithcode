@@ -41,7 +41,7 @@ enum DeviceLabel {
     resolve(
       stored: defaults.string(forKey: defaultsKey),
       deviceName: UIDevice.current.name,
-      model: LiveEngine.modelName(LiveEngine.hardwareIdentifier())
+      model: ConnectDevice.modelName(ConnectDevice.hardwareIdentifier())
     )
   }
 }
