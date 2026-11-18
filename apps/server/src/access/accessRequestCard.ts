@@ -147,6 +147,18 @@ export const waitForAccessRequestCard = (
         if (input.resolvedBySystem !== undefined && polls % SYSTEM_CHECK_EVERY_POLLS === 0) {
           if (yield* input.resolvedBySystem) {
             yield* record("allowed");
+            // A card is answered once: a Not now that beat this record stands,
+            // so the agent hears what the card holds, not what the probe saw.
+            const stored = (yield* readCard).turnItems.find(
+              (candidate) => candidate.id === turnItemId,
+            );
+            if (
+              stored?.type === "access_request" &&
+              stored.accessStatus !== "pending" &&
+              stored.accessStatus !== "allowed"
+            ) {
+              return { status: stored.accessStatus } satisfies AccessRequestCardResult;
+            }
             return { status: "allowed", scope: "machine" } satisfies AccessRequestCardResult;
           }
         }

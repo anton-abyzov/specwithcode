@@ -393,7 +393,10 @@ export const closeSystemSettingsHelper = DesktopIpc.makeIpcMethod({
   }),
 });
 
-/** Only an absolute path to an existing file or .app may be dragged into System Settings. */
+/**
+ * Only an absolute path to an existing executable or .app may be offered to
+ * drag into System Settings; the pane grants programs, so nothing else belongs there.
+ */
 const isDraggableItem = Effect.fn("desktop.ipc.window.isDraggableItem")(function* (
   itemPath: string,
 ) {
@@ -403,7 +406,8 @@ const isDraggableItem = Effect.fn("desktop.ipc.window.isDraggableItem")(function
   const info = yield* fs.stat(itemPath).pipe(Effect.option);
   if (Option.isNone(info)) return false;
   return (
-    info.value.type === "File" || (info.value.type === "Directory" && itemPath.endsWith(".app"))
+    (info.value.type === "File" && (info.value.mode & 0o111) !== 0) ||
+    (info.value.type === "Directory" && itemPath.endsWith(".app"))
   );
 });
 

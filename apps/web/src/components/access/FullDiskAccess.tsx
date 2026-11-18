@@ -6,6 +6,7 @@ import {
   type EnvironmentId,
   type PrivacyAccess,
 } from "@specweave-studio/contracts";
+import { isMacPlatform } from "@specweave-studio/shared/keybindings";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 
 import { useTx } from "../../i18n";
@@ -29,16 +30,22 @@ export function useCanOpenSettingsFor(environmentId: EnvironmentId | null): bool
     environmentId !== null &&
     environmentId === primary &&
     typeof window !== "undefined" &&
+    isMacPlatform(window.navigator.platform) &&
     window.desktopBridge?.openSystemSettings !== undefined
   );
 }
 
-/** What System Settings should offer to drag: the agents' launchd executable, else the app. */
+/**
+ * What System Settings should offer to drag: whatever macOS holds responsible
+ * for the agents. SpecWithCode itself needs no path: the window knows its own
+ * bundle and grant. A launchd executable or another app (a Terminal that
+ * started the service) is named so the helper offers that instead.
+ */
 export function settingsRequestFor(access: PrivacyAccess | null) {
   const host = access?.agentHost;
-  return host?.kind === "executable"
-    ? { pane: "full-disk-access" as const, agentHost: { path: host.path, name: host.name } }
-    : ("full-disk-access" as const);
+  if (host === undefined || host === null) return "full-disk-access" as const;
+  if (host.kind === "app" && host.name.startsWith("SpecWithCode")) return "full-disk-access" as const;
+  return { pane: "full-disk-access" as const, agentHost: { path: host.path, name: host.name } };
 }
 
 /**
@@ -84,7 +91,15 @@ export function useFullDiskAccess(environmentId: EnvironmentId, enabled = true) 
 
   const openSettings = useCallback(async () => {
     watchUntil.current = Date.now() + WATCH_FOR_MS;
-    await readLocalApi()?.shell.openSystemSettings(settingsRequestFor(access));
+    const shell = readLocalApi()?.shell;
+    const request = settingsRequestFor(access);
+    try {
+      await shell?.openSystemSettings(request);
+    } catch (error) {
+      // A desktop shell older than this page only takes a pane name.
+      if (typeof request === "string") throw error;
+      await shell?.openSystemSettings(request.pane);
+    }
   }, [access]);
 
   return { access, error, refresh, openSettings };

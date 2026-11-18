@@ -53,6 +53,7 @@ beforeEach(() => {
   state.opened = [];
   state.closed = 0;
   state.primary = "env-local";
+  vi.spyOn(window.navigator, "platform", "get").mockReturnValue("MacIntel");
   (window as unknown as { desktopBridge: unknown }).desktopBridge = {
     openSystemSettings: async () => true,
     closeSystemSettingsHelper: async () => {
@@ -64,6 +65,7 @@ beforeEach(() => {
   root = createRoot(container);
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   act(() => root.unmount());
   container.remove();
 });
@@ -85,6 +87,14 @@ it("asks System Settings to offer the agents' executable, or the app itself", ()
       access({ agentHost: { kind: "app", path: "/Applications/SpecWithCode.app", name: "SpecWithCode" } }),
     ),
   ).toBe("full-disk-access");
+  expect(
+    settingsRequestFor(
+      access({ agentHost: { kind: "app", path: "/System/Applications/Utilities/Terminal.app", name: "Terminal" } }),
+    ),
+  ).toEqual({
+    pane: "full-disk-access",
+    agentHost: { path: "/System/Applications/Utilities/Terminal.app", name: "Terminal" },
+  });
 });
 
 it("shows an off row with the risk and an Open System Settings button on this Mac", async () => {
@@ -141,4 +151,13 @@ it("first run mentions it closed and optional, on this Mac only", async () => {
   state.primary = null;
   await render(<FirstRunFullDiskAccess />);
   expect(container.querySelector('[data-slot="first-run-fda"]')).toBeNull();
+});
+
+it("first run says nothing in the Windows or Linux desktop app", async () => {
+  state.access = access({});
+  for (const platform of ["Win32", "Linux x86_64"]) {
+    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(platform);
+    await render(<FirstRunFullDiskAccess />);
+    expect(container.querySelector('[data-slot="first-run-fda"]')).toBeNull();
+  }
 });

@@ -58,8 +58,9 @@ read your other apps' files, so none of this appears there.
 1. Press **Open System Settings** in the row, the first-run item or the
    card. System Settings opens at **Privacy & Security › Full Disk Access**,
    and a small panel appears at the bottom of its window with an item to drag.
-2. Drag that item into the list and turn its switch on. You can also press
-   **+** under the list and pick it. macOS may ask for your password.
+2. Drag that item into the list and turn its switch on. If the list doesn't
+   take the drag, press **+** under the list and pick the same item. macOS
+   may ask for your password.
 3. Come back to SpecWithCode. The row rechecks every 2 seconds for 2 minutes
    after you opened System Settings, and when the window gets focus.
 
@@ -68,8 +69,9 @@ read your other apps' files, so none of this appears there.
 macOS asks about the program that runs the agents, which is not always the
 SpecWithCode window:
 
-- When the app runs its own background service, which is the usual case,
-  allow **SpecWithCode**.
+- When the app started its own background service, allow **SpecWithCode**.
+- When you started the service from a terminal app, macOS asks about that
+  app, for example **Terminal**.
 - When the service runs on its own, as a launchd job you installed with
   `specweave-studio service install` or a script, macOS asks about that
   service's executable, for example `~/.nvm/versions/node/v22.20.0/bin/node`.

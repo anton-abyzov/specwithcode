@@ -17,11 +17,15 @@ import * as NodePath from "node:path";
 
 import type { PrivacyAccess, PrivacyAgentHost } from "@specweave-studio/contracts";
 
-/** Folders only Full Disk Access opens; the first that exists decides. */
+/**
+ * Folders only Full Disk Access opens; the first that exists decides. The TCC
+ * folder leads because no narrower grant (App Data, Files and Folders) opens
+ * it, so a partial grant cannot read as Full Disk Access.
+ */
 export function protectedProbePaths(homeDir: string): ReadonlyArray<string> {
   return [
-    NodePath.join(homeDir, "Library", "Safari"),
     NodePath.join(homeDir, "Library", "Application Support", "com.apple.TCC"),
+    NodePath.join(homeDir, "Library", "Safari"),
     NodePath.join(homeDir, "Library", "Mail"),
   ];
 }
@@ -127,6 +131,10 @@ export interface PrivacyAccessOptions {
   readonly now?: () => Date;
 }
 
+// The service's ancestry never changes while it runs; walk it once, not every recheck.
+let cachedAncestors: ReadonlyArray<string> | null = null;
+const serviceAncestors = () => (cachedAncestors ??= readAncestorExecutables());
+
 export async function checkPrivacyAccess(options: PrivacyAccessOptions = {}): Promise<PrivacyAccess> {
   const platform = options.platform ?? process.platform;
   const checkedAt = (options.now?.() ?? new Date()).toISOString();
@@ -140,14 +148,13 @@ export async function checkPrivacyAccess(options: PrivacyAccessOptions = {}): Pr
   }
   const agentHost = resolveAgentHost(
     options.execPath ?? process.execPath,
-    (options.ancestors ?? (() => readAncestorExecutables()))(),
+    (options.ancestors ?? serviceAncestors)(),
   );
   const inChild = options.inChild ?? probeInChild;
   const inProcess = options.inProcess ?? probeInProcess;
   for (const path of protectedProbePaths(options.homeDir ?? NodeOS.homedir())) {
     const child = await inChild(path);
-    if (child === "missing") continue;
-    if (child === "failed") break;
+    if (child === "missing" || child === "failed") continue;
     const own = child === "allowed" ? await inProcess(path) : child;
     return {
       checkedAt,

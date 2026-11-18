@@ -77,8 +77,8 @@ describe("checkPrivacyAccess", () => {
   it("reports not-allowed when macOS refuses the child", async () => {
     const result = await checkPrivacyAccess({
       ...base,
-      inChild: answers({ [SAFARI]: "denied" }),
-      inProcess: answers({ [SAFARI]: "denied" }),
+      inChild: answers({ [TCC]: "denied" }),
+      inProcess: answers({ [TCC]: "denied" }),
     });
     expect(result.fullDiskAccess).toBe("not-allowed");
     expect(result.agentHost?.path).toBe("/opt/node");
@@ -87,8 +87,8 @@ describe("checkPrivacyAccess", () => {
   it("reports allowed, and a restart for running agents when only the child has it", async () => {
     const result = await checkPrivacyAccess({
       ...base,
-      inChild: answers({ [SAFARI]: "allowed" }),
-      inProcess: answers({ [SAFARI]: "denied" }),
+      inChild: answers({ [TCC]: "allowed" }),
+      inProcess: answers({ [TCC]: "denied" }),
     });
     expect(result.fullDiskAccess).toBe("allowed");
     expect(result.runningAgentsNeedRestart).toBe(true);
@@ -97,10 +97,28 @@ describe("checkPrivacyAccess", () => {
   it("falls back to the next protected folder when one is missing", async () => {
     const result = await checkPrivacyAccess({
       ...base,
-      inChild: answers({ [SAFARI]: "missing", [TCC]: "allowed" }),
-      inProcess: answers({ [TCC]: "allowed" }),
+      inChild: answers({ [TCC]: "missing", [SAFARI]: "allowed" }),
+      inProcess: answers({ [SAFARI]: "allowed" }),
     });
     expect(result).toMatchObject({ fullDiskAccess: "allowed", runningAgentsNeedRestart: false });
+  });
+
+  it("asks the TCC folder first, so an App Data grant on Safari cannot pass for Full Disk Access", async () => {
+    const result = await checkPrivacyAccess({
+      ...base,
+      inChild: answers({ [TCC]: "denied", [SAFARI]: "allowed" }),
+      inProcess: answers({ [TCC]: "denied" }),
+    });
+    expect(result.fullDiskAccess).toBe("not-allowed");
+  });
+
+  it("tries the next folder when one probe fails", async () => {
+    const result = await checkPrivacyAccess({
+      ...base,
+      inChild: answers({ [TCC]: "failed", [SAFARI]: "denied" }),
+      inProcess: answers({}),
+    });
+    expect(result.fullDiskAccess).toBe("not-allowed");
   });
 
   it("is unknown when the probe fails or nothing exists", async () => {
