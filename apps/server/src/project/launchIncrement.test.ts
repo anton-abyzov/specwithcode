@@ -13,6 +13,9 @@ import {
   INCREMENT_SIZING_RULE,
   NO_INCREMENT_BRIEF,
   REMINDED_INCREMENT_MESSAGE,
+  SPECWEAVE_OFF_BRIEF,
+  SPECWEAVE_OFF_NEW_BRIEF,
+  SPECWEAVE_OFF_WARNING,
   UNPLANNED_BRIEF,
   launchIncrementFields,
   resolveLaunchIncrement,
@@ -303,6 +306,25 @@ describe("resolveLaunchIncrement", () => {
     const plain = await temp("launch-increment-plain-");
     expect(await launch(plain, { isCoordinator: true })).toEqual({ ok: true, value: {} });
     expect((await launch(plain, { ref: "0996" })).ok).toBe(false);
+  });
+
+  it('never briefs create-increment or small-fix for "new" or "none" with SpecWeave off', async () => {
+    const plain = await temp("launch-increment-off-");
+    // An increment a worker wrote without `specweave init` does not turn SpecWeave on.
+    await increment(plain, "0001-simple-site");
+    expect(await launch(plain, { ref: "new", isCoordinator: true })).toEqual({
+      ok: true,
+      value: { brief: SPECWEAVE_OFF_NEW_BRIEF, warning: SPECWEAVE_OFF_WARNING },
+    });
+    expect(await launch(plain, { ref: "none", isCoordinator: true })).toEqual({
+      ok: true,
+      value: { brief: SPECWEAVE_OFF_BRIEF },
+    });
+    for (const brief of [SPECWEAVE_OFF_BRIEF, SPECWEAVE_OFF_NEW_BRIEF]) {
+      expect(brief).toContain("do not run `specweave create-increment`");
+      expect(brief).toContain("Set up SpecWeave");
+    }
+    expect(SPECWEAVE_OFF_WARNING).toContain("Board > Set up SpecWeave");
   });
 
   it("appends the brief to the task, or stands alone for an empty one", () => {

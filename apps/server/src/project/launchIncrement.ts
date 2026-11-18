@@ -28,6 +28,7 @@ import {
   hasSpecweaveConfig,
   incrementExists,
   incrementRootFor,
+  isSpecweaveProject,
   readRequireIncrementMode,
   readThreadIncrementProgress,
   registeredRootAccepted,
@@ -120,6 +121,16 @@ export const INCREMENT_SIZING_RULE =
 
 export const NO_INCREMENT_BRIEF = `If you change code, run \`specweave small-fix "<why>"\` first. ${INCREMENT_SIZING_RULE}`;
 
+/**
+ * "new" or "none" in a project without SpecWeave: `specweave create-increment`
+ * there writes a folder no board shows, so the worker plans in its reply instead.
+ */
+export const SPECWEAVE_OFF_BRIEF =
+  "SpecWeave is off in this project, so it has no increments: do not run `specweave create-increment` or `specweave small-fix`, do not create .specweave folders, and do not call the work an increment. If the user asks for increments, tell them SpecWeave can be turned on in one click from the project's Board (Set up SpecWeave), which sets up Git too when the folder has none.";
+export const SPECWEAVE_OFF_NEW_BRIEF = `Plan the work in your reply before you edit code. ${SPECWEAVE_OFF_BRIEF}`;
+export const SPECWEAVE_OFF_WARNING =
+  'SpecWeave is off in this project, so increment "new" made no increment and the worker plans in its reply. To plan with increments, offer the user Board > Set up SpecWeave (one click; it sets up Git too when the folder has none).';
+
 /** A worker in a SpecWeave project that neither named nor inherited an increment. */
 export const UNPLANNED_BRIEF = `Use the existing increment if the assignment names one or continues its handoff. Apply the following guidance only when no increment applies: for a small code change, run \`specweave small-fix "<why>"\` first. ${INCREMENT_SIZING_RULE}`;
 
@@ -205,8 +216,14 @@ export async function resolveLaunchIncrement(input: {
   readonly isCoordinator: boolean;
 }): Promise<LaunchIncrementResolution> {
   const ref = input.ref?.trim();
-  if (ref === "none") return { ok: true, value: { brief: NO_INCREMENT_BRIEF } };
-  if (ref === "new") return { ok: true, value: { brief: NEW_INCREMENT_BRIEF } };
+  if (ref === "none" || ref === "new") {
+    if (!(await usesSpecweave(input.workspaceRoot, input.worktreePath))) {
+      return ref === "new"
+        ? { ok: true, value: { brief: SPECWEAVE_OFF_NEW_BRIEF, warning: SPECWEAVE_OFF_WARNING } }
+        : { ok: true, value: { brief: SPECWEAVE_OFF_BRIEF } };
+    }
+    return { ok: true, value: { brief: ref === "new" ? NEW_INCREMENT_BRIEF : NO_INCREMENT_BRIEF } };
+  }
   try {
     if (ref !== undefined && ref !== "") {
       let resolved = await resolveIncrementRef(input.workspaceRoot, input.worktreePath, ref);
@@ -313,6 +330,20 @@ export async function resolveLaunchIncrement(input: {
     };
   } catch {
     return { ok: true, value: {} };
+  }
+}
+
+/**
+ * Whether `specweave` planning works for this launch: the checkout it reads, or
+ * the project, was set up with `specweave init` (or an umbrella plans for it).
+ * An increment folder written without that does not count. Never rejects.
+ */
+async function usesSpecweave(workspaceRoot: string, worktreePath: string | null) {
+  try {
+    const root = await incrementRootFor(workspaceRoot, worktreePath);
+    return (await hasSpecweaveConfig(root)) || (await isSpecweaveProject(workspaceRoot));
+  } catch {
+    return true;
   }
 }
 

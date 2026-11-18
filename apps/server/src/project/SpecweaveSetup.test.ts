@@ -148,4 +148,75 @@ describe("SpecweaveSetup", () => {
       }
     }),
   );
+
+  it.live(
+    "with initGit, runs git init first, stages nothing and keeps a parent repository's refusal",
+    () =>
+      Effect.gen(function* () {
+        const bin = yield* Effect.promise(() => tempDir("specweave-setup-bin-"));
+        // Records whether a repository existed when the CLI ran.
+        writeFakeCli({
+          directory: bin,
+          name: "specweave",
+          source: [
+            'import { existsSync, mkdirSync, writeFileSync } from "node:fs";',
+            'mkdirSync(".specweave/increments", { recursive: true });',
+            'writeFileSync(".specweave/config.json", JSON.stringify({ git: existsSync(".git") }));',
+          ].join("\n"),
+        });
+        const setup = yield* setupWith(bin);
+
+        const plain = yield* Effect.promise(() => tempDir("specweave-setup-git-"));
+        // Written before setup, like an increment a worker planned with SpecWeave off.
+        const early = NodePath.join(plain, ".specweave", "increments", "0001-simple-site");
+        yield* Effect.promise(() => NodeFSP.mkdir(early, { recursive: true }));
+        yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(early, "spec.md"), "# Site\n"));
+        yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(plain, "notes.txt"), "mine"));
+
+        expect(yield* setup.setUp(plain, { initGit: true })).toEqual({
+          ok: true,
+          alreadySetUp: false,
+          gitInitialized: true,
+        });
+        const config = JSON.parse(
+          yield* Effect.promise(() =>
+            NodeFSP.readFile(NodePath.join(plain, ".specweave", "config.json"), "utf8"),
+          ),
+        );
+        expect(config.git).toBe(true);
+        expect(
+          execFileSync("git", ["rev-parse", "--show-toplevel"], {
+            cwd: plain,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(yield* Effect.promise(() => NodeFSP.realpath(plain)));
+        // Nothing of the person's is staged or committed.
+        expect(
+          execFileSync("git", ["diff", "--cached", "--name-only"], {
+            cwd: plain,
+            encoding: "utf8",
+          }),
+        ).toBe("");
+        const tracked = execFileSync("git", ["ls-files"], { cwd: plain, encoding: "utf8" });
+        expect(tracked).toBe("");
+        expect(
+          yield* Effect.promise(() => NodeFSP.readFile(NodePath.join(early, "spec.md"), "utf8")),
+        ).toBe("# Site\n");
+
+        // A subfolder of a repository is still refused, and no repository is nested in it.
+        const repo = yield* Effect.promise(() => repoDir("specweave-setup-outer-"));
+        const sub = NodePath.join(repo, "apps", "site");
+        yield* Effect.promise(() => NodeFSP.mkdir(sub, { recursive: true }));
+        const nested = yield* setup.setUp(sub, { initGit: true });
+        expect(nested.ok ? "" : nested.detail).toContain("inside the Git repository at");
+        expect(
+          yield* Effect.promise(() =>
+            NodeFSP.access(NodePath.join(sub, ".git")).then(
+              () => true,
+              () => false,
+            ),
+          ),
+        ).toBe(false);
+      }),
+  );
 });

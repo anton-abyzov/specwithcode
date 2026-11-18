@@ -716,6 +716,7 @@ export function ProjectWorkspaceSettings({
                     <ProjectSpecweaveSetting
                       project={project}
                       specweave={snapshot.specweave}
+                      gitRepository={snapshot.gitRepository}
                       disabled={disabled || dirty}
                       onChanged={onSaved}
                     />

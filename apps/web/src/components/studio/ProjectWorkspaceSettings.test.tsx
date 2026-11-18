@@ -567,6 +567,30 @@ describe("project folder placement", () => {
     });
     expect(state.saved).toHaveBeenCalled();
   });
+  it("offers Git and SpecWeave in one click when the folder is not a repository", async () => {
+    state.specweaveSetUp.mockResolvedValue({
+      _tag: "Success",
+      value: { alreadySetUp: false, gitInitialized: true },
+    });
+    const mutable = snapshot as { gitRepository?: boolean };
+    mutable.gitRepository = false;
+    try {
+      await render("general", true, { kind: "code" });
+      await click("Set up Git and SpecWeave");
+      expect(container.textContent).toContain("first runs git init here");
+      expect(container.textContent).toContain("AGENTS.md");
+      expect(container.textContent).not.toContain("Run specweave init");
+      await click("Set up Git and SpecWeave");
+      expect(state.specweaveSetUp).toHaveBeenCalledWith({
+        environmentId: project.environmentId,
+        input: { projectId: project.id, initGit: true },
+      });
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+      expect(state.saved).toHaveBeenCalled();
+    } finally {
+      delete mutable.gitRepository;
+    }
+  });
   it("shows why SpecWeave setup failed and keeps the button", async () => {
     state.specweaveSetUp.mockResolvedValue({
       _tag: "Failure",

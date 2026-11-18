@@ -82,6 +82,7 @@ export function ImportStep({
   const nickname = useMachineNicknames();
   const writableEnvironments = useEnvironmentsWithScope(scans, AuthOrchestrationOperateScope);
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const createNewProject = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
   const projects = useProjects();
   const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string> | null>(null);
@@ -252,6 +253,34 @@ export function ImportStep({
       }
       if (importedProjects.has(candidate.key)) continue;
       let projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate);
+      // A folder picked here, not one setup found, goes through New project's
+      // rules: an empty folder starts as a Git repository with a first commit,
+      // and a folder with files is used as it is. The title is the folder's own
+      // name, so the server always takes the picked folder, never a new child.
+      if (
+        projectId === null &&
+        candidate.key === folderCandidate?.key &&
+        environments.find((environment) => environment.environmentId === environmentId)
+          ?.serverConfig?.specweaveSetUp === true
+      ) {
+        const created = await createNewProject({
+          environmentId,
+          input: { name: candidate.title, kind: "code", parentPath: candidate.path },
+        });
+        if (
+          importGeneration !== importGenerationRef.current ||
+          importedProjects !== importedProjectsRef.current
+        ) {
+          return;
+        }
+        // The server may have used another folder only if the title and the
+        // folder disagree; then it is not this candidate, so fall back below.
+        if (created._tag === "Success" && sameFolder(created.value.workspaceRoot, candidate.path)) {
+          projectId = created.value.projectId;
+        } else if (created._tag !== "Success" && isAtomCommandInterrupted(created)) {
+          continue;
+        }
+      }
       if (projectId === null) {
         let attempt = projectAttempts.get(candidate.key);
         if (attempt === undefined) {

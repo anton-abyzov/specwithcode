@@ -10,6 +10,11 @@
  * Whether a project uses SpecWeave is then read from disk
  * (`isSpecweaveProject`), so there is no flag to keep in step.
  *
+ * A folder that is not a Git repository yet gets `git init` first only when
+ * the person asked for it ("Set up Git and SpecWeave"); the CLI then sees
+ * `.git` and skips its own `git add .` and commit, so none of their files is
+ * staged. An empty first commit gives branches and worktrees a base.
+ *
  * @module SpecweaveSetup
  */
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
@@ -44,8 +49,17 @@ export const specweaveUnavailableDetail = (platform: NodeJS.Platform): string =>
     ? "SpecWeave needs Node.js, and SpecWithCode found neither specweave nor npx on this machine. Install Node.js from nodejs.org, then try again."
     : 'SpecWeave needs Node.js, and SpecWithCode found neither specweave nor npx on this machine (it looked on its PATH, in ~/.local/bin and in the fnm, nvm, volta and npm folders). Install Node.js, or if a terminal already has it run: mkdir -p ~/.local/bin && ln -sf "$(command -v node)" "$(command -v npx)" ~/.local/bin/ and try again.';
 
+/** The refusal older clients get for a folder outside Git, word for word. */
+export const NOT_A_REPOSITORY_DETAIL =
+  "SpecWeave needs a Git repository: this folder is not one. Run git init here first, then try again.";
+
+export interface SpecweaveSetupOptions {
+  /** Run `git init` first when the folder is in no Git work tree. */
+  readonly initGit?: boolean | undefined;
+}
+
 export type SpecweaveSetupResult =
-  | { readonly ok: true; readonly alreadySetUp: boolean }
+  | { readonly ok: true; readonly alreadySetUp: boolean; readonly gitInitialized?: true }
   | {
       readonly ok: false;
       readonly reason: "unavailable" | "failed";
@@ -62,7 +76,10 @@ export class SpecweaveSetup extends Context.Service<
      * a missing CLI or a failed init comes back as `ok: false` with what to
      * tell the person.
      */
-    readonly setUp: (cwd: string) => Effect.Effect<SpecweaveSetupResult>;
+    readonly setUp: (
+      cwd: string,
+      options?: SpecweaveSetupOptions,
+    ) => Effect.Effect<SpecweaveSetupResult>;
   }
 >()("specweave-studio/project/SpecweaveSetup") {}
 
@@ -135,7 +152,62 @@ const make = Effect.gen(function* () {
     return platform === "win32" ? prefix : path.join(prefix, "bin");
   });
 
-  const run = Effect.fn("SpecweaveSetup.run")(function* (cwd: string) {
+  const git = (cwd: string, args: ReadonlyArray<string>, timeout = Duration.seconds(10)) =>
+    runner
+      .run({
+        command: "git",
+        args: [...args],
+        cwd,
+        timeout,
+        timeoutBehavior: "timedOutResult",
+        maxOutputBytes: 64 * 1024,
+        outputMode: "truncate",
+        // Git's own words in English, so "not a git repository" reads the same everywhere.
+        env: { LC_ALL: "C", LANGUAGE: "C" },
+      })
+      .pipe(Effect.option);
+
+  /** A `.git` in `start` or any folder above it, read from disk. */
+  const gitMarkerAbove = Effect.fnUntraced(function* (start: string) {
+    let dir = yield* fs.realPath(start).pipe(Effect.orElseSucceed(() => path.resolve(start)));
+    for (;;) {
+      if (yield* fs.exists(path.join(dir, ".git")).pipe(Effect.orElseSucceed(() => true)))
+        return dir;
+      const parent = path.dirname(dir);
+      if (parent === dir) return null;
+      dir = parent;
+    }
+  });
+
+  /**
+   * `git init` in a folder that is in no work tree, on the branch Git is set
+   * to start on (main otherwise). An error detail, or undefined once it worked.
+   */
+  const initRepository = Effect.fnUntraced(function* (cwd: string) {
+    const above = yield* gitMarkerAbove(cwd);
+    if (above !== null) {
+      return `This folder is inside the Git repository at ${above}. Set SpecWeave up there instead.`;
+    }
+    const configured = yield* git(cwd, ["config", "--get", "init.defaultBranch"]);
+    const branch =
+      Option.isSome(configured) && configured.value.code === 0 && configured.value.stdout.trim()
+        ? configured.value.stdout.trim()
+        : "main";
+    const init = yield* git(cwd, ["init", `--initial-branch=${branch}`]);
+    if (Option.isNone(init))
+      return "Git could not be started on this machine. Install Git, then try again.";
+    if (init.value.timedOut) return "git init did not finish in time.";
+    if (init.value.code !== 0) {
+      const tail = outputTail(init.value);
+      return `git init failed${tail === "" ? "." : `: ${tail}`}`;
+    }
+    return undefined;
+  });
+
+  const run = Effect.fn("SpecweaveSetup.run")(function* (
+    cwd: string,
+    options: SpecweaveSetupOptions | undefined,
+  ) {
     if (yield* Effect.promise(() => hasSpecweaveConfig(cwd))) {
       return { ok: true, alreadySetUp: true } as const;
     }
@@ -150,34 +222,44 @@ const make = Effect.gen(function* () {
     }
     // Outside a repository init runs `git init` and commits the whole folder;
     // in a subfolder it nests a second repository. Only the repository's top runs it.
-    const top = yield* runner
-      .run({
-        command: "git",
-        args: ["rev-parse", "--show-toplevel"],
-        cwd,
-        timeout: Duration.seconds(10),
-        timeoutBehavior: "timedOutResult",
-        maxOutputBytes: 64 * 1024,
-        outputMode: "truncate",
-      })
-      .pipe(Effect.option);
-    const topLevel =
-      Option.isSome(top) && !top.value.timedOut && top.value.code === 0
-        ? top.value.stdout.trim()
-        : "";
-    if (topLevel === "") {
+    // A git that cannot start or does not answer is said as such, never as
+    // "not a repository", so no second repository is made inside a real one.
+    const top = yield* git(cwd, ["rev-parse", "--show-toplevel"]);
+    if (Option.isNone(top)) {
       return {
         ok: false,
         reason: "failed",
         detail:
-          "SpecWeave needs a Git repository: this folder is not one. Run git init here first, then try again.",
+          "SpecWeave needs Git, which could not be started on this machine. Install Git, then try again.",
       } as const;
+    }
+    if (top.value.timedOut) {
+      return {
+        ok: false,
+        reason: "failed",
+        detail: "Git did not answer in time, so SpecWeave was not set up. Try again.",
+      } as const;
+    }
+    const topLevel = top.value.code === 0 ? top.value.stdout.trim() : "";
+    // Any other refusal (a repository Git will not read, say) is Git's to explain.
+    if (topLevel === "" && !/not a git repository/i.test(top.value.stderr)) {
+      const tail = outputTail(top.value);
+      return {
+        ok: false,
+        reason: "failed",
+        detail: `Git could not read this folder${tail === "" ? "." : `: ${tail}`}`,
+      } as const;
+    }
+    // Run only once the CLI is found, so a missing Node.js leaves no repository behind.
+    const needsInit = topLevel === "";
+    if (needsInit && options?.initGit !== true) {
+      return { ok: false, reason: "failed", detail: NOT_A_REPOSITORY_DETAIL } as const;
     }
     const [here, root] = yield* Effect.all([
       fs.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd)),
       fs.realPath(topLevel).pipe(Effect.orElseSucceed(() => topLevel)),
     ]);
-    if (here !== root) {
+    if (!needsInit && here !== root) {
       return {
         ok: false,
         reason: "failed",
@@ -204,6 +286,12 @@ const make = Effect.gen(function* () {
         ...(node === null ? { needs: "node" as const } : {}),
       } as const;
     }
+    if (needsInit) {
+      const initError = yield* initRepository(cwd);
+      if (initError !== undefined)
+        return { ok: false, reason: "failed", detail: initError } as const;
+    }
+    const gitInitialized = needsInit;
     const args =
       specweave === null
         ? [...NPX_SPECWEAVE_ARGS, ...SPECWEAVE_INIT_ARGS]
@@ -258,12 +346,28 @@ const make = Effect.gen(function* () {
         detail: `specweave init finished without writing .specweave/config.json${tail === "" ? "." : `: ${tail}`}`,
       } as const;
     }
+    if (gitInitialized) {
+      // Only an empty commit: the person's files and SpecWeave's stay for them
+      // to review. Soft, since Git may have no name or email on this machine.
+      const commit = yield* git(
+        cwd,
+        ["commit", "--allow-empty", "--no-verify", "--message", "Initial commit"],
+        Duration.seconds(30),
+      );
+      if (Option.isNone(commit) || commit.value.timedOut || commit.value.code !== 0) {
+        yield* Effect.logInfo("The empty first commit was not made", {
+          cwd,
+          detail: Option.isSome(commit) ? outputTail(commit.value) : "git did not start",
+        });
+      }
+      return { ok: true, alreadySetUp: false, gitInitialized: true } as const;
+    }
     return { ok: true, alreadySetUp: false } as const;
   });
 
   // The reason reaches the person once, in the app; the log keeps it for later.
-  const setUp: SpecweaveSetup["Service"]["setUp"] = (cwd) =>
-    run(cwd).pipe(
+  const setUp: SpecweaveSetup["Service"]["setUp"] = (cwd, options) =>
+    run(cwd, options).pipe(
       Effect.tap((result) =>
         result.ok
           ? Effect.void
