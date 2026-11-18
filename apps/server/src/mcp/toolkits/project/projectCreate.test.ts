@@ -106,6 +106,7 @@ const setup = (
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
       namedProjectsRoot: "/app/projects",
       suggestedProjectsRoot: "/home/example/Projects",
+      previewNamedProject: () => Effect.succeed(Option.none()),
       createNamedProject: (input) => {
         named.push(input);
         if (options.folderFails !== undefined) return Effect.fail(options.folderFails);

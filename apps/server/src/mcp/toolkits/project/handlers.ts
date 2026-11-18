@@ -79,9 +79,11 @@ import { receiveAgentCopy } from "../../../fleet/folderTransfer/agentCopy.ts";
 import { agentClone } from "./agentClone.ts";
 import { addProjectToMachine } from "./addToMachine.ts";
 import {
+  createMakesNewFolder,
   createProjectOnMachine,
   GRANT_GITHUB_MESSAGE,
   resolveCreateMachine,
+  specweaveCreateNote,
 } from "./createOnMachine.ts";
 import {
   absoluteParentPath,
@@ -970,7 +972,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     }),
   ),
   studio_project_create: McpToolAccess.writesEnvironment(
-    ({ workspaceRoot, machine, parentPath, github, ...input }) =>
+    ({ workspaceRoot, machine, parentPath, github, specweave, ...input }) =>
       Effect.gen(function* () {
         const unusable = refuseUnusableOptions({ ...input, workspaceRoot, parentPath, github });
         if (unusable !== undefined) return yield* unusable;
@@ -985,6 +987,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
                 ...(parentPath === undefined ? {} : { parentPath }),
                 ...(github === undefined ? {} : { github }),
+                ...(specweave === undefined ? {} : { specweave }),
               },
             });
         }
@@ -1055,14 +1058,24 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               : input.kind === "personal"
                 ? undefined
                 : folders.suggestedProjectsRoot;
+          // SpecWeave by default, as in the dialog, but only in a folder the
+          // create makes or an empty one it takes (1396 AC-17, D-02).
+          const wantsSpecweave = input.kind !== "personal" && specweave !== false;
+          const outcome =
+            parent !== undefined && (work !== undefined || wantsSpecweave)
+              ? yield* folders.previewNamedProject({ name: input.title, parentPath: parent })
+              : Option.none();
+          const setsUpSpecweave =
+            wantsSpecweave &&
+            createMakesNewFolder({
+              parent,
+              namedProjectsRoot: folders.namedProjectsRoot,
+              preview: outcome,
+            });
           // Another machine's work starts new folders only: a parentPath that is,
           // or holds, a project here would hand that project over, so it goes
           // through workspaceRoot and its grant check instead.
           if (work !== undefined && parent !== undefined) {
-            const outcome = yield* folders.previewNamedProject({
-              name: input.title,
-              parentPath: parent,
-            });
             if (Option.isSome(outcome) && outcome.value.kind === "uses")
               return yield* new OrchestratorMcpFailure({
                 code: "outside_grant_scope",
@@ -1075,6 +1088,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               ...(parent === undefined ? {} : { parentPath: parent }),
               // A personal one comes back as this machine's assistant when one exists.
               ...(input.kind === undefined ? {} : { kind: input.kind }),
+              ...(setsUpSpecweave ? { specweave: true } : {}),
             })
             .pipe(Effect.mapError(createFailure));
           const project = yield* projects
@@ -1090,8 +1104,21 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             github === undefined || github === false || created.existing === true
               ? {}
               : yield* publishNewProject({ workspaceRoot: created.workspaceRoot, github });
+          const specweaveNote = specweaveCreateNote({
+            kind: input.kind,
+            asked: specweave,
+            ...(wantsSpecweave && !setsUpSpecweave
+              ? {
+                  skipped: created.existing === true ? "existing_folder" : "unknown_folder",
+                  workspaceRoot: created.workspaceRoot,
+                }
+              : {}),
+            error: created.specweaveError,
+            needsNode: created.specweaveNeedsNode,
+          });
           return {
             ...project,
+            ...(specweaveNote === undefined ? {} : { specweave: specweaveNote }),
             ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
             ...(created.existing === true ? { existing: true } : {}),
             ...published,
@@ -1105,6 +1132,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               'Only the user moves a project to their own projects. Omit origin for a project they asked for, or pass origin "automated" for a check.',
           });
         const commandId = yield* newCommandId();
+        // A folder that is registered keeps its files as they are.
+        const registeredNote = specweaveCreateNote({
+          kind: input.kind,
+          asked: specweave,
+          skipped: "registered",
+        });
+        const withNote = <A extends object>(result: A) =>
+          registeredNote === undefined ? result : { ...result, specweave: registeredNote };
         return yield* projects
           .create({
             ...input,
@@ -1137,6 +1172,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ),
               ),
             ),
+            Effect.map(withNote),
           );
       }),
   ),

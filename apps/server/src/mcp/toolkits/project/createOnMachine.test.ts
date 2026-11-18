@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  type FilesystemProjectOutcome,
   type OrchestrationV2ThreadShell,
   OrchestratorMcpFailure,
   ProjectId,
@@ -11,6 +12,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../../config.ts";
@@ -26,6 +28,12 @@ import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import {
+  createMakesNewFolder,
+  olderMachineSpecweaveNote,
+  SPECWEAVE_SET_UP_NOTE,
+  specweaveCreateNote,
+} from "./createOnMachine.ts";
 import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -47,10 +55,17 @@ const setup = (
     readonly createFails?: OrchestratorMcpFailure;
     /** Another machine's work started the calling thread here. */
     readonly origin?: WorkOrigin;
+    /** M1 knows studio_project_create's specweave (1396). */
+    readonly m1Specweave?: boolean;
+    /** What the local create decides for a parentPath. */
+    readonly preview?: FilesystemProjectOutcome;
+    /** What the local create reports. */
+    readonly localResult?: { readonly existing?: true; readonly specweaveError?: string };
   } = {},
 ) => {
   const calls: RemoteCall[] = [];
   const localCreates: string[] = [];
+  const localInputs: Array<{ readonly specweave?: boolean | undefined }> = [];
   const caller = {
     id: callerId,
     projectId: ProjectId.make("project"),
@@ -83,7 +98,11 @@ const setup = (
           return Effect.succeed({
             features: options.olderM1
               ? { scheduledTasks: true }
-              : { scheduledTasks: true, projectCreateOptions: true },
+              : {
+                  scheduledTasks: true,
+                  projectCreateOptions: true,
+                  ...(options.m1Specweave ? { projectCreateSpecweave: true } : {}),
+                },
           });
         if (input.tool === "studio_project_create") {
           if (options.createFails !== undefined) return Effect.fail(options.createFails);
@@ -121,15 +140,33 @@ const setup = (
     }),
     Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
     Layer.mock(Project.ProjectService)({
-      getById: () => Effect.succeedNone,
+      getById: (id) =>
+        Effect.succeed(
+          id === "local"
+            ? Option.some(projectFixture(id, { title: "Local", workspaceRoot: "/projects/local" }))
+            : Option.none(),
+        ),
     }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
       namedProjectsRoot: "/projects",
       createNamedProject: (input) =>
         Effect.sync(() => {
           localCreates.push(input.name);
-          return { projectId: ProjectId.make("local"), workspaceRoot: "/projects/local" };
+          localInputs.push(input);
+          return {
+            projectId: ProjectId.make("local"),
+            workspaceRoot: "/projects/local",
+            ...options.localResult,
+          };
         }),
+      suggestedProjectsRoot: "/home/example/Projects",
+      // The create's own decision for the parent: a new folder unless a test says otherwise.
+      previewNamedProject: (input) =>
+        Effect.succeed(
+          Option.some(
+            options.preview ?? { kind: "creates" as const, path: `${input.parentPath}/new` },
+          ),
+        ),
     }),
     Layer.mock(GitVcsDriver.GitVcsDriver)({}),
     Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -152,7 +189,7 @@ const setup = (
       ),
       Effect.map((results) => results.at(-1)?.result as unknown as Record<string, unknown>),
     );
-  return { create, calls, localCreates };
+  return { create, calls, localCreates, localInputs };
 };
 
 describe("studio_project_create on another machine", () => {
@@ -251,6 +288,118 @@ describe("studio_project_create on another machine", () => {
       const result = yield* create({ title: "X", machine: "M1" });
       expect(result).toMatchObject({ code: "capability_denied" });
       expect(calls).toEqual([]);
+    });
+  });
+});
+
+describe("studio_project_create's specweave (1396 AC-17)", () => {
+  it("sets SpecWeave up only in a folder the create makes or an empty one it takes", () => {
+    const root = "/app/projects";
+    const at = (preview?: FilesystemProjectOutcome) =>
+      createMakesNewFolder({
+        parent: "/home/example/Projects",
+        namedProjectsRoot: root,
+        preview: Option.fromUndefinedOr(preview),
+      });
+    expect(
+      createMakesNewFolder({ parent: undefined, namedProjectsRoot: root, preview: Option.none() }),
+    ).toBe(true);
+    expect(at({ kind: "creates", path: "/home/example/Projects/x" })).toBe(true);
+    expect(at({ kind: "uses", path: "/x", because: "empty_named_like_project" })).toBe(true);
+    for (const because of ["repository", "specweave", "named_like_project"] as const)
+      expect(at({ kind: "uses", path: "/x", because })).toBe(false);
+    // Unknown is never a yes.
+    expect(at(undefined)).toBe(false);
+    expect(
+      createMakesNewFolder({
+        parent: root,
+        namedProjectsRoot: root,
+        preview: Option.some({ kind: "creates", path: `${root}/x` }),
+      }),
+    ).toBe(false);
+  });
+
+  it("says SpecWeave set up, or why not and what the user presses", () => {
+    expect(specweaveCreateNote({ asked: undefined })).toBe(SPECWEAVE_SET_UP_NOTE);
+    expect(specweaveCreateNote({ kind: "personal", asked: undefined })).toBeUndefined();
+    expect(specweaveCreateNote({ kind: "personal", asked: true })).toContain("personal assistant");
+    expect(specweaveCreateNote({ asked: false })).toContain("specweave was false");
+    expect(specweaveCreateNote({ asked: true, skipped: "registered" })).toContain(
+      "an existing folder is registered as it is",
+    );
+    expect(
+      specweaveCreateNote({
+        asked: undefined,
+        skipped: "existing_folder",
+        workspaceRoot: "/w/site",
+      }),
+    ).toContain("/w/site already existed");
+    expect(specweaveCreateNote({ asked: undefined, needsNode: true, error: "no node" })).toContain(
+      "no Node.js",
+    );
+    expect(specweaveCreateNote({ asked: undefined, error: "specweave init exited with 1." })).toBe(
+      "SpecWeave not set up: specweave init exited with 1. The project was made anyway. The user can set it up any time with Set up SpecWeave on the project's Board tab.",
+    );
+  });
+
+  it.effect(
+    "a new project starts with SpecWeave by default, and specweave:false leaves it out",
+    () => {
+      const { create, localInputs } = setup();
+      return Effect.gen(function* () {
+        const made = yield* create({ title: "Fresh" });
+        expect(localInputs[0]!.specweave).toBe(true);
+        expect(made.specweave).toBe(SPECWEAVE_SET_UP_NOTE);
+        const without = yield* create({ title: "Bare", specweave: false });
+        expect(localInputs[1]!.specweave).toBeUndefined();
+        expect(String(without.specweave)).toContain("specweave was false");
+      });
+    },
+  );
+
+  it.effect("never sets it up in a folder that already has files", () => {
+    const { create, localInputs } = setup({
+      preview: { kind: "uses", path: "/w/site", because: "named_like_project" },
+      localResult: { existing: true },
+    });
+    return Effect.gen(function* () {
+      const result = yield* create({ title: "site", parentPath: "/w/site", specweave: true });
+      expect(localInputs[0]!.specweave).toBeUndefined();
+      expect(result.existing).toBe(true);
+      expect(String(result.specweave)).toContain("already existed");
+    });
+  });
+
+  it.effect("an empty folder it takes gets SpecWeave; a failed setup keeps the project", () => {
+    const { create, localInputs } = setup({
+      preview: { kind: "uses", path: "/w/site", because: "empty_named_like_project" },
+      localResult: { specweaveError: "specweave init exited with 1" },
+    });
+    return Effect.gen(function* () {
+      const result = yield* create({ title: "site", parentPath: "/w/site" });
+      expect(localInputs[0]!.specweave).toBe(true);
+      expect(result.id).toBeDefined();
+      expect(String(result.specweave)).toContain("The project was made anyway");
+    });
+  });
+
+  it.effect("forwards specweave to a machine that knows it", () => {
+    const { create, calls } = setup({ m1Specweave: true });
+    return Effect.gen(function* () {
+      const result = yield* create({ title: "Pinball Stats", machine: "M1", specweave: false });
+      expect(calls[1]!.arguments).toEqual({ title: "Pinball Stats", specweave: false });
+      expect(result.specweave).toBeUndefined();
+    });
+  });
+
+  it.effect("tells the caller an older machine made it without SpecWeave", () => {
+    const { create, calls } = setup();
+    return Effect.gen(function* () {
+      const result = yield* create({ title: "Pinball Stats", machine: "M1", specweave: true });
+      // Not sent to a machine that does not know it.
+      expect(calls[1]!.arguments).toEqual({ title: "Pinball Stats" });
+      expect(result.id).toBe(remoteProjectId);
+      expect(result.specweave).toBe(olderMachineSpecweaveNote("M1"));
     });
   });
 });

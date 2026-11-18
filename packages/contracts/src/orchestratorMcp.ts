@@ -1099,6 +1099,8 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
     scheduledTasks: Schema.Boolean,
     /** studio_project_create takes parentPath and github. Older machines omit it. */
     projectCreateOptions: Schema.optional(Schema.Boolean),
+    /** studio_project_create takes specweave (1396). Older machines omit it. */
+    projectCreateSpecweave: Schema.optional(Schema.Boolean),
     maxBatchThreads: Schema.Number,
     /** Most unfinished delegate_task children one parent run may hold at once. */
     maxLiveChildTasks: Schema.optional(Schema.Number),
