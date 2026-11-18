@@ -21,10 +21,9 @@ export function loadOwnDeviceShortId(): Promise<string | null> {
     } catch {
       return null;
     }
-  })().then((id) => {
-    // A window without a key yet asks again next time; a found ID never changes.
-    if (id === null) loading = undefined;
-    return id;
+  })().finally(() => {
+    // Read again next time: a window gains a key on sign-in and may replace it.
+    loading = undefined;
   });
   return loading;
 }

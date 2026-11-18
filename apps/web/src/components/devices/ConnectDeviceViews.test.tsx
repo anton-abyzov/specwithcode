@@ -26,7 +26,8 @@ const phone = (id: string, shortId: string | undefined, askedAt: string): Connec
   deviceType: "mobile",
   system: "iOS",
   app: "SpecWithCode",
-  ...(shortId === undefined ? {} : { shortId }),
+  // A machine that sends short IDs also sends the device reference Later uses.
+  ...(shortId === undefined ? {} : { shortId, device: `reference-of-${id.replace(/\d+$/, "")}` }),
   askedAt,
   expiresAt: "2026-11-18T08:38:00.000Z",
 });
@@ -225,6 +226,69 @@ describe("the approval pop-up with several devices (1406)", () => {
   });
 });
 
+describe("one answer at a time (1406)", () => {
+  const render = async (handlers: {
+    onApprove: (code: string) => Promise<string | null>;
+    onDeny: (id: string) => Promise<void>;
+  }) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <DeviceApprovalPrompt
+          machine="m4"
+          requests={[first, second]}
+          onApprove={handlers.onApprove}
+          onDeny={handlers.onDeny}
+          onLater={() => undefined}
+        />,
+      );
+    });
+  };
+  const denies = () => [
+    ...prompt()!.querySelectorAll<HTMLButtonElement>("button[data-device-deny]"),
+  ];
+
+  it("holds every Deny while an Allow is on its way", async () => {
+    const denied: string[] = [];
+    let finish: (problem: string | null) => void = () => undefined;
+    await render({
+      onApprove: () => new Promise((resolve) => (finish = resolve)),
+      onDeny: async (id) => void denied.push(id),
+    });
+    await type("P4RT9W");
+    await act(async () => button("Allow").click());
+    expect(denies().map((deny) => deny.disabled)).toEqual([true, true]);
+    await act(async () => denies()[1]!.click());
+    expect(denied).toEqual([]);
+    await act(async () => finish(null));
+    expect(denies().map((deny) => deny.disabled)).toEqual([false, false]);
+  });
+
+  it("holds Allow and the other Deny while a Deny is on its way", async () => {
+    const approved: string[] = [];
+    let finish: () => void = () => undefined;
+    await render({
+      onApprove: async (code) => {
+        approved.push(code);
+        return null;
+      },
+      onDeny: () => new Promise((resolve) => (finish = resolve)),
+    });
+    await type("K7QX2M");
+    await act(async () => denies()[1]!.click());
+    expect(prompt()!.querySelector<HTMLButtonElement>("button[type=submit]")!.disabled).toBe(true);
+    expect(denies().map((deny) => deny.disabled)).toEqual([true, true]);
+    await act(async () => {
+      prompt()!.querySelector("form")!.requestSubmit();
+    });
+    expect(approved).toEqual([]);
+    await act(async () => finish());
+    expect(prompt()!.querySelector<HTMLButtonElement>("button[type=submit]")!.disabled).toBe(false);
+  });
+});
+
 describe("Later (1406)", () => {
   it("hides the pop-up for the listed devices, also when their request is renewed", () => {
     const later = new Set([first, second].map(laterKey));
@@ -232,15 +296,24 @@ describe("Later (1406)", () => {
     // Ten minutes on, the same phone asks again under a new request id.
     const renewed = { ...first, id: "request-a2" };
     expect(requestsToPrompt([renewed, second], later)).toEqual([]);
+    expect(laterKey(renewed)).toBe(laterKey(first));
     // A device that was not listed brings the pop-up back, with every waiting device.
     const third = phone("request-c", "ABCD", first.askedAt);
     expect(requestsToPrompt([renewed, third], later)).toEqual([renewed, third]);
   });
 
+  it("never hides another device that carries the same short ID", () => {
+    const later = new Set([first].map(laterKey));
+    // A look-alike: same name, same four characters, another key.
+    const twin = phone("request-z", "TSKR", first.askedAt);
+    expect(twin.shortId).toBe(first.shortId);
+    expect(requestsToPrompt([twin], later)).toEqual([twin]);
+  });
+
   it("falls back to the request when the machine sends no ID", () => {
     const old = phone("request-old", undefined, first.askedAt);
     expect(laterKey(old)).toBe("request-old");
-    expect(laterKey(first)).toBe("connect:TSKR");
+    expect(laterKey(first)).toBe("device:reference-of-request-a");
     expect(requestsToPrompt([old], new Set(["request-old"]))).toEqual([]);
     expect(
       requestsToPrompt([{ ...old, id: "request-new" }], new Set(["request-old"])),

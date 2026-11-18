@@ -40,21 +40,21 @@ function CodeForm({
   id,
   label,
   onApprove,
-  onDeny,
+  disabled = false,
   autoFocus = false,
   compact = false,
 }: {
   id: string;
   label: string;
   onApprove: ApproveWithCode;
-  /** Left out where each waiting device has its own Deny (1406). */
-  onDeny?: (() => Promise<void>) | undefined;
+  /** True while a Deny beside it runs, so Allow and Deny never overlap. */
+  disabled?: boolean;
   autoFocus?: boolean;
   compact?: boolean;
 }) {
   const tx = useTx();
   const [code, setCode] = useState("");
-  const [busy, setBusy] = useState<"allow" | "deny" | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -63,25 +63,15 @@ function CodeForm({
 
   const allow = async (event: FormEvent) => {
     event.preventDefault();
-    if (!isCompleteApprovalCode(code) || busy) return;
-    setBusy("allow");
+    if (!isCompleteApprovalCode(code) || busy || disabled) return;
+    setBusy(true);
     setError(null);
     try {
       const problem = await onApprove(code);
       if (problem) setError(problem);
       else setCode("");
     } finally {
-      setBusy(null);
-    }
-  };
-  const deny = async () => {
-    if (!onDeny) return;
-    setBusy("deny");
-    setError(null);
-    try {
-      await onDeny();
-    } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
@@ -113,21 +103,10 @@ function CodeForm({
           <Button
             type="submit"
             size={compact ? "xs" : "default"}
-            disabled={!isCompleteApprovalCode(code) || busy !== null}
+            disabled={!isCompleteApprovalCode(code) || busy || disabled}
           >
-            {busy === "allow" ? tx("Allowing…") : tx("Allow")}
+            {busy ? tx("Allowing…") : tx("Allow")}
           </Button>
-          {onDeny ? (
-            <Button
-              type="button"
-              variant="outline"
-              size={compact ? "xs" : "default"}
-              disabled={busy !== null}
-              onClick={() => void deny()}
-            >
-              {busy === "deny" ? tx("Turning away…") : tx("Deny")}
-            </Button>
-          ) : null}
         </div>
       </div>
       {error ? (
@@ -152,6 +131,23 @@ function ShortId({ device }: { device: { readonly shortId?: string | undefined }
       {label}
     </span>
   );
+}
+
+/**
+ * One Allow or Deny at a time for a list of waiting devices: while one runs,
+ * the code box and every Deny wait, so two answers never cross.
+ */
+function useOneAtATime() {
+  const [running, setRunning] = useState(false);
+  const run = async <A,>(action: () => Promise<A>): Promise<A> => {
+    setRunning(true);
+    try {
+      return await action();
+    } finally {
+      setRunning(false);
+    }
+  };
+  return { running, run };
 }
 
 /** One waiting device's own Deny: it acts on the row it sits in and says which. */
@@ -220,6 +216,7 @@ export function DeviceApprovalPrompt({
   onLater: () => void;
 }) {
   const tx = useTx();
+  const answer = useOneAtATime();
   const only = requests.length === 1 ? requests[0]! : null;
   if (requests.length === 0) return null;
   const hubOf = (request: ConnectDeviceRequest) =>
@@ -315,7 +312,11 @@ export function DeviceApprovalPrompt({
                       </p>
                     )}
                   </div>
-                  <DenyButton request={request} disabled={false} onDeny={onDeny} />
+                  <DenyButton
+                    request={request}
+                    disabled={answer.running}
+                    onDeny={(id) => answer.run(() => onDeny(id))}
+                  />
                 </li>
               );
             })}
@@ -338,7 +339,8 @@ export function DeviceApprovalPrompt({
                 ? tx("Type the code shown on {device}", { device: connectDeviceName(only, tx) })
                 : tx("Type the code shown on the device you want to allow")
             }
-            onApprove={onApprove}
+            onApprove={(code) => answer.run(() => onApprove(code))}
+            disabled={answer.running}
             autoFocus
           />
         </DialogPanel>
@@ -464,10 +466,10 @@ export function ConnectDevicesList({
   const tx = useTx();
   const locale = useLocale();
   const [busy, setBusy] = useState<string | null>(null);
-  const act = async (key: string, action: () => Promise<void>) => {
+  const act = async <A,>(key: string, action: () => Promise<A>): Promise<A> => {
     setBusy(key);
     try {
-      await action();
+      return await action();
     } finally {
       setBusy(null);
     }
@@ -517,7 +519,11 @@ export function ConnectDevicesList({
                 <p className="text-xs text-muted-foreground">{connectDeviceDetails(request, tx)}</p>
               </div>
               {snapshot.canApprove ? (
-                <DenyButton request={request} disabled={busy !== null} onDeny={actions.onDeny} />
+                <DenyButton
+                  request={request}
+                  disabled={busy !== null}
+                  onDeny={(id) => act("deny", () => actions.onDeny(id))}
+                />
               ) : null}
             </div>
           ))}
@@ -526,7 +532,8 @@ export function ConnectDevicesList({
               compact
               id="list"
               label={tx("Type the code shown on the device you want to allow")}
-              onApprove={actions.onApprove}
+              onApprove={(code) => act("allow", () => actions.onApprove(code))}
+              disabled={busy !== null}
             />
           ) : null}
         </div>

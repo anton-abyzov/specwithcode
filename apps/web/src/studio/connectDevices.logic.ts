@@ -89,11 +89,13 @@ export function connectDeviceTitle(
 
 /**
  * What Later remembers a hidden request by: the device, not the request, so the
- * same device asking again after its request ran out stays hidden. Later only
- * hides the pop-up; the device stays listed in Settings and gains nothing.
+ * same device asking again after its request ran out stays hidden. Never the
+ * short ID, which another device can share: that one would stay hidden too.
+ * An older machine sends no device reference, so its requests are remembered
+ * one by one. Later only hides the pop-up; the device stays listed in Settings.
  */
-export const laterKey = (request: Pick<ConnectDeviceRequest, "id" | "kind" | "shortId">) =>
-  request.shortId ? `${request.kind}:${request.shortId}` : request.id;
+export const laterKey = (request: Pick<ConnectDeviceRequest, "id" | "device">) =>
+  request.device ? `device:${request.device}` : request.id;
 
 /**
  * The pop-up's waiting list: every request while at least one of them was not
