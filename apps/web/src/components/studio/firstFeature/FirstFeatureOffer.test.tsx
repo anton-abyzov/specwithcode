@@ -26,8 +26,14 @@ describe("FirstFeatureOfferCard (AC-11, AC-12, AC-20)", () => {
     vi.unstubAllGlobals();
   });
 
-  const offer = (over: Partial<Parameters<typeof firstFeatureOffer>[0]> = {}) =>
-    firstFeatureOffer({
+  type Project = Parameters<typeof firstFeatureOffer>[0]["projects"][number] & {
+    readonly title?: string;
+  };
+  type Input = Omit<Parameters<typeof firstFeatureOffer>[0], "projects"> & {
+    readonly projects: ReadonlyArray<Project>;
+  };
+  const offer = (over: Partial<Input> = {}) =>
+    firstFeatureOffer<Project>({
       supported: true,
       finishedBefore: false,
       dismissed: false,

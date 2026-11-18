@@ -59,7 +59,16 @@ const done = (reviews?: ProjectBoardCardReview[]) => [
 const atEnd = { ...on, cards: done([review()]), openedReview: true };
 
 type Guide = { kind: "guide"; input: GuideInput; extra?: Record<string, unknown> };
-type Offer = { kind: "offer"; offer: Parameters<typeof firstFeatureOffer>[0]; starting?: boolean };
+type Project = Parameters<typeof firstFeatureOffer>[0]["projects"][number] & {
+  readonly title?: string;
+};
+type Offer = {
+  kind: "offer";
+  offer: Omit<Parameters<typeof firstFeatureOffer>[0], "projects"> & {
+    readonly projects: ReadonlyArray<Project>;
+  };
+  starting?: boolean;
+};
 const offerBase = {
   supported: true,
   finishedBefore: false,
@@ -201,7 +210,7 @@ function Fixture() {
       <main data-fixture-ready="" className="mx-auto max-w-3xl p-4">
         {state.kind === "offer" ? (
           <FirstFeatureOfferCard
-            offer={firstFeatureOffer(state.offer)}
+            offer={firstFeatureOffer<Project>(state.offer)}
             starting={state.starting ?? false}
             onStart={noop}
             onDismiss={noop}
