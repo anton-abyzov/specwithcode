@@ -5657,7 +5657,6 @@ export const ru: PhraseCatalog = {
     "Координатор {project} на другой машине, к которой это окно не может подключиться.",
   "This window cannot open {machine}": "Это окно не может открыть {machine}",
   "Offline · last seen {time}": "Не в сети · последняя активность: {time}",
-  "Needs update · {version}": "Нужно обновление · {version}",
   "Old conversation kept": "Прежний разговор сохранён",
   "this project": "этот проект",
   "its machine": "его машина",

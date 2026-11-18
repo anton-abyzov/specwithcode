@@ -5690,7 +5690,6 @@ export const es: PhraseCatalog = {
     "El coordinador de {project} está en otra máquina a la que esta ventana no puede acceder.",
   "This window cannot open {machine}": "Esta ventana no puede abrir {machine}",
   "Offline · last seen {time}": "Sin conexión · última actividad: {time}",
-  "Needs update · {version}": "Necesita actualizarse · {version}",
   "Old conversation kept": "Conversación anterior conservada",
   "this project": "este proyecto",
   "its machine": "su máquina",

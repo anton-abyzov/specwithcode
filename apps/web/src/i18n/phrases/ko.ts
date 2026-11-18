@@ -5593,7 +5593,6 @@ export const ko: PhraseCatalog = {
     "{project}의 코디네이터는 이 창에서 연결할 수 없는 다른 컴퓨터에 있습니다.",
   "This window cannot open {machine}": "이 창에서 {machine}을(를) 열 수 없습니다",
   "Offline · last seen {time}": "오프라인 · 마지막 접속: {time}",
-  "Needs update · {version}": "업데이트 필요 · {version}",
   "Old conversation kept": "이전 대화 보관됨",
   "this project": "이 프로젝트",
   "its machine": "해당 컴퓨터",

@@ -63,15 +63,14 @@ describe("machineRowState", () => {
     expect(row("copy", { reach: "offline" }).notes).toEqual([{ text: "Offline" }]);
   });
 
-  it("orders the notes: offline, needs update, old conversation kept", () => {
+  it("orders the notes: offline, old conversation kept", () => {
     expect(
       row("copy", {
         reach: "offline",
         lastSeen: "5m ago",
-        needsUpdate: "1.0.340",
         keptConversation: true,
       }).notes.map((note) => note.text),
-    ).toEqual(["Offline · last seen {time}", "Needs update · {version}", "Old conversation kept"]);
+    ).toEqual(["Offline · last seen {time}", "Old conversation kept"]);
   });
 
   it("never names a role on any row", () => {
@@ -86,7 +85,7 @@ describe("machineRowState", () => {
     const reaches = ["open", "offline", "never-opened", "refused"] as const;
     for (const role of roles)
       for (const reach of reaches) {
-        const state = row(role, { reach, keptConversation: true, needsUpdate: "1.0.1" });
+        const state = row(role, { reach, keptConversation: true });
         const words = [state.label, ...state.notes].map((part) => part?.text ?? "").join(" ");
         expect(words).not.toMatch(/\bMain\b|\bmain\b|\bCopy\b|\bcopy\b/);
       }

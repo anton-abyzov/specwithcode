@@ -5666,7 +5666,6 @@ export const ja: PhraseCatalog = {
     "{project} のコーディネーターは、このウィンドウから接続できない別のマシンにあります。",
   "This window cannot open {machine}": "このウィンドウでは {machine} を開けません",
   "Offline · last seen {time}": "オフライン · 最終アクセス: {time}",
-  "Needs update · {version}": "要更新 · {version}",
   "Old conversation kept": "以前の会話を保持",
   "this project": "このプロジェクト",
   "its machine": "そのマシン",

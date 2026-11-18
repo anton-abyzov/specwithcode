@@ -5703,7 +5703,6 @@ export const de: PhraseCatalog = {
     "Der Koordinator für {project} ist auf einem anderen Rechner, den dieses Fenster nicht erreicht.",
   "This window cannot open {machine}": "Dieses Fenster kann {machine} nicht öffnen",
   "Offline · last seen {time}": "Offline · zuletzt gesehen {time}",
-  "Needs update · {version}": "Update nötig · {version}",
   "Old conversation kept": "Altes Gespräch bleibt erhalten",
   "this project": "dieses Projekt",
   "its machine": "sein Rechner",

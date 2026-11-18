@@ -5427,7 +5427,6 @@ export const zh: PhraseCatalog = {
     "{project} 的协调者在另一台电脑上，此窗口无法连接到它。",
   "This window cannot open {machine}": "此窗口无法打开 {machine}",
   "Offline · last seen {time}": "离线 · 上次活动 {time}",
-  "Needs update · {version}": "需要更新 · {version}",
   "Old conversation kept": "已保留旧对话",
   "this project": "此项目",
   "its machine": "它所在的电脑",

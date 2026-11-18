@@ -57,8 +57,6 @@ export interface MachineRowInput {
   readonly reach: MachineReach;
   /** When this window last saw an offline machine, in words ("2h ago"); null when unknown. */
   readonly lastSeen?: string | null;
-  /** The app version of a machine too old for this window's actions; null when it is current. */
-  readonly needsUpdate?: string | null;
   /** The machine kept a coordinator conversation from before, as history. */
   readonly keptConversation?: boolean;
 }
@@ -80,8 +78,6 @@ export function machineRowState(input: MachineRowInput): MachineRowState {
         ? { text: "Offline · last seen {time}", values: { time: input.lastSeen } }
         : { text: "Offline" },
     );
-  if (input.needsUpdate)
-    notes.push({ text: "Needs update · {version}", values: { version: input.needsUpdate } });
   if (input.keptConversation) notes.push({ text: "Old conversation kept" });
   const row = (
     kind: MachineRowKind,

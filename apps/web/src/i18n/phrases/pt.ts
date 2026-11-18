@@ -5663,7 +5663,6 @@ export const pt: PhraseCatalog = {
     "O coordenador de {project} está em outra máquina que esta janela não consegue acessar.",
   "This window cannot open {machine}": "Esta janela não consegue abrir {machine}",
   "Offline · last seen {time}": "Offline · última atividade: {time}",
-  "Needs update · {version}": "Precisa de atualização · {version}",
   "Old conversation kept": "Conversa antiga mantida",
   "this project": "este projeto",
   "its machine": "a máquina dele",
