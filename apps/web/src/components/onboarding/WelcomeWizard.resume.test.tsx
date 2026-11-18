@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
+  hydrated: true,
   environments: [] as { environmentId: string; label: string; serverConfig: unknown }[],
   primaryId: "this-mac" as string | null,
   save: vi.fn(async (_marker: unknown) => undefined),
@@ -31,7 +32,7 @@ vi.mock("../../onboarding/accessRecommendation", () => ({
   useFullAccessRecommendation: () => ({
     answer: "declined",
     machineRole: null,
-    hydrated: true,
+    hydrated: mocks.hydrated,
     accept: vi.fn(),
     decline: vi.fn(),
     undo: vi.fn(),
@@ -91,6 +92,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.environments = [machine("this-mac", "This Mac"), machine("studio", "Studio")];
   mocks.primaryId = "this-mac";
+  mocks.hydrated = true;
   mocks.take.mockResolvedValue(null);
   Object.defineProperty(window, "desktopBridge", {
     configurable: true,
@@ -215,4 +217,17 @@ it("after reopening, Files and commands stays away when it had no answer", async
   await render();
   expect(step()).toBe("access");
   expect(document.querySelector("[data-access-row='files']")).toBeNull();
+});
+
+it("after reopening, Files and commands waits for settings before it shows", async () => {
+  mocks.hydrated = false;
+  mocks.take.mockResolvedValue(marker({ filesIds: ["this-mac"] }));
+  await render();
+  expect(step()).toBe("access");
+  expect(document.querySelector("[data-access-row='files']")).toBeNull();
+  mocks.hydrated = true;
+  await render();
+  expect(document.querySelector("[data-access-row='files']")?.textContent).toContain(
+    "Settings > General",
+  );
 });

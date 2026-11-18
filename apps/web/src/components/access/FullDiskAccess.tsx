@@ -304,8 +304,12 @@ function FirstRunFullDiskAccessBody({
 }) {
   const [open, setOpen] = useState(false);
   const { access, openSettings } = useFullDiskAccess(environmentId, open);
+  // Told only once read: an unread status on a fresh mount is not "not allowed".
+  const read = access !== null;
   const allowed = access?.fullDiskAccess === "allowed";
-  useEffect(() => onAllowedChange?.(allowed), [allowed, onAllowedChange]);
+  useEffect(() => {
+    if (read) onAllowedChange?.(allowed);
+  }, [read, allowed, onAllowedChange]);
   if (access?.fullDiskAccess === "not-applicable") return null;
   return (
     <details

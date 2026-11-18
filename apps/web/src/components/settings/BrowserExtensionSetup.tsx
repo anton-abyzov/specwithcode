@@ -243,6 +243,8 @@ export function usePairingCode(
   const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pairedAtHandOut, setPairedAtHandOut] = useState<ReadonlySet<string>>(new Set());
   const clear = useCallback(() => {
+    if (clearTimer.current !== null) clearTimeout(clearTimer.current);
+    clearTimer.current = null;
     const value = copied.current;
     copied.current = null;
     if (value !== null) void clearClipboardIfText(value);

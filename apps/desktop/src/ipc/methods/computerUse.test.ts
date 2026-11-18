@@ -35,6 +35,15 @@ describe("first-run resume marker", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("keeps the machines Files and commands was answered for", () =>
+    Effect.gen(function* () {
+      const dir = yield* userData;
+      const answered = { ...marker, filesIds: ["this-mac"] };
+      yield* writeFirstRunResume(dir, answered);
+      assert.deepStrictEqual(yield* takeFirstRunResume(dir, AT + 5_000), answered);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("a second take returns nothing", () =>
     Effect.gen(function* () {
       const dir = yield* userData;

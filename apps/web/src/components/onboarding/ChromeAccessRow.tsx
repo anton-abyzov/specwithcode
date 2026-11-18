@@ -234,7 +234,10 @@ export function ChromeAccessRow({
   const reconnect = useAtomCommand(projectWorkspace.browserExtensionReconnect);
   const answerPeer = useAtomCommand(projectWorkspace.browserExtensionPeer);
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState<string | null>(null);
+  // A failure belongs to the state it was pressed in, and goes when that state does.
+  const [failed, setFailed] = useState<{ readonly kind: string; readonly message: string } | null>(
+    null,
+  );
   const status = query.data ?? null;
   // Profiles by name: the relay keeps each unique and a reconnect keeps it.
   const paired = status?.profiles.map((profile) => profile.label) ?? NO_PROFILES;
@@ -291,9 +294,10 @@ export function ChromeAccessRow({
     setFailed(null);
     try {
       const result = await action();
-      if (result._tag === "Failure") setFailed(tx("That did not go through. Try again."));
+      if (result._tag === "Failure")
+        setFailed({ kind: state.kind, message: tx("That did not go through. Try again.") });
     } catch {
-      setFailed(tx("That did not go through. Try again."));
+      setFailed({ kind: state.kind, message: tx("That did not go through. Try again.") });
     } finally {
       setBusy(false);
       refresh();
@@ -308,7 +312,7 @@ export function ChromeAccessRow({
       storeUrl={storeUrl}
       busy={busy}
       canAnswer={canAnswer}
-      failed={failed}
+      failed={failed?.kind === state.kind ? failed.message : null}
       onReconnect={() => void run(() => reconnect({ environmentId, input: {} }))}
       onAnswer={(allow) => {
         const id = state.asking?.id;

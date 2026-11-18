@@ -186,7 +186,9 @@ export function WelcomeWizard({
         own,
         platform: accessEnvironments[index]?.serverConfig?.environment?.platform?.os ?? null,
         recommended:
-          recommendedIds.has(id) || recommendedNow.includes(id) || resumedFilesIds.includes(id),
+          recommendedIds.has(id) ||
+          recommendedNow.includes(id) ||
+          (fullAccess.hydrated && resumedFilesIds.includes(id)),
         computerUseLocal: own && computerUseLocal,
         fullDiskAccessLocal: own && fullDiskAccessLocal,
       };
@@ -490,8 +492,11 @@ export function WelcomeWizard({
                 : accessAnswer.accepted !== null
                   ? "accepted"
                   : "declined",
+            // Read only once settings have loaded: before that the answer is the default, null.
             answeredBefore:
-              accessAnswer === null && resumedFilesIds.length > 0 ? fullAccess.answer : null,
+              accessAnswer === null && resumedFilesIds.length > 0 && fullAccess.hydrated
+                ? fullAccess.answer
+                : null,
             onAccept: async () => {
               const accepted = await fullAccess.accept(filesMachineIds);
               if (accepted === null) return t("wizard.access.saveFailed");
