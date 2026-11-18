@@ -437,7 +437,10 @@ final class AppRouter {
   /// Percy, with the composer focused.
   func startNewChat(in model: AppModel) {
     let target: ChatTarget?
-    if let aide = model.aide, !aide.archived {
+    if case let .aide(ref)? = landing(in: model), model.isAideSeat(ref), model.project(ref)?.archived == false {
+      // With another machine's Percy open, a new chat stays on that machine.
+      target = .aide(ref)
+    } else if let aide = model.aide, !aide.archived {
       target = .aide(aide.ref)
     } else if let current = landing(in: model), current.projectRef != nil {
       target = current
