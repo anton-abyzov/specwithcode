@@ -201,7 +201,17 @@ type HostPhase = EnvironmentConnectionPresentation["phase"] | undefined;
 type HostConnection = {
   readonly phase: string;
   readonly blockedReason?: string;
+  /** Refused because this window has no SpecWithCode Connect sign-in (1417). */
+  readonly connectSignInRequired?: boolean;
 };
+
+/** Another machine this window reaches only after a Connect sign-in. */
+function needsConnectSignIn(
+  connection: HostConnection | null | undefined,
+  context: HostAdmissionContext,
+): boolean {
+  return !context.isThisDevice && connection?.connectSignInRequired === true;
+}
 
 /**
  * Where the host runs, and whether it has been slow for longer than a blip.
@@ -236,6 +246,7 @@ export function hostDisconnectedLabel(
   connection: HostConnection | null | undefined,
   context: HostAdmissionContext = REMOTE_PAST_GRACE,
 ): string {
+  if (needsConnectSignIn(connection, context)) return "Needs sign-in";
   if (connection?.blockedReason === "authentication") return "Signed out";
   if (context.isThisDevice) {
     // This machine is never offline: its server is busy and catches up.
@@ -340,6 +351,13 @@ export function composerHostStatus(
       : { ...base, tone: "busy", headline: "Catching up…" };
   }
   const named = context.machineLabel !== undefined;
+  if (needsConnectSignIn(connection, context))
+    return {
+      ...base,
+      tone: "signed-out",
+      headline: named ? "Sign in to reach {machine}" : "Sign in to reach this machine",
+      action: "Sign in to SpecWithCode Connect to reach it from this window.",
+    };
   if (connection?.blockedReason === "authentication")
     return {
       ...base,
@@ -413,6 +431,9 @@ export function projectAdmissionReason(
         return "SpecWithCode on this machine stopped answering. Quit and reopen the app to continue.";
       }
       return context.graceElapsed ? THIS_DEVICE_BUSY_ADMISSION : "Catching up…";
+    }
+    if (needsConnectSignIn(connection, context)) {
+      return "This window is signed out of SpecWithCode Connect. Sign in to reach this machine.";
     }
     if (connection?.blockedReason === "authentication") {
       return "This browser is signed out of this host. Reload the page to sign in again.";

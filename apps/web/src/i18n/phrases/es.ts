@@ -5670,4 +5670,5 @@ export const es: PhraseCatalog = {
     "{machine} está en marcha, pero esta ventana no puede acceder hasta que inicies sesión.",
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} están en marcha, pero esta ventana no puede acceder hasta que inicies sesión.",
+  "Sign in to reach this machine": "Inicia sesión para acceder a este equipo",
 };

@@ -5688,4 +5688,5 @@ export const fr: PhraseCatalog = {
     "{machine} fonctionne, mais cette fenêtre ne peut pas y accéder tant que vous n'êtes pas connecté.",
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} fonctionnent, mais cette fenêtre ne peut pas y accéder tant que vous n'êtes pas connecté.",
+  "Sign in to reach this machine": "Connectez-vous pour accéder à cet ordinateur",
 };

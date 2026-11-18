@@ -79,6 +79,8 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
 
   useEffect(() => {
     if (!isLoaded) {
+      // Not settled yet: a refusal now is never read as a sign-out (1417).
+      setConnectAccountState("unknown");
       return;
     }
 
@@ -142,7 +144,14 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
     };
   }, [getToken, isLoaded, isSignedIn, removeRelayEnvironments, userId]);
 
-  useEffect(() => () => deactivateManagedRelayAuthentication(), []);
+  useEffect(
+    () => () => {
+      deactivateManagedRelayAuthentication();
+      // A remounted provider settles again before anything says "Needs sign-in".
+      setConnectAccountState("unknown");
+    },
+    [],
+  );
 
   return (
     <ManagedTunnelPolicyContext

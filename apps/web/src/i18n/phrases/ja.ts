@@ -5644,4 +5644,5 @@ export const ja: PhraseCatalog = {
     "{machine} は動作中ですが、サインインするまでこのウィンドウから接続できません。",
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} は動作中ですが、サインインするまでこのウィンドウから接続できません。",
+  "Sign in to reach this machine": "サインインしてこのマシンに接続",
 };
