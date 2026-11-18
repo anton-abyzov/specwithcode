@@ -33,6 +33,14 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
   const [editing, setEditing] = useState<SshDeviceHostConfig | null>(null);
   const [originalHost, setOriginalHost] = useState<SshDeviceHostConfig | null>(null);
   const [busy, setBusy] = useState(false);
+  // The list opens on request: most machines have no remote host, and the page stays short.
+  const [open, setOpen] = useState(false);
+  const shown = open || editing !== null;
+  const hostCount = new Set(
+    connectedEnvironments.flatMap((environment) =>
+      (environment.serverConfig?.settings.deviceHosts ?? []).map((host) => host.id),
+    ),
+  ).size;
   const targets = environments.map((environment) => ({
     environmentId: environment.environmentId,
     label: environment.label,
@@ -91,25 +99,45 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
       settingKeys={["deviceHosts"]}
       description="Add remote machines with simulator or emulator runtimes installed, and the selected environments will connect over SSH and set up device tools automatically."
       control={
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={
-            !canConfigure || projectScope || busy || !props.environmentId || editing !== null
-          }
-          onClick={() => {
-            setOriginalHost(null);
-            setEditing({ id: randomUUID(), label: "", target: "" });
-          }}
-        >
-          <PlusIcon className="size-3.5" /> {tx("Add host")}
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            aria-expanded={shown}
+            aria-controls="device-hosts-list"
+            disabled={!props.environmentId || editing !== null}
+            onClick={() => setOpen((value) => !value)}
+          >
+            {tx("Manage hosts")}
+          </Button>
+          {shown ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={
+                !canConfigure || projectScope || busy || !props.environmentId || editing !== null
+              }
+              onClick={() => {
+                setOriginalHost(null);
+                setEditing({ id: randomUUID(), label: "", target: "" });
+              }}
+            >
+              <PlusIcon className="size-3.5" /> {tx("Add host")}
+            </Button>
+          ) : null}
+        </div>
       }
     >
-      <div className="pt-3 pb-2">
+      <div id="device-hosts-list" className="pt-3 pb-2">
         {!props.environmentId ? (
           <p className="text-sm text-muted-foreground">
             {tx("Connect a selected environment to manage device hosts.")}
+          </p>
+        ) : !shown ? (
+          <p className="text-xs text-muted-foreground" data-testid="device-hosts-count">
+            {hostCount === 0
+              ? tx("No device hosts.")
+              : tx("Device hosts: {count}", { count: hostCount })}
           </p>
         ) : (
           <>

@@ -119,6 +119,38 @@ describe("AccessGrantsList", () => {
     expect(text(tree)).toContain("Finder");
   });
 
+  it("shows four entries until asked for all of them", async () => {
+    const apps = ["Notes", "Finder", "Dock", "Music", "Maps", "Mail"].map((label) => ({
+      kind: "app" as const,
+      key: `app:${label.toLowerCase()}`,
+      label,
+      grantedAt: hourAgo,
+    }));
+    commands.list.mockResolvedValue({ _tag: "Success", value: { grants: apps } });
+    let tree = await mount("app");
+    expect(text(tree)).toContain("Music");
+    expect(text(tree)).not.toContain("Maps");
+    const toggle = () =>
+      visitElements(
+        tree,
+        (element) => element.props["data-testid"] === "access-grants-app-toggle",
+      )!;
+    expect(text(toggle())).toBe("Show all 6");
+    expect(toggle().props["aria-expanded"]).toBe(false);
+    (toggle().props.onClick as () => void)();
+    tree = render("app");
+    expect(text(tree)).toContain("Mail");
+    expect(text(toggle())).toBe("Show fewer");
+    expect(toggle().props["aria-expanded"]).toBe(true);
+  });
+
+  it("offers no toggle for four entries or fewer", async () => {
+    const tree = await mount("app");
+    expect(
+      visitElements(tree, (element) => element.props["data-testid"] === "access-grants-app-toggle"),
+    ).toBeNull();
+  });
+
   it("explains how to add one when nothing is allowed yet", async () => {
     commands.list.mockResolvedValue({ _tag: "Success", value: { grants: [notes] } });
     const tree = await mount("device");

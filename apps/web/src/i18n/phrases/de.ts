@@ -5657,4 +5657,8 @@ export const de: PhraseCatalog = {
   "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
     "Agenten nutzen dein angemeldetes Chrome über die SpecWithCode-Erweiterung. Dafür gibt es eine eigene Einstellungsseite.",
   "Open Chrome settings": "Chrome-Einstellungen öffnen",
+  "Manage hosts": "Hosts verwalten",
+  "Manage profiles": "Profile verwalten",
+  "Profiles: {count}": "Profile: {count}",
+  "Device hosts: {count}": "Geräte-Hosts: {count}",
 };

@@ -85,8 +85,9 @@ export function IntegrationsTabStrip({ current }: { readonly current: Integratio
               role="tab"
               id={tabElementId(tab.id)}
               aria-selected={selected}
-              aria-controls={panelElementId(tab.id)}
-              tabIndex={selected || current === null ? 0 : -1}
+              // Only the open tab has a panel in the page; the others are routes not yet shown.
+              aria-controls={selected ? panelElementId(tab.id) : undefined}
+              tabIndex={selected || (current === null && tab === INTEGRATIONS_TABS[0]) ? 0 : -1}
               className={cn(
                 "flex min-h-9 min-w-0 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-2 text-start text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
                 "@xl/integrations-tabs:-mb-px @xl/integrations-tabs:rounded-b-none @xl/integrations-tabs:border-0 @xl/integrations-tabs:border-b-2 @xl/integrations-tabs:border-transparent @xl/integrations-tabs:bg-transparent @xl/integrations-tabs:px-3",
@@ -135,6 +136,7 @@ export function IntegrationsMachineState({
   children,
   links,
   changeScope = AuthSettingsWriteScope,
+  alsoScope,
   disableRows = true,
 }: {
   readonly children: ReactNode;
@@ -142,6 +144,8 @@ export function IntegrationsMachineState({
   readonly links?: ReactNode;
   /** The grant this tab's changes need. */
   readonly changeScope?: AuthEnvironmentScope;
+  /** A second grant the same changes need, when one is not enough. */
+  readonly alsoScope?: AuthEnvironmentScope;
   /** False for rows that turn their own controls off and stay open to read. */
   readonly disableRows?: boolean;
 }) {
@@ -155,7 +159,11 @@ export function IntegrationsMachineState({
   const away = reach !== null && reach !== "connected";
   // "denied" is a sign-in that may read only; a session still loading or
   // signed out says nothing about what this sign-in may change.
-  const viewOnly = useEnvironmentScopeAccess(away ? null : environmentId, changeScope) === "denied";
+  const reachable = away ? null : environmentId;
+  // Both are read every render, so the number of hooks never changes.
+  const first = useEnvironmentScopeAccess(reachable, changeScope);
+  const second = useEnvironmentScopeAccess(reachable, alsoScope ?? changeScope);
+  const viewOnly = first === "denied" || second === "denied";
   const locked = viewOnly && disableRows;
   if (scope.kind === "unavailable") {
     return (
