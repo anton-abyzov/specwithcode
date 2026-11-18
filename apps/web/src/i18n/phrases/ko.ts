@@ -229,7 +229,6 @@ export const ko: PhraseCatalog = {
   "Restart when idle waits up to": "유휴 시 다시 시작 최대 대기 시간",
   "Retry once on the usual model": "평소 모델로 한 번 다시 시도",
   "Review depth": "리뷰 깊이",
-  "Review finished features automatically": "완성된 기능 자동 리뷰",
   "Reviewer order": "리뷰어 순서",
   "Rich text composer": "서식 있는 입력창",
   "Routine unavailable": "루틴을 사용할 수 없음",
@@ -2305,10 +2304,13 @@ export const ko: PhraseCatalog = {
     "이 기기에서 {name}({host})의 이전 기록을 제거할까요?\n이 머신은 새 머신으로 다시 참여해 계속 작동합니다. 여기의 사용하지 않는 기록과 캐시된 스레드만 사라집니다.",
   "Use 2 or 3 characters.": "2~3자를 사용하세요.",
   "Not shared": "공유 안 함",
-  "{machine} is main now, with machines not yet following it": "{machine}이(가) 메인이 되었지만 아직 따르지 않는 머신이 있습니다",
-  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.": "이 머신들은 아직 새 메인을 받아들이지 않았습니다: {machines}. 받아들인 뒤에야 이전 메인의 작업을 거부합니다.",
+  "{machine} is main now, with machines not yet following it":
+    "{machine}이(가) 메인이 되었지만 아직 따르지 않는 머신이 있습니다",
+  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.":
+    "이 머신들은 아직 새 메인을 받아들이지 않았습니다: {machines}. 받아들인 뒤에야 이전 메인의 작업을 거부합니다.",
   "Not linked · also on {machine}": "연결 안 됨 · {machine}에도 있음",
-  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "이 복사본은 {machine}의 복사본과 연결되어 있지 않습니다. 프로젝트 메뉴에서 연결하면 코디네이터를 공유할 수 있습니다.",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.":
+    "이 복사본은 {machine}의 복사본과 연결되어 있지 않습니다. 프로젝트 메뉴에서 연결하면 코디네이터를 공유할 수 있습니다.",
   "No other machine has a copy of this project.":
     "다른 어떤 머신에도 이 프로젝트의 복사본이 없습니다.",
   "Connect to see its role": "연결하면 역할이 보입니다",
@@ -3590,10 +3592,6 @@ export const ko: PhraseCatalog = {
     "{owner}에서 관리합니다. 도구는 필요할 때 이 호스트에서 자동으로 업데이트됩니다.",
   "Tools update automatically on this host when needed.":
     "도구는 필요할 때 이 호스트에서 자동으로 업데이트됩니다.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "스레드가 끝나고 해당 증분의 모든 작업이 완료되면 다른 계열의 모델이 새 스레드에서 작업을 검토합니다. 두 번째 의견에 사용량을 쓸 가치가 있는 프로젝트에서 켜세요.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "스레드가 끝나고 해당 증분의 모든 작업이 완료되면 다른 계열의 모델이 새 스레드에서 작업을 검토합니다. 기본값은 꺼짐이며 프로젝트에서 켤 수 있습니다.",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "이 프로젝트의 추가 규칙입니다. 전역 지침은 항상 이 추가 내용보다 먼저 포함됩니다.",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -5044,74 +5042,44 @@ export const ko: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "AppImage 경로를 명령에 쓸 수 없습니다. AppImage를 더 단순한 폴더로 옮긴 뒤 거기서 여세요.",
   "Could not write {path} ({error}).": "{path}를 쓰지 못했습니다({error}).",
-  "Main":
-    "메인",
-  "Moving main":
-    "메인 이동 중",
-  "Copy · main on {machine}":
-    "복사본 · 메인은 {machine}",
+  Main: "메인",
+  "Moving main": "메인 이동 중",
+  "Copy · main on {machine}": "복사본 · 메인은 {machine}",
   "Work for this project starts here. Copies on other machines take work from it.":
     "이 프로젝트의 작업은 여기서 시작됩니다. 다른 머신의 복사본은 여기서 작업을 받습니다.",
   "Main is on {machine}. This copy can also start work of its own.":
     "메인은 {machine}에 있습니다. 이 복사본도 자체 작업을 시작할 수 있습니다.",
   "Work starts on {machine}. This copy takes work from there.":
     "작업은 {machine}에서 시작됩니다. 이 복사본은 거기서 작업을 받습니다.",
-  "Main is moving between machines right now.":
-    "메인이 지금 머신 간에 이동 중입니다.",
-  "{there} can start work here":
-    "{there}은(는) 여기서 작업을 시작할 수 있습니다",
-  "{there} can't start work here":
-    "{there}은(는) 여기서 작업을 시작할 수 없습니다",
-  "This machine can start work on {there}":
-    "이 머신은 {there}에서 작업을 시작할 수 있습니다",
-  "This machine can't start work on {there}":
-    "이 머신은 {there}에서 작업을 시작할 수 없습니다",
-  "until you stop it":
-    "중지할 때까지",
-  "1 running thread stops at {time}.":
-    "실행 중인 스레드 1개가 {time}에 중지됩니다.",
-  "{count} running threads stop at {time}.":
-    "실행 중인 스레드 {count}개가 {time}에 중지됩니다.",
-  "Its access ran out {date}.":
-    "접근 권한이 {date}에 만료되었습니다.",
-  "Its access ran out.":
-    "접근 권한이 만료되었습니다.",
-  "Time limit ended {date}.":
-    "시간 제한이 {date}에 끝났습니다.",
-  "Stopped {date}.":
-    "{date}에 중지됨.",
-  "Stopped.":
-    "중지됨.",
-  "{there} stopped it.":
-    "{there}이(가) 중지했습니다.",
-  "{there} has not allowed it yet.":
-    "{there}이(가) 아직 허용하지 않았습니다.",
-  "Allow…":
-    "허용…",
-  "Set up…":
-    "설정…",
-  "Change…":
-    "변경…",
-  "Allow {there} to start work here for":
-    "{there}이(가) 여기서 작업을 시작하도록 허용할 기간",
-  "More for {machine}":
-    "{machine} 더 보기",
-  "Hide connection details":
-    "연결 세부 정보 숨기기",
-  "Let {thereLabel} start work here":
-    "{thereLabel}이(가) 여기서 작업을 시작하도록 허용",
+  "Main is moving between machines right now.": "메인이 지금 머신 간에 이동 중입니다.",
+  "{there} can start work here": "{there}은(는) 여기서 작업을 시작할 수 있습니다",
+  "{there} can't start work here": "{there}은(는) 여기서 작업을 시작할 수 없습니다",
+  "This machine can start work on {there}": "이 머신은 {there}에서 작업을 시작할 수 있습니다",
+  "This machine can't start work on {there}": "이 머신은 {there}에서 작업을 시작할 수 없습니다",
+  "until you stop it": "중지할 때까지",
+  "1 running thread stops at {time}.": "실행 중인 스레드 1개가 {time}에 중지됩니다.",
+  "{count} running threads stop at {time}.": "실행 중인 스레드 {count}개가 {time}에 중지됩니다.",
+  "Its access ran out {date}.": "접근 권한이 {date}에 만료되었습니다.",
+  "Its access ran out.": "접근 권한이 만료되었습니다.",
+  "Time limit ended {date}.": "시간 제한이 {date}에 끝났습니다.",
+  "Stopped {date}.": "{date}에 중지됨.",
+  "Stopped.": "중지됨.",
+  "{there} stopped it.": "{there}이(가) 중지했습니다.",
+  "{there} has not allowed it yet.": "{there}이(가) 아직 허용하지 않았습니다.",
+  "Allow…": "허용…",
+  "Set up…": "설정…",
+  "Change…": "변경…",
+  "Allow {there} to start work here for": "{there}이(가) 여기서 작업을 시작하도록 허용할 기간",
+  "More for {machine}": "{machine} 더 보기",
+  "Hide connection details": "연결 세부 정보 숨기기",
+  "Let {thereLabel} start work here": "{thereLabel}이(가) 여기서 작업을 시작하도록 허용",
   "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
     "{there}은(는) 여기서 작업을 시작할 수 있습니다: 그 에이전트가 이 머신의 프로젝트에서 스레드를 시작할 수 있습니다. 중지하면 새 작업은 즉시 거부되고 실행 중인 스레드는 2분 뒤 중지됩니다. 이 머신은 {there}에서 작업을 시작할 수 있습니다: 여기 에이전트가 {there}이(가) 허용하는 접근 범위 안에서 스레드를 시작할 수 있습니다.",
-  "Allow {there} to start work here":
-    "{there}이(가) 여기서 작업을 시작하도록 허용",
-  "Stop {there} starting work here":
-    "{there}의 여기서 작업 시작 중지",
-  "Allow {there} again to start work here":
-    "{there}이(가) 여기서 작업을 시작하도록 다시 허용",
-  "Set up this machine to start work on {there}":
-    "이 머신이 {there}에서 작업을 시작하도록 설정",
-  "Change what this machine may do on {there}":
-    "이 머신이 {there}에서 할 수 있는 일 변경",
+  "Allow {there} to start work here": "{there}이(가) 여기서 작업을 시작하도록 허용",
+  "Stop {there} starting work here": "{there}의 여기서 작업 시작 중지",
+  "Allow {there} again to start work here": "{there}이(가) 여기서 작업을 시작하도록 다시 허용",
+  "Set up this machine to start work on {there}": "이 머신이 {there}에서 작업을 시작하도록 설정",
+  "Change what this machine may do on {there}": "이 머신이 {there}에서 할 수 있는 일 변경",
   Advisor: "어드바이저",
   "Let threads ask a stronger model": "스레드가 더 강한 모델에 물어볼 수 있게 하기",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
@@ -5144,102 +5112,75 @@ export const ko: PhraseCatalog = {
   "The advisor gave no advice": "어드바이저가 조언하지 않았습니다",
   "Advisor unavailable": "어드바이저를 사용할 수 없음",
   "Claude built-in": "Claude 내장",
-  "The advisor is still working. Its advice arrives as a new message.": "어드바이저가 아직 작업 중입니다. 조언은 새 메시지로 도착합니다.",
+  "The advisor is still working. Its advice arrives as a new message.":
+    "어드바이저가 아직 작업 중입니다. 조언은 새 메시지로 도착합니다.",
   "Still working": "작업 중",
   "{count} left this run": "이번 실행에서 {count}회 남음",
   "Advice applied (hidden by Claude)": "조언 적용됨 (Claude가 숨김)",
   "Advisor consult": "어드바이저 상담",
   "Follow project (on)": "프로젝트 설정 따름 (켬)",
   "Follow project (off)": "프로젝트 설정 따름 (끔)",
-  "Lets this thread ask a stronger model to check its work.": "이 스레드가 더 강한 모델에게 작업 검토를 요청할 수 있게 합니다.",
+  "Lets this thread ask a stronger model to check its work.":
+    "이 스레드가 더 강한 모델에게 작업 검토를 요청할 수 있게 합니다.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "채팅이 해결되었거나 보관되었고 이 일수 동안 비활성인 워크트리를 삭제합니다. 브랜치와 채팅 기록은 유지됩니다.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
     "풀 리퀘스트가 병합되고 커밋이 기본 브랜치에 포함되었거나, 병합 없이 닫혔고 모든 커밋이 푸시된 워크트리를 삭제합니다. 아직 열려 있는 채팅은 6시간 동안 활동이 없으면 폴더를 잃습니다. 실행 중이거나 대기 중인 채팅은 항상 폴더를 유지합니다. 브랜치는 남으므로 다시 연 채팅은 폴더를 되찾습니다. 에이전트가 채팅 없이 만든 깨끗하고 푸시된 워크트리도 풀 리퀘스트가 병합되거나 닫히고 하루 동안 유휴 상태이면 삭제합니다.",
   "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
     "해결되었거나 보관된 채팅 중 브랜치에 기본 브랜치 이후의 커밋이 없는 워크트리를 삭제합니다.",
-  "What cleanup would remove":
-    "정리로 삭제될 항목",
-  "Chat worktrees and leftover downloads":
-    "채팅 워크트리와 다운로드 잔여 파일",
+  "What cleanup would remove": "정리로 삭제될 항목",
+  "Chat worktrees and leftover downloads": "채팅 워크트리와 다운로드 잔여 파일",
   "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
     "정리로 삭제될 항목과 유지될 항목, 그 이유를 보여 줍니다. 확인할 때 완료된 폴더마다 Git 호스트에 물어보므로 확인을 누를 때만 실행됩니다.",
-  "Check":
-    "확인",
-  "Clean up now":
-    "지금 정리",
-  "Cleaning up…":
-    "정리 중…",
-  "Would be removed":
-    "삭제 대상",
-  "Kept":
-    "유지",
-  "At least {size} would be freed.":
-    "최소 {size}가 확보됩니다.",
+  Check: "확인",
+  "Clean up now": "지금 정리",
+  "Cleaning up…": "정리 중…",
+  "Would be removed": "삭제 대상",
+  Kept: "유지",
+  "At least {size} would be freed.": "최소 {size}가 확보됩니다.",
   "Dependency folders are left out: their files are shared with the package store.":
     "의존성 폴더는 제외됩니다. 해당 파일은 패키지 저장소와 공유됩니다.",
   "Some folders could not be fully checked or measured.":
     "일부 폴더는 완전히 확인하거나 측정하지 못했습니다.",
-  "Leftover files of stopped downloads":
-    "중단된 다운로드의 잔여 파일",
-  "Nothing to remove right now.":
-    "지금은 삭제할 항목이 없습니다.",
-  "Nothing was removed.":
-    "삭제된 항목이 없습니다.",
-  "Removed 1 folder, at least {size}.":
-    "폴더 1개를 삭제했습니다(최소 {size}).",
-  "Removed {count} folders, at least {size}.":
-    "폴더 {count}개를 삭제했습니다(최소 {size}).",
-  "The check could not finish.":
-    "확인을 끝내지 못했습니다.",
+  "Leftover files of stopped downloads": "중단된 다운로드의 잔여 파일",
+  "Nothing to remove right now.": "지금은 삭제할 항목이 없습니다.",
+  "Nothing was removed.": "삭제된 항목이 없습니다.",
+  "Removed 1 folder, at least {size}.": "폴더 1개를 삭제했습니다(최소 {size}).",
+  "Removed {count} folders, at least {size}.": "폴더 {count}개를 삭제했습니다(최소 {size}).",
+  "The check could not finish.": "확인을 끝내지 못했습니다.",
   "This connection cannot change this machine's storage.":
     "이 연결로는 이 컴퓨터의 저장 공간을 변경할 수 없습니다.",
-  "Delete worktrees of resolved chats":
-    "해결된 채팅의 워크트리 삭제",
+  "Delete worktrees of resolved chats": "해결된 채팅의 워크트리 삭제",
   "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
     "해결되었거나 보관된 채팅의 워크트리를 그 안의 모든 내용이 커밋되고 푸시되면 삭제합니다. 브랜치는 남으므로 다시 연 채팅은 폴더를 되찾습니다.",
-  "Its pull request merged.":
-    "풀 리퀘스트가 병합되었습니다.",
+  "Its pull request merged.": "풀 리퀘스트가 병합되었습니다.",
   "Its pull request closed and every commit is on the remote.":
     "풀 리퀘스트가 닫혔고 모든 커밋이 원격에 있습니다.",
   "Its chats are resolved or archived and everything is pushed.":
     "채팅이 해결되었거나 보관되었고 모든 내용이 푸시되었습니다.",
-  "Its chat was deleted.":
-    "채팅이 삭제되었습니다.",
+  "Its chat was deleted.": "채팅이 삭제되었습니다.",
   "Its chats are resolved or archived and it has been inactive.":
     "채팅이 해결되었거나 보관되었고 한동안 비활성 상태였습니다.",
-  "Its branch has no commits of its own.":
-    "브랜치에 자체 커밋이 없습니다.",
-  "Leftover files of stopped downloads.":
-    "중단된 다운로드의 잔여 파일입니다.",
-  "Work in it has not finished.":
-    "그 안의 작업이 아직 끝나지 않았습니다.",
+  "Its branch has no commits of its own.": "브랜치에 자체 커밋이 없습니다.",
+  "Leftover files of stopped downloads.": "중단된 다운로드의 잔여 파일입니다.",
+  "Work in it has not finished.": "그 안의 작업이 아직 끝나지 않았습니다.",
   "A chat that is still open works in it or near it.":
     "아직 열려 있는 채팅이 그 안이나 근처에서 작업 중입니다.",
-  "It was used less than 6 hours ago.":
-    "마지막으로 사용한 지 6시간이 지나지 않았습니다.",
-  "It has uncommitted changes.":
-    "커밋하지 않은 변경 사항이 있습니다.",
-  "It has files Git does not track.":
-    "Git이 추적하지 않는 파일이 있습니다.",
-  "It has commits that exist only on this machine.":
-    "이 컴퓨터에만 있는 커밋이 있습니다.",
-  "A stash was made on its branch.":
-    "브랜치에서 stash가 만들어졌습니다.",
-  "It has ignored files that may hold data.":
-    "데이터가 들어 있을 수 있는 무시된 파일이 있습니다.",
+  "It was used less than 6 hours ago.": "마지막으로 사용한 지 6시간이 지나지 않았습니다.",
+  "It has uncommitted changes.": "커밋하지 않은 변경 사항이 있습니다.",
+  "It has files Git does not track.": "Git이 추적하지 않는 파일이 있습니다.",
+  "It has commits that exist only on this machine.": "이 컴퓨터에만 있는 커밋이 있습니다.",
+  "A stash was made on its branch.": "브랜치에서 stash가 만들어졌습니다.",
+  "It has ignored files that may hold data.": "데이터가 들어 있을 수 있는 무시된 파일이 있습니다.",
   "It holds more media than is copied automatically.":
     "자동으로 복사되는 양보다 많은 미디어가 있습니다.",
-  "Something is working in it, or it is locked.":
-    "무언가가 그 안에서 작업 중이거나 잠겨 있습니다.",
+  "Something is working in it, or it is locked.": "무언가가 그 안에서 작업 중이거나 잠겨 있습니다.",
   "Its Git registration is broken. Check it by hand.":
     "Git 등록이 손상되었습니다. 직접 확인하세요.",
   "Another repository or hidden changes sit inside it.":
     "그 안에 다른 저장소나 숨은 변경 사항이 있습니다.",
-  "No cleanup rule covers it.":
-    "해당하는 정리 규칙이 없습니다.",
-  "It could not be fully checked, so it is kept.":
-    "완전히 확인할 수 없어서 유지합니다.",
+  "No cleanup rule covers it.": "해당하는 정리 규칙이 없습니다.",
+  "It could not be fully checked, so it is kept.": "완전히 확인할 수 없어서 유지합니다.",
   "Installed, but it does not start": "설치되었지만 시작되지 않음",
   "Install {agent} on {machine} with this command:":
     "이 명령으로 {machine}에 {agent}을(를) 설치하세요:",
@@ -5262,7 +5203,8 @@ export const ko: PhraseCatalog = {
     "{machine}은(는) 아직 넘겨받을 수 없습니다. 거기서 SpecWithCode를 업데이트하거나 설정 변경과 작업 실행 권한으로 연결하세요.",
   "not ready": "준비 안 됨",
   "Main cannot move from this machine yet.": "아직 이 컴퓨터에서 메인을 옮길 수 없습니다.",
-  "Send this project its first message here, then try again.": "여기서 이 프로젝트에 첫 메시지를 보낸 뒤 다시 시도하세요.",
+  "Send this project its first message here, then try again.":
+    "여기서 이 프로젝트에 첫 메시지를 보낸 뒤 다시 시도하세요.",
   "{machine} cannot become main yet.": "{machine}은(는) 아직 메인이 될 수 없습니다.",
   "{machine} is main now": "이제 {machine}이(가) 메인입니다",
   "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
@@ -5317,4 +5259,10 @@ export const ko: PhraseCatalog = {
   "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
     "먼저 {main}을(를) 연결하세요. 이 창은 {main}의 메인 사본을 불러오지 않아 아직 {machine}을(를) 메인으로 만들 수 없습니다.",
   "connect {main} first": "먼저 {main} 연결",
+  "Review each finished increment automatically": "완료된 인크리먼트마다 자동으로 리뷰",
+  "Review each finished increment": "완료된 인크리먼트마다 리뷰",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "직접 시작한 스레드가 끝나고 해당 인크리먼트의 모든 작업이 완료되거나 건너뛰어지면, 다른 계열의 모델이 새 스레드에서 작업을 리뷰합니다. 인크리먼트마다 한 번입니다. 프로젝트가 따로 정하지 않으면 이 머신의 프로젝트에 적용됩니다. 직접 또는 에이전트가 요청한 리뷰와 인크리먼트 종료 시 리뷰는 이 설정과 상관없이 실행됩니다.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "직접 시작한 스레드가 끝나고 해당 인크리먼트의 모든 작업이 완료되거나 건너뛰어지면, 다른 계열의 모델이 새 스레드에서 작업을 리뷰합니다. 인크리먼트마다 한 번입니다. 이 프로젝트에만 적용됩니다. 직접 또는 에이전트가 요청한 리뷰와 인크리먼트 종료 시 리뷰는 이 설정과 상관없이 실행됩니다.",
 };

@@ -27,6 +27,7 @@ import {
 import { createModelSelection } from "@specweave-studio/shared/model";
 import {
   effortLabel,
+  isEffortId,
   findEffortDescriptor,
   withEffortSelection,
 } from "@specweave-studio/shared/effortLevel";
@@ -143,15 +144,19 @@ const TRACK_FIRST: Record<ModelTrack, string> = {
 
 /**
  * The reasoning effort one track entry runs at, from the levels its source
- * offers: the saved level, else Medium (`trackEntryEffort`), which is also
- * what a launch from the entry uses. A model whose source offers no effort
- * shows none. A model no source here lists shows the level it will start at,
- * read-only, until a source lists its levels.
+ * offers: the saved level, else the start level (`TrackRow.effort`, Medium
+ * unless the built-in order names one), matched to the nearest level, which
+ * is also what a launch from the entry uses. When the entry's own source does
+ * not list the model, the levels come from the first source that does, where
+ * it runs. A model no source offers effort for shows none, and a model no
+ * source here lists shows its start level read-only. Never an empty picker.
  */
 export function TrackEffortSelect(props: {
   readonly selection: ModelSelection | null;
-  /** The row's own level (`TrackRow.effort`), shown read-only while nothing lists the model. */
+  /** The row's start level (`TrackRow.effort`), shown read-only while nothing lists the model. */
   readonly effort: string | null;
+  /** Where the row runs, first tried first (`TrackRow.sources`). */
+  readonly sources?: ReadonlyArray<{ readonly provider: ServerProvider; readonly slug: string }>;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly label: string;
   readonly disabled: boolean;
@@ -159,15 +164,40 @@ export function TrackEffortSelect(props: {
 }) {
   const tx = useTx();
   const { selection } = props;
-  const listed =
+  const listedOn = (provider: ServerProvider | undefined, slug: string) =>
+    provider?.models.find((model) => model.slug === slug);
+  const own =
     selection === null
       ? undefined
-      : props.providers
-          .find((provider) => provider.instanceId === selection.instanceId)
-          ?.models.find((model) => model.slug === selection.model);
-  const descriptor = findEffortDescriptor(listed?.capabilities?.optionDescriptors);
-  if (selection === null || listed === undefined || descriptor === undefined) {
-    if (listed !== undefined || props.effort === null) return null;
+      : listedOn(
+          props.providers.find((provider) => provider.instanceId === selection.instanceId),
+          selection.model,
+        );
+  const candidates = [
+    ...(selection === null ? [] : [{ instanceId: selection.instanceId, listed: own }]),
+    ...(props.sources ?? []).map((source) => ({
+      instanceId: source.provider.instanceId,
+      listed: listedOn(source.provider, source.slug),
+    })),
+  ];
+  const target = candidates.find(
+    (candidate) =>
+      findEffortDescriptor(candidate.listed?.capabilities?.optionDescriptors) !== undefined,
+  );
+  const descriptor = findEffortDescriptor(target?.listed?.capabilities?.optionDescriptors);
+  const effort =
+    selection === null || target?.listed === undefined
+      ? null
+      : trackEntryEffort(
+          { ...selection, instanceId: target.instanceId, model: target.listed.slug },
+          [...props.providers, ...(props.sources ?? []).map((source) => source.provider)].filter(
+            (provider) => provider.instanceId === target.instanceId,
+          ),
+          props.effort ?? undefined,
+        );
+  if (selection === null || descriptor === undefined || effort === null) {
+    const listedSomewhere = candidates.some((candidate) => candidate.listed !== undefined);
+    if (listedSomewhere || props.effort === null) return null;
     return (
       <Badge
         variant="outline"
@@ -179,8 +209,7 @@ export function TrackEffortSelect(props: {
       </Badge>
     );
   }
-  const value =
-    trackEntryEffort(selection, props.providers, props.effort ?? undefined)?.value ?? null;
+  const value = effort.value;
   return (
     <Select
       value={value}
@@ -189,16 +218,16 @@ export function TrackEffortSelect(props: {
         if (typeof next !== "string" || next === value) return;
         props.onChange({
           ...selection,
-          options: withEffortSelection(selection.options, {
-            optionId: descriptor.id,
-            value: next,
-          }),
+          options: withEffortSelection(
+            (selection.options ?? []).filter((option) => !isEffortId(option.id)),
+            { optionId: descriptor.id, value: next },
+          ),
         });
       }}
     >
       <SelectTrigger size="xs" className="w-auto min-w-0" aria-label={props.label}>
         <SelectValue>
-          {descriptor.options.find((choice) => choice.id === value)?.label ?? value ?? ""}
+          {descriptor.options.find((choice) => choice.id === value)?.label ?? effortLabel(value)}
         </SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -457,6 +486,7 @@ function TrackCard(props: {
             <TrackEffortSelect
               selection={row.selection}
               effort={row.effort}
+              sources={row.sources}
               providers={providers}
               label={`${tx("Effort for")} ${row.name}`}
               disabled={props.mixed}
@@ -676,13 +706,18 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
           }
           control={
             track === "review" ? (
-              <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                {tx("Review finished features")}
+              <label
+                className="flex items-center gap-2 text-xs text-muted-foreground"
+                title={tx(
+                  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.",
+                )}
+              >
+                {tx("Review each finished increment")}
                 <Switch
                   size="sm"
                   mixed={mixedReview}
                   checked={review.autoOnFeatureComplete}
-                  aria-label={tx("Review finished features automatically")}
+                  aria-label={tx("Review each finished increment automatically")}
                   onCheckedChange={(checked) =>
                     updateSettings({ adversarialReview: { autoOnFeatureComplete: checked } })
                   }

@@ -231,7 +231,6 @@ export const de: PhraseCatalog = {
   "Restart when idle waits up to": "Neustart im Leerlauf wartet bis zu",
   "Retry once on the usual model": "Einmal mit dem üblichen Modell wiederholen",
   "Review depth": "Review-Tiefe",
-  "Review finished features automatically": "Fertige Features automatisch reviewen",
   "Reviewer order": "Reihenfolge der Reviewer",
   "Rich text composer": "Rich-Text-Eingabefeld",
   "Routine unavailable": "Routine nicht verfügbar",
@@ -2338,10 +2337,13 @@ export const de: PhraseCatalog = {
     "Den alten Eintrag von {name} ({host}) von diesem Gerät entfernen?\nDie Maschine ist neu beigetreten und läuft weiter; nur der tote Eintrag und seine zwischengespeicherten Threads hier verschwinden.",
   "Use 2 or 3 characters.": "Verwende 2 oder 3 Zeichen.",
   "Not shared": "Nicht geteilt",
-  "{machine} is main now, with machines not yet following it": "{machine} ist jetzt Haupt, aber einige Maschinen folgen noch nicht",
-  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.": "Diese Maschinen haben die neue Haupt noch nicht übernommen: {machines}. Sie lehnen Arbeit der alten Haupt erst ab, wenn sie es tun.",
+  "{machine} is main now, with machines not yet following it":
+    "{machine} ist jetzt Haupt, aber einige Maschinen folgen noch nicht",
+  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.":
+    "Diese Maschinen haben die neue Haupt noch nicht übernommen: {machines}. Sie lehnen Arbeit der alten Haupt erst ab, wenn sie es tun.",
   "Not linked · also on {machine}": "Nicht verknüpft · auch auf {machine}",
-  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "Diese Kopie ist nicht mit den Kopien auf {machine} verknüpft. Verknüpfe sie über das Projektmenü, um einen Koordinator zu teilen.",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.":
+    "Diese Kopie ist nicht mit den Kopien auf {machine} verknüpft. Verknüpfe sie über das Projektmenü, um einen Koordinator zu teilen.",
   "No other machine has a copy of this project.":
     "Keine andere Maschine hat eine Kopie dieses Projekts.",
   "Connect to see its role": "Verbinden, um die Rolle zu sehen",
@@ -3639,10 +3641,6 @@ export const de: PhraseCatalog = {
     "Verwaltet von {owner}. Werkzeuge werden auf diesem Host bei Bedarf automatisch aktualisiert.",
   "Tools update automatically on this host when needed.":
     "Werkzeuge werden auf diesem Host bei Bedarf automatisch aktualisiert.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "Wenn ein Thread fertig ist und jede Aufgabe seines Inkrements erledigt ist, prüft ein Modell aus einer anderen Familie die Arbeit in einem neuen Thread. Schalte es für die Projekte ein, bei denen sich eine zweite Meinung lohnt.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "Wenn ein Thread fertig ist und jede Aufgabe seines Inkrements erledigt ist, prüft ein Modell aus einer anderen Familie die Arbeit in einem neuen Thread. Standardmäßig aus; Projekte können es einschalten.",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "Zusätzliche Regeln für dieses Projekt. Globale Anweisungen werden immer vor diesen Ergänzungen eingefügt.",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -5137,74 +5135,46 @@ export const de: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "Der Pfad des AppImage lässt sich nicht in den Befehl schreiben. Verschieben Sie das AppImage in einen einfacheren Ordner und öffnen Sie es dort.",
   "Could not write {path} ({error}).": "{path} konnte nicht geschrieben werden ({error}).",
-  "Main":
-    "Haupt",
-  "Moving main":
-    "Haupt zieht um",
-  "Copy · main on {machine}":
-    "Kopie · Haupt auf {machine}",
+  Main: "Haupt",
+  "Moving main": "Haupt zieht um",
+  "Copy · main on {machine}": "Kopie · Haupt auf {machine}",
   "Work for this project starts here. Copies on other machines take work from it.":
     "Die Arbeit für dieses Projekt startet hier. Kopien auf anderen Maschinen übernehmen Arbeit von hier.",
   "Main is on {machine}. This copy can also start work of its own.":
     "Haupt ist auf {machine}. Diese Kopie kann auch eigene Arbeit starten.",
   "Work starts on {machine}. This copy takes work from there.":
     "Die Arbeit startet auf {machine}. Diese Kopie übernimmt Arbeit von dort.",
-  "Main is moving between machines right now.":
-    "Haupt zieht gerade zwischen Maschinen um.",
-  "{there} can start work here":
-    "{there} kann hier Arbeit starten",
-  "{there} can't start work here":
-    "{there} kann hier keine Arbeit starten",
-  "This machine can start work on {there}":
-    "Dieser Rechner kann Arbeit auf {there} starten",
+  "Main is moving between machines right now.": "Haupt zieht gerade zwischen Maschinen um.",
+  "{there} can start work here": "{there} kann hier Arbeit starten",
+  "{there} can't start work here": "{there} kann hier keine Arbeit starten",
+  "This machine can start work on {there}": "Dieser Rechner kann Arbeit auf {there} starten",
   "This machine can't start work on {there}":
     "Dieser Rechner kann keine Arbeit auf {there} starten",
-  "until you stop it":
-    "bis du es beendest",
-  "1 running thread stops at {time}.":
-    "1 laufender Thread stoppt um {time}.",
-  "{count} running threads stop at {time}.":
-    "{count} laufende Threads stoppen um {time}.",
-  "Its access ran out {date}.":
-    "Der Zugriff ist am {date} abgelaufen.",
-  "Its access ran out.":
-    "Der Zugriff ist abgelaufen.",
-  "Time limit ended {date}.":
-    "Zeitlimit endete am {date}.",
-  "Stopped {date}.":
-    "Am {date} gestoppt.",
-  "Stopped.":
-    "Gestoppt.",
-  "{there} stopped it.":
-    "{there} hat es gestoppt.",
-  "{there} has not allowed it yet.":
-    "{there} hat es noch nicht erlaubt.",
-  "Allow…":
-    "Erlauben…",
-  "Set up…":
-    "Einrichten…",
-  "Change…":
-    "Ändern…",
-  "Allow {there} to start work here for":
-    "{there} erlauben, hier Arbeit zu starten, für",
-  "More for {machine}":
-    "Mehr für {machine}",
-  "Hide connection details":
-    "Verbindungsdetails ausblenden",
-  "Let {thereLabel} start work here":
-    "{thereLabel} hier Arbeit starten lassen",
+  "until you stop it": "bis du es beendest",
+  "1 running thread stops at {time}.": "1 laufender Thread stoppt um {time}.",
+  "{count} running threads stop at {time}.": "{count} laufende Threads stoppen um {time}.",
+  "Its access ran out {date}.": "Der Zugriff ist am {date} abgelaufen.",
+  "Its access ran out.": "Der Zugriff ist abgelaufen.",
+  "Time limit ended {date}.": "Zeitlimit endete am {date}.",
+  "Stopped {date}.": "Am {date} gestoppt.",
+  "Stopped.": "Gestoppt.",
+  "{there} stopped it.": "{there} hat es gestoppt.",
+  "{there} has not allowed it yet.": "{there} hat es noch nicht erlaubt.",
+  "Allow…": "Erlauben…",
+  "Set up…": "Einrichten…",
+  "Change…": "Ändern…",
+  "Allow {there} to start work here for": "{there} erlauben, hier Arbeit zu starten, für",
+  "More for {machine}": "Mehr für {machine}",
+  "Hide connection details": "Verbindungsdetails ausblenden",
+  "Let {thereLabel} start work here": "{thereLabel} hier Arbeit starten lassen",
   "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
     "{there} kann hier Arbeit starten: Seine Agenten dürfen Threads in den Projekten dieses Rechners starten. Stoppen lehnt neue Arbeit sofort ab; laufende Threads stoppen 2 Minuten später. Dieser Rechner kann Arbeit auf {there} starten: Agenten hier dürfen dort Threads starten, bis zu dem Zugriff, den {there} erlaubt.",
-  "Allow {there} to start work here":
-    "{there} erlauben, hier Arbeit zu starten",
-  "Stop {there} starting work here":
-    "{there} stoppen, hier Arbeit zu starten",
-  "Allow {there} again to start work here":
-    "{there} wieder erlauben, hier Arbeit zu starten",
+  "Allow {there} to start work here": "{there} erlauben, hier Arbeit zu starten",
+  "Stop {there} starting work here": "{there} stoppen, hier Arbeit zu starten",
+  "Allow {there} again to start work here": "{there} wieder erlauben, hier Arbeit zu starten",
   "Set up this machine to start work on {there}":
     "Diese Maschine einrichten, um auf {there} Arbeit zu starten",
-  "Change what this machine may do on {there}":
-    "Ändern, was diese Maschine auf {there} darf",
+  "Change what this machine may do on {there}": "Ändern, was diese Maschine auf {there} darf",
   Advisor: "Berater",
   "Let threads ask a stronger model": "Threads ein stärkeres Modell fragen lassen",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
@@ -5238,100 +5208,76 @@ export const de: PhraseCatalog = {
   "The advisor gave no advice": "Der Berater gab keinen Rat",
   "Advisor unavailable": "Berater nicht verfügbar",
   "Claude built-in": "In Claude integriert",
-  "The advisor is still working. Its advice arrives as a new message.": "Der Berater arbeitet noch. Sein Rat kommt als neue Nachricht.",
+  "The advisor is still working. Its advice arrives as a new message.":
+    "Der Berater arbeitet noch. Sein Rat kommt als neue Nachricht.",
   "Still working": "Arbeitet noch",
   "{count} left this run": "Noch {count} in diesem Lauf",
   "Advice applied (hidden by Claude)": "Rat übernommen (von Claude ausgeblendet)",
   "Advisor consult": "Beraterkonsultation",
   "Follow project (on)": "Wie im Projekt (an)",
   "Follow project (off)": "Wie im Projekt (aus)",
-  "Lets this thread ask a stronger model to check its work.": "Erlaubt diesem Thread, ein stärkeres Modell um eine Prüfung seiner Arbeit zu bitten.",
+  "Lets this thread ask a stronger model to check its work.":
+    "Erlaubt diesem Thread, ein stärkeres Modell um eine Prüfung seiner Arbeit zu bitten.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Worktrees entfernen, deren Chats erledigt oder archiviert und so viele Tage inaktiv sind. Branches und Chatverlauf bleiben erhalten.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
     "Worktrees entfernen, deren Pull Request gemergt ist und deren Commits im Standardbranch enthalten sind, oder die ohne Merge geschlossen wurden und alle Commits gepusht haben. Ein noch offener Chat verliert seinen Ordner nach 6 ruhigen Stunden; ein Chat, der läuft oder wartet, behält ihn immer. Der Branch bleibt, sodass ein wieder geöffneter Chat seinen Ordner zurückbekommt. Entfernt auch saubere, gepushte Worktrees, die Agenten ohne Chat erstellt haben, sobald ihr Pull Request gemergt oder geschlossen ist und sie einen Tag inaktiv waren.",
   "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
     "Worktrees erledigter oder archivierter Chats entfernen, deren Branch keine Commits über den Standardbranch hinaus hat.",
-  "What cleanup would remove":
-    "Was die Bereinigung entfernen würde",
-  "Chat worktrees and leftover downloads":
-    "Worktrees von Chats und Download-Reste",
+  "What cleanup would remove": "Was die Bereinigung entfernen würde",
+  "Chat worktrees and leftover downloads": "Worktrees von Chats und Download-Reste",
   "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
     "Zeigt, was die Bereinigung entfernen und was sie behalten würde, und warum. Die Prüfung fragt den Git-Host zu jedem fertigen Ordner, deshalb läuft sie nur, wenn du auf Prüfen drückst.",
-  "Check":
-    "Prüfen",
-  "Clean up now":
-    "Jetzt bereinigen",
-  "Cleaning up…":
-    "Wird bereinigt…",
-  "Would be removed":
-    "Würde entfernt",
-  "Kept":
-    "Behalten",
-  "At least {size} would be freed.":
-    "Mindestens {size} würden frei.",
+  Check: "Prüfen",
+  "Clean up now": "Jetzt bereinigen",
+  "Cleaning up…": "Wird bereinigt…",
+  "Would be removed": "Würde entfernt",
+  Kept: "Behalten",
+  "At least {size} would be freed.": "Mindestens {size} würden frei.",
   "Dependency folders are left out: their files are shared with the package store.":
     "Abhängigkeitsordner sind nicht mitgezählt: Ihre Dateien teilen sie mit dem Paketspeicher.",
   "Some folders could not be fully checked or measured.":
     "Einige Ordner konnten nicht vollständig geprüft oder gemessen werden.",
-  "Leftover files of stopped downloads":
-    "Reste abgebrochener Downloads",
-  "Nothing to remove right now.":
-    "Gerade gibt es nichts zu entfernen.",
-  "Nothing was removed.":
-    "Nichts wurde entfernt.",
-  "Removed 1 folder, at least {size}.":
-    "1 Ordner entfernt, mindestens {size}.",
-  "Removed {count} folders, at least {size}.":
-    "{count} Ordner entfernt, mindestens {size}.",
-  "The check could not finish.":
-    "Die Prüfung konnte nicht abgeschlossen werden.",
+  "Leftover files of stopped downloads": "Reste abgebrochener Downloads",
+  "Nothing to remove right now.": "Gerade gibt es nichts zu entfernen.",
+  "Nothing was removed.": "Nichts wurde entfernt.",
+  "Removed 1 folder, at least {size}.": "1 Ordner entfernt, mindestens {size}.",
+  "Removed {count} folders, at least {size}.": "{count} Ordner entfernt, mindestens {size}.",
+  "The check could not finish.": "Die Prüfung konnte nicht abgeschlossen werden.",
   "This connection cannot change this machine's storage.":
     "Diese Verbindung darf den Speicher dieses Rechners nicht ändern.",
-  "Delete worktrees of resolved chats":
-    "Worktrees erledigter Chats löschen",
+  "Delete worktrees of resolved chats": "Worktrees erledigter Chats löschen",
   "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
     "Entfernt den Worktree eines erledigten oder archivierten Chats, sobald darin alles committet und gepusht ist. Der Branch bleibt, sodass ein wieder geöffneter Chat seinen Ordner zurückbekommt.",
-  "Its pull request merged.":
-    "Sein Pull Request wurde gemergt.",
+  "Its pull request merged.": "Sein Pull Request wurde gemergt.",
   "Its pull request closed and every commit is on the remote.":
     "Sein Pull Request wurde geschlossen und jeder Commit ist auf dem Remote.",
   "Its chats are resolved or archived and everything is pushed.":
     "Seine Chats sind erledigt oder archiviert und alles ist gepusht.",
-  "Its chat was deleted.":
-    "Sein Chat wurde gelöscht.",
+  "Its chat was deleted.": "Sein Chat wurde gelöscht.",
   "Its chats are resolved or archived and it has been inactive.":
     "Seine Chats sind erledigt oder archiviert und er war inaktiv.",
-  "Its branch has no commits of its own.":
-    "Sein Branch hat keine eigenen Commits.",
-  "Leftover files of stopped downloads.":
-    "Reste abgebrochener Downloads.",
-  "Work in it has not finished.":
-    "Die Arbeit darin ist nicht abgeschlossen.",
+  "Its branch has no commits of its own.": "Sein Branch hat keine eigenen Commits.",
+  "Leftover files of stopped downloads.": "Reste abgebrochener Downloads.",
+  "Work in it has not finished.": "Die Arbeit darin ist nicht abgeschlossen.",
   "A chat that is still open works in it or near it.":
     "Ein noch offener Chat arbeitet darin oder daneben.",
-  "It was used less than 6 hours ago.":
-    "Er wurde vor weniger als 6 Stunden benutzt.",
-  "It has uncommitted changes.":
-    "Er hat nicht committete Änderungen.",
-  "It has files Git does not track.":
-    "Er hat Dateien, die Git nicht verfolgt.",
+  "It was used less than 6 hours ago.": "Er wurde vor weniger als 6 Stunden benutzt.",
+  "It has uncommitted changes.": "Er hat nicht committete Änderungen.",
+  "It has files Git does not track.": "Er hat Dateien, die Git nicht verfolgt.",
   "It has commits that exist only on this machine.":
     "Er hat Commits, die es nur auf diesem Rechner gibt.",
-  "A stash was made on its branch.":
-    "Auf seinem Branch wurde ein Stash angelegt.",
+  "A stash was made on its branch.": "Auf seinem Branch wurde ein Stash angelegt.",
   "It has ignored files that may hold data.":
     "Er hat ignorierte Dateien, die Daten enthalten können.",
   "It holds more media than is copied automatically.":
     "Er enthält mehr Medien, als automatisch kopiert werden.",
-  "Something is working in it, or it is locked.":
-    "Etwas arbeitet darin, oder er ist gesperrt.",
+  "Something is working in it, or it is locked.": "Etwas arbeitet darin, oder er ist gesperrt.",
   "Its Git registration is broken. Check it by hand.":
     "Seine Git-Registrierung ist defekt. Prüfe sie von Hand.",
   "Another repository or hidden changes sit inside it.":
     "Darin liegt ein weiteres Repository oder versteckte Änderungen.",
-  "No cleanup rule covers it.":
-    "Keine Bereinigungsregel betrifft ihn.",
+  "No cleanup rule covers it.": "Keine Bereinigungsregel betrifft ihn.",
   "It could not be fully checked, so it is kept.":
     "Er ließ sich nicht vollständig prüfen und bleibt deshalb.",
   "Installed, but it does not start": "Installiert, startet aber nicht",
@@ -5415,4 +5361,10 @@ export const de: PhraseCatalog = {
   "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
     "Verbinde zuerst {main}. Dieses Fenster hat die Hauptkopie auf {main} nicht geladen und kann {machine} deshalb noch nicht zu Haupt machen.",
   "connect {main} first": "zuerst {main} verbinden",
+  "Review each finished increment automatically": "Jedes fertige Inkrement automatisch reviewen",
+  "Review each finished increment": "Jedes fertige Inkrement reviewen",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Wenn ein von dir gestarteter Thread endet und jede Aufgabe seines Inkrements erledigt oder übersprungen ist, reviewt ein Modell einer anderen Familie die Arbeit in einem neuen Thread, einmal pro Inkrement. Gilt für die Projekte dieses Rechners, außer ein Projekt legt es selbst fest. Reviews, die du oder ein Agent anfordern, und das Review beim Abschluss des Inkrements laufen in jedem Fall.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Wenn ein von dir gestarteter Thread endet und jede Aufgabe seines Inkrements erledigt oder übersprungen ist, reviewt ein Modell einer anderen Familie die Arbeit in einem neuen Thread, einmal pro Inkrement. Gilt nur für dieses Projekt. Reviews, die du oder ein Agent anfordern, und das Review beim Abschluss des Inkrements laufen in jedem Fall.",
 };

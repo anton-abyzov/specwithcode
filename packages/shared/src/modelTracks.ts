@@ -10,6 +10,7 @@
  */
 import {
   findEffortDescriptor,
+  isEffortId,
   modelSelectionEffortValue,
   resolveEffort,
   withEffortSelection,
@@ -257,8 +258,15 @@ export function trackEntryEffort(
     ?.models.find((model) => model.slug === selection.model)?.capabilities?.optionDescriptors;
   const descriptor = findEffortDescriptor(descriptors);
   if (descriptor === undefined) return null;
-  const saved = selection.options?.find((option) => option.id === descriptor.id)?.value;
-  if (typeof saved === "string") return { optionId: descriptor.id, value: saved, saved: true };
+  // A level saved under another harness's option id, or one this model lacks,
+  // runs at the nearest level the model offers.
+  const saved =
+    selection.options?.find((option) => option.id === descriptor.id)?.value ??
+    modelSelectionEffortValue(selection);
+  if (typeof saved === "string") {
+    const kept = resolveEffort(saved, descriptors);
+    if (kept.ok) return { optionId: kept.optionId, value: kept.value, saved: true };
+  }
   const resolved = resolveEffort(fallback, descriptors);
   return resolved.ok ? { optionId: resolved.optionId, value: resolved.value, saved: false } : null;
 }
@@ -270,9 +278,16 @@ export function withTrackEffort<S extends ModelSelection>(
   fallback?: string,
 ): S {
   const effort = trackEntryEffort(selection, providers, fallback);
-  return effort === null || effort.saved
-    ? selection
-    : { ...selection, options: withEffortSelection(selection.options, effort) };
+  if (effort === null) return selection;
+  const written = selection.options?.some(
+    (option) => option.id === effort.optionId && option.value === effort.value,
+  );
+  if (written) return selection;
+  // One effort option, under the id this model reads.
+  const others = (selection.options ?? []).filter(
+    (option) => !isEffortId(option.id) && option.id !== effort.optionId,
+  );
+  return { ...selection, options: [...others, { id: effort.optionId, value: effort.value }] };
 }
 
 /**

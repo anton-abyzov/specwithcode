@@ -279,4 +279,62 @@ describe("ModelTracksSettings effort", () => {
     const saved = render();
     expect(JSON.stringify(renderer!.toJSON())).toContain("Follows newest: GPT-6.2-Sol");
   });
+
+  it("never shows an empty effort picker for a Review entry", () => {
+    // GitHub Copilot over ACP: a Mode select first, then lowercase effort levels.
+    const acpLevels = {
+      optionDescriptors: [
+        {
+          id: "mode",
+          label: "Mode",
+          type: "select" as const,
+          options: [{ id: "agent", label: "Agent" }],
+          currentValue: "agent",
+        },
+        {
+          id: "reasoning_effort",
+          label: "Reasoning Effort",
+          type: "select" as const,
+          options: ["low", "medium", "high"].map((id) => ({ id, label: id })),
+          currentValue: "medium",
+        },
+      ],
+    };
+    const copilot = provider("acpRegistry_copilot", "acpRegistry", [
+      { slug: "gpt-6.1-sol", name: "GPT-6.1-Sol", capabilities: acpLevels },
+      { slug: "gemini-4-carbon", name: "Gemini 4 Carbon", capabilities: acpLevels },
+    ]);
+    // Codex on a ChatGPT account here does not list Sol.
+    const codexWithoutSol = provider("codex", "codex", [
+      { slug: "gpt-6-astra", name: "GPT-6-Astra", capabilities: CODEX_LEVELS },
+    ]);
+    state.providers = [claude, codexWithoutSol, copilot];
+    state.settings = {
+      ...state.settings,
+      adversarialReview: {
+        ...state.settings.adversarialReview,
+        reviewers: [
+          // Saved on Codex, which no longer lists it: the levels come from Copilot.
+          { instanceId: codexWithoutSol.instanceId, model: "gpt-6.1-sol" },
+          // A saved level Copilot lacks: shown at the nearest one it offers.
+          {
+            instanceId: copilot.instanceId,
+            model: "gemini-4-carbon",
+            options: [{ id: "reasoning_effort", value: "xhigh" }],
+          },
+        ],
+      },
+    };
+    const root = render();
+    const [sol, gemini] = rowNames(track(root, "Review"));
+    const solPicker = picker(root, sol!, "Review");
+    expect(solPicker.props["data-effort-value"]).toBe("medium");
+    expect(levelIds(solPicker)).toEqual(["low", "medium", "high"]);
+    expect(picker(root, gemini!, "Review").props["data-effort-value"]).toBe("high");
+    // A pick saves under the source's own option id.
+    act(() => solPicker.props["data-on-change"]("low"));
+    const reviewers = state.update.mock.calls[0]![0].adversarialReview
+      .reviewers as ModelSelection[];
+    expect(reviewers[0]?.options).toEqual([{ id: "reasoning_effort", value: "low" }]);
+  });
 });

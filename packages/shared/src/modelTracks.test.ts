@@ -25,6 +25,7 @@ import {
   providersForModel,
   trackEntryEffort,
   trackStartEffort,
+  withTrackEffort,
 } from "./modelTracks.ts";
 import { addTrackEntry } from "./modelTrackRules.ts";
 import { describeFallbackOrder, resolveProviderFallback } from "./providerFallback.ts";
@@ -622,6 +623,26 @@ describe("track effort", () => {
     });
     // A model its source lists with no effort setting has none.
     expect(trackEntryEffort(sel("claudeAgent", "claude-opus-5-5"), [claude])).toBeNull();
+  });
+
+  it("runs a saved level the model lacks, or one saved under another id, at the nearest level", () => {
+    // Codex here offers low and high only.
+    expect(
+      trackEntryEffort(
+        { ...sel("codex", "gpt-6.1-sol"), options: [{ id: "reasoningEffort", value: "xhigh" }] },
+        [codexE],
+      ),
+    ).toEqual({ optionId: "reasoningEffort", value: "high", saved: true });
+    // Saved for Copilot's `reasoning_effort`, run on Claude's `effort`.
+    expect(
+      withTrackEffort(
+        {
+          ...sel("claudeAgent", "claude-opus-5-5"),
+          options: [{ id: "reasoning_effort", value: "low" }],
+        },
+        [claudeE],
+      ).options,
+    ).toEqual([{ id: "effort", value: "low" }]);
   });
 
   it("carries an entry's level to the same model on another harness", () => {

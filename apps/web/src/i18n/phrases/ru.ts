@@ -231,7 +231,6 @@ export const ru: PhraseCatalog = {
   "Restart when idle waits up to": "Перезапуск в простое ждёт до",
   "Retry once on the usual model": "Повторить один раз на обычной модели",
   "Review depth": "Глубина ревью",
-  "Review finished features automatically": "Автоматически проверять готовые функции",
   "Reviewer order": "Порядок ревьюеров",
   "Rich text composer": "Форматированный ввод",
   "Routine unavailable": "Рутина недоступна",
@@ -2321,10 +2320,13 @@ export const ru: PhraseCatalog = {
     "Удалить с этого устройства старую запись {name} ({host})?\nМашина подключилась заново как новая и продолжает работать; уходят только мёртвая запись и её кэшированные треды здесь.",
   "Use 2 or 3 characters.": "Используйте 2 или 3 символа.",
   "Not shared": "Не общий",
-  "{machine} is main now, with machines not yet following it": "{machine} теперь основная, но некоторые машины ещё не следуют за ней",
-  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.": "Эти машины ещё не приняли новую основную: {machines}. Работу прежней они начнут отклонять только после этого.",
+  "{machine} is main now, with machines not yet following it":
+    "{machine} теперь основная, но некоторые машины ещё не следуют за ней",
+  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.":
+    "Эти машины ещё не приняли новую основную: {machines}. Работу прежней они начнут отклонять только после этого.",
   "Not linked · also on {machine}": "Не связана · также на {machine}",
-  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "Эта копия не связана с копиями на {machine}. Свяжите их из меню проекта, чтобы был один координатор.",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.":
+    "Эта копия не связана с копиями на {machine}. Свяжите их из меню проекта, чтобы был один координатор.",
   "No other machine has a copy of this project.":
     "Ни на одной другой машине нет копии этого проекта.",
   "Connect to see its role": "Подключитесь, чтобы увидеть роль",
@@ -3617,10 +3619,6 @@ export const ru: PhraseCatalog = {
     "Управляет: {owner}. Инструменты обновляются на этом хосте автоматически, когда нужно.",
   "Tools update automatically on this host when needed.":
     "Инструменты обновляются на этом хосте автоматически, когда нужно.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "Когда тред завершается и все задачи его инкремента выполнены, модель из другого семейства проверяет работу в новом треде. Включайте для проектов, где второе мнение стоит затрат.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "Когда тред завершается и все задачи его инкремента выполнены, модель из другого семейства проверяет работу в новом треде. По умолчанию выключено; проекты могут включить.",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "Дополнительные правила для этого проекта. Глобальные инструкции всегда идут перед этими дополнениями.",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -5101,74 +5099,45 @@ export const ru: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "Путь к AppImage нельзя записать в команду. Переместите AppImage в папку с простым путём и откройте его оттуда.",
   "Could not write {path} ({error}).": "Не удалось записать {path} ({error}).",
-  "Main":
-    "Основная",
-  "Moving main":
-    "Основная переезжает",
-  "Copy · main on {machine}":
-    "Копия · основная на {machine}",
+  Main: "Основная",
+  "Moving main": "Основная переезжает",
+  "Copy · main on {machine}": "Копия · основная на {machine}",
   "Work for this project starts here. Copies on other machines take work from it.":
     "Работа над этим проектом начинается здесь. Копии на других машинах получают работу отсюда.",
   "Main is on {machine}. This copy can also start work of its own.":
     "Основная на {machine}. Эта копия тоже может начинать свою работу.",
   "Work starts on {machine}. This copy takes work from there.":
     "Работа начинается на {machine}. Эта копия получает работу оттуда.",
-  "Main is moving between machines right now.":
-    "Основная прямо сейчас переезжает между машинами.",
-  "{there} can start work here":
-    "{there} может начинать работу здесь",
-  "{there} can't start work here":
-    "{there} не может начинать работу здесь",
-  "This machine can start work on {there}":
-    "Эта машина может начинать работу на {there}",
-  "This machine can't start work on {there}":
-    "Эта машина не может начинать работу на {there}",
-  "until you stop it":
-    "пока вы не остановите",
-  "1 running thread stops at {time}.":
-    "1 работающий поток остановится в {time}.",
-  "{count} running threads stop at {time}.":
-    "Работающие потоки ({count}) остановятся в {time}.",
-  "Its access ran out {date}.":
-    "Доступ истёк {date}.",
-  "Its access ran out.":
-    "Доступ истёк.",
-  "Time limit ended {date}.":
-    "Срок закончился {date}.",
-  "Stopped {date}.":
-    "Остановлено {date}.",
-  "Stopped.":
-    "Остановлено.",
-  "{there} stopped it.":
-    "{there} остановил это.",
-  "{there} has not allowed it yet.":
-    "{there} ещё не разрешил это.",
-  "Allow…":
-    "Разрешить…",
-  "Set up…":
-    "Настроить…",
-  "Change…":
-    "Изменить…",
-  "Allow {there} to start work here for":
-    "Разрешить {there} начинать работу здесь на",
-  "More for {machine}":
-    "Ещё для {machine}",
-  "Hide connection details":
-    "Скрыть сведения о подключении",
-  "Let {thereLabel} start work here":
-    "Разрешить {thereLabel} начинать работу здесь",
+  "Main is moving between machines right now.": "Основная прямо сейчас переезжает между машинами.",
+  "{there} can start work here": "{there} может начинать работу здесь",
+  "{there} can't start work here": "{there} не может начинать работу здесь",
+  "This machine can start work on {there}": "Эта машина может начинать работу на {there}",
+  "This machine can't start work on {there}": "Эта машина не может начинать работу на {there}",
+  "until you stop it": "пока вы не остановите",
+  "1 running thread stops at {time}.": "1 работающий поток остановится в {time}.",
+  "{count} running threads stop at {time}.": "Работающие потоки ({count}) остановятся в {time}.",
+  "Its access ran out {date}.": "Доступ истёк {date}.",
+  "Its access ran out.": "Доступ истёк.",
+  "Time limit ended {date}.": "Срок закончился {date}.",
+  "Stopped {date}.": "Остановлено {date}.",
+  "Stopped.": "Остановлено.",
+  "{there} stopped it.": "{there} остановил это.",
+  "{there} has not allowed it yet.": "{there} ещё не разрешил это.",
+  "Allow…": "Разрешить…",
+  "Set up…": "Настроить…",
+  "Change…": "Изменить…",
+  "Allow {there} to start work here for": "Разрешить {there} начинать работу здесь на",
+  "More for {machine}": "Ещё для {machine}",
+  "Hide connection details": "Скрыть сведения о подключении",
+  "Let {thereLabel} start work here": "Разрешить {thereLabel} начинать работу здесь",
   "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
     "{there} может начинать работу здесь: его агенты могут запускать потоки в проектах этой машины. «Остановить» сразу отклоняет новую работу; уже запущенные потоки останавливаются через 2 минуты. Эта машина может начинать работу на {there}: здешние агенты могут запускать там потоки в пределах доступа, который разрешает {there}.",
-  "Allow {there} to start work here":
-    "Разрешить {there} начинать работу здесь",
-  "Stop {there} starting work here":
-    "Запретить {there} начинать работу здесь",
-  "Allow {there} again to start work here":
-    "Снова разрешить {there} начинать работу здесь",
+  "Allow {there} to start work here": "Разрешить {there} начинать работу здесь",
+  "Stop {there} starting work here": "Запретить {there} начинать работу здесь",
+  "Allow {there} again to start work here": "Снова разрешить {there} начинать работу здесь",
   "Set up this machine to start work on {there}":
     "Настроить эту машину для запуска работы на {there}",
-  "Change what this machine may do on {there}":
-    "Изменить, что этой машине можно на {there}",
+  "Change what this machine may do on {there}": "Изменить, что этой машине можно на {there}",
   Advisor: "Советник",
   "Let threads ask a stronger model": "Разрешить тредам спрашивать более сильную модель",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
@@ -5202,100 +5171,76 @@ export const ru: PhraseCatalog = {
   "The advisor gave no advice": "Советник не дал совета",
   "Advisor unavailable": "Советник недоступен",
   "Claude built-in": "Встроенный в Claude",
-  "The advisor is still working. Its advice arrives as a new message.": "Советник ещё работает. Совет придёт новым сообщением.",
+  "The advisor is still working. Its advice arrives as a new message.":
+    "Советник ещё работает. Совет придёт новым сообщением.",
   "Still working": "Ещё работает",
   "{count} left this run": "Осталось в этом запуске: {count}",
   "Advice applied (hidden by Claude)": "Совет учтён (скрыт Claude)",
   "Advisor consult": "Консультация советника",
   "Follow project (on)": "Как в проекте (вкл.)",
   "Follow project (off)": "Как в проекте (выкл.)",
-  "Lets this thread ask a stronger model to check its work.": "Позволяет этому треду просить более сильную модель проверить работу.",
+  "Lets this thread ask a stronger model to check its work.":
+    "Позволяет этому треду просить более сильную модель проверить работу.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Удалять worktree, чаты которых решены или в архиве и неактивны столько дней. Ветки и история чатов сохраняются.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
     "Удалять worktree, пул-реквест которых смержен, а коммиты вошли в основную ветку, или закрыт без слияния, а все коммиты отправлены. Открытый чат теряет папку после 6 часов без активности; чат, который работает или ждёт ответа, всегда её сохраняет. Ветка остаётся, поэтому открытый заново чат получает папку обратно. Также удаляет чистые отправленные worktree, которые агенты создали без чата, когда их пул-реквест смержен или закрыт и они простаивают сутки.",
   "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
     "Удалять worktree решённых или архивных чатов, в ветке которых нет коммитов сверх основной ветки.",
-  "What cleanup would remove":
-    "Что удалит очистка",
-  "Chat worktrees and leftover downloads":
-    "Worktree чатов и остатки загрузок",
+  "What cleanup would remove": "Что удалит очистка",
+  "Chat worktrees and leftover downloads": "Worktree чатов и остатки загрузок",
   "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
     "Показывает, что очистка удалит, что оставит и почему. Проверка спрашивает Git-хостинг о каждой завершённой папке, поэтому запускается только по кнопке «Проверить».",
-  "Check":
-    "Проверить",
-  "Clean up now":
-    "Очистить сейчас",
-  "Cleaning up…":
-    "Очистка…",
-  "Would be removed":
-    "Будет удалено",
-  "Kept":
-    "Остаётся",
-  "At least {size} would be freed.":
-    "Освободится не меньше {size}.",
+  Check: "Проверить",
+  "Clean up now": "Очистить сейчас",
+  "Cleaning up…": "Очистка…",
+  "Would be removed": "Будет удалено",
+  Kept: "Остаётся",
+  "At least {size} would be freed.": "Освободится не меньше {size}.",
   "Dependency folders are left out: their files are shared with the package store.":
     "Папки зависимостей не учитываются: их файлы общие с хранилищем пакетов.",
   "Some folders could not be fully checked or measured.":
     "Некоторые папки не удалось полностью проверить или измерить.",
-  "Leftover files of stopped downloads":
-    "Остатки прерванных загрузок",
-  "Nothing to remove right now.":
-    "Сейчас удалять нечего.",
-  "Nothing was removed.":
-    "Ничего не удалено.",
-  "Removed 1 folder, at least {size}.":
-    "Удалена 1 папка, не меньше {size}.",
-  "Removed {count} folders, at least {size}.":
-    "Удалено папок: {count}, не меньше {size}.",
-  "The check could not finish.":
-    "Проверку не удалось завершить.",
+  "Leftover files of stopped downloads": "Остатки прерванных загрузок",
+  "Nothing to remove right now.": "Сейчас удалять нечего.",
+  "Nothing was removed.": "Ничего не удалено.",
+  "Removed 1 folder, at least {size}.": "Удалена 1 папка, не меньше {size}.",
+  "Removed {count} folders, at least {size}.": "Удалено папок: {count}, не меньше {size}.",
+  "The check could not finish.": "Проверку не удалось завершить.",
   "This connection cannot change this machine's storage.":
     "Это подключение не может менять хранилище этой машины.",
-  "Delete worktrees of resolved chats":
-    "Удалять worktree решённых чатов",
+  "Delete worktrees of resolved chats": "Удалять worktree решённых чатов",
   "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
     "Удаляет worktree решённого или архивного чата, когда всё в нём закоммичено и отправлено. Ветка остаётся, поэтому открытый заново чат получает папку обратно.",
-  "Its pull request merged.":
-    "Его пул-реквест смержен.",
+  "Its pull request merged.": "Его пул-реквест смержен.",
   "Its pull request closed and every commit is on the remote.":
     "Его пул-реквест закрыт, и все коммиты есть на удалённом репозитории.",
   "Its chats are resolved or archived and everything is pushed.":
     "Его чаты решены или в архиве, и всё отправлено.",
-  "Its chat was deleted.":
-    "Его чат удалён.",
+  "Its chat was deleted.": "Его чат удалён.",
   "Its chats are resolved or archived and it has been inactive.":
     "Его чаты решены или в архиве, и он давно не используется.",
-  "Its branch has no commits of its own.":
-    "В его ветке нет своих коммитов.",
-  "Leftover files of stopped downloads.":
-    "Остатки прерванных загрузок.",
-  "Work in it has not finished.":
-    "Работа в нём не закончена.",
+  "Its branch has no commits of its own.": "В его ветке нет своих коммитов.",
+  "Leftover files of stopped downloads.": "Остатки прерванных загрузок.",
+  "Work in it has not finished.": "Работа в нём не закончена.",
   "A chat that is still open works in it or near it.":
     "Ещё открытый чат работает в нём или рядом с ним.",
-  "It was used less than 6 hours ago.":
-    "Им пользовались меньше 6 часов назад.",
-  "It has uncommitted changes.":
-    "В нём есть незакоммиченные изменения.",
-  "It has files Git does not track.":
-    "В нём есть файлы, которые Git не отслеживает.",
+  "It was used less than 6 hours ago.": "Им пользовались меньше 6 часов назад.",
+  "It has uncommitted changes.": "В нём есть незакоммиченные изменения.",
+  "It has files Git does not track.": "В нём есть файлы, которые Git не отслеживает.",
   "It has commits that exist only on this machine.":
     "В нём есть коммиты, которые есть только на этой машине.",
-  "A stash was made on its branch.":
-    "В его ветке есть stash.",
+  "A stash was made on its branch.": "В его ветке есть stash.",
   "It has ignored files that may hold data.":
     "В нём есть игнорируемые файлы, в которых могут быть данные.",
   "It holds more media than is copied automatically.":
     "В нём больше медиафайлов, чем копируется автоматически.",
-  "Something is working in it, or it is locked.":
-    "В нём что-то работает, или он заблокирован.",
+  "Something is working in it, or it is locked.": "В нём что-то работает, или он заблокирован.",
   "Its Git registration is broken. Check it by hand.":
     "Его регистрация в Git сломана. Проверьте её вручную.",
   "Another repository or hidden changes sit inside it.":
     "Внутри есть другой репозиторий или скрытые изменения.",
-  "No cleanup rule covers it.":
-    "Ни одно правило очистки его не касается.",
+  "No cleanup rule covers it.": "Ни одно правило очистки его не касается.",
   "It could not be fully checked, so it is kept.":
     "Его не удалось проверить полностью, поэтому он оставлен.",
   "Installed, but it does not start": "Установлен, но не запускается",
@@ -5377,4 +5322,11 @@ export const ru: PhraseCatalog = {
   "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
     "Сначала подключите {main}. Это окно не загрузило основную копию на {main}, поэтому пока не может сделать {machine} основной.",
   "connect {main} first": "сначала подключите {main}",
+  "Review each finished increment automatically":
+    "Автоматически проверять каждый готовый инкремент",
+  "Review each finished increment": "Проверять каждый готовый инкремент",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Когда запущенный вами тред завершается и все задачи его инкремента выполнены или пропущены, модель из другого семейства проверяет работу в новом треде, один раз на инкремент. Действует для проектов этой машины, если проект не задал своё. Проверки, которые просите вы или агент, и проверка при закрытии инкремента идут в любом случае.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Когда запущенный вами тред завершается и все задачи его инкремента выполнены или пропущены, модель из другого семейства проверяет работу в новом треде, один раз на инкремент. Действует только для этого проекта. Проверки, которые просите вы или агент, и проверка при закрытии инкремента идут в любом случае.",
 };

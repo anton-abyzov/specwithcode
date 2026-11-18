@@ -230,7 +230,6 @@ export const ja: PhraseCatalog = {
   "Restart when idle waits up to": "アイドル時の再起動の最大待機時間",
   "Retry once on the usual model": "いつものモデルで 1 回再試行",
   "Review depth": "レビューの深さ",
-  "Review finished features automatically": "完成した機能を自動でレビュー",
   "Reviewer order": "レビュアーの順序",
   "Rich text composer": "リッチテキストの入力欄",
   "Routine unavailable": "ルーティンを利用できません",
@@ -2327,10 +2326,13 @@ export const ja: PhraseCatalog = {
     "{name}（{host}）の古い記録をこのデバイスから削除しますか？\nこのマシンは新しいマシンとして再参加し、引き続き動作します。削除されるのは使われなくなった記録と、ここにキャッシュされたスレッドだけです。",
   "Use 2 or 3 characters.": "2〜3文字にしてください。",
   "Not shared": "共有なし",
-  "{machine} is main now, with machines not yet following it": "{machine} がメインになりましたが、まだ従っていないマシンがあります",
-  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.": "これらのマシンはまだ新しいメインを受け入れていません: {machines}。受け入れて初めて旧メインからの作業を拒否します。",
+  "{machine} is main now, with machines not yet following it":
+    "{machine} がメインになりましたが、まだ従っていないマシンがあります",
+  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.":
+    "これらのマシンはまだ新しいメインを受け入れていません: {machines}。受け入れて初めて旧メインからの作業を拒否します。",
   "Not linked · also on {machine}": "未リンク · {machine} にもあり",
-  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "このコピーは {machine} 上のコピーとリンクしていません。プロジェクトメニューからリンクするとコーディネーターを共有できます。",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.":
+    "このコピーは {machine} 上のコピーとリンクしていません。プロジェクトメニューからリンクするとコーディネーターを共有できます。",
   "No other machine has a copy of this project.":
     "このプロジェクトのコピーは他のどのマシンにもありません。",
   "Connect to see its role": "接続すると役割が表示されます",
@@ -3621,10 +3623,6 @@ export const ja: PhraseCatalog = {
     "{owner} が管理しています。ツールは必要に応じてこのホストで自動更新されます。",
   "Tools update automatically on this host when needed.":
     "ツールは必要に応じてこのホストで自動更新されます。",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "スレッドが終了し、そのインクリメントのタスクがすべて完了すると、別系統のモデルが新しいスレッドで作業をレビューします。セカンドオピニオンに使用量をかける価値があるプロジェクトでオンにしてください。",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "スレッドが終了し、そのインクリメントのタスクがすべて完了すると、別系統のモデルが新しいスレッドで作業をレビューします。既定ではオフで、プロジェクトごとにオンにできます。",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "このプロジェクトの追加ルール。グローバルな指示は常にこれらの追加より前に含まれます。",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -5105,74 +5103,44 @@ export const ja: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "AppImage のパスをコマンドに書き込めません。AppImage を単純なフォルダーに移動し、そこから開いてください。",
   "Could not write {path} ({error}).": "{path} を書き込めませんでした（{error}）。",
-  "Main":
-    "メイン",
-  "Moving main":
-    "メインを移動中",
-  "Copy · main on {machine}":
-    "コピー · メインは {machine}",
+  Main: "メイン",
+  "Moving main": "メインを移動中",
+  "Copy · main on {machine}": "コピー · メインは {machine}",
   "Work for this project starts here. Copies on other machines take work from it.":
     "このプロジェクトの作業はここで始まります。他のマシンのコピーはここから作業を受け取ります。",
   "Main is on {machine}. This copy can also start work of its own.":
     "メインは {machine} にあります。このコピーも独自に作業を開始できます。",
   "Work starts on {machine}. This copy takes work from there.":
     "作業は {machine} で始まります。このコピーはそこから作業を受け取ります。",
-  "Main is moving between machines right now.":
-    "メインは現在マシン間で移動中です。",
-  "{there} can start work here":
-    "{there} はここで作業を開始できます",
-  "{there} can't start work here":
-    "{there} はここで作業を開始できません",
-  "This machine can start work on {there}":
-    "このマシンは {there} で作業を開始できます",
-  "This machine can't start work on {there}":
-    "このマシンは {there} で作業を開始できません",
-  "until you stop it":
-    "停止するまで",
-  "1 running thread stops at {time}.":
-    "実行中のスレッド 1 件が {time} に停止します。",
-  "{count} running threads stop at {time}.":
-    "実行中のスレッド {count} 件が {time} に停止します。",
-  "Its access ran out {date}.":
-    "アクセスは {date} に期限切れになりました。",
-  "Its access ran out.":
-    "アクセスの期限が切れました。",
-  "Time limit ended {date}.":
-    "期限は {date} に終了しました。",
-  "Stopped {date}.":
-    "{date} に停止しました。",
-  "Stopped.":
-    "停止しました。",
-  "{there} stopped it.":
-    "{there} が停止しました。",
-  "{there} has not allowed it yet.":
-    "{there} はまだ許可していません。",
-  "Allow…":
-    "許可…",
-  "Set up…":
-    "設定…",
-  "Change…":
-    "変更…",
-  "Allow {there} to start work here for":
-    "{there} にここで作業の開始を許可する期間",
-  "More for {machine}":
-    "{machine} のその他",
-  "Hide connection details":
-    "接続の詳細を隠す",
-  "Let {thereLabel} start work here":
-    "{thereLabel} にここで作業を開始させる",
+  "Main is moving between machines right now.": "メインは現在マシン間で移動中です。",
+  "{there} can start work here": "{there} はここで作業を開始できます",
+  "{there} can't start work here": "{there} はここで作業を開始できません",
+  "This machine can start work on {there}": "このマシンは {there} で作業を開始できます",
+  "This machine can't start work on {there}": "このマシンは {there} で作業を開始できません",
+  "until you stop it": "停止するまで",
+  "1 running thread stops at {time}.": "実行中のスレッド 1 件が {time} に停止します。",
+  "{count} running threads stop at {time}.": "実行中のスレッド {count} 件が {time} に停止します。",
+  "Its access ran out {date}.": "アクセスは {date} に期限切れになりました。",
+  "Its access ran out.": "アクセスの期限が切れました。",
+  "Time limit ended {date}.": "期限は {date} に終了しました。",
+  "Stopped {date}.": "{date} に停止しました。",
+  "Stopped.": "停止しました。",
+  "{there} stopped it.": "{there} が停止しました。",
+  "{there} has not allowed it yet.": "{there} はまだ許可していません。",
+  "Allow…": "許可…",
+  "Set up…": "設定…",
+  "Change…": "変更…",
+  "Allow {there} to start work here for": "{there} にここで作業の開始を許可する期間",
+  "More for {machine}": "{machine} のその他",
+  "Hide connection details": "接続の詳細を隠す",
+  "Let {thereLabel} start work here": "{thereLabel} にここで作業を開始させる",
   "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
     "{there} はここで作業を開始できます: そのエージェントはこのマシンのプロジェクトでスレッドを開始できます。停止すると新しい作業はすぐに拒否され、実行中のスレッドは 2 分後に停止します。このマシンは {there} で作業を開始できます: ここのエージェントは {there} が許可するアクセスの範囲でスレッドを開始できます。",
-  "Allow {there} to start work here":
-    "{there} にここで作業の開始を許可",
-  "Stop {there} starting work here":
-    "{there} によるここでの作業開始を停止",
-  "Allow {there} again to start work here":
-    "{there} にここで作業の開始を再び許可",
-  "Set up this machine to start work on {there}":
-    "このマシンが {there} で作業を開始できるよう設定",
-  "Change what this machine may do on {there}":
-    "このマシンが {there} でできることを変更",
+  "Allow {there} to start work here": "{there} にここで作業の開始を許可",
+  "Stop {there} starting work here": "{there} によるここでの作業開始を停止",
+  "Allow {there} again to start work here": "{there} にここで作業の開始を再び許可",
+  "Set up this machine to start work on {there}": "このマシンが {there} で作業を開始できるよう設定",
+  "Change what this machine may do on {there}": "このマシンが {there} でできることを変更",
   Advisor: "アドバイザー",
   "Let threads ask a stronger model": "スレッドがより強いモデルに相談できるようにする",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
@@ -5205,90 +5173,67 @@ export const ja: PhraseCatalog = {
   "The advisor gave no advice": "アドバイザーから助言はありませんでした",
   "Advisor unavailable": "アドバイザーを利用できません",
   "Claude built-in": "Claude 組み込み",
-  "The advisor is still working. Its advice arrives as a new message.": "アドバイザーはまだ作業中です。助言は新しいメッセージで届きます。",
+  "The advisor is still working. Its advice arrives as a new message.":
+    "アドバイザーはまだ作業中です。助言は新しいメッセージで届きます。",
   "Still working": "作業中",
   "{count} left this run": "この実行で残り {count} 回",
   "Advice applied (hidden by Claude)": "助言を適用済み (Claude により非表示)",
   "Advisor consult": "アドバイザーへの相談",
   "Follow project (on)": "プロジェクトに従う (オン)",
   "Follow project (off)": "プロジェクトに従う (オフ)",
-  "Lets this thread ask a stronger model to check its work.": "このスレッドが、より強力なモデルに作業の確認を頼めるようにします。",
+  "Lets this thread ask a stronger model to check its work.":
+    "このスレッドが、より強力なモデルに作業の確認を頼めるようにします。",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "チャットが解決済みまたはアーカイブ済みで、この日数のあいだ非アクティブなワークツリーを削除します。ブランチとチャットの履歴は残ります。",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
     "プルリクエストがマージされ、コミットが既定のブランチに含まれているか、マージせずにクローズされすべてのコミットがプッシュ済みのワークツリーを削除します。開いたままのチャットは、6 時間動きがなければフォルダーを失います。実行中または待機中のチャットは常にフォルダーを残します。ブランチは残るので、再開したチャットはフォルダーを取り戻せます。エージェントがチャットなしで作った、変更がなくプッシュ済みのワークツリーも、プルリクエストがマージまたはクローズされ 1 日アイドルなら削除します。",
   "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
     "解決済みまたはアーカイブ済みのチャットのうち、ブランチに既定のブランチより先のコミットがないワークツリーを削除します。",
-  "What cleanup would remove":
-    "クリーンアップで削除されるもの",
-  "Chat worktrees and leftover downloads":
-    "チャットのワークツリーとダウンロードの残り",
+  "What cleanup would remove": "クリーンアップで削除されるもの",
+  "Chat worktrees and leftover downloads": "チャットのワークツリーとダウンロードの残り",
   "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
     "クリーンアップで削除されるものと残るもの、その理由を表示します。確認では完了した各フォルダーについて Git ホストに問い合わせるため、「確認」を押したときだけ実行されます。",
-  "Check":
-    "確認",
-  "Clean up now":
-    "今すぐクリーンアップ",
-  "Cleaning up…":
-    "クリーンアップ中…",
-  "Would be removed":
-    "削除対象",
-  "Kept":
-    "残すもの",
-  "At least {size} would be freed.":
-    "少なくとも {size} が空きます。",
+  Check: "確認",
+  "Clean up now": "今すぐクリーンアップ",
+  "Cleaning up…": "クリーンアップ中…",
+  "Would be removed": "削除対象",
+  Kept: "残すもの",
+  "At least {size} would be freed.": "少なくとも {size} が空きます。",
   "Dependency folders are left out: their files are shared with the package store.":
     "依存関係のフォルダーは含みません。そのファイルはパッケージストアと共有されています。",
   "Some folders could not be fully checked or measured.":
     "一部のフォルダーは完全に確認または計測できませんでした。",
-  "Leftover files of stopped downloads":
-    "中断したダウンロードの残りファイル",
-  "Nothing to remove right now.":
-    "今は削除するものはありません。",
-  "Nothing was removed.":
-    "何も削除されませんでした。",
-  "Removed 1 folder, at least {size}.":
-    "1 個のフォルダーを削除しました（少なくとも {size}）。",
+  "Leftover files of stopped downloads": "中断したダウンロードの残りファイル",
+  "Nothing to remove right now.": "今は削除するものはありません。",
+  "Nothing was removed.": "何も削除されませんでした。",
+  "Removed 1 folder, at least {size}.": "1 個のフォルダーを削除しました（少なくとも {size}）。",
   "Removed {count} folders, at least {size}.":
     "{count} 個のフォルダーを削除しました（少なくとも {size}）。",
-  "The check could not finish.":
-    "確認を完了できませんでした。",
+  "The check could not finish.": "確認を完了できませんでした。",
   "This connection cannot change this machine's storage.":
     "この接続では、このマシンのストレージを変更できません。",
-  "Delete worktrees of resolved chats":
-    "解決済みチャットのワークツリーを削除",
+  "Delete worktrees of resolved chats": "解決済みチャットのワークツリーを削除",
   "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
     "解決済みまたはアーカイブ済みのチャットのワークツリーを、中身がすべてコミットされプッシュされたら削除します。ブランチは残るので、再開したチャットはフォルダーを取り戻せます。",
-  "Its pull request merged.":
-    "プルリクエストがマージされました。",
+  "Its pull request merged.": "プルリクエストがマージされました。",
   "Its pull request closed and every commit is on the remote.":
     "プルリクエストがクローズされ、すべてのコミットがリモートにあります。",
   "Its chats are resolved or archived and everything is pushed.":
     "チャットは解決済みかアーカイブ済みで、すべてプッシュ済みです。",
-  "Its chat was deleted.":
-    "チャットが削除されました。",
+  "Its chat was deleted.": "チャットが削除されました。",
   "Its chats are resolved or archived and it has been inactive.":
     "チャットは解決済みかアーカイブ済みで、しばらく使われていません。",
-  "Its branch has no commits of its own.":
-    "ブランチに独自のコミットがありません。",
-  "Leftover files of stopped downloads.":
-    "中断したダウンロードの残りファイルです。",
-  "Work in it has not finished.":
-    "その中の作業がまだ終わっていません。",
+  "Its branch has no commits of its own.": "ブランチに独自のコミットがありません。",
+  "Leftover files of stopped downloads.": "中断したダウンロードの残りファイルです。",
+  "Work in it has not finished.": "その中の作業がまだ終わっていません。",
   "A chat that is still open works in it or near it.":
     "まだ開いているチャットが、その中か近くで作業しています。",
-  "It was used less than 6 hours ago.":
-    "最後に使われてから 6 時間たっていません。",
-  "It has uncommitted changes.":
-    "コミットされていない変更があります。",
-  "It has files Git does not track.":
-    "Git が追跡していないファイルがあります。",
-  "It has commits that exist only on this machine.":
-    "このマシンにしかないコミットがあります。",
-  "A stash was made on its branch.":
-    "ブランチで stash が作成されています。",
-  "It has ignored files that may hold data.":
-    "データを含む可能性のある無視ファイルがあります。",
+  "It was used less than 6 hours ago.": "最後に使われてから 6 時間たっていません。",
+  "It has uncommitted changes.": "コミットされていない変更があります。",
+  "It has files Git does not track.": "Git が追跡していないファイルがあります。",
+  "It has commits that exist only on this machine.": "このマシンにしかないコミットがあります。",
+  "A stash was made on its branch.": "ブランチで stash が作成されています。",
+  "It has ignored files that may hold data.": "データを含む可能性のある無視ファイルがあります。",
   "It holds more media than is copied automatically.":
     "自動でコピーされる量を超えるメディアがあります。",
   "Something is working in it, or it is locked.":
@@ -5297,10 +5242,8 @@ export const ja: PhraseCatalog = {
     "Git の登録が壊れています。手動で確認してください。",
   "Another repository or hidden changes sit inside it.":
     "中に別のリポジトリまたは隠れた変更があります。",
-  "No cleanup rule covers it.":
-    "当てはまるクリーンアップのルールがありません。",
-  "It could not be fully checked, so it is kept.":
-    "すべてを確認できなかったため、残します。",
+  "No cleanup rule covers it.": "当てはまるクリーンアップのルールがありません。",
+  "It could not be fully checked, so it is kept.": "すべてを確認できなかったため、残します。",
   "Installed, but it does not start": "インストール済みですが起動しません",
   "Install {agent} on {machine} with this command:":
     "このコマンドで {machine} に {agent} をインストールします:",
@@ -5319,7 +5262,8 @@ export const ja: PhraseCatalog = {
   "This window can only read {main}, so it cannot move main from there. Open SpecWithCode on {main}, or connect to it with full access, to make {machine} main.":
     "このウィンドウは {main} を読み取ることしかできないため、そこからメインを移動できません。{machine} をメインにするには、{main} で SpecWithCode を開くか、フルアクセスで接続してください。",
   "read-only on {main}": "{main} は読み取り専用",
-  "Connect {machine} first to make it main.": "メインにするには、まず {machine} を接続してください。",
+  "Connect {machine} first to make it main.":
+    "メインにするには、まず {machine} を接続してください。",
   "{machine} cannot take over yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
     "{machine} はまだ引き継げません。そのマシンの SpecWithCode を更新するか、設定の変更と作業の実行ができる権限で接続してください。",
   "not ready": "準備未完了",
@@ -5380,4 +5324,10 @@ export const ja: PhraseCatalog = {
   "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
     "まず {main} を接続してください。このウィンドウは {main} のメインのコピーを読み込んでいないため、まだ {machine} をメインにできません。",
   "connect {main} first": "先に {main} を接続",
+  "Review each finished increment automatically": "完了したインクリメントを毎回自動でレビュー",
+  "Review each finished increment": "完了したインクリメントを毎回レビュー",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "自分で始めたスレッドが終わり、そのインクリメントのタスクがすべて完了またはスキップになると、別ファミリーのモデルが新しいスレッドで作業をレビューします。インクリメントごとに 1 回です。プロジェクトが個別に設定しない限り、このマシンのプロジェクトに適用されます。あなたやエージェントが依頼するレビューと、インクリメント終了時のレビューは、この設定に関係なく実行されます。",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "自分で始めたスレッドが終わり、そのインクリメントのタスクがすべて完了またはスキップになると、別ファミリーのモデルが新しいスレッドで作業をレビューします。インクリメントごとに 1 回です。このプロジェクトにのみ適用されます。あなたやエージェントが依頼するレビューと、インクリメント終了時のレビューは、この設定に関係なく実行されます。",
 };

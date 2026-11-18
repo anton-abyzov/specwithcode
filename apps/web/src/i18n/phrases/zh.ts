@@ -229,7 +229,6 @@ export const zh: PhraseCatalog = {
   "Restart when idle waits up to": "空闲重启最多等待",
   "Retry once on the usual model": "用常用模型重试一次",
   "Review depth": "审查深度",
-  "Review finished features automatically": "自动审查已完成的功能",
   "Reviewer order": "审查者顺序",
   "Rich text composer": "富文本输入框",
   "Routine unavailable": "例行任务不可用",
@@ -2243,10 +2242,13 @@ export const zh: PhraseCatalog = {
     "要从此设备删除 {name}（{host}）的旧记录吗？\n这台机器已作为新机器重新加入并继续工作；只会删除失效的记录及其在此缓存的线程。",
   "Use 2 or 3 characters.": "请使用 2 或 3 个字符。",
   "Not shared": "未共享",
-  "{machine} is main now, with machines not yet following it": "{machine} 现已为主副本，但有些机器尚未跟随",
-  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.": "这些机器尚未接受新的主副本：{machines}。接受后才会拒绝旧主副本的工作。",
+  "{machine} is main now, with machines not yet following it":
+    "{machine} 现已为主副本，但有些机器尚未跟随",
+  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.":
+    "这些机器尚未接受新的主副本：{machines}。接受后才会拒绝旧主副本的工作。",
   "Not linked · also on {machine}": "未关联 · {machine} 上也有",
-  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.": "此副本未与 {machine} 上的副本关联。从项目菜单关联后可共享一个协调器。",
+  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.":
+    "此副本未与 {machine} 上的副本关联。从项目菜单关联后可共享一个协调器。",
   "No other machine has a copy of this project.": "没有其他机器有这个项目的副本。",
   "Connect to see its role": "连接后可查看角色",
   "This app cannot see this machine, so it cannot tell what this copy does.":
@@ -3496,10 +3498,6 @@ export const zh: PhraseCatalog = {
   "Managed by {owner}. Tools update automatically on this host when needed.":
     "由 {owner} 管理。工具会在需要时在此主机上自动更新。",
   "Tools update automatically on this host when needed.": "工具会在需要时在此主机上自动更新。",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "当一个线程完成且其增量的所有任务都已完成时，另一个系列的模型会在新线程中审查这项工作。请在值得花费用量获取第二意见的项目中开启。",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "当一个线程完成且其增量的所有任务都已完成时，另一个系列的模型会在新线程中审查这项工作。默认关闭；项目可以开启。",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "此项目的附加规则。全局指令始终放在这些附加内容之前。",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -4904,74 +4902,44 @@ export const zh: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "无法把 AppImage 的路径写入命令。请把 AppImage 移到更简单的文件夹，再从那里打开。",
   "Could not write {path} ({error}).": "无法写入 {path}（{error}）。",
-  "Main":
-    "主副本",
-  "Moving main":
-    "主副本迁移中",
-  "Copy · main on {machine}":
-    "副本 · 主副本在 {machine}",
+  Main: "主副本",
+  "Moving main": "主副本迁移中",
+  "Copy · main on {machine}": "副本 · 主副本在 {machine}",
   "Work for this project starts here. Copies on other machines take work from it.":
     "此项目的工作从这里开始。其他机器上的副本从这里接收工作。",
   "Main is on {machine}. This copy can also start work of its own.":
     "主副本在 {machine}。此副本也可以开始自己的工作。",
   "Work starts on {machine}. This copy takes work from there.":
     "工作从 {machine} 开始。此副本从那里接收工作。",
-  "Main is moving between machines right now.":
-    "主副本正在机器之间迁移。",
-  "{there} can start work here":
-    "{there} 可以在这里开始工作",
-  "{there} can't start work here":
-    "{there} 不能在这里开始工作",
-  "This machine can start work on {there}":
-    "此机器可以在 {there} 上开始工作",
-  "This machine can't start work on {there}":
-    "此机器不能在 {there} 上开始工作",
-  "until you stop it":
-    "直到你停止",
-  "1 running thread stops at {time}.":
-    "1 个运行中的线程将于 {time} 停止。",
-  "{count} running threads stop at {time}.":
-    "{count} 个运行中的线程将于 {time} 停止。",
-  "Its access ran out {date}.":
-    "访问权限已于 {date} 过期。",
-  "Its access ran out.":
-    "访问权限已过期。",
-  "Time limit ended {date}.":
-    "时限已于 {date} 结束。",
-  "Stopped {date}.":
-    "已于 {date} 停止。",
-  "Stopped.":
-    "已停止。",
-  "{there} stopped it.":
-    "{there} 已停止它。",
-  "{there} has not allowed it yet.":
-    "{there} 尚未允许。",
-  "Allow…":
-    "允许…",
-  "Set up…":
-    "设置…",
-  "Change…":
-    "更改…",
-  "Allow {there} to start work here for":
-    "允许 {there} 在这里开始工作的时长",
-  "More for {machine}":
-    "{machine} 的更多选项",
-  "Hide connection details":
-    "隐藏连接详情",
-  "Let {thereLabel} start work here":
-    "让 {thereLabel} 在这里开始工作",
+  "Main is moving between machines right now.": "主副本正在机器之间迁移。",
+  "{there} can start work here": "{there} 可以在这里开始工作",
+  "{there} can't start work here": "{there} 不能在这里开始工作",
+  "This machine can start work on {there}": "此机器可以在 {there} 上开始工作",
+  "This machine can't start work on {there}": "此机器不能在 {there} 上开始工作",
+  "until you stop it": "直到你停止",
+  "1 running thread stops at {time}.": "1 个运行中的线程将于 {time} 停止。",
+  "{count} running threads stop at {time}.": "{count} 个运行中的线程将于 {time} 停止。",
+  "Its access ran out {date}.": "访问权限已于 {date} 过期。",
+  "Its access ran out.": "访问权限已过期。",
+  "Time limit ended {date}.": "时限已于 {date} 结束。",
+  "Stopped {date}.": "已于 {date} 停止。",
+  "Stopped.": "已停止。",
+  "{there} stopped it.": "{there} 已停止它。",
+  "{there} has not allowed it yet.": "{there} 尚未允许。",
+  "Allow…": "允许…",
+  "Set up…": "设置…",
+  "Change…": "更改…",
+  "Allow {there} to start work here for": "允许 {there} 在这里开始工作的时长",
+  "More for {machine}": "{machine} 的更多选项",
+  "Hide connection details": "隐藏连接详情",
+  "Let {thereLabel} start work here": "让 {thereLabel} 在这里开始工作",
   "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
     "{there} 可以在这里开始工作：它的代理可以在此机器的项目中启动线程。停止会立即拒绝新工作；正在运行的线程在 2 分钟后停止。此机器可以在 {there} 上开始工作：这里的代理可以在 {there} 允许的访问范围内在那里启动线程。",
-  "Allow {there} to start work here":
-    "允许 {there} 在此开始工作",
-  "Stop {there} starting work here":
-    "停止 {there} 在此开始工作",
-  "Allow {there} again to start work here":
-    "再次允许 {there} 在此开始工作",
-  "Set up this machine to start work on {there}":
-    "设置本机在 {there} 上开始工作",
-  "Change what this machine may do on {there}":
-    "更改本机在 {there} 上可以做的事",
+  "Allow {there} to start work here": "允许 {there} 在此开始工作",
+  "Stop {there} starting work here": "停止 {there} 在此开始工作",
+  "Allow {there} again to start work here": "再次允许 {there} 在此开始工作",
+  "Set up this machine to start work on {there}": "设置本机在 {there} 上开始工作",
+  "Change what this machine may do on {there}": "更改本机在 {there} 上可以做的事",
   Advisor: "顾问",
   "Let threads ask a stronger model": "允许会话询问更强的模型",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
@@ -5004,7 +4972,8 @@ export const zh: PhraseCatalog = {
   "The advisor gave no advice": "顾问未给出建议",
   "Advisor unavailable": "顾问不可用",
   "Claude built-in": "Claude 内置",
-  "The advisor is still working. Its advice arrives as a new message.": "顾问仍在处理。建议将以新消息送达。",
+  "The advisor is still working. Its advice arrives as a new message.":
+    "顾问仍在处理。建议将以新消息送达。",
   "Still working": "仍在处理",
   "{count} left this run": "本次运行还剩 {count} 次",
   "Advice applied (hidden by Claude)": "已采纳建议（被 Claude 隐藏）",
@@ -5018,88 +4987,53 @@ export const zh: PhraseCatalog = {
     "删除拉取请求已合并且提交已包含在默认分支中，或未合并即关闭且所有提交都已推送的工作树。仍打开的聊天在 6 小时无活动后会失去其文件夹；正在运行或等待的聊天始终保留。分支会保留，因此重新打开的聊天会找回其文件夹。也会删除代理在没有聊天时创建的、干净且已推送的工作树，前提是其拉取请求已合并或关闭且已闲置一天。",
   "Remove worktrees of resolved or archived chats whose branch has no commits beyond the default branch.":
     "删除已解决或已归档聊天中分支没有超出默认分支的提交的工作树。",
-  "What cleanup would remove":
-    "清理会删除的内容",
-  "Chat worktrees and leftover downloads":
-    "聊天工作树和下载残留",
+  "What cleanup would remove": "清理会删除的内容",
+  "Chat worktrees and leftover downloads": "聊天工作树和下载残留",
   "Shows what the cleanup would remove and what it keeps, and why. The check asks the Git host about each finished folder, so it runs only when you press Check.":
     "显示清理会删除什么、保留什么以及原因。检查会就每个已完成的文件夹询问 Git 托管服务，因此只在你点按“检查”时运行。",
-  "Check":
-    "检查",
-  "Clean up now":
-    "立即清理",
-  "Cleaning up…":
-    "正在清理…",
-  "Would be removed":
-    "将被删除",
-  "Kept":
-    "保留",
-  "At least {size} would be freed.":
-    "至少会释放 {size}。",
+  Check: "检查",
+  "Clean up now": "立即清理",
+  "Cleaning up…": "正在清理…",
+  "Would be removed": "将被删除",
+  Kept: "保留",
+  "At least {size} would be freed.": "至少会释放 {size}。",
   "Dependency folders are left out: their files are shared with the package store.":
     "不计入依赖文件夹：其文件与包存储共享。",
-  "Some folders could not be fully checked or measured.":
-    "部分文件夹无法完整检查或测量。",
-  "Leftover files of stopped downloads":
-    "中断下载的残留文件",
-  "Nothing to remove right now.":
-    "目前没有可删除的内容。",
-  "Nothing was removed.":
-    "没有删除任何内容。",
-  "Removed 1 folder, at least {size}.":
-    "已删除 1 个文件夹，至少 {size}。",
-  "Removed {count} folders, at least {size}.":
-    "已删除 {count} 个文件夹，至少 {size}。",
-  "The check could not finish.":
-    "检查未能完成。",
-  "This connection cannot change this machine's storage.":
-    "此连接无法更改这台机器的存储。",
-  "Delete worktrees of resolved chats":
-    "删除已解决聊天的工作树",
+  "Some folders could not be fully checked or measured.": "部分文件夹无法完整检查或测量。",
+  "Leftover files of stopped downloads": "中断下载的残留文件",
+  "Nothing to remove right now.": "目前没有可删除的内容。",
+  "Nothing was removed.": "没有删除任何内容。",
+  "Removed 1 folder, at least {size}.": "已删除 1 个文件夹，至少 {size}。",
+  "Removed {count} folders, at least {size}.": "已删除 {count} 个文件夹，至少 {size}。",
+  "The check could not finish.": "检查未能完成。",
+  "This connection cannot change this machine's storage.": "此连接无法更改这台机器的存储。",
+  "Delete worktrees of resolved chats": "删除已解决聊天的工作树",
   "Removes the worktree of a resolved or archived chat once everything in it is committed and pushed. The branch stays, so a reopened chat gets its folder back.":
     "当已解决或已归档聊天的工作树中的所有内容都已提交并推送后，将其删除。分支会保留，因此重新打开的聊天会找回其文件夹。",
-  "Its pull request merged.":
-    "其拉取请求已合并。",
+  "Its pull request merged.": "其拉取请求已合并。",
   "Its pull request closed and every commit is on the remote.":
     "其拉取请求已关闭，且所有提交都在远程。",
   "Its chats are resolved or archived and everything is pushed.":
     "其聊天已解决或已归档，所有内容都已推送。",
-  "Its chat was deleted.":
-    "其聊天已删除。",
+  "Its chat was deleted.": "其聊天已删除。",
   "Its chats are resolved or archived and it has been inactive.":
     "其聊天已解决或已归档，且已闲置。",
-  "Its branch has no commits of its own.":
-    "其分支没有自己的提交。",
-  "Leftover files of stopped downloads.":
-    "中断下载的残留文件。",
-  "Work in it has not finished.":
-    "其中的工作尚未完成。",
-  "A chat that is still open works in it or near it.":
-    "仍在打开的聊天正在其中或其附近工作。",
-  "It was used less than 6 hours ago.":
-    "它在不到 6 小时前被使用过。",
-  "It has uncommitted changes.":
-    "有未提交的更改。",
-  "It has files Git does not track.":
-    "有 Git 未跟踪的文件。",
-  "It has commits that exist only on this machine.":
-    "有只存在于这台机器上的提交。",
-  "A stash was made on its branch.":
-    "其分支上有 stash。",
-  "It has ignored files that may hold data.":
-    "有可能包含数据的被忽略文件。",
-  "It holds more media than is copied automatically.":
-    "其中的媒体超过了自动复制的上限。",
-  "Something is working in it, or it is locked.":
-    "有东西正在其中工作，或它已被锁定。",
-  "Its Git registration is broken. Check it by hand.":
-    "其 Git 注册已损坏。请手动检查。",
-  "Another repository or hidden changes sit inside it.":
-    "其中有另一个仓库或隐藏的更改。",
-  "No cleanup rule covers it.":
-    "没有适用于它的清理规则。",
-  "It could not be fully checked, so it is kept.":
-    "无法完整检查，因此保留。",
+  "Its branch has no commits of its own.": "其分支没有自己的提交。",
+  "Leftover files of stopped downloads.": "中断下载的残留文件。",
+  "Work in it has not finished.": "其中的工作尚未完成。",
+  "A chat that is still open works in it or near it.": "仍在打开的聊天正在其中或其附近工作。",
+  "It was used less than 6 hours ago.": "它在不到 6 小时前被使用过。",
+  "It has uncommitted changes.": "有未提交的更改。",
+  "It has files Git does not track.": "有 Git 未跟踪的文件。",
+  "It has commits that exist only on this machine.": "有只存在于这台机器上的提交。",
+  "A stash was made on its branch.": "其分支上有 stash。",
+  "It has ignored files that may hold data.": "有可能包含数据的被忽略文件。",
+  "It holds more media than is copied automatically.": "其中的媒体超过了自动复制的上限。",
+  "Something is working in it, or it is locked.": "有东西正在其中工作，或它已被锁定。",
+  "Its Git registration is broken. Check it by hand.": "其 Git 注册已损坏。请手动检查。",
+  "Another repository or hidden changes sit inside it.": "其中有另一个仓库或隐藏的更改。",
+  "No cleanup rule covers it.": "没有适用于它的清理规则。",
+  "It could not be fully checked, so it is kept.": "无法完整检查，因此保留。",
   "Installed, but it does not start": "已安装，但无法启动",
   "Install {agent} on {machine} with this command:": "用这条命令在 {machine} 上安装 {agent}：",
   "Run its installer again:": "重新运行它的安装程序：",
@@ -5119,7 +5053,8 @@ export const zh: PhraseCatalog = {
     "{machine} 暂时无法接管。请在那里更新 SpecWithCode，或以可更改设置并运行工作的权限连接它。",
   "not ready": "未就绪",
   "Main cannot move from this machine yet.": "暂时无法从这台机器移动主副本。",
-  "Send this project its first message here, then try again.": "请先在这里向此项目发送第一条消息，然后重试。",
+  "Send this project its first message here, then try again.":
+    "请先在这里向此项目发送第一条消息，然后重试。",
   "{machine} cannot become main yet.": "{machine} 暂时无法成为主副本。",
   "{machine} is main now": "{machine} 现在是主副本",
   "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
@@ -5174,4 +5109,10 @@ export const zh: PhraseCatalog = {
   "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
     "请先连接 {main}。此窗口尚未加载 {main} 上的主副本，因此还不能将 {machine} 设为主副本。",
   "connect {main} first": "请先连接 {main}",
+  "Review each finished increment automatically": "自动审查每个完成的增量",
+  "Review each finished increment": "审查每个完成的增量",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "当你启动的线程结束，且其增量的所有任务都已完成或跳过时，另一系列的模型会在新线程中审查这些工作，每个增量一次。适用于本机的项目，除非某个项目单独设置。你或智能体请求的审查，以及关闭增量时的审查，都会照常进行。",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "当你启动的线程结束，且其增量的所有任务都已完成或跳过时，另一系列的模型会在新线程中审查这些工作，每个增量一次。仅适用于此项目。你或智能体请求的审查，以及关闭增量时的审查，都会照常进行。",
 };

@@ -189,7 +189,7 @@ afterEach(() => {
 describe("AdversarialReviewSettings", () => {
   it("is off by default and writes only the switch when turned on", () => {
     render(<AdversarialReviewSettings />);
-    const toggle = byLabel("Review finished features automatically").findByType("input");
+    const toggle = byLabel("Review each finished increment automatically").findByType("input");
     expect(toggle.props.checked).toBe(false);
     act(() => toggle.props.onChange({ target: { checked: true } }));
     expect(state.update).toHaveBeenCalledWith({
