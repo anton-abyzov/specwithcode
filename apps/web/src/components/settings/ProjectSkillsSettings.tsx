@@ -3,6 +3,8 @@ import { useTx } from "../../i18n";
 import { WorkflowCapabilities } from "./WorkflowCapabilities";
 import {
   EnvironmentId,
+  PROVIDER_DISPLAY_NAMES,
+  ProviderDriverKind,
   ThreadId,
   summarizeProjectSkills,
   type ProjectId,
@@ -853,7 +855,12 @@ function ScopedProjectSkillsView({
       withSelectedFacetOptions(
         facets.providers,
         providers,
-        (value) => entries.get(value)?.displayName ?? presenceByLabel.get(value)?.label ?? value,
+        // A built-in agent this machine does not run still reads "Claude", never `claudeAgent`.
+        (value) =>
+          entries.get(value)?.displayName ??
+          presenceByLabel.get(value)?.label ??
+          PROVIDER_DISPLAY_NAMES[ProviderDriverKind.make(value)] ??
+          value,
       ),
     [facets.providers, providers, entries, presenceByLabel],
   );
@@ -997,7 +1004,7 @@ function ScopedProjectSkillsView({
             })}
           </label>
         </div>
-        {snapshot && snapshot.rows.length > 0 ? (
+        {snapshot && (snapshot.rows.length > 0 || chipsActive) ? (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="skills-filters">
             <FacetGroup
               label={tx("Agent")}

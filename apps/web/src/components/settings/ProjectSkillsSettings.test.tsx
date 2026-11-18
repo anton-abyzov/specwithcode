@@ -743,7 +743,7 @@ describe("ProjectSkillsView", () => {
           },
         ],
       });
-    async function renderSeeded() {
+    async function renderSeeded(overrides: Partial<ProjectSkillsSnapshot> = {}) {
       state.data = {
         ...snapshot,
         rows: [codexRow("imagegen"), codexRow("openai-docs")],
@@ -752,6 +752,7 @@ describe("ProjectSkillsView", () => {
           { ...codex, state: "ok", skills: 2 },
         ],
         locks: [],
+        ...overrides,
       } satisfies ProjectSkillsSnapshot;
       state.search = { agent: "claudeAgent" };
       await render();
@@ -771,6 +772,24 @@ describe("ProjectSkillsView", () => {
       await act(async () => agentChip("claudeAgent")!.click());
       expect(bodyRows()).toEqual(["imagegen", "openai-docs"]);
       expect(agentChip("claudeAgent")).toBeNull();
+    });
+
+    it("names a built-in agent the machine does not list, never by its raw id", async () => {
+      await renderSeeded({ providers: [{ ...codex, state: "ok", skills: 2 }] });
+      expect(agentChip("claudeAgent")?.getAttribute("aria-pressed")).toBe("true");
+      expect(agentChip("claudeAgent")?.textContent).toBe("Claude0");
+    });
+
+    it("keeps the filter row when the machine has no skills at all", async () => {
+      await renderSeeded({ rows: [] });
+      expect(agentChip("claudeAgent")?.getAttribute("aria-pressed")).toBe("true");
+      expect(agentChip("claudeAgent")?.textContent).toBe("Claude0");
+      const clear = [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "Clear filters",
+      )!;
+      await act(async () => clear.click());
+      expect(agentChip("claudeAgent")).toBeNull();
+      expect(container.querySelector("[data-testid='skills-filters']")).toBeNull();
     });
 
     it("restores every row with Clear filters", async () => {
