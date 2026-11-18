@@ -11,10 +11,10 @@ import {
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
 import * as ServerConfig from "../../../config.ts";
@@ -235,22 +235,21 @@ describe("studio_project_create in a parent folder", () => {
     });
   });
 
-  it.effect("says a registered folder already has SpecWeave only where it is on", () => {
-    const planned = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t09-registered-"));
-    NodeFS.mkdirSync(NodePath.join(planned, ".specweave"), { recursive: true });
-    NodeFS.writeFileSync(NodePath.join(planned, ".specweave", "config.json"), "{}");
-    const { create } = setup();
-    return Effect.gen(function* () {
+  it.effect("says a registered folder already has SpecWeave only where it is on", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const planned = yield* fs.makeTempDirectoryScoped({ prefix: "t09-registered-" });
+      yield* fs.makeDirectory(NodePath.join(planned, ".specweave"), { recursive: true });
+      yield* fs.writeFileString(NodePath.join(planned, ".specweave", "config.json"), "{}");
+      const { create } = setup();
       const on = yield* create({ title: "Planned", workspaceRoot: planned });
       expect(on.specweave).toBe(
         `SpecWeave is already set up in ${planned}, which is used as it is.`,
       );
       const plain = yield* create({ title: "Plain", workspaceRoot: "/work/plain" });
       expect(String(plain.specweave)).toContain("an existing folder is registered as it is");
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(planned, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("passes on a folder used as it is, and never publishes it", () => {
     const { create, published } = setup({ existingFolder: true });
