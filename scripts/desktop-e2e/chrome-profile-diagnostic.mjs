@@ -103,21 +103,57 @@ result.machine = {
 };
 note("machine", result.machine);
 
-// 1. Chrome once, so a profile and its Local State exist.
+// 1. Chrome once, so a profile and its Local State exist. `open -na` on a fresh
+// runner left no Local State in 3 minutes (run 2), so Chrome's own binary runs
+// headless against the default user-data folder and is stopped gracefully,
+// which writes Local State. If it still is not there, a minimal one is written
+// and the result says so: the read under test is the same either way.
 const chromeStart = stamp();
-run("open", ["-na", chromeApp, "--args", "--no-first-run", "--no-default-browser-check", "about:blank"]);
-for (let i = 0; i < 60 && !NodeFS.existsSync(localState); i++) await sleep(1000);
-await sleep(8000);
-const chromePids = run("pgrep", ["-x", "Google Chrome"]).stdout.trim().split(/\s+/).filter(Boolean);
-for (const pid of chromePids) {
-  try {
-    process.kill(Number(pid), "SIGTERM");
-  } catch {}
-}
-for (let i = 0; i < 20 && run("pgrep", ["-x", "Google Chrome"]).stdout.trim(); i++) await sleep(500);
+const userData = NodePath.join(home, "Library/Application Support/Google/Chrome");
+const chromeBinary = NodePath.join(chromeApp, "Contents/MacOS/Google Chrome");
+const chromeChild = NodeChildProcess.spawn(
+  chromeBinary,
+  [
+    "--headless=new",
+    `--user-data-dir=${userData}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--remote-debugging-port=0",
+    "about:blank",
+  ],
+  { stdio: "ignore" },
+);
+for (let i = 0; i < 30 && !NodeFS.existsSync(NodePath.join(userData, "Default")); i++) await sleep(1000);
+await sleep(5000);
+const chromePids = chromeChild.pid ? [String(chromeChild.pid)] : [];
+chromeChild.kill("SIGTERM");
+for (let i = 0; i < 30 && chromeChild.exitCode === null && chromeChild.signalCode === null; i++)
+  await sleep(500);
 await sleep(2000);
+let localStateWrittenBy = NodeFS.existsSync(localState) ? "chrome" : null;
+if (localStateWrittenBy === null) {
+  NodeFS.mkdirSync(NodePath.join(userData, "Default"), { recursive: true });
+  NodeFS.writeFileSync(
+    localState,
+    JSON.stringify({
+      profile: {
+        info_cache: { Default: { name: "Person 1" } },
+        last_used: "Default",
+      },
+    }),
+  );
+  localStateWrittenBy = "diagnostic";
+}
 result.chrome = {
   pids: chromePids,
+  localStateWrittenBy,
+  userDataEntries: (() => {
+    try {
+      return NodeFS.readdirSync(userData);
+    } catch (error) {
+      return String(error);
+    }
+  })(),
   localStateAfter: NodeFS.existsSync(localState),
   profilesOnDisk: (() => {
     try {
