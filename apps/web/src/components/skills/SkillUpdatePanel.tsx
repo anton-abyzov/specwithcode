@@ -149,7 +149,7 @@ export function SkillUpdatePanel({
                   !rolling.has(status.skill) ? (
                     <Button
                       size="xs"
-                      variant="ghost"
+                      variant="outline"
                       type="button"
                       onClick={() => setRolling((previous) => new Set(previous).add(status.skill))}
                     >

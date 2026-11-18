@@ -430,7 +430,7 @@ export function SkillRollout({
         {review.length > 0 ? (
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             type="button"
             disabled={busy !== null}
             onClick={() => void previewAgain(tickedMachines.map((machine) => machine.machineId))}
@@ -489,7 +489,7 @@ export function SkillRollout({
                 {plan && plan.kind !== "none" ? (
                   <Button
                     size="xs"
-                    variant="ghost"
+                    variant="outline"
                     type="button"
                     disabled={busy !== null}
                     onClick={() => void undo(row)}
