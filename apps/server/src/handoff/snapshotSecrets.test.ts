@@ -25,6 +25,14 @@ afterAll(restoreGit);
 afterEach(cleanUp);
 
 const KB = 1024;
+const canRead = (file: string) => {
+  try {
+    NodeFS.readFileSync(file);
+    return true;
+  } catch {
+    return false;
+  }
+};
 const filler = (bytes: number) => "x".repeat(bytes - 1) + "\n";
 
 describe("the snapshot's content check (1390 AC-14)", () => {
@@ -34,8 +42,7 @@ describe("the snapshot's content check (1390 AC-14)", () => {
     const absolute = NodePath.join(a, "big.txt");
     expect(await readSmallText(absolute, 64 * KB)).toBeNull();
     const head = await readFileHead(absolute);
-    expect(head).not.toBeNull();
-    expect(Buffer.byteLength(head!)).toBe(64 * KB);
+    expect(Buffer.isBuffer(head) && head.length).toBe(64 * KB);
     const checked = await checkSnapshotContent({
       root: a,
       untracked: ["big.txt"],
@@ -55,16 +62,69 @@ describe("the snapshot's content check (1390 AC-14)", () => {
     expect(checked.leftOut).toEqual([]);
   });
 
-  it("never follows a link, and skips binary files and folders", async () => {
+  it("never follows a link, and reads no folder or missing file", async () => {
     const { a, base } = twoMachines();
     write(base, "outside.txt", `token=${fakeToken()}\n`);
     NodeFS.symlinkSync(NodePath.join(base, "outside.txt"), NodePath.join(a, "link.txt"));
-    write(a, "image.bin", Buffer.concat([Buffer.from([0, 1, 2, 0]), Buffer.from(fakeToken())]));
     NodeFS.mkdirSync(NodePath.join(a, "folder"));
     expect(await readFileHead(NodePath.join(a, "link.txt"))).toBeNull();
-    expect(await readFileHead(NodePath.join(a, "image.bin"))).toBeNull();
     expect(await readFileHead(NodePath.join(a, "folder"))).toBeNull();
     expect(await readFileHead(NodePath.join(a, "gone.txt"))).toBeNull();
+    // A link travels as a link, not as the file it points to: there is no content to flag.
+    const checked = await checkSnapshotContent({
+      root: a,
+      untracked: ["link.txt"],
+      pastLimit: "leave-out",
+    });
+    expect(checked.leftOut).toEqual([]);
+  });
+
+  it("finds a token in a binary file and in a UTF-16 one (P2-04)", async () => {
+    const { a } = twoMachines();
+    const token = fakeToken();
+    write(a, "image.bin", Buffer.concat([Buffer.from([0, 1, 2, 0]), Buffer.from(token)]));
+    write(a, "notes-le.txt", Buffer.from(`\ufefftoken=${token}\r\n`, "utf16le"));
+    write(a, "notes-be.txt", Buffer.from(`\ufefftoken=${token}\r\n`, "utf16le").swap16());
+    write(a, "notes-nobom.txt", Buffer.from(`token=${token}\r\n`, "utf16le"));
+    write(a, "plain.bin", Buffer.from([0, 1, 2, 3, 0, 255, 254]));
+    const checked = await checkSnapshotContent({
+      root: a,
+      untracked: ["image.bin", "notes-be.txt", "notes-le.txt", "notes-nobom.txt", "plain.bin"],
+      pastLimit: "leave-out",
+    });
+    expect(checked.leftOut).toEqual(
+      ["image.bin", "notes-be.txt", "notes-le.txt", "notes-nobom.txt"].map((path) => ({
+        path,
+        reason: "content",
+        kind: "GitHub token",
+      })),
+    );
+  });
+
+  it("reports a file it cannot read as not checked, never as fine (P2-04)", async () => {
+    const { a } = twoMachines();
+    write(a, "locked.txt", `token=${fakeToken()}\n`);
+    NodeFS.chmodSync(NodePath.join(a, "locked.txt"), 0o000);
+    try {
+      // Where the mode does not keep this process out (an administrator, a file system
+      // without modes), the case does not exist.
+      if (canRead(NodePath.join(a, "locked.txt"))) return;
+      expect(await readFileHead(NodePath.join(a, "locked.txt"))).toBe("unreadable");
+      const dialog = await checkSnapshotContent({
+        root: a,
+        untracked: ["locked.txt"],
+        pastLimit: "leave-out",
+      });
+      expect(dialog.leftOut).toEqual([{ path: "locked.txt", reason: "not-checked", kind: null }]);
+      const standby = await checkSnapshotContent({
+        root: a,
+        untracked: ["locked.txt"],
+        pastLimit: "name-only",
+      });
+      expect(standby).toEqual({ leftOut: [], notCheckedCount: 1 });
+    } finally {
+      NodeFS.chmodSync(NodePath.join(a, "locked.txt"), 0o600);
+    }
   });
 
   it("reads at most the file cap: the rest is left out in a dialog, counted for a standby", async () => {
@@ -164,6 +224,41 @@ describe("a snapshot with the content check (1390 AC-14, AC-31)", () => {
     expect(carried).toContain("notes.txt");
     expect(carried).not.toContain(".env");
     expect(written.leftOutByContent.map((file) => file.path)).not.toContain("notes.txt");
+  });
+
+  it("checks what was staged, not what was read before it (P2-05)", async () => {
+    const a = dirtyRepository();
+    write(a, "later.txt", "nothing to see\n");
+    write(a, "grows.bin", "small\n");
+    write(a, "stays.txt", "fine\n");
+    const before = snapshot(a);
+    const written = await writeCheckpoint({
+      cwd: a,
+      threadId: "sync-test",
+      ref: "refs/specwithcode/extras/test/2",
+      contentCheck: {
+        pastLimit: "leave-out",
+        // A running thread rewrites two files between the check and the staging.
+        onChecked: async () => {
+          write(a, "later.txt", `token=${fakeToken()}\n`);
+          write(a, "grows.bin", Buffer.alloc(10 * 1024 * 1024 + 1, 97));
+        },
+      },
+    });
+    const carried = filesOf(a, written.commit);
+    expect(carried).toContain("stays.txt");
+    expect(carried).not.toContain("later.txt");
+    expect(written.leftOutByContent).toContainEqual({
+      path: "later.txt",
+      reason: "content",
+      kind: "GitHub token",
+    });
+    // The file that grew past the limit is named, so the caller keeps the extra.
+    expect(written.overLimit).toMatchObject({ path: "grows.bin", reason: "too-large" });
+    expect(written.overLimit!.bytes).toBe(10 * 1024 * 1024 + 1);
+    write(a, "later.txt", "nothing to see\n");
+    write(a, "grows.bin", "small\n");
+    expect(snapshot(a)).toEqual(before);
   });
 
   it("leaves a thread's checkpoint as it is today: no content check unless asked for", async () => {

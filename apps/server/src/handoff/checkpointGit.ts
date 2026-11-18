@@ -16,7 +16,11 @@ import {
   isSecretLikeProjectPath,
   isUntrackedSecretConfigPath,
 } from "../workspace/WorkspaceSensitivePaths.ts";
-import { checkSnapshotContent, type SnapshotContentFinding } from "./snapshotSecrets.ts";
+import {
+  checkSnapshotContent,
+  checkStagedContent,
+  type SnapshotContentFinding,
+} from "./snapshotSecrets.ts";
 
 const SKIPPED_LIST_MAX = 200;
 const REQUIRED_SECRET_PATHS_MAX = 200;
@@ -117,6 +121,8 @@ export async function writeCheckpoint(input: {
   readonly contentCheck?: {
     readonly pastLimit: "leave-out" | "name-only";
     readonly sendAnyway?: ReadonlyArray<string>;
+    /** Runs between the check of the files and their staging. Tests rewrite a file here. */
+    readonly onChecked?: () => Promise<void>;
   };
 }): Promise<CheckpointCommit> {
   const root = await repositoryRoot(input.cwd);
@@ -216,13 +222,8 @@ export async function writeCheckpoint(input: {
       leftOutByContent = checked.leftOut;
       const out = new Set(leftOutByContent.map((file) => file.path));
       included = included.filter((path) => !out.has(path));
+      await input.contentCheck.onChecked?.();
     }
-    const local = {
-      excludedSecretPaths,
-      leftOutByContent,
-      includedFileCount: included.length,
-      overLimit,
-    };
 
     if (included.length > 0) {
       const pathspec = NodePath.join(scratch, "pathspec");
@@ -231,7 +232,43 @@ export async function writeCheckpoint(input: {
         env,
       });
     }
-    const ownTree = (await runGit(root, ["write-tree"], { env })).stdout.trim();
+    let ownTree = (await runGit(root, ["write-tree"], { env })).stdout.trim();
+    if (input.contentCheck !== undefined) {
+      // What is checked is what travels: the staged blobs are judged, not the files
+      // read a moment earlier, which a running thread may have rewritten since.
+      const staged = await checkStagedContent({
+        root,
+        baseCommit,
+        tree: ownTree,
+        untracked: untrackedPaths,
+        allow: new Set(input.contentCheck.sendAnyway ?? []),
+        maxFileBytes: HANDOFF_MAX_SNAPSHOT_FILE_BYTES,
+      });
+      if (staged.tooLarge !== null) skip({ ...staged.tooLarge, reason: "too-large" });
+      if (staged.flagged.length > 0) {
+        const flagged = staged.flagged.map((file) => file.path);
+        for (let index = 0; index < flagged.length; index += 100) {
+          await runGit(
+            root,
+            ["update-index", "--force-remove", "--", ...flagged.slice(index, index + 100)],
+            { env },
+          );
+        }
+        const out = new Set(flagged);
+        leftOutByContent = [
+          ...leftOutByContent.filter((file) => !out.has(file.path)),
+          ...staged.flagged,
+        ];
+        included = included.filter((path) => !out.has(path));
+        ownTree = (await runGit(root, ["write-tree"], { env })).stdout.trim();
+      }
+    }
+    const local = {
+      excludedSecretPaths,
+      leftOutByContent,
+      includedFileCount: included.length,
+      overLimit: overLimit as HandoffSkippedFile | null,
+    };
     const requiredSecretPaths = [...secretPaths]
       .filter((path) => path.length <= 1024)
       .toSorted()
