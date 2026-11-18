@@ -349,3 +349,27 @@ describe("the layer wires the switch from settings", () => {
     });
   });
 });
+
+describe("status for first-run's browser row", () => {
+  it("says whether a profile paired with the current code, connected or not", () => {
+    const { extension, token } = setup();
+    expect(extension.status().paired).toBe(false);
+    connect(extension, { origin: BROWSER_EXTENSION_STORE_ORIGIN, token, label: "Work" });
+    expect(extension.status().paired).toBe(true);
+    // A new code forgets the pairing.
+    extension.pairing(true);
+    expect(extension.status().paired).toBe(false);
+  });
+
+  it("sends chromeInstalled only where it was checked", () => {
+    const stateDir = tempStateDir();
+    const missing = makeBrowserExtension({ stateDir, port: 8319, chromeInstalled: () => false });
+    expect(missing.status().chromeInstalled).toBe(false);
+    const unchecked = makeBrowserExtension({
+      stateDir: tempStateDir(),
+      port: 8319,
+      chromeInstalled: () => undefined,
+    });
+    expect("chromeInstalled" in unchecked.status()).toBe(false);
+  });
+});

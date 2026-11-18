@@ -1,4 +1,5 @@
 import { ExternalBrowser, OpenInExternalBrowserInput } from "@specweave-studio/contracts";
+import * as Electron from "electron";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -28,5 +29,22 @@ export const openInExternalBrowser = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.externalBrowser.open")(function* (input) {
     const externalBrowsers = yield* ExternalBrowsers.ExternalBrowsers;
     return yield* externalBrowsers.open(input);
+  }),
+});
+
+/**
+ * Clears the clipboard when it still holds exactly the given text: a pairing
+ * code copied for Chrome is cleared after use, never something copied since.
+ */
+export const clearClipboardIfText = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.CLEAR_CLIPBOARD_IF_TEXT_CHANNEL,
+  payload: Schema.String.check(Schema.isMaxLength(4096)),
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.externalBrowser.clearClipboardIfText")(function* (text) {
+    return yield* Effect.sync(() => {
+      if (text === "" || Electron.clipboard.readText() !== text) return false;
+      Electron.clipboard.clear();
+      return true;
+    });
   }),
 });

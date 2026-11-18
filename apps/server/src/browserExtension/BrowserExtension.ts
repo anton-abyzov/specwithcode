@@ -37,6 +37,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import { EXTENSION_VERSION } from "./extensionVersion.generated.ts";
+import { chromeInstalled } from "../browserBridge/chromeBridgeFacts.ts";
 import { BrowserRelayHub, type RelaySocket } from "./relayHub.ts";
 import {
   BROWSER_EXTENSION_DIR,
@@ -101,6 +102,11 @@ export function relayRequestAllowed(input: {
   return true;
 }
 
+/** `chromeInstalled` only where it was checked: an absent key counts as installed. */
+function installedKey(installed: boolean | undefined) {
+  return installed === undefined ? {} : { chromeInstalled: installed };
+}
+
 interface PairingStore {
   readonly read: () => string;
   readonly reset: () => string;
@@ -108,6 +114,8 @@ interface PairingStore {
   readonly markConnected: () => void;
   /** Forgets that record, so Claude threads keep Claude in Chrome until a profile pairs again. */
   readonly markUnpaired: () => void;
+  /** A profile presented the current code and has not unpaired since. */
+  readonly paired: () => boolean;
 }
 
 /** The token lives in the state folder, readable only by this user. */
@@ -151,6 +159,13 @@ function filePairingStore(dir: string): PairingStore {
         write({ token: state.token, connectedAt: new Date().toISOString() });
       } catch {
         // The relay keeps working; Claude threads just keep Claude in Chrome.
+      }
+    },
+    paired: () => {
+      try {
+        return load().connectedAt !== null;
+      } catch {
+        return false;
       }
     },
     markUnpaired: () => {
@@ -265,7 +280,12 @@ export function makeBrowserExtension(options: {
   readonly machineName?: string;
   /** The developer switch, read live; when given, hand-loaded ids are refused at hello while it is off. */
   readonly allowHandLoaded?: () => boolean;
+  /** Whether Google Chrome is installed; undefined where it is not checked. Defaults to a look on macOS. */
+  readonly chromeInstalled?: () => boolean | undefined;
 }): BrowserExtensionShape {
+  const readChromeInstalled =
+    options.chromeInstalled ??
+    (() => (process.platform === "darwin" ? chromeInstalled(NodeOS.homedir()) : undefined));
   const dir = NodePath.join(options.stateDir, BROWSER_EXTENSION_DIR);
   const store = filePairingStore(dir);
   // A forgotten machine loses access like a declined one: let go of its tabs.
@@ -361,6 +381,8 @@ export function makeBrowserExtension(options: {
         state: record.state,
         requestedAt: record.requestedAt,
       })),
+      paired: store.paired(),
+      ...installedKey(readChromeInstalled()),
     }),
     check,
     peerState: (id) => peerStore.get(id)?.state,

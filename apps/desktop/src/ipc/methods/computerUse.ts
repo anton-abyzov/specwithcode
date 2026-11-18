@@ -4,8 +4,13 @@ import {
   ComputerUsePermission,
   ComputerUsePermissions,
 } from "@specweave-studio/contracts";
+import * as Electron from "electron";
+import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
@@ -24,6 +29,8 @@ import {
   REQUEST_COMPUTER_USE_PERMISSION_CHANNEL,
   RESET_COMPUTER_USE_PERMISSION_CHANNEL,
   RUN_COMPUTER_USE_ACTION_CHANNEL,
+  SAVE_FIRST_RUN_RESUME_CHANNEL,
+  TAKE_FIRST_RUN_RESUME_CHANNEL,
 } from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
@@ -42,6 +49,68 @@ const ComputerUseResetIpcResult = Schema.Union([
   Schema.Struct({ ok: Schema.Literal(true), permissions: ComputerUsePermissions }),
   Schema.Struct({ ok: Schema.Literal(false), error: Schema.String }),
 ]);
+
+/** Where first-run setup reopens after Quit & Reopen: kept in the app's user-data folder. */
+export const FIRST_RUN_RESUME_FILE = "first-run-resume.json";
+/** An older marker is not a reopen any more, and setup starts as usual. */
+export const FIRST_RUN_RESUME_MAX_AGE_MS = 10 * 60_000;
+
+export const FirstRunResumeMarker = Schema.Struct({
+  step: Schema.String.check(Schema.isMaxLength(32)),
+  environmentId: Schema.String.check(Schema.isMaxLength(256)),
+  setupIds: Schema.Array(Schema.String.check(Schema.isMaxLength(256))).check(
+    Schema.isMaxLength(64),
+  ),
+  at: Schema.Number,
+});
+export type FirstRunResumeMarker = typeof FirstRunResumeMarker.Type;
+
+/** Writes the marker whole (a temporary file renamed over it), so a reader never sees half. */
+export const writeFirstRunResume = Effect.fn("desktop.firstRunResume.write")(function* (
+  dir: string,
+  marker: FirstRunResumeMarker,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = path.join(dir, FIRST_RUN_RESUME_FILE);
+  const temporary = `${file}.${process.pid}.tmp`;
+  yield* fs.makeDirectory(dir, { recursive: true });
+  yield* fs.writeFileString(temporary, JSON.stringify(marker), { mode: 0o600 });
+  yield* fs.rename(temporary, file);
+});
+
+/**
+ * Claims the marker by renaming the file away before reading it, so of any
+ * number of callers, in this process or the next, exactly one gets it. A
+ * marker older than ten minutes, from the future, or unreadable is deleted
+ * and returns nothing.
+ */
+export const takeFirstRunResume = Effect.fn("desktop.firstRunResume.take")(function* (
+  dir: string,
+  now: number,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = path.join(dir, FIRST_RUN_RESUME_FILE);
+  const claimed = `${file}.${process.pid}-${yield* Random.nextIntBetween(0, 2 ** 31)}.taken`;
+  const renamed = yield* fs.rename(file, claimed).pipe(
+    Effect.as(true),
+    Effect.catch(() => Effect.succeed(false)),
+  );
+  if (!renamed) return null;
+  const marker = yield* fs.readFileString(claimed).pipe(
+    Effect.flatMap((text) =>
+      Effect.try(() => JSON.parse(text) as unknown).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(FirstRunResumeMarker)),
+      ),
+    ),
+    Effect.catch(() => Effect.succeed(null)),
+  );
+  yield* fs.remove(claimed, { force: true }).pipe(Effect.ignore);
+  if (marker === null) return null;
+  const age = now - marker.at;
+  return age >= 0 && age <= FIRST_RUN_RESUME_MAX_AGE_MS ? marker : null;
+});
 
 /**
  * Runs agents' computer-use actions in the app's main process: macOS grants
@@ -128,6 +197,35 @@ export const installComputerUse = Effect.fn("desktop.ipc.installComputerUse")(fu
               message: error.reason,
             }).pipe(Effect.as({ ok: false as const, error: error.reason || "The reset failed." })),
           ),
+        ),
+    }),
+  );
+  // First run's Quit & Reopen: the marker is written, and waited for, before the relaunch.
+  const services = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
+  const userData = () => Electron.app.getPath("userData");
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: SAVE_FIRST_RUN_RESUME_CHANNEL,
+      payload: FirstRunResumeMarker,
+      result: Schema.Void,
+      handler: (marker) =>
+        writeFirstRunResume(userData(), marker).pipe(
+          Effect.provide(services),
+          Effect.catch((error) =>
+            Effect.logWarning("First-run resume marker not written", { error: String(error) }),
+          ),
+        ),
+    }),
+  );
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: TAKE_FIRST_RUN_RESUME_CHANNEL,
+      payload: Schema.Undefined,
+      result: Schema.NullOr(FirstRunResumeMarker),
+      handler: () =>
+        Clock.currentTimeMillis.pipe(
+          Effect.flatMap((now) => takeFirstRunResume(userData(), now)),
+          Effect.provide(services),
         ),
     }),
   );
