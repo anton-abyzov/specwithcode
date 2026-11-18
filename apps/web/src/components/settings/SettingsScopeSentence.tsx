@@ -94,6 +94,8 @@ export function SettingsScopeSentence() {
   // A page set up machine by machine names its machine even when there is one.
   if (pageScope === "machine" && environments.length < 2 && wording !== "set-up-machine")
     return null;
+  // With no machine at all there is nothing to name.
+  if (wording === "set-up-machine" && environments.length === 0) return null;
   const props: SettingsScopeMenuProps = {
     value: scope.search,
     singleEnvironment: scope.singleEnvironment,

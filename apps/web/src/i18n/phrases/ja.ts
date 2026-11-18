@@ -5620,4 +5620,8 @@ export const ja: PhraseCatalog = {
   "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
     "エージェントは SpecWithCode 拡張機能を通じて、サインイン済みの Chrome を使います。専用の設定ページがあります。",
   "Open Chrome settings": "Chrome の設定を開く",
+  "Manage hosts": "ホストを管理",
+  "Manage profiles": "プロファイルを管理",
+  "Profiles: {count}": "プロファイル: {count}",
+  "Device hosts: {count}": "デバイスホスト: {count}",
 };

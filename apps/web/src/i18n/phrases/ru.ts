@@ -5615,4 +5615,8 @@ export const ru: PhraseCatalog = {
   "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
     "Агенты работают в вашем Chrome с выполненным входом через расширение SpecWithCode. У него своя страница настроек.",
   "Open Chrome settings": "Открыть настройки Chrome",
+  "Manage hosts": "Управлять хостами",
+  "Manage profiles": "Управлять профилями",
+  "Profiles: {count}": "Профили: {count}",
+  "Device hosts: {count}": "Хосты устройств: {count}",
 };

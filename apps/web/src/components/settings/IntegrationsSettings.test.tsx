@@ -141,6 +141,33 @@ describe("Integrations tabs", () => {
   });
 });
 
+describe("Browser profiles", () => {
+  const toggle = () =>
+    renderer!.root.find(
+      (node) => node.type === "button" && node.props["aria-controls"] === "browser-profiles-list",
+    );
+  const names = () =>
+    renderer!.root
+      .findAll((node) => node.type === "button")
+      .map((node) => node.props["aria-label"]);
+
+  it("opens the profile list on request and keeps its row for links", async () => {
+    await openTab("preview");
+    expect(toggle().props["aria-expanded"]).toBe(false);
+    const count = renderer!.root.find(
+      (node) => node.props["data-testid"] === "browser-profiles-count",
+    );
+    expect(count.props.id).toBe("browser-profiles-list");
+    expect(names().some((name) => String(name).endsWith("options"))).toBe(false);
+    // The row a search result or an old link names is there before the list opens.
+    expect(renderer!.root.findAll((node) => node.props.id === "browser-profiles")).not.toEqual([]);
+
+    await act(() => toggle().props.onClick());
+    expect(toggle().props["aria-expanded"]).toBe(true);
+    expect(names().some((name) => String(name).endsWith("options"))).toBe(true);
+  });
+});
+
 const deviceState = (overrides: Partial<DeviceServiceState> = {}): DeviceServiceState => ({
   hosts: [
     {
