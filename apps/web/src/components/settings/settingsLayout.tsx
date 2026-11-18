@@ -758,10 +758,13 @@ export function SettingsPageContainer({
   children,
   className,
   width = "readable",
+  header,
 }: {
   children: ReactNode;
   className?: string;
   width?: WorkspacePageWidth;
+  /** Shown above the scope line, such as a page's tabs. */
+  header?: ReactNode;
 }) {
   const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
@@ -790,7 +793,15 @@ export function SettingsPageContainer({
         data-settings-page-scroll
       >
         <WorkspacePageContainer width={width} className={cn("gap-8", className)}>
-          <SettingsScopeSentence />
+          {header ? (
+            // Tabs and the scope line read as one block above the rows.
+            <div className="flex min-w-0 flex-col gap-3">
+              {header}
+              <SettingsScopeSentence />
+            </div>
+          ) : (
+            <SettingsScopeSentence />
+          )}
           {children}
         </WorkspacePageContainer>
       </div>
