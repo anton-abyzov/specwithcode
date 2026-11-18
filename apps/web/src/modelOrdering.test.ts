@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId } from "@specweave-studio/contracts";
+import { strongestVariantsFirst } from "@specweave-studio/shared/modelVariants";
 
 import {
   providerModelKey,
@@ -88,5 +89,30 @@ describe("newer releases of a family", () => {
       },
     ).map((m) => m.slug);
     expect(picker.slice(0, 2)).toEqual(["claude-fable-5-2", "claude-fable-5-1"]);
+  });
+});
+
+describe("strongest variant first", () => {
+  // The server ranks Muse's host order (Wonder, then Full) before any picker reads it.
+  const ranked = strongestVariantsFirst([
+    { slug: "muse-wonder-1.0", isCustom: false, isDefault: true },
+    { slug: "muse-wonder-full-1.0", isCustom: false },
+    { slug: "muse-spark-1.3", isCustom: false },
+  ]);
+
+  it("shows Wonder Full first when the person has not arranged the list", () => {
+    expect(sortModelsForProviderInstance(ranked).map((model) => model.slug)).toEqual([
+      "muse-wonder-full-1.0",
+      "muse-wonder-1.0",
+      "muse-spark-1.3",
+    ]);
+  });
+
+  it("keeps the person's own arrow order", () => {
+    expect(
+      sortModelsForProviderInstance(ranked, {
+        modelOrder: ["muse-wonder-1.0", "muse-wonder-full-1.0", "muse-spark-1.3"],
+      }).map((model) => model.slug),
+    ).toEqual(["muse-wonder-1.0", "muse-wonder-full-1.0", "muse-spark-1.3"]);
   });
 });

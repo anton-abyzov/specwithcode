@@ -2132,6 +2132,65 @@ it.layer(
       ]);
     });
 
+    it("lists Muse Wonder Full first and recommends it across refreshes", () => {
+      // Muse Code's own catalog order: Wonder first and default, Full below it.
+      const hostOrder = {
+        instanceId: ProviderInstanceId.make("muse"),
+        driver: ProviderDriverKind.make("muse"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-11-18T07:40:57.000Z",
+        version: "1.4.23",
+        models: [
+          {
+            slug: "muse-wonder-1.0",
+            name: "Muse Wonder 1.0",
+            isCustom: false,
+            isDefault: true,
+            billing: "subscription",
+            capabilities: null,
+          },
+          {
+            slug: "muse-wonder-full-1.0",
+            name: "Muse Wonder Full 1.0",
+            isCustom: false,
+            billing: "subscription",
+            capabilities: null,
+          },
+          {
+            slug: "muse-spark-1.3",
+            name: "Muse Spark 1.3",
+            isCustom: false,
+            billing: "subscription",
+            capabilities: null,
+          },
+        ],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+
+      const first = ProviderRegistry.withStrongestVariantsFirst(hostOrder);
+      const ranked = (provider: ServerProvider) =>
+        provider.models.map((model) => [model.slug, model.isDefault === true]);
+      assert.deepStrictEqual(ranked(first), [
+        ["muse-wonder-full-1.0", true],
+        ["muse-wonder-1.0", false],
+        ["muse-spark-1.3", false],
+      ]);
+      // The next check reports the host order again; merged and ranked, it reads the same.
+      const next = ProviderRegistry.withStrongestVariantsFirst(
+        ProviderRegistry.mergeProviderSnapshot(first, {
+          ...hostOrder,
+          checkedAt: "2026-11-18T07:45:57.000Z",
+        }),
+      );
+      assert.deepStrictEqual(ranked(next), ranked(first));
+      // An unchanged snapshot stays the same object, so no change is published.
+      assert.strictEqual(ProviderRegistry.withStrongestVariantsFirst(next), next);
+    });
+
     it.effect("shares one in-flight pass between concurrent untargeted refreshes", () =>
       Effect.gen(function* () {
         const driver = ProviderDriverKind.make("codex");

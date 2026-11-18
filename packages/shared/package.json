@@ -304,6 +304,10 @@
       "types": "./src/modelTiers.ts",
       "import": "./src/modelTiers.ts"
     },
+    "./modelVariants": {
+      "types": "./src/modelVariants.ts",
+      "import": "./src/modelVariants.ts"
+    },
     "./adversarialReview": {
       "types": "./src/adversarialReview.ts",
       "import": "./src/adversarialReview.ts"

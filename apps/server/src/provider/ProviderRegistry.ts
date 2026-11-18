@@ -57,6 +57,7 @@ import * as Semaphore from "effect/Semaphore";
 import { AgentSearch } from "./agentSearch.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
+import { strongestVariantsFirst } from "@specweave-studio/shared/modelVariants";
 import * as ServerConfig from "../config.ts";
 import { refreshServerPath } from "../serverPath.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
@@ -349,6 +350,16 @@ const carrySavedAntigravityAccount = (
   return { auth: previousProvider.auth, status };
 };
 
+/**
+ * `provider` with the strongest variant of each model line listed first and
+ * recommended, such as Muse Wonder Full above Wonder. A person's own model
+ * order and saved picks are applied later by the client, so they still win.
+ */
+export const withStrongestVariantsFirst = (provider: ServerProvider): ServerProvider => {
+  const models = strongestVariantsFirst(provider.models);
+  return models === provider.models ? provider : { ...provider, models };
+};
+
 export const mergeProviderSnapshot = (
   previousProvider: ServerProvider | undefined,
   nextProvider: ServerProvider,
@@ -539,15 +550,19 @@ export const layer = Layer.effect(
       ),
     );
     const initialManifest = yield* manifestService.current;
+    // Every snapshot, cached or fresh, passes here: the strongest variant of
+    // a line is listed first and recommended (Muse Wonder Full over Wonder).
     const classifyCompatibility = (
       provider: ServerProvider,
       manifest: ModelManifest.ModelManifestData,
-    ) =>
-      applyProviderCompatibility(
+    ) => {
+      const classified = applyProviderCompatibility(
         provider,
         manifest.compatibility,
         ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
       );
+      return withStrongestVariantsFirst(classified);
+    };
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
       cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
