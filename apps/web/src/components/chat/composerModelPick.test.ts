@@ -5,7 +5,7 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { composerPickSelection } from "./composerModelPick";
+import { composerDraftStartOptions, composerPickSelection } from "./composerModelPick";
 
 const levels = (ids: ReadonlyArray<string>, isDefault: string) => ({
   optionDescriptors: [
@@ -74,5 +74,41 @@ describe("composerPickSelection", () => {
       instanceId: muse.instanceId,
       model: "muse-spark-1.3",
     });
+  });
+});
+
+describe("composerDraftStartOptions", () => {
+  const start = (
+    model: string,
+    options?: ReadonlyArray<{ id: string; value: string }>,
+    isDraft = true,
+  ) =>
+    composerDraftStartOptions({
+      isDraft,
+      instanceId: muse.instanceId,
+      model,
+      options,
+      providers: [muse],
+    });
+
+  it("starts a new draft on Wonder Full at Medium, not the provider's Max", () => {
+    expect(start("muse-wonder-full-1.0")).toEqual([{ id: "reasoningEffort", value: "medium" }]);
+  });
+
+  it("takes the nearest level a model offers", () => {
+    expect(start("muse-wonder-1.0")).toEqual([{ id: "reasoningEffort", value: "high" }]);
+  });
+
+  it("keeps a level already picked on the draft", () => {
+    const picked = [{ id: "reasoningEffort", value: "max" }];
+    expect(start("muse-wonder-full-1.0", picked)).toBe(picked);
+  });
+
+  it("leaves a thread already on the server at its provider's default", () => {
+    expect(start("muse-wonder-full-1.0", undefined, false)).toBeUndefined();
+  });
+
+  it("adds nothing for a model without an effort setting", () => {
+    expect(start("muse-spark-1.3")).toBeUndefined();
   });
 });

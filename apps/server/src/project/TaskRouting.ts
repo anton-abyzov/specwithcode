@@ -18,7 +18,12 @@ import {
   type RoutingDecision,
 } from "@specweave-studio/shared/decisionModel";
 import { classifyLane, resolveLaneRouting } from "@specweave-studio/shared/modelLanes";
-import { isHeldSource, launchTrackLanes } from "@specweave-studio/shared/modelTracks";
+import {
+  isHeldSource,
+  launchTrackLanes,
+  trackStartEffort,
+  withTrackEffort,
+} from "@specweave-studio/shared/modelTracks";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
   classifyTask,
@@ -292,6 +297,26 @@ export function routedSelection(
   providers: ReadonlyArray<ServerProvider>,
 ): ModelSelection {
   return decision.moved ? withDefaultModelOptions(resolved, providers, "worker") : resolved;
+}
+
+/**
+ * A new worker's model with an effort level: its own, else the track's start
+ * level (Medium, or Extra High for Muse Wonder Full in Review), matched to the
+ * nearest level the model offers. Without one the provider's own default ran,
+ * which is Max on Muse. Only threads being created pass through here.
+ */
+export function withStartEffort<T extends { readonly modelSelection: ModelSelection }>(
+  target: T,
+  providers: ReadonlyArray<ServerProvider>,
+  review: boolean,
+): T {
+  const { model } = target.modelSelection;
+  const modelSelection = withTrackEffort(
+    target.modelSelection,
+    providers,
+    trackStartEffort(review ? "review" : "complex", model),
+  );
+  return modelSelection === target.modelSelection ? target : { ...target, modelSelection };
 }
 
 /** The task prompt with the routing plan appended when its input needs steps outside the model. */

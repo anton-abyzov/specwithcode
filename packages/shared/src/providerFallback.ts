@@ -20,6 +20,7 @@ import {
   type ServerProvider,
   type ThreadId,
 } from "@specweave-studio/contracts";
+import { modelSelectionEffortValue, resolveEffort, withEffortSelection } from "./effortLevel.ts";
 import { describeModel, isSameModel, sameModelOn } from "./modelIdentity.ts";
 import {
   chainNamedByPerson,
@@ -742,11 +743,39 @@ type ResolveProviderFallbackInput = Parameters<typeof resolveProviderFallbackPas
 export function resolveProviderFallback(
   input: ResolveProviderFallbackInput,
 ): ModelSelection | null {
-  return (
+  const target =
     resolveProviderFallbackPass({ ...input, verifiedOnly: true }) ??
-    resolveProviderFallbackPass({ ...input, verifiedOnly: false })
-  );
+    resolveProviderFallbackPass({ ...input, verifiedOnly: false });
+  return target === null ? null : withMovedEffort(target, input);
 }
+
+/**
+ * A fallback onto another model runs at the thread's own level, else Medium,
+ * matched to the nearest level that model offers. With no level it ran at the
+ * provider's default, which is Max on Muse. A move that keeps the model, or a
+ * target that names its own level, is left as it is.
+ */
+function withMovedEffort(
+  target: ModelSelection,
+  input: Pick<ResolveProviderFallbackInput, "providers" | "currentModel" | "currentOptions">,
+): ModelSelection {
+  if (modelSelectionEffortValue(target) !== undefined) return target;
+  if (input.currentModel !== undefined && target.model === input.currentModel) return target;
+  const descriptors = input.providers
+    .find((provider) => provider.instanceId === target.instanceId)
+    ?.models.find((model) => model.slug === target.model)?.capabilities?.optionDescriptors;
+  const carried =
+    input.currentOptions === undefined
+      ? undefined
+      : modelSelectionEffortValue({ options: input.currentOptions });
+  const kept = carried === undefined ? null : resolveEffort(carried, descriptors);
+  const resolved = kept?.ok === true ? kept : resolveEffort(START_EFFORT, descriptors);
+  if (!resolved.ok) return target;
+  return { ...target, options: withEffortSelection(target.options, resolved) };
+}
+
+/** The level a model nobody chose a level for starts at (`TRACK_DEFAULT_EFFORT`). */
+const START_EFFORT = "medium";
 
 function resolveProviderFallbackPass(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
