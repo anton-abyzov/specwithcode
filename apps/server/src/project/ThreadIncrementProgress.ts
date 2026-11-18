@@ -235,6 +235,25 @@ export async function isSpecweaveProject(workspaceRoot: string): Promise<boolean
 }
 
 /**
+ * Whether a `.git` (a folder, or a worktree's file) sits in `folder` or any
+ * folder above it: files only, no Git process. An unreadable entry counts as
+ * one, so the app never offers to start a second repository inside a real one.
+ */
+export async function insideGitWorkTree(folder: string): Promise<boolean> {
+  let dir = await NodeFSP.realpath(folder).catch(() => NodePath.resolve(folder));
+  for (;;) {
+    const found = await NodeFSP.lstat(NodePath.join(dir, ".git")).then(
+      () => true,
+      (error: NodeJS.ErrnoException) => error.code !== "ENOENT" && error.code !== "ENOTDIR",
+    );
+    if (found) return true;
+    const parent = NodePath.dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
+  }
+}
+
+/**
  * Where `specweave small-fix` records a SpecWithCode thread's declared small
  * fix: SpecWeave's work-session marker keyed `studio-<thread>`, sanitized the
  * way its `workSessionFile` does.

@@ -216,7 +216,7 @@ const accessDependencies = [
 
 const RequestAccessTool = Tool.make("request_access", {
   description:
-    "Ask the user to let you use Mac apps (with the computer_* tools) or simulators and emulators (with the device_* tools), through one access card in this thread, and wait for Allow or Deny. Name every app and device you need in one call and give one sentence on why; the card shows each with its icon. The user picks whether the Allow lasts for this thread or always on this machine. Anything already allowed is not asked again. You do not need this before every app: opening or working in an app you were not allowed yet shows the same card by itself, but asking up front with your reason is clearer.",
+    "Ask the user to let you use Mac apps (with the computer_* tools) or simulators and emulators (with the device_* tools), through one access card in this thread, and wait for Allow or Deny. Name every app and device you need in one call and give one sentence on why; the card shows each with its icon. The user picks whether the Allow lasts for this thread or always on this machine. Anything already allowed is not asked again. You do not need this before every app: opening or working in an app you were not allowed yet shows the same card by itself, but asking up front with your reason is clearer. On a Mac, when reading another app's data (Chrome or Safari profiles, Mail, Messages) fails with 'Operation not permitted', ask with permission 'full-disk-access' alone: the card explains the risk, opens System Settings for the user and returns allowed once it is on. Never tell the user to open System Settings yourself.",
   parameters: OrchestratorMcpRequestAccessInput,
   success: OrchestratorMcpRequestAccessResult,
   failure: OrchestratorMcpFailure,

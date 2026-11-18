@@ -65,7 +65,9 @@ describe("SpecWithCode orchestration provider instructions", () => {
     // The needs sentence (about 45 tokens) sends simulator and Xcode work to a Mac
     // and points Linux and Windows callers at the build steps in `needs`.
     // The title line (about 35 tokens) keeps a thread's name about what it owns.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 3_050);
+    // The permission clause (about 15 tokens) turns a macOS "Operation not
+    // permitted" into the Full Disk Access card instead of a text blocker.
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 3_095);
   });
 
   it("asks for thread titles that name the lasting goal and follow a scope change", () => {

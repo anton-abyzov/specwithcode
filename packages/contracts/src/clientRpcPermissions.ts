@@ -92,6 +92,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.machineHandoffCopySealedSecrets]: AuthOrchestrationOperateScope,
   [WS_METHODS.machineHandoffSentSecrets]: AuthFilesystemReadScope,
   [WS_METHODS.machineHandoffReadiness]: AuthFilesystemReadScope,
+  [WS_METHODS.machineHandoffPrivacyAccess]: AuthFilesystemReadScope,
   // Handoff mode: settings, per-thread checkpoints (a Git ref, maybe pushed) and moving work.
   [WS_METHODS.handoffModeSnapshot]: AuthOrchestrationReadScope,
   [WS_METHODS.handoffModeUpdateConfig]: AuthSettingsWriteScope,
@@ -278,6 +279,7 @@ function folderCopyScopes(method: string, input: unknown): readonly AuthEnvironm
     case WS_METHODS.machineHandoffCopyStatus:
     case WS_METHODS.machineHandoffSentSecrets:
     case WS_METHODS.machineHandoffReadiness:
+    case WS_METHODS.machineHandoffPrivacyAccess:
     case PROVISION_RPC_METHODS.provisionPreview:
       return read;
     // Sends secret files to another machine: as strong as granting it access. An empty

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import * as Electron from "electron";
-import { MacPermissionHelper, macAppBundlePath } from "./MacPermissionHelper.ts";
+import { MacPermissionHelper, helperHtml, macAppBundlePath } from "./MacPermissionHelper.ts";
 import type { SettingsWindow } from "./MacSettingsWindow.ts";
 import { MAC_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
 
@@ -311,4 +311,22 @@ it("does not reopen a superseded helper when its initial probe completes", async
   await first;
   expect(windows).toHaveLength(1);
   expect(windows[0]!.destroyed).toBe(false);
+});
+
+describe("helperHtml", () => {
+  it("offers the named item to drag on panes that take a drop", () => {
+    const html = helperHtml("full-disk-access", "data:image/png;base64,AA", "node");
+    expect(html).toContain("Drag node into the list above");
+    expect(html).toContain('id="app"');
+  });
+
+  it("shows an instruction instead of a drag row on Automation", () => {
+    const html = helperHtml("automation", "data:image/png;base64,AA");
+    expect(html).toContain("Turn on SpecWithCode in the list above");
+    expect(html).not.toContain('id="app"');
+  });
+
+  it("escapes the item name", () => {
+    expect(helperHtml("accessibility", "x", "<b>")).toContain("Drag &lt;b&gt; into");
+  });
 });

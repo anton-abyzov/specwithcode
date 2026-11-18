@@ -1,6 +1,7 @@
 import { Rpc } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import { EnvironmentAuthorizationError } from "./auth.ts";
+import { PrivacyAccess, PrivacyAccessInput } from "./privacyAccess.ts";
 import {
   MachineHandoffError,
   MachineHandoffPrepareInput,
@@ -60,6 +61,7 @@ export const MACHINE_HANDOFF_RPC_METHODS = {
   machineHandoffCopySealedSecrets: "machineHandoff.copySealedSecrets",
   machineHandoffSentSecrets: "machineHandoff.sentSecrets",
   machineHandoffReadiness: "machineHandoff.readiness",
+  machineHandoffPrivacyAccess: "machineHandoff.privacyAccess",
 } as const;
 const copyError = Schema.Union([FolderCopyError, EnvironmentAuthorizationError]);
 const M = MACHINE_HANDOFF_RPC_METHODS;
@@ -177,6 +179,11 @@ export const folderCopyRpcs = [
   Rpc.make(M.machineHandoffReadiness, {
     payload: MachineReadinessInput,
     success: MachineReadiness,
+    error: copyError,
+  }),
+  Rpc.make(M.machineHandoffPrivacyAccess, {
+    payload: PrivacyAccessInput,
+    success: PrivacyAccess,
     error: copyError,
   }),
 ] as const;

@@ -5,8 +5,17 @@ import { ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 /**
  * What an access request asks for. Apps and devices are asked for today;
  * folders and other machines share the card once their gates move onto it.
+ * A `permission` is a macOS privacy permission (Full Disk Access) that only
+ * the user can turn on, in System Settings: its card resolves when the
+ * service sees the grant, and the user can only decline it from the card.
  */
-export const AccessRequestSubjectKind = Schema.Literals(["app", "device", "machine", "folder"]);
+export const AccessRequestSubjectKind = Schema.Literals([
+  "app",
+  "device",
+  "machine",
+  "folder",
+  "permission",
+]);
 export type AccessRequestSubjectKind = typeof AccessRequestSubjectKind.Type;
 
 /** A small PNG of the subject's own icon (an app's), base64 encoded. */
@@ -72,6 +81,8 @@ const ACCESS_REQUEST_FAILURE_MESSAGES = {
   agent_stopped: "The agent that asked has stopped, so there is nothing to allow.",
   grant_failed: "Could not save the access.",
   record_failed: "Saved the access, but could not update the request.",
+  system_settings_only:
+    "Only System Settings can allow this. Turn it on there; the card closes by itself once it is on.",
 } as const;
 
 export const AccessRequestFailureReason = Schema.Literals(
@@ -93,6 +104,9 @@ export class AccessRequestError extends Schema.TaggedError<AccessRequestError>()
     return ACCESS_REQUEST_FAILURE_MESSAGES[this.reason];
   }
 }
+
+/** The grant key of the Full Disk Access permission subject. */
+export const FULL_DISK_ACCESS_SUBJECT_KEY = "permission:full-disk-access";
 
 /** Grant keys are case-insensitive names, so "Notes" and "notes" are one app. */
 export const accessGrantKey = (kind: AccessRequestSubjectKind, id: string): string =>

@@ -38,6 +38,10 @@ Agent computer access**: each shows its live status and an **Allow** button,
 which brings up the macOS prompt or opens the right Privacy & Security page
 with a SpecWithCode icon you can drag into the list.
 
+Reading other apps' data (Chrome profiles, Mail, Messages) is a different
+permission, Full Disk Access, and it is judged on the background service, not
+the app. See [Full Disk Access for agents](full-disk-access.md).
+
 When an agent needs a permission you have not allowed yet, the thread shows a
 card above the composer with the same **Allow** button. The agent's action
 waits up to two minutes and goes through by itself once you allow it. If it

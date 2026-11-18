@@ -32,6 +32,11 @@ export interface AccessRequestCardInput {
   readonly subjects: ReadonlyArray<AccessRequestSubject>;
   readonly timeoutMs?: number | undefined;
   readonly clientRequestId?: string | undefined;
+  /**
+   * For a permission only the OS grants (Full Disk Access): true once it is
+   * granted. Checked while the card waits; the card then closes as allowed.
+   */
+  readonly resolvedBySystem?: Effect.Effect<boolean> | undefined;
 }
 
 export interface AccessRequestCardResult {
@@ -56,6 +61,9 @@ export function accessRequestKey(
 /** A person answers the card, so a slower poll is plenty. */
 export const ACCESS_REQUEST_POLL_INTERVAL_MS = 500;
 
+/** A system-resolved card asks the OS every this many polls (2 s). */
+const SYSTEM_CHECK_EVERY_POLLS = 4;
+
 export interface AccessRequestCardDeps {
   readonly threadManagement: ThreadManagementService.ThreadManagementService["Service"];
   readonly threadId: ThreadId;
@@ -63,7 +71,7 @@ export interface AccessRequestCardDeps {
   readonly nodeId: NodeId;
   readonly turnItemId: TurnItemId;
   /** The stable command id for recording the card in this state. */
-  readonly commandId: (accessStatus: "pending" | "cancelled") => CommandId;
+  readonly commandId: (accessStatus: "pending" | "cancelled" | "allowed") => CommandId;
   /** How long to wait for an answer, already capped by the caller. */
   readonly timeoutMs: number;
 }
@@ -82,7 +90,7 @@ export const waitForAccessRequestCard = (
 ): Effect.Effect<AccessRequestCardResult, OrchestratorMcpFailure> =>
   Effect.gen(function* () {
     const { threadManagement, threadId, runId, nodeId, turnItemId } = deps;
-    const record = (accessStatus: "pending" | "cancelled") =>
+    const record = (accessStatus: "pending" | "cancelled" | "allowed") =>
       threadManagement
         .dispatch({
           type: "access_request.record",
@@ -95,6 +103,7 @@ export const waitForAccessRequestCard = (
           reason: input.reason,
           subjects: input.subjects,
           accessStatus,
+          ...(accessStatus === "allowed" ? { accessScope: "machine" as const } : {}),
         })
         .pipe(
           Effect.mapError((error) =>
@@ -120,6 +129,7 @@ export const waitForAccessRequestCard = (
       ),
     );
     const answered = yield* Effect.gen(function* () {
+      let polls = 0;
       while (true) {
         const projection = yield* readCard;
         const item = projection.turnItems.find((candidate) => candidate.id === turnItemId);
@@ -134,6 +144,25 @@ export const waitForAccessRequestCard = (
           yield* record("cancelled");
           return { status: "cancelled" } satisfies AccessRequestCardResult;
         }
+        if (input.resolvedBySystem !== undefined && polls % SYSTEM_CHECK_EVERY_POLLS === 0) {
+          if (yield* input.resolvedBySystem) {
+            yield* record("allowed");
+            // A card is answered once: a Not now that beat this record stands,
+            // so the agent hears what the card holds, not what the probe saw.
+            const stored = (yield* readCard).turnItems.find(
+              (candidate) => candidate.id === turnItemId,
+            );
+            if (
+              stored?.type === "access_request" &&
+              stored.accessStatus !== "pending" &&
+              stored.accessStatus !== "allowed"
+            ) {
+              return { status: stored.accessStatus } satisfies AccessRequestCardResult;
+            }
+            return { status: "allowed", scope: "machine" } satisfies AccessRequestCardResult;
+          }
+        }
+        polls += 1;
         yield* Effect.sleep(Duration.millis(ACCESS_REQUEST_POLL_INTERVAL_MS));
       }
     }).pipe(

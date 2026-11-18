@@ -47,6 +47,11 @@ const folderChoice = vi.hoisted(() => ({
   remember: vi.fn(),
   openPalette: vi.fn(),
 }));
+// The Full Disk Access row and first-run item have their own test.
+vi.mock("../access/FullDiskAccess", () => ({
+  FullDiskAccessRow: () => null,
+  FirstRunFullDiskAccess: () => null,
+}));
 vi.mock("./ProjectsFolderChoice", () => ({
   ProjectsFolderChoice: (props: NonNullable<typeof folderChoice.props>) => {
     folderChoice.props = props;

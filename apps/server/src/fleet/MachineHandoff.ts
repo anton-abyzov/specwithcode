@@ -127,6 +127,7 @@ import { decodeDestinationRecord, decodeSourceRecord } from "./machineHandoffRec
 import { leftBehindOf, markProjectMoved, projectRepositories } from "./repositorySync.ts";
 import { discoverCopyScopes, resolveCopyScope } from "./folderCopyScope.ts";
 import { checkMachineReadiness } from "./MachineReadiness.ts";
+import { checkPrivacyAccess } from "../access/privacyAccess.ts";
 import { newSourceRecord } from "./machineHandoffBundle.ts";
 import {
   type ContextThread,
@@ -1710,6 +1711,7 @@ export const layerFolderCopyRpcHandlers = WsFolderCopyRpcGroup.middleware(
         unlessUpdating(stageSealedSecrets(handoff, secretsPeer, input)),
       [WS_METHODS.machineHandoffSentSecrets]: handoff.sentSecrets,
       [WS_METHODS.machineHandoffReadiness]: handoff.readiness,
+      [WS_METHODS.machineHandoffPrivacyAccess]: () => Effect.promise(() => checkPrivacyAccess()),
     };
   }),
 );

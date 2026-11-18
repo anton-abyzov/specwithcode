@@ -324,6 +324,11 @@ public final class LiveEngine: AppEngine {
       Task { await connectSessionRejected() }
     }
     if let days = status.tokenDaysLeft { entry.tokenDaysLeft = days }
+    // A computer got through again: the relay accepts the session Clerk kept.
+    if status.state == .connected, let connect, connect.lastUnconfirmed != nil {
+      connect.lastUnconfirmed = nil
+      updateConnect { if $0.lastError == ConnectState.relayRefusedMessage { $0.lastError = nil } }
+    }
     // Connected, or the attempt really failed: the grace is over for good.
     if status.state == .connected || MachineEntry.isFailure(status) {
       entry.settlingUntil = nil

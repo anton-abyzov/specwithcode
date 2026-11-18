@@ -12,7 +12,7 @@ Database verification remains fail-closed. A small local cache can reuse a table
 
 | Setting                         | Default | What it does                                                                                                                                                                                                               |
 | ------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Check for updates automatically | On      | The app checks about 15 seconds after launch, then once a minute whenever its last successful check is over 10 minutes old; the service agent checks every hour. Off stops all background checks.                         |
+| Check for updates automatically | On      | The app checks about 15 seconds after launch, then once a minute whenever its last successful check is over 10 minutes old; the service agent checks every hour. Off stops all background checks.                          |
 | Download in the background      | On      | A found release downloads and is verified right away.                                                                                                                                                                      |
 | Install automatically           | On      | The app installs the next time you quit it. The service installs once no session has worked for 10 minutes; a thread that is only waiting on a usage limit does not count as working. Off means you install from Settings. |
 | Update track                    | Stable  | Stable takes plain versions such as `0.2.1`, even when GitHub marks the release as a prerelease. Nightly takes `-nightly` builds.                                                                                          |
@@ -141,6 +141,10 @@ release=$(/usr/bin/python3 -c 'import json, pathlib; print(json.loads((pathlib.P
 ```
 
 The checkout's `scripts/studio-fleet/update_agent.py` installs the same way; it belongs to no release, so the next update or fleet request replaces it.
+
+### A restart asked for from inside the service (Linux)
+
+`specweave-studio update`, `service install` and `service restart` stop and start `studio.service`. Run from inside it (an agent's terminal, a routine's check command, an agent's tool call), the stop used to take the command with it under `KillMode=mixed`, so the start never ran and the service stayed down until someone started it by hand; with no service, the desktop then opened an empty home of its own. `BootService` now reads `/proc/self/cgroup`: inside the unit it does not stop the service, writes the new files while it runs, exactly as a declined restart does (`.restart-pending` names the version), and hands the start to a transient unit, `systemd-run --user --collect --unit=studio-restart systemctl --user restart studio.service`, which has its own cgroup and outlives the stop. The launcher removes `.restart-pending` once it runs that version. A failed hand-off leaves the service running its old version.
 
 ## Database size: compaction and `db reclaim`
 

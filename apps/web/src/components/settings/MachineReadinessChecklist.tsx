@@ -20,6 +20,7 @@ import { machineHandoff } from "../../studio/machineHandoff";
 import { cliOfDriver, knownProviderLabel, providerLabel } from "../../studio/projectUsageModel";
 import { useCoordinatorProvider } from "../../studio/useCoordinatorProvider";
 import { MachineBasicsOn } from "../onboarding/MachineBasics";
+import { FullDiskAccessRow } from "../access/FullDiskAccess";
 import { Button } from "../ui/button";
 import { GitHubCredentialCard, useGitHubCredentialCardAvailable } from "./GitHubCredentialCard";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -402,6 +403,7 @@ export function MachineReadinessChecklist({
           />
         )}
       </ul>
+      <FullDiskAccessRow environmentId={environmentId} environmentLabel={environmentLabel} />
       {error && (
         <p role="alert" className="wrap-anywhere text-xs text-destructive-foreground">
           {error}
