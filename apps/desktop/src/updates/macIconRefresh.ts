@@ -1,7 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- The icon refresh runs once at startup with native macOS tools before the app runtime.
 import * as NodeChildProcess from "node:child_process";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- The icon refresh runs once at startup with native macOS tools before the app runtime.
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- The icon refresh runs once at startup with native macOS tools before the app runtime.
 import * as NodeFS from "node:fs";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- The icon refresh runs once at startup with native macOS tools before the app runtime.
@@ -85,7 +85,7 @@ export function readIconStamp(bundle: string): string | null {
   for (const name of ["Assets.car", "icon.icns"]) {
     try {
       const data = NodeFS.readFileSync(BundlePath.join(resources, name));
-      return `${name}:${createHash("sha256").update(data).digest("hex").slice(0, 32)}`;
+      return `${name}:${NodeCrypto.createHash("sha256").update(data).digest("hex").slice(0, 32)}`;
     } catch {
       // Try the next file.
     }
