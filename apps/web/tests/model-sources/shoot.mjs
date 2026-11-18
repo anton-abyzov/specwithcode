@@ -1,5 +1,5 @@
-// Headless screenshots of the Sources fixture: the card, Add source open, and
-// the list after adding Copilot. Usage: node shoot.mjs <built-site-dir> <out-dir>
+// Headless screenshots of the Sources fixture: the card, Add source open, the
+// list after adding Copilot, and one model's route. Usage: node shoot.mjs <built-site-dir> <out-dir>
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
@@ -63,6 +63,10 @@ try {
       path: NodePath.join(output, `sources-added-${theme}.png`),
       fullPage: true,
     });
+    // Claude Fable 5.2's route: OpenRouter asks first, Cursor dropped, Devin available via.
+    await page
+      .getByRole("region", { name: "Route fixture" })
+      .screenshot({ path: NodePath.join(output, `route-${theme}.png`) });
     await page.close();
   }
   console.log(`saved to ${output}`);

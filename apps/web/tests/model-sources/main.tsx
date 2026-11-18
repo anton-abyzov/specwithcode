@@ -1,14 +1,17 @@
 import {
   EnvironmentId,
+  type ModelRoute,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import { listedSources } from "@specweave-studio/shared/modelSources";
+import { describeTrack } from "@specweave-studio/shared/modelTrackRules";
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import { Card } from "../../src/components/settings/ModelListParts";
+import { ModelRoutePanel } from "../../src/components/settings/ModelRouteCard";
 import { MissingTrackSource, SourcesCard } from "../../src/components/settings/ModelSourcesCard";
 import "./fixture.css";
 
@@ -57,6 +60,53 @@ const providers: ServerProvider[] = [
   provider("antigravity", "antigravity", "Antigravity", [], off),
 ];
 const sourceName = (entry: ServerProvider) => entry.displayName ?? entry.instanceId;
+
+// Claude Fable 5.2's route: Claude Code and Cursor list it, Copilot only Fable 5,
+// OpenRouter bills per token. Cursor is dropped and OpenRouter added, so it asks first.
+const FABLE = "claude-fable-5-2";
+const routeProviders: ServerProvider[] = [
+  provider("claudeAgent", "claudeAgent", "Claude Code", [FABLE], {
+    auth: { status: "authenticated", label: "Claude Max" },
+  }),
+  provider("cursor", "cursor", "Cursor", [FABLE]),
+  provider("acpRegistry_copilot", "acpRegistry", "GitHub Copilot", ["claude-fable-5"], {
+    iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+  }),
+  provider("openrouter", "opencode", "OpenRouter", [FABLE], {
+    auth: { status: "authenticated", type: "apiKey" },
+  }),
+];
+
+function RouteFixture() {
+  const [route, setRoute] = useState<ModelRoute>({
+    order: [ProviderInstanceId.make("claudeAgent"), ProviderInstanceId.make("openrouter")],
+    dropped: [ProviderInstanceId.make("cursor")],
+    pinned: false,
+    allowed: [],
+  });
+  const row = describeTrack({
+    track: "complex",
+    saved: [],
+    providers: routeProviders,
+    nowMs,
+    routes: { [FABLE]: route },
+  }).find((entry) => entry.model === FABLE)!;
+  return (
+    <section
+      aria-label="Route fixture"
+      className="overflow-hidden rounded-xl border border-border bg-card"
+    >
+      <ModelRoutePanel
+        environmentId={env}
+        row={row}
+        providers={routeProviders}
+        nowMs={nowMs}
+        sourceName={sourceName}
+        onSave={setRoute}
+      />
+    </section>
+  );
+}
 const configuredAgents = new Set(["github-copilot-cli"]);
 
 function Fixture() {
@@ -111,6 +161,7 @@ function Fixture() {
         configuredAgents={configuredAgents}
         onSave={setOrder}
       />
+      <RouteFixture />
     </div>
   );
 }
