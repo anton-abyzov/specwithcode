@@ -1254,10 +1254,6 @@ export const pt: PhraseCatalog = {
   "Retrying…": "Tentando de novo…",
   "Retry now": "Tentar agora",
   "Show less": "Mostrar menos",
-  "Connections execution machine": "Máquina que executa as conexões",
-  "Select a machine": "Selecione uma máquina",
-  "The selected machine or project is no longer in this scope.":
-    "A máquina ou o projeto selecionado não está mais neste escopo.",
   "Connect a machine to see its MCP servers.":
     "Conecte uma máquina para ver os servidores MCP dela.",
   "Granted scopes": "Permissões concedidas",
@@ -5397,6 +5393,25 @@ export const pt: PhraseCatalog = {
   "A device cannot approve itself. Type this code on another device or on the machine.":
     "Um dispositivo não pode aprovar a si mesmo. Digite este código em outro dispositivo ou na máquina.",
   "A new device wants to use {machine}": "Um novo dispositivo quer usar {machine}",
+  "{count} devices want to use {machine}": "{count} dispositivos querem usar {machine}",
+  "Each one shows its own code. Type the code from the device you want to allow.":
+    "Cada um mostra o próprio código. Digite o código do dispositivo que você quer permitir.",
+  "Type the code shown on the device you want to allow":
+    "Digite o código mostrado no dispositivo que você quer permitir",
+  "Allowed {device}. It can now use {machine}.": "{device} permitido. Já pode usar {machine}.",
+  "ID {id}": "ID {id}",
+  "Deny {device}": "Negar {device}",
+  "Signed in to SpecWithCode Connect as {account}": "Entrou no SpecWithCode Connect como {account}",
+  "Signed in to your SpecWithCode Connect account": "Entrou na sua conta do SpecWithCode Connect",
+  "Paired through {hub}": "Pareado por {hub}",
+  "Paired through another of your machines": "Pareado por outra das suas máquinas",
+  "Waiting for approval": "Aguardando aprovação",
+  "This device's ID is {id}. The machine shows the same ID next to it.":
+    "O ID deste dispositivo é {id}. A máquina mostra o mesmo ID ao lado dele.",
+  "Open SpecWithCode on each machine below and type its code:":
+    "Abra o SpecWithCode em cada máquina abaixo e digite o código dela:",
+  "This device connects on its own once a machine allows it.":
+    "Este dispositivo se conecta sozinho assim que uma máquina permitir.",
   "A phone": "Um celular",
   "A tablet": "Um tablet",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
@@ -5409,7 +5424,6 @@ export const pt: PhraseCatalog = {
   "Approve this device on the machine.": "Aprove este dispositivo na máquina.",
   "Approved {date} by {approver}": "Aprovado em {date} por {approver}",
   "Checking devices…": "Verificando dispositivos…",
-  "Code shown on {device}": "Código mostrado em {device}",
   "Could not reach this machine.": "Não foi possível acessar esta máquina.",
   "Could not reach this machine. Try again.":
     "Não foi possível acessar esta máquina. Tente de novo.",
@@ -5475,7 +5489,6 @@ export const pt: PhraseCatalog = {
   "{label} joined": "{label} entrou",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} não deixa mais este dispositivo entrar. Aprove de novo no SpecWithCode em {machine}.",
-  "{position} of {total} waiting": "{position} de {total} aguardando",
   "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
     "Permitir deixa que ele use terminais, arquivos, configurações e logins em {machine} e comece trabalho lá, como este app.",
   "Asked at {time}": "Pedido às {time}",
@@ -5499,4 +5512,115 @@ export const pt: PhraseCatalog = {
     "Não foi possível carregar o histórico resolvido de {machines}.",
   "Resolved history from another machine could not be loaded.":
     "Não foi possível carregar o histórico resolvido de outra máquina.",
+  "Set up for {project} on {machine}": "Configurar para {project} em {machine}",
+  "Unavailable machine": "Máquina indisponível",
+  "No machines": "Nenhuma máquina",
+  "Each machine keeps its own. Changes here only affect {machine}.":
+    "Cada máquina tem os seus. As alterações aqui afetam apenas {machine}.",
+  "On this machine": "Nesta máquina",
+  "Not on {machine}": "Não está em {machine}",
+  "Needs sign-in": "Requer início de sessão",
+  "Update available {version}": "Atualização disponível: {version}",
+  "Built into the agent": "Incluídas no agente",
+  "Read {time}, scan incomplete": "Lido às {time}, análise incompleta",
+  "Read {time}": "Lido às {time}",
+  "Offline, not read": "Offline, não lido",
+  "No project there, not read": "Sem projeto lá, não lido",
+  "Could not be read": "Não foi possível ler",
+  "copies differ": "as cópias diferem",
+  "Across machines": "Entre máquinas",
+  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
+    "Só leitura. Cada máquina informa as suas próprias skills. Uma máquina que não pôde ser lida nunca aparece como se faltasse algo.",
+  "No skills on the machines that were read.": "Não há skills nas máquinas lidas.",
+  "Showing the first 32 machines. Open Connections to inspect the rest.":
+    "A mostrar as primeiras 32 máquinas. Abra Ligações para ver as restantes.",
+  "The machine list could not be refreshed. Listed machines may be out of date.":
+    "Não foi possível atualizar a lista de máquinas. As máquinas listadas podem estar desatualizadas.",
+  "These come with the agent or its account. They are listed so you can see what it loads, and cannot be installed, switched off or edited here.":
+    "Vêm com o agente ou com a sua conta. São listadas para que veja o que ele carrega e não podem ser instaladas, desligadas nem editadas aqui.",
+  "{agent}: no skills installed on {machine}": "{agent}: nenhuma skill instalada em {machine}",
+  "This project has no folder on {machine}. Pick another machine above.":
+    "Este projeto não tem pasta em {machine}. Escolha outra máquina acima.",
+  "Nothing is installed on {machine} yet.": "Ainda não há nada instalado em {machine}.",
+  "Skills view": "Vista de skills",
+  "You are on {machine}": "Está em {machine}",
+  "{machine} is offline. Its settings show when it reconnects.":
+    "{machine} está offline. As definições aparecem quando voltar a ligar-se.",
+  "You can look at {machine}'s settings from this sign-in, but not change them.":
+    "Com este início de sessão pode ver as definições de {machine}, mas não alterá-las.",
+  "Needs permission to change files and run vskill here.":
+    "É preciso permissão para alterar arquivos e executar o vskill aqui.",
+  "Needs permission to change settings on this machine.":
+    "É preciso permissão para alterar as configurações desta máquina.",
+  "Loaded now": "Carregado agora",
+  "Next message": "Próxima mensagem",
+  "Next session": "Próxima sessão",
+  "Update available": "Atualização disponível",
+  "Changed at source": "Alterado na origem",
+  "Not updated from here": "Não é atualizado daqui",
+  "Needs GitHub sign-in": "Requer login no GitHub",
+  "Name the repo as owner/repo or paste its GitHub link.":
+    "Informe o repositório como owner/repo ou cole o link do GitHub.",
+  "Sign in to GitHub on {machine} to read {repo}": "Entre no GitHub em {machine} para ler {repo}",
+  "GitHub has no {repo} for the account signed in on {machine}.":
+    "O GitHub não tem {repo} para a conta conectada em {machine}.",
+  "GitHub is limiting reads from {machine}. Sign in to GitHub there or try again later.":
+    "O GitHub está limitando as leituras de {machine}. Entre no GitHub nela ou tente mais tarde.",
+  "GitHub could not be reached from {machine}.":
+    "Não foi possível acessar o GitHub a partir de {machine}.",
+  "Installed {skill} {version}": "Instalado {skill} {version}",
+  "Updated {skill} to {version}": "{skill} atualizado para {version}",
+  "{skill} is already up to date": "{skill} já está atualizado",
+  "Skipped {skill}": "{skill} ignorado",
+  "{skill} was not changed": "{skill} não foi alterado",
+  "Search skills and notes": "Buscar skills e notas",
+  "Search installed skills, connected repos and notes":
+    "Busque em skills instaladas, repositórios conectados e notas",
+  "Installed on {machine}": "Instaladas em {machine}",
+  "No installed skill matches.": "Nenhuma skill instalada corresponde.",
+  "Available in a connected repo": "Disponíveis em um repositório conectado",
+  "No skill in a connected repo matches.": "Nenhuma skill de um repositório conectado corresponde.",
+  Private: "Privado",
+  Notes: "Notas",
+  "No Obsidian vault on {machine}.": "Não há cofre do Obsidian em {machine}.",
+  "No note matches.": "Nenhuma nota corresponde.",
+  "Open in Obsidian": "Abrir no Obsidian",
+  "More notes may match. Narrow the search.": "Pode haver mais notas. Refine a busca.",
+  "Obsidian on {machine} did not open the note.": "O Obsidian em {machine} não abriu a nota.",
+  "When each agent has it": "Quando cada agente a tem",
+  "Versions and updates": "Versões e atualizações",
+  "Update all ({count})": "Atualizar tudo ({count})",
+  "No skill on {machine} records a source yet.":
+    "Nenhuma skill em {machine} registra uma origem ainda.",
+  "Skill repos": "Repositórios de skills",
+  "Connected on {machine} only. A private repo is read with the GitHub sign-in on {machine} and is never sent to a registry.":
+    "Conectados apenas em {machine}. Um repositório privado é lido com o login do GitHub em {machine} e nunca é enviado a um registro.",
+  "Skill repo": "Repositório de skills",
+  "owner/repo or a GitHub link": "owner/repo ou um link do GitHub",
+  Suggested: "Sugeridos",
+  "Connect {repo}": "Conectar {repo}",
+  Public: "Público",
+  "Skills: {count}": "Skills: {count}",
+  "No skills found in this repo.": "Nenhuma skill encontrada neste repositório.",
+  "This repo holds more skills than are listed here.":
+    "Este repositório tem mais skills do que as listadas aqui.",
+  "Agent access": "Acesso dos agentes",
+  "MCP servers": "Servidores MCP",
+  "Preview and recording": "Prévia e gravação",
+  "Integrations sections": "Seções de Integrações",
+  "Set up on {machine}": "Configurar em {machine}",
+  "Only in this app window": "Somente nesta janela do app",
+  "Saved in the app on this computer. Other machines and your phone keep their own.":
+    "Salvo no app deste computador. As outras máquinas e o seu celular têm os seus.",
+  "Its settings show when it reconnects. Pick another machine above to set that one up.":
+    "As configurações aparecem quando ela se reconectar. Escolha outra máquina acima para configurá-la.",
+  "Needs an app update": "Precisa atualizar o app",
+  "No permission": "Sem permissão",
+  "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
+    "Os agentes usam o seu Chrome conectado por meio da extensão do SpecWithCode. Ele tem a própria página de configurações.",
+  "Open Chrome settings": "Abrir configurações do Chrome",
+  "Manage hosts": "Gerenciar hosts",
+  "Manage profiles": "Gerenciar perfis",
+  "Profiles: {count}": "Perfis: {count}",
+  "Device hosts: {count}": "Hosts de dispositivos: {count}",
 };

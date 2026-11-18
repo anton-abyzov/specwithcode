@@ -176,6 +176,13 @@ public final class LiveEngine: AppEngine {
       await bootstrap()
       await startConnect()
     }
+    if let connect {
+      Task { [weak self] in
+        guard let thumbprint = try? await connect.relay.thumbprint() else { return }
+        connect.shortID = DeviceShortID.make(thumbprint: thumbprint)
+        self?.schedulePublish()
+      }
+    }
     let timeout = options.loadingTimeout
     Task { [weak self] in
       try? await Task.sleep(for: timeout)
@@ -316,6 +323,7 @@ public final class LiveEngine: AppEngine {
     let dropped = entry.status.state == .connected && status.state != .connected
     if dropped { markSeen(entry) }
     entry.status = status
+    entry.noteApproval(status)
     if case let .connect(error)? = status.lastError, error.isDeviceRemoved {
       Task { await connectHandleRemoval(error) }
     } else if status.lastError == .connect(.signedOut) {
@@ -527,6 +535,9 @@ public final class LiveEngine: AppEngine {
     let nicknames = fleetNicknames
     let now = options.now()
     assign(model, \.machines, entries.map { summary($0, nicknames: nicknames, now: now) })
+    // The name machines list for this phone: Connect's, frozen when it started.
+    assign(model, \.thisPhoneName, connect?.clientLabel ?? options.clientLabel())
+    assign(model, \.thisPhoneShortID, connect?.shortID)
     // Percy is a switch in the desktop's settings; any machine saying so shows it.
     let aideEnabled = AideSetting.visible(entries.map { aideMachine($0, nicknames: nicknames) }, previous: model.aideEnabled)
     assign(model, \.aideEnabled, aideEnabled)
@@ -588,6 +599,9 @@ public final class LiveEngine: AppEngine {
   func summary(_ entry: MachineEntry, nicknames: [String: String]? = nil, now: ContinuousClock.Instant? = nil) -> MachineSummary {
     let settling = entry.isSettling(at: now ?? options.now())
     var status: MachineStatus = entry.record.enabled ? (MachineStatus(rawValue: entry.status.state.rawValue) ?? .offline) : .offline
+    // Waiting for the owner to type the code: each retry, a return to the app
+    // or a Reconnect would otherwise flash "Connecting" over the code.
+    if entry.approvalCode != nil, status != .connected { status = .offline }
     // No attempt has answered yet: offline here only means "no socket yet",
     // and a dropped connection reads "Connecting" as at launch.
     if settling, status == .offline || status == .reconnecting { status = .connecting }
@@ -610,7 +624,11 @@ public final class LiveEngine: AppEngine {
     result.isSettling = settling
     if case .http(status: 429, code: _)? = entry.status.lastError { result.isRefusingSignIns = true }
     if case let .teamRules(message)? = entry.status.lastError { result.teamRulesRefusal = message }
-    if case let .awaitingApproval(code, _)? = entry.status.lastError { result.deviceApprovalCode = code }
+    result.deviceApprovalCode = entry.approvalCode
+    // A remembered code with a different last error: the machine did not answer.
+    if entry.approvalCode != nil, let error = entry.status.lastError {
+      if case .awaitingApproval = error {} else { result.approvalReachable = false }
+    }
     result.teamRules = entry.teamRules.map(TeamRulesInfo.init)
     return result
   }
@@ -690,6 +708,30 @@ final class MachineEntry {
   var deviceTask: Task<Void, Never>?
   /// The machine's open devices, from `subscribeDeviceState`.
   var devices: MachineDevices?
+  /// The last code this machine asked for while it waits to let this phone in.
+  /// A network blip keeps it, so the row and the code stay up (1406, 1408).
+  var approvalCode: String?
+
+  /// Remembers or forgets the approval code from a new status.
+  func noteApproval(_ status: MachineConnection.Status) {
+    if status.state == .connected || status.state == .needsRepair || status.state == .unsupported {
+      approvalCode = nil
+      return
+    }
+    switch status.lastError {
+    case let .awaitingApproval(code, _)?:
+      approvalCode = code
+    case nil, .unreachable?, .timedOut?, .closed?, .upgradeFailed?:
+      break
+    case let .http(status, _)? where status >= 500:
+      break
+    case let .connect(error)? where !error.isPermanent:
+      // The relay or the tunnel failed on the way, as with a broken tunnel.
+      break
+    default:
+      approvalCode = nil
+    }
+  }
 
   init(record: MachineRecord, connection: MachineConnection) {
     self.environmentId = record.environmentId
@@ -703,7 +745,7 @@ final class MachineEntry {
   /// Not connected yet and its first attempt has neither failed nor run past
   /// the connecting grace.
   func isSettling(at now: ContinuousClock.Instant) -> Bool {
-    guard let settlingUntil, record.enabled, status.state != .connected, !Self.isFailure(status) else { return false }
+    guard let settlingUntil, record.enabled, status.state != .connected, approvalCode == nil, !Self.isFailure(status) else { return false }
     return now < settlingUntil
   }
 

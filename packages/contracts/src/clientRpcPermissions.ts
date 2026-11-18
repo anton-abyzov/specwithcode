@@ -45,6 +45,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsSkillsFleetPush]: AuthEnvironmentMaintainScope,
   [WS_METHODS.projectsSkillAuthoring]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsSkillsStudioLink]: AuthOrchestrationOperateScope,
+  // Skill repos, search and updates on this machine. Each widens per operation below.
+  [WS_METHODS.projectsSkillRepos]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectsSkillsSearch]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsSkillsUpdate]: AuthFilesystemWriteScope,
   [WS_METHODS.managedUpdatesEnroll]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesRevoke]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesCheck]: AuthEnvironmentMaintainScope,
@@ -430,6 +434,22 @@ export function clientRpcRequiredScopes(
       : [AuthFilesystemReadScope, AuthFilesystemWriteScope];
   }
   if (method === WS_METHODS.projectsSkillsAction) return projectSkillsActionScopes(input);
+  const operation = (input as { operation?: unknown } | null | undefined)?.operation;
+  // Connecting or disconnecting a repo changes this machine's saved list.
+  if (method === WS_METHODS.projectsSkillRepos)
+    return operation === "read"
+      ? [AuthOrchestrationReadScope]
+      : [AuthOrchestrationReadScope, AuthSettingsWriteScope];
+  // Search quotes the person's notes; opening one starts a program on the machine.
+  if (method === WS_METHODS.projectsSkillsSearch)
+    return operation === "search"
+      ? [AuthOrchestrationReadScope, AuthFilesystemReadScope]
+      : [AuthFilesystemReadScope, AuthTerminalOperateScope];
+  // Updates and installs run vskill and write skill folders; an unreadable ask takes that set.
+  if (method === WS_METHODS.projectsSkillsUpdate)
+    return operation === "status"
+      ? [AuthOrchestrationReadScope]
+      : [AuthFilesystemWriteScope, AuthTerminalOperateScope];
   // Writes another tool's configuration, which that tool then runs as commands.
   if (method === WS_METHODS.nativeConnectionApply)
     return [AuthFilesystemWriteScope, AuthTerminalOperateScope];

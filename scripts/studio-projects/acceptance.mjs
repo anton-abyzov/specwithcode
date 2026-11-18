@@ -21,6 +21,7 @@ const { fileURLToPath } = NodeURL;
 const net = NodeNet;
 import { rpc, requiredRpc } from "./rpc.mjs";
 import { sourceVersion } from "./version.mjs";
+import { walkFirstRun } from "../studio-verify/first-run-walk.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const args = process.argv.slice(2);
@@ -314,17 +315,9 @@ async function openProject(project) {
     return;
   }
   await page.goto(origin, { waitUntil: "domcontentloaded" });
-  for (let i = 0; i < 3; i++) {
-    const next = page.getByRole("button", { name: "Continue", exact: true });
-    if (await next.isVisible().catch(() => false)) await next.click();
-    else break;
-  }
-  // The access step: keep what the machine has, so the checks after setup run as before.
-  const keepAccess = page.getByRole("button", { name: /^Keep (Supervised|current access)$/ });
-  if (await keepAccess.isVisible().catch(() => false)) await keepAccess.click();
-  const skip = page.getByRole("button", { name: "Do not import projects", exact: true });
-  if (await skip.isVisible().catch(() => false)) await skip.click();
   const link = page.locator('a[href*="/projects/"]').filter({ hasText: project.title }).first();
+  // First-run setup on each step's neutral action, keeping the machine's access.
+  receipt.setupSteps = await walkFirstRun(page, { until: () => link.isVisible() });
   receipt.uiSubstep = "discover-initial-project-link";
   save();
   await link.waitFor({ state: "visible", timeout: 30000 });

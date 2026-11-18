@@ -106,6 +106,7 @@ export * from "./studio.ts";
 
 export * from "./projectUsage.ts";
 export * from "./projectSkills.ts";
+export * from "./projectSkillRepos.ts";
 export * from "./skillAuthoring.ts";
 export * from "./skillPublication.ts";
 export * from "./workflowCapabilities.ts";

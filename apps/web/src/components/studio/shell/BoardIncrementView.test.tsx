@@ -484,7 +484,7 @@ describe("BoardIncrementView", () => {
         [thread("t1", "unknown", { binding: "claim", boundTaskId: "T-02", boundAt: BLOCKED_AT })],
         {},
       ],
-    ] as const)("asks the coordinator when %s", async (_case, threads, taskExtra) => {
+    ] as const)("asks the coordinator when %s", async (name, threads, taskExtra) => {
       runtime.reply = detail(blockedCard, {
         tasks: [blockedTask(taskExtra)],
         blockers: [blocker("T-02", { title: "Wire the form" })],
@@ -492,7 +492,13 @@ describe("BoardIncrementView", () => {
       await render({ card: blockedCard, threads: [...threads] });
       expect(byText("Open that thread")).toBeNull();
       await click(byText("Ask the coordinator why T-02 is blocked"));
-      expect(asked).toEqual([`${facts} Find out why it is still blocked and what it needs.`]);
+      // A thread that cannot be reached may hold the task: the question names it.
+      const note = name.includes("unreachable")
+        ? ' Check first: the thread "Thread t1" on Laptop cannot be reached now and may still hold this work. Do not start another worker beside it.'
+        : "";
+      expect(asked).toEqual([
+        `${facts} Find out why it is still blocked and what it needs.${note}`,
+      ]);
     });
 
     it("says when no reason was given, and shows no coordinator buttons to someone who cannot send", async () => {
@@ -968,11 +974,33 @@ describe("BoardIncrementView", () => {
       ],
     ] as const)("asks the coordinator to %s without a live thread", async (label, card, prompt) => {
       runtime.reply = detail(card);
-      await render({ card, threads: [thread("t1", "unknown"), thread("r1", "resolved")] });
+      await render({ card, threads: [thread("r1", "resolved")] });
       expect(primary()?.textContent).toBe(label);
       expect(byText("Open thread")).toBeNull();
       await click(primary());
       expect(asked).toEqual([prompt]);
+    });
+
+    it("adds the same sentence to a request to unblock a task", async () => {
+      const card = makeCard({ blocked: true, blockedTasks: 1, blockers: [blocker("T-02")] });
+      runtime.reply = detail(card, { blockers: [blocker("T-02")] });
+      await render({ card, threads: [thread("t1", "unknown")] });
+      await click(byText("Unblock with the coordinator"));
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toMatch(
+        /Unblock it: resolve what it waits for, or tell me what only I can do\. Check first: the thread "Thread t1" on Laptop cannot be reached now/,
+      );
+    });
+
+    it("names a thread that cannot be reached in the request, so no second worker starts", async () => {
+      const card = makeCard();
+      runtime.reply = detail(card);
+      await render({ card, threads: [thread("t1", "unknown"), thread("r1", "resolved")] });
+      expect(primary()?.textContent).toBe("Continue");
+      await click(primary());
+      expect(asked).toEqual([
+        `Continue increment ${ID}: pick up its next open task. Check first: the thread "Thread t1" on Laptop cannot be reached now and may still hold this work. Do not start another worker beside it.`,
+      ]);
     });
 
     it("offers none to someone who cannot send", async () => {

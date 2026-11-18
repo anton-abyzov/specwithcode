@@ -62,6 +62,9 @@ import {
   type RemoteProjectMatch,
   translateModel,
 } from "./remoteWorkerMatching.ts";
+import { readProviders } from "./remoteWorkerProbe.ts";
+
+export { readProviderUsage } from "./remoteWorkerProbe.ts";
 import { remoteRepositoryBrief } from "./remoteRepositories.ts";
 import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -157,6 +160,12 @@ export interface RemoteLaunchInput extends LauncherKey {
   readonly explicitModelSelection: ModelSelection | undefined;
   /** What the thread would inherit here; the other machine's default replaces an unavailable one. */
   readonly inheritedModelSelection: ModelSelection | undefined;
+  /**
+   * The model this project's settings pick for an unnamed thread, tried before
+   * the inherited one. It never starts there on a sign-in that machine's grant
+   * excludes or holds back from automatic starts; the inherited model is next.
+   */
+  readonly pickedModelSelection?: ModelSelection | undefined;
   readonly runtimeMode: RuntimeMode;
   readonly requestedRuntimeMode: RuntimeMode | undefined;
   readonly interactionMode: ProviderInteractionMode;
@@ -462,72 +471,6 @@ interface Probe extends MachineProbeFacts {
   readonly providers: ReadonlyArray<OrchestratorMcpMachineProvider>;
   readonly projects: ReadonlyArray<Project>;
 }
-
-const ISO_TIME = /^\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2})$/;
-const isoOrNull = (value: unknown) =>
-  typeof value === "string" && ISO_TIME.test(value) && Number.isFinite(Date.parse(value))
-    ? value
-    : null;
-
-/**
- * The usage another machine shares for one provider, or undefined when it
- * shares none (an older version) or sends something malformed. Unknown
- * usage is never read as room.
- */
-export const readProviderUsage = (
-  value: unknown,
-): OrchestratorMcpMachineProvider["usage"] | undefined => {
-  if (!isRecord(value) || typeof value.signedIn !== "boolean") return undefined;
-  const fingerprint =
-    typeof value.accountFingerprint === "string" &&
-    /^sha256:[a-f0-9]{64}$/.test(value.accountFingerprint)
-      ? value.accountFingerprint
-      : null;
-  const used =
-    typeof value.usedPercent === "number" &&
-    Number.isFinite(value.usedPercent) &&
-    value.usedPercent >= 0 &&
-    value.usedPercent <= 100
-      ? value.usedPercent
-      : null;
-  return {
-    accountFingerprint: fingerprint,
-    usedPercent: used,
-    resetsAt: isoOrNull(value.resetsAt),
-    signedIn: value.signedIn,
-    observedAt: isoOrNull(value.observedAt),
-    ...(value.limited === true ? { limited: true } : {}),
-  } as OrchestratorMcpMachineProvider["usage"];
-};
-
-const readProviders = (capabilities: unknown): ReadonlyArray<OrchestratorMcpMachineProvider> =>
-  (isRecord(capabilities) && Array.isArray(capabilities.providers) ? capabilities.providers : [])
-    .filter(isRecord)
-    .flatMap((provider) => {
-      if (
-        typeof provider.providerInstanceId !== "string" ||
-        typeof provider.driverKind !== "string"
-      )
-        return [];
-      const usage = readProviderUsage(provider.usage);
-      const models = (Array.isArray(provider.models) ? provider.models : []).filter(isRecord);
-      const paidModels = models.flatMap((model) =>
-        typeof model.id === "string" && model.paid === true ? [model.id] : [],
-      );
-      return [
-        {
-          providerInstanceId: provider.providerInstanceId,
-          driverKind: provider.driverKind,
-          models: models.flatMap((model) => (typeof model.id === "string" ? [model.id] : [])),
-          available: Array.isArray(provider.constraints) && provider.constraints.length === 0,
-          ...(usage === undefined ? {} : { usage }),
-          ...(typeof provider.allowedByGrant === "boolean"
-            ? { allowedByGrant: provider.allowedByGrant }
-            : {}),
-          ...(paidModels.length === 0 ? {} : { paidModels }),
-        } as unknown as OrchestratorMcpMachineProvider,
-      ];
-    });
 
 const make = Effect.gen(function* () {
   const targets = yield* FleetTargets.FleetTargets;
@@ -929,9 +872,10 @@ const make = Effect.gen(function* () {
     machine: OrchestratorMcpMachineRef,
     selection: ModelSelection,
     remote: ReadonlyArray<OrchestratorMcpMachineProvider>,
+    picked = false,
   ) =>
     Effect.map(driverKindOf(selection.instanceId), (driverKind) =>
-      translateModel({ selection, driverKind, remote }),
+      translateModel({ selection, driverKind, remote, picked }),
     ).pipe(Effect.map((translation) => ({ machine, translation })));
 
   const modelUnavailable = (machine: OrchestratorMcpMachineRef, selection: ModelSelection) =>
@@ -1026,14 +970,16 @@ const make = Effect.gen(function* () {
         if (translation.type === "unavailable")
           return yield* modelUnavailable(machine, input.explicitModelSelection);
         modelSelection = translation.modelSelection;
-      } else if (input.inheritedModelSelection !== undefined) {
-        const { translation } = yield* translate(
-          machine,
-          input.inheritedModelSelection,
-          target.providers,
-        );
-        modelSelection =
-          translation.type === "unavailable" ? undefined : translation.modelSelection;
+      } else {
+        const unnamed = [
+          [input.pickedModelSelection, true],
+          [input.inheritedModelSelection, false],
+        ] as const;
+        for (const [selection, picked] of unnamed) {
+          if (selection === undefined || modelSelection !== undefined) continue;
+          const { translation } = yield* translate(machine, selection, target.providers, picked);
+          if (translation.type !== "unavailable") modelSelection = translation.modelSelection;
+        }
       }
 
       // The worker is told which repositories the project uses; it clones

@@ -1242,10 +1242,6 @@ export const ko: PhraseCatalog = {
   "Retrying…": "다시 시도하는 중…",
   "Retry now": "지금 다시 시도",
   "Show less": "간단히 보기",
-  "Connections execution machine": "연결을 실행할 컴퓨터",
-  "Select a machine": "컴퓨터 선택",
-  "The selected machine or project is no longer in this scope.":
-    "선택한 컴퓨터나 프로젝트가 더 이상 이 범위에 없습니다.",
   "Connect a machine to see its MCP servers.": "컴퓨터를 연결하면 MCP 서버를 볼 수 있습니다.",
   "Granted scopes": "부여된 권한",
   "Pairing link scopes": "페어링 링크 권한",
@@ -5328,6 +5324,26 @@ export const ko: PhraseCatalog = {
   "A device cannot approve itself. Type this code on another device or on the machine.":
     "기기는 스스로를 승인할 수 없습니다. 다른 기기나 컴퓨터에서 이 코드를 입력하세요.",
   "A new device wants to use {machine}": "새 기기가 {machine}을(를) 사용하려고 합니다",
+  "{count} devices want to use {machine}": "기기 {count}대가 {machine}을(를) 사용하려고 합니다",
+  "Each one shows its own code. Type the code from the device you want to allow.":
+    "기기마다 고유한 코드가 표시됩니다. 허용할 기기의 코드를 입력하세요.",
+  "Type the code shown on the device you want to allow": "허용할 기기에 표시된 코드를 입력하세요",
+  "Allowed {device}. It can now use {machine}.":
+    "{device}을(를) 허용했습니다. 이제 {machine}을(를) 사용할 수 있습니다.",
+  "ID {id}": "ID {id}",
+  "Deny {device}": "{device} 거부",
+  "Signed in to SpecWithCode Connect as {account}":
+    "{account}(으)로 SpecWithCode Connect에 로그인함",
+  "Signed in to your SpecWithCode Connect account": "내 SpecWithCode Connect 계정에 로그인함",
+  "Paired through {hub}": "{hub}을(를) 통해 페어링됨",
+  "Paired through another of your machines": "내 다른 컴퓨터를 통해 페어링됨",
+  "Waiting for approval": "승인 대기 중",
+  "This device's ID is {id}. The machine shows the same ID next to it.":
+    "이 기기의 ID는 {id}입니다. 컴퓨터에서도 같은 ID가 옆에 표시됩니다.",
+  "Open SpecWithCode on each machine below and type its code:":
+    "아래 각 컴퓨터에서 SpecWithCode를 열고 해당 코드를 입력하세요:",
+  "This device connects on its own once a machine allows it.":
+    "컴퓨터 중 하나가 허용하면 이 기기가 자동으로 연결됩니다.",
   "A phone": "휴대폰",
   "A tablet": "태블릿",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
@@ -5340,7 +5356,6 @@ export const ko: PhraseCatalog = {
   "Approve this device on the machine.": "컴퓨터에서 이 기기를 승인하세요.",
   "Approved {date} by {approver}": "{date}에 승인됨 ({approver})",
   "Checking devices…": "기기 확인 중…",
-  "Code shown on {device}": "{device}에 표시된 코드",
   "Could not reach this machine.": "이 컴퓨터에 연결할 수 없습니다.",
   "Could not reach this machine. Try again.": "이 컴퓨터에 연결할 수 없습니다. 다시 시도하세요.",
   "Could not remove {device}": "{device}을(를) 제거하지 못했습니다",
@@ -5404,7 +5419,6 @@ export const ko: PhraseCatalog = {
   "{label} joined": "{label} 참여함",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine}에서 더 이상 이 기기의 연결을 허용하지 않습니다. {machine}의 SpecWithCode에서 다시 승인하세요.",
-  "{position} of {total} waiting": "대기 중 {position}/{total}",
   "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
     "허용하면 이 앱처럼 {machine}의 터미널, 파일, 설정, 로그인을 사용하고 그곳에서 작업을 시작할 수 있습니다.",
   "Asked at {time}": "{time}에 요청",
@@ -5428,4 +5442,115 @@ export const ko: PhraseCatalog = {
     "{machines}의 해결된 기록을 불러올 수 없습니다.",
   "Resolved history from another machine could not be loaded.":
     "다른 기기의 해결된 기록을 불러올 수 없습니다.",
+  "Set up for {project} on {machine}": "{machine}의 {project}에 맞게 설정",
+  "Unavailable machine": "사용할 수 없는 컴퓨터",
+  "No machines": "컴퓨터 없음",
+  "Each machine keeps its own. Changes here only affect {machine}.":
+    "컴퓨터마다 따로 보관합니다. 여기서 바꾼 내용은 {machine}에만 적용됩니다.",
+  "On this machine": "이 컴퓨터에 있음",
+  "Not on {machine}": "{machine}에 없음",
+  "Needs sign-in": "로그인 필요",
+  "Update available {version}": "업데이트 가능 {version}",
+  "Built into the agent": "에이전트에 내장",
+  "Read {time}, scan incomplete": "{time}에 읽음, 스캔 미완료",
+  "Read {time}": "{time}에 읽음",
+  "Offline, not read": "오프라인, 읽지 않음",
+  "No project there, not read": "프로젝트가 없어 읽지 않음",
+  "Could not be read": "읽을 수 없음",
+  "copies differ": "사본이 서로 다름",
+  "Across machines": "컴퓨터 간 비교",
+  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
+    "읽기 전용입니다. 컴퓨터마다 자기 스킬을 보고합니다. 읽지 못한 컴퓨터는 없는 것으로 표시하지 않습니다.",
+  "No skills on the machines that were read.": "읽은 컴퓨터에 스킬이 없습니다.",
+  "Showing the first 32 machines. Open Connections to inspect the rest.":
+    "처음 32대만 표시합니다. 나머지는 연결에서 확인하세요.",
+  "The machine list could not be refreshed. Listed machines may be out of date.":
+    "컴퓨터 목록을 새로 고칠 수 없습니다. 표시된 컴퓨터가 최신이 아닐 수 있습니다.",
+  "These come with the agent or its account. They are listed so you can see what it loads, and cannot be installed, switched off or edited here.":
+    "에이전트나 그 계정에 딸려 오는 스킬입니다. 무엇을 불러오는지 볼 수 있게 나열하며, 여기서는 설치하거나 끄거나 편집할 수 없습니다.",
+  "{agent}: no skills installed on {machine}": "{agent}: {machine}에 설치된 스킬 없음",
+  "This project has no folder on {machine}. Pick another machine above.":
+    "이 프로젝트는 {machine}에 폴더가 없습니다. 위에서 다른 컴퓨터를 고르세요.",
+  "Nothing is installed on {machine} yet.": "{machine}에는 아직 설치된 것이 없습니다.",
+  "Skills view": "스킬 보기",
+  "You are on {machine}": "지금 {machine}에 있습니다",
+  "{machine} is offline. Its settings show when it reconnects.":
+    "{machine}이(가) 오프라인입니다. 다시 연결되면 설정이 표시됩니다.",
+  "You can look at {machine}'s settings from this sign-in, but not change them.":
+    "이 로그인으로는 {machine}의 설정을 볼 수만 있고 바꿀 수는 없습니다.",
+  "Needs permission to change files and run vskill here.":
+    "여기에서 파일을 변경하고 vskill을 실행할 권한이 필요합니다.",
+  "Needs permission to change settings on this machine.":
+    "이 기기의 설정을 변경할 권한이 필요합니다.",
+  "Loaded now": "지금 로드됨",
+  "Next message": "다음 메시지부터",
+  "Next session": "다음 세션부터",
+  "Update available": "업데이트 있음",
+  "Changed at source": "소스에서 변경됨",
+  "Not updated from here": "여기서 업데이트하지 않음",
+  "Needs GitHub sign-in": "GitHub 로그인이 필요함",
+  "Name the repo as owner/repo or paste its GitHub link.":
+    "저장소를 owner/repo 형식으로 입력하거나 GitHub 링크를 붙여넣으세요.",
+  "Sign in to GitHub on {machine} to read {repo}":
+    "{repo}을(를) 읽으려면 {machine}에서 GitHub에 로그인하세요",
+  "GitHub has no {repo} for the account signed in on {machine}.":
+    "{machine}에 로그인된 계정으로는 GitHub에서 {repo}을(를) 찾을 수 없습니다.",
+  "GitHub is limiting reads from {machine}. Sign in to GitHub there or try again later.":
+    "GitHub가 {machine}의 읽기를 제한하고 있습니다. 그 기기에서 GitHub에 로그인하거나 나중에 다시 시도하세요.",
+  "GitHub could not be reached from {machine}.": "{machine}에서 GitHub에 연결할 수 없습니다.",
+  "Installed {skill} {version}": "{skill} {version} 설치됨",
+  "Updated {skill} to {version}": "{skill}을(를) {version}(으)로 업데이트함",
+  "{skill} is already up to date": "{skill}은(는) 이미 최신입니다",
+  "Skipped {skill}": "{skill} 건너뜀",
+  "{skill} was not changed": "{skill}은(는) 변경되지 않았습니다",
+  "Search skills and notes": "스킬과 노트 검색",
+  "Search installed skills, connected repos and notes": "설치된 스킬, 연결된 저장소, 노트 검색",
+  "Installed on {machine}": "{machine}에 설치됨",
+  "No installed skill matches.": "일치하는 설치된 스킬이 없습니다.",
+  "Available in a connected repo": "연결된 저장소에서 사용 가능",
+  "No skill in a connected repo matches.": "연결된 저장소에 일치하는 스킬이 없습니다.",
+  Private: "비공개",
+  Notes: "노트",
+  "No Obsidian vault on {machine}.": "{machine}에 Obsidian 보관소가 없습니다.",
+  "No note matches.": "일치하는 노트가 없습니다.",
+  "Open in Obsidian": "Obsidian에서 열기",
+  "More notes may match. Narrow the search.":
+    "일치하는 노트가 더 있을 수 있습니다. 검색을 좁혀 보세요.",
+  "Obsidian on {machine} did not open the note.": "{machine}의 Obsidian이 노트를 열지 못했습니다.",
+  "When each agent has it": "에이전트별 사용 가능 시점",
+  "Versions and updates": "버전 및 업데이트",
+  "Update all ({count})": "모두 업데이트 ({count})",
+  "No skill on {machine} records a source yet.":
+    "{machine}에는 소스가 기록된 스킬이 아직 없습니다.",
+  "Skill repos": "스킬 저장소",
+  "Connected on {machine} only. A private repo is read with the GitHub sign-in on {machine} and is never sent to a registry.":
+    "{machine}에서만 연결됩니다. 비공개 저장소는 {machine}의 GitHub 로그인으로 읽으며 레지스트리로 전송되지 않습니다.",
+  "Skill repo": "스킬 저장소",
+  "owner/repo or a GitHub link": "owner/repo 또는 GitHub 링크",
+  Suggested: "추천",
+  "Connect {repo}": "{repo} 연결",
+  Public: "공개",
+  "Skills: {count}": "스킬: {count}",
+  "No skills found in this repo.": "이 저장소에서 스킬을 찾지 못했습니다.",
+  "This repo holds more skills than are listed here.":
+    "이 저장소에는 여기에 표시된 것보다 더 많은 스킬이 있습니다.",
+  "Agent access": "에이전트 접근",
+  "MCP servers": "MCP 서버",
+  "Preview and recording": "미리보기 및 녹화",
+  "Integrations sections": "연동 섹션",
+  "Set up on {machine}": "{machine}에서 설정",
+  "Only in this app window": "이 앱 창에서만",
+  "Saved in the app on this computer. Other machines and your phone keep their own.":
+    "이 컴퓨터의 앱에 저장됩니다. 다른 컴퓨터와 휴대폰은 각자 따로 보관합니다.",
+  "Its settings show when it reconnects. Pick another machine above to set that one up.":
+    "다시 연결되면 설정이 표시됩니다. 다른 컴퓨터를 설정하려면 위에서 선택하세요.",
+  "Needs an app update": "앱 업데이트 필요",
+  "No permission": "권한 없음",
+  "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
+    "에이전트는 SpecWithCode 확장 프로그램을 통해 로그인된 Chrome을 사용합니다. 전용 설정 페이지가 있습니다.",
+  "Open Chrome settings": "Chrome 설정 열기",
+  "Manage hosts": "호스트 관리",
+  "Manage profiles": "프로필 관리",
+  "Profiles: {count}": "프로필: {count}",
+  "Device hosts: {count}": "기기 호스트: {count}",
 };

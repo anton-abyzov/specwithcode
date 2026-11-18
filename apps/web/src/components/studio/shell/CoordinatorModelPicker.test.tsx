@@ -243,6 +243,58 @@ describe("CoordinatorModelPicker provider recovery", () => {
     expect(state.refresh).not.toHaveBeenCalled();
   });
 
+  it("moves the saved effort and Thinking to another model that offers them", async () => {
+    const withOptions = (slug: string) => ({
+      slug,
+      name: slug,
+      isCustom: false,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Effort",
+            type: "select",
+            options: ["medium", "high"].map((id) => ({ id, label: id })),
+          },
+          { id: "thinking", label: "Thinking", type: "boolean" },
+        ],
+      },
+    });
+    state.entries = [
+      {
+        ...entry("claudeAgent", true),
+        models: [withOptions("claude-opus-5-5"), withOptions("claude-fable-5-2")],
+      } as never,
+    ];
+    state.options = new Map([
+      [
+        "claudeAgent",
+        [
+          { slug: "claude-opus-5-5", name: "Opus" },
+          { slug: "claude-fable-5-2", name: "Fable" },
+        ],
+      ],
+    ]);
+    const options = [
+      { id: "effort", value: "high" },
+      { id: "thinking", value: true },
+    ];
+    const { onChange } = await mount(false, {
+      value: { instanceId: "claudeAgent", model: "claude-opus-5-5", options } as never,
+    });
+    await act(async () =>
+      (state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void)(
+        "claudeAgent",
+        "claude-fable-5-2",
+      ),
+    );
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({
+      instanceId: "claudeAgent",
+      model: "claude-fable-5-2",
+      options,
+    });
+  });
+
   it.each([
     { entries: [] },
     { entries: [entry("codex", false)] },

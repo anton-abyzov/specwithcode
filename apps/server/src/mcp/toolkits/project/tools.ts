@@ -50,6 +50,7 @@ import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
+import { ProjectModelRole } from "../../../project/projectModelChange.ts";
 import * as ProjectLink from "../../../project/ProjectLink.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProjectCoordinatorService from "../../../project/ProjectCoordinatorService.ts";
@@ -99,7 +100,7 @@ const ProjectReadTool = Tool.make("studio_project_read", {
 const ProjectCreateTool = Tool.make("studio_project_create", {
   ...shared,
   description:
-    "Start a project the way the New project dialog does, or register an existing folder. With just title: a new Git repository with a README, an icon and a first commit, in <parentPath>/<slug> (a -2, -3 suffix when taken; the result has the final workspaceRoot), parentPath defaulting to the machine's projects folder such as ~/Projects. A parentPath that already is a project, or holds a project of that name, is used as it is. github:true (or {account}) then publishes a private GitHub repository with that machine's GitHub sign-in; published, repository, publishFailure and publishError say how it went, and a failed publish keeps the project. commitError says why a commit failed; the project exists either way. machine creates it on another machine in the fleet (id or label from studio_machine_list), under that machine's worker grant covering all its projects (parentPath works there; github does not, because publishing uses that machine's own sign-in and is its user's to do): it lives there only, and the result's next is the studio_thread_launch call that starts work there. With workspaceRoot instead, an existing folder is registered (createWorkspaceRootIfMissing makes it); a folder that is already a project returns that project. existing:true means nothing was made. Clone separately with studio_project_clone when needed. Create a project only for the user's own work. A check, test, acceptance run or fixture rarely needs one: use studio_thread_launch with scratch:true, or a test server with its own home. When a check must drive a real project, pass origin:\"automated\" with its workspaceRoot; the sidebar then lists it under Automated, never among the user's projects. Delete it with studio_project_request when the check ends.",
+    "Start a project the way the New project dialog does, or register an existing folder. With just title: a new Git repository with a README, an icon and a first commit, in <parentPath>/<slug> (a -2, -3 suffix when taken; the result has the final workspaceRoot), parentPath defaulting to the machine's projects folder such as ~/Projects. A parentPath that already is a project, or holds a project of that name, is used as it is. github:true (or {account}) then publishes a private GitHub repository with that machine's GitHub sign-in; published, repository, publishFailure and publishError say how it went, and a failed publish keeps the project. commitError says why a commit failed; the project exists either way. machine creates it on another machine in the fleet (id or label from studio_machine_list), under that machine's worker grant covering all its projects (parentPath works there; github does not, because publishing uses that machine's own sign-in and is its user's to do): it lives there only, and the result's next is the studio_thread_launch call that starts work there. With workspaceRoot instead, an existing folder is registered (createWorkspaceRootIfMissing makes it); a folder that is already a project returns that project, and defaultModelSelection there is the model the new project's threads start on (a project started from its title takes none: its threads start from the machine's model tracks). existing:true means nothing was made. Clone separately with studio_project_clone when needed. Create a project only for the user's own work. A check, test, acceptance run or fixture rarely needs one: use studio_thread_launch with scratch:true, or a test server with its own home. When a check must drive a real project, pass origin:\"automated\" with its workspaceRoot; the sidebar then lists it under Automated, never among the user's projects. Delete it with studio_project_request when the check ends.",
   parameters: Schema.Struct({
     ...ProjectCreatePayload.fields,
     workspaceRoot: Schema.optional(ProjectCreatePayload.fields.workspaceRoot),
@@ -111,7 +112,7 @@ const ProjectCreateTool = Tool.make("studio_project_create", {
 const ProjectUpdateTool = Tool.make("studio_project_update", {
   ...shared,
   description:
-    "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app. Project instructions, pause, auto-resume and the worker machine are the user's to change. To move a project to another folder, add an approved folder (action add_folder), or archive, restore or delete it, use studio_project_request: the user approves those.",
+    "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app. Project instructions, pause, auto-resume and the worker machine are the user's to change. So are its saved models: defaultModelSelection (the model new threads start on) and workspaceSettings.coordinatorModelSelection can be set here only while none is saved, in the project or in its Project settings; replacing or clearing a saved one is refused. To replace a saved model (action change_model), move a project to another folder, add an approved folder (action add_folder), or archive, restore or delete it, use studio_project_request: the user approves those.",
   parameters: Schema.Struct({ projectId: ProjectId, ...ProjectUpdatePayload.fields }),
 }).annotate(Tool.Destructive, true);
 const ProjectRequestResult = Schema.Struct({
@@ -123,7 +124,7 @@ const requestDependencies = [...shared.dependencies, ProjectActionRequests.Proje
 const ProjectRequestTool = Tool.make("studio_project_request", {
   ...shared,
   description:
-    "Ask the user to archive, restore (unarchive), delete or move a project to another folder, or to let the project's agents reach one more folder (add_folder). SpecWithCode shows an approval card in your thread; only the user can answer it, and SpecWithCode makes the change itself when they approve. End your turn after calling: the decision and its outcome arrive as the user's answer to the card. For change_folder pass workspaceRoot, an existing folder; the card says whether it is a checkout of the same repository, and the change is refused while the project has other running work. For add_folder pass folder, an existing absolute folder, for the calling thread's own project; the card names its real path, and it works while other threads run. Home, the filesystem root and credential folders such as ~/.ssh are refused. Deleting removes the project's threads, memory, plans and routines but never its folders or Git branches.",
+    "Ask the user to archive, restore (unarchive), delete or move a project to another folder, to let the project's agents reach one more folder (add_folder), or to replace a model saved for the project (change_model). SpecWithCode shows an approval card in your thread; only the user can answer it, and SpecWithCode makes the change itself when they approve. End your turn after calling: the decision and its outcome arrive as the user's answer to the card. For change_folder pass workspaceRoot, an existing folder; the card says whether it is a checkout of the same repository, and the change is refused while the project has other running work. For add_folder pass folder, an existing absolute folder, for the calling thread's own project; the card names its real path, and it works while other threads run. Home, the filesystem root and credential folders such as ~/.ssh are refused. For change_model pass role (threads: the model new threads start on; coordinator: the coordinator's own model) and modelSelection with every option to keep: the card names the current and the new model with their effort, Ultracode and context window and what the new choice leaves off, and exactly that selection is saved. The model and every option must be ones this machine lists (orchestrator_capabilities); a project whose threads start from model tracks takes no single thread model, here or through studio_project_update. Ask only when the user asked for the change. Deleting removes the project's threads, memory, plans and routines but never its folders or Git branches.",
   parameters: Schema.Struct({
     action: ProjectActionRequests.ProjectAction,
     projectId: Schema.optional(
@@ -138,6 +139,18 @@ const ProjectRequestTool = Tool.make("studio_project_request", {
       TrimmedNonEmptyString.annotate({
         description:
           "For add_folder: the absolute folder agents in the calling thread's project should also read and write.",
+      }),
+    ),
+    role: Schema.optional(
+      ProjectModelRole.annotate({
+        description:
+          "For change_model: threads for the model new threads start on, coordinator for the coordinator's own model.",
+      }),
+    ),
+    modelSelection: Schema.optional(
+      ModelSelection.annotate({
+        description:
+          "For change_model: the provider instance, model and options to save, from orchestrator_capabilities. Options left out are not kept, and the card says so.",
       }),
     ),
     reason: TrimmedNonEmptyString.annotate({

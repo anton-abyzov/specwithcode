@@ -1249,10 +1249,6 @@ export const ja: PhraseCatalog = {
   "Retrying…": "再試行しています…",
   "Retry now": "今すぐ再試行",
   "Show less": "表示を減らす",
-  "Connections execution machine": "接続を実行するマシン",
-  "Select a machine": "マシンを選択",
-  "The selected machine or project is no longer in this scope.":
-    "選択したマシンまたはプロジェクトは、この範囲にもうありません。",
   "Connect a machine to see its MCP servers.": "マシンを接続すると MCP サーバーを確認できます。",
   "Granted scopes": "付与された権限",
   "Pairing link scopes": "ペアリングリンクの権限",
@@ -5393,6 +5389,27 @@ export const ja: PhraseCatalog = {
   "A device cannot approve itself. Type this code on another device or on the machine.":
     "デバイスは自分自身を承認できません。このコードを別のデバイスかマシンで入力してください。",
   "A new device wants to use {machine}": "新しいデバイスが {machine} の使用を求めています",
+  "{count} devices want to use {machine}": "{count} 台のデバイスが {machine} の使用を求めています",
+  "Each one shows its own code. Type the code from the device you want to allow.":
+    "デバイスごとに固有のコードが表示されます。許可するデバイスのコードを入力してください。",
+  "Type the code shown on the device you want to allow": "許可するデバイスに表示されたコードを入力",
+  "Allowed {device}. It can now use {machine}.":
+    "{device} を許可しました。{machine} を使えるようになりました。",
+  "ID {id}": "ID {id}",
+  "Deny {device}": "{device} を拒否",
+  "Signed in to SpecWithCode Connect as {account}":
+    "SpecWithCode Connect に {account} としてサインイン",
+  "Signed in to your SpecWithCode Connect account":
+    "あなたの SpecWithCode Connect アカウントにサインイン",
+  "Paired through {hub}": "{hub} 経由でペアリング",
+  "Paired through another of your machines": "別のマシン経由でペアリング",
+  "Waiting for approval": "承認待ち",
+  "This device's ID is {id}. The machine shows the same ID next to it.":
+    "このデバイスの ID は {id} です。マシン側でも同じ ID が横に表示されます。",
+  "Open SpecWithCode on each machine below and type its code:":
+    "下の各マシンで SpecWithCode を開き、それぞれのコードを入力してください:",
+  "This device connects on its own once a machine allows it.":
+    "いずれかのマシンが許可すると、このデバイスは自動で接続します。",
   "A phone": "スマートフォン",
   "A tablet": "タブレット",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
@@ -5405,7 +5422,6 @@ export const ja: PhraseCatalog = {
   "Approve this device on the machine.": "このデバイスをマシンで承認してください。",
   "Approved {date} by {approver}": "{date} に {approver} が承認",
   "Checking devices…": "デバイスを確認しています…",
-  "Code shown on {device}": "{device} に表示されたコード",
   "Could not reach this machine.": "このマシンに接続できませんでした。",
   "Could not reach this machine. Try again.":
     "このマシンに接続できませんでした。もう一度お試しください。",
@@ -5472,7 +5488,6 @@ export const ja: PhraseCatalog = {
   "{label} joined": "{label} が参加しました",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} はこのデバイスの接続を許可しなくなりました。{machine} の SpecWithCode でもう一度承認してください。",
-  "{position} of {total} waiting": "待機中 {position}/{total}",
   "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
     "許可すると、このアプリと同じように {machine} のターミナル、ファイル、設定、サインインを使い、そこで作業を始められるようになります。",
   "Asked at {time}": "{time} に申請",
@@ -5496,4 +5511,118 @@ export const ja: PhraseCatalog = {
     "{machines} の解決済み履歴を読み込めませんでした。",
   "Resolved history from another machine could not be loaded.":
     "別のマシンの解決済み履歴を読み込めませんでした。",
+  "Set up for {project} on {machine}": "{machine} の {project} 用に設定",
+  "Unavailable machine": "利用できないマシン",
+  "No machines": "マシンがありません",
+  "Each machine keeps its own. Changes here only affect {machine}.":
+    "マシンごとに別々に保持されます。ここでの変更は {machine} にのみ反映されます。",
+  "On this machine": "このマシンにあります",
+  "Not on {machine}": "{machine} にはありません",
+  "Needs sign-in": "サインインが必要",
+  "Update available {version}": "更新あり {version}",
+  "Built into the agent": "エージェントに組み込み",
+  "Read {time}, scan incomplete": "{time} に読み取り、スキャン未完了",
+  "Read {time}": "{time} に読み取り",
+  "Offline, not read": "オフライン、未読み取り",
+  "No project there, not read": "プロジェクトがないため未読み取り",
+  "Could not be read": "読み取れませんでした",
+  "copies differ": "コピーに差異あり",
+  "Across machines": "マシン間の比較",
+  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
+    "読み取り専用です。各マシンが自分のスキルを報告します。読み取れなかったマシンを「ない」と表示することはありません。",
+  "No skills on the machines that were read.": "読み取ったマシンにスキルはありません。",
+  "Showing the first 32 machines. Open Connections to inspect the rest.":
+    "最初の 32 台を表示しています。残りは「接続」で確認できます。",
+  "The machine list could not be refreshed. Listed machines may be out of date.":
+    "マシンの一覧を更新できませんでした。表示中のマシンは古い可能性があります。",
+  "These come with the agent or its account. They are listed so you can see what it loads, and cannot be installed, switched off or edited here.":
+    "エージェントまたはそのアカウントに付属するものです。読み込まれる内容がわかるよう一覧にしていますが、ここではインストール、オフへの切り替え、編集はできません。",
+  "{agent}: no skills installed on {machine}":
+    "{agent}: {machine} にスキルはインストールされていません",
+  "This project has no folder on {machine}. Pick another machine above.":
+    "このプロジェクトのフォルダーは {machine} にありません。上で別のマシンを選んでください。",
+  "Nothing is installed on {machine} yet.": "{machine} にはまだ何もインストールされていません。",
+  "Skills view": "スキルの表示",
+  "You are on {machine}": "現在のマシン: {machine}",
+  "{machine} is offline. Its settings show when it reconnects.":
+    "{machine} はオフラインです。再接続すると設定が表示されます。",
+  "You can look at {machine}'s settings from this sign-in, but not change them.":
+    "このサインインでは {machine} の設定を見られますが、変更はできません。",
+  "Needs permission to change files and run vskill here.":
+    "ここでファイルを変更して vskill を実行する権限が必要です。",
+  "Needs permission to change settings on this machine.":
+    "このマシンの設定を変更する権限が必要です。",
+  "Loaded now": "読み込み済み",
+  "Next message": "次のメッセージから",
+  "Next session": "次のセッションから",
+  "Update available": "更新があります",
+  "Changed at source": "ソース側で変更あり",
+  "Not updated from here": "ここからは更新しません",
+  "Needs GitHub sign-in": "GitHub へのサインインが必要",
+  "Name the repo as owner/repo or paste its GitHub link.":
+    "リポジトリを owner/repo の形で入力するか、GitHub のリンクを貼り付けてください。",
+  "Sign in to GitHub on {machine} to read {repo}":
+    "{repo} を読み込むには {machine} で GitHub にサインインしてください",
+  "GitHub has no {repo} for the account signed in on {machine}.":
+    "{machine} でサインイン中のアカウントでは、GitHub に {repo} が見つかりません。",
+  "GitHub is limiting reads from {machine}. Sign in to GitHub there or try again later.":
+    "GitHub が {machine} からの読み取りを制限しています。そのマシンで GitHub にサインインするか、後でもう一度お試しください。",
+  "GitHub could not be reached from {machine}.": "{machine} から GitHub に接続できませんでした。",
+  "Installed {skill} {version}": "{skill} {version} をインストールしました",
+  "Updated {skill} to {version}": "{skill} を {version} に更新しました",
+  "{skill} is already up to date": "{skill} はすでに最新です",
+  "Skipped {skill}": "{skill} をスキップしました",
+  "{skill} was not changed": "{skill} は変更されませんでした",
+  "Search skills and notes": "スキルとノートを検索",
+  "Search installed skills, connected repos and notes":
+    "インストール済みスキル、接続済みリポジトリ、ノートを検索",
+  "Installed on {machine}": "{machine} にインストール済み",
+  "No installed skill matches.": "一致するインストール済みスキルはありません。",
+  "Available in a connected repo": "接続済みリポジトリで利用可能",
+  "No skill in a connected repo matches.": "接続済みリポジトリに一致するスキルはありません。",
+  Private: "非公開",
+  Notes: "ノート",
+  "No Obsidian vault on {machine}.": "{machine} に Obsidian の保管庫がありません。",
+  "No note matches.": "一致するノートはありません。",
+  "Open in Obsidian": "Obsidian で開く",
+  "More notes may match. Narrow the search.":
+    "ほかにも一致するノートがあるかもしれません。検索を絞り込んでください。",
+  "Obsidian on {machine} did not open the note.":
+    "{machine} の Obsidian でノートを開けませんでした。",
+  "When each agent has it": "各エージェントで使えるタイミング",
+  "Versions and updates": "バージョンと更新",
+  "Update all ({count})": "すべて更新（{count}）",
+  "No skill on {machine} records a source yet.":
+    "{machine} にはソースが記録されたスキルがまだありません。",
+  "Skill repos": "スキルリポジトリ",
+  "Connected on {machine} only. A private repo is read with the GitHub sign-in on {machine} and is never sent to a registry.":
+    "{machine} でのみ接続されます。非公開リポジトリは {machine} の GitHub サインインで読み込まれ、レジストリには送信されません。",
+  "Skill repo": "スキルリポジトリ",
+  "owner/repo or a GitHub link": "owner/repo または GitHub のリンク",
+  Suggested: "おすすめ",
+  "Connect {repo}": "{repo} を接続",
+  Public: "公開",
+  "Skills: {count}": "スキル: {count}",
+  "No skills found in this repo.": "このリポジトリにスキルは見つかりませんでした。",
+  "This repo holds more skills than are listed here.":
+    "このリポジトリには、ここに表示されている以外のスキルもあります。",
+  "Agent access": "エージェントのアクセス",
+  "MCP servers": "MCP サーバー",
+  "Preview and recording": "プレビューと録画",
+  "Integrations sections": "連携のセクション",
+  "Set up on {machine}": "{machine} で設定",
+  "Only in this app window": "このアプリウィンドウのみ",
+  "Saved in the app on this computer. Other machines and your phone keep their own.":
+    "このコンピューターのアプリに保存されます。ほかのマシンやスマートフォンはそれぞれ別に保持します。",
+  "Its settings show when it reconnects. Pick another machine above to set that one up.":
+    "再接続すると設定が表示されます。別のマシンを設定するには上で選んでください。",
+  "Needs an app update": "アプリの更新が必要",
+  "No permission": "権限なし",
+  "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
+    "エージェントは SpecWithCode 拡張機能を通じて、サインイン済みの Chrome を使います。専用の設定ページがあります。",
+  "Open Chrome settings": "Chrome の設定を開く",
+  "Manage hosts": "ホストを管理",
+  "Manage profiles": "プロファイルを管理",
+  "Profiles: {count}": "プロファイル: {count}",
+  "Device hosts: {count}": "デバイスホスト: {count}",
 };

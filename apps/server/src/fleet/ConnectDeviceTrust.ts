@@ -59,12 +59,19 @@ import {
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { deviceShortIdOfThumbprint } from "@specweave-studio/shared/deviceShortId";
 import { describeDeviceClient } from "./connectDeviceNames.ts";
 
 const FILE_NAME = "connect-devices.json";
 /** Written once, after the first start kept its devices; never removed. */
 const MARKER_NAME = "connect-devices.migrated";
 export const DEVICE_APPROVAL_PENDING_TTL_MS = 10 * 60_000;
+/**
+ * A device that keeps asking keeps its request and its code this long at most
+ * (1406), so the code on the phone does not change while the owner walks to
+ * the machine. After it, the next ask starts a new request with a new code.
+ */
+export const DEVICE_APPROVAL_PENDING_MAX_MS = 30 * 60_000;
 export const DEVICE_APPROVAL_DENY_MS = 24 * 60 * 60_000;
 export const DEVICE_APPROVAL_MAX_PENDING = 20;
 /** Per account (Connect) or per hub (linked phones), so one source cannot fill the list. */
@@ -117,6 +124,39 @@ const describeSession = (session: DeviceSessionFacts, deviceType: string | undef
   });
 
 export const deviceKeyOfThumbprint = (thumbprint: string) => `jkt:${thumbprint}`;
+
+/**
+ * The four characters shown beside a device's name (1406), from its key: the
+ * thumbprint's own bytes, so the device can show the same ones. A hub-linked
+ * phone without a key gets them from a hash of its link key, on this machine
+ * only. Display only: nothing here approves, denies or removes by it.
+ */
+export const deviceShortIdOfKey = (key: string): string => {
+  const fromThumbprint = key.startsWith("jkt:")
+    ? deviceShortIdOfThumbprint(key.slice("jkt:".length))
+    : undefined;
+  return (
+    fromThumbprint ??
+    deviceShortIdOfThumbprint(
+      NodeCrypto.createHash("sha256").update(key, "utf8").digest("base64url"),
+    )!
+  );
+};
+
+/**
+ * One device across its requests (1406): a hash of its whole key, so a window
+ * can remember which waiting devices Later hid without holding their keys.
+ * Display only, like the short ID, but as long as the key is strong.
+ */
+export const deviceReferenceOfKey = (key: string): string =>
+  NodeCrypto.createHash("sha256").update(`device-reference:${key}`, "utf8").digest("base64url");
+
+/** A stored device as the list shows it. The file never holds the short ID. */
+export type ListedDevice = DeviceRecord & { readonly shortId: string };
+export const listedDevice = (device: DeviceRecord): ListedDevice => ({
+  ...device,
+  shortId: deviceShortIdOfKey(device.key),
+});
 
 /** The device a session belongs to, or null when this machine does not gate it. */
 export const gatedDevice = (session: DeviceSessionFacts): GatedDevice | null => {
@@ -325,6 +365,9 @@ export interface PendingSummary {
   readonly id: string;
   readonly kind: DeviceKind;
   readonly label: string;
+  readonly shortId: string;
+  /** The same across this device's requests; see `deviceReferenceOfKey`. */
+  readonly device: string;
   readonly named?: boolean;
   readonly deviceType?: string;
   readonly system?: string;
@@ -338,7 +381,7 @@ export interface TrustSnapshot {
   readonly machine: string;
   /** `damaged`: the file does not parse; remote devices are refused until it is repaired. */
   readonly health: "ok" | "damaged";
-  readonly devices: ReadonlyArray<DeviceRecord>;
+  readonly devices: ReadonlyArray<ListedDevice>;
   readonly pending: ReadonlyArray<PendingSummary>;
   /** Devices the update kept wait for the owner to look at the list once. */
   readonly needsReview: boolean;
@@ -654,6 +697,10 @@ export const makeWith = (options: MakeOptions = {}) =>
           const [result, next] = change(base, now);
           const toWrite = next ?? (changed(loaded.file, base) ? base : undefined);
           if (toWrite !== undefined) yield* write(toWrite);
+          // A plain code goes when its request does (ran out, allowed or turned away),
+          // once the file says so.
+          const waiting = new Set((next ?? base).pending.map((entry) => entry.key));
+          for (const key of codes.keys()) if (!waiting.has(key)) codes.delete(key);
           return result;
         }),
       );
@@ -674,7 +721,26 @@ export const makeWith = (options: MakeOptions = {}) =>
       | { readonly _tag: "full" }
       | { readonly _tag: "approved" };
 
-    /** Records `device` as waiting (once per key), refreshing its code after a restart. */
+    /**
+     * When a request that was just asked for again should run out (1406): ten
+     * minutes from this ask, never past the ceiling counted from its first ask.
+     * Undefined while more than half of its time is left, so a device that
+     * polls every few seconds makes the file change once in five minutes.
+     */
+    const renewedExpiry = (entry: PendingRecord, now: number): string | undefined => {
+      const current = millisOf(entry.expiresAt);
+      if (current - now > DEVICE_APPROVAL_PENDING_TTL_MS / 2) return undefined;
+      const wanted = Math.min(
+        now + DEVICE_APPROVAL_PENDING_TTL_MS,
+        millisOf(entry.createdAt) + DEVICE_APPROVAL_PENDING_MAX_MS,
+      );
+      return wanted > current ? isoOf(wanted) : undefined;
+    };
+
+    /**
+     * Records `device` as waiting (once per key), refreshing its code after a
+     * restart. A device that asks again keeps its request and code alive.
+     */
     const ensureWaiting = (device: GatedDevice & { readonly key: string }) =>
       modify((file, now): readonly [Waiting, StoreFile | undefined] => {
         if (file.devices.some((entry) => entry.key === device.key))
@@ -683,6 +749,9 @@ export const makeWith = (options: MakeOptions = {}) =>
           return [{ _tag: "denied" }, undefined];
         const existing = file.pending.find((entry) => entry.key === device.key);
         if (existing !== undefined) {
+          const expiresAt = renewedExpiry(existing, now);
+          const kept: PendingRecord =
+            expiresAt === undefined ? existing : { ...existing, expiresAt };
           const known = codes.get(device.key);
           if (known !== undefined && codeMatches(known, existing.codeHash)) {
             // At mint time no session said what the device is; its session does.
@@ -693,13 +762,15 @@ export const makeWith = (options: MakeOptions = {}) =>
               existing.app !== device.app;
             return [
               { _tag: "waiting", code: known },
-              relabel
+              relabel || kept !== existing
                 ? {
                     ...file,
                     pending: file.pending.map((entry) =>
-                      entry.key === device.key
-                        ? { ...withoutDescription(entry), ...describedFields(device) }
-                        : entry,
+                      entry.key !== device.key
+                        ? entry
+                        : relabel
+                          ? { ...withoutDescription(kept), ...describedFields(device) }
+                          : kept,
                     ),
                   }
                 : undefined,
@@ -712,7 +783,7 @@ export const makeWith = (options: MakeOptions = {}) =>
             {
               ...file,
               pending: file.pending.map((entry) =>
-                entry.key === device.key ? { ...entry, codeHash: hashCode(code) } : entry,
+                entry.key === device.key ? { ...kept, codeHash: hashCode(code) } : entry,
               ),
             },
           ];
@@ -902,11 +973,13 @@ export const makeWith = (options: MakeOptions = {}) =>
       return {
         machine: machineName,
         health: "ok",
-        devices: file.devices,
+        devices: file.devices.map(listedDevice),
         pending: file.pending.map((entry) => ({
           id: entry.id,
           kind: entry.kind,
           ...describedFields(entry),
+          shortId: deviceShortIdOfKey(entry.key),
+          device: deviceReferenceOfKey(entry.key),
           // The hub machine a phone was paired through, so the owner can tell where it came from.
           ...(entry.account.startsWith("hub:") ? { via: entry.account.slice(4) } : {}),
           askedAt: entry.createdAt,

@@ -58,7 +58,8 @@ struct ProjectSettingsSheet: View {
       .sheet(isPresented: $pickingIcon) {
         ProjectIconPicker(title: draft.title, current: shownIcon) { draft.icon = $0 }
           .presentationDetents([.medium, .large])
-          .presentationDragIndicator(.visible)
+          // Hidden, as on the settings sheet it opens from.
+          .presentationDragIndicator(.hidden)
       }
       .alert("Archive \(draft.title.isEmpty ? "this project" : draft.title)?", isPresented: $confirmArchive) {
         Button("Archive project", role: .destructive) { archive() }

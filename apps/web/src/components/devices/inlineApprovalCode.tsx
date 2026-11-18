@@ -8,12 +8,10 @@ import { useEffect, useState } from "react";
 
 import { useTx } from "../../i18n";
 import { Button } from "../ui/button";
+import { useOwnDeviceShortId } from "./ownDeviceId";
 
-/**
- * Where to go and the code to type, large and copyable: in the floating card,
- * and inline where a join or first run is waiting on that machine (1327).
- */
-export function DeviceApprovalCode({ machine, code }: { machine: string; code: string }) {
+/** Copies one code; says so for a moment. */
+export function CopyCodeButton({ code }: { code: string }) {
   const tx = useTx();
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -26,6 +24,43 @@ export function DeviceApprovalCode({ machine, code }: { machine: string; code: s
     }
   };
   return (
+    <Button size="sm" variant="outline" onClick={() => void copy()}>
+      {copied ? <CheckIcon /> : <CopyIcon />}
+      {copied ? tx("Copied") : tx("Copy")}
+    </Button>
+  );
+}
+
+/**
+ * Which device this is, by the four characters the machine shows beside it
+ * (1406), so the owner picks the right row among devices of one name.
+ */
+export function OwnDeviceIdLine({ deviceId }: { deviceId: string | null | undefined }) {
+  const tx = useTx();
+  if (!deviceId) return null;
+  return (
+    <p className="mt-2 text-xs text-muted-foreground" data-own-device-id={deviceId}>
+      {tx("This device's ID is {id}. The machine shows the same ID next to it.", { id: deviceId })}
+    </p>
+  );
+}
+
+/**
+ * Where to go and the code to type, large and copyable: in the floating card,
+ * and inline where a join or first run is waiting on that machine (1327).
+ */
+export function DeviceApprovalCode({
+  machine,
+  code,
+  deviceId = null,
+}: {
+  machine: string;
+  code: string;
+  /** This device's own short ID, when it is known. */
+  deviceId?: string | null;
+}) {
+  const tx = useTx();
+  return (
     <div data-device-approval-code={machine}>
       <p className="text-sm font-medium" data-device-waiting-line>
         {tx("Open SpecWithCode on {machine} and type this code:", { machine })}
@@ -37,11 +72,9 @@ export function DeviceApprovalCode({ machine, code }: { machine: string; code: s
         >
           {code}
         </output>
-        <Button size="sm" variant="outline" onClick={() => void copy()}>
-          {copied ? <CheckIcon /> : <CopyIcon />}
-          {copied ? tx("Copied") : tx("Copy")}
-        </Button>
+        <CopyCodeButton code={code} />
       </div>
+      <OwnDeviceIdLine deviceId={deviceId} />
       <p className="mt-2 text-xs text-muted-foreground">
         {tx("This device connects on its own once {machine} allows it.", { machine })}
       </p>
@@ -84,13 +117,14 @@ export function InlineDeviceApprovalCode({
     changeInline(environmentId, 1);
     return () => changeInline(environmentId, -1);
   }, [environmentId]);
+  const deviceId = useOwnDeviceShortId();
   return (
     <div
       role="status"
       className="rounded-lg border border-border bg-muted/40 p-3"
       data-inline-device-approval={environmentId}
     >
-      <DeviceApprovalCode machine={machine} code={code} />
+      <DeviceApprovalCode machine={machine} code={code} deviceId={deviceId} />
     </div>
   );
 }

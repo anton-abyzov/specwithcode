@@ -8,6 +8,10 @@
       "types": "./src/reservedDeviceNames.ts",
       "import": "./src/reservedDeviceNames.ts"
     },
+    "./deviceShortId": {
+      "types": "./src/deviceShortId.ts",
+      "import": "./src/deviceShortId.ts"
+    },
     "./threadLifecycleEvidence": {
       "types": "./src/threadLifecycleEvidence.ts",
       "import": "./src/threadLifecycleEvidence.ts"

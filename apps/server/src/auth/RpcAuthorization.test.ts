@@ -752,3 +752,113 @@ describe("skills control center authorization", () => {
       }).pipe(Effect.scoped),
   );
 });
+
+describe("skill repos, search and update authorization", () => {
+  const tested = [
+    WS_METHODS.projectsSkillRepos,
+    WS_METHODS.projectsSkillsSearch,
+    WS_METHODS.projectsSkillsUpdate,
+  ] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+        !(tested as ReadonlyArray<string>).includes(tag),
+    ),
+  );
+  const projectId = ProjectId.make("project");
+  const install = { repo: "owner/repo", skill: "sw-do" };
+
+  const clientWith = (scopes: ReadonlyArray<AuthEnvironmentScope>, invoked: { count: number }) => {
+    const handler = () =>
+      Effect.sync(() => {
+        invoked.count += 1;
+      }).pipe(Effect.andThen(Effect.never));
+    return RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.projectsSkillRepos, handler),
+          group.toLayerHandler(WS_METHODS.projectsSkillsSearch, handler),
+          group.toLayerHandler(WS_METHODS.projectsSkillsUpdate, handler),
+          RpcAuthorization.layer(scopes),
+        ),
+      ),
+    );
+  };
+
+  it.effect("refuses a repo change without settings write before its handler runs", () =>
+    Effect.gen(function* () {
+      const invoked = { count: 0 };
+      const client = yield* clientWith([AuthOrchestrationReadScope], invoked);
+      for (const operation of ["connect", "disconnect"] as const)
+        expect(
+          yield* client[WS_METHODS.projectsSkillRepos]({
+            projectId,
+            operation,
+            repo: "owner/repo",
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+      expect(invoked.count).toBe(0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses an install or update without terminal operate or file write", () =>
+    Effect.gen(function* () {
+      const invoked = { count: 0 };
+      const noTerminal = yield* clientWith(
+        [AuthOrchestrationReadScope, AuthFilesystemWriteScope],
+        invoked,
+      );
+      expect(
+        yield* noTerminal[WS_METHODS.projectsSkillsUpdate]({
+          projectId,
+          operation: "install",
+          install,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthTerminalOperateScope });
+      expect(
+        yield* noTerminal[WS_METHODS.projectsSkillsUpdate]({
+          projectId,
+          operation: "update",
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthTerminalOperateScope });
+      const noWrite = yield* clientWith(
+        [AuthOrchestrationReadScope, AuthTerminalOperateScope],
+        invoked,
+      );
+      expect(
+        yield* noWrite[WS_METHODS.projectsSkillsUpdate]({
+          projectId,
+          operation: "install",
+          install,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthFilesystemWriteScope });
+      expect(invoked.count).toBe(0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a notes search without file read and opening a note without terminal", () =>
+    Effect.gen(function* () {
+      const invoked = { count: 0 };
+      const reader = yield* clientWith([AuthOrchestrationReadScope], invoked);
+      expect(
+        yield* reader[WS_METHODS.projectsSkillsSearch]({
+          projectId,
+          operation: "search",
+          query: "report",
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthFilesystemReadScope });
+      const files = yield* clientWith(
+        [AuthOrchestrationReadScope, AuthFilesystemReadScope],
+        invoked,
+      );
+      expect(
+        yield* files[WS_METHODS.projectsSkillsSearch]({
+          projectId,
+          operation: "open-note",
+          note: "Daily/note.md",
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthTerminalOperateScope });
+      expect(invoked.count).toBe(0);
+    }).pipe(Effect.scoped),
+  );
+});

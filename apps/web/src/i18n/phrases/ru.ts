@@ -1250,10 +1250,6 @@ export const ru: PhraseCatalog = {
   "Retrying…": "Повтор…",
   "Retry now": "Повторить сейчас",
   "Show less": "Свернуть",
-  "Connections execution machine": "Машина для выполнения подключений",
-  "Select a machine": "Выберите машину",
-  "The selected machine or project is no longer in this scope.":
-    "Выбранная машина или проект больше не входит в эту область.",
   "Connect a machine to see its MCP servers.": "Подключите машину, чтобы увидеть её MCP-серверы.",
   "Granted scopes": "Выданные права",
   "Pairing link scopes": "Права ссылки связывания",
@@ -5391,6 +5387,29 @@ export const ru: PhraseCatalog = {
   "A device cannot approve itself. Type this code on another device or on the machine.":
     "Устройство не может одобрить само себя. Введите этот код на другом устройстве или на машине.",
   "A new device wants to use {machine}": "Новое устройство хочет использовать {machine}",
+  "{count} devices want to use {machine}":
+    "Устройств, которые хотят использовать {machine}: {count}",
+  "Each one shows its own code. Type the code from the device you want to allow.":
+    "У каждого свой код. Введите код с того устройства, которое хотите разрешить.",
+  "Type the code shown on the device you want to allow":
+    "Введите код с устройства, которое хотите разрешить",
+  "Allowed {device}. It can now use {machine}.":
+    "{device} разрешено. Теперь оно может использовать {machine}.",
+  "ID {id}": "ID {id}",
+  "Deny {device}": "Отклонить {device}",
+  "Signed in to SpecWithCode Connect as {account}":
+    "Вход в SpecWithCode Connect выполнен как {account}",
+  "Signed in to your SpecWithCode Connect account":
+    "Вход выполнен в ваш аккаунт SpecWithCode Connect",
+  "Paired through {hub}": "Подключено через {hub}",
+  "Paired through another of your machines": "Подключено через другую вашу машину",
+  "Waiting for approval": "Ожидают разрешения",
+  "This device's ID is {id}. The machine shows the same ID next to it.":
+    "ID этого устройства: {id}. Машина показывает тот же ID рядом с ним.",
+  "Open SpecWithCode on each machine below and type its code:":
+    "Откройте SpecWithCode на каждой машине ниже и введите её код:",
+  "This device connects on its own once a machine allows it.":
+    "Это устройство подключится само, как только одна из машин его разрешит.",
   "A phone": "Телефон",
   "A tablet": "Планшет",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
@@ -5403,7 +5422,6 @@ export const ru: PhraseCatalog = {
   "Approve this device on the machine.": "Одобрите это устройство на машине.",
   "Approved {date} by {approver}": "Одобрено {date} ({approver})",
   "Checking devices…": "Проверка устройств…",
-  "Code shown on {device}": "Код, который показывает {device}",
   "Could not reach this machine.": "Не удалось связаться с этой машиной.",
   "Could not reach this machine. Try again.":
     "Не удалось связаться с этой машиной. Попробуйте ещё раз.",
@@ -5469,7 +5487,6 @@ export const ru: PhraseCatalog = {
   "{label} joined": "Подключено: {label}",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} больше не пускает это устройство. Одобрите его снова в SpecWithCode на {machine}.",
-  "{position} of {total} waiting": "{position} из {total} в ожидании",
   "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
     "«Разрешить» даёт ему терминалы, файлы, настройки и входы в аккаунты на {machine}, а также запуск работы там, так же как это приложение.",
   "Asked at {time}": "Запрос в {time}",
@@ -5493,4 +5510,115 @@ export const ru: PhraseCatalog = {
     "Не удалось загрузить завершённую историю с {machines}.",
   "Resolved history from another machine could not be loaded.":
     "Не удалось загрузить завершённую историю с другого компьютера.",
+  "Set up for {project} on {machine}": "Настройка для {project} на {machine}",
+  "Unavailable machine": "Компьютер недоступен",
+  "No machines": "Нет компьютеров",
+  "Each machine keeps its own. Changes here only affect {machine}.":
+    "У каждого компьютера свой набор. Изменения здесь касаются только {machine}.",
+  "On this machine": "На этом компьютере",
+  "Not on {machine}": "Нет на {machine}",
+  "Needs sign-in": "Нужен вход",
+  "Update available {version}": "Доступно обновление {version}",
+  "Built into the agent": "Встроены в агента",
+  "Read {time}, scan incomplete": "Прочитано в {time}, проверка неполная",
+  "Read {time}": "Прочитано в {time}",
+  "Offline, not read": "Не в сети, не прочитано",
+  "No project there, not read": "Там нет проекта, не прочитано",
+  "Could not be read": "Не удалось прочитать",
+  "copies differ": "копии различаются",
+  "Across machines": "По всем компьютерам",
+  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
+    "Только чтение. Каждый компьютер сообщает о своих навыках. Компьютер, который не удалось прочитать, никогда не показывается как без навыка.",
+  "No skills on the machines that were read.": "На прочитанных компьютерах нет навыков.",
+  "Showing the first 32 machines. Open Connections to inspect the rest.":
+    "Показаны первые 32 компьютера. Остальные смотрите в разделе «Подключения».",
+  "The machine list could not be refreshed. Listed machines may be out of date.":
+    "Не удалось обновить список компьютеров. Показанные компьютеры могут быть устаревшими.",
+  "These come with the agent or its account. They are listed so you can see what it loads, and cannot be installed, switched off or edited here.":
+    "Они поставляются с агентом или его аккаунтом. Показаны, чтобы было видно, что он загружает; установить, выключить или изменить их здесь нельзя.",
+  "{agent}: no skills installed on {machine}": "{agent}: на {machine} нет установленных навыков",
+  "This project has no folder on {machine}. Pick another machine above.":
+    "У этого проекта нет папки на {machine}. Выберите другой компьютер выше.",
+  "Nothing is installed on {machine} yet.": "На {machine} пока ничего не установлено.",
+  "Skills view": "Вид навыков",
+  "You are on {machine}": "Вы на {machine}",
+  "{machine} is offline. Its settings show when it reconnects.":
+    "{machine} не в сети. Настройки появятся, когда он снова подключится.",
+  "You can look at {machine}'s settings from this sign-in, but not change them.":
+    "С этим входом можно смотреть настройки {machine}, но нельзя их менять.",
+  "Needs permission to change files and run vskill here.":
+    "Нужно разрешение менять файлы и запускать vskill здесь.",
+  "Needs permission to change settings on this machine.":
+    "Нужно разрешение менять настройки на этой машине.",
+  "Loaded now": "Уже загружен",
+  "Next message": "Со следующего сообщения",
+  "Next session": "Со следующей сессии",
+  "Update available": "Есть обновление",
+  "Changed at source": "Изменён в источнике",
+  "Not updated from here": "Отсюда не обновляется",
+  "Needs GitHub sign-in": "Нужен вход в GitHub",
+  "Name the repo as owner/repo or paste its GitHub link.":
+    "Укажите репозиторий как owner/repo или вставьте ссылку на GitHub.",
+  "Sign in to GitHub on {machine} to read {repo}":
+    "Войдите в GitHub на {machine}, чтобы прочитать {repo}",
+  "GitHub has no {repo} for the account signed in on {machine}.":
+    "Для аккаунта, вошедшего на {machine}, на GitHub нет {repo}.",
+  "GitHub is limiting reads from {machine}. Sign in to GitHub there or try again later.":
+    "GitHub ограничивает запросы с {machine}. Войдите там в GitHub или повторите позже.",
+  "GitHub could not be reached from {machine}.": "Не удалось связаться с GitHub с {machine}.",
+  "Installed {skill} {version}": "Установлен {skill} {version}",
+  "Updated {skill} to {version}": "{skill} обновлён до {version}",
+  "{skill} is already up to date": "{skill} уже актуален",
+  "Skipped {skill}": "{skill} пропущен",
+  "{skill} was not changed": "{skill} не изменён",
+  "Search skills and notes": "Поиск навыков и заметок",
+  "Search installed skills, connected repos and notes":
+    "Искать в установленных навыках, подключённых репозиториях и заметках",
+  "Installed on {machine}": "Установлено на {machine}",
+  "No installed skill matches.": "Среди установленных навыков совпадений нет.",
+  "Available in a connected repo": "Доступно в подключённом репозитории",
+  "No skill in a connected repo matches.": "В подключённых репозиториях совпадений нет.",
+  Private: "Приватный",
+  Notes: "Заметки",
+  "No Obsidian vault on {machine}.": "На {machine} нет хранилища Obsidian.",
+  "No note matches.": "Совпадений в заметках нет.",
+  "Open in Obsidian": "Открыть в Obsidian",
+  "More notes may match. Narrow the search.": "Могут быть и другие заметки. Уточните запрос.",
+  "Obsidian on {machine} did not open the note.": "Obsidian на {machine} не открыл заметку.",
+  "When each agent has it": "Когда навык появится у каждого агента",
+  "Versions and updates": "Версии и обновления",
+  "Update all ({count})": "Обновить все ({count})",
+  "No skill on {machine} records a source yet.":
+    "На {machine} пока нет навыков с записанным источником.",
+  "Skill repos": "Репозитории навыков",
+  "Connected on {machine} only. A private repo is read with the GitHub sign-in on {machine} and is never sent to a registry.":
+    "Подключены только на {machine}. Приватный репозиторий читается через вход в GitHub на {machine} и никогда не отправляется в реестр.",
+  "Skill repo": "Репозиторий навыков",
+  "owner/repo or a GitHub link": "owner/repo или ссылка на GitHub",
+  Suggested: "Рекомендуем",
+  "Connect {repo}": "Подключить {repo}",
+  Public: "Публичный",
+  "Skills: {count}": "Навыков: {count}",
+  "No skills found in this repo.": "В этом репозитории навыков не найдено.",
+  "This repo holds more skills than are listed here.":
+    "В этом репозитории больше навыков, чем показано здесь.",
+  "Agent access": "Доступ агентов",
+  "MCP servers": "MCP-серверы",
+  "Preview and recording": "Предпросмотр и запись",
+  "Integrations sections": "Разделы интеграций",
+  "Set up on {machine}": "Настройка на {machine}",
+  "Only in this app window": "Только в этом окне приложения",
+  "Saved in the app on this computer. Other machines and your phone keep their own.":
+    "Хранится в приложении на этом компьютере. У других компьютеров и телефона свои настройки.",
+  "Its settings show when it reconnects. Pick another machine above to set that one up.":
+    "Настройки появятся, когда компьютер снова подключится. Чтобы настроить другой, выберите его выше.",
+  "Needs an app update": "Нужно обновить приложение",
+  "No permission": "Нет доступа",
+  "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
+    "Агенты работают в вашем Chrome с выполненным входом через расширение SpecWithCode. У него своя страница настроек.",
+  "Open Chrome settings": "Открыть настройки Chrome",
+  "Manage hosts": "Управлять хостами",
+  "Manage profiles": "Управлять профилями",
+  "Profiles: {count}": "Профили: {count}",
+  "Device hosts: {count}": "Хосты устройств: {count}",
 };

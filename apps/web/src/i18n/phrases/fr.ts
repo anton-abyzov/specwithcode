@@ -1255,10 +1255,6 @@ export const fr: PhraseCatalog = {
   "Retrying…": "Nouvelle tentative…",
   "Retry now": "Réessayer maintenant",
   "Show less": "Afficher moins",
-  "Connections execution machine": "Machine d'exécution des connexions",
-  "Select a machine": "Sélectionnez une machine",
-  "The selected machine or project is no longer in this scope.":
-    "La machine ou le projet sélectionné n'est plus dans ce périmètre.",
   "Connect a machine to see its MCP servers.": "Connectez une machine pour voir ses serveurs MCP.",
   "Granted scopes": "Autorisations accordées",
   "Pairing link scopes": "Autorisations du lien d'association",
@@ -5441,6 +5437,27 @@ export const fr: PhraseCatalog = {
   "A device cannot approve itself. Type this code on another device or on the machine.":
     "Un appareil ne peut pas s’approuver lui-même. Saisissez ce code sur un autre appareil ou sur la machine.",
   "A new device wants to use {machine}": "Un nouvel appareil veut utiliser {machine}",
+  "{count} devices want to use {machine}": "{count} appareils veulent utiliser {machine}",
+  "Each one shows its own code. Type the code from the device you want to allow.":
+    "Chacun affiche son propre code. Saisissez le code de l’appareil que vous voulez autoriser.",
+  "Type the code shown on the device you want to allow":
+    "Saisissez le code affiché sur l’appareil que vous voulez autoriser",
+  "Allowed {device}. It can now use {machine}.":
+    "{device} autorisé. Il peut maintenant utiliser {machine}.",
+  "ID {id}": "ID {id}",
+  "Deny {device}": "Refuser {device}",
+  "Signed in to SpecWithCode Connect as {account}":
+    "Connecté à SpecWithCode Connect en tant que {account}",
+  "Signed in to your SpecWithCode Connect account": "Connecté à votre compte SpecWithCode Connect",
+  "Paired through {hub}": "Associé via {hub}",
+  "Paired through another of your machines": "Associé via une autre de vos machines",
+  "Waiting for approval": "En attente d’approbation",
+  "This device's ID is {id}. The machine shows the same ID next to it.":
+    "L’ID de cet appareil est {id}. La machine affiche le même ID à côté de lui.",
+  "Open SpecWithCode on each machine below and type its code:":
+    "Ouvrez SpecWithCode sur chaque machine ci-dessous et saisissez son code :",
+  "This device connects on its own once a machine allows it.":
+    "Cet appareil se connecte tout seul dès qu’une machine l’autorise.",
   "A phone": "Un téléphone",
   "A tablet": "Une tablette",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
@@ -5453,7 +5470,6 @@ export const fr: PhraseCatalog = {
   "Approve this device on the machine.": "Approuvez cet appareil sur la machine.",
   "Approved {date} by {approver}": "Approuvé le {date} par {approver}",
   "Checking devices…": "Vérification des appareils…",
-  "Code shown on {device}": "Code affiché sur {device}",
   "Could not reach this machine.": "Impossible de joindre cette machine.",
   "Could not reach this machine. Try again.": "Impossible de joindre cette machine. Réessayez.",
   "Could not remove {device}": "Impossible de retirer {device}",
@@ -5518,7 +5534,6 @@ export const fr: PhraseCatalog = {
   "{label} joined": "{label} a rejoint",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} n’accepte plus cet appareil. Approuvez-le à nouveau dans SpecWithCode sur {machine}.",
-  "{position} of {total} waiting": "{position} sur {total} en attente",
   "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
     "Autoriser lui permet d’utiliser les terminaux, les fichiers, les réglages et les connexions sur {machine} et d’y lancer du travail, comme cette app.",
   "Asked at {time}": "Demandé à {time}",
@@ -5542,4 +5557,116 @@ export const fr: PhraseCatalog = {
     "L'historique résolu de {machines} n'a pas pu être chargé.",
   "Resolved history from another machine could not be loaded.":
     "L'historique résolu d'une autre machine n'a pas pu être chargé.",
+  "Set up for {project} on {machine}": "Configurer pour {project} sur {machine}",
+  "Unavailable machine": "Machine indisponible",
+  "No machines": "Aucune machine",
+  "Each machine keeps its own. Changes here only affect {machine}.":
+    "Chaque machine a les siens. Les changements ici ne concernent que {machine}.",
+  "On this machine": "Sur cette machine",
+  "Not on {machine}": "Absent de {machine}",
+  "Needs sign-in": "Connexion requise",
+  "Update available {version}": "Mise à jour disponible : {version}",
+  "Built into the agent": "Intégrées à l'agent",
+  "Read {time}, scan incomplete": "Lu à {time}, analyse incomplète",
+  "Read {time}": "Lu à {time}",
+  "Offline, not read": "Hors ligne, non lu",
+  "No project there, not read": "Aucun projet là-bas, non lu",
+  "Could not be read": "Lecture impossible",
+  "copies differ": "les copies diffèrent",
+  "Across machines": "Entre machines",
+  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
+    "Lecture seule. Chaque machine indique ses propres skills. Une machine qui n'a pas pu être lue n'est jamais affichée comme n'ayant pas le skill.",
+  "No skills on the machines that were read.": "Aucun skill sur les machines lues.",
+  "Showing the first 32 machines. Open Connections to inspect the rest.":
+    "Les 32 premières machines sont affichées. Ouvrez Connexions pour voir les autres.",
+  "The machine list could not be refreshed. Listed machines may be out of date.":
+    "La liste des machines n'a pas pu être actualisée. Les machines affichées ne sont peut-être plus à jour.",
+  "These come with the agent or its account. They are listed so you can see what it loads, and cannot be installed, switched off or edited here.":
+    "Ils sont fournis avec l'agent ou son compte. Ils sont listés pour montrer ce qu'il charge et ne peuvent être ni installés, ni désactivés, ni modifiés ici.",
+  "{agent}: no skills installed on {machine}": "{agent} : aucun skill installé sur {machine}",
+  "This project has no folder on {machine}. Pick another machine above.":
+    "Ce projet n'a pas de dossier sur {machine}. Choisissez une autre machine ci-dessus.",
+  "Nothing is installed on {machine} yet.": "Rien n'est encore installé sur {machine}.",
+  "Skills view": "Vue des skills",
+  "You are on {machine}": "Vous êtes sur {machine}",
+  "{machine} is offline. Its settings show when it reconnects.":
+    "{machine} est hors ligne. Ses réglages s'afficheront à la reconnexion.",
+  "You can look at {machine}'s settings from this sign-in, but not change them.":
+    "Avec cette connexion, vous pouvez consulter les réglages de {machine}, mais pas les modifier.",
+  "Needs permission to change files and run vskill here.":
+    "Il faut l'autorisation de modifier des fichiers et de lancer vskill ici.",
+  "Needs permission to change settings on this machine.":
+    "Il faut l'autorisation de modifier les réglages de cette machine.",
+  "Loaded now": "Chargé maintenant",
+  "Next message": "Prochain message",
+  "Next session": "Prochaine session",
+  "Update available": "Mise à jour disponible",
+  "Changed at source": "Modifié à la source",
+  "Not updated from here": "Pas mis à jour d'ici",
+  "Needs GitHub sign-in": "Connexion à GitHub requise",
+  "Name the repo as owner/repo or paste its GitHub link.":
+    "Indiquez le dépôt sous la forme owner/repo ou collez son lien GitHub.",
+  "Sign in to GitHub on {machine} to read {repo}":
+    "Connectez-vous à GitHub sur {machine} pour lire {repo}",
+  "GitHub has no {repo} for the account signed in on {machine}.":
+    "GitHub n'a pas de {repo} pour le compte connecté sur {machine}.",
+  "GitHub is limiting reads from {machine}. Sign in to GitHub there or try again later.":
+    "GitHub limite les lectures depuis {machine}. Connectez-vous à GitHub sur cette machine ou réessayez plus tard.",
+  "GitHub could not be reached from {machine}.": "GitHub est injoignable depuis {machine}.",
+  "Installed {skill} {version}": "{skill} {version} installé",
+  "Updated {skill} to {version}": "{skill} mis à jour vers {version}",
+  "{skill} is already up to date": "{skill} est déjà à jour",
+  "Skipped {skill}": "{skill} ignoré",
+  "{skill} was not changed": "{skill} n'a pas été modifié",
+  "Search skills and notes": "Rechercher des skills et des notes",
+  "Search installed skills, connected repos and notes":
+    "Rechercher dans les skills installés, les dépôts connectés et les notes",
+  "Installed on {machine}": "Installés sur {machine}",
+  "No installed skill matches.": "Aucun skill installé ne correspond.",
+  "Available in a connected repo": "Disponibles dans un dépôt connecté",
+  "No skill in a connected repo matches.": "Aucun skill d'un dépôt connecté ne correspond.",
+  Private: "Privé",
+  Notes: "Notes",
+  "No Obsidian vault on {machine}.": "Aucun coffre Obsidian sur {machine}.",
+  "No note matches.": "Aucune note ne correspond.",
+  "Open in Obsidian": "Ouvrir dans Obsidian",
+  "More notes may match. Narrow the search.":
+    "D'autres notes peuvent correspondre. Affinez la recherche.",
+  "Obsidian on {machine} did not open the note.": "Obsidian sur {machine} n'a pas ouvert la note.",
+  "When each agent has it": "Quand chaque agent l'a",
+  "Versions and updates": "Versions et mises à jour",
+  "Update all ({count})": "Tout mettre à jour ({count})",
+  "No skill on {machine} records a source yet.":
+    "Aucun skill sur {machine} n'a encore de source enregistrée.",
+  "Skill repos": "Dépôts de skills",
+  "Connected on {machine} only. A private repo is read with the GitHub sign-in on {machine} and is never sent to a registry.":
+    "Connectés uniquement sur {machine}. Un dépôt privé est lu avec la connexion GitHub de {machine} et n'est jamais envoyé à un registre.",
+  "Skill repo": "Dépôt de skills",
+  "owner/repo or a GitHub link": "owner/repo ou un lien GitHub",
+  Suggested: "Suggestions",
+  "Connect {repo}": "Connecter {repo}",
+  Public: "Public",
+  "Skills: {count}": "Skills : {count}",
+  "No skills found in this repo.": "Aucun skill trouvé dans ce dépôt.",
+  "This repo holds more skills than are listed here.":
+    "Ce dépôt contient plus de skills que ceux listés ici.",
+  "Agent access": "Accès des agents",
+  "MCP servers": "Serveurs MCP",
+  "Preview and recording": "Aperçu et enregistrement",
+  "Integrations sections": "Sections des intégrations",
+  "Set up on {machine}": "Configurer sur {machine}",
+  "Only in this app window": "Seulement dans cette fenêtre de l'app",
+  "Saved in the app on this computer. Other machines and your phone keep their own.":
+    "Enregistré dans l'app sur cet ordinateur. Les autres machines et votre téléphone ont les leurs.",
+  "Its settings show when it reconnects. Pick another machine above to set that one up.":
+    "Ses réglages s'afficheront quand elle se reconnectera. Choisissez une autre machine ci-dessus pour la configurer.",
+  "Needs an app update": "Mise à jour de l'app requise",
+  "No permission": "Pas d'autorisation",
+  "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
+    "Les agents utilisent votre Chrome connecté via l'extension SpecWithCode. Il a sa propre page de réglages.",
+  "Open Chrome settings": "Ouvrir les réglages de Chrome",
+  "Manage hosts": "Gérer les hôtes",
+  "Manage profiles": "Gérer les profils",
+  "Profiles: {count}": "Profils : {count}",
+  "Device hosts: {count}": "Hôtes d’appareils : {count}",
 };

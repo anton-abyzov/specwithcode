@@ -34,10 +34,13 @@ import { requestMigrateProjectThreads } from "../handoff/HandOffMachineDialog";
 import { toastManager } from "../ui/toast";
 import { ProjectLinkDialog, type ProjectLinkTarget } from "./ProjectLinkDialog";
 import { Button } from "../ui/button";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
+  MenuHint,
+  MenuInfoGroup,
   MenuItem,
   MenuPopup,
   MenuRadioGroup,
@@ -46,6 +49,20 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
+
+/** A machine row's leading glyph: the machine's own icon in its color, as its chip shows it. */
+function MachineRowIcon({ checkoutKey, name }: { checkoutKey: string; name: string }) {
+  const identity = useMachineIdentity(checkoutKeyEnvironmentId(checkoutKey), name);
+  return (
+    <span
+      className="machine-mark flex size-4 shrink-0 items-center justify-center"
+      {...machineColorProps(identity)}
+      aria-hidden
+    >
+      <EnvironmentMachineIcon kind={identity?.icon ?? "laptop"} className="size-4" />
+    </span>
+  );
+}
 
 /** Runs the pending action once the popup holding this has left the DOM. */
 function AfterUnmount({ pending }: { pending: { current: (() => void) | null } }) {
@@ -256,27 +273,33 @@ export function OrchestratorSwitcher({
           <ChevronDownIcon aria-hidden />
         </MenuTrigger>
       </span>
-      <MenuPopup align="start" side="top" className="min-w-64">
+      {/* A fixed width, so opening the info note never makes the menu jump wider. */}
+      <MenuPopup align="start" side="top" className="w-[min(20rem,calc(100vw-2rem))]">
         <AfterUnmount pending={pendingView} />
         {viewable && onView ? (
-          <MenuGroup>
-            <MenuGroupLabel>{tx("View this project on")}</MenuGroupLabel>
-            <p className="px-2 pb-1 text-muted-foreground text-xs" data-orchestrator-note="">
-              {tx(
-                "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.",
-              )}
-            </p>
-            {allUnlinked ? (
-              <p
-                className="px-2 pb-1 text-muted-foreground text-xs"
-                data-orchestrator-unlinked-note=""
-              >
-                {tx(
-                  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.",
-                )}
-                {linkCoversRows ? ` ${tx("Link them below to make one project.")}` : null}
-              </p>
-            ) : null}
+          <MenuInfoGroup
+            label={tx("View this project on")}
+            infoLabel={`${tx("About")}: ${tx("View this project on")}`}
+            info={
+              <>
+                <MenuHint data-orchestrator-note="">
+                  {tx(
+                    "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.",
+                  )}
+                </MenuHint>
+                {allUnlinked ? (
+                  <MenuHint data-orchestrator-unlinked-note="">
+                    {tx(
+                      "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.",
+                    )}
+                    {linkCoversRows ? ` ${tx("Link them below to make one project.")}` : null}
+                  </MenuHint>
+                ) : null}
+              </>
+            }
+          >
+            {/* What viewing means sits behind the label's info button: the lines are too long
+                to stand in a menu, and the menu should open on its machines. */}
             <MenuRadioGroup
               value={current}
               onValueChange={(value) => {
@@ -326,6 +349,7 @@ export function OrchestratorSwitcher({
                   title={row.hint}
                 >
                   <span className="flex w-full items-center gap-2">
+                    <MachineRowIcon checkoutKey={row.key} name={row.name} />
                     <span className="min-w-0 truncate">{row.name}</span>
                     {row.note ? (
                       <span className="shrink-0 text-muted-foreground text-xs">{row.note}</span>
@@ -335,7 +359,7 @@ export function OrchestratorSwitcher({
                 </MenuRadioItem>
               ))}
             </MenuRadioGroup>
-          </MenuGroup>
+          </MenuInfoGroup>
         ) : null}
         {projectActions ? (
           <>

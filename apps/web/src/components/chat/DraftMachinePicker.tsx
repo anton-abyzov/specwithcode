@@ -807,6 +807,7 @@ export function DraftMachinePicker(props: Props) {
         </MenuTrigger>
         <MenuPopup
           align="start"
+          width="lg"
           className="w-[min(22rem,calc(100vw-2rem))]"
           {...composerFloatingLayerProps}
         >

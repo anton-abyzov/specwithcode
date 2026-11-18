@@ -260,6 +260,8 @@ try {
       "m3not linked",
       "m4not linked",
     ]);
+    // What viewing means sits behind the first label's info button.
+    await page.locator('[data-slot="menu-info-button"]').click();
     assert.equal(
       await page.locator("[data-orchestrator-unlinked-note]").textContent(),
       "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them. Link them below to make one project.",

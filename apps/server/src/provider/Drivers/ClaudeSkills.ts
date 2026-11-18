@@ -16,12 +16,23 @@
  * The Agent SDK init handshake surfaces skills only as slash commands without
  * their filesystem paths, so the provider snapshot scans the same locations
  * directly, mirroring how the Codex app-server reports its skills.
+ * Skills synced from claude.ai live one level deeper, in
+ * `<config dir>/skills/synced/<bucket>/<skill>/SKILL.md`, and are published as
+ * `anthropic-skills:<skill>`. They are reported under the `claude.ai` scope:
+ * the sync rewrites those folders, so nothing here switches or edits them.
+ * Which bucket a session loads is not recorded on disk, so every bucket is
+ * read and the most recently synced copy of a name is the one listed.
  *
  * @module provider/Drivers/ClaudeSkills
  */
 import * as NodeOS from "node:os";
 
-import type { ClaudeSettings, ServerProviderSkill } from "@specweave-studio/contracts";
+import {
+  CLAUDE_AI_SKILL_NAMESPACE,
+  CLAUDE_AI_SKILL_SCOPE,
+  type ClaudeSettings,
+  type ServerProviderSkill,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -33,6 +44,10 @@ import { parse as parseYamlDocument } from "yaml";
 import { expandHomePath } from "../../pathExpansion.ts";
 
 type ClaudeSkillScope = "user" | "project" | "plugin";
+
+const SyncedManifestJson = fromLenientJson(
+  Schema.Struct({ lastUpdated: Schema.optional(Schema.Number) }),
+);
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
@@ -833,6 +848,73 @@ export const readClaudeSkillSwitches = Effect.fn("readClaudeSkillSwitches")(func
  * project copy instead would attach its invocation metadata to a command
  * Claude Code resolves elsewhere.
  */
+/**
+ * Skills claude.ai syncs into `<skills>/synced/<bucket>/<skill>/SKILL.md`.
+ * Dot entries (`.bucket-*` markers, `.staging`) are the sync's own bookkeeping.
+ * A name in several buckets is listed once, from the bucket whose manifest was
+ * updated last. `skillOverrides` are not applied: these are not switched here.
+ */
+const discoverClaudeSyncedSkills = Effect.fn("discoverClaudeSyncedSkills")(function* (
+  skillsRoot: string,
+): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const syncedRoot = path.join(skillsRoot, "synced");
+  const list = (directory: string) =>
+    fileSystem.readDirectory(directory).pipe(
+      Effect.map((entries) => entries.filter((entry) => !entry.startsWith(".")).sort()),
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    );
+  const decodeManifest = Schema.decodeUnknownOption(SyncedManifestJson);
+
+  const found = new Map<
+    string,
+    { readonly updated: number; readonly skill: ServerProviderSkill }
+  >();
+  for (const bucket of yield* list(syncedRoot)) {
+    const bucketPath = path.join(syncedRoot, bucket);
+    const manifest = yield* fileSystem
+      .readFileString(path.join(bucketPath, "manifest.json"))
+      .pipe(Effect.orElseSucceed(() => undefined));
+    const decoded = manifest === undefined ? undefined : decodeManifest(manifest);
+    const updated =
+      decoded !== undefined && decoded._tag === "Some" ? (decoded.value.lastUpdated ?? 0) : 0;
+    for (const entry of yield* list(bucketPath)) {
+      const skillPath = path.join(bucketPath, entry, "SKILL.md");
+      const contents = yield* fileSystem
+        .readFileString(skillPath)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (contents === undefined) continue;
+      const frontmatter = parseSkillFrontmatter(contents);
+      if (frontmatter.kind === "malformed") continue;
+      const leaf = entry.trim();
+      if (!leaf) continue;
+      const name = `${CLAUDE_AI_SKILL_NAMESPACE}:${leaf}`;
+      const prior = found.get(name);
+      if (prior !== undefined && prior.updated >= updated) continue;
+      found.set(name, {
+        updated,
+        skill: {
+          name,
+          path: skillPath,
+          enabled: true,
+          scope: CLAUDE_AI_SKILL_SCOPE,
+          ...(frontmatter.kind === "parsed" && frontmatter.description
+            ? { description: frontmatter.description }
+            : {}),
+          ...(frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true
+            ? { userInvocationOnly: true }
+            : {}),
+          ...(frontmatter.kind === "parsed" && frontmatter.userInvocable === false
+            ? { userInvocable: false }
+            : {}),
+        },
+      });
+    }
+  }
+  return [...found.values()].map((entry) => entry.skill);
+});
+
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   cwd?: string,
@@ -918,6 +1000,10 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
           : {}),
       });
     }
+  }
+
+  for (const skill of yield* discoverClaudeSyncedSkills(path.join(configDirPath, "skills"))) {
+    if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
   }
 
   const pluginSkills = yield* discoverClaudePluginSkills({

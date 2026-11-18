@@ -501,6 +501,7 @@ describe("RemoteWorkers", () => {
                 { id: "default", label: "Pi default" },
                 { id: "openrouter/anthropic/claude-sonnet-5", label: "Sonnet", paid: true },
                 { id: "lmstudio/qwen3", label: "Qwen", paid: "yes" },
+                { id: "anthropic/claude", label: "Claude", held: true },
               ],
             },
           ],
@@ -526,6 +527,7 @@ describe("RemoteWorkers", () => {
       expect(grok).not.toHaveProperty("allowedByGrant");
       expect(codex).not.toHaveProperty("paidModels");
       expect(pi?.paidModels).toEqual(["openrouter/anthropic/claude-sonnet-5"]);
+      expect(pi?.heldModels).toEqual(["anthropic/claude"]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -836,6 +838,55 @@ describe("RemoteWorkers", () => {
         1,
       );
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("tries the app's pick first, and never starts it on a model held back there", () => {
+    const codex = ProviderInstanceId.make("codex");
+    const held = { instanceId: codex, model: "gpt-5.5" } as ModelSelection;
+    const plan = { instanceId: codex, model: "gpt-5.5-mini" } as ModelSelection;
+    // That machine bills gpt-5.5 per use, or cannot say how; the mini runs on its plan.
+    const sent = (input: Parameters<typeof launchInput>[0]) => {
+      const { remote, layer } = setup({
+        orchestrator_capabilities: () => ({
+          result: {
+            ...capabilities,
+            providers: [
+              {
+                ...capabilities.providers[0],
+                models: [
+                  { id: held.model, label: null, held: true },
+                  { id: plan.model, label: null },
+                ],
+              },
+            ],
+          },
+        }),
+      });
+      return Effect.gen(function* () {
+        yield* allow();
+        yield* (yield* RemoteWorkers.RemoteWorkers).launch(launchInput(input));
+        return remote.toolCalls.find((call) => call.name === "studio_thread_launch")?.args
+          .modelSelection;
+      }).pipe(Effect.provide(layer));
+    };
+    return Effect.gen(function* () {
+      // The pick runs there on a plan: it wins over what the caller runs on.
+      expect(
+        yield* sent({ pickedModelSelection: plan, inheritedModelSelection: held }),
+      ).toMatchObject(plan);
+      // The pick is held back there: the caller's own model starts, as it did before.
+      expect(
+        yield* sent({ pickedModelSelection: held, inheritedModelSelection: plan }),
+      ).toMatchObject(plan);
+      // The caller's own model is inherited whatever it costs there, as before.
+      expect(
+        yield* sent({ pickedModelSelection: held, inheritedModelSelection: held }),
+      ).toMatchObject(held);
+      // A model the caller names is the caller's choice.
+      expect(
+        yield* sent({ explicitModelSelection: held, pickedModelSelection: undefined }),
+      ).toMatchObject(held);
+    });
   });
 
   it.live("falls back to this project's worker model when the remote project has none", () => {

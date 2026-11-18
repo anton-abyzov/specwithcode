@@ -88,6 +88,7 @@ import {
   type ProviderThreadId,
   type ThreadId,
   type ResponseStyle,
+  CLAUDE_AI_SKILL_SCOPE,
 } from "@specweave-studio/contracts";
 
 import { teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
@@ -3755,7 +3756,14 @@ export function makeClaudeAdapterV2(
         (skills) =>
           new Set(
             skills
-              .filter((skill) => skill.enabled && skill.userInvocable !== false)
+              // claude.ai-synced skills stay prose: which sync bucket a session
+              // loads is not on disk, so a `/name` could answer "Unknown command".
+              .filter(
+                (skill) =>
+                  skill.enabled &&
+                  skill.userInvocable !== false &&
+                  skill.scope !== CLAUDE_AI_SKILL_SCOPE,
+              )
               .map((skill) => skill.name),
           ),
       ),
