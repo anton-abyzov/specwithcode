@@ -53,6 +53,11 @@ try {
       await enable.click();
       const dialog = page.getByRole("alertdialog");
       await dialog.waitFor();
+      // Capture the settled dialog, not its fade-in.
+      await page.waitForFunction(() =>
+        document.getAnimations().every((animation) => animation.playState !== "running"),
+      );
+      await page.waitForTimeout(250);
       const text = await dialog.innerText();
       if (!text.includes("can get your account banned")) problems.push(`${where}: no warning text`);
       const file = NodePath.join(output, `cursor-usage-warning-${theme}-${width}.png`);
