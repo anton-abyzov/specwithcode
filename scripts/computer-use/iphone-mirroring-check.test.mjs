@@ -201,6 +201,17 @@ describe("dry run", () => {
     expect(result.lines.some((entry) => entry.includes("20 of 20"))).toBe(false);
   });
 
+  it("never writes 20 of 20 in a failed log, even when every tap landed", async () => {
+    const phone = simulatedPhone();
+    const call = phone.deps.call;
+    phone.deps.call = (tool, args) =>
+      tool === "computer_scroll" ? Promise.resolve({ data: {} }) : call(tool, args);
+    const result = await runCheck(phone.deps);
+    expect(result.lines.at(-1)).toMatch(/^Result: FAIL/);
+    expect(result.lines).toContain("Clicks landed: all 20, but another check failed");
+    expect(result.lines.some((entry) => entry.includes("20 of 20"))).toBe(false);
+  });
+
   it("still fails a run that started at load 48 or less", async () => {
     const result = await runCheck(simulatedPhone({ load: 48, missClick: 2 }).deps);
     expect(result.invalid).toBe(false);
@@ -249,7 +260,8 @@ describe("dry run", () => {
 describe("options", () => {
   it("needs --out for a live run and keeps --miss to dry runs", () => {
     expect(() => parseArgs([])).toThrow(/--out/);
-    expect(() => parseArgs(["--out", "x", "--miss", "2"])).toThrow(/dry-run/);
+    expect(() => parseArgs(["--out", "x"])).toThrow(/--ios <version> is required/);
+    expect(() => parseArgs(["--out", "x", "--ios", "26.1", "--miss", "2"])).toThrow(/dry-run/);
     expect(() => parseArgs(["--dry-run", "--tabs", "One"])).toThrow(/two tab names/);
     expect(() => parseArgs(["--bogus"])).toThrow(/unknown option/);
     expect(() => parseArgs(["--dry-run", "--anchors", "one"])).toThrow(/two word lists/);
@@ -262,7 +274,7 @@ describe("options", () => {
 
   it("refuses a live run outside a thread's shell", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const code = await main(["--out", tempOut()], {});
+    const code = await main(["--out", tempOut(), "--ios", "26.1"], {});
     expect(code).toBe(2);
   });
 });

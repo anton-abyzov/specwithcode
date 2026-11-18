@@ -270,7 +270,12 @@ export async function runCheck(deps, options = {}) {
         `failed (${failure}; ${landed} clicks landed) but started at a 1-minute load of ${startLoad}, above ${MAX_FAIL_LOAD}`,
       );
     }
-    log(`Clicks landed: ${landed} of ${CLICK_TARGET}`);
+    // Only a passing run may read "20 of 20": the T-02 test greps for it.
+    log(
+      pass || landed < CLICK_TARGET
+        ? `Clicks landed: ${landed} of ${CLICK_TARGET}`
+        : `Clicks landed: all ${CLICK_TARGET}, but another check failed`,
+    );
     endLoad();
     log(pass ? `Result: PASS (${passed}/${checks.length} checks)` : `Result: FAIL (${failure})`);
     return { lines, pass, invalid: false, landed, checks };
@@ -925,6 +930,9 @@ export function parseArgs(argv) {
     else throw new Error(`unknown option ${flag}`);
   }
   if (!options.dryRun && options.out === undefined) throw new Error("--out <dir> is required");
+  if (!options.dryRun && options.ios === undefined) {
+    throw new Error("--ios <version> is required: the log names the iOS version it proved");
+  }
   if (options.miss !== undefined && !options.dryRun)
     throw new Error("--miss works only with --dry-run");
   return options;
@@ -1009,7 +1017,7 @@ export async function main(argv, env = process.env) {
       started,
       mode: "live",
       macos: run("/usr/bin/sw_vers", ["-productVersion"]),
-      ios: options.ios ?? "not given (pass --ios)",
+      ios: options.ios,
       service: server?.version ?? "unknown",
     };
     for (const line of header(meta)) console.log(line);
@@ -1032,6 +1040,10 @@ export async function main(argv, env = process.env) {
     const landed = printed.filter((line) => /^PASS click \d+\//.test(line)).length;
     const pathShown = printed.some((line) => line.startsWith("PASS mirroring path"));
     const end = [`FAIL stopped: ${error.message}`];
+    if (!printed.some((line) => line.startsWith("Load (1 min) at start"))) {
+      end.push(`Load (1 min) at start: ${Math.round(startLoad * 100) / 100}`);
+    }
+    end.push(`Load (1 min) at end: ${Math.round(NodeOS.loadavg()[0] * 100) / 100}`);
     if (!pathShown) {
       end.push(
         `Result: INVALID (stopped before the iPhone Mirroring path was shown). Repeat the run.`,
@@ -1041,7 +1053,12 @@ export async function main(argv, env = process.env) {
         `Result: INVALID (stopped early with ${landed} clicks landed, at a 1-minute start load of ${startLoad}, above ${MAX_FAIL_LOAD}). Repeat the run.`,
       );
     } else {
-      end.push(`Clicks landed: ${landed} of ${CLICK_TARGET}`, "Result: FAIL (stopped early)");
+      end.push(
+        landed < CLICK_TARGET
+          ? `Clicks landed: ${landed} of ${CLICK_TARGET}`
+          : `Clicks landed: all ${CLICK_TARGET}, but the run stopped early`,
+        "Result: FAIL (stopped early)",
+      );
     }
     for (const line of end) print(line);
     result = { lines: printed, pass: false, invalid: end.at(-1).startsWith("Result: INVALID") };
