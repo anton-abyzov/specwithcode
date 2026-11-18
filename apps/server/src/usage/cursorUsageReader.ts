@@ -79,7 +79,7 @@ export interface CursorAccountUsageAccess {
 }
 
 const defaultAccess: CursorAccountUsageAccess = {
-  request: (url, init) => globalThis.fetch(url, init),
+  request: globalThis.fetch,
   keychainToken: readMacCursorAccessToken,
 };
 

@@ -119,7 +119,7 @@ export const CursorAccess = Context.Reference<CursorAccessShape>(
     defaultValue: () => ({
       keychainToken: readMacCursorAccessToken,
       desktopSignIn: readCursorDesktopSignIn,
-      fetch: (url, init) => globalThis.fetch(url, init),
+      fetch: globalThis.fetch,
     }),
   },
 );
