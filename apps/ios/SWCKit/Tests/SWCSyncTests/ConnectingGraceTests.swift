@@ -174,6 +174,8 @@ final class AttemptGate: Sendable {
     // Reconnect with the next attempt still out: the attempt reads "connecting".
     h.gate.set(.hang)
     h.engine.reconnect(machineId: env)
+    // The attempt is really out before the screen is read.
+    #expect(await until { h.engine.machines[env]?.status.state == .connecting })
     for _ in 0..<20 {
       h.engine.publishNow()
       record()
@@ -182,9 +184,11 @@ final class AttemptGate: Sendable {
 
     // To the background and back, as when the owner goes to type the code.
     h.engine.setActive(false)
-    #expect(await until { h.model.machine(env)?.status == .offline })
+    #expect(await until { h.engine.machines[env]?.status.state == .offline })
+    h.engine.publishNow()
     record()
     h.engine.setActive(true)
+    #expect(await until { h.engine.machines[env]?.status.state == .connecting })
     for _ in 0..<20 {
       h.engine.publishNow()
       record()
