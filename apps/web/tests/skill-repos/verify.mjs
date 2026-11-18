@@ -85,7 +85,7 @@ try {
       assert.equal(await page.getByTestId("skill-update-outcome").count(), 0);
       await page.getByRole("button", { name: "Update all (2)", exact: true }).click();
       await page.getByText("Updated html-report to 1.2.0 · 8d41e07").waitFor();
-      for (const chip of ["Codex: Loaded now", "Copilot: Next message", "Claude: Next session"])
+      for (const chip of ["Codex: Loaded now", "Copilot: Next session", "Claude: Next session"])
         assert.equal(await updates.getByText(chip, { exact: true }).count(), 1);
       await page
         .locator('[data-group="available"]')

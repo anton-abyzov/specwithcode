@@ -62,7 +62,7 @@ const readiness = [
     instanceId: "copilot",
     driver: "acpRegistry",
     label: "Copilot",
-    readiness: "next-message",
+    readiness: "next-session",
     detail: "",
   },
   {
