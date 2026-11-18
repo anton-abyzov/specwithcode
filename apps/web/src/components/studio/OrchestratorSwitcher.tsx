@@ -604,9 +604,10 @@ export function ProjectOrchestratorSwitcher({
   const [now] = useState(Date.now);
   const reachOf = (key: string): MachineRowReach => {
     const environmentId = checkoutKeyEnvironmentId(key);
-    const reach = machineReach(
-      environments.find((item) => item.environmentId === environmentId)?.connection,
-    );
+    // A listed machine this window holds no connection record for is shown as it was:
+    // only machines the project names and this window never opened are greyed.
+    const known = environments.find((item) => item.environmentId === environmentId);
+    const reach = known ? machineReach(known.connection) : "open";
     const seen = reach === "offline" ? machineLastSeenAt(environmentId) : null;
     return { reach, lastSeen: seen === null ? null : formatAgo(seen, now) };
   };

@@ -239,6 +239,20 @@ it("says the routed send could not reach the coordinator's machine", async () =>
   expect(onOpen).not.toHaveBeenCalled();
 });
 
+it("never says nothing was sent when the connection dropped under the send", async () => {
+  // A lost socket may have carried the message: it is not that machine's refusal.
+  const lost = Object.assign(new Error("Socket closed"), { _tag: "RpcClientError" });
+  state.routeSend.mockResolvedValue({ _tag: "Failure", cause: lost });
+  await render();
+  let said = "";
+  await act(async () => {
+    said = await outcomeOf(box.send("Hello"));
+  });
+  expect(said).toBe("Socket closed");
+  expect(box.state?.kind).toBe("routes");
+  expect(onOpen).not.toHaveBeenCalled();
+});
+
 it("says why the coordinator's machine refused a message, until the next send", async () => {
   state.routeSend.mockResolvedValue({
     _tag: "Failure",
