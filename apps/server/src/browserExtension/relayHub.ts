@@ -124,6 +124,13 @@ interface Connection {
   profile: RelayProfile | null;
   helloTimer: ReturnType<typeof setTimeout> | null;
   closed: boolean;
+  /** The extension id from the socket's `Origin`, which Chrome sets; preferred over the hello's. */
+  readonly originExtensionId: string | null;
+}
+
+export interface RelayOpenOptions {
+  /** The extension id the route read from the request's `Origin`. */
+  readonly extensionId?: string;
 }
 
 export interface RelaySession {
@@ -196,7 +203,7 @@ export class BrowserRelayHub {
   }
 
   /** A new socket from an extension. It must say hello with the right token first. */
-  open(socket: RelaySocket): RelaySession {
+  open(socket: RelaySocket, options: RelayOpenOptions = {}): RelaySession {
     const connection: Connection = {
       socket,
       pending: new Map(),
@@ -204,6 +211,7 @@ export class BrowserRelayHub {
       profile: null,
       helloTimer: null,
       closed: false,
+      originExtensionId: options.extensionId || null,
     };
     connection.helloTimer = setTimeout(
       () => this.reject(connection, CLOSE_BAD_HELLO, "no hello"),
@@ -239,6 +247,8 @@ export class BrowserRelayHub {
         return this.reject(connection, CLOSE_REJECTED, "pairing code rejected");
       if (connection.helloTimer) clearTimeout(connection.helloTimer);
       connection.helloTimer = null;
+      // The id Chrome put in the Origin decides "from the Chrome Web Store", not the hello's claim.
+      const extensionId = connection.originExtensionId ?? hello.extensionId;
       // The same profile reconnecting replaces its stale socket. Store installs share one
       // extension id across Chrome profiles, so the install's own id decides when both sent one.
       for (const other of this.connections) {
@@ -246,15 +256,14 @@ export class BrowserRelayHub {
         const sameProfile =
           hello.instanceId && other.profile.instanceId
             ? other.profile.instanceId === hello.instanceId
-            : other.profile.extensionId === hello.extensionId &&
-              other.profile.label === hello.label;
+            : other.profile.extensionId === extensionId && other.profile.label === hello.label;
         if (sameProfile) this.reject(other, CLOSE_REPLACED, "replaced by a newer connection");
       }
       connection.profile = {
         id: `p${++this.profileSeq}`,
         label: this.uniqueLabel(hello.label),
         extensionVersion: hello.extensionVersion,
-        extensionId: hello.extensionId,
+        extensionId,
         instanceId: hello.instanceId,
         browser: browserFromUserAgent(hello.userAgent),
         connectedAt: this.now(),
@@ -637,6 +646,14 @@ export class BrowserRelayHub {
   /** The pairing code changed: drop every profile, which must pair again. */
   disconnectAll(reason: string) {
     for (const connection of [...this.connections]) this.reject(connection, CLOSE_REJECTED, reason);
+  }
+
+  /** Closes every socket whose extension id (from its Origin, else its hello) fails `keep`. */
+  disconnectExtensions(keep: (extensionId: string) => boolean, reason: string) {
+    for (const connection of [...this.connections]) {
+      const extensionId = connection.profile?.extensionId ?? connection.originExtensionId ?? "";
+      if (!keep(extensionId)) this.reject(connection, CLOSE_REJECTED, reason);
+    }
   }
 
   /** Resolves once a profile is connected, or after `timeoutMs`. */

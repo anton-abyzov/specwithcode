@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as Socket from "effect/socket/Socket";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as NodeCrypto from "node:crypto";
@@ -32,6 +33,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import { EXTENSION_VERSION } from "./extensionVersion.generated.ts";
@@ -63,18 +65,37 @@ export function tokensEqual(expected: string, presented: string): boolean {
   return a.length === b.length && a.length > 0 && NodeCrypto.timingSafeEqual(a, b);
 }
 
+export const BROWSER_EXTENSION_STORE_ORIGIN = `chrome-extension://${BROWSER_EXTENSION_STORE_ID}`;
+
+/** Chrome extension ids are 32 letters from a to p. */
+const EXTENSION_ORIGIN = /^chrome-extension:\/\/([a-p]{32})$/;
+
+/** The extension id in an exact `chrome-extension://<id>` origin, or null. */
+export function relayOriginExtensionId(origin: string | undefined): string | null {
+  return (origin === undefined ? null : EXTENSION_ORIGIN.exec(origin)?.[1]) ?? null;
+}
+
 /**
- * Only the extension, from this computer, may open the relay: a loopback peer,
- * an extension origin, and no proxy in between (a tunnel or `tailscale serve`
- * also arrives from loopback but adds forwarding headers).
+ * Only the Chrome Web Store copy of the extension, from this computer, may
+ * open the relay: a loopback peer, exactly the store's origin, and no proxy in
+ * between (a tunnel or `tailscale serve` also arrives from loopback but adds
+ * forwarding headers). `allowHandLoaded` (the developer switch in Settings ›
+ * Chrome) also admits a copy loaded by hand under any extension id.
+ *
+ * This is a gate for browsers, not proof of who is calling: a local program
+ * can send any `Origin`. The pairing token the hub checks in the first frame
+ * stays the only authentication.
  */
 export function relayRequestAllowed(input: {
   readonly remoteAddress: string | undefined;
   readonly origin: string | undefined;
   readonly headers: Readonly<Record<string, string | undefined>>;
+  readonly allowHandLoaded?: boolean;
 }): boolean {
   if (!input.remoteAddress || !LOOPBACK_ADDRESSES.has(input.remoteAddress)) return false;
-  if (!input.origin?.startsWith("chrome-extension://")) return false;
+  const extensionId = relayOriginExtensionId(input.origin);
+  if (extensionId === null) return false;
+  if (extensionId !== BROWSER_EXTENSION_STORE_ID && input.allowHandLoaded !== true) return false;
   for (const header of ["x-forwarded-for", "forwarded", "x-real-ip", "cf-connecting-ip"])
     if (input.headers[header] !== undefined) return false;
   return true;
@@ -369,6 +390,20 @@ export const layer = Layer.effect(
       port: config.port,
       machineName: label,
     });
+    // Turning the developer switch off closes hand-loaded copies at once; the relay refuses their return.
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    yield* serverSettings.streamChanges.pipe(
+      Stream.runForEach((settings) =>
+        Effect.sync(() => {
+          if (!settings.allowHandLoadedBrowserExtension)
+            extension.hub.disconnectExtensions(
+              (extensionId) => extensionId === BROWSER_EXTENSION_STORE_ID,
+              "hand-loaded extension not allowed",
+            );
+        }),
+      ),
+      Effect.forkScoped,
+    );
     // A paired profile stops at once when the rules turn Chrome off; the relay refuses its return.
     yield* watchTeamRules((state) =>
       Effect.sync(() => {
@@ -384,7 +419,10 @@ export const layer = Layer.effect(
 
 // ── The relay route ─────────────────────────────────────────────────────────
 
-const relayHandler = (extension: BrowserExtensionShape) =>
+const relayHandler = (
+  extension: BrowserExtensionShape,
+  serverSettings: ServerSettings.ServerSettingsService["Service"],
+) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
@@ -395,11 +433,17 @@ const relayHandler = (extension: BrowserExtensionShape) =>
     )
       return HttpServerResponse.text("Not Found", { status: 404 });
     const incoming = NodeHttpServerRequest.toIncomingMessage(request);
+    // Unreadable settings keep the switch off: only the store copy connects.
+    const allowHandLoaded = yield* serverSettings.getSettings.pipe(
+      Effect.map((settings) => settings.allowHandLoadedBrowserExtension),
+      Effect.orElseSucceed(() => false),
+    );
     if (
       !relayRequestAllowed({
         remoteAddress: incoming.socket.remoteAddress,
         origin: request.headers.origin,
         headers: request.headers,
+        allowHandLoaded,
       })
     )
       return HttpServerResponse.text("Forbidden", { status: 403 });
@@ -419,7 +463,9 @@ const relayHandler = (extension: BrowserExtensionShape) =>
             Queue.offerUnsafe(outgoing, new Socket.CloseEvent(code, reason));
           },
         };
-        const session = extension.hub.open(relaySocket);
+        const session = extension.hub.open(relaySocket, {
+          extensionId: relayOriginExtensionId(request.headers.origin) ?? "",
+        });
         // The extension says why it closed ("unpaired" from its popup) in the close frame.
         let closeReason: string | undefined;
         const decoder = new TextDecoder();
@@ -460,7 +506,8 @@ const relayHandler = (extension: BrowserExtensionShape) =>
 export const routeLayer = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const extension = yield* BrowserExtension;
-    yield* router.add("GET", BROWSER_RELAY_PATH, relayHandler(extension));
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    yield* router.add("GET", BROWSER_RELAY_PATH, relayHandler(extension, serverSettings));
   }),
 );
 

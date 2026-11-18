@@ -2033,6 +2033,14 @@ export const ServerSettings = Schema.Struct({
    * of asking the user to pick an unnamed browser. Off keeps Claude in Chrome.
    */
   preferSpecWithCodeBrowser: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Developer switch: the Chrome relay also admits a copy of the SpecWithCode
+   * Browser extension loaded by hand (any extension id). Off, only the Chrome
+   * Web Store copy may connect. The pairing token is still required either way.
+   */
+  allowHandLoadedBrowserExtension: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   /** A machine-wide choice with no project override; see `ProviderSessionIdleMinutes`. */
   providerSessionIdleMinutes: ProviderSessionIdleMinutes.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_SESSION_IDLE_MINUTES)),
@@ -2603,6 +2611,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentComputerAccess: Schema.optionalKey(Schema.Boolean),
   preferSpecWithCodeBrowser: Schema.optionalKey(Schema.Boolean),
+  allowHandLoadedBrowserExtension: Schema.optionalKey(Schema.Boolean),
   providerSessionIdleMinutes: Schema.optionalKey(ProviderSessionIdleMinutes),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   aideEnabled: Schema.optionalKey(Schema.Boolean),
