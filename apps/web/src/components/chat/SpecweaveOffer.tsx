@@ -165,7 +165,7 @@ export function SpecweaveOfferView(props: {
           </Button>
         ) : null}
         {props.onSeeBoard ? (
-          <Button size="xs" variant="ghost" disabled={settingUp} onClick={props.onSeeBoard}>
+          <Button size="xs" variant="outline" disabled={settingUp} onClick={props.onSeeBoard}>
             {tx(SPECWEAVE_OFFER_SEE_BOARD)}
           </Button>
         ) : null}
