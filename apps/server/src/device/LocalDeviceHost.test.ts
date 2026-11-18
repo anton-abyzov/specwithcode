@@ -1305,14 +1305,20 @@ it.effect("Check again runs a fresh iOS check and ignores a kept no", () =>
         HttpClient.make(() => Effect.die(new Error("Setup checks must not make network requests"))),
       ),
     );
+    // The host reads the platform on each check, so every read runs as a Mac whatever OS runs the test.
+    const onDarwin = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(Effect.provideService(HostProcessPlatform, "darwin"));
     const ios = (summary: DeviceHostSummary) =>
       summary.platforms.find((platform) => platform.platform === "ios");
     // Xcode is installed after the first check said no.
     fixture = READY_IOS;
-    expect(ios(yield* host.summary)).toMatchObject({ available: false, code: "xcode_missing" });
+    expect(ios(yield* onDarwin(host.summary))).toMatchObject({
+      available: false,
+      code: "xcode_missing",
+    });
     expect(calls.count).toBe(1);
     expect(host.inspect).toBeDefined();
-    expect(ios(yield* host.inspect!)).toEqual({
+    expect(ios(yield* onDarwin(host.inspect!))).toEqual({
       platform: "ios",
       available: true,
       xcodeAppFound: true,
@@ -1320,7 +1326,7 @@ it.effect("Check again runs a fresh iOS check and ignores a kept no", () =>
     });
     expect(calls.count).toBe(2);
     // The fresh yes is kept for ordinary reads.
-    expect(ios(yield* host.summary)).toMatchObject({ available: true });
+    expect(ios(yield* onDarwin(host.summary))).toMatchObject({ available: true });
     expect(calls.count).toBe(2);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
