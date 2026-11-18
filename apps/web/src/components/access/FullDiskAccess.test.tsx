@@ -138,8 +138,6 @@ it("names the app macOS asks about when another app started the service", async 
     agentHost: { kind: "app", path: "/System/Applications/Utilities/Terminal.app", name: "Terminal" },
   });
   await render(<FullDiskAccessRow environmentId={"env-local" as never} environmentLabel="M5" />);
-  const what = [...container.querySelectorAll("button")].find((b) => b.textContent === "What this allows");
-  if (what) await act(async () => what.click());
   expect(container.textContent).toContain("Full Disk Access, turn on Terminal.");
 });
 

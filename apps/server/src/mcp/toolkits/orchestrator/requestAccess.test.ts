@@ -16,7 +16,12 @@ import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import type { AccessRequestCardInput } from "../../OrchestratorMcpService.ts";
 import type { PrivacyAccess } from "@specweave-studio/contracts";
-import { findDevice, requestAccess, requestFullDiskAccess } from "./requestAccess.ts";
+import {
+  findDevice,
+  fullDiskAccessSubject,
+  requestAccess,
+  requestFullDiskAccess,
+} from "./requestAccess.ts";
 
 const device = (overrides: Partial<DeviceSummary>): DeviceSummary =>
   ({
@@ -273,4 +278,23 @@ describe("requestFullDiskAccess", () => {
       assert.equal(error.code, "invalid_request");
     }),
   );
+});
+
+describe("fullDiskAccessSubject", () => {
+  const access = (agentHost: PrivacyAccess["agentHost"]): PrivacyAccess => ({
+    checkedAt: "2026-11-18T12:00:00.000Z",
+    fullDiskAccess: "not-allowed",
+    agentHost,
+    runningAgentsNeedRestart: false,
+  });
+
+  it("names the app, the executable, or SpecWithCode when the host is unknown", () => {
+    const detail = (host: PrivacyAccess["agentHost"]) => fullDiskAccessSubject(access(host)).detail ?? "";
+    assert.include(
+      detail({ kind: "app", path: "/System/Applications/Utilities/Terminal.app", name: "Terminal" }),
+      "Turn on Terminal in System Settings.",
+    );
+    assert.include(detail({ kind: "executable", path: "/opt/node/bin/node", name: "node" }), "Add /opt/node/bin/node");
+    assert.include(detail(null), "Turn on SpecWithCode in System Settings.");
+  });
 });

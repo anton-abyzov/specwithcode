@@ -44,7 +44,7 @@ export function fullDiskAccessSubject(access: PrivacyAccess): AccessRequestSubje
     label: "Full Disk Access",
     detail:
       host === null || host.kind === "app"
-        ? `Read ${FULL_DISK_ACCESS_UNLOCKS.join(", ")}. Turn on SpecWithCode in System Settings.`
+        ? `Read ${FULL_DISK_ACCESS_UNLOCKS.join(", ")}. Turn on ${host?.name ?? "SpecWithCode"} in System Settings.`
         : `Read ${FULL_DISK_ACCESS_UNLOCKS.join(", ")}. Add ${host.path} in System Settings.`,
   };
 }
