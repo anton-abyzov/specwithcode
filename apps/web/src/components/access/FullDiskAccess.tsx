@@ -223,7 +223,7 @@ export function FullDiskAccessRow({
                 {`${tx("Open SpecWithCode on")} ${environmentLabel} ${tx("to allow it there.")}`}
               </span>
             ) : null}
-            <Button size="xs" variant="ghost" onClick={() => void refresh()}>
+            <Button size="xs" variant="outline" onClick={() => void refresh()}>
               {tx("Check again")}
             </Button>
           </div>
