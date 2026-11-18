@@ -85,7 +85,7 @@ function pageCount(threads: number): number {
   return pages;
 }
 
-/** The pages to read, and whether some thread fits in none of them. */
+/** The pages to read, and whether some thread that is not resolved fits in none of them. */
 export function boardThreadPages(threads: ReadonlyArray<EnvironmentThreadShell>): {
   readonly pages: ReadonlyArray<BoardThreadPage>;
   readonly cut: boolean;
@@ -109,16 +109,20 @@ export function boardThreadPages(threads: ReadonlyArray<EnvironmentThreadShell>)
       let page = bucket;
       if (bucket.length > THREAD_INCREMENT_PROGRESS_MAX_THREADS) {
         // Too many for one read: the threads still at work stay, then the newest.
-        cut = true;
-        page = bucket
+        const ranked = bucket
           .map((thread) => ({ thread, resolved: threadTone(thread) === "resolved" }))
           .toSorted(
             (left, right) =>
               Number(left.resolved) - Number(right.resolved) ||
               right.thread.updatedAt.localeCompare(left.thread.updatedAt),
-          )
-          .slice(0, THREAD_INCREMENT_PROGRESS_MAX_THREADS)
-          .map((entry) => entry.thread);
+          );
+        // Leaving out resolved threads loses no decision: they hold no work,
+        // color no edge and never make a card busy. It does lose their lines on
+        // the cards and in the view's finished list. Only a thread that is not
+        // resolved and goes unread leaves the board not knowing.
+        if (ranked.slice(THREAD_INCREMENT_PROGRESS_MAX_THREADS).some((entry) => !entry.resolved))
+          cut = true;
+        page = ranked.slice(0, THREAD_INCREMENT_PROGRESS_MAX_THREADS).map((entry) => entry.thread);
       }
       const threadIds = page.map((thread) => thread.id).toSorted();
       pages.push({
@@ -168,10 +172,17 @@ export function useBoardThreads(input: {
 }): {
   readonly byIncrement: ReadonlyMap<string, ReadonlyArray<BoardThread>>;
   /**
-   * False until every thread has said which increment it works on: an empty
-   * card then means "not known yet", not "nobody is on it".
+   * False until every thread that is read has said which increment it works
+   * on: an empty card then means "not known yet", not "nobody is on it". In a
+   * project past the read limit, resolved threads may be left unread; their
+   * lines are then missing from the cards, which is not said anywhere.
    */
   readonly answered: boolean;
+  /**
+   * The project has more unresolved threads than are read, so `answered` never
+   * becomes true. Resolved threads left unread do not count: nothing is decided by them.
+   */
+  readonly cut: boolean;
   /** Threads run on more than one machine, so each line names its own. */
   readonly multiMachine: boolean;
   readonly loaders: ReactNode;
@@ -287,7 +298,7 @@ export function useBoardThreads(input: {
       multiMachine: machines.size > 1 || (machineLabels?.size ?? 0) > 1,
     };
   }, [environments, identity, links, machineLabels, nickname, threads, unreachable]);
-  return { ...joined, answered, loaders };
+  return { ...joined, answered, cut, loaders };
 }
 
 /** Where a thread runs, in its machine's color; "→ name" once it moved there. */

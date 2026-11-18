@@ -27,6 +27,7 @@ const runtime = vi.hoisted(() => ({
     byIncrement: new Map<string, unknown[]>(),
     multiMachine: false,
     answered: true,
+    cut: false,
     loaders: null,
   },
 }));
@@ -163,9 +164,11 @@ describe("BoardPane increment view", () => {
       byIncrement: new Map(),
       multiMachine: false,
       answered: true,
+      cut: false,
       loaders: null,
     };
     calls.length = 0;
+    localStorage.clear();
   });
   afterEach(async () => {
     await act(async () => root.unmount());
@@ -208,6 +211,8 @@ describe("BoardPane increment view", () => {
   const view = () => container.querySelector<HTMLElement>("section.sws-board-view");
   const opener = (id: string) =>
     container.querySelector<HTMLButtonElement>(`button[data-board-card="${id}"]`)!;
+  const groupBar = (group: string) =>
+    container.querySelector<HTMLButtonElement>(`[data-group="${group}"] .sws-group-bar`)!;
   const labelled = (label: string) =>
     container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
   const byText = (scope: HTMLElement, text: string) =>
@@ -275,12 +280,12 @@ describe("BoardPane increment view", () => {
       expect(calls).toEqual([]);
       expect(view()).toBeNull();
 
-      const filter = container.querySelector<HTMLButtonElement>(".sws-board-filter")!;
-      for (const name of ["Enter", " "]) await key(filter, name);
-      await act(async () => filter.click());
-      expect(filter.getAttribute("aria-pressed")).toBe("true");
+      const bar = groupBar("blocked");
+      for (const name of ["Enter", " "]) await key(bar, name);
+      await act(async () => bar.click());
+      expect(groupBar("blocked").getAttribute("aria-expanded")).toBe("false");
       expect(calls).toEqual([]);
-      await act(async () => filter.click());
+      await act(async () => groupBar("blocked").click());
 
       await act(async () => opener("0002-build").click());
       calls.length = 0;
@@ -364,25 +369,23 @@ describe("BoardPane increment view", () => {
       expect(opener("0003-build").getAttribute("aria-expanded")).toBe("false");
     });
 
-    it("hands focus to the column heading when the filter hid the card", async () => {
+    it("hands focus to the group's heading when its group was folded", async () => {
       runtime.reply = board([
         card("0002-build", "active"),
         card("0003-stuck", "active", { blocked: true, blockedTasks: 1 }),
       ]);
       await render();
       await act(async () => opener("0002-build").click());
-      await act(async () =>
-        container.querySelector<HTMLButtonElement>(".sws-board-filter")!.click(),
-      );
+      await act(async () => groupBar("active").click());
       expect(container.querySelector('[data-board-card="0002-build"]')).toBeNull();
       expect(viewTitle()?.textContent).toBe("Title 0002-build");
       const close = labelled("Close the increment view");
       close.focus();
       await key(close, "Escape");
-      expect(document.activeElement).toBe(container.querySelector('[data-column="active"] h3'));
+      expect(document.activeElement).toBe(groupBar("active"));
     });
 
-    it("hands focus to the column heading when a refresh removed the card", async () => {
+    it("hands focus to the group's heading when a refresh removed the card", async () => {
       runtime.reply = board([card("0001-plan", "planned"), card("0004-check", "review")]);
       await render();
       await act(async () => opener("0004-check").click());
@@ -393,7 +396,244 @@ describe("BoardPane increment view", () => {
       close.focus();
       await key(close, "Escape");
       expect(calls.at(-1)).toEqual({ id: null, options: { replace: true } });
-      expect(document.activeElement).toBe(container.querySelector('[data-column="review"] h3'));
+      expect(document.activeElement).toBe(groupBar("review"));
+    });
+  });
+
+  describe("folded groups", () => {
+    const stuck = () => card("0005-stuck", "active", { blocked: true, blockedTasks: 1 });
+
+    it("walks only the cards on screen, Blocked first, and never into a folded group", async () => {
+      runtime.reply = board([...fourCards(), stuck()]);
+      await render();
+      await act(async () => groupBar("review").click());
+      opener("0005-stuck").focus();
+      await key(opener("0005-stuck"), "ArrowDown");
+      expect(document.activeElement).toBe(opener("0002-build"));
+      await key(opener("0002-build"), "ArrowDown");
+      await key(opener("0003-build"), "ArrowDown");
+      // In review is folded: the next card on screen is the planned one.
+      expect(document.activeElement).toBe(opener("0001-plan"));
+      await act(async () => opener("0003-build").click());
+      await act(async () => labelled("Next card").click());
+      expect(calls.at(-1)).toEqual({ id: "0001-plan", options: { replace: true } });
+    });
+
+    it("unfolds the group of an increment opened by a link, and remembers it", async () => {
+      localStorage.setItem(
+        "studio:project-board-folded:v1",
+        JSON.stringify({ "host:atlas": ["review", "done"] }),
+      );
+      runtime.reply = board(fourCards());
+      await render({ initial: "0004-check" });
+      expect(viewTitle()?.textContent).toBe("Title 0004-check");
+      expect(groupBar("review").getAttribute("aria-expanded")).toBe("true");
+      expect(opener("0004-check")).not.toBeNull();
+      expect(JSON.parse(localStorage.getItem("studio:project-board-folded:v1")!)).toEqual({
+        "host:atlas": ["done"],
+      });
+    });
+
+    it("unfolds nothing when the open card changes group", async () => {
+      runtime.reply = board([card("0002-build", "active"), stuck()]);
+      await render();
+      await act(async () => groupBar("blocked").click());
+      await act(async () => opener("0002-build").click());
+      // A refresh finds the open card blocked: it moves under Blocked, which stays folded.
+      runtime.reply = board([
+        card("0002-build", "active", { blocked: true, blockedTasks: 1 }),
+        stuck(),
+      ]);
+      await render();
+      expect(viewTitle()?.textContent).toBe("Title 0002-build");
+      expect(groupBar("blocked").getAttribute("aria-expanded")).toBe("false");
+      expect(container.querySelector('[data-board-card="0002-build"]')).toBeNull();
+    });
+
+    it("opens the group at once and follows a planned card the threads move to Active", async () => {
+      localStorage.setItem(
+        "studio:project-board-folded:v1",
+        JSON.stringify({ "host:atlas": ["planned", "active"] }),
+      );
+      const atWork = {
+        thread: { id: "t1", environmentId: "host", title: "Thread t1" },
+        tone: "working",
+        status: "Working",
+        updatedAt: "2026-11-14T09:00:00.000Z",
+        machine: {
+          label: "Desk",
+          moved: false,
+          executionMachineId: "host",
+          state: "live",
+          description: "Runs on Desk",
+        },
+        color: "violet",
+      };
+      runtime.reply = board(fourCards());
+      runtime.working = {
+        byIncrement: new Map(),
+        multiMachine: false,
+        answered: false,
+        cut: false,
+        loaders: null,
+      };
+      await render({ initial: "0001-plan" });
+      // The threads have not answered, and may never: the card is shown where it is now.
+      expect(viewTitle()?.textContent).toBe("Title 0001-plan");
+      expect(groupBar("planned").getAttribute("aria-expanded")).toBe("true");
+      expect(opener("0001-plan")).not.toBeNull();
+      // The threads answer: one is at work on the planned card, so it is Active.
+      runtime.working = {
+        byIncrement: new Map([["0001-plan", [atWork]]]),
+        multiMachine: false,
+        answered: true,
+        cut: false,
+        loaders: null,
+      };
+      await render({ initial: "0001-plan" });
+      expect(groupBar("active").getAttribute("aria-expanded")).toBe("true");
+      expect(groupBar("planned").getAttribute("aria-expanded")).toBe("false");
+      expect(opener("0001-plan").closest("[data-group]")!.getAttribute("data-group")).toBe(
+        "active",
+      );
+      // It moved before it settled: the fold it opened was given back.
+      expect(JSON.parse(localStorage.getItem("studio:project-board-folded:v1")!)).toEqual({
+        "host:atlas": ["planned"],
+      });
+    });
+
+    it("follows no other move, and leaves a fold made by hand alone", async () => {
+      const key = "studio:project-board-folded:v1";
+      const stored = () =>
+        (JSON.parse(localStorage.getItem(key)!) as Record<string, string[]>)[
+          "host:atlas"
+        ]!.toSorted();
+      localStorage.setItem(key, JSON.stringify({ "host:atlas": ["planned", "blocked"] }));
+      const others = () => [...fourCards().slice(1), stuck()];
+      runtime.reply = board([card("0001-plan", "planned"), ...others()]);
+      // A machine that is off never answers, so the planned card never settles by itself.
+      runtime.working = {
+        byIncrement: new Map(),
+        multiMachine: false,
+        answered: false,
+        cut: false,
+        loaders: null,
+      };
+      await render({ initial: "0001-plan" });
+      expect(stored()).toEqual(["blocked"]);
+      // The person folds Planned again, by hand.
+      await act(async () => groupBar("planned").click());
+      expect(stored()).toEqual(["blocked", "planned"]);
+      // A refresh finds the open card blocked, and a later one finds it planned again.
+      runtime.reply = board([
+        card("0001-plan", "planned", { blocked: true, blockedTasks: 1 }),
+        ...others(),
+      ]);
+      await render({ initial: "0001-plan" });
+      expect(stored()).toEqual(["blocked", "planned"]);
+      runtime.reply = board([card("0001-plan", "planned"), ...others()]);
+      await render({ initial: "0001-plan" });
+      expect(stored()).toEqual(["blocked", "planned"]);
+      expect(viewTitle()?.textContent).toBe("Title 0001-plan");
+    });
+
+    it("does not follow a card the board moves, only one the threads promote", async () => {
+      const key = "studio:project-board-folded:v1";
+      localStorage.setItem(key, JSON.stringify({ "host:atlas": ["planned", "blocked"] }));
+      const others = () => [...fourCards().slice(1), stuck()];
+      runtime.reply = board([card("0001-plan", "planned"), ...others()]);
+      runtime.working = {
+        byIncrement: new Map(),
+        multiMachine: false,
+        answered: false,
+        cut: false,
+        loaders: null,
+      };
+      await render({ initial: "0001-plan" });
+      runtime.reply = board([
+        card("0001-plan", "planned", { blocked: true, blockedTasks: 1 }),
+        ...others(),
+      ]);
+      await render({ initial: "0001-plan" });
+      // Blocked stays folded and Planned keeps the fold the link opened: nothing is given back.
+      expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ "host:atlas": ["blocked"] });
+    });
+
+    it("never waits on the threads for a card that cannot move", async () => {
+      localStorage.setItem(
+        "studio:project-board-folded:v1",
+        JSON.stringify({ "host:atlas": ["review"] }),
+      );
+      runtime.reply = board(fourCards());
+      // A machine that is off never answers.
+      runtime.working = {
+        byIncrement: new Map(),
+        multiMachine: false,
+        answered: false,
+        cut: false,
+        loaders: null,
+      };
+      await render({ initial: "0004-check" });
+      expect(groupBar("review").getAttribute("aria-expanded")).toBe("true");
+      // Settled at once: the person can fold it again and it stays folded.
+      await act(async () => groupBar("review").click());
+      expect(groupBar("review").getAttribute("aria-expanded")).toBe("false");
+      expect(viewTitle()?.textContent).toBe("Title 0004-check");
+    });
+  });
+
+  describe("a card that moves under the keyboard", () => {
+    it("keeps focus on the card when a refresh moves it to another group", async () => {
+      runtime.reply = board(fourCards());
+      await render();
+      opener("0002-build").focus();
+      runtime.reply = board([
+        card("0001-plan", "planned"),
+        card("0002-build", "active", { blocked: true, blockedTasks: 1 }),
+        card("0003-build", "active"),
+        card("0004-check", "review"),
+      ]);
+      await render();
+      expect(opener("0002-build").closest("[data-group]")!.getAttribute("data-group")).toBe(
+        "blocked",
+      );
+      expect(document.activeElement).toBe(opener("0002-build"));
+    });
+
+    it("moves focus to the group's heading when a refresh takes the card away", async () => {
+      runtime.reply = board(fourCards());
+      await render();
+      opener("0003-build").focus();
+      runtime.reply = board(fourCards().filter((entry) => entry.incrementId !== "0003-build"));
+      await render();
+      expect(document.activeElement).toBe(groupBar("active"));
+    });
+
+    it("moves focus to the heading when the card lands in a folded group", async () => {
+      const stuck = card("0005-stuck", "active", { blocked: true, blockedTasks: 1 });
+      runtime.reply = board([...fourCards(), stuck]);
+      await render();
+      await act(async () => groupBar("blocked").click());
+      opener("0002-build").focus();
+      runtime.reply = board([
+        ...fourCards().filter((entry) => entry.incrementId !== "0002-build"),
+        card("0002-build", "active", { blocked: true, blockedTasks: 1 }),
+        stuck,
+      ]);
+      await render();
+      // The card is under Blocked now, which is folded: the place it left gets the keyboard.
+      expect(document.activeElement).toBe(groupBar("active"));
+    });
+
+    it("never takes the keyboard from somewhere else", async () => {
+      runtime.reply = board(fourCards());
+      await render();
+      opener("0003-build").focus();
+      const search = container.querySelector<HTMLInputElement>('[aria-label="Find an increment"]')!;
+      search.focus();
+      runtime.reply = board(fourCards().filter((entry) => entry.incrementId !== "0003-build"));
+      await render();
+      expect(document.activeElement).toBe(search);
     });
   });
 
