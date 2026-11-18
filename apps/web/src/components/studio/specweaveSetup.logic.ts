@@ -224,8 +224,9 @@ const SNAPSHOT_TOOLS =
   /^(delegate_task|create_threads|studio_thread_launch|request_specweave_setup)$/;
 const SETTLED_ITEM = new Set(["completed", "failed", "cancelled", "interrupted"]);
 
+/** Claude names a tool `mcp__studio-code__x`; Codex and ACP agents name it `studio-code.x`. */
 function bareToolName(name: string): string {
-  return name.replace(/^mcp__.+?__/, "");
+  return name.replace(/^mcp__.+?__/, "").replace(/^studio[-_]code\./, "");
 }
 
 /**
@@ -336,6 +337,54 @@ export function lastUserMessageAt(
     if (row.kind === "message" && row.message?.role === "user" && writtenByPerson(row.message))
       if (latest === null || row.createdAt > latest) latest = row.createdAt;
   return latest;
+}
+
+/**
+ * The card's tool key and newest person message, read from a coordinator's
+ * projection. The project page draws its coordinator without timeline rows,
+ * so the card there reads the projection directly.
+ */
+export function specweaveCoordinatorKeys(input: {
+  readonly turnItems: ReadonlyArray<{
+    readonly id: string;
+    readonly type: string;
+    readonly toolName?: string | null | undefined;
+    readonly status?: string | undefined;
+  }>;
+  readonly messages: ReadonlyArray<{
+    readonly role: string;
+    readonly createdAt: string | null;
+    readonly createdBy?: string | undefined;
+  }>;
+}): { readonly toolKey: string; readonly lastUserMessageAt: string | null } {
+  return {
+    toolKey: specweaveSnapshotToolKey(
+      input.turnItems.map((item) => ({
+        kind: "work",
+        id: item.id,
+        entry: {
+          structuredPayload: {
+            type: item.type,
+            toolName: item.toolName ?? null,
+            ...(item.status === undefined ? {} : { status: item.status }),
+          },
+        },
+      })),
+    ),
+    lastUserMessageAt: lastUserMessageAt(
+      input.messages.flatMap((message) =>
+        message.createdAt === null
+          ? []
+          : [
+              {
+                kind: "message",
+                createdAt: message.createdAt,
+                message: { role: message.role, createdBy: message.createdBy },
+              },
+            ],
+      ),
+    ),
+  };
 }
 
 /**

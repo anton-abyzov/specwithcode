@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
   answer: vi.fn(),
   navigate: vi.fn(),
   install: vi.fn(),
+  projection: null as unknown,
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (atom: unknown) => ({
@@ -36,6 +37,7 @@ vi.mock("../../state/session", () => ({
   useEnvironmentScope: (_environmentId: unknown, scope: string) =>
     scope === "filesystem:write" ? state.canWrite : state.canOperate,
 }));
+vi.mock("../../state/entities", () => ({ useThreadProjection: () => state.projection }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 vi.mock("../settings/useSettingsProjectGroups", () => ({
   useSettingsProjectGroups: () => [
@@ -49,7 +51,9 @@ vi.mock("../machineTools/machineToolInstallRequest", () => ({
   requestMachineToolInstall: state.install,
 }));
 
-const { SpecweaveSetupCard, SpecweaveSetupCardView } = await import("./SpecweaveSetupCard");
+const { CoordinatorSpecweaveCard, SpecweaveSetupCard, SpecweaveSetupCardView } = await import(
+  "./SpecweaveSetupCard"
+);
 
 const environmentId = EnvironmentId.make("env-m4");
 const projectId = ProjectId.make("project-atlas");
@@ -83,6 +87,7 @@ describe("SpecweaveSetupCard", () => {
     });
     state.navigate.mockReset();
     state.install.mockReset();
+    state.projection = null;
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -196,6 +201,35 @@ describe("SpecweaveSetupCard", () => {
     expect(container.textContent).toBe("");
     await render({ toolKey: "1:item-7" });
     expect(state.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows under the project page's coordinator, read from its projection", async () => {
+    const tool = (id: string, status: string) => ({
+      id,
+      type: "dynamic_tool",
+      toolName: "studio-code.delegate_task",
+      status,
+    });
+    const coordinator = (turnItems: ReadonlyArray<unknown>) => {
+      state.projection = { projection: { turnItems, messages: [] } };
+      return act(async () =>
+        root.render(
+          <CoordinatorSpecweaveCard
+            environmentId={environmentId}
+            projectId={projectId}
+            threadId={ThreadId.make(threadId)}
+          />,
+        ),
+      );
+    };
+    await coordinator([tool("t1", "running")]);
+    expect(shownState()).toBe("asking");
+    expect(state.refresh).not.toHaveBeenCalled();
+    await coordinator([tool("t1", "completed")]);
+    expect(state.refresh).toHaveBeenCalledTimes(1);
+    state.snapshot = { specweaveState: "off" };
+    await coordinator([tool("t1", "completed"), tool("t2", "completed")]);
+    expect(container.querySelector("[data-specweave-card]")).toBeNull();
   });
 
   it("shows a failure with its reason and Retry, and Node.js missing with its install", async () => {

@@ -15,6 +15,7 @@ import {
   specweavePollWhile,
   specweaveSetupFailureOutcome,
   specweaveSetupLabel,
+  specweaveCoordinatorKeys,
   specweaveSnapshotToolKey,
   specweaveStateOf,
   specweaveStateReason,
@@ -212,6 +213,16 @@ describe("specweaveSnapshotToolKey", () => {
       expect(specweaveSnapshotToolKey([tool("x", `mcp__studio-code__${name}`)])).toBe("1:x");
   });
 
+  it("reads the name Codex and ACP agents give a studio-code tool", () => {
+    expect(
+      specweaveSnapshotToolKey([
+        tool("a", "studio-code.delegate_task"),
+        tool("b", "other-server.delegate_task"),
+        tool("c", "studio-code.request_specweave_setup"),
+      ]),
+    ).toBe("2:c");
+  });
+
   it("waits for a call that is still running", () => {
     expect(
       specweaveSnapshotToolKey([tool("a", "mcp__studio-code__delegate_task", "running")]),
@@ -304,5 +315,30 @@ describe("incrementBoardNote", () => {
     expect(incrementBoardNote("on")).toBeNull();
     expect(incrementBoardNote("off")).toBeNull();
     expect(incrementBoardNote(undefined)).toBeNull();
+  });
+});
+
+describe("specweaveCoordinatorKeys", () => {
+  it("reads the coordinator's projection as the timeline reads its rows", () => {
+    expect(specweaveCoordinatorKeys({ turnItems: [], messages: [] })).toEqual({
+      toolKey: "",
+      lastUserMessageAt: null,
+    });
+    expect(
+      specweaveCoordinatorKeys({
+        turnItems: [
+          { id: "m", type: "user_message", status: "completed" },
+          { id: "t", type: "dynamic_tool", toolName: "studio-code.delegate_task", status: "completed" },
+          { id: "r", type: "dynamic_tool", toolName: "studio-code.task_status", status: "completed" },
+          { id: "u", type: "dynamic_tool", toolName: "mcp__studio-code__delegate_task", status: "running" },
+        ],
+        messages: [
+          { role: "user", createdAt: "2026-11-18T09:00:00Z", createdBy: "user" },
+          { role: "user", createdAt: "2026-11-18T10:00:00Z", createdBy: "agent" },
+          { role: "assistant", createdAt: "2026-11-18T11:00:00Z" },
+          { role: "user", createdAt: null },
+        ],
+      }),
+    ).toEqual({ toolKey: "1:t", lastUserMessageAt: "2026-11-18T09:00:00Z" });
   });
 });

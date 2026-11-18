@@ -37,6 +37,7 @@ import { FolderCopyBanner } from "./FolderCopyBanner";
 import { OtherMachineAssistantNotice } from "./OtherMachineAssistantNotice";
 import { ProjectPlan } from "./ProjectPlan";
 import { TimelineDetailMenu } from "../chat/TimelineDetailMenu";
+import { CoordinatorSpecweaveCard } from "../chat/SpecweaveSetupCard";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
@@ -2050,6 +2051,13 @@ export function ProjectWorkspaceSurface({
                 // Only a project known to have no coordinator yet is greeted: while the
                 // workspace read is pending, a coordinator with history may be behind it.
                 welcome
+              ) : null}
+              {conversationCoordinatorId ? (
+                <CoordinatorSpecweaveCard
+                  environmentId={project.environmentId}
+                  projectId={project.id}
+                  threadId={conversationCoordinatorId}
+                />
               ) : null}
               <QuestionLiveStatus announcement={questionAnnouncement} />
               <CoordinatorComposer

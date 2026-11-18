@@ -17,13 +17,16 @@ import {
   type ProjectSpecweaveAnswer,
   type ProjectWorkspaceReadResult,
   type SpecweaveSetupRequestState,
+  type ThreadId,
 } from "@specweave-studio/contracts";
+import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { useNavigate } from "@tanstack/react-router";
 import { KanbanIcon } from "lucide-react";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { useTx } from "../../i18n";
+import { useThreadProjection } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -48,6 +51,7 @@ import {
   SPECWEAVE_SETTING_UP_POLL_MS,
   specweaveCardShown,
   specweaveCardState,
+  specweaveCoordinatorKeys,
   specweaveNeedsGitFirst,
   specweavePollWhile,
   specweaveSetupFailureOutcome,
@@ -62,6 +66,7 @@ import {
   ACCESS_PRIMARY_BUTTON_CLASS,
   ACCESS_SECONDARY_BUTTON_CLASS,
 } from "./AccessCardChrome";
+import { viewerIso } from "../../viewerDate";
 
 // ── Shared wiring ───────────────────────────────────────────────────────
 
@@ -286,6 +291,52 @@ export function SpecweaveSetupCard({
       }
       onOpenBoard={openBoard}
     />
+  );
+}
+
+/**
+ * The card under the project page's coordinator conversation, which draws its
+ * messages without timeline rows: the keys come from the coordinator's projection.
+ */
+export function CoordinatorSpecweaveCard({
+  environmentId,
+  projectId,
+  threadId,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly threadId: ThreadId;
+}) {
+  const projection = useThreadProjection(
+    useMemo(() => scopeThreadRef(environmentId, threadId), [environmentId, threadId]),
+  )?.projection;
+  const keys = useMemo(
+    () =>
+      specweaveCoordinatorKeys({
+        turnItems: (projection?.turnItems ?? []).map((item) => ({
+          id: item.id,
+          type: item.type,
+          toolName: "toolName" in item ? item.toolName : null,
+          status: item.status,
+        })),
+        messages: (projection?.messages ?? []).map((message) => ({
+          role: message.role,
+          createdAt: viewerIso(message.createdAt),
+          createdBy: message.createdBy,
+        })),
+      }),
+    [projection?.messages, projection?.turnItems],
+  );
+  return (
+    <div className="mx-auto w-full max-w-3xl px-1 pt-2 empty:hidden">
+      <SpecweaveSetupCard
+        environmentId={environmentId}
+        projectId={projectId}
+        threadId={threadId}
+        toolKey={keys.toolKey}
+        lastUserMessageAt={keys.lastUserMessageAt}
+      />
+    </div>
   );
 }
 
