@@ -5681,4 +5681,5 @@ export const de: PhraseCatalog = {
     "{machine} läuft, aber dieses Fenster erreicht ihn erst nach der Anmeldung.",
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} laufen, aber dieses Fenster erreicht sie erst nach der Anmeldung.",
+  "Sign in to reach this machine": "Anmelden, um diesen Rechner zu erreichen",
 };

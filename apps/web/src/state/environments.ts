@@ -35,18 +35,26 @@ export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
 
 const deviceRefusalText = (message: string) => translateDeviceRefusal(message, txNow);
 
-/** The connection with its sign-in mark dropped unless Clerk says signed out (1417). */
-export function gateConnectSignIn<T extends { readonly connectSignInRequired?: boolean }>(
-  connection: T,
-  account: ConnectAccountState,
-): T {
+/**
+ * The connection with its sign-in mark dropped unless Clerk says signed out
+ * (1417). Until then the refusal is a startup step, neither a sign-in to ask
+ * for nor this machine refusing the window, so its "authentication" reason
+ * goes with it and every word keyed on that reason waits too.
+ */
+export function gateConnectSignIn<
+  T extends { readonly connectSignInRequired?: boolean; readonly blockedReason?: string },
+>(connection: T, account: ConnectAccountState): T {
   if (connection.connectSignInRequired === undefined) return connection;
   if (connectSignInShown(connection.connectSignInRequired, account)) return connection;
-  const { connectSignInRequired: _dropped, ...rest } = connection;
-  return rest as T;
+  const { connectSignInRequired: _dropped, blockedReason, ...rest } = connection;
+  return (
+    blockedReason === undefined || blockedReason === "authentication"
+      ? rest
+      : { ...rest, blockedReason }
+  ) as T;
 }
 
-function projectEnvironmentPresentation(
+export function projectEnvironmentPresentation(
   environmentId: EnvironmentId,
   presentation: BaseEnvironmentPresentation,
   account: ConnectAccountState,

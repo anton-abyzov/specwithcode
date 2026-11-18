@@ -5407,4 +5407,5 @@ export const zh: PhraseCatalog = {
     "{machine} 正在运行，但登录前此窗口无法访问它。",
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} 正在运行，但登录前此窗口无法访问它们。",
+  "Sign in to reach this machine": "登录以访问此电脑",
 };

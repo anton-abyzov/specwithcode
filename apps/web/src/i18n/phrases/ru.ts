@@ -5639,4 +5639,5 @@ export const ru: PhraseCatalog = {
     "{machine} работает, но это окно не подключится к нему, пока вы не войдёте.",
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} работают, но это окно не подключится к ним, пока вы не войдёте.",
+  "Sign in to reach this machine": "Войдите, чтобы подключиться к этому компьютеру",
 };

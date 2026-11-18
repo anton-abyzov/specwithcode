@@ -5572,4 +5572,5 @@ export const ko: PhraseCatalog = {
     "{machine}은(는) 실행 중이지만 로그인할 때까지 이 창에서 연결할 수 없습니다.",
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines}은(는) 실행 중이지만 로그인할 때까지 이 창에서 연결할 수 없습니다.",
+  "Sign in to reach this machine": "이 컴퓨터에 연결하려면 로그인",
 };
