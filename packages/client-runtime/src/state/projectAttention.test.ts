@@ -861,8 +861,24 @@ describe("a worker's subagent question goes to its lead", () => {
     const laneB = child("lane-b", "skills", ran("09:00:05", "09:15:00"));
     const review = asking("review", "lane-b", ran("09:19:22", "09:28:53"));
     expect(aggregate(skills, laneB, review).count).toBe(1);
-    // A lead that is gone cannot answer either.
+    // A lead that is gone or archived cannot answer either.
     expect(subagentQuestionWait(review, undefined)).toBeNull();
+    const archived = child("lane-b", "skills", {
+      ...ran("09:30:00", "09:40:00"),
+      archivedAt: at("09:41:00"),
+    } as Partial<EnvironmentThreadShell>);
+    expect(subagentQuestionWait(review, archived)).toBeNull();
+  });
+
+  it("asks the person when the lead's turn since the asker ended failed", () => {
+    const review = asking("review", "lane-b", ran("09:19:22", "09:28:53"));
+    const finished = ran("09:30:00", "09:40:00");
+    const failed = child("lane-b", "skills", {
+      ...finished,
+      latestRun: { ...finished.latestRun!, status: "failed" },
+    } as Partial<EnvironmentThreadShell>);
+    expect(subagentQuestionWait(review, failed)).toBeNull();
+    expect(subagentQuestionWait(review, child("lane-b", "skills", finished))).toBe("settled");
   });
 
   it("keeps a working asker's question with its lead", () => {

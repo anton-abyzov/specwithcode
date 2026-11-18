@@ -135,12 +135,12 @@ const ASK_USER_REQUEST = /(^|:)ask-user:/u;
  * the lead, so the question is the lead's to settle: the lead answers the card
  * or relays a decision only the person can make in its own report, the way a
  * child's report blocker already goes to the lead. "lead" while the asker or
- * its lead still works; "settled" once the lead has finished a turn that
- * started after the asker's last run ended, and the card no longer counts.
- * Null when the person must answer: the thread asks the person directly, the
- * request is not an ask_user question (a secret, a sign-in or an approval), or
- * no lead is working or has run since the asker ended (it is gone, or nothing
- * will wake it).
+ * its lead still works; "settled" once the lead has completed a turn that
+ * started after the asker's last run ended (the turn the asker's result woke),
+ * and the card no longer counts. Null when the person must answer: the thread
+ * asks the person directly, the request is not an ask_user question (a
+ * secret, a sign-in or an approval), the lead is gone or archived, or its turn
+ * since the asker ended failed or was stopped, or it has not run since.
  */
 export function subagentQuestionWait(
   asker: EnvironmentThreadShell,
@@ -148,7 +148,8 @@ export function subagentQuestionWait(
 ): "lead" | "settled" | null {
   const pending = asker.source?.pendingRuntimeRequest;
   if (!pending || !ASK_USER_REQUEST.test(pending.id) || !reportsToParentAgent(asker)) return null;
-  if (threadAwaitingPerson(asker)?.kind !== "answer" || lead === undefined) return null;
+  if (threadAwaitingPerson(asker)?.kind !== "answer") return null;
+  if (lead === undefined || lead.archivedAt != null || lead.deletedAt != null) return null;
   if (threadRuntimeIsActive(asker.runtime) || threadRuntimeIsActive(lead.runtime)) return "lead";
   const askerEnded = millis(asker.latestRun?.completedAt);
   const leadRun = lead.latestRun;
@@ -156,9 +157,17 @@ export function subagentQuestionWait(
   return askerEnded !== null &&
     leadStarted !== null &&
     leadStarted > askerEnded &&
-    leadRun?.completedAt != null
+    leadRun?.status === "completed"
     ? "settled"
     : null;
+}
+
+/** The thread an attention row's thread reports to, as `aggregateProjectAttention` reads it. */
+export function attentionLeadThreadId(thread: EnvironmentThreadShell): string | null {
+  return (
+    thread.lineage?.parentThreadId ??
+    (thread.forkedFrom?.type === "run" ? thread.forkedFrom.threadId : null)
+  );
 }
 
 /** The words a root goes by while a subagent's question waits on its lead. */
@@ -296,9 +305,7 @@ const threadKeys = new WeakMap<EnvironmentThreadShell, AttentionThreadKeys>();
 function keysOf(thread: EnvironmentThreadShell): AttentionThreadKeys {
   let keys = threadKeys.get(thread);
   if (keys === undefined) {
-    const parentId =
-      thread.lineage?.parentThreadId ??
-      (thread.forkedFrom?.type === "run" ? thread.forkedFrom.threadId : null);
+    const parentId = attentionLeadThreadId(thread);
     keys = {
       identity: attentionIdentity({
         environmentId: thread.environmentId,

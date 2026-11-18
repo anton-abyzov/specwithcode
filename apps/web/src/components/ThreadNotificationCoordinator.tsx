@@ -1,7 +1,9 @@
 import { observeNotificationEpisode } from "../notificationEpisodes";
 import {
+  attentionLeadThreadId,
   attentionOwnerMachine,
   observeProjectThread,
+  subagentQuestionWait,
 } from "@specweave-studio/client-runtime/state/projectAttention";
 import {
   classifyProjectActions,
@@ -296,6 +298,9 @@ function EnvironmentNotifications({
       return;
     }
     const next = new Map<ThreadId, NotificationState>();
+    const threadById = new Map<string, (typeof threads)[number]>(
+      threads.map((rawThread) => [rawThread.id, rawThread]),
+    );
     for (const rawThread of threads) {
       // A provider's own subagents are part of their parent's turn. A worker a
       // coordinator delegated is its own thread: its status and this alert
@@ -308,7 +313,15 @@ function EnvironmentNotifications({
       const thread = presentThreadShell(environmentId, rawThread);
       let status = resolveThreadAlertStatus(thread);
       if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
-      const observation = observeProjectThread(thread, "live");
+      // A subagent's question its lead settles alerts nobody, as Needs you counts it.
+      const leadId = attentionLeadThreadId(thread);
+      const leadRaw = leadId === null ? undefined : threadById.get(leadId);
+      const questionGoesToLead =
+        subagentQuestionWait(
+          thread,
+          leadRaw === undefined ? undefined : presentThreadShell(environmentId, leadRaw),
+        ) !== null;
+      const observation = observeProjectThread(thread, "live", questionGoesToLead);
       const observedActions = classifyProjectActions(observation);
       // Baseline absence must end persisted episodes too, including after every client restarted.
       for (const reason of ["plan", "held"] as const) {

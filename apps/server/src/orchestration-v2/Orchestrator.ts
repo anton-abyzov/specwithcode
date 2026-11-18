@@ -140,6 +140,7 @@ import {
 } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
@@ -814,6 +815,9 @@ export const WORKSPACE_MOVE_CONTINUES_MESSAGE = "Moved to a worktree; the work c
  * result once this passes.
  */
 export const WORKSPACE_MOVE_CONTINUATION_WAIT_MS = 60_000;
+/** A failed recheck of a moved child tries again this often, this many times. */
+const MOVED_CHILD_RECHECK_RETRY_MS = 5_000;
+const MOVED_CHILD_RECHECK_ATTEMPTS = 3;
 
 /** A reopened preparation item drops the output and exit code of the attempt it replaces. */
 function withoutPreparationResult(
@@ -12021,14 +12025,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
-  // Moved children whose result waits for a continuation, each rechecked once
-  // when its wait ends. Server recovery rechecks any wait a restart cut short.
+  // Moved children whose result waits for a continuation, each rechecked when
+  // its wait ends, and again a few times if that recheck fails. Server
+  // recovery rechecks any wait a restart cut short.
   const movedChildRechecks = new Set<RunId>();
   const recheckMovedChildLater = (
     parentThreadId: ThreadId,
     childThreadId: ThreadId,
     childRunId: RunId,
     delayMs: number,
+    attempt = 1,
   ): Effect.Effect<void> =>
     movedChildRechecks.has(childRunId)
       ? Effect.void
@@ -12045,8 +12051,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     Effect.andThen(
                       Effect.logWarning("Failed to settle a child moved into a worktree", {
                         childThreadId,
+                        attempt,
                         cause,
                       }),
+                    ),
+                    Effect.andThen(
+                      Cause.hasInterruptsOnly(cause) || attempt >= MOVED_CHILD_RECHECK_ATTEMPTS
+                        ? Effect.void
+                        : recheckMovedChildLater(
+                            parentThreadId,
+                            childThreadId,
+                            childRunId,
+                            MOVED_CHILD_RECHECK_RETRY_MS,
+                            attempt + 1,
+                          ),
                     ),
                   ),
                 ),

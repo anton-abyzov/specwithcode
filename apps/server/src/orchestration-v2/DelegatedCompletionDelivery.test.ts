@@ -1447,9 +1447,25 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       });
       yield* orchestrator.recoverDelegatedTask(child.childThreadId, child.childRunId);
       if (move === "lost") {
-        // No continuation run appeared: the wait ends and the stop is the result.
+        const held = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(held.subagents.find((row) => row.id === child.taskId)?.status, "running");
+        // No continuation run appeared: the recheck the hold scheduled settles
+        // the task once the wait ends, with nothing else calling in.
+        const afterSequence = yield* eventSink.latestSequence();
         yield* TestClock.adjust(Duration.millis(Orchestrator.WORKSPACE_MOVE_CONTINUATION_WAIT_MS));
-        yield* orchestrator.recoverDelegatedTask(child.childThreadId, child.childRunId);
+        const settled = yield* eventSink
+          .stream({ afterSequence, eventType: "subagent.updated" })
+          .pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "subagent.updated" &&
+                stored.event.payload.id === child.taskId &&
+                stored.event.payload.status === "interrupted",
+            ),
+            Stream.take(1),
+            Stream.runHead,
+          );
+        assert.isTrue(settled._tag === "Some");
       }
       const moved = yield* orchestrator.getThreadProjection(threadId);
       const task = moved.subagents.find((row) => row.id === child.taskId);

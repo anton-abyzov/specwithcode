@@ -6172,10 +6172,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS pending_request_payload_json,
               (
-                -- The newest open ask_user card's questions, for the row's words.
-                -- Used only when its requestId is the pending request above. An
-                -- ask_user card has a node of its own, so the node lookup reads
-                -- one item, never a run's history.
+                -- The newest open ask_user or update-reopened card's questions,
+                -- for the row's words. Used only when its requestId is the
+                -- pending request above. Such a card has a node of its own, so
+                -- the node lookup reads one item, never a run's history.
                 SELECT json_object(
                   'requestId', json_extract(question.payload_json, '$.requestId'),
                   'questions', json(json_extract(question.payload_json, '$.questions'))
@@ -6187,7 +6187,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE request.thread_id = t.thread_id
                   AND request.status = 'pending'
                   AND request.kind = 'user_input'
-                  AND request.runtime_request_id LIKE 'ask-user:%'
+                  AND (request.runtime_request_id LIKE 'ask-user:%'
+                    OR request.runtime_request_id LIKE 'update-reopen%')
                   AND question.thread_id = t.thread_id
                   AND question.type = 'user_input_request'
                   AND json_extract(question.payload_json, '$.requestId') = request.runtime_request_id

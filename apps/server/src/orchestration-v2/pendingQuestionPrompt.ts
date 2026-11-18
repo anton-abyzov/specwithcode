@@ -1,6 +1,12 @@
 import { pendingQuestionPrompt } from "@specweave-studio/shared/attentionAsk";
 
 /**
+ * Cards with a node of their own: the app's ask_user cards and the cards a
+ * service update reopens (`update-reopen:` and `update-reopen-approval:`).
+ */
+const OWN_NODE_CARD = /^(?:ask-user:|update-reopen)/u;
+
+/**
  * The row words of a thread's open ask_user card, for the shell's pending
  * request summary. The card's questions live on its user_input_request turn
  * item; they count only when that item belongs to the pending request itself.
@@ -11,9 +17,9 @@ export function pendingRequestPrompt(
   request: { readonly id: string; readonly kind: string } | null,
   source: unknown,
 ): { readonly prompt?: string } {
-  // ask_user cards only, as in the SQL shell read (see ProjectionStore).
+  // The same cards as the SQL shell read (see ProjectionStore).
   if (request === null || request.kind !== "user_input") return {};
-  if (!request.id.startsWith("ask-user:")) return {};
+  if (!OWN_NODE_CARD.test(request.id)) return {};
   if (typeof source !== "object" || source === null) return {};
   const { requestId, questions: asked } = source as Record<string, unknown>;
   if (requestId !== request.id || !Array.isArray(asked)) return {};
