@@ -437,7 +437,10 @@ final class AppRouter {
   /// Percy, with the composer focused.
   func startNewChat(in model: AppModel) {
     let target: ChatTarget?
-    if let aide = model.aide, !aide.archived {
+    if let seat = openAideSeat(in: model) {
+      // With a machine's Percy, or one of its threads, open, a new chat stays on that machine.
+      target = .aide(seat)
+    } else if let aide = model.aide, !aide.archived {
       target = .aide(aide.ref)
     } else if let current = landing(in: model), current.projectRef != nil {
       target = current
@@ -454,6 +457,17 @@ final class AppRouter {
 
   func showError(_ error: any Error) {
     toast = WeaveToastMessage(error.localizedDescription, kind: .fail)
+  }
+
+  /// The live Percy seat the root chat belongs to: the seat itself or one of its threads.
+  func openAideSeat(in model: AppModel) -> ProjectRef? {
+    let ref: ProjectRef? = switch landing(in: model) {
+    case let .aide(ref)?: ref
+    case let .thread(thread)?: model.thread(thread)?.projectRef
+    default: nil
+    }
+    guard let ref, model.isAideSeat(ref), model.project(ref)?.archived == false else { return nil }
+    return ref
   }
 
   /// The chat to show at the root right now.
