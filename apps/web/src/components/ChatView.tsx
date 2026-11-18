@@ -276,6 +276,7 @@ import { resolveProviderInstanceDisplayName } from "@specweave-studio/client-run
 import { isApiCreditAccountDriver } from "./settings/apiCreditAccount";
 import { sourceControlRepositorySelector } from "@specweave-studio/shared/sourceControl";
 import { truncate } from "@specweave-studio/shared/String";
+import { composerPickSelection } from "./chat/composerModelPick";
 import { resolveThreadReferenceCopyTarget } from "@specweave-studio/shared/threadReference";
 import { nextTerminalId, resolveTerminalTabTitle } from "@specweave-studio/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -14826,15 +14827,16 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
       // Restore this model's own remembered options; without any, start it
-      // from its default rather than carrying the previous model's over.
-      const rememberedOptions =
-        useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[
-          resolvedModel
-        ];
-      const nextModelSelection: ModelSelection =
-        rememberedOptions !== undefined && rememberedOptions.length > 0
-          ? { instanceId, model: resolvedModel, options: [...rememberedOptions] }
-          : { instanceId, model: resolvedModel };
+      // at Medium rather than carrying the previous model's over.
+      const nextModelSelection = composerPickSelection({
+        instanceId,
+        model: resolvedModel,
+        remembered:
+          useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[
+            resolvedModel
+          ],
+        providers: providerStatuses,
+      });
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeRuntime !== null,

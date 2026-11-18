@@ -19,6 +19,7 @@ import {
   defaultTrackSelections,
   providersForModel,
   trackAlternate,
+  trackStartEffort,
   withTrackEffort,
 } from "./modelTracks.ts";
 import { type ModelFamily, modelFamily } from "./fallbackOptions.ts";
@@ -128,7 +129,9 @@ export function reviewerOrderGroups(input: {
   // A listed reviewer without an effort runs at Medium, as the Models page shows it.
   const base =
     input.reviewers.length > 0
-      ? input.reviewers.map((entry) => withTrackEffort(entry, input.providers))
+      ? input.reviewers.map((entry) =>
+          withTrackEffort(entry, input.providers, trackStartEffort("review", entry.model)),
+        )
       : defaultReviewerChain(input);
   // Only a person's own list pins places; the default order groups freely.
   const listed = new Set(input.reviewers.map(fallbackSelectionKey));

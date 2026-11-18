@@ -26,6 +26,8 @@ import {
   isFreeTrackModel,
   providerHomeFamily,
   providersForModel,
+  trackStartEffort,
+  withTrackEffort,
 } from "./modelTracks.ts";
 import { type ModelFamily, modelFamily } from "./modelVendor.ts";
 import {
@@ -281,7 +283,8 @@ export function describeTrack(input: {
         misplaced: freeModel && input.track !== "daily",
         follows: newer ?? null,
         sources: sourcesOf(selection.model, free, selection.instanceId),
-        effort: modelSelectionEffortValue(selection) ?? null,
+        effort:
+          modelSelectionEffortValue(selection) ?? trackStartEffort(input.track, selection.model),
       };
     });
   }
@@ -378,7 +381,13 @@ export function addTrackEntry(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly entry: ModelSelection;
 }): ReadonlyArray<ModelSelection> {
-  if (input.track !== "daily") return [...input.entries, input.entry];
+  // A new entry carries the level it starts at, so the list saves what it shows.
+  const entry = withTrackEffort(
+    input.entry,
+    input.providers,
+    trackStartEffort(input.track, input.entry.model),
+  );
+  if (input.track !== "daily") return [...input.entries, entry];
   const isFree = (entry: ModelSelection) =>
     isFreeTrackModel(
       describeModel(
@@ -386,11 +395,11 @@ export function addTrackEntry(input: {
         entry.model,
       ),
     );
-  if (isFree(input.entry)) return [...input.entries, input.entry];
+  if (isFree(entry)) return [...input.entries, entry];
   const tail = input.entries.findIndex(isFree);
   return tail === -1
-    ? [...input.entries, input.entry]
-    : [...input.entries.slice(0, tail), input.entry, ...input.entries.slice(tail)];
+    ? [...input.entries, entry]
+    : [...input.entries.slice(0, tail), entry, ...input.entries.slice(tail)];
 }
 
 /** The single family every Review row belongs to, when a review could not cross families. */

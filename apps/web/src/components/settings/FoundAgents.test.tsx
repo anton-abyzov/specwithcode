@@ -26,6 +26,7 @@ vi.mock("../../i18n", () => ({
 }));
 
 import {
+  agentsWithProviderChecks,
   defaultAgentInstance,
   FoundAgents,
   FoundAgentsList,
@@ -111,6 +112,34 @@ it("lists found agents that still need a step, and counts the rest", () => {
   expect(view.checkedCount).toBe(8);
   expect(view.notFound).toEqual(["Codex"]);
   expect(view.noAnswer).toEqual(["Cursor"]);
+});
+
+it("counts an agent its provider check found installed, even when the search predates it", () => {
+  // The search ran before Muse Code was installed; its provider check since reads it signed in.
+  const before: AgentSearch = {
+    ...SEARCH,
+    agents: [found("codex", "ready"), found("muse", "not-installed")],
+  };
+  const providers = [
+    { driver: driver("muse"), installed: true, auth: { status: "authenticated" as const } },
+  ];
+  const view = foundAgentsView(before, SETTINGS, providers);
+  expect(view.notFound).toEqual([]);
+  expect(view.foundCount).toBe(2);
+  expect(view.rows.map((row) => [row.agent, row.state])).toContainEqual(["muse", "ready"]);
+  // Without a provider check the search's answer stands.
+  expect(foundAgentsView(before, SETTINGS).notFound).toEqual(["Muse Code"]);
+  // A check that found it signed out says so; one that did not find it changes nothing.
+  expect(
+    agentsWithProviderChecks(before.agents, [
+      { driver: driver("muse"), installed: true, auth: { status: "unauthenticated" } },
+    ])[1]?.state,
+  ).toBe("signed-out");
+  expect(
+    agentsWithProviderChecks(before.agents, [
+      { driver: driver("muse"), installed: false, auth: { status: "unknown" } },
+    ])[1]?.state,
+  ).toBe("not-installed");
 });
 
 it("counts an agent as in use when any of its entries is on, or a registry agent is added", () => {
@@ -236,6 +265,7 @@ const mount = () =>
         environmentId={environmentId}
         machine="Mac mini"
         settings={SETTINGS}
+        providers={[]}
         readOnly={false}
         onTurnOn={() => {}}
         onAdd={() => {}}

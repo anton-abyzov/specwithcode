@@ -1300,6 +1300,7 @@ export function EnvironmentProviderSettings({
           environmentId={environmentId}
           machine={environmentLabel}
           settings={settings}
+          providers={serverProviders}
           readOnly={readOnly || !canWriteSettings}
           onTurnOn={turnOnAgent}
           onAdd={() => setIsAddInstanceDialogOpen(true)}

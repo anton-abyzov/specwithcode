@@ -44,6 +44,10 @@ export const TRACK_LANES: Readonly<Record<Exclude<ModelTrack, "review">, ModelLa
   daily: "routine",
   complex: "complex",
 };
+const TRACK_OF_LANE: Readonly<Record<ModelLane, Exclude<ModelTrack, "review">>> = {
+  routine: "daily",
+  complex: "complex",
+};
 
 /** Drivers that are a vendor's own way to run its models. */
 const DRIVER_HOME_FAMILY: Readonly<Record<string, ModelFamily>> = {
@@ -226,6 +230,18 @@ export function builtInTrackSelection(
 export const TRACK_DEFAULT_EFFORT = "medium";
 
 /**
+ * The level a model starts at in `track` when nobody picked one: the level
+ * the built-in order gives the same model there (Muse Wonder Full reviews at
+ * Extra High), else Medium. Matched to the model's own levels at use.
+ */
+export function trackStartEffort(track: ModelTrack, model: string): string {
+  return (
+    DEFAULT_MODEL_TRACKS[track].find((entry) => isSameModel({ slug: entry.model }, { slug: model }))
+      ?.effort ?? TRACK_DEFAULT_EFFORT
+  );
+}
+
+/**
  * The effort `selection` runs at as a track entry: its saved level, else
  * `fallback` (Medium) matched to the nearest level its model offers. Null for
  * a model its source lists with no effort setting, or a source that no longer
@@ -296,9 +312,11 @@ export function effectiveModelLanes(
   providers: ReadonlyArray<TrackProvider>,
   order?: ReadonlyArray<ProviderInstanceId> | null,
 ): EffectiveModelLanes {
-  // A saved entry without an effort runs at Medium, as the Models page shows it.
+  // A saved entry without an effort runs at its start level, as the Models page shows it.
   const saved = (lane: ModelLane) =>
-    (lanes?.[lane] ?? []).map((entry) => withTrackEffort(entry, providers));
+    (lanes?.[lane] ?? []).map((entry) =>
+      withTrackEffort(entry, providers, trackStartEffort(TRACK_OF_LANE[lane], entry.model)),
+    );
   const builtIn = {
     routine: saved("routine").length === 0,
     complex: saved("complex").length === 0,

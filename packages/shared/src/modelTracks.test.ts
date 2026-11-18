@@ -24,7 +24,9 @@ import {
   providerHomeFamily,
   providersForModel,
   trackEntryEffort,
+  trackStartEffort,
 } from "./modelTracks.ts";
+import { addTrackEntry } from "./modelTrackRules.ts";
 import { describeFallbackOrder, resolveProviderFallback } from "./providerFallback.ts";
 
 const now = Date.parse("2026-11-14T18:00:00.000Z");
@@ -649,6 +651,102 @@ describe("track effort", () => {
       ...sel("codex", "gpt-6.1-sol"),
       options: [{ id: "reasoningEffort", value: "high" }],
     });
+  });
+});
+
+describe("start effort for a new entry", () => {
+  // Muse Code reports Max as Wonder Full's own default.
+  const museLevels = {
+    optionDescriptors: [
+      {
+        id: "reasoningEffort",
+        label: "Reasoning effort",
+        type: "select" as const,
+        options: ["low", "medium", "high", "xhigh", "max"].map((id) => ({
+          id,
+          label: id,
+          ...(id === "max" ? { isDefault: true } : {}),
+        })),
+      },
+    ],
+  };
+  const muse = {
+    ...provider("muse", "muse", ["muse-wonder-full-1.0", "muse-wonder-1.0"], 10),
+    models: ["muse-wonder-full-1.0", "muse-wonder-1.0"].map((slug) => ({
+      slug,
+      name: slug,
+      isCustom: false,
+      capabilities: museLevels,
+    })),
+  } satisfies ServerProvider;
+  const effortOf = (entry: ModelSelection | undefined) =>
+    entry?.options?.find((option) => option.id === "reasoningEffort")?.value;
+
+  it("starts Wonder Full at Extra High in Review and every other entry at Medium", () => {
+    expect(trackStartEffort("review", "muse-wonder-full-1.0")).toBe("xhigh");
+    expect(trackStartEffort("review", "gpt-6.2-sol")).toBe("medium");
+    expect(trackStartEffort("complex", "muse-wonder-full-1.0")).toBe("medium");
+    expect(trackStartEffort("daily", "claude-opus-5-5")).toBe("medium");
+  });
+
+  it("saves the start level with a model added to a track, never the provider's Max", () => {
+    const review = addTrackEntry({
+      track: "review",
+      entries: [],
+      providers: [muse],
+      entry: sel("muse", "muse-wonder-full-1.0"),
+    });
+    expect(effortOf(review[0])).toBe("xhigh");
+    const complex = addTrackEntry({
+      track: "complex",
+      entries: [],
+      providers: [muse],
+      entry: sel("muse", "muse-wonder-full-1.0"),
+    });
+    expect(effortOf(complex[0])).toBe("medium");
+    // A level the person picked is kept.
+    const picked = addTrackEntry({
+      track: "review",
+      entries: [],
+      providers: [muse],
+      entry: {
+        ...sel("muse", "muse-wonder-1.0"),
+        options: [{ id: "reasoningEffort", value: "low" }],
+      },
+    });
+    expect(effortOf(picked[0])).toBe("low");
+  });
+
+  it("reviews on a saved entry without an effort at its built-in Review level, else Medium", () => {
+    const codexE = {
+      ...provider("codex", "codex", ["gpt-6.2-sol"], 10),
+      models: [
+        { slug: "gpt-6.2-sol", name: "GPT-6.2 Sol", isCustom: false, capabilities: museLevels },
+      ],
+    } satisfies ServerProvider;
+    const chain = reviewerChain({
+      providers: [muse, codexE],
+      reviewers: [
+        sel("muse", "muse-wonder-full-1.0"),
+        sel("muse", "muse-wonder-1.0"),
+        sel("codex", "gpt-6.2-sol"),
+      ],
+      tier: "regular",
+    });
+    // Both Wonder models review at Extra High in the built-in order.
+    expect(chain.map((entry) => [entry.model, effortOf(entry)])).toEqual([
+      ["muse-wonder-full-1.0", "xhigh"],
+      ["muse-wonder-1.0", "xhigh"],
+      ["gpt-6.2-sol", "medium"],
+    ]);
+  });
+
+  it("runs Wonder Full saved in Complex without an effort at Medium", () => {
+    const lanes = effectiveModelLanes(
+      { routine: [], complex: [sel("muse", "muse-wonder-full-1.0")] },
+      [muse],
+    ).lanes.complex;
+    expect(effortOf(lanes[0])).toBe("medium");
   });
 });
 

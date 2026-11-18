@@ -179,7 +179,8 @@ export function TrackEffortSelect(props: {
       </Badge>
     );
   }
-  const value = trackEntryEffort(selection, props.providers)?.value ?? null;
+  const value =
+    trackEntryEffort(selection, props.providers, props.effort ?? undefined)?.value ?? null;
   return (
     <Select
       value={value}
