@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -193,7 +194,11 @@ it.effect("sits out an automatic install while the agent applies it, and counts 
     const writeState = (status: string, updatedAtMs: number) =>
       fileSystem.writeFileString(
         statePath,
-        JSON.stringify({ status, message: status, updatedAt: new Date(updatedAtMs).toISOString() }),
+        JSON.stringify({
+          status,
+          message: status,
+          updatedAt: DateTime.formatIso(DateTime.makeUnsafe(updatedAtMs)),
+        }),
       );
     const startMs = Date.parse("2026-11-18T03:47:30.000Z");
     yield* TestClock.setTime(startMs);
@@ -240,7 +245,10 @@ it.effect("runs due work when an installing state is older than the apply timeou
     yield* TestClock.setTime(startMs);
     yield* fileSystem.writeFileString(
       statePath,
-      JSON.stringify({ status: "installing", updatedAt: new Date(staleMs).toISOString() }),
+      JSON.stringify({
+        status: "installing",
+        updatedAt: DateTime.formatIso(DateTime.makeUnsafe(staleMs)),
+      }),
     );
     const hold = yield* ServiceUpdateHold.makeWithOptions({ agentStatePath: statePath });
     const ran = yield* Queue.unbounded<number>();
