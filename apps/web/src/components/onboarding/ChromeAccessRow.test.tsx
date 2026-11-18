@@ -329,10 +329,18 @@ describe("ChromeAccessRow", () => {
     expect(state.clearClipboard).toHaveBeenCalledWith("SECRET-1");
   });
 
-  it("on a Mac, opens the store link as a plain link and never reads Chrome's profiles", async () => {
+  it("on a Mac too, reads Chrome's profiles once the steps open", async () => {
     vi.stubGlobal("window", { desktopBridge: { getClientPlatform: () => "darwin" } });
+    state.profiles.mockResolvedValue([{ directory: "Default", name: "Your Chrome" }]);
     await render(<Harness initiallyOpen />);
-    expect(state.profiles).not.toHaveBeenCalled();
+    expect(state.profiles).toHaveBeenCalledTimes(1);
+    expect(text()).toContain("Opens the store page in Chrome.");
+  });
+
+  it("where no profile can be read, the store link opens in the profile Chrome used last", async () => {
+    vi.stubGlobal("window", { desktopBridge: { getClientPlatform: () => "darwin" } });
+    state.profiles.mockResolvedValue(null);
+    await render(<Harness initiallyOpen />);
     expect(text()).toContain("It opens in the Chrome profile you used last.");
   });
 

@@ -33,10 +33,11 @@ import { AccessRow, AccessRowAction, AccessRowChip, BrowserRowGlyph } from "./Ac
 /**
  * Whether the desktop app on macOS lists Chrome's profiles in this row. Set by
  * the check on a fresh macOS account (increment 1387, T-06,
- * `reports/chrome-profile-read.md`). Off means the store link opens in the
- * profile Chrome used last, with a sentence that says so.
+ * `reports/chrome-profile-read.md`): the list came back with no TCC request,
+ * so no prompt. Off would open the store link in the profile Chrome used
+ * last, with a sentence that says so.
  */
-export const CHROME_PROFILE_LIST_ON_MAC = false;
+export const CHROME_PROFILE_LIST_ON_MAC = true;
 
 function profileListAllowed(): boolean {
   if (!canUseExternalBrowsers()) return false;
