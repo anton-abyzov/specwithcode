@@ -134,7 +134,7 @@ export function AccessGrantsList({
       {shown !== null && shown.length > ACCESS_GRANTS_SHOWN ? (
         <Button
           size="xs"
-          variant="ghost"
+          variant="outline"
           aria-expanded={showAll}
           data-testid={`access-grants-${kind}-toggle`}
           onClick={() => setShowAll((value) => !value)}
