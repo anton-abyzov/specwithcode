@@ -910,6 +910,12 @@ export const ProjectCreateNewInput = Schema.Struct({
    * projects and for a folder that already was a project.
    */
   specweave: Schema.optional(Schema.Boolean),
+  /**
+   * With `specweave`: only in a folder the create makes or an empty one it
+   * takes, decided under the create's lock. A folder that turns out to hold
+   * files is used as it is, with no Git and no SpecWeave (1396 AC-22).
+   */
+  specweaveOnlyIfNew: Schema.optional(Schema.Boolean),
 });
 export type ProjectCreateNewInput = typeof ProjectCreateNewInput.Type;
 

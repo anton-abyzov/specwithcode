@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from "react";
+
 // A small, fixed disk per machine. m1 is a remote Mac whose projects folder
 // does not exist yet; m4 is this device.
 const HOMES: Record<string, string> = { m4: "/Users/you", m1: "/Users/remote" };
@@ -61,9 +63,25 @@ export const useAtomCommand = () => async (value: any) => {
   for (const listener of listeners) listener();
   return { _tag: "Success", value: { path: `${parentPath}/${name}` } };
 };
+// `slow=1`: the server's answer for a folder asked about under a project name
+// waits for window.answerFolderChecks(), as a slow machine's would.
+let checksAnswered = new URLSearchParams(location.search).get("slow") !== "1";
+(window as any).answerFolderChecks = () => {
+  checksAnswered = true;
+  version += 1;
+  for (const listener of listeners) listener();
+};
+const subscribe = (listener: () => void) => {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+};
 export const useEnvironmentQuery = (value: any) => {
+  useSyncExternalStore(subscribe, () => version);
   const refresh = () => {};
   if (!value) return { data: null, error: null, isPending: false, refresh };
+  if (!checksAnswered && value.input.projectName !== undefined) {
+    return { data: null, error: null, isPending: true, refresh };
+  }
   (window as any).browsedMachine = value.environmentId;
   const home = HOMES[value.environmentId]!;
   const path = value.input.partialPath.replace(/^~/, home).replace(/\/$/, "") || "/";

@@ -72,6 +72,8 @@ export function specweaveCreateNote(input: {
   readonly asked: boolean | undefined;
   /** Why setup was not run although wanted. */
   readonly skipped?: "registered" | "existing_folder" | undefined;
+  /** The folder used as it is already has SpecWeave. */
+  readonly present?: boolean | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly error?: string | undefined;
   readonly needsNode?: boolean | undefined;
@@ -83,6 +85,8 @@ export function specweaveCreateNote(input: {
   if (input.asked === false) return `SpecWeave not set up: specweave was false. ${BOARD_PRESS}`;
   if (input.skipped === "registered")
     return `SpecWeave not set up: an existing folder is registered as it is, and SpecWeave is never added to one without the user's press. ${BOARD_PRESS}`;
+  if (input.skipped === "existing_folder" && input.present === true)
+    return `SpecWeave is already set up in ${input.workspaceRoot ?? "the folder"}, which is used as it is.`;
   if (input.skipped === "existing_folder")
     return `SpecWeave not set up: ${input.workspaceRoot ?? "the folder"} already existed, so it is used as it is, and SpecWeave is never added to an existing folder without the user's press. ${BOARD_PRESS}`;
   if (input.needsNode === true)
@@ -173,8 +177,11 @@ export const createProjectOnMachine = Effect.fn("mcp.createProjectOnMachine")(fu
     input.arguments.kind !== "personal" &&
     input.arguments.specweave !== false &&
     input.arguments.workspaceRoot === undefined;
+  // A folder used as it is gets none from a current machine either.
   const olderNote =
-    knowsSpecweave || !wantedThere ? {} : { specweave: olderMachineSpecweaveNote(machine.label) };
+    knowsSpecweave || !wantedThere || created.existing === true
+      ? {}
+      : { specweave: olderMachineSpecweaveNote(machine.label) };
   return {
     ...created,
     ...olderNote,

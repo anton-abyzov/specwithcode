@@ -284,7 +284,10 @@ export function ImportStep({
             name: candidate.title,
             kind: "code",
             parentPath: candidate.path,
-            ...(typeof folderSpecweave === "boolean" ? { specweave: folderSpecweave } : {}),
+            // Decided again under the create's lock: files that appeared since get none.
+            ...(typeof folderSpecweave === "boolean"
+              ? { specweave: folderSpecweave, specweaveOnlyIfNew: true }
+              : {}),
           },
         });
         if (

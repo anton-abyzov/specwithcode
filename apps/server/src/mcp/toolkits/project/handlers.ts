@@ -1101,7 +1101,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             kind: input.kind,
             asked: specweave,
             ...(wantsSpecweave && created.existing === true
-              ? { skipped: "existing_folder" as const, workspaceRoot: created.workspaceRoot }
+              ? {
+                  skipped: "existing_folder" as const,
+                  workspaceRoot: created.workspaceRoot,
+                  present: created.specweavePresent,
+                }
               : {}),
             error: created.specweaveError,
             needsNode: created.specweaveNeedsNode,

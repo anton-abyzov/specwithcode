@@ -290,6 +290,17 @@ try {
     await page.waitForTimeout(300);
     assert.equal(await box.count(), 0);
     assert.equal(await page.evaluate(() => window.startWithSpecweave), undefined);
+    // A slow server: no box and nothing to send until it says the folder is
+    // empty (null holds Add), then the box shows ticked.
+    await page.goto(`${base}/?theme=${theme}&mode=setup&found=0&slow=1`);
+    await page.getByRole("option", { name: "Projects", exact: true }).click();
+    await page.getByRole("option", { name: "github", exact: true }).click();
+    await page.getByRole("option", { name: "notes", exact: true }).click();
+    await page.waitForFunction(() => window.startWithSpecweave === null);
+    assert.equal(await box.count(), 0);
+    await page.evaluate(() => window.answerFolderChecks());
+    await box.waitFor();
+    assert.equal(await page.evaluate(() => window.startWithSpecweave), true);
     // A server that cannot set SpecWeave up: no box, even for an empty folder.
     await page.goto(`${base}/?theme=${theme}&mode=setup&found=0&old=1`);
     await page.getByRole("option", { name: "Projects", exact: true }).click();

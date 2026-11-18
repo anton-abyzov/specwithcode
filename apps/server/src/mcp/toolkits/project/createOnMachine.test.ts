@@ -56,10 +56,16 @@ const setup = (
     readonly origin?: WorkOrigin;
     /** M1 knows studio_project_create's specweave (1396). */
     readonly m1Specweave?: boolean;
+    /** M1 used an existing folder as it is. */
+    readonly m1Existing?: boolean;
     /** What the local create decides for a parentPath. */
     readonly preview?: FilesystemProjectOutcome;
     /** What the local create reports. */
-    readonly localResult?: { readonly existing?: true; readonly specweaveError?: string };
+    readonly localResult?: {
+      readonly existing?: true;
+      readonly specweaveError?: string;
+      readonly specweavePresent?: true;
+    };
   } = {},
 ) => {
   const calls: RemoteCall[] = [];
@@ -115,6 +121,7 @@ const setup = (
             }),
             published: "published",
             repository: "example/pinball-stats",
+            ...(options.m1Existing ? { existing: true } : {}),
           });
         }
         return Effect.die(`unexpected tool ${input.tool}`);
@@ -310,6 +317,14 @@ describe("studio_project_create's specweave (1396 AC-17)", () => {
         workspaceRoot: "/w/site",
       }),
     ).toContain("/w/site already existed");
+    expect(
+      specweaveCreateNote({
+        asked: undefined,
+        skipped: "existing_folder",
+        workspaceRoot: "/w/site",
+        present: true,
+      }),
+    ).toBe("SpecWeave is already set up in /w/site, which is used as it is.");
     expect(specweaveCreateNote({ asked: undefined, needsNode: true, error: "no node" })).toContain(
       "no Node.js",
     );
@@ -341,6 +356,16 @@ describe("studio_project_create's specweave (1396 AC-17)", () => {
       expect(localInputs[0]).toMatchObject({ specweave: true, specweaveOnlyIfNew: true });
       expect(result.existing).toBe(true);
       expect(String(result.specweave)).toContain("/projects/local already existed");
+    });
+  });
+
+  it.effect("a folder used as it is that has SpecWeave says it is set up", () => {
+    const { create } = setup({ localResult: { existing: true, specweavePresent: true } });
+    return Effect.gen(function* () {
+      const result = yield* create({ title: "site", parentPath: "/w/site" });
+      expect(result.specweave).toBe(
+        "SpecWeave is already set up in /projects/local, which is used as it is.",
+      );
     });
   });
 
@@ -382,6 +407,15 @@ describe("studio_project_create's specweave (1396 AC-17)", () => {
       // Declined, it blames no version.
       const declined = yield* create({ title: "Pinball Stats", machine: "M1", specweave: false });
       expect(declined.specweave).toBeUndefined();
+    });
+  });
+
+  it.effect("blames no version for a folder an older machine used as it is", () => {
+    const { create } = setup({ m1Existing: true });
+    return Effect.gen(function* () {
+      const result = yield* create({ title: "Pinball Stats", machine: "M1" });
+      expect(result.existing).toBe(true);
+      expect(result.specweave).toBeUndefined();
     });
   });
 });

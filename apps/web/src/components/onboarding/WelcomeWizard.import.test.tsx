@@ -575,6 +575,7 @@ describe("an empty folder's SpecWeave box", () => {
       kind: "code",
       parentPath: "/work/site",
       specweave: startWith,
+      specweaveOnlyIfNew: true,
     });
   });
 
