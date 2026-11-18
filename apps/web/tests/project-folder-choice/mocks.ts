@@ -76,6 +76,18 @@ export const useEnvironmentQuery = (value: any) => {
       error: `The folder '${path}' does not exist on this machine.`,
     };
   }
+  // The server's decision for a folder asked about under its own name, as
+  // first-run setup does: used as it is, and empty or not.
+  const slug = (name: string) => name.trim().toLowerCase().replace(/\s+/g, "-");
+  const asked = value.input.projectName as string | undefined;
+  const outcome =
+    asked !== undefined && slug(path.split("/").pop() ?? "") === slug(asked)
+      ? {
+          kind: "uses",
+          path,
+          because: entries.length === 0 ? "empty_named_like_project" : "named_like_project",
+        }
+      : undefined;
   return {
     error: null,
     isPending: false,
@@ -84,6 +96,7 @@ export const useEnvironmentQuery = (value: any) => {
       parentPath: path,
       homePath: home,
       version,
+      ...(outcome === undefined ? {} : { outcome }),
       ...(UNREADABLE.has(path) ? { unreadable: true } : {}),
       entries: entries
         .toSorted((left, right) => left.name.localeCompare(right.name))

@@ -174,6 +174,12 @@ export function ImportStep({
     } satisfies (typeof candidates)[number];
   }, [candidates, folder, folderEnvironmentId]);
   const selected = folderCandidate === null ? found : [...found, folderCandidate];
+  // 1396 AC-22: an empty folder picked here starts with SpecWeave as its box
+  // stands; undefined while there is no box (a folder with files, not checked yet).
+  const [folderSpecweave, setFolderSpecweave] = useState<boolean | undefined>(undefined);
+  const folderSetsUpSpecweave =
+    environments.find((environment) => environment.environmentId === folderEnvironmentId)
+      ?.serverConfig?.specweaveSetUp === true;
   const knownProjects = useMemo(
     () =>
       projects
@@ -268,7 +274,12 @@ export function ImportStep({
       ) {
         const created = await createNewProject({
           environmentId,
-          input: { name: candidate.title, kind: "code", parentPath: candidate.path },
+          input: {
+            name: candidate.title,
+            kind: "code",
+            parentPath: candidate.path,
+            ...(folderSpecweave === undefined ? {} : { specweave: folderSpecweave }),
+          },
         });
         if (
           importGeneration !== importGenerationRef.current ||
@@ -498,6 +509,8 @@ export function ImportStep({
           projects={knownProjects}
           defaultOpen={candidates.length === 0}
           disabled={isImporting}
+          specweaveSetUp={folderSetsUpSpecweave}
+          onStartWithSpecweave={setFolderSpecweave}
           folder={folder}
           onFolderChange={(next) => {
             setFolder(next);

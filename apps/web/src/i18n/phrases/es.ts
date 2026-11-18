@@ -4472,6 +4472,7 @@ export const es: PhraseCatalog = {
   "Setup can be closed once the import finishes.":
     "La configuración se puede cerrar cuando termine la importación.",
   "Add a folder on this machine": "Añadir una carpeta de este equipo",
+  "Start with SpecWeave, for plans and a board": "Empezar con SpecWeave, para planes y un tablero",
   "Type a path, browse or drop a folder": "Escribe una ruta, explora o suelta una carpeta",
   "Starting from nothing?": "¿Empiezas de cero?",
   "New empty project or clone a repository": "Nuevo proyecto vacío o clonar un repositorio",

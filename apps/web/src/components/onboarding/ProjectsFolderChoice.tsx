@@ -1,16 +1,24 @@
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { ChevronRightIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { readRecentFolders } from "../../hooks/useProjectFolderChoice";
 import { useTx } from "../../i18n";
 import { droppedFolder, folderDropRefusal } from "../../lib/folderDrop";
 import { currentPlatform, systemDialogLabel } from "../../lib/platformConventions";
 import { readLocalApi } from "../../localApi";
+import { filesystemEnvironment } from "../../state/filesystem";
+import { useEnvironmentQuery } from "../../state/query";
 import { resolveProjectPickerTarget } from "../../wslPaths";
-import { projectPlaces, type KnownProject } from "../studio/folderBrowser.logic";
+import {
+  projectPlaces,
+  sameFolder,
+  withSeparator,
+  type KnownProject,
+} from "../studio/folderBrowser.logic";
 import { NewProjectFolderPicker } from "../studio/NewProjectFolderPicker";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 
 /**
@@ -29,6 +37,8 @@ export function ProjectsFolderChoice({
   folder,
   onFolderChange,
   onOtherWays,
+  specweaveSetUp = false,
+  onStartWithSpecweave,
 }: {
   /** This machine. */
   readonly environmentId: EnvironmentId;
@@ -45,9 +55,40 @@ export function ProjectsFolderChoice({
   readonly onFolderChange: (folder: string | null) => void;
   /** Leaves setup for Add project, where a new empty project or a clone starts. */
   readonly onOtherWays: () => void;
+  /** This machine's server can set SpecWeave up when it makes a project (1396 AC-22). */
+  readonly specweaveSetUp?: boolean;
+  /** The empty folder's box as it stands, or undefined while no box shows. */
+  readonly onStartWithSpecweave?: (startWith: boolean | undefined) => void;
 }) {
   const tx = useTx();
   const [open, setOpen] = useState(defaultOpen);
+  // An empty folder becomes a new project, so it gets one box: start with
+  // SpecWeave. The server says whether it is empty, by the create's own rules
+  // (the folder's own name as the project's); a folder with files gets none.
+  const [startWithSpecweave, setStartWithSpecweave] = useState(true);
+  const folderName =
+    folder
+      ?.replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .pop() || null;
+  const folderCheck = useEnvironmentQuery(
+    specweaveSetUp && folder !== null && folderName !== null
+      ? filesystemEnvironment.browse({
+          environmentId,
+          input: { partialPath: withSeparator(folder), projectName: folderName },
+        })
+      : null,
+  );
+  const emptyFolder =
+    specweaveSetUp &&
+    folder !== null &&
+    folderCheck.data?.outcome?.kind === "uses" &&
+    folderCheck.data.outcome.because === "empty_named_like_project" &&
+    sameFolder(folderCheck.data.parentPath, folder);
+  const boxState = emptyFolder ? startWithSpecweave : undefined;
+  useEffect(() => {
+    onStartWithSpecweave?.(boxState);
+  }, [boxState, onStartWithSpecweave]);
   // A drop or the system dialog restarts the list at the folder it gave.
   const [start, setStart] = useState<{ readonly path: string | null; readonly key: number }>({
     path: folder,
@@ -171,6 +212,13 @@ export function ProjectsFolderChoice({
           </div>
         </CollapsiblePanel>
       </Collapsible>
+      {emptyFolder ? (
+        <StartWithSpecweaveBox
+          checked={startWithSpecweave}
+          disabled={disabled}
+          onCheckedChange={setStartWithSpecweave}
+        />
+      ) : null}
       {dropNote ? (
         <p role="status" className="px-3 pb-2 text-xs text-muted-foreground">
           {dropNote}
@@ -189,5 +237,31 @@ export function ProjectsFolderChoice({
         </Button>
       </p>
     </div>
+  );
+}
+
+/** The one box an empty folder shows in first-run setup (1396 AC-22). */
+export function StartWithSpecweaveBox({
+  checked,
+  disabled,
+  onCheckedChange,
+}: {
+  readonly checked: boolean;
+  readonly disabled: boolean;
+  readonly onCheckedChange: (checked: boolean) => void;
+}) {
+  const tx = useTx();
+  return (
+    <label
+      data-slot="start-with-specweave"
+      className="flex min-w-0 items-center gap-2 border-t border-border px-3 py-2.5 text-sm"
+    >
+      <Checkbox
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={(value) => onCheckedChange(value === true)}
+      />
+      <span className="min-w-0">{tx("Start with SpecWeave, for plans and a board")}</span>
+    </label>
   );
 }

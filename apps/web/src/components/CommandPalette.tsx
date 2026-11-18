@@ -1082,7 +1082,7 @@ function OpenCommandPaletteDialog(props: {
   const newProjectSubmittingRef = useRef(false);
   const createNewProject = useNewProject();
   const newProjectEnvironmentId = newProjectFlow?.environmentId ?? null;
-  // Older servers drop the `specweave` field without a word, so only offer it where it works.
+  // Older servers drop the `specweave` field without a word: the row shows off there (1396 AC-16).
   const newProjectSupportsSpecweave =
     environments.find((environment) => environment.environmentId === newProjectEnvironmentId)
       ?.serverConfig?.specweaveSetUp === true;
@@ -3747,12 +3747,11 @@ function OpenCommandPaletteDialog(props: {
         checked: newProjectPublishesToGitHub,
         toggle: () => setNewProjectPublishesToGitHub((value) => !value),
       }),
-      specweave: newProjectSupportsSpecweave
-        ? {
-            checked: newProjectUsesSpecweave,
-            toggle: () => setNewProjectUsesSpecweave((value) => !value),
-          }
-        : null,
+      specweave: {
+        checked: newProjectUsesSpecweave,
+        toggle: () => setNewProjectUsesSpecweave((value) => !value),
+        unavailable: !newProjectSupportsSpecweave,
+      },
     });
   } else if (addProjectCloneFlow?.step === "repository") {
     displayedGroups = [];

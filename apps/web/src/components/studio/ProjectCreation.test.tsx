@@ -5,6 +5,7 @@ import {
   ProjectMachineChoice,
   projectCreationGroups,
   SPECWEAVE_SETUP_SUMMARY,
+  SPECWEAVE_TOO_OLD,
 } from "./ProjectCreation";
 import {
   EXISTING_FOLDER_PUBLISH_NOTE,
@@ -30,7 +31,7 @@ describe("project creation choices", () => {
     expect(groups.some((g) => g.value === "new-project-options")).toBe(true);
     expect(groups.flatMap((g) => g.items).every((i) => i.disabled)).toBe(true);
   });
-  it("offers Use SpecWeave for code projects only, even without GitHub, in one sentence", () => {
+  it("offers Use SpecWeave for code projects only, outside Options, in one sentence", () => {
     const toggle = vi.fn();
     const groups = projectCreationGroups({
       ...input(),
@@ -38,9 +39,10 @@ describe("project creation choices", () => {
       github: null,
       specweave: { checked: true, toggle },
     });
-    const option = groups
-      .find((g) => g.value === "new-project-options")
-      ?.items.find((i) => i.value === "new-project:specweave");
+    // Its own group, never under the Options heading (1396 AC-16).
+    expect(groups.map((g) => g.value)).toEqual(["new-project-specweave"]);
+    expect(groups[0]?.label).toBeUndefined();
+    const option = groups[0]?.items.find((i) => i.value === "new-project:specweave");
     expect(option?.title).toBe("Use SpecWeave");
     expect(option?.description).toBe(SPECWEAVE_SETUP_SUMMARY);
     if (option?.kind === "action") void option.run();
@@ -50,6 +52,20 @@ describe("project creation choices", () => {
         .flatMap((g) => g.items)
         .some((i) => i.value === "new-project:specweave"),
     ).toBe(false);
+  });
+  it("shows Use SpecWeave off with the reason where the server cannot set it up", () => {
+    const toggle = vi.fn();
+    const option = projectCreationGroups({
+      ...input(),
+      kind: "code",
+      specweave: { checked: true, toggle, unavailable: true },
+    })
+      .flatMap((g) => g.items)
+      .find((i) => i.value === "new-project:specweave");
+    expect(option?.description).toBe(SPECWEAVE_TOO_OLD);
+    expect(option?.disabled).toBe(true);
+    if (option?.kind === "action") void option.run();
+    expect(toggle).not.toHaveBeenCalled();
   });
   it("never offers project types or a second assistant", () => {
     for (const kind of ["code", "personal"] as const) {

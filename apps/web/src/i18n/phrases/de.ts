@@ -4475,6 +4475,7 @@ export const de: PhraseCatalog = {
   "Setup can be closed once the import finishes.":
     "Die Einrichtung lässt sich schließen, sobald der Import fertig ist.",
   "Add a folder on this machine": "Einen Ordner auf diesem Rechner hinzufügen",
+  "Start with SpecWeave, for plans and a board": "Mit SpecWeave starten, für Pläne und ein Board",
   "Type a path, browse or drop a folder": "Pfad eingeben, durchsuchen oder Ordner ablegen",
   "Starting from nothing?": "Bei null anfangen?",
   "New empty project or clone a repository": "Neues leeres Projekt oder Repository klonen",

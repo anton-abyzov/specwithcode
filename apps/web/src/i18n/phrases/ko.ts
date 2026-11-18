@@ -4398,6 +4398,7 @@ export const ko: PhraseCatalog = {
   "Not finished": "완료되지 않음",
   "Setup can be closed once the import finishes.": "가져오기가 끝나면 설정을 닫을 수 있습니다.",
   "Add a folder on this machine": "이 컴퓨터의 폴더 추가",
+  "Start with SpecWeave, for plans and a board": "SpecWeave로 시작하기(계획과 보드용)",
   "Type a path, browse or drop a folder": "경로를 입력하거나 찾아보거나 폴더를 끌어다 놓기",
   "Starting from nothing?": "처음부터 시작하시나요?",
   "New empty project or clone a repository": "새 빈 프로젝트 또는 저장소 복제",

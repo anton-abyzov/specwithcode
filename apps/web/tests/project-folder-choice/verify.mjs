@@ -148,7 +148,18 @@ try {
       await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
       true,
     );
-    assert.equal(await page.getByRole("option", { name: /Use SpecWeave/ }).count(), 1);
+    // Use SpecWeave stands outside Options, checked, with the Board's sentence (1396 AC-16).
+    const specweaveRow = page.getByRole("option", { name: /Use SpecWeave/ });
+    assert.equal(await specweaveRow.count(), 1);
+    assert.equal(await page.getByText("Options", { exact: true }).count(), 0);
+    assert.match(
+      await specweaveRow.innerText(),
+      /Plans each piece of work as a short spec with tasks in your repository, and gives the project a board/,
+    );
+    assert.equal(await specweaveRow.getAttribute("aria-disabled"), null);
+    await specweaveRow.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: join(output, `${width}-${theme}-specweave-row.png`) });
     await page.getByRole("button", { name: "Add existing project", exact: true }).click();
     assert.equal(await page.evaluate(() => window.existingClicked), true);
     receipt.cases.push({ width, height, theme, passed: true });
@@ -204,6 +215,13 @@ try {
     assert.equal(await github.getAttribute("aria-disabled"), "true");
     await github.click({ force: true });
     assert.equal(await page.evaluate(() => window.githubToggled === true), false);
+    // A server too old to set SpecWeave up: the row stays, off, and says so.
+    const oldSpecweave = page.getByRole("option", { name: /Use SpecWeave/ });
+    assert.match(
+      await oldSpecweave.innerText(),
+      /This machine's SpecWithCode is too old to set it up\./,
+    );
+    assert.equal(await oldSpecweave.getAttribute("aria-disabled"), "true");
     // Machines that cannot be chosen say why, to assistive tech and on hover.
     for (const [label, reason] of [
       ["Studio Linux", "Offline: it cannot be used right now."],
@@ -233,6 +251,47 @@ try {
     await page.waitForTimeout(350);
     await page.screenshot({ path: join(output, `${width}-${theme}-states.png`), fullPage: true });
     receipt.cases.push({ width, height, theme, mode: "states", passed: true });
+    await page.close();
+  }
+  // First-run setup: an empty folder gets one box, checked; a folder with files
+  // and a server that cannot set SpecWeave up get none (1396 AC-22).
+  for (const theme of ["light", "dark"]) {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 960 } });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const box = page.locator('[data-slot="start-with-specweave"]');
+    await page.goto(`${base}/?theme=${theme}&mode=setup&found=0`);
+    await page.getByRole("option", { name: "Projects", exact: true }).click();
+    await page.getByRole("option", { name: "github", exact: true }).click();
+    await page.getByRole("option", { name: "notes", exact: true }).click();
+    await box.waitFor();
+    assert.equal(await box.innerText(), "Start with SpecWeave, for plans and a board");
+    assert.equal(await box.getByRole("checkbox").getAttribute("aria-checked"), "true");
+    assert.equal(await page.evaluate(() => window.startWithSpecweave), true);
+    await page.waitForTimeout(350);
+    await page.screenshot({
+      path: join(output, `setup-${theme}-empty-folder.png`),
+      fullPage: true,
+    });
+    await box.getByRole("checkbox").click();
+    assert.equal(await page.evaluate(() => window.startWithSpecweave), false);
+    assert.equal(await box.getByRole("checkbox").getAttribute("aria-checked"), "false");
+    // A folder with files is bound as it is: no box.
+    await page.goto(`${base}/?theme=${theme}&mode=setup&found=0`);
+    await page.getByRole("option", { name: "Projects", exact: true }).click();
+    await page.getByRole("option", { name: "github", exact: true }).click();
+    await page.getByRole("option", { name: /hack26-openai/ }).click();
+    await page.getByRole("option", { name: "api", exact: true }).waitFor();
+    await page.waitForTimeout(300);
+    assert.equal(await box.count(), 0);
+    assert.equal(await page.evaluate(() => window.startWithSpecweave), undefined);
+    // A server that cannot set SpecWeave up: no box, even for an empty folder.
+    await page.goto(`${base}/?theme=${theme}&mode=setup&found=0&old=1`);
+    await page.getByRole("option", { name: "Projects", exact: true }).click();
+    await page.getByRole("option", { name: "github", exact: true }).click();
+    await page.getByRole("option", { name: "notes", exact: true }).click();
+    await page.waitForTimeout(300);
+    assert.equal(await box.count(), 0);
+    receipt.cases.push({ theme, mode: "setup", passed: true });
     await page.close();
   }
   // Nothing animates when the person asked for reduced motion.
