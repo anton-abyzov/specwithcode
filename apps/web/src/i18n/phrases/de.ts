@@ -5711,4 +5711,6 @@ export const de: PhraseCatalog = {
   Send: "Senden",
   "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "{machine} hat noch nicht bestätigt, wo der Koordinator ist. Verbinde den Rechner neu, um Nachrichten zu senden.",
+  "Coordinator conversations": "Koordinator-Gespräche",
+  Threads: "Threads",
 };

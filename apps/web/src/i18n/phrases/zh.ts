@@ -5435,4 +5435,6 @@ export const zh: PhraseCatalog = {
   Send: "发送",
   "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "{machine} 尚未确认协调者在哪里。请重新连接后再发送消息。",
+  "Coordinator conversations": "协调者对话",
+  Threads: "会话",
 };

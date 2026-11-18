@@ -5665,4 +5665,6 @@ export const ru: PhraseCatalog = {
   Send: "Отправить",
   "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "{machine} ещё не подтвердила, где координатор. Переподключите эту машину, чтобы отправлять сообщения.",
+  "Coordinator conversations": "Разговоры координатора",
+  Threads: "Треды",
 };

@@ -5601,4 +5601,6 @@ export const ko: PhraseCatalog = {
   Send: "보내기",
   "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "{machine}이(가) 아직 코디네이터의 위치를 확인하지 못했습니다. 메시지를 보내려면 다시 연결하세요.",
+  "Coordinator conversations": "코디네이터 대화",
+  Threads: "스레드",
 };

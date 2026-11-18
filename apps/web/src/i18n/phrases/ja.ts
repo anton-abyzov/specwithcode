@@ -5674,4 +5674,6 @@ export const ja: PhraseCatalog = {
   Send: "送信",
   "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "{machine} はコーディネーターの場所をまだ確認していません。メッセージを送るには再接続してください。",
+  "Coordinator conversations": "コーディネーターの会話",
+  Threads: "スレッド",
 };

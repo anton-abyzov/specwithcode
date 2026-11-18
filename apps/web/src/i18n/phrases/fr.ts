@@ -5718,4 +5718,6 @@ export const fr: PhraseCatalog = {
   Send: "Envoyer",
   "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "{machine} n’a pas encore confirmé où se trouve le coordinateur. Reconnectez cette machine pour envoyer des messages.",
+  "Coordinator conversations": "Conversations du coordinateur",
+  Threads: "Fils",
 };
