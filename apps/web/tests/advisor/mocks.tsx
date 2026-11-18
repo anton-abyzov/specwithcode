@@ -225,7 +225,7 @@ export function useEnvironment() {
     serverConfig: {
       settings: environmentSettings,
       providers,
-      environment: { capabilities: { advisor: true } },
+      environment: { capabilities: { advisor: true, threadReviewMode: true } },
     },
   };
 }
@@ -238,19 +238,26 @@ export const useLocation = (options?: { select?: (value: typeof location) => unk
 
 // state/entities, state/threads, state/use-orchestration-command
 let threadAdvisorMode: "on" | "off" | null = null;
+let threadReviewMode: "on" | "off" | null = null;
 export function useThreadShell() {
   useVersion();
   return {
     environmentId: ENVIRONMENT_ID,
     projectId: PROJECT_ID,
-    source: { advisorMode: threadAdvisorMode, purpose: null },
+    title: "Atlas checkout",
+    source: { advisorMode: threadAdvisorMode, reviewMode: threadReviewMode, purpose: null },
   };
 }
-export const threadEnvironment = { setAdvisorMode: "setAdvisorMode" };
+export const threadEnvironment = {
+  setAdvisorMode: "setAdvisorMode",
+  setReviewMode: "setReviewMode",
+};
+type ModeInput = { advisorMode?: "on" | "off" | null; reviewMode?: "on" | "off" | null };
 export const useOrchestrationCommand =
-  (command: string) => async (call: { input: { advisorMode: "on" | "off" | null } }) => {
+  (command: string) => async (call: { input: ModeInput }) => {
     record([command, call]);
-    threadAdvisorMode = call.input.advisorMode;
+    if (command === "setReviewMode") threadReviewMode = call.input.reviewMode ?? null;
+    else threadAdvisorMode = call.input.advisorMode ?? null;
     version += 1;
     for (const listener of listeners) listener();
   };

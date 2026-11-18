@@ -1,15 +1,26 @@
-import { DEFAULT_ADVISOR_SETTINGS, type ThreadAdvisorMode } from "@specweave-studio/contracts";
-import type { ReactNode } from "react";
+import {
+  DEFAULT_ADVERSARIAL_REVIEW_SETTINGS,
+  DEFAULT_ADVISOR_SETTINGS,
+  type ThreadAdvisorMode,
+} from "@specweave-studio/contracts";
+import type { ReactElement, ReactNode } from "react";
 import { act, create } from "react-test-renderer";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   shell: null as null | {
     projectId: string;
-    source: { advisorMode?: "on" | "off" | null; purpose?: "advisor" };
+    title?: string;
+    source: {
+      advisorMode?: "on" | "off" | null;
+      reviewMode?: "on" | "off" | null;
+      purpose?: "advisor";
+    };
   },
   capability: true as boolean | undefined,
+  reviewCapability: false,
   enabled: false,
+  reviewEnabled: false,
   sent: [] as Array<unknown>,
 }));
 
@@ -41,24 +52,43 @@ vi.mock("../ui/menu", async () => {
     },
   };
 });
-vi.mock("../../state/entities", () => ({ useThreadShell: () => state.shell }));
+vi.mock("../ui/tooltip", () => ({
+  Tooltip: (props: { children?: ReactNode }) => <>{props.children}</>,
+  TooltipTrigger: (props: { render?: ReactElement }) => <>{props.render}</>,
+  TooltipPopup: (props: { children?: ReactNode }) => <span data-note="">{props.children}</span>,
+}));
+vi.mock("../../state/entities", () => ({
+  useThreadShell: () =>
+    state.shell === null ? null : { title: "Sign in with passkeys", ...state.shell },
+}));
 vi.mock("../../state/environments", () => ({
   useEnvironment: () => ({
     serverConfig: {
       environment: {
-        capabilities: state.capability === undefined ? {} : { advisor: state.capability },
+        capabilities: {
+          ...(state.capability === undefined ? {} : { advisor: state.capability }),
+          threadReviewMode: state.reviewCapability,
+        },
       },
-      settings: { advisor: { ...DEFAULT_ADVISOR_SETTINGS, enabled: state.enabled } },
+      settings: {
+        advisor: { ...DEFAULT_ADVISOR_SETTINGS, enabled: state.enabled },
+        adversarialReview: {
+          ...DEFAULT_ADVERSARIAL_REVIEW_SETTINGS,
+          autoOnFeatureComplete: state.reviewEnabled,
+        },
+      },
     },
   }),
 }));
 vi.mock("@specweave-studio/shared/projectSettings", () => ({
   resolveProjectSettings: (settings: unknown) => ({ settings }),
 }));
-vi.mock("../../state/threads", () => ({ threadEnvironment: { setAdvisorMode: "command" } }));
+vi.mock("../../state/threads", () => ({
+  threadEnvironment: { setAdvisorMode: "advisor", setReviewMode: "review" },
+}));
 vi.mock("../../state/use-orchestration-command", () => ({
-  useOrchestrationCommand: () => async (value: unknown) => {
-    state.sent.push(value);
+  useOrchestrationCommand: (command: string) => async (value: unknown) => {
+    state.sent.push(command === "advisor" ? value : { review: value });
     return { _tag: "Success" };
   },
 }));
@@ -68,6 +98,8 @@ import {
   threadAdvisorMenuState,
   threadAdvisorMenuVisible,
   threadAdvisorModeForChoice,
+  threadReviewMenuState,
+  threadReviewMenuVisible,
 } from "./ThreadAdvisorMenu";
 
 const threadRef = { environmentId: "env-1", threadId: "thread-1" } as never;
@@ -80,8 +112,12 @@ function render() {
   return renderer;
 }
 
-function choices(renderer: ReturnType<typeof create>) {
-  return renderer.root.findAll((node) => node.type === "button" && node.props["data-choice"]);
+function choices(renderer: ReturnType<typeof create>, kind: "advisor" | "review" = "advisor") {
+  const attribute = kind === "advisor" ? "data-thread-advisor-menu" : "data-thread-review-menu";
+  const rows = renderer.root.findAll((node) => node.type === "div" && node.props[attribute]);
+  return rows.flatMap((row) =>
+    row.findAll((node) => node.type === "button" && node.props["data-choice"]),
+  );
 }
 
 function text(node: ReturnType<ReturnType<typeof create>["root"]["findByType"]>): string {
@@ -91,7 +127,9 @@ function text(node: ReturnType<ReturnType<typeof create>["root"]["findByType"]>)
 beforeEach(() => {
   state.shell = { projectId: "project-1", source: {} };
   state.capability = true;
+  state.reviewCapability = false;
   state.enabled = false;
+  state.reviewEnabled = false;
   state.sent = [];
 });
 
@@ -185,5 +223,99 @@ describe("ThreadAdvisorMenu", () => {
     expect(render().toJSON()).toBeNull();
     state.shell = null;
     expect(render().toJSON()).toBeNull();
+  });
+});
+
+describe("the Adversarial review row", () => {
+  beforeEach(() => {
+    state.reviewCapability = true;
+  });
+
+  it.each<[ThreadAdvisorMode | null | undefined, boolean, string, boolean]>([
+    [undefined, true, "follow", true],
+    [null, false, "follow", false],
+    ["on", false, "on", true],
+    ["off", true, "off", false],
+  ])("reads mode %s with the project %s", (mode, projectEnabled, choice, enabled) => {
+    expect(threadReviewMenuState(mode, { autoOnFeatureComplete: projectEnabled })).toEqual({
+      choice,
+      enabled,
+      projectEnabled,
+    });
+  });
+
+  it("shows with the capability, never on an advisor or a review thread", () => {
+    const visible = (input: Partial<Parameters<typeof threadReviewMenuVisible>[0]>) =>
+      threadReviewMenuVisible({ capability: true, purpose: undefined, title: "Fix", ...input });
+    expect(visible({})).toBe(true);
+    expect(visible({ capability: false })).toBe(false);
+    expect(visible({ purpose: "advisor" })).toBe(false);
+    expect(visible({ title: "Adversarial review: Fix" })).toBe(false);
+  });
+
+  it("comes after Advisor with its description and the project's value beside Follow", () => {
+    state.reviewEnabled = true;
+    const renderer = render();
+    const rows = renderer.root.findAll(
+      (node) =>
+        node.type === "div" &&
+        (node.props["data-thread-advisor-menu"] || node.props["data-thread-review-menu"]),
+    );
+    expect(rows.map((row) => (row.props["data-thread-review-menu"] ? "review" : "advisor"))).toEqual(
+      ["advisor", "review"],
+    );
+    const review = rows[1]!;
+    expect(text(review)).toContain("Adversarial review");
+    expect(text(review)).toContain(
+      "Has a model from another family review this thread's work when its feature is finished.",
+    );
+    expect(choices(renderer, "review").map(text)).toEqual(["Follow project (on)", "On", "Off"]);
+  });
+
+  it("gives each row an info button named after it, with its time note", () => {
+    const renderer = render();
+    const buttons = renderer.root.findAll(
+      (node) => node.type === "button" && node.props["data-thread-choice-time-note"] !== undefined,
+    );
+    expect(buttons.map((button) => button.props["aria-label"])).toEqual([
+      "How much longer work takes with Advisor",
+      "How much longer work takes with Adversarial review",
+    ]);
+    const notes = renderer.root.findAll((node) => node.type === "span" && node.props["data-note"]);
+    expect(notes.map(text)).toEqual([
+      expect.stringContaining("each consult adds about 2 minutes"),
+      expect.stringContaining("a median 2.6 times as long"),
+    ]);
+  });
+
+  it.each<[string, "on" | "off" | null, "on" | "off" | null]>([
+    ["on", null, "on"],
+    ["off", "on", "off"],
+    ["follow", "off", null],
+  ])("choosing %s sends thread.review-mode.set", (choice, from, reviewMode) => {
+    state.shell = { projectId: "project-1", source: { reviewMode: from } };
+    const renderer = render();
+    act(() => {
+      choices(renderer, "review")
+        .find((button) => button.props["data-choice"] === choice)!
+        .props.onClick();
+    });
+    expect(state.sent).toEqual([
+      { review: { environmentId: "env-1", input: { threadId: "thread-1", reviewMode } } },
+    ]);
+  });
+
+  it("is hidden on a review thread, which keeps its Advisor row", () => {
+    state.shell = { projectId: "project-1", title: "Adversarial review: Fix", source: {} };
+    const renderer = render();
+    expect(choices(renderer, "advisor")).toHaveLength(3);
+    expect(choices(renderer, "review")).toHaveLength(0);
+  });
+
+  it("shows alone on a server with review choices but no advisor", () => {
+    state.capability = false;
+    const renderer = render();
+    expect(choices(renderer, "advisor")).toHaveLength(0);
+    expect(choices(renderer, "review")).toHaveLength(3);
   });
 });

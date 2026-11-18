@@ -5169,6 +5169,8 @@ export const de: PhraseCatalog = {
   "Follow project (off)": "Wie im Projekt (aus)",
   "Lets this thread ask a stronger model to check its work.":
     "Erlaubt diesem Thread, ein stärkeres Modell um eine Prüfung seiner Arbeit zu bitten.",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "Lässt ein Modell einer anderen Familie die Arbeit dieses Threads prüfen, sobald sein Feature fertig ist.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Worktrees entfernen, deren Chats erledigt oder archiviert und so viele Tage inaktiv sind. Branches und Chatverlauf bleiben erhalten.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":

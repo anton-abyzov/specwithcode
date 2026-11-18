@@ -5075,6 +5075,8 @@ export const ko: PhraseCatalog = {
   "Follow project (off)": "프로젝트 설정 따름 (끔)",
   "Lets this thread ask a stronger model to check its work.":
     "이 스레드가 더 강한 모델에게 작업 검토를 요청할 수 있게 합니다.",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "이 스레드의 기능이 완성되면 다른 계열의 모델이 작업을 검토하게 합니다.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "채팅이 해결되었거나 보관되었고 이 일수 동안 비활성인 워크트리를 삭제합니다. 브랜치와 채팅 기록은 유지됩니다.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":

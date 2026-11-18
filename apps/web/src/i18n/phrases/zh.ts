@@ -4939,6 +4939,8 @@ export const zh: PhraseCatalog = {
   "Follow project (on)": "跟随项目（开）",
   "Follow project (off)": "跟随项目（关）",
   "Lets this thread ask a stronger model to check its work.": "允许此会话请更强的模型检查其工作。",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "此会话的功能完成后，由另一家族的模型审查其工作。",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "删除其聊天已解决或已归档且已闲置这么多天的工作树。分支和聊天记录会保留。",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":

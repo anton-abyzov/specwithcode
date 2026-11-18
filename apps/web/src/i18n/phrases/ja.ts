@@ -5135,6 +5135,8 @@ export const ja: PhraseCatalog = {
   "Follow project (off)": "プロジェクトに従う (オフ)",
   "Lets this thread ask a stronger model to check its work.":
     "このスレッドが、より強力なモデルに作業の確認を頼めるようにします。",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "このスレッドの機能が完成したら、別系統のモデルに作業をレビューさせます。",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "チャットが解決済みまたはアーカイブ済みで、この日数のあいだ非アクティブなワークツリーを削除します。ブランチとチャットの履歴は残ります。",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
