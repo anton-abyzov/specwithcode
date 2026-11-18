@@ -504,6 +504,74 @@ it.effect("a device that signs in after the start is never kept by the update", 
   ),
 );
 
+it.effect(
+  "an approval holds across restarts, and a later start never takes a new snapshot (1416)",
+  () =>
+    withMachine(
+      Effect.gen(function* () {
+        const auth = yield* EnvironmentAuth.EnvironmentAuth;
+        const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+        const code = refusedCode(
+          yield* trust.check(connect("m1-key", "Laptop")),
+        );
+        const approved = yield* trust.approve({
+          code,
+          approvedBy: "this machine",
+          approverKey: null,
+        });
+        expect(approved.status).toBe("approved");
+        const setUpAt = (yield* trust.snapshot).devices[0]!.approvedAt;
+
+        // Restarted twice: the same device is let in, asked nothing, listed once.
+        for (let restart = 0; restart < 2; restart++) {
+          const restarted = yield* ConnectDeviceTrust.make;
+          expect(yield* restarted.check(connect("m1-key", "Laptop"))).toEqual({
+            _tag: "allowed",
+          });
+          const snapshot = yield* restarted.snapshot;
+          expect(snapshot.pending).toEqual([]);
+          expect(snapshot.devices.map((device) => device.key)).toEqual(["jkt:m1-key"]);
+          expect(snapshot.devices[0]!.approvedAt).toBe(setUpAt);
+        }
+
+        // A device with a live session at a later start is not kept: only the first start keeps.
+        yield* auth.issueSession({
+          subject: "cloud-connect",
+          proofKeyThumbprint: "signed-in-later",
+          scopes: AuthStandardClientScopes,
+          label: "MacBook",
+        });
+        const later = yield* ConnectDeviceTrust.make;
+        refusedCode(yield* later.check(connect("signed-in-later", "MacBook")));
+        expect((yield* later.snapshot).devices.map((device) => device.key)).toEqual(["jkt:m1-key"]);
+      }),
+    ),
+);
+
+it.effect("a device the update kept is still let in after later restarts (1416)", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      yield* auth.issueSession({
+        subject: "cloud-connect",
+        proofKeyThumbprint: "kept-key",
+        scopes: AuthStandardClientScopes,
+        label: "MacBook",
+      });
+      yield* forgetSetup;
+      const first = yield* ConnectDeviceTrust.make;
+      expect(yield* first.check(connect("kept-key"))).toEqual({ _tag: "allowed" });
+      for (let restart = 0; restart < 2; restart++) {
+        const restarted = yield* ConnectDeviceTrust.make;
+        expect(yield* restarted.check(connect("kept-key"))).toEqual({ _tag: "allowed" });
+        expect((yield* restarted.snapshot).devices).toEqual([
+          expect.objectContaining({ key: "jkt:kept-key", approvedBy: "the update" }),
+        ]);
+      }
+    }),
+  ),
+);
+
 it.effect("a lost list after setup refuses remote devices instead of keeping them", () =>
   withMachine(
     Effect.gen(function* () {
