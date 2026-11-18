@@ -1196,7 +1196,13 @@ const viewOf = (hold: Option.Option<ServiceUpdateHoldShape>): ServiceUpdateHoldV
     // Read lazily: a mocked hold without it (Layer.mock throws on access) reads as never applying.
     installApplying: Effect.suspend(
       () => hold.value.automaticInstallApplying ?? Effect.succeed(false),
-    ).pipe(Effect.catchDefect(() => Effect.succeed(false))),
+    ).pipe(
+      Effect.catchDefect((defect) =>
+        Effect.logWarning("Could not tell whether an update is installing", { defect }).pipe(
+          Effect.as(false),
+        ),
+      ),
+    ),
     admit: hold.value.withAdmission,
     refuse: (action) =>
       Effect.gen(function* () {
