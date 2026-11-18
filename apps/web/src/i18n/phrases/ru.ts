@@ -5543,4 +5543,9 @@ export const ru: PhraseCatalog = {
     "У этого проекта нет папки на {machine}. Выберите другой компьютер выше.",
   "Nothing is installed on {machine} yet.": "На {machine} пока ничего не установлено.",
   "Skills view": "Вид навыков",
+  "You are on {machine}": "Вы на {machine}",
+  "{machine} is offline. Its settings show when it reconnects.":
+    "{machine} не в сети. Настройки появятся, когда он снова подключится.",
+  "You can look at {machine}'s settings from this sign-in, but not change them.":
+    "С этим входом можно смотреть настройки {machine}, но нельзя их менять.",
 };

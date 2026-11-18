@@ -5583,4 +5583,9 @@ export const de: PhraseCatalog = {
     "Dieses Projekt hat keinen Ordner auf {machine}. Wählen Sie oben einen anderen Computer.",
   "Nothing is installed on {machine} yet.": "Auf {machine} ist noch nichts installiert.",
   "Skills view": "Skills-Ansicht",
+  "You are on {machine}": "Sie sind auf {machine}",
+  "{machine} is offline. Its settings show when it reconnects.":
+    "{machine} ist offline. Die Einstellungen erscheinen, sobald die Verbindung wieder steht.",
+  "You can look at {machine}'s settings from this sign-in, but not change them.":
+    "Mit dieser Anmeldung können Sie die Einstellungen von {machine} ansehen, aber nicht ändern.",
 };

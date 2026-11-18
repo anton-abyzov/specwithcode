@@ -11,7 +11,7 @@ import type { ReactNode } from "react";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useServerConfigs } from "../../state/entities";
 import { ineligibleProjectLabel, isAssistantGroup } from "../../studio/projectListVisibility";
-import { type EnvironmentPresentation } from "../../state/environments";
+import { type EnvironmentPresentation, usePrimaryEnvironmentId } from "../../state/environments";
 import { useNamedEnvironments } from "./useNamedEnvironments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -69,6 +69,7 @@ export function SettingsScopeSentence() {
   const scope = useOptionalSettingsScope();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useNamedEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   if (scope === null || SETTINGS_DEVICE_ONLY_PATHS.has(pathname)) return null;
   const pageScope = settingsPageScope(pathname);
   if (pageScope === "global") return null;
@@ -84,6 +85,10 @@ export function SettingsScopeSentence() {
     const machineId =
       scope.search.machine ?? (scope.scope.kind === "checkout" ? scope.scope.environmentId : null);
     const machine = environments.find((environment) => environment.environmentId === machineId);
+    // Setting up another machine than the one in front of you is easy to miss.
+    const here = environments.find(
+      (environment) => environment.environmentId === primaryEnvironmentId,
+    );
     return (
       <div className="space-y-1 px-3 sm:px-4">
         <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-base text-muted-foreground">
@@ -92,6 +97,13 @@ export function SettingsScopeSentence() {
             machine: <EnvironmentScopeMenu {...props} machineWording />,
           })}
         </p>
+        {here && machine && here.environmentId !== machine.environmentId ? (
+          <p className="text-xs font-medium text-foreground" data-testid="settings-scope-seat">
+            {tx("You are on {machine}", {
+              machine: settingsScopeEnvironmentLabel(here, environments),
+            })}
+          </p>
+        ) : null}
         {machine ? (
           <p className="text-xs text-muted-foreground" data-testid="settings-scope-caption">
             {tx("Each machine keeps its own. Changes here only affect {machine}.", {

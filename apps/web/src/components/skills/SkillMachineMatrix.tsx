@@ -91,7 +91,7 @@ function MatrixCell({ cell, column }: { cell: SkillMatrixCell; column: SkillMatr
         <span className="flex flex-wrap items-center gap-1">
           {column.current ? <SkillStatusChip status={{ kind: "on-this-machine" }} /> : null}
           {!column.current || cell.version ? (
-            <SkillStatusChip status={{ kind: "installed", version: cell.version }} />
+            <SkillStatusChip status={{ kind: "added", version: cell.version }} />
           ) : null}
           {cell.differs ? (
             <span className="text-xs text-muted-foreground">{tx("copies differ")}</span>
@@ -103,6 +103,12 @@ function MatrixCell({ cell, column }: { cell: SkillMatrixCell; column: SkillMatr
       );
     case "missing":
       return <SkillStatusChip status={{ kind: "not-on", machine: column.label }} />;
+    case "unreported":
+      return (
+        <span className="text-muted-foreground" aria-hidden>
+          —
+        </span>
+      );
     case "offline":
       return <SkillStatusChip status={{ kind: "offline" }} />;
     case "needs-sign-in":
@@ -132,6 +138,9 @@ export function SkillMachineMatrix({
     readonly snapshot: ProjectSkillsSnapshot | null;
     readonly error: string | null;
     readonly pending: boolean;
+    /** False once the machine drops: a kept snapshot is then not a current read. */
+    readonly connected: boolean;
+    readonly successful: boolean;
   };
   /** The project on another machine that can carry its read. */
   projectIdFor: (environmentId: EnvironmentId) => ProjectId | null;
@@ -160,10 +169,10 @@ export function SkillMachineMatrix({
         label: nickname(environmentId, local?.label ?? null),
         current: true,
         linked: true,
-        connected: true,
+        connected: current.connected,
         error: current.error,
         pending: current.pending,
-        successful: current.snapshot !== null && current.error === null,
+        successful: current.successful,
         snapshot: current.snapshot,
       },
       ...remote.map((machine) => ({

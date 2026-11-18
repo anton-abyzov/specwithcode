@@ -2,12 +2,12 @@ import { useTx } from "../../i18n";
 import { Badge } from "../ui/badge";
 
 /**
- * The per-machine status chips, shared wording with Integrations: where a
- * skill is, and why a machine could not say.
+ * The per-machine status chips. "Added" and "Offline" are the words
+ * Integrations uses too; the rest are the Skills page's own.
  */
 export type SkillStatus =
   | { readonly kind: "on-this-machine" }
-  | { readonly kind: "installed"; readonly version: string | null }
+  | { readonly kind: "added"; readonly version: string | null }
   | { readonly kind: "not-on"; readonly machine: string }
   | { readonly kind: "needs-sign-in" }
   | { readonly kind: "offline" }
@@ -24,10 +24,10 @@ export function SkillStatusChip({ status }: { status: SkillStatus }) {
           {tx("On this machine")}
         </Badge>
       );
-    case "installed":
+    case "added":
       return (
         <Badge variant="outline" data-status={status.kind}>
-          {status.version ? `v${status.version}` : tx("Installed")}
+          {status.version ? `v${status.version}` : tx("Added")}
         </Badge>
       );
     case "not-on":

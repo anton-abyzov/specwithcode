@@ -5546,4 +5546,9 @@ export const ja: PhraseCatalog = {
     "このプロジェクトのフォルダーは {machine} にありません。上で別のマシンを選んでください。",
   "Nothing is installed on {machine} yet.": "{machine} にはまだ何もインストールされていません。",
   "Skills view": "スキルの表示",
+  "You are on {machine}": "現在のマシン: {machine}",
+  "{machine} is offline. Its settings show when it reconnects.":
+    "{machine} はオフラインです。再接続すると設定が表示されます。",
+  "You can look at {machine}'s settings from this sign-in, but not change them.":
+    "このサインインでは {machine} の設定を見られますが、変更はできません。",
 };

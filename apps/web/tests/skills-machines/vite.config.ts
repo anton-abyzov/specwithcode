@@ -9,6 +9,7 @@ const SWAPS: Readonly<Record<string, ReadonlyArray<string>>> = {
     "@tanstack/react-router",
     "../../state/query",
     "../../state/environments",
+    "../../state/session",
     "../../studio/projectWorkspace",
     "../../studio/machineNickname",
     "../studio/shell/ModelBadge",
@@ -28,6 +29,7 @@ const SWAPS: Readonly<Record<string, ReadonlyArray<string>>> = {
     "./SettingsScopeContext",
     "./useNamedEnvironments",
     "../../state/entities",
+    "../../state/environments",
   ],
 };
 export default defineConfig({

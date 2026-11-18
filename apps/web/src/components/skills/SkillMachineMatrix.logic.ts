@@ -24,7 +24,8 @@ export interface SkillMatrixMachine {
 
 /**
  * One skill on one machine. Only `missing` says the machine was read and does
- * not have it; an unread machine is `offline`, `needs-sign-in` or `unknown`.
+ * not have a skill it could install; an unread machine is `offline`,
+ * `needs-sign-in` or `unknown`.
  */
 export type SkillMatrixCell =
   | {
@@ -35,6 +36,8 @@ export type SkillMatrixCell =
       readonly update?: string;
     }
   | { readonly kind: "missing" }
+  /** A skill that comes with an agent's account: its absence is not a gap to fill. */
+  | { readonly kind: "unreported" }
   | { readonly kind: "offline" }
   | { readonly kind: "needs-sign-in" }
   | { readonly kind: "unknown" };
@@ -137,14 +140,9 @@ function cellFor(
   }
   // A scan that did not finish cannot say the skill is absent.
   if (state === "partial" || availability.state !== "missing") return { kind: "unknown" };
-  // An app that predates the claude.ai scan reports none of them at all.
-  if (
-    claudeAi &&
-    !machine.snapshot?.rows.some((candidate) =>
-      candidate.providers.some((presence) => presence.scope === CLAUDE_AI_SKILL_SCOPE),
-    )
-  )
-    return { kind: "unknown" };
+  // What claude.ai syncs depends on the account, an older app does not read that
+  // folder at all, and a folder it could not open looks the same as an empty one.
+  if (claudeAi) return { kind: "unreported" };
   return { kind: "missing" };
 }
 

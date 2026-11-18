@@ -5316,4 +5316,9 @@ export const zh: PhraseCatalog = {
     "此项目在 {machine} 上没有文件夹。请在上方选择另一台计算机。",
   "Nothing is installed on {machine} yet.": "{machine} 上尚未安装任何内容。",
   "Skills view": "技能视图",
+  "You are on {machine}": "你当前在 {machine} 上",
+  "{machine} is offline. Its settings show when it reconnects.":
+    "{machine} 已离线。重新连接后会显示其设置。",
+  "You can look at {machine}'s settings from this sign-in, but not change them.":
+    "使用此登录可以查看 {machine} 的设置,但无法更改。",
 };

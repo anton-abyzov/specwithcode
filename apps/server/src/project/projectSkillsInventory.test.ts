@@ -423,6 +423,36 @@ describe("buildProjectSkillRows", () => {
     assert.strictEqual(rows[0]!.path, null);
   });
 
+  it("never attaches a lock to a skill built into the agent", () => {
+    const synced = `${HOME}/.claude/skills/synced/a_b/pdf/SKILL.md`;
+    const system = `${HOME}/.codex/skills/.system/plan/SKILL.md`;
+    const rows = buildProjectSkillRows({
+      cwd: CWD,
+      providers: [
+        provider("claude", "claudeAgent", "Claude", [
+          skill("anthropic-skills:pdf", synced, { scope: "claude.ai" }),
+        ]),
+        provider("codex", "codex", "Codex", [skill("plan", system, { scope: "system" })]),
+      ],
+      // Unrelated packages a person installed under the same folder names.
+      locks: [lock("user", { pdf: lockEntry(), plan: lockEntry({ version: "2.0.0" }) })],
+      files: new Map([
+        [synced, fact(synced, "x")],
+        [system, fact(system, "y")],
+      ]),
+      doctor: [],
+    });
+    assert.deepEqual(
+      rows.map((row) => [row.name, row.lock?.version ?? null, row.providers.length]),
+      [
+        ["anthropic-skills:pdf", null, 1],
+        ["pdf", "1.0.0", 0],
+        // The system skill keeps its row; the same-named package's lock is not its lock.
+        ["plan", null, 1],
+      ],
+    );
+  });
+
   it("attaches a plugin install's lock to its namespaced skills", () => {
     const pluginSkill = `${HOME}/.claude/plugins/cache/mkt/frontend/1.0.0/skills/build/SKILL.md`;
     const ownLocked = `${HOME}/.claude/plugins/cache/mkt/frontend/1.0.0/skills/lint/SKILL.md`;

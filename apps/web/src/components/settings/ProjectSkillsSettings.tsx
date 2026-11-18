@@ -2,6 +2,7 @@ import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { WorkflowCapabilities } from "./WorkflowCapabilities";
 import {
+  AuthFilesystemWriteScope,
   EnvironmentId,
   isProviderDriverKind,
   PROVIDER_DISPLAY_NAMES,
@@ -38,6 +39,7 @@ import { cn } from "~/lib/utils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentScope } from "../../state/session";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { projectWorkspace } from "../../studio/projectWorkspace";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -862,9 +864,16 @@ function ScopedProjectSkillsView({
     [snapshot],
   );
   const [view, setView] = useState<"machine" | "across">("machine");
+  const canWrite = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const currentRead = useMemo(
-    () => ({ snapshot: snapshot ?? null, error: query.error, pending: query.isPending }),
-    [snapshot, query.error, query.isPending],
+    () => ({
+      snapshot: snapshot ?? null,
+      error: query.error,
+      pending: query.isPending,
+      connected: !machineOffline,
+      successful: query.isSuccess,
+    }),
+    [snapshot, query.error, query.isPending, query.isSuccess, machineOffline],
   );
   const remoteProjectId = useCallback(
     (remote: EnvironmentId) =>
@@ -1015,7 +1024,14 @@ function ScopedProjectSkillsView({
             {tx("Across machines")}
           </Button>
         </div>
-        {view === "machine" ? (
+        {!canWrite && !machineOffline ? (
+          <p className="text-xs text-foreground" role="status" data-testid="skills-view-only">
+            {tx("You can look at {machine}'s settings from this sign-in, but not change them.", {
+              machine: machineName,
+            })}
+          </p>
+        ) : null}
+        {view === "machine" && !machineOffline ? (
           <>
             {/* Search, "Connect a skill repo" and updates mount in this one slot. */}
             <SkillsManagementSlot
@@ -1150,11 +1166,21 @@ function ScopedProjectSkillsView({
             projectIdFor={remoteProjectId}
           />
         </div>
+      ) : machineOffline ? (
+        <div className="px-3 py-3 sm:px-4">
+          <p
+            role="status"
+            data-testid="skills-machine-offline"
+            className="rounded-lg border bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground"
+          >
+            {tx("{machine} is offline. Its settings show when it reconnects.", {
+              machine: machineName,
+            })}
+          </p>
+        </div>
       ) : query.error && !snapshot ? (
         <p role="alert" className="px-3 py-4 text-sm text-destructive-foreground sm:px-4">
-          {machineOffline
-            ? `${machineName} is not connected, so its skills cannot be read now. Pick another machine above, or open SpecWithCode on ${machineName}.`
-            : `Could not read this project's skills${environment ? ` on ${machineName}` : ""}: ${query.error}`}
+          {`Could not read this project's skills${environment ? ` on ${machineName}` : ""}: ${query.error}`}
         </p>
       ) : !snapshot ? (
         <p
@@ -1165,9 +1191,12 @@ function ScopedProjectSkillsView({
           {tx("Scanning skill folders and lockfiles…")}
         </p>
       ) : snapshot.rows.length === 0 ? (
-        <p className="px-3 py-4 text-sm text-muted-foreground sm:px-4">
-          {tx("No agent loads any skill in this folder, and no vskill lockfile lists one.")}
-        </p>
+        <>
+          <p className="px-3 py-4 text-sm text-muted-foreground sm:px-4">
+            {tx("No agent loads any skill in this folder, and no vskill lockfile lists one.")}
+          </p>
+          <SkillsFootnotes snapshot={snapshot} machine={machineName} />
+        </>
       ) : (
         <>
           {query.error ? (

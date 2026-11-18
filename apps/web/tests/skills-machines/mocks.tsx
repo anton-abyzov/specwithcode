@@ -3,6 +3,9 @@ import type { ProjectSkillsSnapshot } from "@specweave-studio/contracts";
 
 const params = new URLSearchParams(location.search);
 export const fixtureCase = params.get("case") ?? "synced";
+/** The machine the page is set up for; the person sits at the laptop. */
+export const fixtureMachine =
+  fixtureCase === "offline" ? "mini" : fixtureCase === "view-only" ? "desktop" : "laptop";
 
 const agent = (driver: string, label: string, scope: string, path: string, version?: string) => ({
   instanceId: driver,
@@ -98,6 +101,7 @@ const LAPTOP_ACROSS = [
 const SNAPSHOTS: Readonly<Record<string, Readonly<Record<string, ProjectSkillsSnapshot>>>> = {
   synced: { laptop: snapshotOf(SYNCED, { Claude: SYNCED.length, Codex: 0 }) },
   codex: { laptop: snapshotOf(SYSTEM, { Claude: 0, Codex: SYSTEM.length }) },
+  "view-only": { desktop: snapshotOf(LAPTOP_ACROSS, { Claude: 2, Codex: 5 }) },
   across: {
     laptop: snapshotOf(LAPTOP_ACROSS, { Claude: 2, Codex: 5 }),
     desktop: snapshotOf(
@@ -146,6 +150,7 @@ export function useEnvironments() {
   return { environments: MACHINES.map(presentation), presentationById: new Map() };
 }
 export const usePrimaryEnvironmentId = () => "laptop";
+export const useEnvironmentScope = () => fixtureCase !== "view-only";
 const nickname = (environmentId: string, fallback?: string | null) =>
   MACHINES.find((candidate) => candidate.id === environmentId)?.label ?? fallback ?? environmentId;
 export const useMachineNickname = nickname;
@@ -176,7 +181,7 @@ export const useNavigate = () => () => Promise.resolve();
 export const useLocation = (input: { select: (location: { pathname: string }) => unknown }) =>
   input.select({ pathname: "/settings/skills" });
 export const useOptionalSettingsScope = () => ({
-  search: { machine: "laptop" },
+  search: { machine: fixtureMachine },
   singleEnvironment: true,
   groups: [],
   scope: { kind: "environment" },

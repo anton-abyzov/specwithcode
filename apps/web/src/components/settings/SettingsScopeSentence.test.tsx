@@ -31,6 +31,7 @@ vi.mock("./SettingsScopeContext", () => ({
 }));
 vi.mock("./useNamedEnvironments", () => ({ useNamedEnvironments: () => ({ environments }) }));
 vi.mock("../../state/entities", () => ({ useServerConfigs: () => new Map() }));
+vi.mock("../../state/environments", () => ({ usePrimaryEnvironmentId: () => "env-a" }));
 vi.mock("../EnvironmentMachineIcon", () => ({ EnvironmentMachineIcon: () => null }));
 vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 // Render every menu open, so its choices are in the document.
@@ -92,6 +93,25 @@ describe("SettingsScopeSentence", () => {
     expect(view.querySelector('[aria-label="Project: All projects"]')).not.toBeNull();
     expect(choices(view)).not.toContain("All environments");
     expect(choices(view)).toEqual(expect.arrayContaining(["Desk", "MiniOffline"]));
+  });
+
+  it("says which machine you are on when setting up another one", () => {
+    const here = render({
+      pathname: "/settings/skills",
+      search: { machine: "env-a" },
+      singleEnvironment: true,
+    });
+    expect(here.querySelector('[data-testid="settings-scope-seat"]')).toBeNull();
+    act(() => root?.unmount());
+    const other = render({
+      pathname: "/settings/skills",
+      search: { machine: "env-b" },
+      singleEnvironment: true,
+    });
+    expect(other.querySelector('[data-testid="settings-scope-seat"]')!.textContent).toBe(
+      "You are on Desk",
+    );
+    expect(other.textContent).toContain("Changes here only affect Mini.");
   });
 
   it("names the picked project on Skills", () => {

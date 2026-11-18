@@ -9,7 +9,12 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-const state = vi.hoisted(() => ({ data: null as unknown, search: {} as Record<string, unknown> }));
+const state = vi.hoisted(() => ({
+  data: null as unknown,
+  search: {} as Record<string, unknown>,
+  canWrite: true,
+  phase: "connected",
+}));
 
 vi.mock("../../studio/projectWorkspace", () => ({
   projectWorkspace: {
@@ -32,7 +37,11 @@ vi.mock("../../state/query", () => ({
 }));
 vi.mock(import("../../state/session"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useEnvironmentScope: () => true,
+  useEnvironmentScope: () => state.canWrite,
+}));
+vi.mock(import("../../state/environments"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironment: () => ({ label: "Desk", connection: { phase: state.phase } }) as never,
 }));
 vi.mock("../../studio/fleet", () => ({
   useStudioFleet: () => ({ snapshot: null, loading: false, failed: false, refresh: () => {} }),
@@ -134,6 +143,8 @@ afterEach(() => {
   act(() => root?.unmount());
   host?.remove();
   state.search = {};
+  state.canWrite = true;
+  state.phase = "connected";
 });
 const builtIn = (view: HTMLElement) =>
   [...view.querySelectorAll('[data-testid="skills-built-in"] [data-skill]')].map(
@@ -201,5 +212,49 @@ describe("the Skills page on one machine", () => {
       expect(
         control.hasAttribute("disabled") || control.getAttribute("aria-disabled"),
       ).toBeTruthy();
+  });
+
+  it("opens a Codex system skill's details without a working switch", async () => {
+    const view = await render(snapshotOf([system], { Codex: 1 }));
+    await act(async () =>
+      view.querySelector<HTMLButtonElement>('[data-testid="skills-built-in"] button')!.click(),
+    );
+    const controls = document.querySelectorAll('[data-testid="skill-details"] [role="switch"]');
+    expect(controls.length).toBeGreaterThan(0);
+    for (const control of controls)
+      expect(
+        control.hasAttribute("disabled") || control.getAttribute("aria-disabled"),
+      ).toBeTruthy();
+  });
+
+  it("names every empty agent on a machine with no skills at all", async () => {
+    const view = await render(snapshotOf([], { Claude: 0, Codex: 0 }));
+    expect(view.querySelector('[data-testid="skills-empty-agents"]')!.textContent).toBe(
+      "Claude: no skills installed on DeskCodex: no skills installed on Desk",
+    );
+  });
+
+  it("shows one card for an offline machine instead of its last skills", async () => {
+    state.phase = "idle";
+    const view = await render(snapshotOf([mine], { Codex: 1 }));
+    expect(view.querySelector('[data-testid="skills-machine-offline"]')!.textContent).toBe(
+      "Desk is offline. Its settings show when it reconnects.",
+    );
+    expect(view.querySelector('[data-testid="skills-table"]')).toBeNull();
+    expect(view.querySelector('[data-testid="skills-built-in"]')).toBeNull();
+    expect(view.querySelector('[data-testid="skills-view-only"]')).toBeNull();
+  });
+
+  it("says once that a view-only sign-in cannot change this machine", async () => {
+    const full = await render(snapshotOf([mine], { Codex: 1 }));
+    expect(full.querySelector('[data-testid="skills-view-only"]')).toBeNull();
+    act(() => root?.unmount());
+    state.canWrite = false;
+    const view = await render(snapshotOf([mine], { Codex: 1 }));
+    expect(view.querySelector('[data-testid="skills-view-only"]')!.textContent).toBe(
+      "You can look at Desk's settings from this sign-in, but not change them.",
+    );
+    // The rows stay, each with its own real state.
+    expect(view.querySelector('[data-testid="skills-table"]')).not.toBeNull();
   });
 });

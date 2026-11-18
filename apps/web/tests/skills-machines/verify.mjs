@@ -109,6 +109,17 @@ try {
       assert.match(headers[2], /^Desktop\s+Read /);
       assert.match(headers[3], /^Mini\s+Offline, not read$/);
       const line = (name) => matrix.locator("tbody tr").filter({ hasText: name }).locator("td");
+      assert.deepEqual(await line("imagegen").allInnerTexts(), [
+        "On this machine",
+        "Added",
+        "Offline",
+      ]);
+      // A claude.ai skill another account does not sync is not a gap on that machine.
+      assert.deepEqual(await line("anthropic-skills:pdf").allInnerTexts(), [
+        "On this machine",
+        "—",
+        "Offline",
+      ]);
       assert.deepEqual(await line("release-notes").allInnerTexts(), [
         "On this machine\nv1.4.0",
         "v1.3.0",
@@ -123,9 +134,31 @@ try {
       assert.equal(await matrix.locator('button, input, [role="switch"]').count(), 0);
       assert.equal(await fits(), true);
       await shot("across-machines-offline");
+
+      // Setting up a machine that is offline: one card, and where you are.
+      await page.goto(`${origin}/?case=offline&theme=${theme}`);
+      assert.equal(
+        await page.getByTestId("skills-machine-offline").innerText(),
+        "Mini is offline. Its settings show when it reconnects.",
+      );
+      assert.equal(await page.getByTestId("settings-scope-seat").innerText(), "You are on Laptop");
+      assert.equal(await page.getByTestId("skills-table").count(), 0);
+      assert.equal(await fits(), true);
+      await shot("offline-machine");
+
+      // A sign-in that may look at another machine but not change it.
+      await page.goto(`${origin}/?case=view-only&theme=${theme}`);
+      assert.equal(
+        await page.getByTestId("skills-view-only").innerText(),
+        "You can look at Desktop's settings from this sign-in, but not change them.",
+      );
+      assert.equal(await page.getByTestId("settings-scope-seat").innerText(), "You are on Laptop");
+      await page.getByTestId("skills-table").waitFor();
+      assert.equal(await fits(), true);
+      await shot("view-only-sign-in");
     }
   assert.deepEqual(errors, []);
-  console.log(`skills-machines: 12 screenshots in ${output}`);
+  console.log(`skills-machines: 20 screenshots in ${output}`);
 } finally {
   await browser?.close();
   server.close();

@@ -14,7 +14,7 @@ import type {
   ProjectSkillsFleetTarget,
   ProjectSkillsLiveness,
 } from "@specweave-studio/contracts";
-import { CLAUDE_AI_SKILL_SCOPE } from "@specweave-studio/contracts";
+import { CLAUDE_AI_SKILL_SCOPE, isBuiltInAgentSkill } from "@specweave-studio/contracts";
 import type { StudioFleetMachine } from "@specweave-studio/contracts/studioFleet";
 
 import { projectSkillLevel } from "./ProjectSkillsSettings.logic";
@@ -62,8 +62,14 @@ export function skillSwitchFor(
   options: { readonly userLevel?: boolean } = {},
 ): SkillSwitch {
   const enabled = !presence.enabled;
-  if (presence.scope === CLAUDE_AI_SKILL_SCOPE)
-    return { available: false, reason: "Synced from claude.ai. Manage it on claude.ai" };
+  if (isBuiltInAgentSkill(presence))
+    return {
+      available: false,
+      reason:
+        presence.scope === CLAUDE_AI_SKILL_SCOPE
+          ? "Synced from claude.ai. Manage it on claude.ai"
+          : `Built into ${presence.label}. It cannot be switched from here`,
+    };
   switch (presence.driver) {
     case "claudeAgent": {
       if (presence.scope === "plugin")

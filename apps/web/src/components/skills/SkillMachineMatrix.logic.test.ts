@@ -135,7 +135,18 @@ describe("buildSkillMatrix", () => {
     });
   });
 
-  it("does not call a claude.ai skill missing on a machine that reports none", () => {
+  it("does not call the page's own machine read once it has disconnected", () => {
+    const matrix = buildSkillMatrix([
+      // The page keeps its last snapshot; that is not a current read.
+      machine("desk", { current: true, connected: false, snapshot: snapshot([row("notes")]) }),
+      machine("mini", { snapshot: snapshot([row("notes"), row("draw")]) }),
+    ]);
+    expect(matrix.columns[0]).toMatchObject({ state: "offline", readAt: null });
+    expect(cellsOf(matrix, "draw")).toEqual(["offline", "installed"]);
+    expect(cellsOf(matrix, "notes")).toEqual(["offline", "installed"]);
+  });
+
+  it("does not call a claude.ai skill missing on any machine", () => {
     const synced = row(
       "anthropic-skills:pdf",
       {},
@@ -157,7 +168,8 @@ describe("buildSkillMatrix", () => {
     ]);
     const pdf = matrix.rows.find((entry) => entry.name === "anthropic-skills:pdf");
     expect(pdf?.builtIn).toBe(true);
-    expect(pdf?.cells.map((cell) => cell.kind)).toEqual(["installed", "unknown", "missing"]);
+    // Never "Not on": the other machines may sync another account, or not read the folder.
+    expect(pdf?.cells.map((cell) => cell.kind)).toEqual(["installed", "unreported", "unreported"]);
     // Built-in rows sort after the ones a person can install.
     expect(matrix.rows.map((entry) => entry.name)).toEqual([
       "notes",

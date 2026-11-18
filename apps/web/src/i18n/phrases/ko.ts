@@ -5476,4 +5476,9 @@ export const ko: PhraseCatalog = {
     "이 프로젝트는 {machine}에 폴더가 없습니다. 위에서 다른 컴퓨터를 고르세요.",
   "Nothing is installed on {machine} yet.": "{machine}에는 아직 설치된 것이 없습니다.",
   "Skills view": "스킬 보기",
+  "You are on {machine}": "지금 {machine}에 있습니다",
+  "{machine} is offline. Its settings show when it reconnects.":
+    "{machine}이(가) 오프라인입니다. 다시 연결되면 설정이 표시됩니다.",
+  "You can look at {machine}'s settings from this sign-in, but not change them.":
+    "이 로그인으로는 {machine}의 설정을 볼 수만 있고 바꿀 수는 없습니다.",
 };

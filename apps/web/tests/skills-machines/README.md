@@ -19,5 +19,7 @@ Cases, each in light and dark at 1440 and 390 pixels:
 - `?case=synced`: a home that holds only claude.ai-synced skills.
 - `?case=codex`: a machine with only Codex and its system skills.
 - `?case=across`: the "Across machines" table with one machine offline.
+- `?case=offline`: the page set up for a machine that is offline.
+- `?case=view-only`: another machine, from a sign-in that may not change it.
 
 The fixture does not prove what a real agent loads or what another machine reports.

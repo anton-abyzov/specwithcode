@@ -48,6 +48,13 @@ describe("the Skills page's built-in block", () => {
     expect(control.available).toBe(false);
     expect(control).toMatchObject({ reason: expect.stringContaining("claude.ai") });
   });
+
+  it("offers no switch for a Codex system skill, and keeps it for an installed one", () => {
+    const control = skillSwitchFor(system as never, { userLevel: true });
+    expect(control.available).toBe(false);
+    expect(control).toMatchObject({ reason: expect.stringContaining("Built into Codex") });
+    expect(skillSwitchFor(mine as never, { userLevel: true }).available).toBe(true);
+  });
 });
 
 describe("emptySkillAgents", () => {

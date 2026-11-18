@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { ProjectSkillsView } from "../../src/components/settings/ProjectSkillsSettings";
 import { SettingsScopeSentence } from "../../src/components/settings/SettingsScopeSentence";
 import "./fixture.css";
+import { fixtureMachine } from "./mocks";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.classList.toggle("dark", params.get("theme") === "dark");
@@ -16,7 +17,7 @@ function Fixture() {
         <h1 className="px-3 text-lg font-semibold sm:px-4">Skills</h1>
         <SettingsScopeSentence />
         <ProjectSkillsView
-          environmentId={EnvironmentId.make("laptop")}
+          environmentId={EnvironmentId.make(fixtureMachine)}
           projectId={ProjectId.make("fixture")}
           folder="~"
           userLevel

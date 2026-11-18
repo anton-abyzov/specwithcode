@@ -304,6 +304,24 @@ describe("Claude switches", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("refuses to switch a Codex system skill", () =>
+    Effect.gen(function* () {
+      const h = yield* harness({
+        row: () => rowOf("plan", [presence("codex", { scope: "system", name: "plan" })]),
+      });
+      const action = skillToggle("codex", false);
+      for (const preview of [true, false]) {
+        const error = yield* h.toggles
+          .toggleSkill(h.ctx, input(action, { preview }), action, serialized)
+          .pipe(Effect.flip);
+        expect(error.reason).toBe("scope_unsupported");
+        expect(error.message).toContain("built into");
+      }
+      expect(h.runs).toEqual([]);
+      expect(h.writes).toEqual([]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("refuses unsupported per-skill plugin writes before changing settings", () =>
     Effect.gen(function* () {
       const h = yield* harness({

@@ -101,6 +101,8 @@ function render() {
           snapshot: snapshot([row("notes", "1.2.0"), row("draw")]),
           error: null,
           pending: false,
+          connected: true,
+          successful: true,
         }}
         projectIdFor={projectIdFor as never}
         latest={new Map([["notes", "1.3.0"]])}
