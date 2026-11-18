@@ -450,7 +450,7 @@ describe("BoardPane increment view", () => {
       expect(container.querySelector('[data-board-card="0002-build"]')).toBeNull();
     });
 
-    it("waits for the threads before it unfolds, so it opens the group the card ends in", async () => {
+    it("opens the group at once and follows a planned card the threads move to Active", async () => {
       localStorage.setItem(
         "studio:project-board-folded:v1",
         JSON.stringify({ "host:atlas": ["planned", "active"] }),
@@ -478,9 +478,10 @@ describe("BoardPane increment view", () => {
         loaders: null,
       };
       await render({ initial: "0001-plan" });
-      // The view is open, but where the card belongs is not known yet.
+      // The threads have not answered, and may never: the card is shown where it is now.
       expect(viewTitle()?.textContent).toBe("Title 0001-plan");
-      expect(groupBar("planned").getAttribute("aria-expanded")).toBe("false");
+      expect(groupBar("planned").getAttribute("aria-expanded")).toBe("true");
+      expect(opener("0001-plan")).not.toBeNull();
       // The threads answer: one is at work on the planned card, so it is Active.
       runtime.working = {
         byIncrement: new Map([["0001-plan", [atWork]]]),
@@ -495,9 +496,32 @@ describe("BoardPane increment view", () => {
       expect(opener("0001-plan").closest("[data-group]")!.getAttribute("data-group")).toBe(
         "active",
       );
+      // It moved before it settled: the fold it opened was given back.
       expect(JSON.parse(localStorage.getItem("studio:project-board-folded:v1")!)).toEqual({
         "host:atlas": ["planned"],
       });
+    });
+
+    it("never waits on the threads for a card that cannot move", async () => {
+      localStorage.setItem(
+        "studio:project-board-folded:v1",
+        JSON.stringify({ "host:atlas": ["review"] }),
+      );
+      runtime.reply = board(fourCards());
+      // A machine that is off never answers.
+      runtime.working = {
+        byIncrement: new Map(),
+        multiMachine: false,
+        answered: false,
+        cut: false,
+        loaders: null,
+      };
+      await render({ initial: "0004-check" });
+      expect(groupBar("review").getAttribute("aria-expanded")).toBe("true");
+      // Settled at once: the person can fold it again and it stays folded.
+      await act(async () => groupBar("review").click());
+      expect(groupBar("review").getAttribute("aria-expanded")).toBe("false");
+      expect(viewTitle()?.textContent).toBe("Title 0004-check");
     });
   });
 

@@ -384,6 +384,14 @@ try {
         `${label}: an edge on finished or unheld work`,
       );
 
+      // The action ends its row, also on a band card where the row wraps.
+      const ends = await cardOf(page, ID.blocked).evaluate((node) => {
+        const card = node.getBoundingClientRect();
+        const action = node.querySelector(".sws-board-action").getBoundingClientRect();
+        return Math.round(card.right - action.right);
+      });
+      check(ends >= 0 && ends <= 14, `${label}: the action sits ${ends} px from the card's right`);
+
       // One action a card. A thread that can be opened: open it.
       check(
         JSON.stringify(await actionOf(page, ID.blocked)) === JSON.stringify(["Open thread"]),
@@ -931,6 +939,38 @@ try {
       await closePage(page, label);
     }
 
+    /* A refresh that moves or removes the card under the keyboard: focus follows, in a real browser. */
+    {
+      const label = `focus on refresh ${theme}`;
+      const page = await openPage(theme, { width: 900, height: 1000 });
+      await cardOf(page, ID.promoted).waitFor();
+      await cardButton(page, ID.promoted).focus();
+      await page.evaluate((id) => window.fixtureBoard.block(id), ID.promoted);
+      await group(page, "blocked").locator(`[data-increment="${ID.promoted}"]`).waitFor();
+      check(
+        (await focusedCard(page)) === ID.promoted,
+        `${label}: focus did not follow the card into Blocked`,
+      );
+      await cardButton(page, ID.idle).focus();
+      await page.evaluate((id) => window.fixtureBoard.remove(id), ID.idle);
+      await cardOf(page, ID.idle).waitFor({ state: "detached" });
+      check(
+        await groupBar(page, "planned").evaluate((node) => node === document.activeElement),
+        `${label}: focus did not go to the heading of the group the card left`,
+      );
+      // Focus that is somewhere else stays there.
+      const find = page.locator('[aria-label="Find an increment"]');
+      await cardButton(page, ID.noSpec).focus();
+      await find.focus();
+      await page.evaluate((id) => window.fixtureBoard.remove(id), ID.noSpec);
+      await cardOf(page, ID.noSpec).waitFor({ state: "detached" });
+      check(
+        await find.evaluate((node) => node === document.activeElement),
+        `${label}: a refresh took focus from the search box`,
+      );
+      await closePage(page, label);
+    }
+
     /* Until the threads have answered: machines without counts, nothing to choose, no offer. */
     {
       const label = `threads reading ${theme}`;
@@ -946,6 +986,12 @@ try {
             0 &&
           (await page.locator('.sws-board-legend-entry[data-machine="no-thread"]').count()) === 0,
         `${label}: a machine can be chosen from a half-read list`,
+      );
+      // What the unread machine holds is not on the board yet: its card waits in Planned, no edge.
+      check(
+        (await group(page, "planned").locator(`[data-increment="${ID.promoted}"]`).count()) === 1 &&
+          (await cardOf(page, ID.promoted).locator(".sws-board-card-edge").count()) === 0,
+        `${label}: a thread of a machine that has not answered is on the board`,
       );
       // A card with no thread known yet is not offered as free; a thread already known still opens.
       const offers = await page

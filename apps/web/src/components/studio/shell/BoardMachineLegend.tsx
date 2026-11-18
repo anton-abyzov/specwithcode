@@ -28,7 +28,8 @@ export function BoardMachineLegend(props: {
 }) {
   const { options, pick, answered, cut } = props;
   if (options.length === 0) return null;
-  const narrows = options.length > 1;
+  // One entry is only a legend, unless it is the choice: that can always be let go.
+  const narrows = options.length > 1 || pick !== null;
   const entry = (option: BoardMachineOption) => (
     <>
       {option.color ? <MachineDot identity={{ color: option.color as MachineColorId }} /> : null}

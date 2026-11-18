@@ -2,7 +2,8 @@
 // increment view answer from fictional increments, filtered the way the server
 // does. Variants, picked by URL parameter the way the page reads them:
 // `?server=old` is a server without the detail read (no reasons, no counts),
-// `?removed=<folder>` is an increment deleted while its view is open.
+// `?removed=<folder>` is an increment deleted while its view is open,
+// `?threads=reading` is a machine whose threads have not answered yet.
 import type {
   ProjectBoardBlocker,
   ProjectBoardCard,
@@ -14,10 +15,11 @@ import type {
   ThreadIncrementTask,
 } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
+import { useSyncExternalStore } from "react";
 
 const params = new URLSearchParams(location.search);
 const OLD_SERVER = params.get("server") === "old";
-// `?threads=reading`: the threads have not said yet which increment they work on.
+// `?threads=reading`: one machine has not said yet which increments its threads work on.
 const THREADS_READING = params.get("threads") === "reading";
 const REMOVED = params.get("removed");
 
@@ -486,14 +488,41 @@ function incrementReply(input: IncrementRequest): ProjectBoardIncrementResult {
   };
 }
 
+// A check can change the board under the page, as a refresh would:
+// `fixtureBoard.block(id)` gives a card a blocked task, `fixtureBoard.remove(id)` takes it away.
+let boardVersion = 0;
+const boardListeners = new Set<() => void>();
+const subscribeBoard = (listener: () => void) => {
+  boardListeners.add(listener);
+  return () => void boardListeners.delete(listener);
+};
+const changeBoard = (change: () => void) => {
+  change();
+  boardVersion += 1;
+  for (const listener of boardListeners) listener();
+};
+(window as unknown as { fixtureBoard: unknown }).fixtureBoard = {
+  block: (id: string) =>
+    changeBoard(() => {
+      const at = ALL.findIndex((entry) => entry.incrementId === id);
+      if (at !== -1) ALL[at] = { ...ALL[at]!, blocked: true, blockedTasks: 1 };
+    }),
+  remove: (id: string) =>
+    changeBoard(() => {
+      const at = ALL.findIndex((entry) => entry.incrementId === id);
+      if (at !== -1) ALL.splice(at, 1);
+    }),
+};
+
 // One reply per distinct input, as the real query atoms hold theirs.
 const replies = new Map<string, unknown>();
 const NO_DATA = { data: undefined, error: null, isPending: false, refresh: () => undefined };
 export function useEnvironmentQuery(request: Request | null) {
+  const version = useSyncExternalStore(subscribeBoard, () => boardVersion);
   if (request === null) return NO_DATA;
   const key =
     request.kind === "board"
-      ? `board|${request.input.query ?? ""}|${request.input.doneLimit ?? 30}`
+      ? `board|${version}|${request.input.query ?? ""}|${request.input.doneLimit ?? 30}`
       : `increment|${request.input.incrementId}|${request.input.includeDone === true}`;
   let data = replies.get(key);
   if (data === undefined) {
@@ -659,15 +688,15 @@ export function useThreadIncrementState(input: {
   const key = `${input.environmentId}|${input.threadIds.join(",")}`;
   let state = pageStates.get(key);
   if (!state) {
+    // A read still under way holds nothing yet, as the real one does.
+    const reading = THREADS_READING && input.environmentId === "laptop";
     const progress = new Map<string, Link>();
-    for (const id of input.threadIds) {
-      const link = LINKS.get(`${input.environmentId}:${id}`);
-      if (link) progress.set(id, link);
-    }
-    pageStates.set(
-      key,
-      (state = { progress, unplanned: new Set<string>(), answered: !THREADS_READING }),
-    );
+    if (!reading)
+      for (const id of input.threadIds) {
+        const link = LINKS.get(`${input.environmentId}:${id}`);
+        if (link) progress.set(id, link);
+      }
+    pageStates.set(key, (state = { progress, unplanned: new Set<string>(), answered: !reading }));
   }
   return state;
 }

@@ -1122,6 +1122,33 @@ describe("BoardPane", () => {
       expect(shown()).toHaveLength(5);
     });
 
+    it("keeps a choice whose machine is the only one a search leaves", async () => {
+      runtime.reply = cards();
+      runtime.working = fleet();
+      await render();
+      await act(async () => entry("desk").click());
+      expect(shown()).toEqual(["0001-a", "0002-b"]);
+      // Every match is on the chosen machine, so it is the legend's only entry.
+      await type("0001");
+      runtime.reply = board([card("0001-a", "active")]);
+      await render();
+      expect(entries()).toEqual(["All", "Desk1 card"]);
+      expect(entry("desk").getAttribute("aria-pressed")).toBe("true");
+      expect(shown()).toEqual(["0001-a"]);
+      await type("");
+      runtime.reply = cards();
+      await render();
+      expect(entry("desk").getAttribute("aria-pressed")).toBe("true");
+      expect(shown()).toEqual(["0001-a", "0002-b"]);
+      // The only entry left can still be let go.
+      await type("0001");
+      runtime.reply = board([card("0001-a", "active")]);
+      await render();
+      await act(async () => entry("desk").click());
+      expect(shown()).toEqual(["0001-a"]);
+      expect(legend()!.querySelector("button")).toBeNull();
+    });
+
     it("waits for the threads before it counts, narrows or offers No thread", async () => {
       runtime.reply = cards();
       runtime.working = fleet(false);
@@ -1148,6 +1175,11 @@ describe("BoardPane", () => {
         multiMachine: true,
       };
       await render();
+      // The board stays narrowed meanwhile: it does not widen and narrow under the person.
+      expect(shown()).toEqual([]);
+      expect([...legend()!.querySelectorAll("button")].map((node) => node.textContent)).toContain(
+        "All",
+      );
       runtime.working = fleet(false);
       await render();
       expect(entry("laptop").getAttribute("aria-pressed")).toBe("true");
@@ -1170,18 +1202,25 @@ describe("BoardPane", () => {
       expect(article("0001-a").querySelector(".sws-board-action")!.textContent).toBe("Open thread");
     });
 
-    it("is only a legend with one machine, and absent when nothing has a colored edge", async () => {
-      runtime.reply = cards();
-      runtime.working = {
-        ...threadsOn(
-          [["0001-a", [working("t1", "working", { id: "desk", label: "Desk" })]]],
-          false,
-        ),
+    it("is only a legend with one entry, and absent when nothing has a colored edge", async () => {
+      const onDesk = {
+        ...threadsOn([["0001-a", [working("t1", "working", { id: "desk", label: "Desk" })]]]),
         multiMachine: true,
       };
+      // One machine and open work nobody holds: two entries, so they narrow.
+      runtime.reply = cards();
+      runtime.working = onDesk;
+      await render();
+      expect(entries()).toEqual(["All", "Desk1 card", "No thread3 cards"]);
+      await act(async () => entry("no-thread").click());
+      expect(shown()).toEqual(["0003-c", "0002-b", "0004-d"]);
+      await act(async () => entry("no-thread").click());
+      // Every open card on the one machine: a single entry, with nothing to press.
+      runtime.reply = board([card("0001-a", "active"), card("0005-e", "done")]);
       await render();
       expect(legend()!.querySelector("button")).toBeNull();
-      expect(entries()).toEqual(["Desk"]);
+      expect(entries()).toEqual(["Desk1 card"]);
+      runtime.reply = cards();
       // One machine and no moved thread: no edge anywhere, so nothing to explain.
       runtime.working = threadsOn([["0001-a", [working("t1", "working")]]]);
       await render();

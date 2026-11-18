@@ -499,30 +499,42 @@ function isOneThing(token: string): boolean {
   if (token.includes("://") || token.includes("\\") || /^(data|mailto|file):/i.test(token))
     return true;
   if (/\p{L}\/|\/\p{L}|^[.~]*\//u.test(token)) return true;
-  return /\.[a-z0-9]{1,5}$/.test(token.replace(/[.,;:!?)\]]+$/, ""));
+  return /\.[\p{L}\p{N}]{1,8}$/u.test(token.replace(/[.,;:!?)\]]+$/, ""));
 }
 
-/** Adds the space a writer left out after a comma or semicolon. */
-function spaceAfterMarks(token: string): string {
-  if (isOneThing(token)) return token;
-  let depth = 0;
+/**
+ * Adds the space a writer left out after a comma or semicolon. `depth` is how
+ * many brackets are open before the token: a list in brackets may hold spaces.
+ */
+function spaceAfterMarks(token: string, depth: number): { text: string; depth: number } {
+  let open = depth;
+  const brackets = () => {
+    for (const mark of token) {
+      if (mark === "(" || mark === "[" || mark === "{") open += 1;
+      else if (mark === ")" || mark === "]" || mark === "}") open = Math.max(0, open - 1);
+    }
+  };
+  if (isOneThing(token)) {
+    brackets();
+    return { text: token, depth: open };
+  }
   let result = "";
   for (let at = 0; at < token.length; at += 1) {
     const mark = token[at]!;
     result += mark;
-    if (mark === "(" || mark === "[" || mark === "{") depth += 1;
-    else if (mark === ")" || mark === "]" || mark === "}") depth = Math.max(0, depth - 1);
+    if (mark === "(" || mark === "[" || mark === "{") open += 1;
+    else if (mark === ")" || mark === "]" || mark === "}") open = Math.max(0, open - 1);
     if (mark !== "," && mark !== ";") continue;
     const next = token[at + 1];
     if (next === undefined || !/[\p{L}\p{N}]/u.test(next)) continue;
     // Arguments and lists in brackets ("f(a,b)") are written that way.
-    if (depth > 0) continue;
+    if (open > 0) continue;
     // "1,234" and "1,5x" are one number, and "&amp;" is one character.
     if (mark === "," && isDigit(token[at - 1]) && isDigit(next)) continue;
     if (mark === ";" && /&#?\w+;$/.test(result)) continue;
     result += " ";
   }
-  return result;
+  return { text: result, depth: open };
 }
 
 /**
@@ -531,12 +543,13 @@ function spaceAfterMarks(token: string): string {
  * this collapses runs of whitespace and puts the space back after a comma or
  * semicolon that a letter or digit (of any script) follows, except between two
  * digits, inside brackets, in a character reference and in a link, path or
- * file name. It never splits a word: where a word ends inside
- * "offline37profile" cannot be known, and a guess would also cut task ids,
+ * file name. It never splits a word: where a word ends inside a squeezed run
+ * of letters and digits cannot be known, and a guess would also cut task ids,
  * versions and hashes. Text in backticks is left exactly as written. Requests
  * to the coordinator quote the note unrepaired.
  */
 export function boardNoteText(note: string): string {
+  let depth = 0;
   return note
     .split(/(`[^`]*`)/)
     .map((part, index) =>
@@ -544,7 +557,12 @@ export function boardNoteText(note: string): string {
         ? part
         : part
             .split(/(\s+)/)
-            .map((token, at) => (at % 2 === 1 ? " " : spaceAfterMarks(token)))
+            .map((token, at) => {
+              if (at % 2 === 1) return " ";
+              const spaced = spaceAfterMarks(token, depth);
+              depth = spaced.depth;
+              return spaced.text;
+            })
             .join(""),
     )
     .join("")

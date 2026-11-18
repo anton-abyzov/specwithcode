@@ -442,9 +442,9 @@ describe("a reason as the board shows it", () => {
 
   it("never splits a word, an id, a version or a number", () => {
     for (const text of [
-      "T-64 waits on HTTPX",
+      "T-07 waits on GRPCX",
       "version 1.0.343 of sha256abc",
-      "offline37profileattestation",
+      "cache42layoutsnapshot",
       "1,234 rows and 12,5 more",
       "already fine, as written; nothing to do",
       "ends with a comma,",
@@ -460,14 +460,23 @@ describe("a reason as the board shows it", () => {
       "open data:text/plain,hello",
       "see src/a,b and ./x,y",
       "mailto:a,b@example.test",
+      "waiting on [T-01,T-02, T-03,T-04] to land",
+      "call sum(first,second, third,fourth) again",
+      "export,final.CSV is missing",
+      "needs a,b.markdown",
       "C:\\work\\a,b",
     ])
       expect(boardNoteText(text)).toBe(text);
   });
 
+  it("goes on repairing after a bracket closes, and after one that never opened", () => {
+    expect(boardNoteText("see (a,b) then,go")).toBe("see (a,b) then, go");
+    expect(boardNoteText("step 1) first,second")).toBe("step 1) first, second");
+  });
+
   it("reads a slash between numbers as a ratio, not a path", () => {
-    expect(boardNoteText("valid;113/148 copies recovered,35unresolved. Next")).toBe(
-      "valid; 113/148 copies recovered, 35unresolved. Next",
+    expect(boardNoteText("ready;12/40 rows copied,7pending. Next")).toBe(
+      "ready; 12/40 rows copied, 7pending. Next",
     );
   });
 

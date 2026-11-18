@@ -975,6 +975,17 @@ describe("BoardIncrementView", () => {
       expect(asked).toEqual([prompt]);
     });
 
+    it("adds the same sentence to a request to unblock a task", async () => {
+      const card = makeCard({ blocked: true, blockedTasks: 1, blockers: [blocker("T-02")] });
+      runtime.reply = detail(card, { blockers: [blocker("T-02")] });
+      await render({ card, threads: [thread("t1", "unknown")] });
+      await click(byText("Unblock with the coordinator"));
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toMatch(
+        /Unblock it: resolve what it waits for, or tell me what only I can do\. Check first: the thread "Thread t1" on Laptop cannot be reached now/,
+      );
+    });
+
     it("names a thread that cannot be reached in the request, so no second worker starts", async () => {
       const card = makeCard();
       runtime.reply = detail(card);

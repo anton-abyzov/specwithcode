@@ -186,6 +186,7 @@ button.sws-board-card-open {
 }
 .sws-board-action {
   flex: none;
+  margin-left: auto;
   height: 24px;
   padding: 0 10px;
   border: 1px solid color-mix(in srgb, var(--primary) 45%, var(--border));

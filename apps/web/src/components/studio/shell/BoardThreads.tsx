@@ -85,7 +85,7 @@ function pageCount(threads: number): number {
   return pages;
 }
 
-/** The pages to read, and whether some thread fits in none of them. */
+/** The pages to read, and whether some thread that is not resolved fits in none of them. */
 export function boardThreadPages(threads: ReadonlyArray<EnvironmentThreadShell>): {
   readonly pages: ReadonlyArray<BoardThreadPage>;
   readonly cut: boolean;
@@ -109,16 +109,19 @@ export function boardThreadPages(threads: ReadonlyArray<EnvironmentThreadShell>)
       let page = bucket;
       if (bucket.length > THREAD_INCREMENT_PROGRESS_MAX_THREADS) {
         // Too many for one read: the threads still at work stay, then the newest.
-        cut = true;
-        page = bucket
+        const ranked = bucket
           .map((thread) => ({ thread, resolved: threadTone(thread) === "resolved" }))
           .toSorted(
             (left, right) =>
               Number(left.resolved) - Number(right.resolved) ||
               right.thread.updatedAt.localeCompare(left.thread.updatedAt),
-          )
-          .slice(0, THREAD_INCREMENT_PROGRESS_MAX_THREADS)
-          .map((entry) => entry.thread);
+          );
+        // Leaving out resolved threads loses nothing the board decides by: they
+        // hold no work, color no edge and never make a card busy. Only a thread
+        // that is not resolved and goes unread leaves the board not knowing.
+        if (ranked.slice(THREAD_INCREMENT_PROGRESS_MAX_THREADS).some((entry) => !entry.resolved))
+          cut = true;
+        page = ranked.slice(0, THREAD_INCREMENT_PROGRESS_MAX_THREADS).map((entry) => entry.thread);
       }
       const threadIds = page.map((thread) => thread.id).toSorted();
       pages.push({
@@ -172,7 +175,10 @@ export function useBoardThreads(input: {
    * card then means "not known yet", not "nobody is on it".
    */
   readonly answered: boolean;
-  /** The project has more threads than are read, so `answered` never becomes true. */
+  /**
+   * The project has more unresolved threads than are read, so `answered` never
+   * becomes true. Resolved threads left unread do not count: nothing is decided by them.
+   */
   readonly cut: boolean;
   /** Threads run on more than one machine, so each line names its own. */
   readonly multiMachine: boolean;

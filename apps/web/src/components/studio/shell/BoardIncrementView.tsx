@@ -457,7 +457,7 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
                   <button
                     type="button"
                     className="sws-board-view-button"
-                    onClick={() => onAsk(actions.unblock.prompt)}
+                    onClick={() => onAsk(actions.unblock.prompt + boardOutOfReachNote(threads))}
                   >
                     {actions.unblock.label}
                   </button>
@@ -609,7 +609,9 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
                         <span className="sws-board-view-task-text">
                           <span className="sws-board-view-task-title">{task.title}</span>
                           {task.note && !taskIsClosed(task) ? (
-                            <span className="sws-board-view-task-note">{task.note}</span>
+                            <span className="sws-board-view-task-note">
+                              {boardNoteText(task.note)}
+                            </span>
                           ) : null}
                           {holder ? (
                             <button

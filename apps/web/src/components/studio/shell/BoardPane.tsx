@@ -318,11 +318,11 @@ function BoardCards({
   // but only once the threads have answered, never on a half-read list. A
   // search that leaves the machine no match lets it go too: an empty board
   // would read as "not found" while the match sits on another machine.
-  const machine =
-    machineOptions.length > 1 && machineOptions.some((option) => option.id === machineChoice)
-      ? machineChoice
-      : null;
-  if (machineChoice !== null && machine === null && board !== null && working.answered)
+  // While the threads are read again the choice holds, so the board does not
+  // widen and narrow under the person. A choice stays valid as the only entry.
+  const offered = machineOptions.some((option) => option.id === machineChoice);
+  const machine = offered || !working.answered ? machineChoice : null;
+  if (machineChoice !== null && !offered && board !== null && working.answered)
     setMachineChoice(null);
   // A search looks inside folded groups too; hiding a match would read as "not found".
   const searching = filter.trim() !== "" || searched !== "";
@@ -379,22 +379,40 @@ function BoardCards({
   const openedGroup = openedCard ? boardCardGroup(openedCard) : null;
 
   // An increment opened by a link or by going back, in a folded group: the
-  // group opens, once, when the card's group is known. That is after the
-  // threads have answered and moved a planned card they work on into Active,
-  // or it would open the group the card is about to leave. A card that
-  // changes group later, while its view is open, unfolds nothing.
-  const revealed = useRef<string | null>(null);
+  // group opens at once, so it never waits on a machine that does not answer.
+  // Only a planned card can still move as the threads answer (into Active);
+  // when it does, the fold it opened is given back and the group it ends in
+  // opens instead. After that a card that changes group, while its view is
+  // open, unfolds nothing.
+  const revealed = useRef<{
+    id: string;
+    group: BoardGroupId | null;
+    opened: boolean;
+    settled: boolean;
+  } | null>(null);
+  const openedColumn =
+    openId === null ? null : data?.cards.find((card) => card.incrementId === openId)?.column;
   const groupSettled =
-    (working.answered || working.cut) &&
-    (openId === null || !evidence.includes(openId) || promotions.ids.has(openId));
+    openId !== null &&
+    (openedColumn !== "planned" ||
+      promotions.ids.has(openId) ||
+      ((working.answered || working.cut) && !evidence.includes(openId)));
   useEffect(() => {
     if (openId === null) {
       revealed.current = null;
       return;
     }
-    if (revealed.current === openId || openedGroup === null || !groupSettled) return;
-    revealed.current = openId;
-    if (folds.includes(openedGroup)) setGroupFolded(openedGroup, false);
+    if (revealed.current?.id !== openId)
+      revealed.current = { id: openId, group: null, opened: false, settled: false };
+    const state = revealed.current;
+    if (state.settled || openedGroup === null) return;
+    if (state.group !== openedGroup) {
+      if (state.group !== null && state.opened) setGroupFolded(state.group, true);
+      state.opened = folds.includes(openedGroup);
+      if (state.opened) setGroupFolded(openedGroup, false);
+      state.group = openedGroup;
+    }
+    if (groupSettled) state.settled = true;
   }, [folds, groupSettled, openId, openedGroup, setGroupFolded]);
 
   // The cards on screen in reading order; with the view open that is the stacked list.
