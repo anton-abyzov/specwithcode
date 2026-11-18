@@ -41,7 +41,7 @@ function agent(
     skills: [],
     usageLimits: {
       checkedAt,
-      windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 20, resetsAt: null }],
+      windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 20 }],
     },
     ...over,
   };
