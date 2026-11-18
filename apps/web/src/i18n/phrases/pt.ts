@@ -5768,6 +5768,7 @@ export const pt: PhraseCatalog = {
   "Anyone with this code can pair a browser with this computer.":
     "Qualquer pessoa com este código pode parear um navegador com este computador.",
   "Chrome profile": "Perfil do Chrome",
+  "Pick a profile above first.": "Escolha um perfil acima primeiro.",
   "Opens the store page in {profile}.": "Abre a página da loja em {profile}.",
   "Opens the store page in Chrome.": "Abre a página da loja no Chrome.",
   "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":

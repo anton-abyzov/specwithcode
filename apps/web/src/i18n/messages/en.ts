@@ -104,7 +104,7 @@ export const en = {
   "wizard.import.selectNone": "Select none",
   "wizard.import.looking": "Looking for projects…",
   "wizard.import.checkFailed": "Could not check projects. {error}",
-  "wizard.import.none": "No existing Claude Code or Codex projects found.",
+  "wizard.import.none": "No existing agent projects found.",
   "wizard.import.importing": "Importing…",
   "wizard.import.importButton": { one: "Import {count} project", other: "Import {count} projects" },
   "wizard.import.otherFolders": "Other folders",

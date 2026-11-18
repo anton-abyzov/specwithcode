@@ -125,7 +125,8 @@ const PROFILES = [
 function ChromeRow({ open }: { open: { open: boolean; onOpenChange: (open: boolean) => void } }) {
   const given = CHROME[params.get("chrome") ?? "not-set-up"] ?? CHROME["not-set-up"]!;
   const [code, setCode] = useState<PairingCodeState>({ kind: "idle" });
-  const [chosen, setChosen] = useState<string | null>("Default");
+  // As the product does: with several profiles none starts picked (D-15).
+  const [chosen, setChosen] = useState<string | null>(null);
   const count = Number(params.get("profiles") ?? "0");
   const profiles = count > 0 ? PROFILES.slice(0, count) : null;
   const handedOut = code.kind === "copied" || code.kind === "shown";

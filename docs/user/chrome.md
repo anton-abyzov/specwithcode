@@ -40,12 +40,13 @@ Work profile"), so give each one a name you can tell apart.
 1. Press **Set up** in the **Your browser** row, or open **Settings >
    Chrome**. To add a profile when one is already paired, press **Pair
    another profile**.
-2. In the desktop app, pick the Chrome profile from the list. SpecWithCode
-   reads Chrome's profile names to show this list. With one profile there is
-   no list. Press **Add to Chrome**: the Chrome Web Store page opens in that
-   profile. In a browser tab, or when the list cannot be read, **Add to
-   Chrome** opens in the Chrome profile you used last. To pair another,
-   switch to it in Chrome first.
+2. In first-run setup in the desktop app, pick the Chrome profile from the
+   list. SpecWithCode reads Chrome's profile names to show this list, and none
+   starts picked: **Add to Chrome** waits until you pick one. With one profile
+   there is no list. Press **Add to Chrome**: the Chrome Web Store page opens
+   in that profile. In Settings > Chrome, in a browser tab, or when the list
+   cannot be read, **Add to Chrome** opens in the Chrome profile you used
+   last. To pair another, switch to it in Chrome first.
 3. Add the extension in Chrome. On a first install it opens its own pairing
    page in that profile, with the code field ready.
 4. Back in SpecWithCode, press **Copy code**. One press copies the pairing
