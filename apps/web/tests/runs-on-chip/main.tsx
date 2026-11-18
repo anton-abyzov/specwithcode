@@ -1,4 +1,4 @@
-/* Synthetic data only. The "Runs on <machine>" chip in each place it shows, for every
+/* Synthetic data only. The "On <machine>" and "Runs on <machine>" chips in each place it shows, for every
    machine color and for a machine with no color:
    - `coordinator`: a project coordinator's message box with the machine menu (a Button).
    - `percy`: a message box with no menu to offer, as Percy's (the plain chip).
@@ -44,7 +44,8 @@ const copy = (machine: string, main: boolean): OrchestratorCopy => ({
   folder: "/w/atlas",
   role: main ? "coordinator" : "workers",
   main,
-  label: main ? { text: "Main" } : { text: "Copy · main on {machine}", values: { machine: "m4" } },
+  rowRole: main ? "main" : "copy",
+  label: main ? { text: "Coordinator" } : { text: "" },
   canStart: false,
 });
 
@@ -67,6 +68,7 @@ function Switcher({ color, menu }: { color: MachineColorId | null; menu: boolean
         identity={identity}
         label="m1"
         hostLabel="Fixture laptop"
+        projectTitle="Atlas"
         connected
         statusDetail=""
         current="m1:p"
