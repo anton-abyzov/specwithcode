@@ -1261,10 +1261,6 @@ export const de: PhraseCatalog = {
   "Retrying…": "Neuer Versuch…",
   "Retry now": "Jetzt erneut versuchen",
   "Show less": "Weniger anzeigen",
-  "Connections execution machine": "Rechner für die Ausführung von Verbindungen",
-  "Select a machine": "Rechner auswählen",
-  "The selected machine or project is no longer in this scope.":
-    "Der ausgewählte Rechner oder das Projekt ist nicht mehr in diesem Bereich.",
   "Connect a machine to see its MCP servers.":
     "Verbinde einen Rechner, um seine MCP-Server zu sehen.",
   "Granted scopes": "Erteilte Berechtigungen",
@@ -5646,4 +5642,19 @@ export const de: PhraseCatalog = {
   "No skills found in this repo.": "In diesem Repository wurden keine Skills gefunden.",
   "This repo holds more skills than are listed here.":
     "Dieses Repository enthält mehr Skills, als hier aufgeführt sind.",
+  "Agent access": "Agentenzugriff",
+  "MCP servers": "MCP-Server",
+  "Preview and recording": "Vorschau und Aufnahme",
+  "Integrations sections": "Bereiche der Integrationen",
+  "Set up on {machine}": "Einrichten auf {machine}",
+  "Only in this app window": "Nur in diesem App-Fenster",
+  "Saved in the app on this computer. Other machines and your phone keep their own.":
+    "In der App auf diesem Computer gespeichert. Andere Computer und dein Telefon haben ihre eigenen.",
+  "Its settings show when it reconnects. Pick another machine above to set that one up.":
+    "Seine Einstellungen erscheinen, sobald er wieder verbunden ist. Wähle oben einen anderen Computer, um diesen einzurichten.",
+  "Needs an app update": "App-Update nötig",
+  "No permission": "Keine Berechtigung",
+  "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
+    "Agenten nutzen dein angemeldetes Chrome über die SpecWithCode-Erweiterung. Dafür gibt es eine eigene Einstellungsseite.",
+  "Open Chrome settings": "Chrome-Einstellungen öffnen",
 };

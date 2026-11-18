@@ -388,12 +388,12 @@ private struct ChatScreen: View {
         .multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityAddTraits(.isHeader)
-      ForEach(waiting.isEmpty ? [machine] : waiting) { row in
-        approvalRow(row, code: row.deviceApprovalCode ?? code)
-      }
+      approvalRow(machine, code: code)
+      let others = waiting.filter { $0.id != machine.id }
+      if !others.isEmpty { approvalOthers(others) }
       HStack(spacing: WeaveSpacing.s2) {
         ProgressView().controlSize(.small)
-        Text(waiting.count > 1 ? "Connects to each machine on its own once it allows this phone." : machine.approvalProgress)
+        Text(machine.approvalProgress)
           .weaveFont(.caption)
           .foregroundStyle(Color.weave.muted)
           .multilineTextAlignment(.center)
@@ -414,6 +414,50 @@ private struct ChatScreen: View {
     .padding(.horizontal, WeaveSpacing.s6)
     .padding(.top, WeaveSpacing.s8 * 3)
     .accessibilityIdentifier("chat.approval-wait")
+  }
+
+  /// Other machines waiting for this phone, smaller than this chat's code so
+  /// it is clear which code goes where: "linux-mini  BWQ35F" per row (1406).
+  private func approvalOthers(_ others: [MachineSummary]) -> some View {
+    VStack(spacing: 0) {
+      Text(MachineSummary.approvalOthersHeader)
+        .weaveFont(.caption)
+        .foregroundStyle(Color.weave.muted)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+      ForEach(others) { other in
+        if let code = other.deviceApprovalCode {
+          Button { WeaveClipboard.copyAnnounced(code) } label: {
+            VStack(spacing: 2) {
+              HStack(spacing: WeaveSpacing.s2) {
+                Text(other.displayName)
+                  .weaveFont(.callout)
+                  .foregroundStyle(Color.weave.muted)
+                Text(code)
+                  .font(Font.weave(.headline).monospaced())
+                  .tracking(2)
+                  .foregroundStyle(other.approvalReachable ? Color.weave.ink : Color.weave.muted)
+                Image(systemName: "doc.on.doc")
+                  .font(.weave(.caption))
+                  .foregroundStyle(Color.weave.muted)
+                  .accessibilityHidden(true)
+              }
+              if !other.approvalReachable {
+                Text(other.approvalUnreachableNote)
+                  .weaveFont(.footnote)
+                  .foregroundStyle(Color.weave.muted)
+              }
+            }
+            .frame(maxWidth: .infinity, minHeight: WeaveSize.minTap)
+            .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel("\(other.displayName) code \(code.map(String.init).joined(separator: " ")). Copy\(other.approvalReachable ? "" : ". \(other.approvalUnreachableNote)")")
+          .accessibilityIdentifier("chat.approval-code.\(other.id)")
+        }
+      }
+    }
+    .padding(.top, WeaveSpacing.s2)
   }
 
   /// "Open SpecWithCode on m1 and type this code:" over the code, which copies on tap.
@@ -438,6 +482,11 @@ private struct ChatScreen: View {
       .buttonStyle(.plain)
       .accessibilityLabel("\(machine.displayName) code \(code.map(String.init).joined(separator: " ")). Copy")
       .accessibilityIdentifier("chat.approval-code.\(machine.id)")
+      if !machine.approvalReachable {
+        Text(machine.approvalUnreachableNote)
+          .weaveFont(.caption)
+          .foregroundStyle(Color.weave.muted)
+      }
     }
     .padding(.vertical, WeaveSpacing.s1)
   }

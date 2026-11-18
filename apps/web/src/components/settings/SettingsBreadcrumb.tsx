@@ -3,6 +3,7 @@ import {
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
+import { INTEGRATIONS_PATH, isIntegrationsPath } from "./integrations/integrationsTabs";
 import { SETTINGS_SECTION_LABELS } from "./settingsSearch";
 import { useTx } from "../../i18n";
 
@@ -12,9 +13,11 @@ const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
   "/settings/open-source-licenses": "Open source licenses",
 };
 
-function settingsBreadcrumbLabel(pathname: string): string | null {
+export function settingsBreadcrumbLabel(pathname: string): string | null {
   const normalizedPathname = pathname.replace(/\/+$/, "") || "/";
-  return SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? null;
+  // A tab of Integrations is still the Integrations page.
+  const section = isIntegrationsPath(normalizedPathname) ? INTEGRATIONS_PATH : normalizedPathname;
+  return SETTINGS_BREADCRUMB_LABELS[section] ?? null;
 }
 
 /**

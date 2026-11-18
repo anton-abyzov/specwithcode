@@ -1243,10 +1243,6 @@ export const ko: PhraseCatalog = {
   "Retrying…": "다시 시도하는 중…",
   "Retry now": "지금 다시 시도",
   "Show less": "간단히 보기",
-  "Connections execution machine": "연결을 실행할 컴퓨터",
-  "Select a machine": "컴퓨터 선택",
-  "The selected machine or project is no longer in this scope.":
-    "선택한 컴퓨터나 프로젝트가 더 이상 이 범위에 없습니다.",
   "Connect a machine to see its MCP servers.": "컴퓨터를 연결하면 MCP 서버를 볼 수 있습니다.",
   "Granted scopes": "부여된 권한",
   "Pairing link scopes": "페어링 링크 권한",
@@ -5537,4 +5533,19 @@ export const ko: PhraseCatalog = {
   "No skills found in this repo.": "이 저장소에서 스킬을 찾지 못했습니다.",
   "This repo holds more skills than are listed here.":
     "이 저장소에는 여기에 표시된 것보다 더 많은 스킬이 있습니다.",
+  "Agent access": "에이전트 접근",
+  "MCP servers": "MCP 서버",
+  "Preview and recording": "미리보기 및 녹화",
+  "Integrations sections": "연동 섹션",
+  "Set up on {machine}": "{machine}에서 설정",
+  "Only in this app window": "이 앱 창에서만",
+  "Saved in the app on this computer. Other machines and your phone keep their own.":
+    "이 컴퓨터의 앱에 저장됩니다. 다른 컴퓨터와 휴대폰은 각자 따로 보관합니다.",
+  "Its settings show when it reconnects. Pick another machine above to set that one up.":
+    "다시 연결되면 설정이 표시됩니다. 다른 컴퓨터를 설정하려면 위에서 선택하세요.",
+  "Needs an app update": "앱 업데이트 필요",
+  "No permission": "권한 없음",
+  "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
+    "에이전트는 SpecWithCode 확장 프로그램을 통해 로그인된 Chrome을 사용합니다. 전용 설정 페이지가 있습니다.",
+  "Open Chrome settings": "Chrome 설정 열기",
 };

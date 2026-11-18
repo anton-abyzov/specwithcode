@@ -20,6 +20,7 @@ import {
 import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
 import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
+import { isIntegrationsPath } from "../components/settings/integrations/integrationsTabs";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
   effectiveSettingsSearch,
@@ -99,7 +100,12 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
   }
   // Device-local pages ignore the scope entirely; the project page follows
   // remembered members while a grouping change replaces its URL key.
-  if (SETTINGS_DEVICE_ONLY_PATHS.has(pathname) || pathname === "/settings/projects") {
+  // Integrations keeps its tabs on screen and explains a machine's state itself.
+  if (
+    SETTINGS_DEVICE_ONLY_PATHS.has(pathname) ||
+    pathname === "/settings/projects" ||
+    isIntegrationsPath(pathname)
+  ) {
     return children;
   }
   // Keep the scope sentence on screen so the selection can be changed back.

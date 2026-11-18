@@ -267,6 +267,7 @@ export function WelcomeWizard({
 
   return (
     <FirstRunFrame
+      stepId={step}
       stages={barStages}
       currentStage={stageIndex}
       stagesLocked={isImporting}

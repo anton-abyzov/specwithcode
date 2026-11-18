@@ -176,6 +176,7 @@ export function ConnectionStep({
           label: t("wizard.continue"),
           onClick: onContinue,
           disabled: !ready || isPairing,
+          neutral: true,
           // The pairing link is the field to fill when it opens expanded.
           autoFocus: !expandPairingInitially,
         }}

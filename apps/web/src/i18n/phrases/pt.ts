@@ -1255,10 +1255,6 @@ export const pt: PhraseCatalog = {
   "Retrying…": "Tentando de novo…",
   "Retry now": "Tentar agora",
   "Show less": "Mostrar menos",
-  "Connections execution machine": "Máquina que executa as conexões",
-  "Select a machine": "Selecione uma máquina",
-  "The selected machine or project is no longer in this scope.":
-    "A máquina ou o projeto selecionado não está mais neste escopo.",
   "Connect a machine to see its MCP servers.":
     "Conecte uma máquina para ver os servidores MCP dela.",
   "Granted scopes": "Permissões concedidas",
@@ -5606,4 +5602,19 @@ export const pt: PhraseCatalog = {
   "No skills found in this repo.": "Nenhuma skill encontrada neste repositório.",
   "This repo holds more skills than are listed here.":
     "Este repositório tem mais skills do que as listadas aqui.",
+  "Agent access": "Acesso dos agentes",
+  "MCP servers": "Servidores MCP",
+  "Preview and recording": "Prévia e gravação",
+  "Integrations sections": "Seções de Integrações",
+  "Set up on {machine}": "Configurar em {machine}",
+  "Only in this app window": "Somente nesta janela do app",
+  "Saved in the app on this computer. Other machines and your phone keep their own.":
+    "Salvo no app deste computador. As outras máquinas e o seu celular têm os seus.",
+  "Its settings show when it reconnects. Pick another machine above to set that one up.":
+    "As configurações aparecem quando ela se reconectar. Escolha outra máquina acima para configurá-la.",
+  "Needs an app update": "Precisa atualizar o app",
+  "No permission": "Sem permissão",
+  "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
+    "Os agentes usam o seu Chrome conectado por meio da extensão do SpecWithCode. Ele tem a própria página de configurações.",
+  "Open Chrome settings": "Abrir configurações do Chrome",
 };

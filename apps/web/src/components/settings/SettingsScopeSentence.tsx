@@ -13,6 +13,9 @@ import { useServerConfigs } from "../../state/entities";
 import { ineligibleProjectLabel, isAssistantGroup } from "../../studio/projectListVisibility";
 import { type EnvironmentPresentation } from "../../state/environments";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
+import { isElectron } from "../../env";
+import { machineStatus } from "../../lib/machineStatus";
+import { INTEGRATIONS_PREVIEW_TAB_PATH } from "./integrations/integrationsTabs";
 import { useNamedEnvironments } from "./useNamedEnvironments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -48,6 +51,7 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/machines",
   "/settings/chrome",
   "/settings/connect-admin",
+  INTEGRATIONS_PREVIEW_TAB_PATH,
 ]);
 
 interface SettingsScopeMenuProps {
@@ -70,10 +74,26 @@ export function SettingsScopeSentence() {
   const scope = useOptionalSettingsScope();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useNamedEnvironments();
-  if (scope === null || SETTINGS_DEVICE_ONLY_PATHS.has(pathname)) return null;
+  if (scope === null) return null;
+  if (pathname === INTEGRATIONS_PREVIEW_TAB_PATH) {
+    // The browser client has no preview settings to save; the tab says so itself.
+    if (!isElectron) return null;
+    return (
+      <div className="space-y-1 px-3 sm:px-4" data-testid="settings-scope-app-window">
+        <p className="text-base text-muted-foreground">{tx("Only in this app window")}</p>
+        <p className="text-xs text-muted-foreground">
+          {tx("Saved in the app on this computer. Other machines and your phone keep their own.")}
+        </p>
+      </div>
+    );
+  }
+  if (SETTINGS_DEVICE_ONLY_PATHS.has(pathname)) return null;
   const pageScope = settingsPageScope(pathname);
   if (pageScope === "global") return null;
-  if (pageScope === "machine" && environments.length < 2) return null;
+  const wording = settingsPageScopeOptions(pathname).wording;
+  // A page set up machine by machine names its machine even when there is one.
+  if (pageScope === "machine" && environments.length < 2 && wording !== "set-up-machine")
+    return null;
   const props: SettingsScopeMenuProps = {
     value: scope.search,
     singleEnvironment: scope.singleEnvironment,
@@ -81,7 +101,7 @@ export function SettingsScopeSentence() {
     environments,
     onChange: scope.selectScope,
   };
-  if (settingsPageScopeOptions(pathname).wording === "set-up") {
+  if (wording === "set-up" || wording === "set-up-machine") {
     const machineId =
       scope.search.machine ?? (scope.scope.kind === "checkout" ? scope.scope.environmentId : null);
     const machine = environments.find((environment) => environment.environmentId === machineId);
@@ -92,10 +112,28 @@ export function SettingsScopeSentence() {
     return (
       <div className="space-y-1 px-3 sm:px-4">
         <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-base text-muted-foreground">
-          {renderRich(tx("Set up for {project} on {machine}"), {
-            project: <ProjectScopeMenu {...props} machineWording />,
-            machine: <EnvironmentScopeMenu {...props} machineWording />,
-          })}
+          {wording === "set-up"
+            ? renderRich(tx("Set up for {project} on {machine}"), {
+                project: <ProjectScopeMenu {...props} machineWording />,
+                machine: <EnvironmentScopeMenu {...props} machineWording />,
+              })
+            : renderRich(tx("Set up on {machine}"), {
+                machine:
+                  machine && environments.length < 2 ? (
+                    <span className="font-medium text-foreground">
+                      {settingsScopeEnvironmentLabel(machine, environments)}
+                    </span>
+                  ) : (
+                    <EnvironmentScopeMenu {...props} machineWording />
+                  ),
+              })}
+          {wording === "set-up-machine" && machine ? (
+            <span className="text-xs" data-testid="settings-scope-status">
+              {tx(
+                machineStatus(machine.connection, true, isThisMachineTarget(machine.entry)).short,
+              )}
+            </span>
+          ) : null}
         </p>
         {here && machine && here.environmentId !== machine.environmentId ? (
           <p className="text-xs font-medium text-foreground" data-testid="settings-scope-seat">

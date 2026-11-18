@@ -117,7 +117,16 @@ export interface WizardFooterAction {
   readonly label: string;
   readonly onClick: () => void;
   readonly disabled?: boolean;
+  /**
+   * The step's neutral action: it goes on without choosing, granting or
+   * importing anything. Marked `data-wizard-neutral` for the shared walker
+   * (`scripts/studio-verify/first-run-walk.mjs`); a step has at most one.
+   */
+  readonly neutral?: boolean;
 }
+
+/** The attribute that marks a step's neutral action; spread on a control outside the footer. */
+export const WIZARD_NEUTRAL = { "data-wizard-neutral": "" } as const;
 
 export interface WizardPrimaryAction extends WizardFooterAction {
   /** The label says what is running; the button is off until it ends. */
@@ -180,7 +189,12 @@ export function WizardStepFooter({
         }
       >
         {skip ? (
-          <Button variant="outline" disabled={skip.disabled} onClick={skip.onClick}>
+          <Button
+            variant="outline"
+            disabled={skip.disabled}
+            onClick={skip.onClick}
+            {...(skip.neutral ? WIZARD_NEUTRAL : {})}
+          >
             {skip.label}
           </Button>
         ) : null}
@@ -188,6 +202,7 @@ export function WizardStepFooter({
           <Button
             ref={primaryRef}
             data-wizard-primary=""
+            {...(primary.neutral ? WIZARD_NEUTRAL : {})}
             aria-keyshortcuts="Enter"
             // Not before the footer is in its slot: focus inside the panel would scroll the step.
             autoFocus={slot !== null && (primary.autoFocus ?? true)}
@@ -262,8 +277,13 @@ export function escapeLeavesSetup(target: EventTarget | null): boolean {
  * stages, the scrolling panel with the open step, that step's footer below it
  * and the close button. Enter presses the step's primary; Escape and the close
  * button both leave setup where closing is allowed.
+ *
+ * The dialog carries `data-wizard-step` with the open step's id. The footer is
+ * drawn through a portal, so the dialog, not the step, is where the walker
+ * looks for the neutral action.
  */
 export function FirstRunFrame<Id extends string>({
+  stepId,
   stages,
   currentStage,
   stagesLocked = false,
@@ -274,6 +294,8 @@ export function FirstRunFrame<Id extends string>({
   children,
   after,
 }: {
+  /** The open step, for `data-wizard-step`. */
+  readonly stepId?: string;
   /** The stages to show, in order (see `shownStages`). */
   readonly stages: readonly WizardStage<Id>[];
   readonly currentStage: number;
@@ -322,6 +344,7 @@ export function FirstRunFrame<Id extends string>({
         clearTitlebar={isElectron}
         initialFocus={() => stepStartControl() ?? true}
         onKeyDown={handleWizardEnter}
+        data-wizard-step={stepId}
       >
         <WizardHeader
           title={t("wizard.title")}

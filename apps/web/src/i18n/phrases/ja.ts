@@ -1250,10 +1250,6 @@ export const ja: PhraseCatalog = {
   "Retrying…": "再試行しています…",
   "Retry now": "今すぐ再試行",
   "Show less": "表示を減らす",
-  "Connections execution machine": "接続を実行するマシン",
-  "Select a machine": "マシンを選択",
-  "The selected machine or project is no longer in this scope.":
-    "選択したマシンまたはプロジェクトは、この範囲にもうありません。",
   "Connect a machine to see its MCP servers.": "マシンを接続すると MCP サーバーを確認できます。",
   "Granted scopes": "付与された権限",
   "Pairing link scopes": "ペアリングリンクの権限",
@@ -5609,4 +5605,19 @@ export const ja: PhraseCatalog = {
   "No skills found in this repo.": "このリポジトリにスキルは見つかりませんでした。",
   "This repo holds more skills than are listed here.":
     "このリポジトリには、ここに表示されている以外のスキルもあります。",
+  "Agent access": "エージェントのアクセス",
+  "MCP servers": "MCP サーバー",
+  "Preview and recording": "プレビューと録画",
+  "Integrations sections": "連携のセクション",
+  "Set up on {machine}": "{machine} で設定",
+  "Only in this app window": "このアプリウィンドウのみ",
+  "Saved in the app on this computer. Other machines and your phone keep their own.":
+    "このコンピューターのアプリに保存されます。ほかのマシンやスマートフォンはそれぞれ別に保持します。",
+  "Its settings show when it reconnects. Pick another machine above to set that one up.":
+    "再接続すると設定が表示されます。別のマシンを設定するには上で選んでください。",
+  "Needs an app update": "アプリの更新が必要",
+  "No permission": "権限なし",
+  "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
+    "エージェントは SpecWithCode 拡張機能を通じて、サインイン済みの Chrome を使います。専用の設定ページがあります。",
+  "Open Chrome settings": "Chrome の設定を開く",
 };

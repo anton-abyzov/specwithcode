@@ -168,6 +168,7 @@ final class AttemptGate: Sendable {
       return machine.deviceApprovalCode == "K7QX2M" && machine.status == .offline && !machine.isSettling
     }
     #expect(await until { waiting() })
+    #expect(h.model.machine(env)?.approvalReachable == true)
     var flashed = false
     func record() { if !waiting() { flashed = true } }
 
@@ -202,11 +203,30 @@ final class AttemptGate: Sendable {
     #expect(await until { if case .unreachable? = h.engine.machines[env]?.status.lastError { return true } else { return false } })
     h.engine.publishNow()
     #expect(waiting())
+    // Remembered, not live: the screen says the machine can't be reached now.
+    #expect(h.model.machine(env)?.approvalReachable == false)
 
     // Approved: the next attempt connects and the code goes away.
     h.gate.set(.answer)
     h.engine.reconnect(machineId: env)
     #expect(await until { h.model.machine(env)?.status == .connected && h.model.machine(env)?.deviceApprovalCode == nil })
+  }
+
+  @Test func aRelayBlipKeepsTheCodeButASignOutOrRemovalDropsIt() async throws {
+    let h = try await harness(.approval, grace: .seconds(60))
+    defer { h.engine.setActive(false) }
+    #expect(await until { h.engine.machines[env]?.approvalCode == "K7QX2M" })
+    let entry = try #require(h.engine.machines[env])
+    func code(after error: ConnectError) -> String? {
+      entry.noteApproval(.init(state: .offline, lastError: .awaitingApproval(code: "K7QX2M", message: "")))
+      entry.noteApproval(.init(state: .offline, lastError: .connect(error)))
+      return entry.approvalCode
+    }
+    #expect(code(after: .unreachable("tunnel down")) == "K7QX2M")
+    #expect(code(after: .relay(status: 502, code: nil, reason: nil)) == "K7QX2M")
+    #expect(code(after: .signedOut) == nil)
+    #expect(code(after: .relay(status: 403, code: "environment_connect_not_authorized", reason: nil)) == nil)
+    #expect(code(after: .relay(status: 401, code: "auth_invalid", reason: RelayClient.deviceRemoved)) == nil)
   }
 
   @Test func aLaterDisconnectStillShowsOffline() async throws {

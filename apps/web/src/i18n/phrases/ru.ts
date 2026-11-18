@@ -1251,10 +1251,6 @@ export const ru: PhraseCatalog = {
   "Retrying…": "Повтор…",
   "Retry now": "Повторить сейчас",
   "Show less": "Свернуть",
-  "Connections execution machine": "Машина для выполнения подключений",
-  "Select a machine": "Выберите машину",
-  "The selected machine or project is no longer in this scope.":
-    "Выбранная машина или проект больше не входит в эту область.",
   "Connect a machine to see its MCP servers.": "Подключите машину, чтобы увидеть её MCP-серверы.",
   "Granted scopes": "Выданные права",
   "Pairing link scopes": "Права ссылки связывания",
@@ -5604,4 +5600,19 @@ export const ru: PhraseCatalog = {
   "No skills found in this repo.": "В этом репозитории навыков не найдено.",
   "This repo holds more skills than are listed here.":
     "В этом репозитории больше навыков, чем показано здесь.",
+  "Agent access": "Доступ агентов",
+  "MCP servers": "MCP-серверы",
+  "Preview and recording": "Предпросмотр и запись",
+  "Integrations sections": "Разделы интеграций",
+  "Set up on {machine}": "Настройка на {machine}",
+  "Only in this app window": "Только в этом окне приложения",
+  "Saved in the app on this computer. Other machines and your phone keep their own.":
+    "Хранится в приложении на этом компьютере. У других компьютеров и телефона свои настройки.",
+  "Its settings show when it reconnects. Pick another machine above to set that one up.":
+    "Настройки появятся, когда компьютер снова подключится. Чтобы настроить другой, выберите его выше.",
+  "Needs an app update": "Нужно обновить приложение",
+  "No permission": "Нет доступа",
+  "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
+    "Агенты работают в вашем Chrome с выполненным входом через расширение SpecWithCode. У него своя страница настроек.",
+  "Open Chrome settings": "Открыть настройки Chrome",
 };

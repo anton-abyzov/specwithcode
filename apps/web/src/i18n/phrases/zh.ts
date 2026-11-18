@@ -1209,9 +1209,6 @@ export const zh: PhraseCatalog = {
   "Retrying…": "正在重试…",
   "Retry now": "立即重试",
   "Show less": "收起",
-  "Connections execution machine": "执行连接的电脑",
-  "Select a machine": "选择一台电脑",
-  "The selected machine or project is no longer in this scope.": "所选电脑或项目已不在此范围内。",
   "Connect a machine to see its MCP servers.": "连接一台电脑以查看其 MCP 服务器。",
   "Granted scopes": "已授予的权限",
   "Pairing link scopes": "配对链接权限",
@@ -5371,4 +5368,19 @@ export const zh: PhraseCatalog = {
   "Skills: {count}": "技能：{count}",
   "No skills found in this repo.": "此仓库中未找到技能。",
   "This repo holds more skills than are listed here.": "此仓库中的技能多于此处列出的数量。",
+  "Agent access": "智能体访问",
+  "MCP servers": "MCP 服务器",
+  "Preview and recording": "预览和录制",
+  "Integrations sections": "集成分区",
+  "Set up on {machine}": "在 {machine} 上设置",
+  "Only in this app window": "仅在此应用窗口",
+  "Saved in the app on this computer. Other machines and your phone keep their own.":
+    "保存在这台电脑的应用中。其他计算机和你的手机各自保存。",
+  "Its settings show when it reconnects. Pick another machine above to set that one up.":
+    "重新连接后会显示其设置。要设置另一台计算机，请在上方选择。",
+  "Needs an app update": "需要更新应用",
+  "No permission": "无权限",
+  "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
+    "智能体通过 SpecWithCode 扩展使用你已登录的 Chrome。它有单独的设置页面。",
+  "Open Chrome settings": "打开 Chrome 设置",
 };

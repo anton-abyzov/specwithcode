@@ -163,6 +163,7 @@ export function AgentsStep({
           disabled: busy,
           label: readiness.kind === "none" ? tx("Continue without an agent") : t("wizard.continue"),
           onClick: onContinue,
+          neutral: true,
           variant: readiness.kind === "none" ? "outline" : "default",
         }}
       />

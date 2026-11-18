@@ -625,6 +625,10 @@ public final class LiveEngine: AppEngine {
     if case .http(status: 429, code: _)? = entry.status.lastError { result.isRefusingSignIns = true }
     if case let .teamRules(message)? = entry.status.lastError { result.teamRulesRefusal = message }
     result.deviceApprovalCode = entry.approvalCode
+    // A remembered code with a different last error: the machine did not answer.
+    if entry.approvalCode != nil, let error = entry.status.lastError {
+      if case .awaitingApproval = error {} else { result.approvalReachable = false }
+    }
     result.teamRules = entry.teamRules.map(TeamRulesInfo.init)
     return result
   }
@@ -720,6 +724,9 @@ final class MachineEntry {
     case nil, .unreachable?, .timedOut?, .closed?, .upgradeFailed?:
       break
     case let .http(status, _)? where status >= 500:
+      break
+    case let .connect(error)? where !error.isPermanent:
+      // The relay or the tunnel failed on the way, as with a broken tunnel.
       break
     default:
       approvalCode = nil

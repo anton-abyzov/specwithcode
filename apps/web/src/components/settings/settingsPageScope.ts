@@ -1,3 +1,4 @@
+import { INTEGRATIONS_MACHINE_TAB_PATHS } from "./integrations/integrationsTabs";
 import type { SettingsScopeSearch } from "./settingsScope";
 
 /**
@@ -37,23 +38,35 @@ export const SETTINGS_SINGLE_MACHINE_PATHS: ReadonlySet<string> = new Set([
   "/settings/providers",
   "/settings/models",
   "/settings/skills",
+  // Agent access, MCP servers and devices are set up machine by machine.
+  ...INTEGRATIONS_MACHINE_TAB_PATHS,
 ]);
 
 /** Pages whose scope line reads "Set up for <project> on <machine>" and says "machine". */
 const SETTINGS_SET_UP_PATHS: ReadonlySet<string> = new Set(["/settings/skills"]);
 
+/** Pages with no project to pick: "Set up on <machine>". */
+const SETTINGS_SET_UP_MACHINE_PATHS: ReadonlySet<string> = new Set(INTEGRATIONS_MACHINE_TAB_PATHS);
+
 export interface SettingsPageScopeOptions {
   /** One machine at a time: the picker offers no "All environments". */
   readonly singleMachine: boolean;
-  /** `set-up` is the per-machine wording, with a caption naming the machine. */
-  readonly wording: "applying" | "set-up";
+  /**
+   * `set-up` is the per-machine wording, with a caption naming the machine;
+   * `set-up-machine` is the same line on a page that has no project to pick.
+   */
+  readonly wording: "applying" | "set-up" | "set-up-machine";
 }
 
 /** How one page presents the shared scope line. */
 export function settingsPageScopeOptions(pathname: string): SettingsPageScopeOptions {
   return {
     singleMachine: SETTINGS_SINGLE_MACHINE_PATHS.has(pathname),
-    wording: SETTINGS_SET_UP_PATHS.has(pathname) ? "set-up" : "applying",
+    wording: SETTINGS_SET_UP_PATHS.has(pathname)
+      ? "set-up"
+      : SETTINGS_SET_UP_MACHINE_PATHS.has(pathname)
+        ? "set-up-machine"
+        : "applying",
   };
 }
 

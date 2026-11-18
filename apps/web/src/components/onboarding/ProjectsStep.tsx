@@ -401,7 +401,7 @@ export function ImportStep({
         </div>
         <WizardStepFooter
           back={onBack ? { onClick: onBack } : undefined}
-          skip={{ label: t("wizard.import.skip"), onClick: () => void onDone() }}
+          skip={{ label: t("wizard.import.skip"), onClick: () => void onDone(), neutral: true }}
         />
       </div>
     );
@@ -526,6 +526,7 @@ export function ImportStep({
           label: t("wizard.import.skip"),
           onClick: finishAfterImport,
           disabled: isImporting,
+          neutral: true,
         }}
         primary={{
           label: isImporting

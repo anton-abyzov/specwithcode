@@ -83,6 +83,7 @@ export function AccessStep({
           label: t(keepsSupervised ? "wizard.access.keepSupervised" : "wizard.access.keepCurrent"),
           onClick: () => void answer("decline"),
           disabled: saving !== null,
+          neutral: true,
         }}
         primary={{
           label: saving === "accept" ? t("wizard.access.saving") : t("wizard.access.use"),
