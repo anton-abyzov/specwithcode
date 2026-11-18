@@ -64,7 +64,8 @@ export function modelTrackLists(
   return {
     daily: lanes.routine,
     complex: lanes.complex,
-    review: saved.review.length > 0 ? saved.review : defaultTrackSelections("review", providers, order),
+    review:
+      saved.review.length > 0 ? saved.review : defaultTrackSelections("review", providers, order),
   };
 }
 

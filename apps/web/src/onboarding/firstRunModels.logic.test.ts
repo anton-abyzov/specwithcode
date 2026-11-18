@@ -136,15 +136,16 @@ describe("modelTrackLists", () => {
     ],
   ];
 
-  for (const [label, settings] of variants) {
-    it(`gives the lists Settings > Models shows, for every set of ready agents (${label})`, () => {
+  it.each(variants)(
+    "gives the lists Settings > Models shows, for every set of ready agents (%s)",
+    (_label, settings) => {
       for (const ready of subsets(FIVE)) {
         expect(modelTrackLists(settings, ready), ready.map((p) => p.instanceId).join("+")).toEqual(
           editorList(settings, ready),
         );
       }
-    });
-  }
+    },
+  );
 });
 
 describe("firstRunModels", () => {

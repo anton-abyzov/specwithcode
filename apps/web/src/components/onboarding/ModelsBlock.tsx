@@ -19,18 +19,37 @@ import { serverEnvironment } from "../../state/server";
 import { ProviderLogo, type ProviderBrand } from "../ProviderLogo";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Dialog, DialogDescription, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "../ui/dialog";
-import { SettingsScopeProvider } from "../settings/SettingsScopeContext";
+import {
+  Dialog,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import type { SettingsScopeSearch } from "../settings/settingsScope";
-
-const ModelTracksSettings = lazy(() =>
-  import("../settings/ModelTracksSettings").then((module) => ({
-    default: module.ModelTracksSettings,
-  })),
-);
 
 /** The scope stays on this machine: the dialog has no scope picker to move it. */
 const KEEP_SCOPE = () => {};
+
+/**
+ * The Settings > Models editor for one machine, loaded only when Change is
+ * pressed: the settings scope reads the app's live state, which the step
+ * itself never needs.
+ */
+const MachineModelsEditor = lazy(async () => {
+  const [{ SettingsScopeProvider }, { ModelTracksSettings }] = await Promise.all([
+    import("../settings/SettingsScopeContext"),
+    import("../settings/ModelTracksSettings"),
+  ]);
+  return {
+    default: (props: { readonly search: SettingsScopeSearch }) => (
+      <SettingsScopeProvider search={props.search} onChange={KEEP_SCOPE} singleEnvironment>
+        <ModelTracksSettings sources={false} />
+      </SettingsScopeProvider>
+    ),
+  };
+});
 
 /** Rows the step draws for a machine's tools (`MachineReadinessToolId`), not its agents. */
 const TOOL_ROWS: ReadonlyArray<string> = MachineReadinessToolId.literals;
@@ -68,10 +87,16 @@ function Mark(props: { readonly brand: ProviderBrand | null; readonly name: stri
   );
 }
 
-function Named(props: { readonly entry: ModelLineEntry | ReviewerExample; readonly first?: boolean }) {
+function Named(props: {
+  readonly entry: ModelLineEntry | ReviewerExample;
+  readonly first?: boolean;
+}) {
   const tx = useTx();
   return (
-    <span className="inline-flex items-center gap-1 align-middle" data-model-name={props.entry.name}>
+    <span
+      className="inline-flex items-center gap-1 align-middle"
+      data-model-name={props.entry.name}
+    >
       <Mark brand={props.entry.brand} name={props.entry.name} />
       <span>{props.entry.name}</span>
       {props.first ? (
@@ -120,10 +145,7 @@ function LineBody(props: { readonly line: ModelLine; readonly onAddOne: () => vo
     <span>
       {parts}
       {line.more > 0 ? (
-        <span className="text-muted-foreground">
-          {" "}
-          {tx("+{n} more", { n: line.more })}
-        </span>
+        <span className="text-muted-foreground"> {tx("+{n} more", { n: line.more })}</span>
       ) : null}
     </span>
   );
@@ -170,7 +192,11 @@ export function ModelsBlock(props: {
         </Button>
       </div>
       {models.kind === "none-ready" ? (
-        <p className="text-sm text-muted-foreground" data-model-track="daily" data-model-line="empty">
+        <p
+          className="text-sm text-muted-foreground"
+          data-model-track="daily"
+          data-model-line="empty"
+        >
           {tx("Ready once an agent is signed in.")}
         </p>
       ) : (
@@ -197,11 +223,9 @@ export function ModelsBlock(props: {
               <DialogDescription>{props.machineLabel}</DialogDescription>
             </DialogHeader>
             <DialogPanel>
-              <SettingsScopeProvider search={scope} onChange={KEEP_SCOPE} singleEnvironment>
-                <Suspense fallback={null}>
-                  <ModelTracksSettings sources={false} />
-                </Suspense>
-              </SettingsScopeProvider>
+              <Suspense fallback={null}>
+                <MachineModelsEditor search={scope} />
+              </Suspense>
             </DialogPanel>
           </DialogPopup>
         </Dialog>
