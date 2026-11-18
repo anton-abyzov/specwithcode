@@ -726,6 +726,63 @@ describe("ProjectSkillsView", () => {
       "true",
     );
   });
+  describe("an agent filter from the composer link that no row matches", () => {
+    const codex = {
+      instanceId: ProviderInstanceId.make("codex"),
+      driver: ProviderDriverKind.make("codex"),
+      label: "Codex",
+    };
+    const codexRow = (name: string) =>
+      row(name, {
+        providers: [
+          {
+            ...codex,
+            path: `/home/me/.codex/skills/${name}/SKILL.md`,
+            scope: "user",
+            enabled: true,
+          },
+        ],
+      });
+    async function renderSeeded() {
+      state.data = {
+        ...snapshot,
+        rows: [codexRow("imagegen"), codexRow("openai-docs")],
+        providers: [
+          { ...claude, state: "ok", skills: 0 },
+          { ...codex, state: "ok", skills: 2 },
+        ],
+        locks: [],
+      } satisfies ProjectSkillsSnapshot;
+      state.search = { agent: "claudeAgent" };
+      await render();
+    }
+    const agentChip = (value: string) =>
+      container.querySelector<HTMLElement>(
+        `[aria-label='Filter by agent'] [data-facet='${value}']`,
+      );
+
+    it("shows the filter as a selected Claude 0 chip next to Codex, and one click clears it", async () => {
+      await renderSeeded();
+      expect(bodyRows()).toEqual([]);
+      expect(agentChip("claudeAgent")?.getAttribute("aria-pressed")).toBe("true");
+      expect(agentChip("claudeAgent")?.textContent).toBe("Claude0");
+      expect(agentChip("codex")?.getAttribute("aria-pressed")).toBe("false");
+      expect(agentChip("codex")?.textContent).toBe("Codex2");
+      await act(async () => agentChip("claudeAgent")!.click());
+      expect(bodyRows()).toEqual(["imagegen", "openai-docs"]);
+      expect(agentChip("claudeAgent")).toBeNull();
+    });
+
+    it("restores every row with Clear filters", async () => {
+      await renderSeeded();
+      const clear = [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "Clear filters",
+      )!;
+      await act(async () => clear.click());
+      expect(bodyRows()).toEqual(["imagegen", "openai-docs"]);
+      expect(agentChip("claudeAgent")).toBeNull();
+    });
+  });
   it("ignores a thread folder after switching to another settings context", async () => {
     state.search = {
       skillCwd: "/other/worktree",
