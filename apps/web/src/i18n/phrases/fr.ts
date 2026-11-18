@@ -1062,23 +1062,16 @@ export const fr: PhraseCatalog = {
   Copy: "Copier",
   "This device cannot read that machine's settings.":
     "Cet appareil ne peut pas lire les paramètres de cette machine.",
-  "1. Install the SpecWithCode Browser extension": "1. Installer l'extension SpecWithCode Browser",
   "Add to Chrome": "Ajouter à Chrome",
   "(opens the Chrome Web Store)": "(ouvre le Chrome Web Store)",
   "Chrome Web Store link": "Lien vers le Chrome Web Store",
   "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.":
     "Installez-la dans Chrome sur {machine} : copiez le lien et ouvrez-le là-bas, dans le profil que les agents doivent utiliser.",
-  "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.":
-    "Ouvrez le lien dans le profil Chrome que les agents doivent utiliser. Chrome maintient l'extension à jour.",
-  "2. Pair it with {machine}": "2. L'associer à {machine}",
   "This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.":
     "Ce code ne fonctionne que dans Chrome sur {machine}, pas dans Chrome sur {thisComputer}.",
-  "Show pairing code": "Afficher le code d'association",
   "Pairing code": "Code d'association",
   "pairing code": "code d'association",
   "Reset code": "Réinitialiser le code",
-  "The code lets a Chrome profile act for agents on {machine}. Keep it private.":
-    "Le code permet à un profil Chrome d'agir pour les agents sur {machine}. Gardez-le privé.",
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "Vous êtes sur {b}. Ceci configure Chrome sur {b2}, un autre ordinateur ; son code d'association ne fonctionne pas dans le Chrome d'ici.",
   "Set up Chrome on {thisComputer}": "Configurer Chrome sur {thisComputer}",
@@ -3091,6 +3084,10 @@ export const fr: PhraseCatalog = {
   "Supplied patch": "Patch fourni",
   "Previous file path": "Ancien chemin du fichier",
   "Show the question and its options": "Afficher la question et ses options",
+  "Question:": "Question :",
+  "Can't steer now": "Impossible d'orienter maintenant",
+  "Show the full description": "Afficher la description complète",
+  "Hide the full description": "Masquer la description complète",
   "Hide the question and its options": "Masquer la question et ses options",
   "+{waitingCount} more": "+{waitingCount} de plus",
   "Dismiss question without answering": "Fermer la question sans répondre",
@@ -3645,12 +3642,6 @@ export const fr: PhraseCatalog = {
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
     "Vos propres règles, envoyées avec chaque requête du coordinateur et des workers, chez chaque fournisseur, dans chaque projet de chaque environnement sélectionné. Vide par défaut.",
   "Effective instructions for {label}": "Instructions effectives pour {label}",
-  "Click the SpecWithCode icon in Chrome's toolbar.":
-    "Cliquez sur l’icône SpecWithCode dans la barre d’outils de Chrome.",
-  "Paste the pairing code.": "Collez le code d’appairage.",
-  "Name the profile, for example Work or Marketing.":
-    "Nommez le profil, par exemple Travail ou Marketing.",
-  "Click Pair.": "Cliquez sur Appairer.",
   "Ask Google for {service}": "Demander à Google : {service}",
   "Edit shortcut for {command}: {shortcut}": "Modifier le raccourci de {command} : {shortcut}",
   "Edit when clause for {command}": "Modifier la condition de {command}",
@@ -4473,6 +4464,7 @@ export const fr: PhraseCatalog = {
   "Setup can be closed once the import finishes.":
     "La configuration pourra être fermée une fois l'importation terminée.",
   "Add a folder on this machine": "Ajouter un dossier de cette machine",
+  "Start with SpecWeave, for plans and a board": "Commencer avec SpecWeave, pour des plans et un tableau",
   "Type a path, browse or drop a folder": "Saisissez un chemin, parcourez ou déposez un dossier",
   "Starting from nothing?": "Vous partez de zéro ?",
   "New empty project or clone a repository": "Nouveau projet vide ou cloner un dépôt",
@@ -5749,4 +5741,146 @@ export const fr: PhraseCatalog = {
     "{machine} fonctionne, mais cette fenêtre ne peut pas y accéder tant que vous n'êtes pas connecté.",
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} fonctionnent, mais cette fenêtre ne peut pas y accéder tant que vous n'êtes pas connecté.",
+  "Sign in to reach this machine": "Connectez-vous pour accéder à cet ordinateur",
+  // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Profils et historique de Chrome et Safari",
+  Mail: "Mail",
+  Messages: "Messages",
+  "Photos library": "Photothèque de Photos",
+  "Time Machine backups": "Sauvegardes Time Machine",
+  "Other apps' data": "Données d'autres apps",
+  "Screen Recording": "Enregistrement de l'écran",
+  Accessibility: "Accessibilité",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "Chaque agent sur {machine}, dans chaque projet et avec chaque fournisseur, l'obtient jusqu'à ce que vous le désactiviez dans Réglages Système.",
+  "Setup works without Connect, and you can add it later in Settings > Machines.":
+    "La configuration fonctionne sans Connect, et vous pourrez l'ajouter plus tard dans Réglages > Machines.",
+  "Each row has its own button. Change any of it later in Settings.":
+    "Chaque ligne a son propre bouton. Vous pourrez tout modifier plus tard dans Réglages.",
+  "Continue changes nothing.": "Continuer ne modifie rien.",
+  "On {machines}.": "Sur {machines}.",
+  "Full access: agents edit and run without asking each time.":
+    "Accès complet : les agents modifient et exécutent sans demander à chaque fois.",
+  "What it allows": "Ce qu'il permet",
+  "New chats start with Full access.": "Les nouvelles discussions démarrent avec l'accès complet.",
+  "New chats stay Supervised.": "Les nouvelles discussions restent supervisées.",
+  "New chats keep their current access.": "Les nouvelles discussions gardent leur accès actuel.",
+  "Change it in Settings > General.": "Modifiable dans Réglages > Général.",
+  "Files and commands": "Fichiers et commandes",
+  "Not changed": "Inchangé",
+  Change: "Modifier",
+  "Checking Chrome…": "Vérification de Chrome…",
+  "{machine} is offline.": "{machine} est hors ligne.",
+  "Turned off by your team's rules.": "Désactivé par les règles de votre équipe.",
+  "This window cannot pair a browser with {machine}.":
+    "Cette fenêtre ne peut pas associer un navigateur à {machine}.",
+  "Chrome is not installed on {machine}.": "Chrome n'est pas installé sur {machine}.",
+  "{asking} asks to use this Chrome for its threads.":
+    "{asking} demande à utiliser ce Chrome pour ses fils.",
+  "{asking} asks to use this Chrome for its threads. This window cannot answer it: answer in Settings > Chrome where you can change access.":
+    "{asking} demande à utiliser ce Chrome pour ses fils. Cette fenêtre ne peut pas répondre : répondez dans Réglages > Chrome, là où vous pouvez modifier l'accès.",
+  "Paired, not answering. Open Chrome, or reconnect.":
+    "Associé, ne répond pas. Ouvrez Chrome ou reconnectez-le.",
+  "{profiles}: an older extension.": "{profiles} : une extension plus ancienne.",
+  "Update the extension": "Mettre à jour l'extension",
+  "{profiles}: not from the Chrome Web Store.": "{profiles} : hors Chrome Web Store.",
+  "{profiles}: give it a name agents can tell apart.":
+    "{profiles} : donnez-lui un nom que les agents peuvent distinguer.",
+  "Paired: {names}": "Associé : {names}",
+  "Pair another profile": "Associer un autre profil",
+  "Your browser": "Votre navigateur",
+  "That did not go through. Try again.": "Cela n'a pas abouti. Réessayez.",
+  "Screen Recording and Accessibility are allowed.":
+    "Enregistrement de l'écran et Accessibilité sont autorisés.",
+  "Partly allowed: {missing} is still off.":
+    "Partiellement autorisé : il reste {missing} à activer.",
+  "Needs reopening: macOS applies Screen Recording after SpecWithCode reopens.":
+    "Réouverture nécessaire : macOS applique Enregistrement de l'écran après la réouverture de SpecWithCode.",
+  "Could not check the Mac's permissions.": "Impossible de vérifier les autorisations du Mac.",
+  "Agents see the screen and click and type in any app.":
+    "Les agents voient l'écran, cliquent et tapent dans n'importe quelle app.",
+  "Mac apps": "Apps du Mac",
+  "Agents use only the Chrome profiles you pair, and only while they are paired.":
+    "Les agents n'utilisent que les profils Chrome que vous associez, et seulement tant qu'ils sont associés.",
+  "They work in the live browser, in a blue tab group you can pull a tab out of. They never read Chrome's files on disk, which Full Disk Access would open to every agent.":
+    "Ils travaillent dans le navigateur ouvert, dans un groupe d'onglets bleu dont vous pouvez retirer un onglet. Ils ne lisent jamais les fichiers de Chrome sur le disque, que l'accès complet au disque ouvrirait à tous les agents.",
+  "SpecWithCode reads Chrome's profile names to show this list.":
+    "SpecWithCode lit les noms des profils Chrome pour afficher cette liste.",
+  "Pick the profile where the accounts agents need are signed in.":
+    "Choisissez le profil où sont connectés les comptes dont les agents ont besoin.",
+  "One profile is enough when everything agents need is signed in there. Pair a second one for a work account or another brand's accounts. The browser tools never reach a profile you did not pair.":
+    "Un profil suffit si tout ce dont les agents ont besoin y est connecté. Associez-en un second pour un compte professionnel ou les comptes d'une autre marque. Les outils du navigateur n'atteignent jamais un profil que vous n'avez pas associé.",
+  "Agents use the profile you name.": "Les agents utilisent le profil que vous nommez.",
+  "It opens in the Chrome profile you used last. To pair another, switch to it in Chrome first.":
+    "Il s'ouvre dans le dernier profil Chrome utilisé. Pour en associer un autre, passez d'abord à ce profil dans Chrome.",
+  "Anyone with this code can pair a browser with this computer.":
+    "Toute personne ayant ce code peut associer un navigateur à cet ordinateur.",
+  "Chrome profile": "Profil Chrome",
+  "Opens the store page in {profile}.": "Ouvre la page du store dans {profile}.",
+  "Opens the store page in Chrome.": "Ouvre la page du store dans Chrome.",
+  "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
+    "Collez-le dans la page de l'extension, ou cliquez sur son icône dans la barre d'outils de Chrome et collez-le là.",
+  "Waiting for Chrome…": "En attente de Chrome…",
+  "The pairing code could not be read. Try again.":
+    "Impossible de lire le code d'association. Réessayez.",
+  "The code could not be copied. Press Show instead.":
+    "Impossible de copier le code. Appuyez plutôt sur Afficher.",
+  "Developer: allow copies not from the Chrome Web Store":
+    "Développeur : autoriser les copies qui ne viennent pas du Chrome Web Store",
+  "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, any other extension id can connect too, such as a copy loaded by hand in chrome://extensions, but still only with the pairing code, and it is marked not from the Chrome Web Store. Turning it off disconnects those copies.":
+    "Désactivé, seul SpecWithCode Browser du Chrome Web Store peut se connecter à {machine}. Activé, tout autre identifiant d'extension peut aussi se connecter, comme une copie chargée à la main dans chrome://extensions, mais toujours avec le code d'association seulement, et elle est marquée comme ne venant pas du Chrome Web Store. Le désactiver déconnecte ces copies.",
+  "Give it a name agents can tell apart": "Donnez-lui un nom que les agents peuvent distinguer",
+  "What agents can use on this {machine}": "Ce que les agents peuvent utiliser sur ce {machine}",
+  "What agents can use": "Ce que les agents peuvent utiliser",
+  "Some tasks need it: listing Chrome profiles, reading Mail or Messages, searching Safari history, or working with another app's files. macOS blocks these for every app until you allow it.":
+    "Certaines tâches en ont besoin : lister les profils Chrome, lire Mail ou Messages, chercher dans l'historique de Safari ou travailler avec les fichiers d'une autre app. macOS bloque cela pour toutes les apps tant que vous ne l'autorisez pas.",
+  "What it unlocks": "Ce qu'il débloque",
+  "A prompt hidden in a web page or file could ask an agent to read your mail. Turn it on only if you need it.":
+    "Une instruction cachée dans une page web ou un fichier pourrait demander à un agent de lire vos e-mails. Ne l'activez que si vous en avez besoin.",
+  "In System Settings › Privacy & Security › Full Disk Access, turn on":
+    "Dans Réglages Système › Confidentialité et sécurité › Accès complet au disque, activez",
+  "Agents here run under a background service, so macOS asks about it, not the app. In System Settings › Privacy & Security › Full Disk Access, add":
+    "Ici, les agents tournent sous un service en arrière-plan, donc macOS demande pour lui, pas pour l'app. Dans Réglages Système › Confidentialité et sécurité › Accès complet au disque, ajoutez",
+  "How Full Disk Access works and how to turn it off":
+    "Comment fonctionne l'accès complet au disque et comment le désactiver",
+  "Full Disk Access for agents: allowed, restart running threads":
+    "Accès complet au disque pour les agents : autorisé, redémarrez les fils en cours",
+  "Full Disk Access for agents: allowed": "Accès complet au disque pour les agents : autorisé",
+  "Full Disk Access for agents: could not be checked":
+    "Accès complet au disque pour les agents : vérification impossible",
+  "Full Disk Access for agents: off": "Accès complet au disque pour les agents : désactivé",
+  "Privacy access": "Accès de confidentialité",
+  "Restart needed": "Redémarrage nécessaire",
+  Optional: "Facultatif",
+  "New agent runs have it. Threads that were already running get it after they restart.":
+    "Les nouvelles exécutions d'agents l'ont. Les fils déjà en cours l'obtiennent après leur redémarrage.",
+  "Optional. Agents on": "Facultatif. Les agents sur",
+  "can't read Chrome or Safari profiles, Mail, Messages, Notes or other apps' data.":
+    "ne peuvent pas lire les profils Chrome ou Safari, Mail, Messages, Notes ni les données d'autres apps.",
+  "What this allows": "Ce que cela permet",
+  "Open System Settings": "Ouvrir Réglages Système",
+  "Open SpecWithCode on": "Ouvrez SpecWithCode sur",
+  "to allow it there.": "pour l'y autoriser.",
+  "Full Disk Access for agents (optional)": "Accès complet au disque pour les agents (facultatif)",
+  "Already allowed on this Mac.": "Déjà autorisé sur ce Mac.",
+  "You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.":
+    "Vous pouvez passer cette étape. C'est aussi dans Réglages › Machines, et les agents demandent quand une tâche en a besoin.",
+  "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
+    "Utilisez aussi claude, codex et specweave dans Terminal. Ajoute un bloc balisé à votre fichier de démarrage du shell ; désactivez-le quand vous voulez dans Réglages > Général.",
+  "Your Connect sign-in ends at {time}": "Votre connexion Connect se termine à {time}",
+  "Sign in again to keep reaching {machines} from this window.":
+    "Reconnectez-vous pour continuer à accéder à {machines} depuis cette fenêtre.",
+  "Sign in again now": "Se reconnecter maintenant",
+  "SpecWithCode Connect did not accept this sign-in":
+    "SpecWithCode Connect n'a pas accepté cette connexion",
+  "Sign in again to reach your machines through SpecWithCode Connect.":
+    "Reconnectez-vous pour accéder à vos machines via SpecWithCode Connect.",
+  "Sign in again": "Se reconnecter",
+  "first": "en premier",
+  "None of the ready agents runs a model on this list.": "Aucun des agents prêts n’utilise un modèle de cette liste.",
+  "No reviewer yet.": "Pas encore de relecteur.",
+  "A review needs a model from a second family, such as {first} or {second}.": "Une relecture demande un modèle d’une autre famille, comme {first} ou {second}.",
+  "Add one": "En ajouter un",
+  "+{n} more": "+{n} de plus",
+  "Ready once an agent is signed in.": "Prêt dès qu’un agent est connecté.",
 };

@@ -23,6 +23,7 @@ import { fetchRemoteEnvironmentDescriptor } from "@specweave-studio/client-runti
 import {
   managedRelayAccountChanges,
   managedRelaySessionAtom,
+  type ManagedRelaySession,
 } from "@specweave-studio/client-runtime/relay";
 import { EnvironmentRpcRequestObserver } from "@specweave-studio/client-runtime/rpc";
 import {
@@ -285,6 +286,42 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   };
 });
 
+/**
+ * The Connect token a relay route sends (1417, AC-14). Only a missing
+ * session or a session with no token is a sign-out. A failed read (offline,
+ * a slow Clerk refresh) is a network retry, so a short outage never shows
+ * "Sign in" or reaches the session guard.
+ */
+export const readConnectClerkToken = (
+  session: ManagedRelaySession | null,
+): Effect.Effect<string, ConnectionBlockedError | ConnectionTransientError> =>
+  Effect.gen(function* () {
+    if (session === null) {
+      return yield* new ConnectionBlockedError({
+        reason: "authentication",
+        detail: "Sign in to SpecWithCode Connect to connect this environment.",
+        connectSignInRequired: true,
+      });
+    }
+    const token = yield* session.readClerkToken().pipe(
+      Effect.mapError(
+        (error) =>
+          new ConnectionTransientError({
+            reason: "network",
+            detail: error.message,
+          }),
+      ),
+    );
+    if (token === null) {
+      return yield* new ConnectionBlockedError({
+        reason: "authentication",
+        detail: "The SpecWithCode Connect session is unavailable.",
+        connectSignInRequired: true,
+      });
+    }
+    return token;
+  });
+
 const layerCapabilities = Layer.effectContext(
   Effect.sync(() => {
     const presentation = ClientCapabilities.ClientPresentation.of({
@@ -297,33 +334,9 @@ const layerCapabilities = Layer.effectContext(
       identity: Effect.sync(() =>
         Option.fromNullishOr(appAtomRegistry.get(managedRelaySessionAtom)),
       ),
-      clerkToken: Effect.gen(function* () {
-        const session = appAtomRegistry.get(managedRelaySessionAtom);
-        if (session === null) {
-          return yield* new ConnectionBlockedError({
-            reason: "authentication",
-            detail: "Sign in to SpecWithCode Connect to connect this environment.",
-            connectSignInRequired: true,
-          });
-        }
-        const token = yield* session.readClerkToken().pipe(
-          Effect.mapError(
-            (error) =>
-              new ConnectionTransientError({
-                reason: "network",
-                detail: error.message,
-              }),
-          ),
-        );
-        if (token === null) {
-          return yield* new ConnectionBlockedError({
-            reason: "authentication",
-            detail: "The SpecWithCode Connect session is unavailable.",
-            connectSignInRequired: true,
-          });
-        }
-        return token;
-      }),
+      clerkToken: Effect.suspend(() =>
+        readConnectClerkToken(appAtomRegistry.get(managedRelaySessionAtom)),
+      ),
     });
     const identity = ClientCapabilities.RelayDeviceIdentity.of({
       deviceId: Effect.succeedNone,

@@ -1050,23 +1050,16 @@ export const ko: PhraseCatalog = {
   Copy: "복사",
   "This device cannot read that machine's settings.":
     "이 기기에서는 해당 컴퓨터의 설정을 읽을 수 없습니다.",
-  "1. Install the SpecWithCode Browser extension": "1. SpecWithCode Browser 확장 프로그램 설치",
   "Add to Chrome": "Chrome에 추가",
   "(opens the Chrome Web Store)": "(Chrome 웹 스토어가 열립니다)",
   "Chrome Web Store link": "Chrome 웹 스토어 링크",
   "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.":
     "{machine}의 Chrome에 설치하세요. 링크를 복사해 에이전트가 사용할 프로필에서 여세요.",
-  "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.":
-    "에이전트가 사용할 Chrome 프로필에서 링크를 여세요. 확장 프로그램은 Chrome이 최신 상태로 유지합니다.",
-  "2. Pair it with {machine}": "2. {machine}과(와) 페어링",
   "This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.":
     "이 코드는 {machine}의 Chrome에서만 작동하며 {thisComputer}의 Chrome에서는 작동하지 않습니다.",
-  "Show pairing code": "페어링 코드 표시",
   "Pairing code": "페어링 코드",
   "pairing code": "페어링 코드",
   "Reset code": "코드 재설정",
-  "The code lets a Chrome profile act for agents on {machine}. Keep it private.":
-    "이 코드를 사용하면 Chrome 프로필이 {machine}의 에이전트를 대신해 동작할 수 있습니다. 비공개로 유지하세요.",
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "지금은 {b}에 있습니다. 여기서는 다른 컴퓨터인 {b2}의 Chrome을 설정합니다. 그 페어링 코드는 이곳의 Chrome에서 작동하지 않습니다.",
   "Set up Chrome on {thisComputer}": "{thisComputer}에서 Chrome 설정",
@@ -3036,6 +3029,10 @@ export const ko: PhraseCatalog = {
   "Supplied patch": "제공된 패치",
   "Previous file path": "이전 파일 경로",
   "Show the question and its options": "질문과 옵션 보기",
+  "Question:": "질문:",
+  "Can't steer now": "지금은 방향 전환 불가",
+  "Show the full description": "전체 설명 보기",
+  "Hide the full description": "전체 설명 숨기기",
   "Hide the question and its options": "질문과 옵션 숨기기",
   "+{waitingCount} more": "+{waitingCount}개 더",
   "Dismiss question without answering": "답하지 않고 질문 닫기",
@@ -3585,11 +3582,6 @@ export const ko: PhraseCatalog = {
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
     "코디네이터와 워커의 모든 요청에 함께 전송되는 나만의 규칙으로, 모든 공급자와 선택한 각 환경의 모든 프로젝트에 적용됩니다. 기본값은 비어 있음입니다.",
   "Effective instructions for {label}": "{label}의 적용 지침",
-  "Click the SpecWithCode icon in Chrome's toolbar.":
-    "Chrome 도구 모음에서 SpecWithCode 아이콘을 클릭하세요.",
-  "Paste the pairing code.": "페어링 코드를 붙여 넣으세요.",
-  "Name the profile, for example Work or Marketing.": "프로필 이름을 지정하세요(예: 업무, 마케팅).",
-  "Click Pair.": "페어링을 클릭하세요.",
   "Ask Google for {service}": "Google에 요청: {service}",
   "Edit shortcut for {command}: {shortcut}": "{command} 단축키 편집: {shortcut}",
   "Edit when clause for {command}": "{command} 조건 편집",
@@ -4385,6 +4377,7 @@ export const ko: PhraseCatalog = {
   "Not finished": "완료되지 않음",
   "Setup can be closed once the import finishes.": "가져오기가 끝나면 설정을 닫을 수 있습니다.",
   "Add a folder on this machine": "이 컴퓨터의 폴더 추가",
+  "Start with SpecWeave, for plans and a board": "SpecWeave로 시작하기(계획과 보드용)",
   "Type a path, browse or drop a folder": "경로를 입력하거나 찾아보거나 폴더를 끌어다 놓기",
   "Starting from nothing?": "처음부터 시작하시나요?",
   "New empty project or clone a repository": "새 빈 프로젝트 또는 저장소 복제",
@@ -5632,4 +5625,145 @@ export const ko: PhraseCatalog = {
     "{machine}은(는) 실행 중이지만 로그인할 때까지 이 창에서 연결할 수 없습니다.",
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines}은(는) 실행 중이지만 로그인할 때까지 이 창에서 연결할 수 없습니다.",
+  "Sign in to reach this machine": "이 컴퓨터에 연결하려면 로그인",
+  // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Chrome 및 Safari 프로필과 방문 기록",
+  Mail: "Mail",
+  Messages: "메시지",
+  "Photos library": "사진 보관함",
+  "Time Machine backups": "Time Machine 백업",
+  "Other apps' data": "다른 앱의 데이터",
+  "Screen Recording": "화면 기록",
+  Accessibility: "손쉬운 사용",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "{machine}의 모든 에이전트가 모든 프로젝트와 모든 제공업체에서, 시스템 설정에서 끌 때까지 이 권한을 갖습니다.",
+  "Setup works without Connect, and you can add it later in Settings > Machines.":
+    "설정은 Connect 없이도 됩니다. 나중에 설정 > 머신에서 추가할 수 있습니다.",
+  "Each row has its own button. Change any of it later in Settings.":
+    "각 행마다 버튼이 따로 있습니다. 나중에 설정에서 언제든 바꿀 수 있습니다.",
+  "Continue changes nothing.": "계속을 눌러도 아무것도 바뀌지 않습니다.",
+  "On {machines}.": "{machines}에서.",
+  "Full access: agents edit and run without asking each time.":
+    "전체 권한: 에이전트가 매번 묻지 않고 편집하고 실행합니다.",
+  "What it allows": "허용되는 작업",
+  "New chats start with Full access.": "새 채팅은 전체 권한으로 시작합니다.",
+  "New chats stay Supervised.": "새 채팅은 감독 상태로 유지됩니다.",
+  "New chats keep their current access.": "새 채팅은 현재 권한을 유지합니다.",
+  "Change it in Settings > General.": "설정 > 일반에서 바꿀 수 있습니다.",
+  "Files and commands": "파일과 명령",
+  "Not changed": "변경 안 함",
+  Change: "변경",
+  "Checking Chrome…": "Chrome 확인 중…",
+  "{machine} is offline.": "{machine}이(가) 오프라인입니다.",
+  "Turned off by your team's rules.": "팀 규칙에 따라 꺼져 있습니다.",
+  "This window cannot pair a browser with {machine}.":
+    "이 창에서는 브라우저를 {machine}과(와) 페어링할 수 없습니다.",
+  "Chrome is not installed on {machine}.": "{machine}에 Chrome이 설치되어 있지 않습니다.",
+  "{asking} asks to use this Chrome for its threads.":
+    "{asking}이(가) 스레드에서 이 Chrome을 사용하려고 요청합니다.",
+  "{asking} asks to use this Chrome for its threads. This window cannot answer it: answer in Settings > Chrome where you can change access.":
+    "{asking}이(가) 스레드에서 이 Chrome을 사용하려고 요청합니다. 이 창에서는 응답할 수 없습니다. 권한을 바꿀 수 있는 설정 > Chrome에서 응답하세요.",
+  "Paired, not answering. Open Chrome, or reconnect.":
+    "페어링됨, 응답 없음. Chrome을 열거나 다시 연결하세요.",
+  "{profiles}: an older extension.": "{profiles}: 이전 버전의 확장 프로그램입니다.",
+  "Update the extension": "확장 프로그램 업데이트",
+  "{profiles}: not from the Chrome Web Store.":
+    "{profiles}: Chrome 웹 스토어에서 받은 것이 아닙니다.",
+  "{profiles}: give it a name agents can tell apart.":
+    "{profiles}: 에이전트가 구별할 수 있는 이름을 붙이세요.",
+  "Paired: {names}": "페어링됨: {names}",
+  "Pair another profile": "다른 프로필 페어링",
+  "Your browser": "브라우저",
+  "That did not go through. Try again.": "처리되지 않았습니다. 다시 시도하세요.",
+  "Screen Recording and Accessibility are allowed.": "화면 기록과 손쉬운 사용이 허용되어 있습니다.",
+  "Partly allowed: {missing} is still off.": "일부만 허용됨: {missing}이(가) 아직 꺼져 있습니다.",
+  "Needs reopening: macOS applies Screen Recording after SpecWithCode reopens.":
+    "다시 열어야 함: macOS는 SpecWithCode를 다시 연 뒤에 화면 기록을 적용합니다.",
+  "Could not check the Mac's permissions.": "Mac의 권한을 확인할 수 없습니다.",
+  "Agents see the screen and click and type in any app.":
+    "에이전트가 화면을 보고 어떤 앱에서든 클릭하고 입력합니다.",
+  "Mac apps": "Mac 앱",
+  "Agents use only the Chrome profiles you pair, and only while they are paired.":
+    "에이전트는 페어링한 Chrome 프로필만, 페어링된 동안에만 사용합니다.",
+  "They work in the live browser, in a blue tab group you can pull a tab out of. They never read Chrome's files on disk, which Full Disk Access would open to every agent.":
+    "에이전트는 실행 중인 브라우저의 파란색 탭 그룹 안에서 작업하며, 탭을 그룹 밖으로 끌어낼 수 있습니다. 디스크에 있는 Chrome 파일은 읽지 않습니다. 전체 디스크 접근 권한은 그 파일을 모든 에이전트에게 열어 줍니다.",
+  "SpecWithCode reads Chrome's profile names to show this list.":
+    "이 목록을 보여 주기 위해 SpecWithCode가 Chrome 프로필 이름을 읽습니다.",
+  "Pick the profile where the accounts agents need are signed in.":
+    "에이전트에게 필요한 계정이 로그인된 프로필을 고르세요.",
+  "One profile is enough when everything agents need is signed in there. Pair a second one for a work account or another brand's accounts. The browser tools never reach a profile you did not pair.":
+    "에이전트에게 필요한 모든 것이 한 프로필에 로그인되어 있다면 프로필 하나로 충분합니다. 업무 계정이나 다른 브랜드의 계정에는 두 번째 프로필을 페어링하세요. 페어링하지 않은 프로필에는 브라우저 도구가 닿지 않습니다.",
+  "Agents use the profile you name.": "에이전트는 지정한 프로필을 사용합니다.",
+  "It opens in the Chrome profile you used last. To pair another, switch to it in Chrome first.":
+    "마지막으로 사용한 Chrome 프로필에서 열립니다. 다른 프로필을 페어링하려면 먼저 Chrome에서 그 프로필로 전환하세요.",
+  "Anyone with this code can pair a browser with this computer.":
+    "이 코드가 있으면 누구나 브라우저를 이 컴퓨터와 페어링할 수 있습니다.",
+  "Chrome profile": "Chrome 프로필",
+  "Opens the store page in {profile}.": "{profile}에서 스토어 페이지를 엽니다.",
+  "Opens the store page in Chrome.": "Chrome에서 스토어 페이지를 엽니다.",
+  "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
+    "확장 프로그램 페이지에 붙여 넣거나, Chrome 도구 모음의 아이콘을 클릭해 그곳에 붙여 넣으세요.",
+  "Waiting for Chrome…": "Chrome을 기다리는 중…",
+  "The pairing code could not be read. Try again.":
+    "페어링 코드를 읽을 수 없습니다. 다시 시도하세요.",
+  "The code could not be copied. Press Show instead.":
+    "코드를 복사할 수 없습니다. 대신 표시를 누르세요.",
+  "Developer: allow copies not from the Chrome Web Store":
+    "개발자: Chrome 웹 스토어에서 받지 않은 사본 허용",
+  "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, any other extension id can connect too, such as a copy loaded by hand in chrome://extensions, but still only with the pairing code, and it is marked not from the Chrome Web Store. Turning it off disconnects those copies.":
+    "끄면 Chrome 웹 스토어의 SpecWithCode Browser만 {machine}에 연결할 수 있습니다. 켜면 chrome://extensions에서 직접 불러온 사본 같은 다른 확장 프로그램 ID도 연결할 수 있지만, 여전히 페어링 코드가 있어야 하며 Chrome 웹 스토어에서 받지 않은 것으로 표시됩니다. 끄면 그 사본들의 연결이 끊깁니다.",
+  "Give it a name agents can tell apart": "에이전트가 구별할 수 있는 이름을 붙이세요",
+  "What agents can use on this {machine}": "이 {machine}에서 에이전트가 사용할 수 있는 것",
+  "What agents can use": "에이전트가 사용할 수 있는 것",
+  "Some tasks need it: listing Chrome profiles, reading Mail or Messages, searching Safari history, or working with another app's files. macOS blocks these for every app until you allow it.":
+    "Chrome 프로필 목록 보기, Mail이나 메시지 읽기, Safari 방문 기록 검색, 다른 앱의 파일 작업 같은 일에 필요합니다. 허용하기 전까지 macOS는 모든 앱에서 이를 막습니다.",
+  "What it unlocks": "사용할 수 있게 되는 것",
+  "A prompt hidden in a web page or file could ask an agent to read your mail. Turn it on only if you need it.":
+    "웹 페이지나 파일에 숨은 지시가 에이전트에게 메일을 읽으라고 시킬 수 있습니다. 필요할 때만 켜세요.",
+  "In System Settings › Privacy & Security › Full Disk Access, turn on":
+    "시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크 접근 권한에서 다음을 켜세요:",
+  "Agents here run under a background service, so macOS asks about it, not the app. In System Settings › Privacy & Security › Full Disk Access, add":
+    "여기서는 에이전트가 백그라운드 서비스에서 실행되므로 macOS는 앱이 아니라 그 서비스에 대해 묻습니다. 시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크 접근 권한에 다음을 추가하세요:",
+  "How Full Disk Access works and how to turn it off":
+    "전체 디스크 접근 권한의 작동 방식과 끄는 방법",
+  "Full Disk Access for agents: allowed, restart running threads":
+    "에이전트의 전체 디스크 접근 권한: 허용됨, 실행 중인 스레드를 다시 시작하세요",
+  "Full Disk Access for agents: allowed": "에이전트의 전체 디스크 접근 권한: 허용됨",
+  "Full Disk Access for agents: could not be checked":
+    "에이전트의 전체 디스크 접근 권한: 확인할 수 없음",
+  "Full Disk Access for agents: off": "에이전트의 전체 디스크 접근 권한: 꺼짐",
+  "Privacy access": "개인정보 접근",
+  "Restart needed": "다시 시작 필요",
+  Optional: "선택 사항",
+  "New agent runs have it. Threads that were already running get it after they restart.":
+    "새로 실행하는 에이전트에는 적용됩니다. 이미 실행 중이던 스레드는 다시 시작한 뒤에 적용됩니다.",
+  "Optional. Agents on": "선택 사항입니다.",
+  "can't read Chrome or Safari profiles, Mail, Messages, Notes or other apps' data.":
+    "의 에이전트는 Chrome이나 Safari 프로필, Mail, 메시지, 메모, 다른 앱의 데이터를 읽을 수 없습니다.",
+  "What this allows": "이 설정으로 허용되는 것",
+  "Open System Settings": "시스템 설정 열기",
+  "Open SpecWithCode on": "SpecWithCode를",
+  "to allow it there.": "에서 열고 그곳에서 허용하세요.",
+  "Full Disk Access for agents (optional)": "에이전트의 전체 디스크 접근 권한 (선택 사항)",
+  "Already allowed on this Mac.": "이 Mac에서는 이미 허용되어 있습니다.",
+  "You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.":
+    "건너뛰어도 됩니다. 설정 › 머신에도 있으며, 작업에 필요하면 에이전트가 묻습니다.",
+  "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
+    "터미널에서도 claude, codex, specweave를 사용하세요. 셸 시작 파일에 표시된 블록 하나를 추가하며, 설정 > 일반에서 언제든 끌 수 있습니다.",
+  "Your Connect sign-in ends at {time}": "Connect 로그인이 {time}에 끝납니다",
+  "Sign in again to keep reaching {machines} from this window.":
+    "이 창에서 {machines}에 계속 접근하려면 다시 로그인하세요.",
+  "Sign in again now": "지금 다시 로그인",
+  "SpecWithCode Connect did not accept this sign-in":
+    "SpecWithCode Connect가 이 로그인을 받아들이지 않았습니다",
+  "Sign in again to reach your machines through SpecWithCode Connect.":
+    "SpecWithCode Connect를 통해 머신에 접근하려면 다시 로그인하세요.",
+  "Sign in again": "다시 로그인",
+  "first": "먼저",
+  "None of the ready agents runs a model on this list.": "준비된 에이전트 중 이 목록의 모델을 쓰는 에이전트가 없습니다.",
+  "No reviewer yet.": "아직 리뷰어가 없습니다.",
+  "A review needs a model from a second family, such as {first} or {second}.": "리뷰에는 {first} 또는 {second} 같은 다른 계열의 모델이 필요합니다.",
+  "Add one": "추가하기",
+  "+{n} more": "+{n}개 더",
+  "Ready once an agent is signed in.": "에이전트가 로그인하면 준비됩니다.",
 };

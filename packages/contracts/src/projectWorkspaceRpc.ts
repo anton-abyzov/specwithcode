@@ -56,6 +56,8 @@ import {
   ProjectSpecweaveSetUpError,
   ProjectSpecweaveAnswerInput,
   ProjectSpecweaveAnswerResult,
+  ProjectFirstFeatureGuideInput,
+  ProjectFirstFeatureGuideResult,
   ProjectMemoryReadInput,
   ProjectMemoryFile,
   ProjectMemoryWriteInput,
@@ -171,6 +173,7 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsWorkspaceRead: "projects.workspaceRead",
   projectsSpecweaveSetUp: "projects.specweaveSetUp",
   projectsSpecweaveAnswer: "projects.specweaveAnswer",
+  projectsFirstFeatureGuide: "projects.firstFeatureGuide",
   projectsStarterSuggestions: "projects.starterSuggestions",
   projectsMemoryRead: "projects.memoryRead",
   projectsMemoryWrite: "projects.memoryWrite",
@@ -422,6 +425,12 @@ export const projectPlanningRpcs = [
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsThreadIncrementLink, {
     payload: ThreadIncrementLinkInput,
     success: ThreadIncrementLinkResult,
+    error,
+  }),
+  // The first feature guide's marks (1398): the core group is at the depth limit.
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsFirstFeatureGuide, {
+    payload: ProjectFirstFeatureGuideInput,
+    success: ProjectFirstFeatureGuideResult,
     error,
   }),
 ] as const;

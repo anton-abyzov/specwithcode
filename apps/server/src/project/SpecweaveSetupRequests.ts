@@ -199,7 +199,9 @@ export async function openSetupRequest(
 
 /**
  * Moves the card to `state`, only when `requestId` is still the project's
- * card. Null when it is not (answered elsewhere, or replaced).
+ * card and it is still open. Null when it is not (answered elsewhere,
+ * replaced, or settled). The check runs inside the queued write, so a press
+ * that raced a settle can never write over it.
  */
 export async function setRequestState(
   file: string,
@@ -214,7 +216,8 @@ export async function setRequestState(
   let moved: SpecweaveSetupRequest | null = null;
   await updateProjectFacts(file, input.projectId, (facts) => {
     const request = facts.request;
-    if (request === undefined || request.requestId !== input.requestId) return facts;
+    if (request === undefined || request.requestId !== input.requestId || !isOpenRequest(request))
+      return facts;
     const { detail: _previous, ...rest } = request;
     moved = {
       ...rest,
@@ -249,9 +252,7 @@ function answeredRequest(
  * A press on the card starts setup: the card reads Setting up on every device.
  * A press on a card that is already settled (a stale window) changes nothing.
  */
-export async function markSettingUp(file: string, projectId: string, requestId: string) {
-  const open = answeredRequest(await readProjectFacts(file, projectId), requestId);
-  if (open === undefined) return null;
+export function markSettingUp(file: string, projectId: string, requestId: string) {
   return setRequestState(file, { projectId, requestId, state: "setting_up" });
 }
 

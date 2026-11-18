@@ -36,6 +36,16 @@ export function environmentMismatchError(input: {
 function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError {
   switch (error._tag) {
     case "RelayAuthInvalidError":
+      return new ConnectionBlockedError({
+        reason: "authentication",
+        detail: relayProtectedErrorMessage(error),
+        traceId: error.traceId,
+        ...(error.reason === "missing_bearer" ||
+        error.reason === "invalid_bearer" ||
+        error.reason === "device_removed"
+          ? { connectSessionRefused: true }
+          : {}),
+      });
     case "RelayEnvironmentLinkProofExpiredError":
     case "RelayAgentActivityPublishProofExpiredError":
     case "RelayAgentActivityPublishProofInvalidError":

@@ -53,6 +53,7 @@ import { type ReactNode, useState } from "react";
 import { useTx } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import { savedModelTracks } from "../../onboarding/firstRunModels.logic";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -583,14 +584,10 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
   const mixedLanes = useScopedSettingsMixed(["modelLanes"]);
   const mixedReview = useScopedSettingsMixed(["adversarialReview"]);
 
-  const lanes = settings.modelLanes ?? { complex: [], routine: [] };
   const review = settings.adversarialReview;
   const sourceOrder = settings.defaultModelProviders ?? [];
-  const saved: Record<ModelTrack, ReadonlyArray<ModelSelection>> = {
-    daily: lanes.routine ?? [],
-    complex: lanes.complex ?? [],
-    review: review.reviewers,
-  };
+  // The same lists the first-run Models block reads (`modelTrackLists` fits them).
+  const saved = savedModelTracks(settings);
   const save = (track: ModelTrack, models: ReadonlyArray<ModelSelection>) =>
     track === "review"
       ? updateSettings({ adversarialReview: { reviewers: [...models] } })

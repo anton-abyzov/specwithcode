@@ -120,6 +120,29 @@ export const ProjectSecretFiles = Schema.Array(Schema.String.check(Schema.isMaxL
   Schema.isMaxLength(MAX_PROJECT_SECRET_FILES),
 );
 
+/** The sample a project was made as (1398): the first feature guide's project. */
+export const FIRST_FEATURE_SAMPLE = "first-feature";
+export const ProjectSample = Schema.Literal(FIRST_FEATURE_SAMPLE);
+export type ProjectSample = typeof ProjectSample.Type;
+/** How the first feature guide ended: the person left it, or it reached its end. */
+export const FirstFeatureGuideEnd = Schema.Literals(["left", "finished"]);
+export type FirstFeatureGuideEnd = typeof FirstFeatureGuideEnd.Type;
+/**
+ * The first feature guide's two stored facts (1398 AC-03). Everything else
+ * the guide shows is read from live state.
+ */
+export const FirstFeatureGuide = Schema.Struct({
+  /** When the guide started: the sample's creation, or its reopening after it was left. */
+  started: Schema.optionalKey(IsoDateTime),
+  /**
+   * `left` or `finished` (FirstFeatureGuideEnd); absent while the guide runs.
+   * A string on the wire, so a value a newer version adds reads as unknown
+   * instead of failing the whole project.
+   */
+  ended: Schema.optionalKey(Schema.String),
+});
+export type FirstFeatureGuide = typeof FirstFeatureGuide.Type;
+
 export const ProjectWorkspaceSettings = Schema.Struct({
   /** Server-managed identity and transfer fence; absent on legacy independent projects. */
   logicalProject: Schema.optional(LogicalProject),
@@ -166,6 +189,15 @@ export const ProjectWorkspaceSettings = Schema.Struct({
    * a `~/` path in the home folder (`~/.config/acme/token.json`). Absent: none.
    */
   secretFiles: Schema.optionalKey(ProjectSecretFiles),
+  /**
+   * Server-managed: the sample this project was made as, `first-feature` for
+   * the first feature guide's project (1398 AC-01). Set only by
+   * projects.createNew; no settings patch can set or clear it. A string on the
+   * wire, like `origin`.
+   */
+  sample: Schema.optionalKey(Schema.String),
+  /** Server-managed: the sample's guide (1398 AC-03), set by projects.firstFeatureGuide. */
+  firstFeatureGuide: Schema.optionalKey(FirstFeatureGuide),
 });
 export type ProjectWorkspaceSettings = typeof ProjectWorkspaceSettings.Type;
 export const DEFAULT_PROJECT_WORKSPACE_SETTINGS: ProjectWorkspaceSettings = {
@@ -318,6 +350,59 @@ export const ProjectSpecweaveAnswerResult = Schema.Struct({
   specweaveSetupRequest: Schema.optionalKey(SpecweaveSetupRequest),
 });
 export type ProjectSpecweaveAnswerResult = typeof ProjectSpecweaveAnswerResult.Type;
+/**
+ * Records a step of the sample project's first feature guide (1398 AC-03):
+ * `started` when it is opened again after it was left, `left` for "Leave the
+ * guide", `finished` at its end. Refused for a project that is not a sample.
+ */
+export const ProjectFirstFeatureGuideMark = Schema.Literals(["started", "left", "finished"]);
+export type ProjectFirstFeatureGuideMark = typeof ProjectFirstFeatureGuideMark.Type;
+
+/** The guide's end, when it has one this version knows. */
+export function firstFeatureGuideEnd(
+  guide: FirstFeatureGuide | undefined,
+): FirstFeatureGuideEnd | undefined {
+  return guide?.ended === "left" || guide?.ended === "finished" ? guide.ended : undefined;
+}
+
+/**
+ * The guide's facts after a mark, planned against the stored facts so racing
+ * marks cannot undo each other. `started` opens a left guide again (a new start
+ * time, no end) and changes nothing on a running one; `left` and `finished`
+ * end it. A finished guide stays finished: its end is for good (AC-12).
+ */
+export function firstFeatureGuideAfterMark(
+  current: FirstFeatureGuide | undefined,
+  mark: ProjectFirstFeatureGuideMark,
+  now: string,
+): FirstFeatureGuide {
+  const guide = current ?? {};
+  const end = firstFeatureGuideEnd(guide);
+  if (end === "finished") return guide;
+  switch (mark) {
+    case "started":
+      return end === undefined && guide.started !== undefined ? guide : { started: now };
+    case "left":
+    case "finished":
+      return { ...(guide.started === undefined ? {} : { started: guide.started }), ended: mark };
+  }
+}
+
+/** Whether two sets of guide facts say the same. */
+export const sameFirstFeatureGuide = (
+  left: FirstFeatureGuide | undefined,
+  right: FirstFeatureGuide | undefined,
+) => left?.started === right?.started && left?.ended === right?.ended;
+export const ProjectFirstFeatureGuideInput = Schema.Struct({
+  projectId: ProjectId,
+  mark: ProjectFirstFeatureGuideMark,
+});
+export type ProjectFirstFeatureGuideInput = typeof ProjectFirstFeatureGuideInput.Type;
+export const ProjectFirstFeatureGuideResult = Schema.Struct({
+  /** The guide's facts after the mark, as `settings.firstFeatureGuide` now reads. */
+  firstFeatureGuide: FirstFeatureGuide,
+});
+export type ProjectFirstFeatureGuideResult = typeof ProjectFirstFeatureGuideResult.Type;
 export const ProjectMemoryReadInput = Schema.Struct({
   projectId: ProjectId,
   name: ProjectMemoryName,

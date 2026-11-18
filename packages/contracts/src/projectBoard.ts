@@ -65,6 +65,26 @@ export type ProjectBoardBlocker = typeof ProjectBoardBlocker.Type;
 export const ProjectBoardColumnReason = Schema.Literals(["status", "tasks", "ledger"]);
 export type ProjectBoardColumnReason = typeof ProjectBoardColumnReason.Type;
 
+/** The most recorded reviews a card lists. */
+export const PROJECT_BOARD_CARD_REVIEWS = 10;
+
+/**
+ * One recorded review of the increment (`reports/review*.md`,
+ * `reports/reviews/*.md`), as `specweave review` writes its record line.
+ */
+export const ProjectBoardCardReview = Schema.Struct({
+  /** The reviewer model, such as `muse-wonder-full-1.0`; null when the record names none. */
+  model: Schema.NullOr(Schema.String),
+  /** The reviewer's family, canonical (`claude`, `openai`, `meta`, ...); `unknown` when unnamed. */
+  family: Schema.String,
+  /** The family that built the work, canonical: the record's own, else the ledger's; null when unknown. */
+  author: Schema.NullOr(Schema.String),
+  verdict: Schema.NullOr(Schema.Literals(["ship", "fix first"])),
+  /** When the review ran, as an ISO time (the file's time for a report without a record line). */
+  at: Schema.String,
+});
+export type ProjectBoardCardReview = typeof ProjectBoardCardReview.Type;
+
 export const ProjectBoardCard = Schema.Struct({
   incrementId: TrimmedNonEmptyString,
   title: Schema.NullOr(Schema.String),
@@ -99,6 +119,13 @@ export const ProjectBoardCard = Schema.Struct({
   pullRequests: Schema.Array(Schema.String).check(Schema.isMaxLength(PROJECT_BOARD_PULL_REQUESTS)),
   /** `spec.md` as an absolute path on the machine that answered; null when it has none. */
   specPath: Schema.NullOr(Schema.String),
+  /**
+   * The increment's recorded reviews, newest first, up to
+   * PROJECT_BOARD_CARD_REVIEWS. Absent when it has none, and from older servers.
+   */
+  reviews: Schema.optional(
+    Schema.Array(ProjectBoardCardReview).check(Schema.isMaxLength(PROJECT_BOARD_CARD_REVIEWS)),
+  ),
 });
 export type ProjectBoardCard = typeof ProjectBoardCard.Type;
 

@@ -88,4 +88,21 @@ describe("accountMenuPresentation", () => {
     expect(view.name).toBe("Not signed in");
     expect(view.tone).toBeUndefined();
   });
+
+  it("warns before Clerk ends the sign-in and offers a new one (1417, AC-11)", () => {
+    const view = accountMenuPresentation(
+      {
+        status: "signedIn",
+        name: "Ada Lovelace",
+        email: "ada@example.com",
+        sessionEndsIn: "1h 40m",
+      },
+      MACHINE,
+    );
+    expect(view.name).toBe("Sign-in ends in 1h 40m");
+    expect(view.avatarName).toBe("Ada Lovelace");
+    expect(view.header).toBe(`ada@example.com · ${MACHINE}`);
+    expect(view.tone).toBe("warning");
+    expect(view.signIn?.label).toBe("Sign in again now");
+  });
 });

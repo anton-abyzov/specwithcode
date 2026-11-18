@@ -19,11 +19,14 @@ const isolate: Plugin = {
       if (
         source === "@clerk/react" ||
         source.endsWith("/useStudioConnectAuthPrompt") ||
+        source.endsWith("/useConnectRenew") ||
+        source.endsWith("/cloud/ConnectSessionGuard") ||
         source.endsWith("/state/environments") ||
         source.endsWith("/studio/machineNickname")
       )
         return stubs;
     }
+    if (importer.endsWith("useConnectSessionEnd.ts") && source === "@clerk/react") return stubs;
     if (importer.endsWith("SignedOutBanner.tsx") && source.endsWith("/cloud/publicConfig"))
       return stubs;
     if (
