@@ -23,6 +23,7 @@ import {
   type MachineHandoffReceiveResult,
   type MachineHandoffBundle,
   type MachineHandoffBusyThreads,
+  type MachineHandoffUpdateSkipped,
   type EnvironmentId,
   type ProjectId,
   ThreadId,
@@ -93,6 +94,7 @@ import { MoveDialogHold } from "../../studio/moveDialogHold";
 import { HandoffAccountMachines } from "./HandoffAccountMachines";
 import { HandoffBusyThreads } from "./HandoffBusyThreads";
 import { refusedBusyOf } from "./handoffCopySteps";
+import { sameStaleReason } from "../../studio/staleCopyText";
 import { readPendingCopy } from "./handoffFolderCopyPending";
 
 function previewInput(projectId: ProjectId, bundle: MachineHandoffBundle) {
@@ -194,6 +196,7 @@ export function ProjectMachineHandoff({
   const prepare = useAtomCommand(machineHandoff.prepare, { reportFailure: false });
   const receive = useAtomCommand(machineHandoff.receive, { reportFailure: false });
   const capabilities = useAtomCommand(machineHandoff.copyCapabilities, { reportFailure: false });
+  const release = useAtomCommand(machineHandoff.copyRelease, { reportFailure: false });
   const storageKey = machineHandoffStorageKey(project.environmentId, project.id);
   const [open, setOpen] = useState(false);
   useEffect(() => () => onOpenChange?.(false), [onOpenChange]);
@@ -217,6 +220,14 @@ export function ProjectMachineHandoff({
   const [previewCheckout, setPreviewCheckout] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<MachineHandoffReceiveResult | null>(null);
   const [consent, setConsent] = useState(false);
+  // A Git move into an existing copy that cannot fast-forward: why, and whether the person
+  // chose to move anyway on its older commits. The move refuses until they do.
+  // `published`: the refusal came after the source fenced, so Keep Main here must release it.
+  const [staleCopy, setStaleCopy] = useState<{
+    readonly skipped: MachineHandoffUpdateSkipped;
+    readonly accepted: boolean;
+    readonly published: boolean;
+  } | null>(null);
   const [phase, setPhase] = useState<
     "choose" | "checking" | "review" | "transferring" | "complete"
   >("choose");
@@ -576,6 +587,7 @@ export function ProjectMachineHandoff({
     running.current = true;
     setError(null);
     setCanRestart(false);
+    setStaleCopy(null);
     setPhase("checking");
     let at: EnvironmentId = project.environmentId;
     try {
@@ -683,12 +695,63 @@ export function ProjectMachineHandoff({
       }
       setSnapshot(prepared.value);
       setPreviewCheckout(checked.value.workspacePath);
+      setStaleCopy(
+        checked.value.updateSkipped
+          ? {
+              skipped: checked.value.updateSkipped,
+              accepted: false,
+              // A resumed operation may already be published: Keep Main must release it.
+              published: prepared.value.publication === "published",
+            }
+          : null,
+      );
       if (checked.value.phase === "started" && checked.value.coordinatorThreadId) {
         await complete(checked.value, prepared.value.bundle);
       } else setPhase("review");
     } catch (cause) {
       showError(cause, at);
       setPhase("choose");
+    } finally {
+      running.current = false;
+    }
+  };
+
+  /** After a refusal past publishing: release the source's fence, so Main stays here. */
+  const keepMainHere = async () => {
+    const operationId = snapshot?.bundle.manifest.operationId;
+    if (running.current || !operationId) return;
+    running.current = true;
+    try {
+      const released = await release({
+        environmentId: project.environmentId,
+        input: {
+          projectId: project.id,
+          operationId,
+          reason: "Main stays here: the copy there could not fast-forward.",
+        },
+      });
+      if (released._tag === "Failure") throw squashAtomCommandFailure(released);
+      // Forget only this operation's pointer; another window may have stored a newer one.
+      const stored = localStorage.getItem(storageKey);
+      if (stored?.includes(operationId)) localStorage.removeItem(storageKey);
+      if (!released.value.released) {
+        setSnapshot(null);
+        setStaleCopy(null);
+        setConsent(false);
+        setPhase("choose");
+        setError(
+          "That move is no longer waiting on this machine. Check where Main is now before moving again.",
+        );
+        return;
+      }
+      markUnpublished(null);
+      setSnapshot(null);
+      setStaleCopy(null);
+      setConsent(false);
+      setError(null);
+      setPhase("choose");
+    } catch (cause) {
+      showError(cause, project.environmentId);
     } finally {
       running.current = false;
     }
@@ -715,6 +778,20 @@ export function ProjectMachineHandoff({
         await complete(checked.value, snapshot.bundle);
         return;
       }
+      // The copy there may have changed since the review. An "anyway" covers only the reason
+      // the person saw; any other one goes back to the review before anything is published.
+      const fresh = checked.value.updateSkipped ?? null;
+      const acceptStale = staleCopy?.accepted === true && sameStaleReason(staleCopy.skipped, fresh);
+      if (fresh && !acceptStale) {
+        setStaleCopy({
+          skipped: fresh,
+          accepted: false,
+          published: staleCopy?.published === true,
+        });
+        setPhase("review");
+        return;
+      }
+      if (!fresh && staleCopy) setStaleCopy(null);
       // Recorded before publishing so a reload never offers to drop this operation; a failed
       // write publishes nothing, so the review stays editable.
       localStorage.setItem(
@@ -758,9 +835,32 @@ export function ProjectMachineHandoff({
           operationId,
           mode: "start",
           bundle: published.value.bundle,
+          // Only fast-forward the copy there; stop with the reason unless the person chose
+          // to move anyway on its older commits.
+          ...(published.value.bundle.destination?.transport === "git-sync"
+            ? { staleCopy: acceptStale ? ("accept" as const) : ("refuse" as const) }
+            : {}),
         },
       });
-      if (started._tag === "Failure") throw squashAtomCommandFailure(started);
+      if (started._tag === "Failure") {
+        const failure = squashAtomCommandFailure(started);
+        // The copy changed since the check: show why on the review, not as a failure.
+        if (
+          failure &&
+          typeof failure === "object" &&
+          "updateSkipped" in failure &&
+          failure.updateSkipped
+        ) {
+          setStaleCopy({
+            skipped: failure.updateSkipped as MachineHandoffUpdateSkipped,
+            accepted: false,
+            published: true,
+          });
+          setPhase("review");
+          return;
+        }
+        throw failure;
+      }
       if (started.value.phase !== "started" || !started.value.coordinatorThreadId)
         throw new Error(
           "The files are saved, but the coordinator has not started. Try the handoff again.",
@@ -1178,6 +1278,17 @@ export function ProjectMachineHandoff({
         }
         consent={consent}
         onConsent={setConsent}
+        staleCopy={
+          staleCopy
+            ? {
+                skipped: staleCopy.skipped,
+                accepted: staleCopy.accepted,
+                onAccept: (accepted: boolean) =>
+                  setStaleCopy((current) => (current ? { ...current, accepted } : current)),
+                ...(staleCopy.published ? { onKeepHere: () => void keepMainHere() } : {}),
+              }
+            : null
+        }
         onReview={() => void review()}
         onContinue={() => void transfer()}
         onOpenDestination={() => {

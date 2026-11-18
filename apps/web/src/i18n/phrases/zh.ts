@@ -5069,6 +5069,7 @@ export const zh: PhraseCatalog = {
     "{main} 已有 10 分钟或更久无法连接。{machine} 将成为主副本，并从共享的目标、记忆和计划开始。{main} 上的对话作为历史留在那里。在 {main} 恢复之前，它仍可在自己的机器上开始工作；恢复后它会让出主副本，并列出期间运行的内容。",
   "Switching…": "正在切换…",
   "Make {machine} main": "将 {machine} 设为主副本",
+  "Make {machine} main for {project}": "将 {machine} 设为 {project} 的主副本",
   "Main for {project} is {machine}. This copy takes work from there.":
     "{project} 的主副本是 {machine}。此副本从那里接收工作。",
   "Main for {project} is on another machine. This copy takes work from there.":

@@ -585,12 +585,66 @@ describe("handoff file method and intent", () => {
     expect(onMethodChange).toHaveBeenLastCalledWith("clone");
   });
 
-  it("promises no push for a move the destination takes from origin", async () => {
+  it("says the copy there fast-forwards to the commits this machine pushes", async () => {
+    // Since 1326 a Git move into an existing copy publishes its commits, and the copy there
+    // fast-forwards to exactly them in every repository.
     await handoff({ phase: "review", preview: { ...preview, gitSync: true } });
     const review = document.querySelector('[data-slot="handoff-git-review"]')!;
-    expect(review.textContent).toContain("Continue the project on MacBook Pro. Nothing is pushed.");
-    expect(review.textContent).toContain("Unpushed commits, uncommitted files");
-    expect(review.textContent).not.toContain("Push these commits");
+    expect(review.textContent).toContain(
+      "MacBook M4 pushes its commits, and MacBook Pro's copy fast-forwards to them in every repository.",
+    );
+    expect(review.textContent).toContain(
+      "Push these commits and continue the project on MacBook Pro.",
+    );
+    expect(review.textContent).not.toContain("Nothing is pushed");
+    expect(document.querySelector('[data-slot="handoff-stale-copy"]')).toBeNull();
+  });
+
+  it("holds the move when the copy there cannot fast-forward, until the person says anyway", async () => {
+    const onAccept = vi.fn();
+    await handoff({
+      phase: "review",
+      preview: { ...preview, gitSync: true },
+      consent: true,
+      staleCopy: {
+        skipped: {
+          reason: "local-commits",
+          message: "The copy there was not updated to this machine's commits.",
+          repository: "repositories/anton-abyzov/specwithcode",
+        },
+        accepted: false,
+        onAccept,
+      },
+    });
+    const alert = document.querySelector('[data-slot="handoff-stale-copy"]')!;
+    expect(alert.getAttribute("role")).toBe("alert");
+    expect(alert.textContent).toContain(
+      "MacBook Pro's copy will not be updated to MacBook M4's latest commits",
+    );
+    expect(alert.textContent).toContain(
+      "repositories/anton-abyzov/specwithcode on MacBook Pro has commits MacBook M4 does not have, so it cannot fast-forward.",
+    );
+    expect(alert.textContent).toContain("Nothing on MacBook Pro is overwritten");
+    const primary = [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) =>
+      /^(Move project to|Make) /.test(node.textContent ?? ""),
+    )!;
+    expect(primary.disabled).toBe(true);
+    await click(alert.querySelector<HTMLElement>('[role="checkbox"]')!);
+    expect(onAccept).toHaveBeenCalledWith(true);
+    await handoff({
+      phase: "review",
+      preview: { ...preview, gitSync: true },
+      consent: true,
+      staleCopy: {
+        skipped: { reason: "dirty", message: "x" },
+        accepted: true,
+        onAccept,
+      },
+    });
+    const again = [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) =>
+      /^(Move project to|Make) /.test(node.textContent ?? ""),
+    )!;
+    expect(again.disabled).toBe(false);
   });
 
   it("titles a copy Copy and a Git only move Move, and keeps Git only on offer", async () => {
@@ -709,19 +763,32 @@ describe("handoff file method and intent", () => {
 
     it("still moves Main with Git only, and says so before the click", async () => {
       await handoff({ method: "folder", onMethodChange: vi.fn(), send: facts() });
-      expect(document.querySelector("h2")?.textContent).toBe("Move Product to MacBook Pro");
+      // MacBook Pro already has a copy: nothing is copied, so it reads as making it main.
+      expect(document.querySelector("h2")?.textContent).toBe("Make MacBook Pro main for Product");
       expect(description()).toBe(
         "From MacBook M4. Main moves to MacBook Pro. Nothing on MacBook Pro is replaced without asking.",
       );
       expect(document.querySelector('[data-slot="handoff-coordinator"]')).toBeNull();
-      expect(text("send-existing-copy")).toBe(
-        "MacBook Pro already has a copy, at ~/specweave. Only what it is missing is copied.",
-      );
+      expect(document.querySelector('[data-slot="send-existing-copy"]')).toBeNull();
+      expect(document.body.textContent).not.toContain("Only what it is missing is copied");
       expect(text("send-plan")).toBe(
         "Push this machine's commits, then move Main to MacBook Pro's copy at ~/specweave. Work continues on MacBook Pro, and this copy stops starting work. 3 uncommitted files stay here.",
       );
-      await click(button("Move project to MacBook Pro"));
+      await click(button("Make MacBook Pro main"));
       expect(props.onReview).toHaveBeenCalledOnce();
+      // The review, where consent is given, keeps the Make-main title and button.
+      await handoff({
+        phase: "review",
+        preview: { ...preview, gitSync: true },
+        method: "folder",
+        send: facts(),
+        consent: true,
+      });
+      expect(document.querySelector("h2")?.textContent).toBe("Make MacBook Pro main for Product");
+      expect(button("Make MacBook Pro main").disabled).toBe(false);
+      // A method that copies files never reads as a plain switch.
+      await handoff({ method: "clone", onMethodChange: vi.fn(), send: facts() });
+      expect(document.querySelector("h2")?.textContent).not.toContain("main for");
     });
 
     it("moves nothing to the machine that holds Main", async () => {
@@ -861,7 +928,8 @@ describe("handoff file method and intent", () => {
         "MacBook Pro already has Main, at ~/b, so there is nothing to move.",
       );
       await git({ picked: "a" });
-      expect(button("Move project to MacBook Pro").disabled).toBe(false);
+      // The picked copy is not Main: nothing is copied, Main switches there.
+      expect(button("Make MacBook Pro main").disabled).toBe(false);
       expect(text("send-plan")).toContain("move Main to MacBook Pro's copy at ~/a");
     });
   });

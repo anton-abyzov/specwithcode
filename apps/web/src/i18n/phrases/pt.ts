@@ -5286,6 +5286,7 @@ export const pt: PhraseCatalog = {
     "{main} está inacessível há 10 minutos ou mais. {machine} vira a principal e começa do objetivo, da memória e do plano compartilhados. A conversa em {main} fica lá como histórico. Até {main} voltar, ela ainda pode iniciar trabalho na própria máquina; depois cede e lista o que executou nesse meio-tempo.",
   "Switching…": "Trocando…",
   "Make {machine} main": "Tornar {machine} a principal",
+  "Make {machine} main for {project}": "Tornar {machine} a principal de {project}",
   "Main for {project} is {machine}. This copy takes work from there.":
     "A principal de {project} é {machine}. Esta cópia recebe trabalho de lá.",
   "Main for {project} is on another machine. This copy takes work from there.":
