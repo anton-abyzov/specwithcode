@@ -4476,7 +4476,8 @@ export const fr: PhraseCatalog = {
   "Setup can be closed once the import finishes.":
     "La configuration pourra être fermée une fois l'importation terminée.",
   "Add a folder on this machine": "Ajouter un dossier de cette machine",
-  "Start with SpecWeave, for plans and a board": "Commencer avec SpecWeave, pour des plans et un tableau",
+  "Start with SpecWeave, for plans and a board":
+    "Commencer avec SpecWeave, pour des plans et un tableau",
   "Type a path, browse or drop a folder": "Saisissez un chemin, parcourez ou déposez un dossier",
   "Starting from nothing?": "Vous partez de zéro ?",
   "New empty project or clone a repository": "Nouveau projet vide ou cloner un dépôt",
@@ -5815,4 +5816,14 @@ export const fr: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "Reconnectez-vous pour accéder à vos machines via SpecWithCode Connect.",
   "Sign in again": "Se reconnecter",
+  // First-run setup: the Models block under each machine's agents.
+  first: "en premier",
+  "None of the ready agents runs a model on this list.":
+    "Aucun des agents prêts n'utilise un modèle de cette liste.",
+  "No reviewer yet.": "Pas encore de relecteur.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "Une relecture demande un modèle d'une deuxième famille, comme {first} ou {second}.",
+  "Add one": "En ajouter un",
+  "+{n} more": "+{n} autres",
+  "Ready once an agent is signed in.": "Prêt dès qu'un agent est connecté.",
 };
