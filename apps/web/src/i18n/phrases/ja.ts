@@ -5454,6 +5454,7 @@ export const ja: PhraseCatalog = {
     "間違ったコードが多すぎます。{machine} 本体でコードを入力するか、10 分待ってください。",
   "Try again.": "もう一度お試しください。",
   "Turning away…": "拒否しています…",
+  "6 characters": "6文字",
   "Type the code shown on {device}": "{device} に表示されたコードを入力",
   "another device": "別のデバイス",
   "the update": "アップデート",
@@ -5483,14 +5484,12 @@ export const ja: PhraseCatalog = {
     "{device} が申請しています。{hub} 経由でペアリングされています。",
   "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
     "{machine} がこのデバイスを拒否しました。明日もう一度申請するか、{machine} の SpecWithCode で承認してください。",
-  "Different machine at address":
-    "アドレスに別のマシン",
+  "Different machine at address": "アドレスに別のマシン",
   "{machine}'s address now answers as a different SpecWithCode":
     "{machine} のアドレスは現在、別の SpecWithCode として応答しています",
   "This host's address now answers as a different SpecWithCode":
     "このホストのアドレスは現在、別の SpecWithCode として応答しています",
-  "Open Settings > Machines to fix it.":
-    "修正するには「設定 > マシン」を開いてください。",
+  "Open Settings > Machines to fix it.": "修正するには「設定 > マシン」を開いてください。",
   "Resolved history from {machines} could not be loaded.":
     "{machines} の解決済み履歴を読み込めませんでした。",
   "Resolved history from another machine could not be loaded.":

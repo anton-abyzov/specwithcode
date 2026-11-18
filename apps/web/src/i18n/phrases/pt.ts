@@ -5456,6 +5456,7 @@ export const pt: PhraseCatalog = {
     "Muitos códigos errados. Digite o código diretamente em {machine} ou aguarde 10 minutos.",
   "Try again.": "Tente de novo.",
   "Turning away…": "Recusando…",
+  "6 characters": "6 caracteres",
   "Type the code shown on {device}": "Digite o código mostrado em {device}",
   "another device": "outro dispositivo",
   "the update": "atualização",
@@ -5485,14 +5486,12 @@ export const pt: PhraseCatalog = {
     "{device} está pedindo acesso. Ele foi pareado por {hub}.",
   "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
     "{machine} recusou este dispositivo. Peça de novo amanhã ou aprove-o no SpecWithCode em {machine}.",
-  "Different machine at address":
-    "Outra máquina no endereço",
+  "Different machine at address": "Outra máquina no endereço",
   "{machine}'s address now answers as a different SpecWithCode":
     "O endereço de {machine} agora responde como outro SpecWithCode",
   "This host's address now answers as a different SpecWithCode":
     "O endereço deste host agora responde como outro SpecWithCode",
-  "Open Settings > Machines to fix it.":
-    "Abra Configurações > Máquinas para corrigir.",
+  "Open Settings > Machines to fix it.": "Abra Configurações > Máquinas para corrigir.",
   "Resolved history from {machines} could not be loaded.":
     "Não foi possível carregar o histórico resolvido de {machines}.",
   "Resolved history from another machine could not be loaded.":
