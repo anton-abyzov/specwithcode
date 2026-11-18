@@ -180,12 +180,32 @@ export function foundAgentsView(
   };
 }
 
+/** The providers this machine reports installed, as one comparable value. */
+export function installedProvidersKey(
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "installed">>,
+): string {
+  return providers
+    .filter((provider) => provider.installed)
+    .map((provider) => provider.instanceId)
+    .toSorted()
+    .join(",");
+}
+
+/** Whether `next` names a provider `previous` did not; an empty `previous` is a first reading. */
+function newlyInstalled(previous: string, next: string): boolean {
+  if (previous === "") return false;
+  const before = new Set(previous.split(","));
+  return next.split(",").some((id) => id !== "" && !before.has(id));
+}
+
 /**
  * Asks the machine what agents it has. The server answers at once with what it
  * knows and keeps searching, so this reads again until nothing is pending.
- * `search` stays null on a machine whose server cannot search.
+ * `search` stays null on a machine whose server cannot search. When a provider
+ * turns up installed (`installedKey` gains one), it searches again from scratch,
+ * which refreshes the server's snapshot and the folders it found.
  */
-export function useAgentSearch(environmentId: EnvironmentId, enabled: boolean) {
+export function useAgentSearch(environmentId: EnvironmentId, enabled: boolean, installedKey = "") {
   const refresh = useAtomCommand(serverEnvironment.refreshProviders, { reportFailure: false });
   const [search, setSearch] = useState<AgentSearch | null>(null);
   const [asking, setAsking] = useState(false);
@@ -231,6 +251,13 @@ export function useAgentSearch(environmentId: EnvironmentId, enabled: boolean) {
     ask(false);
     return stop;
   }, [ask, enabled, stop]);
+
+  const lastInstalled = useRef(installedKey);
+  useEffect(() => {
+    const previous = lastInstalled.current;
+    lastInstalled.current = installedKey;
+    if (enabled && newlyInstalled(previous, installedKey)) ask(true);
+  }, [ask, enabled, installedKey]);
 
   const find = useCallback(() => {
     setAsking(true);
@@ -389,7 +416,11 @@ export function FoundAgents({
   readonly onAdd: () => void;
 }) {
   const canSearch = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
-  const { search, searching, find } = useAgentSearch(environmentId, canSearch);
+  const { search, searching, find } = useAgentSearch(
+    environmentId,
+    canSearch,
+    installedProvidersKey(providers),
+  );
   if (search === null) return null;
   return (
     <FoundAgentsList

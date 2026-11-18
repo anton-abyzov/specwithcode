@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ServerProvider,
   type ServerSettings,
 } from "@specweave-studio/contracts";
 import { act } from "react";
@@ -258,14 +259,14 @@ const reply = (agentSearch?: AgentSearch) => ({
   value: { providers: [], ...(agentSearch === undefined ? {} : { agentSearch }) },
 });
 
-const mount = () =>
+const mount = (providers: ReadonlyArray<ServerProvider> = []) =>
   act(async () =>
     root.render(
       <FoundAgents
         environmentId={environmentId}
         machine="Mac mini"
         settings={SETTINGS}
-        providers={[]}
+        providers={providers}
         readOnly={false}
         onTurnOn={() => {}}
         onAdd={() => {}}
@@ -328,6 +329,28 @@ it("starts a fresh search from Find agents", async () => {
   state.refresh.mockResolvedValue(reply(SEARCH));
   await mount();
   await act(async () => button("Find agents")?.click());
+  expect(state.refresh).toHaveBeenLastCalledWith({
+    environmentId,
+    input: { discover: true, fresh: true },
+  });
+});
+
+it("searches again from scratch when an agent turns up installed after the last search", async () => {
+  const provider = (id: string, installed: boolean) =>
+    ({
+      instanceId: ProviderInstanceId.make(id),
+      driver: ProviderDriverKind.make(id),
+      installed,
+      auth: { status: "unknown" },
+    }) as ServerProvider;
+  state.refresh.mockResolvedValue(reply(SEARCH));
+  await mount([provider("codex", true), provider("muse", false)]);
+  expect(state.refresh).toHaveBeenCalledOnce();
+  // A provider check that changes nothing installed reuses the answer.
+  await mount([provider("codex", true), provider("muse", false)]);
+  expect(state.refresh).toHaveBeenCalledOnce();
+  await mount([provider("codex", true), provider("muse", true)]);
+  expect(state.refresh).toHaveBeenCalledTimes(2);
   expect(state.refresh).toHaveBeenLastCalledWith({
     environmentId,
     input: { discover: true, fresh: true },
