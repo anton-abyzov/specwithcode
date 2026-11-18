@@ -123,6 +123,20 @@ export function AgentsStep({
     [],
   );
   const busy = installing.length > 0;
+  // A sign-in in progress keeps Continue pressable, but it is no longer the
+  // step's neutral action: a walker never leaves in the middle of one.
+  const [signingIn, setSigningIn] = useState<readonly EnvironmentId[]>([]);
+  const onSigningIn = useCallback(
+    (environmentId: EnvironmentId, open: boolean) =>
+      setSigningIn((current) =>
+        open === current.includes(environmentId)
+          ? current
+          : open
+            ? [...current, environmentId]
+            : current.filter((id) => id !== environmentId),
+      ),
+    [],
+  );
   const checkStalled = useHeldFor(reported.kind === "checking", AGENT_CHECK_TIMEOUT_MS);
   const readiness = checkStalled ? ({ kind: "none" } as const) : reported;
   return (
@@ -135,6 +149,7 @@ export function AgentsStep({
               environmentId={environmentId}
               machineLabel={label}
               onInstalling={onInstalling}
+              onSigningIn={onSigningIn}
             />
           ))}
         </div>
@@ -163,7 +178,7 @@ export function AgentsStep({
           disabled: busy,
           label: readiness.kind === "none" ? tx("Continue without an agent") : t("wizard.continue"),
           onClick: onContinue,
-          neutral: true,
+          neutral: signingIn.length === 0,
           variant: readiness.kind === "none" ? "outline" : "default",
         }}
       />
@@ -175,10 +190,12 @@ function ConnectedAgentsStep({
   environmentId,
   machineLabel,
   onInstalling,
+  onSigningIn,
 }: {
   readonly environmentId: EnvironmentId;
   readonly machineLabel: string;
   readonly onInstalling: (environmentId: EnvironmentId, running: boolean) => void;
+  readonly onSigningIn?: ((environmentId: EnvironmentId, open: boolean) => void) | undefined;
 }) {
   const t = useT();
   const tx = useTx();
@@ -367,6 +384,11 @@ function ConnectedAgentsStep({
     onInstalling(environmentId, installRunning);
     return () => onInstalling(environmentId, false);
   }, [environmentId, installRunning, onInstalling]);
+  const signInOpen = terminalSession?.purpose === "signIn";
+  useEffect(() => {
+    onSigningIn?.(environmentId, signInOpen);
+    return () => onSigningIn?.(environmentId, false);
+  }, [environmentId, signInOpen, onSigningIn]);
 
   const panelBlocked = terminalSession !== null || serverConfig === null || !canOperateTerminal;
   const codexMenu = (
