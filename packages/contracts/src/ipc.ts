@@ -1186,6 +1186,21 @@ export const DESKTOP_FEEDBACK_ACTIONS = {
   question: "send-feedback:question",
 } as const;
 
+/** Where first-run setup reopens after Quit & Reopen (increment 1387). */
+export interface FirstRunResumeMarker {
+  readonly step: string;
+  readonly environmentId: string;
+  readonly setupIds: readonly string[];
+  /**
+   * The machines Files and commands acted on when it was answered on that run;
+   * after the reopen the row shows the saved answer for them. Absent when the
+   * row had no answer.
+   */
+  readonly filesIds?: readonly string[];
+  /** When it was written, in milliseconds since the epoch. */
+  readonly at: number;
+}
+
 export interface DesktopBridge extends DesktopUpdateBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /** Absolute path of a dropped or picked file; absent on desktop builds predating it. */
@@ -1267,6 +1282,13 @@ export interface DesktopBridge extends DesktopUpdateBridge {
   ) => Promise<ComputerUsePermissions>;
   /** Quits and reopens the app, which macOS needs before a new Screen Recording grant applies. */
   relaunchForComputerUse?: () => Promise<void>;
+  /**
+   * Saves where first-run setup was before Quit & Reopen, in the app's
+   * user-data folder; resolves once the file is written.
+   */
+  saveFirstRunResume?: (marker: FirstRunResumeMarker) => Promise<void>;
+  /** Claims that marker: the first caller gets it, every later one gets null. */
+  takeFirstRunResume?: () => Promise<FirstRunResumeMarker | null>;
   /** Voice calls; all absent on desktop builds predating them. */
   getVoiceStatus?: () => Promise<DesktopVoiceStatus>;
   /** Shows the macOS microphone prompt when unanswered; on Linux downloads the speech files. */
@@ -1409,6 +1431,12 @@ export interface DesktopBridge extends DesktopUpdateBridge {
    * fails; callers then fall back to `openExternal`.
    */
   openInExternalBrowser?: (input: OpenInExternalBrowserInput) => Promise<boolean>;
+  /**
+   * Clears the clipboard when it still holds exactly `text`, as after a
+   * pairing code was pasted. Resolves whether it cleared. Optional: older
+   * desktop builds lack it.
+   */
+  clearClipboardIfText?: (text: string) => Promise<boolean>;
   /**
    * Open a System Settings pane by identifier. Optional: older desktop builds
    * lack it, and callers no-op when it is missing.

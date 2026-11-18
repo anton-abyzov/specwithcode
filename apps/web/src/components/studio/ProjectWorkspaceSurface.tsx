@@ -37,6 +37,7 @@ import { FolderCopyBanner } from "./FolderCopyBanner";
 import { OtherMachineAssistantNotice } from "./OtherMachineAssistantNotice";
 import { ProjectPlan } from "./ProjectPlan";
 import { TimelineDetailMenu } from "../chat/TimelineDetailMenu";
+import { CoordinatorSpecweaveCard } from "../chat/CoordinatorSpecweaveCard";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
@@ -168,7 +169,7 @@ import { bulkThreadTargets } from "../../studio/bulkThreadControl";
 import { useBulkThreadControl } from "../../studio/useBulkThreadControl";
 import { useComposerAppCommands } from "../../studio/useComposerAppCommands";
 import { BoardPane } from "./shell/BoardPane";
-import { ProjectSpecweaveSetting } from "./ProjectSpecweaveSetting";
+import { BoardSpecweaveSetup } from "./ProjectSpecweaveSetting";
 import { LibraryPane } from "./shell/LibraryPane";
 import { LIBRARY_SECTIONS, type LibrarySection } from "../../studio/projectArtifacts";
 import { ProjectArtifactShelf } from "./shell/ProjectArtifactShelf";
@@ -2051,6 +2052,13 @@ export function ProjectWorkspaceSurface({
                 // workspace read is pending, a coordinator with history may be behind it.
                 welcome
               ) : null}
+              {conversationCoordinatorId ? (
+                <CoordinatorSpecweaveCard
+                  environmentId={project.environmentId}
+                  projectId={project.id}
+                  threadId={conversationCoordinatorId}
+                />
+              ) : null}
               <QuestionLiveStatus announcement={questionAnnouncement} />
               <CoordinatorComposer
                 composer={composer}
@@ -2433,13 +2441,14 @@ export function ProjectWorkspaceSurface({
                   bar={paneBar}
                   specweave={snapshot?.specweave === true}
                   setup={
-                    <ProjectSpecweaveSetting
-                      project={project}
-                      specweave={snapshot?.specweave}
-                      gitRepository={snapshot?.gitRepository}
-                      disabled={!canOperate || !connected}
-                      onChanged={query.refresh}
-                    />
+                    snapshot ? (
+                      <BoardSpecweaveSetup
+                        project={project}
+                        snapshot={snapshot}
+                        disabled={!canOperate || !connected}
+                        onChanged={query.refresh}
+                      />
+                    ) : null
                   }
                   threads={workers}
                   machineLabels={machineLabels}

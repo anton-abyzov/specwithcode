@@ -180,6 +180,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.projectsLibraryAddArtifact]: "projects",
   [WS_METHODS.projectsSpecweaveSetUp]: "projects",
   [WS_METHODS.projectsSpecweaveAnswer]: "projects",
+  [WS_METHODS.projectsFirstFeatureGuide]: "projects",
   [WS_METHODS.projectsKnowledgeRead]: "projects",
   [WS_METHODS.projectsKnowledgeSearch]: "projects",
   [WS_METHODS.projectsKnowledgeReindex]: "projects",

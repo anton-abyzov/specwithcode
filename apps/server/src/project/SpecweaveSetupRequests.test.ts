@@ -244,4 +244,56 @@ describe("SpecweaveSetupRequests (1396 AC-05, AC-07)", () => {
     expect(failed).toEqual({});
     expect((await readProjectFacts(file, "p1")).request?.state).toBe("on");
   });
+
+  // A press that read the card open before a settle landed used to write over
+  // the settle. The open check and the write are now one queued step.
+  it("two presses landing at once never flip a settled card back or wake twice", async () => {
+    for (let round = 0; round < 10; round += 1) {
+      const file = await stateFile();
+      const { request } = await openSetupRequest(file, {
+        projectId: "p1",
+        threadId: "thread-a",
+        gitRepository: true,
+      });
+      const press = async () => {
+        await markSettingUp(file, "p1", request.requestId);
+        return settleAfterSetup(file, {
+          projectId: "p1",
+          requestId: request.requestId,
+          result: { ok: true },
+        });
+      };
+      const settled = await Promise.all([press(), press()]);
+      expect(settled.filter((result) => result.wake !== undefined)).toHaveLength(1);
+      expect((await readProjectFacts(file, "p1")).request?.state).toBe("on");
+      // A late press whose read raced a settle leaves the card On.
+      const late = await Promise.all([
+        settleAfterSetup(file, { projectId: "p1", result: { ok: true } }),
+        markSettingUp(file, "p1", request.requestId),
+      ]);
+      expect(late[1]).toBeNull();
+      expect((await readProjectFacts(file, "p1")).request?.state).toBe("on");
+    }
+  });
+
+  it("a press and a settle landing at once leave the card On", async () => {
+    for (let round = 0; round < 20; round += 1) {
+      const file = await stateFile();
+      const { request } = await openSetupRequest(file, {
+        projectId: "p1",
+        threadId: "thread-a",
+        gitRepository: true,
+      });
+      await markSettingUp(file, "p1", request.requestId);
+      await Promise.all([
+        settleAfterSetup(file, {
+          projectId: "p1",
+          requestId: request.requestId,
+          result: { ok: true },
+        }),
+        markSettingUp(file, "p1", request.requestId),
+      ]);
+      expect((await readProjectFacts(file, "p1")).request?.state).toBe("on");
+    }
+  });
 });

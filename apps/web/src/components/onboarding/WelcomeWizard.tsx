@@ -3,8 +3,10 @@ import {
   type EnvironmentId,
   type ScopedProjectRef,
 } from "@specweave-studio/contracts";
+import { isMacPlatform } from "@specweave-studio/shared/keybindings";
 import { teamRulesModeAllowed } from "@specweave-studio/shared/teamRules";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { FirstRunResumeMarker } from "@specweave-studio/contracts";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
@@ -12,8 +14,17 @@ import {
   type AcceptedFullAccess,
 } from "../../onboarding/accessRecommendation";
 import { shouldRecommendFullAccess } from "../../onboarding/accessRecommendation.logic";
+import { accessRows } from "../../onboarding/accessRows.logic";
+import {
+  firstRunResumeApplies,
+  saveFirstRunResume,
+  takeFirstRunResume,
+} from "../../onboarding/firstRunResume";
 import { teamRulesFromSummary } from "../../teamRules/teamRulesView";
 import { AccessStep } from "./AccessStep";
+import { ChromeAccessRow } from "./ChromeAccessRow";
+import { MacAppsRow } from "./MacAppsRow";
+import { StepPicture } from "./StepPicture";
 import { SignInFirstStep } from "./SignInFirstStep";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useProjectScans } from "../../onboarding/useProjectScans";
@@ -113,38 +124,119 @@ export function WelcomeWizard({
   const accessMachineIds = [
     ...new Set([...(primaryEnvironmentId ? [primaryEnvironmentId] : []), ...setupIds]),
   ];
-  const accessMachines = accessMachineIds.map(
-    (id) => environments.find((environment) => environment.environmentId === id)?.serverConfig,
+  const accessEnvironments = accessMachineIds.map((id) =>
+    environments.find((environment) => environment.environmentId === id),
   );
-  // Decide only once every machine's settings and rules have loaded; a guess
-  // made before that could show the stage and then take it away.
-  const accessMachinesKnown =
-    accessMachines.length > 0 && accessMachines.every((config) => config != null);
+  const accessMachines = accessEnvironments.map((environment) => environment?.serverConfig);
   const startingMode =
     accessMachines
       .map((config) => config?.settings.defaultRuntimeMode ?? DEFAULT_RUNTIME_MODE)
       .find((mode) => mode !== "full-access") ?? "full-access";
-  // Answered on this run: the stage keeps its place, and going back to it can change the answer.
+  // Answered on this run: the row keeps its place, and Change can take the answer back.
   const [accessAnswer, setAccessAnswer] = useState<{
     readonly accepted: AcceptedFullAccess | null;
   } | null>(null);
-  const recommendAccess = shouldRecommendFullAccess({
-    answer: fullAccess.answer,
-    settingsKnown: fullAccess.hydrated && accessMachinesKnown,
-    machineRole: fullAccess.machineRole,
-    mode: startingMode,
-    projectSetsMode: false,
-    fullAccessAllowed: accessMachines.every((config) =>
-      teamRulesModeAllowed(teamRulesFromSummary(config?.teamRules).state, "full-access"),
-    ),
-    fullAccessOffered: true,
-    chatStarted: false,
+  // Each machine is decided once its own settings and rules have loaded; a
+  // guess made before that could show the row and then take it away.
+  const recommendedNow = accessMachineIds.filter((_id, index) => {
+    const config = accessMachines[index];
+    return shouldRecommendFullAccess({
+      answer: fullAccess.answer,
+      settingsKnown: fullAccess.hydrated && config != null,
+      machineRole: fullAccess.machineRole,
+      mode: config?.settings.defaultRuntimeMode ?? DEFAULT_RUNTIME_MODE,
+      projectSetsMode: false,
+      fullAccessAllowed: teamRulesModeAllowed(
+        teamRulesFromSummary(config?.teamRules).state,
+        "full-access",
+      ),
+      fullAccessOffered: true,
+      chatStarted: false,
+    });
   });
+  // Once recommended on this run, a machine keeps its place in the row, even
+  // after an answer turns the recommendation off.
+  const [recommendedIds, setRecommendedIds] = useState<ReadonlySet<EnvironmentId>>(new Set());
+  // After Quit & Reopen, the machines Files and commands was answered for on
+  // the run before: the row comes back with the saved answer and no Change.
+  const [resumedFilesIds, setResumedFilesIds] = useState<readonly EnvironmentId[]>([]);
+  if (recommendedNow.some((id) => !recommendedIds.has(id))) {
+    setRecommendedIds(new Set([...recommendedIds, ...recommendedNow]));
+  }
+  // Before the machines are picked, this one is set up by default, so the bar
+  // does not grow a stage once the person goes on.
+  const desktopApp = typeof window !== "undefined" && window.desktopBridge !== undefined;
+  const ownSetUp =
+    primaryEnvironmentId !== null &&
+    (setupIds.length === 0 || setupIds.includes(primaryEnvironmentId));
+  // `useComputerUsePermissionsAreLocal` for this window's own machine: the desktop app can read them.
+  const computerUseLocal =
+    typeof window !== "undefined" && window.desktopBridge?.getComputerUsePermissions != null;
+  // 1386's rule for its first-run item (`useCanOpenSettingsFor`): the desktop app on this Mac.
+  const fullDiskAccessLocal =
+    typeof window !== "undefined" &&
+    isMacPlatform(window.navigator.platform) &&
+    window.desktopBridge?.openSystemSettings !== undefined;
+  const rows = accessRows({
+    desktopApp,
+    machines: accessMachineIds.map((id, index) => {
+      const own = ownSetUp && id === primaryEnvironmentId;
+      return {
+        id,
+        own,
+        platform: accessEnvironments[index]?.serverConfig?.environment?.platform?.os ?? null,
+        recommended:
+          recommendedIds.has(id) ||
+          recommendedNow.includes(id) ||
+          (fullAccess.hydrated && resumedFilesIds.includes(id)),
+        computerUseLocal: own && computerUseLocal,
+        fullDiskAccessLocal: own && fullDiskAccessLocal,
+      };
+    }),
+  });
+  const filesMachineIds = rows.find((row) => row.id === "files")?.machineIds ?? [];
+  // The rows allowed or set up, which the Access picture draws a thread to.
+  // What each step's picture reacts to: the Access rows allowed or set up, an
+  // agent ready on Agents, folders picked on Projects.
+  type PictureKey = "browser" | "mac-apps" | "full-disk-access" | "review" | "picked";
+  const [rowsDone, setRowsDone] = useState<ReadonlySet<PictureKey>>(new Set());
+  const rowDone = useCallback((id: PictureKey, done: boolean) => {
+    setRowsDone((current) => {
+      if (current.has(id) === done) return current;
+      const next = new Set(current);
+      if (done) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+  const browserDone = useCallback((done: boolean) => rowDone("browser", done), [rowDone]);
+  const macAppsDone = useCallback((done: boolean) => rowDone("mac-apps", done), [rowDone]);
+  const fullDiskAccessDone = useCallback(
+    (done: boolean) => rowDone("full-disk-access", done),
+    [rowDone],
+  );
+  const agentReady = useCallback((done: boolean) => rowDone("review", done), [rowDone]);
+  const foldersPicked = useCallback((done: boolean) => rowDone("picked", done), [rowDone]);
+  const filesAccepted =
+    accessAnswer === null
+      ? resumedFilesIds.length > 0 && fullAccess.answer === "accepted"
+      : accessAnswer.accepted !== null;
+  const pictureStage = STAGE_OF_STEP[step];
+  const pictureLit: readonly string[] =
+    pictureStage === "access"
+      ? [
+          ...(filesAccepted ? ["files"] : []),
+          ...[...rowsDone].filter((key) => key !== "review" && key !== "picked"),
+        ]
+      : pictureStage === "connect"
+        ? environments.length > 1
+          ? ["machine"]
+          : []
+        : [...rowsDone].filter((key) => key === (pictureStage === "agents" ? "review" : "picked"));
   // Once in the bar, the stage stays for the rest of this run, whatever loads later.
   const [accessStageShown, setAccessStageShown] = useState(false);
-  if (recommendAccess && !accessStageShown) setAccessStageShown(true);
-  const showAccess =
-    accessStageShown || recommendAccess || accessAnswer !== null || step === "access";
+  if (rows.length > 0 && !accessStageShown) setAccessStageShown(true);
+  const showAccess = accessStageShown || rows.length > 0 || step === "access";
   // The whole bar, in order. A stage that does not apply sets `when: false` and
   // drops out of the bar, of Back and of Continue.
   const stages: readonly WizardStage<WizardStageId>[] = [
@@ -187,6 +279,34 @@ export function WelcomeWizard({
         ]),
     );
   }, [environments]);
+  // After Quit & Reopen from Access, setup comes back on Access for the same
+  // machines. The marker is claimed once, after this machine is known, and
+  // used once every machine it names is listed again.
+  const [resumeMarker, setResumeMarker] = useState<FirstRunResumeMarker | null>(null);
+  const resumeTaken = useRef(false);
+  useEffect(() => {
+    if (resumeTaken.current || !desktopApp || !firstRun || primaryEnvironmentId === null) return;
+    resumeTaken.current = true;
+    void takeFirstRunResume().then(setResumeMarker);
+  }, [desktopApp, firstRun, primaryEnvironmentId]);
+  const listedIds = environments.map((environment) => environment.environmentId).join("\n");
+  useEffect(() => {
+    if (resumeMarker === null) return;
+    const applies = firstRunResumeApplies(resumeMarker, {
+      now: Date.now(),
+      primaryEnvironmentId,
+      listedIds: listedIds.split("\n"),
+      finished: !firstRun,
+    });
+    if (!applies) return;
+    setResumeMarker(null);
+    // The person moved on meanwhile: their step wins.
+    if (chosenStep !== null) return;
+    setSetupIds(resumeMarker.setupIds as readonly EnvironmentId[]);
+    setResumedFilesIds((resumeMarker.filesIds ?? []) as readonly EnvironmentId[]);
+    setLeftConnectFrom(entryStep);
+    setStep("access");
+  }, [resumeMarker, primaryEnvironmentId, listedIds, firstRun, chosenStep, entryStep]);
   const selectedIds =
     selection ?? new Set(primaryEnvironment ? [primaryEnvironment.environmentId] : []);
   const scans = useProjectScans(step === "import" ? setupIds : NO_ENVIRONMENTS);
@@ -275,6 +395,9 @@ export function WelcomeWizard({
       canClose={canClose}
       onLeave={leaveSetup}
       holdHeight={isLoadingProjects}
+      picture={
+        <StepPicture step={STAGE_OF_STEP[step]} lit={pictureLit} rows={rows.map((row) => row.id)} />
+      }
       after={<ChatGptWelcomeCoordinator />}
     >
       {step === "start" ? (
@@ -321,35 +444,83 @@ export function WelcomeWizard({
           environmentIds={setupIds}
           onBack={() => goToStage(stageBefore(stages, "agents"))}
           onContinue={() => goToStage(stageAfter(stages, "agents"))}
+          onReadyChange={agentReady}
         />
       ) : step === "access" ? (
         <AccessStep
-          keepsSupervised={
-            (accessAnswer?.accepted != null
-              ? [...accessAnswer.accepted.values()][0]
-              : startingMode) === "approval-required"
+          title={
+            desktopApp && ownSetUp
+              ? tx("What agents can use on this {machine}", { machine: machineNoun })
+              : tx("What agents can use")
           }
+          rows={rows}
+          renderRow={(id, open) =>
+            primaryEnvironmentId === null ? null : id === "browser" ? (
+              <ChromeAccessRow
+                environmentId={primaryEnvironmentId}
+                machine={primaryEnvironment?.label ?? machineNoun}
+                onDoneChange={browserDone}
+                {...open}
+              />
+            ) : id === "mac-apps" ? (
+              <MacAppsRow
+                {...open}
+                onDoneChange={macAppsDone}
+                onBeforeRelaunch={() =>
+                  saveFirstRunResume(
+                    primaryEnvironmentId,
+                    setupIds.length > 0 ? setupIds : [primaryEnvironmentId],
+                    Date.now(),
+                    accessAnswer !== null || resumedFilesIds.length > 0
+                      ? [...new Set([...filesMachineIds, ...resumedFilesIds])]
+                      : [],
+                  )
+                }
+              />
+            ) : null
+          }
+          files={{
+            machineNames: filesMachineIds.map(
+              (id) =>
+                environments.find((environment) => environment.environmentId === id)?.label ?? id,
+            ),
+            keepsSupervised:
+              (accessAnswer?.accepted != null
+                ? [...accessAnswer.accepted.values()][0]
+                : startingMode) === "approval-required",
+            answer:
+              accessAnswer === null
+                ? null
+                : accessAnswer.accepted !== null
+                  ? "accepted"
+                  : "declined",
+            // Read only once settings have loaded: before that the answer is the default, null.
+            answeredBefore:
+              accessAnswer === null && resumedFilesIds.length > 0 && fullAccess.hydrated
+                ? fullAccess.answer
+                : null,
+            onAccept: async () => {
+              const accepted = await fullAccess.accept(filesMachineIds);
+              if (accepted === null) return t("wizard.access.saveFailed");
+              // Accepting again after an earlier accept on this run keeps the first access to undo.
+              setAccessAnswer((current) => ({ accepted: current?.accepted ?? accepted }));
+              return null;
+            },
+            onKeep: async () => {
+              // After an accept on this run, Keep puts the earlier access back.
+              const accepted = accessAnswer?.accepted;
+              if (accepted != null) {
+                if (!(await fullAccess.undo(accepted))) return t("wizard.access.undoFailed");
+              } else {
+                await fullAccess.decline();
+              }
+              setAccessAnswer({ accepted: null });
+              return null;
+            },
+          }}
+          onFullDiskAccessAllowed={fullDiskAccessDone}
           onBack={() => goToStage(stageBefore(stages, "access"))}
-          onAccept={async () => {
-            const accepted = await fullAccess.accept(accessMachineIds);
-            if (accepted === null) return t("wizard.access.saveFailed");
-            // Accepting again after an earlier accept on this run keeps the first access to undo.
-            setAccessAnswer((current) => ({ accepted: current?.accepted ?? accepted }));
-            goToStage(stageAfter(stages, "access"));
-            return null;
-          }}
-          onDecline={async () => {
-            // Back on this step after accepting: Keep puts the earlier access back.
-            const accepted = accessAnswer?.accepted;
-            if (accepted != null) {
-              if (!(await fullAccess.undo(accepted))) return t("wizard.access.undoFailed");
-            } else {
-              await fullAccess.decline();
-            }
-            setAccessAnswer({ accepted: null });
-            goToStage(stageAfter(stages, "access"));
-            return null;
-          }}
+          onContinue={() => goToStage(stageAfter(stages, "access"))}
         />
       ) : (
         <ImportStep
@@ -358,6 +529,7 @@ export function WelcomeWizard({
           setIsImporting={setIsImporting}
           onBack={() => goToStage(stageBefore(stages, "projects"))}
           onDone={finish}
+          onPickedChange={foldersPicked}
         />
       )}
     </FirstRunFrame>

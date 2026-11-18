@@ -14,6 +14,7 @@ import {
   ProjectWorkspaceError,
   ThreadId,
   type ProjectId,
+  type ProjectFirstFeatureGuideInput,
   type ProjectSpecweaveAnswerInput,
   type ProjectSpecweaveSetUpInput,
   type ProjectThreadsDeleteInput,
@@ -26,6 +27,7 @@ import {
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -46,6 +48,7 @@ import * as ServerConfig from "../config.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadIncrementProgressService from "./ThreadIncrementProgressService.ts";
 import * as ProjectService from "./ProjectService.ts";
+import * as FirstFeatureSample from "./firstFeatureSample.ts";
 import * as ThreadRepositories from "./ThreadRepositories.ts";
 import { ProjectFolderService } from "./ProjectFolderChange.ts";
 import * as ProjectWorktreeCleanup from "./ProjectWorktreeCleanup.ts";
@@ -269,6 +272,12 @@ export const layerPlanningRpcHandlers = WsProjectPlanningRpcGroup.middleware(
         Effect.provideService(ProjectWorkspaceService.ProjectWorkspaceService, workspace),
       );
     return {
+      // 1398: the sample's guide is left, finished or opened again; only a sample takes marks.
+      [WS_METHODS.projectsFirstFeatureGuide]: (input: ProjectFirstFeatureGuideInput) =>
+        Effect.gen(function* () {
+          const now = DateTime.formatIso(yield* DateTime.now);
+          return yield* FirstFeatureSample.firstFeatureGuideRpc(projects, input, now);
+        }),
       [WS_METHODS.projectsRepositoriesRead]: (
         input: import("@specweave-studio/contracts").ProjectRepositoriesReadInput,
       ) =>

@@ -11,7 +11,7 @@ import {
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 type Project = { id: ProjectId; environmentId: EnvironmentId; workspaceRoot: string };
@@ -28,6 +28,8 @@ const state = vi.hoisted(() => ({
   config: null as Atom.Atom<null> | null,
   candidates: [] as AgentSessionProjectCandidate[],
   createProject: vi.fn(),
+  createNewProject: vi.fn(),
+  specweaveSetUp: false,
   importThreads: vi.fn(),
   refreshProviders: vi.fn(),
   connectPairing: vi.fn(),
@@ -46,6 +48,13 @@ const folderChoice = vi.hoisted(() => ({
   },
   remember: vi.fn(),
   openPalette: vi.fn(),
+}));
+// The Chrome and Mac apps rows read live machine state; their own tests cover them.
+vi.mock("./ChromeAccessRow", () => ({
+  ChromeAccessRow: () => <li data-access-row="browser" />,
+}));
+vi.mock("./MacAppsRow", () => ({
+  MacAppsRow: () => <li data-access-row="mac-apps" />,
 }));
 // The Full Disk Access row and first-run item have their own test.
 vi.mock("../access/FullDiskAccess", () => ({
@@ -97,6 +106,11 @@ vi.mock("../../state/environments", () => {
     label: environmentId,
     connection: { phase: "connected" },
     entry: { target: { _tag: "DirectConnectionTarget" } },
+    serverConfig: {
+      specweaveSetUp: state.specweaveSetUp,
+      environment: { platform: {} },
+      settings: {},
+    },
   });
   const primary = environment("primary");
   return {
@@ -118,7 +132,9 @@ vi.mock("../../state/entities", async () => {
     readProjects: () => state.registry!.get(state.projects!),
   };
 });
-vi.mock("../../state/projects", () => ({ projectEnvironment: { create: "createProject" } }));
+vi.mock("../../state/projects", () => ({
+  projectEnvironment: { create: "createProject", createNew: "createNewProject" },
+}));
 vi.mock("../../state/agentSessions", () => ({
   agentSessionScan: (query: { environmentId: EnvironmentId }) => query,
   agentSessionImport: "importThreads",
@@ -161,7 +177,12 @@ vi.mock("./SignInFirstStep", () => ({ SignInFirstStep: () => null }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: "connectPairing" }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (
-    command: "createProject" | "importThreads" | "refreshProviders" | "connectPairing",
+    command:
+      | "createProject"
+      | "createNewProject"
+      | "importThreads"
+      | "refreshProviders"
+      | "connectPairing",
   ) => state[command],
 }));
 vi.mock("../../state/terminal", () => ({ terminalEnvironment: {} }));
@@ -306,6 +327,8 @@ beforeEach(() => {
   state.createProject
     .mockReset()
     .mockImplementation(async (input: CreateProjectInput) => recordProject(input));
+  state.createNewProject.mockReset();
+  state.specweaveSetUp = false;
   state.importThreads
     .mockReset()
     .mockResolvedValue(AsyncResult.success({ importedCount: 1, skippedCount: 0 }));
@@ -509,4 +532,72 @@ it("leaves setup for Add project when starting from nothing", async () => {
   expect(state.completeOnboarding).toHaveBeenCalledOnce();
   expect(state.createProject).not.toHaveBeenCalled();
   expect(folderChoice.openPalette).toHaveBeenCalledExactlyOnceWith({ open: "add-project" });
+});
+
+// 1396 AC-22: an empty folder picked in setup is a new project, and starts
+// with SpecWeave as its one box stands. The box and the empty check live in
+// ProjectsFolderChoice; this covers what the step sends.
+describe("an empty folder's SpecWeave box", () => {
+  type BoxProps = {
+    specweaveSetUp?: boolean;
+    onStartWithSpecweave?: (startWith: boolean | null | undefined) => void;
+  };
+  const box = () => folderChoice.props as unknown as BoxProps;
+  const createNewWith = (startWith: boolean | undefined) => {
+    state.candidates = [];
+    state.specweaveSetUp = true;
+    state.importThreads.mockResolvedValue(
+      AsyncResult.success({ importedCount: 0, skippedCount: 0 }),
+    );
+    state.createNewProject.mockImplementation(
+      async ({ environmentId }: { environmentId: EnvironmentId }) => {
+        const projectId = ProjectId.make("site");
+        recordProject({ environmentId, input: { projectId, workspaceRoot: "/work/site" } });
+        return AsyncResult.success({ projectId, workspaceRoot: "/work/site" });
+      },
+    );
+    return async () => {
+      await mountImport();
+      expect(box().specweaveSetUp).toBe(true);
+      await act(async () => folderChoice.props!.onFolderChange("/work/site"));
+      await act(async () => box().onStartWithSpecweave!(startWith));
+      await click("Add site");
+      expect(state.createNewProject).toHaveBeenCalledOnce();
+      expect(state.createProject).not.toHaveBeenCalled();
+      return state.createNewProject.mock.calls[0]![0].input as Record<string, unknown>;
+    };
+  };
+
+  it.each([true, false])("sends specweave %s as the box stands", async (startWith) => {
+    const input = await createNewWith(startWith)();
+    expect(input).toEqual({
+      name: "site",
+      kind: "code",
+      parentPath: "/work/site",
+      specweave: startWith,
+      specweaveOnlyIfNew: true,
+    });
+  });
+
+  it("sends nothing about SpecWeave for a folder that has files", async () => {
+    const input = await createNewWith(undefined)();
+    expect(input).not.toHaveProperty("specweave");
+  });
+
+  it("waits for the empty check before Add can be pressed", async () => {
+    state.candidates = [];
+    state.specweaveSetUp = true;
+    await mountImport();
+    await act(async () => folderChoice.props!.onFolderChange("/work/site"));
+    await act(async () => box().onStartWithSpecweave!(null));
+    expect(button("Add site").props.disabled).toBe(true);
+    await act(async () => box().onStartWithSpecweave!(true));
+    expect(button("Add site").props.disabled).not.toBe(true);
+  });
+
+  it("offers no box where the server cannot set SpecWeave up", async () => {
+    state.candidates = [];
+    await mountImport();
+    expect(box().specweaveSetUp).toBe(false);
+  });
 });

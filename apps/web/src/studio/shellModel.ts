@@ -18,7 +18,7 @@ import {
   threadHeldQueue,
 } from "./projectWorkspaceModel";
 import type { MachineReachState } from "@specweave-studio/client-runtime/connection";
-import { hostDownWord } from "../lib/machineStatus";
+import { hostDownWord, type HostDownNote } from "../lib/machineStatus";
 import { approvalWaitLabel } from "./accessWait";
 import { blockerAsk } from "@specweave-studio/shared/attentionAsk";
 
@@ -332,6 +332,16 @@ export type ChatGroup = {
   readonly threads: readonly EnvironmentThreadShell[];
 };
 
+/**
+ * A status group's heading (1417). The "Offline" group holds threads of every
+ * machine this window cannot reach, a running one included (signed out of
+ * Connect, or only this window cut off), so its heading says that; each row
+ * says why. The key stays "Offline", so folded groups keep their state.
+ */
+export function threadGroupHeading(group: string): string {
+  return group === "Offline" ? "Not reachable from here" : group;
+}
+
 const STATUS_GROUP_ORDER: readonly ProjectThreadGroup[] = [
   "Needs you",
   "Working",
@@ -406,7 +416,8 @@ export function buildChatGroups(
         labels.set(key, input.machine?.(thread).label ?? thread.environmentId);
     }
   }
-  const labelOf = (key: string) => labels.get(key) ?? key;
+  const labelOf = (key: string) =>
+    labels.get(key) ?? (options.groupBy === "status" ? threadGroupHeading(key) : key);
   const fixed: readonly string[] | null =
     options.groupBy === "date"
       ? DATE_BUCKETS
@@ -646,10 +657,12 @@ export function threadStatusWord(
   hostReach?: MachineReachState,
   /** The fleet says the host's address now answers as a different SpecWithCode. */
   hostIdentityMismatch = false,
+  /** Why the host is out of reach beyond its reach state ("Needs sign-in"). */
+  hostNote: HostDownNote | null = null,
 ): string | null {
   if (threadTone(thread, hostOffline) === "resolved") return null;
   // Its last known state is stale; "Blocked" or "Working" would be a guess.
-  if (hostOffline) return hostDownWord(hostReach, hostIdentityMismatch);
+  if (hostOffline) return hostDownWord(hostReach, hostIdentityMismatch, hostNote);
   const status = resolveSidebarThreadStatus(thread);
   if (status === "approval" && thread.source?.pendingRuntimeRequest !== null)
     return approvalWaitLabel(thread);

@@ -881,6 +881,12 @@ export const ServerConfig = Schema.Struct({
    * exists. Older servers drop the field silently, so clients hide the option.
    */
   specweaveSetUp: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Whether projects.createNew accepts `sample: "first-feature"` and
+   * projects.firstFeatureGuide exists (1398). Without it clients show no first
+   * feature offer and never send `sample`.
+   */
+  firstFeatureSample: Schema.optionalKey(Schema.Boolean),
   /** Whether thread reads accept the reasoningMessages opt-in. */
   reasoningMessages: Schema.optionalKey(Schema.Boolean),
   /**
