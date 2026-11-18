@@ -94,11 +94,11 @@ const FETCH_ARGS = [
  * branches where a fetch writes, so Sync leaves it alone and says so.
  */
 export function unusualFetchConfig(input: {
-  readonly mirror: string;
+  /** `remote.origin.mirror` as Git reads it; a value Git cannot read as true or false counts as set. */
+  readonly mirror: boolean;
   readonly refspecs: ReadonlyArray<string>;
 }): string | null {
-  if (/^(true|yes|on|1|fetch|push)$/iu.test(input.mirror.trim()))
-    return "origin is set up as a mirror (remote.origin.mirror).";
+  if (input.mirror) return "origin is set up as a mirror (remote.origin.mirror).";
   for (const line of input.refspecs) {
     const refspec = line.trim();
     // `^refs/…` leaves refs out and has no destination.
@@ -121,15 +121,35 @@ export function unusualFetchConfig(input: {
  */
 const isLocalAddress = (canonical: string) => {
   if (canonical.startsWith("file://")) return true;
-  const host = (canonical.split("/")[0] ?? "").replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
+  const host = normalHost(
+    (canonical.split("/")[0] ?? "").replace(/:\d+$/, "").replace(/^\[|\]$/g, ""),
+  );
   return (
     host === "localhost" ||
     host.endsWith(".localhost") ||
-    host === "::1" ||
-    host === "0.0.0.0" ||
-    /^127(\.\d{1,3}){3}$/.test(host)
+    // 127.0.0.0/8 and 0.0.0.0/8, which a machine reads as itself.
+    /^(127|0)(\.\d{1,3}){3}$/.test(host) ||
+    // `::1`, `::`, and an IPv4 loopback address written inside an IPv6 one.
+    /^::(1|(ffff:)?(7f[0-9a-f]{2}:[0-9a-f]{1,4}|0:0)|ffff:0:0)?$/.test(host)
   );
 };
+
+/**
+ * A host as the network reads it: lower case, no trailing dot, and an address
+ * in its one usual spelling, so `127.1`, `2130706433`, `0x7f000001` and
+ * `0177.0.0.1` all read `127.0.0.1` and `0:0:0:0:0:0:0:1` reads `::1`.
+ */
+function normalHost(written: string): string {
+  const host = written.toLowerCase().replace(/\.+$/, "");
+  try {
+    return new URL(`http://${host.includes(":") ? `[${host}]` : host}/`).hostname.replace(
+      /^\[|\]$|\.+$/g,
+      "",
+    );
+  } catch {
+    return host;
+  }
+}
 
 /**
  * The marks of an unfinished operation, plus the one Git keeps while a
@@ -259,10 +279,15 @@ export async function readRepositoryFacts(
   if (hasOrigin) {
     const [refspecs, mirror] = await Promise.all([
       read(git, cwd, ["config", "--get-all", "remote.origin.fetch"]),
-      read(git, cwd, ["config", "--get-all", "remote.origin.mirror"]),
+      // As Git reads it: any true value, also a bare key. Exit 1 means it is not set.
+      git(cwd, ["config", "--get-all", "--bool", "remote.origin.mirror"], {
+        allowFailure: true,
+        timeoutMs: LOCAL_MS,
+      }),
     ]);
     const unusual = unusualFetchConfig({
-      mirror: mirror.ok ? (mirror.text.split("\n").at(-1) ?? "") : "",
+      mirror:
+        mirror.code === 0 ? mirror.stdout.trim().split("\n").at(-1) !== "false" : mirror.code !== 1,
       refspecs: refspecs.ok ? refspecs.text.split("\n") : [],
     });
     if (unusual !== null) {
@@ -284,23 +309,21 @@ export async function readRepositoryFacts(
     if (fetched.code !== 0) fetchError = gitReason(fetched.stderr);
   }
   const { branch, head } = await branchAndHead(git, cwd);
-  const upstream =
-    branch === null
-      ? { ok: false, text: "" }
-      : await read(git, cwd, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]);
+  const upstream = branch === null ? null : await originUpstream(git, cwd);
   let ahead = 0;
   let behind = 0;
   let upstreamName: string | null = null;
-  if (upstream.ok && upstream.text.length > 0 && head !== null) {
+  if (upstream?.commit != null && head !== null) {
+    // Counted against the commit `origin`'s branch is at, by its hash.
     const counted = await read(git, cwd, [
       "rev-list",
       "--left-right",
       "--count",
-      "HEAD...@{upstream}",
+      `${head}...${upstream.commit}`,
     ]);
     const [left, right] = counted.text.split(/\s+/).map(Number);
     if (counted.ok && Number.isInteger(left) && Number.isInteger(right)) {
-      upstreamName = upstream.text.slice(0, 512);
+      upstreamName = upstream.name.slice(0, 512);
       ahead = left!;
       behind = right!;
     }
@@ -311,6 +334,7 @@ export async function readRepositoryFacts(
     branch,
     head,
     upstream: upstreamName,
+    otherUpstream: upstream?.commit === null ? upstream.name.slice(0, 512) : null,
     ahead,
     behind,
     // A status Git could not read is never treated as clean.
@@ -321,6 +345,29 @@ export async function readRepositoryFacts(
     fetch,
     fetchError,
   };
+}
+
+const ORIGIN_REFS = "refs/remotes/origin/";
+
+/**
+ * The branch's upstream, only when it is a branch of `origin`: the one remote
+ * Sync fetches. `commit` is where that branch is now. An upstream that is a
+ * local branch (`branch.x.remote=.`) or a branch of another remote was not
+ * fetched by Sync, so it has no `commit` here and is never moved forward to;
+ * its name is kept for the step's reason.
+ */
+async function originUpstream(
+  git: SyncGit,
+  cwd: string,
+): Promise<{ readonly name: string; readonly commit: string | null } | null> {
+  const full = await read(git, cwd, ["rev-parse", "--symbolic-full-name", "@{upstream}"]);
+  if (!full.ok || !full.text.startsWith("refs/") || full.text.includes("\n")) return null;
+  if (!full.text.startsWith(ORIGIN_REFS))
+    return { name: full.text.replace(/^refs\/(heads|remotes)\//, ""), commit: null };
+  const commit = await read(git, cwd, ["rev-parse", "-q", "--verify", `${full.text}^{commit}`]);
+  return commit.ok && SHA.test(commit.text)
+    ? { name: full.text.slice("refs/remotes/".length), commit: commit.text }
+    : null;
 }
 
 /** The address when another machine can clone from it: no credential, no folder of this machine. */
@@ -365,13 +412,9 @@ export async function fastForwardRepository(
   const facts = await readRepositoryFacts(context, repository, { fetch: false });
   const planned = result(facts, otherBranch);
   if (planned.action !== "fast-forward") return { ...planned, downgraded: true };
-  const target = await read(git, repository.cwd, [
-    "rev-parse",
-    "-q",
-    "--verify",
-    "@{upstream}^{commit}",
-  ]);
-  if (!target.ok || !SHA.test(target.text)) {
+  // The commit `origin`'s branch is at, by its hash: never whatever `@{upstream}` names.
+  const target = (await originUpstream(git, repository.cwd))?.commit ?? null;
+  if (target === null) {
     return { ...planned, action: "fetch", reason: "no-upstream", downgraded: true };
   }
   // Asked once more, with nothing but the merge left to run: a thread that started
@@ -389,11 +432,11 @@ export async function fastForwardRepository(
   const merged = await git(
     repository.cwd,
     // Ignored files in the way stop the merge instead of being written over.
-    ["merge", "--ff-only", "--no-edit", "--no-overwrite-ignore", "--quiet", target.text],
+    ["merge", "--ff-only", "--no-edit", "--no-overwrite-ignore", "--quiet", target],
     { allowFailure: true, timeoutMs: FETCH_MS },
   );
   const after = await branchAndHead(git, repository.cwd);
-  if (merged.code !== 0 || after.head !== target.text) {
+  if (merged.code !== 0 || after.head !== target) {
     return {
       ...planned,
       action: "fetch",
@@ -407,8 +450,9 @@ export async function fastForwardRepository(
 
 /**
  * Clones a repository this machine lacks into its place in the project folder.
- * The folder must not exist: it is created exclusively, so nothing there is
- * ever written over. A remote that carries a credential, names a transport
+ * The folder must not exist. The clone is made in a new folder beside it and
+ * moved in when it is whole, so nothing at the target is ever written over or
+ * deleted, also not what appears there while the clone runs. A remote that carries a credential, names a transport
  * other than https, ssh or git, or is a folder or `file://` address (a place
  * on one machine only) is refused. A clone that fails or is cancelled leaves
  * no folder behind.
@@ -451,6 +495,7 @@ export async function cloneRepository(
     return refuse('A folder is already there. Use "Compare all files…".');
   /** The folders this call made on the way, innermost last: removed again when nothing is cloned. */
   const made: Array<string> = [];
+  let staging = "";
   const undo = async () => {
     for (const folder of made.toReversed()) await NodeFSP.rmdir(folder).catch(() => undefined);
   };
@@ -471,15 +516,23 @@ export async function cloneRepository(
         return refuse("The folder's path leaves the project folder.");
       }
     }
-    await NodeFSP.mkdir(target);
+    // The clone is made beside its place, in a folder only this call knows, and moved
+    // in when it is whole: nothing a person puts at the target meanwhile is ever touched.
+    staging = await NodeFSP.mkdtemp(
+      NodePath.join(NodePath.dirname(target), `.swc-clone-${NodePath.basename(target)}-`),
+    );
   } catch {
     await undo();
     return refuse("The folder could not be created.");
   }
+  const discard = async () => {
+    await NodeFSP.rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    await undo();
+  };
   const cloned = await context
     // The remote is always named origin, whatever `clone.defaultRemoteName` says.
     .git(
-      target,
+      staging,
       [
         "clone",
         "--quiet",
@@ -502,12 +555,21 @@ export async function cloneRepository(
       stderr: cause instanceof Error ? cause.message : "The clone did not finish.",
     }));
   if (cloned.code !== 0) {
-    // The folder this call created exclusively: all that is in it is this clone's.
-    await NodeFSP.rm(target, { recursive: true, force: true }).catch(() => undefined);
-    await undo();
+    await discard();
     return refuse(
       context.signal?.aborted === true ? "The clone was cancelled." : gitReason(cloned.stderr),
     );
+  }
+  // Moved in only where nothing is: a folder or file that appeared at the target stays.
+  const moved =
+    (await NodeFSP.lstat(target).catch(() => null)) === null &&
+    (await NodeFSP.rename(staging, target).then(
+      () => true,
+      () => false,
+    ));
+  if (!moved) {
+    await discard();
+    return refuse('A folder is already there. Use "Compare all files…".');
   }
   const { branch } = await branchAndHead(context.git, target);
   return step({ branch });
@@ -536,14 +598,19 @@ export function isGitFolderName(name: string): boolean {
  */
 export function threadUsesCheckout(input: {
   readonly threadFolder: string;
-  /** `git rev-parse --show-toplevel` of the thread's folder, when it is inside a checkout. */
+  /** `git rev-parse --show-toplevel` of the thread's folder; null when Git could not read it. */
   readonly threadCheckout: string | null;
   readonly checkout: string;
 }): boolean {
   const { threadFolder, checkout } = input;
   if (threadFolder === checkout) return true;
   if (checkout.startsWith(`${threadFolder}${NodePath.sep}`)) return true;
-  return threadFolder.startsWith(`${checkout}${NodePath.sep}`) && input.threadCheckout === checkout;
+  // A subfolder whose checkout could not be read is taken for part of this one: nothing
+  // moves on a guess.
+  return (
+    threadFolder.startsWith(`${checkout}${NodePath.sep}`) &&
+    (input.threadCheckout === checkout || input.threadCheckout === null)
+  );
 }
 
 async function inParallel<A, B>(items: ReadonlyArray<A>, run: (item: A) => Promise<B>) {
