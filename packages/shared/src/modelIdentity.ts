@@ -18,7 +18,7 @@ type ModelNames = Pick<ServerProviderModel, "slug"> &
  * dropped: "auto", "default" or "opus" name different models on different
  * providers, while "claude-opus-5-5" names one.
  */
-function identityKey(spelling: string): string | null {
+export function identityKey(spelling: string): string | null {
   const key = spelling
     .trim()
     .toLowerCase()

@@ -9,6 +9,7 @@
  * @module adversarialReview
  */
 import type {
+  ModelRoutes,
   ModelSelection,
   ProviderInstanceId,
   ProviderModelTier,
@@ -24,6 +25,7 @@ import {
 } from "./modelTracks.ts";
 import { type ModelFamily, modelFamily } from "./fallbackOptions.ts";
 import { describeModel, isSameModel, sameModelOn } from "./modelIdentity.ts";
+import { applyRoute, routeFor } from "./modelRoutes.ts";
 import { fallbackSelectionKey, tierModelFor } from "./modelTiers.ts";
 import {
   describeFallbackOrder,
@@ -80,6 +82,8 @@ export function defaultReviewerChain(input: {
   readonly tiers?: ProviderModelTiers | undefined;
   /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
+  /** Per-model routes (`modelRoutes`): a dropped source never reviews that model, a pinned one alone does. */
+  readonly routes?: ModelRoutes | null | undefined;
 }): ReadonlyArray<ModelSelection> {
   const picks = input.providers
     .filter((provider) => provider.enabled)
@@ -97,7 +101,7 @@ export function defaultReviewerChain(input: {
   // The track names everyday reviewers; a frontier review keeps each provider's frontier model.
   const track =
     input.tier === "regular"
-      ? defaultTrackSelections("review", input.providers, input.sourceOrder)
+      ? defaultTrackSelections("review", input.providers, input.sourceOrder, input.routes)
       : [];
   return [...track, ...byFamily].filter((entry) => {
     const key = fallbackSelectionKey(entry);
@@ -125,6 +129,8 @@ export function reviewerOrderGroups(input: {
   readonly tiers?: ProviderModelTiers | undefined;
   /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
+  /** Per-model routes (`modelRoutes`): a dropped source never reviews that model, a pinned one alone does. */
+  readonly routes?: ModelRoutes | null | undefined;
 }): ReadonlyArray<ReviewerOrderGroup> {
   // A listed reviewer without an effort runs at Medium, as the Models page shows it.
   const base =
@@ -150,15 +156,29 @@ export function reviewerOrderGroups(input: {
       entry.model,
     );
     const alternates: ModelSelection[] = [];
-    // The same ranking the Models page shows: the saved Sources order, then the maker's harness.
-    for (const { provider, slug } of providersForModel({
-      providers: input.providers,
-      model: names,
-      order: input.sourceOrder,
-      // The built-in order stands for each model's whole family; a listed reviewer for itself.
-      family: input.reviewers.length === 0,
-    })) {
-      if (provider.instanceId === entry.instanceId) continue;
+    const route = routeFor(input.routes, names);
+    const ranked = applyRoute(
+      // The same ranking the Models page shows: the saved Sources order, then the maker's harness.
+      providersForModel({
+        providers: input.providers,
+        model: names,
+        order: input.sourceOrder,
+        // The built-in order stands for each model's whole family; a listed reviewer for itself.
+        family: input.reviewers.length === 0,
+      }),
+      route,
+    );
+    // A route that drops the entry's own source, or pins another, moves the model to its alternates.
+    const ownKept =
+      route === null ||
+      (!route.dropped.includes(entry.instanceId) &&
+        (!route.pinned || route.order[0] === entry.instanceId));
+    let ownSlot = 0;
+    for (const { provider, slug } of ranked) {
+      if (provider.instanceId === entry.instanceId) {
+        ownSlot = alternates.length;
+        continue;
+      }
       // The entry's effort goes with it, matched to the levels that source offers.
       const alternate = trackAlternate(
         entry,
@@ -168,7 +188,13 @@ export function reviewerOrderGroups(input: {
       if (listed.has(fallbackSelectionKey(alternate))) continue;
       if (claim(alternate)) alternates.push(alternate);
     }
-    groups.push({ primary: entry, alternates });
+    // A route with its own order decides where the entry's source stands among the others.
+    const sequence = !ownKept
+      ? alternates
+      : route !== null && route.order.length > 0
+        ? [...alternates.slice(0, ownSlot), entry, ...alternates.slice(ownSlot)]
+        : [entry, ...alternates];
+    if (sequence.length > 0) groups.push({ primary: sequence[0]!, alternates: sequence.slice(1) });
   }
   return groups;
 }
@@ -181,6 +207,8 @@ export function reviewerChain(input: {
   readonly tiers?: ProviderModelTiers | undefined;
   /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
+  /** Per-model routes (`modelRoutes`): a dropped source never reviews that model, a pinned one alone does. */
+  readonly routes?: ModelRoutes | null | undefined;
 }): ReadonlyArray<ModelSelection> {
   return reviewerOrderGroups(input).flatMap((group) => [group.primary, ...group.alternates]);
 }
@@ -223,6 +251,8 @@ export function describeReviewerOrder(input: {
   readonly tiers?: ProviderModelTiers | undefined;
   /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
+  /** Per-model routes (`modelRoutes`): a dropped source never reviews that model, a pinned one alone does. */
+  readonly routes?: ModelRoutes | null | undefined;
   readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
   readonly nowMs: number;
 }): ReviewerOrderView {
@@ -289,6 +319,8 @@ export function resolveReviewer(input: {
   readonly tiers?: ProviderModelTiers | undefined;
   /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
+  /** Per-model routes (`modelRoutes`): a dropped source never reviews that model, a pinned one alone does. */
+  readonly routes?: ModelRoutes | null | undefined;
   readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
   readonly nowMs: number;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;

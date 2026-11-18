@@ -13,7 +13,6 @@
  * @module AccessRequests
  */
 import {
-  type AccessGrant,
   type AccessGrantListResult,
   AccessRequestError,
   type AccessRequestAnswerInput,
@@ -171,18 +170,18 @@ const make = Effect.gen(function* () {
         const grantedAt = DateTime.formatIso(yield* DateTime.now);
         // An expired thread grant is given again, not taken as already there.
         const current = scope === "machine" ? grants.machine : yield* currentThreadGrants(threadId);
-        const added: Array<AccessGrant> = subjects
+        const added: Array<typeof StoredGrant.Type> = subjects
           .filter(
             (subject, index) =>
               !grantedIn(current, subject.key) &&
               subjects.findIndex((other) => other.key === subject.key) === index,
           )
-          .map((subject) => ({
-            kind: subject.kind,
-            key: subject.key,
-            label: subject.label,
-            grantedAt,
-          }));
+          // A model's route keeps the answer for a paid source, never a grant.
+          .flatMap((subject) =>
+            subject.kind === "source"
+              ? []
+              : [{ kind: subject.kind, key: subject.key, label: subject.label, grantedAt }],
+          );
         if (added.length === 0) return [] as ReadonlyArray<string>;
         const nextList = [...current, ...added];
         yield* save(
@@ -200,7 +199,7 @@ const make = Effect.gen(function* () {
       : writeLock
           .withPermits(1)(
             Effect.gen(function* () {
-              const drop = (list: ReadonlyArray<AccessGrant>) =>
+              const drop = (list: ReadonlyArray<typeof StoredGrant.Type>) =>
                 list.filter((entry) => !keys.includes(entry.key));
               yield* save(
                 scope === "machine"

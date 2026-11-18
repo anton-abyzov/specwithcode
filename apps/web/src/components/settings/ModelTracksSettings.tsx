@@ -3,6 +3,8 @@ import {
   MAX_LANE_MODELS,
   MODEL_TRACK_LABELS,
   type ModelLanes,
+  type ModelRoute,
+  type ModelRoutes,
   type ModelSelection,
   type ModelTrack,
   type ProviderInstanceId,
@@ -17,6 +19,7 @@ import {
   withEffortSelection,
 } from "@specweave-studio/shared/effortLevel";
 import { describeModel } from "@specweave-studio/shared/modelIdentity";
+import { withModelRoute } from "@specweave-studio/shared/modelRoutes";
 import {
   addTrackEntry,
   describeTrack,
@@ -28,8 +31,8 @@ import {
   type TrackSource,
 } from "@specweave-studio/shared/modelTrackRules";
 import { TRACK_LANES, trackEntryEffort } from "@specweave-studio/shared/modelTracks";
-import { XIcon } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react";
+import { Fragment, type ReactNode, useState } from "react";
 
 import { useTx } from "../../i18n";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
@@ -47,6 +50,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Card, Note, SortableList, SortableRow, statusChip } from "./ModelListParts";
+import { ModelRoutePanel } from "./ModelRouteCard";
 import { MissingTrackSource, SourcesCard } from "./ModelSourcesCard";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, useRelativeTimeTick } from "./settingsLayout";
@@ -215,16 +219,21 @@ function TrackCard(props: {
   /** A line under the list, such as when the track applies. */
   readonly note?: ReactNode;
   readonly onSave: (models: ReadonlyArray<ModelSelection>) => void;
+  /** Per-model routes, kept for the whole machine; null where this page cannot change them. */
+  readonly routes?: ModelRoutes | undefined;
+  readonly onSaveRoute?: ((row: TrackRow, route: ModelRoute) => void) | undefined;
 }) {
   const tx = useTx();
   const { track, saved, providers } = props;
   const [refusal, setRefusal] = useState<TrackEntryRefusal | null>(null);
+  const [opened, setOpened] = useState<string | null>(null);
   const rows = describeTrack({
     track,
     saved,
     providers,
     sourceOrder: props.sourceOrder,
     nowMs: props.nowMs,
+    routes: props.routes,
   });
   const title = MODEL_TRACK_LABELS[track];
   // Reordering or removing a built-in row saves the list as the person's own.
@@ -263,110 +272,153 @@ function TrackCard(props: {
     >
       <SortableList label={`${title} ${tx("order")}`} ids={movable.map(key)} onMove={move}>
         {rows.map((row, index) => (
-          <SortableRow
-            key={key(row)}
-            id={key(row)}
-            position={index + 1}
-            label={row.name}
-            locked={row.selection === null}
-          >
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="truncate text-sm font-medium">{row.name}</span>
-                {row.selection !== null &&
-                rows.findIndex((entry) => entry.selection !== null) === index ? (
-                  <Badge variant="outline" size="sm">
-                    {tx(TRACK_FIRST[track])}
-                  </Badge>
-                ) : null}
-                {row.free ? (
-                  <Badge variant="info" size="sm">
-                    {tx("Free, used last")}
-                  </Badge>
-                ) : null}
-                {row.misplaced ? (
-                  <Badge variant="warning" size="sm">
-                    {tx("Free model: remove it, hard work waits for a reset")}
-                  </Badge>
-                ) : null}
-                {row.follows !== null ? (
-                  <Badge variant="outline" size="sm">
-                    {`${tx("Follows newest")}: ${followsName(row, providers)}`}
-                  </Badge>
-                ) : null}
-              </div>
-              <ul
-                aria-label={`${tx("Sources for")} ${row.name}`}
-                className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
-              >
-                {row.sources.length === 0 ? (
-                  props.environmentId === null ? (
-                    <li>
-                      <Badge variant="outline" size="sm">
-                        {tx("Not installed")}
-                      </Badge>{" "}
-                      {tx("No source on this machine lists it.")}
-                    </li>
-                  ) : (
-                    <MissingTrackSource
-                      environmentId={props.environmentId}
-                      providers={providers}
-                      model={row.model}
-                      pinned={row.selection?.instanceId ?? null}
-                      nowMs={props.nowMs}
-                      sourceName={props.sourceName}
-                      configuredAgents={props.configuredAgents}
-                    />
-                  )
-                ) : (
-                  row.sources.map((source, at) => {
-                    const chip = statusChip(source.status, tx);
-                    const hold = holdNote(source, track, tx);
-                    return (
-                      <li key={source.provider.instanceId} className="flex items-center gap-1">
-                        {at > 0 && source.used ? <span aria-hidden>{tx("then")}</span> : null}
-                        <span className="text-foreground">{props.sourceName(source.provider)}</span>
-                        {source.used ? (
-                          <Badge variant={chip.variant} size="sm">
-                            {chip.label}
-                          </Badge>
-                        ) : null}
-                        {hold !== null ? (
-                          <Badge variant="warning" size="sm">
-                            {hold}
-                          </Badge>
-                        ) : null}
+          <Fragment key={key(row)}>
+            <SortableRow
+              id={key(row)}
+              position={index + 1}
+              label={row.name}
+              locked={row.selection === null}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="truncate text-sm font-medium">{row.name}</span>
+                  {row.selection !== null &&
+                  rows.findIndex((entry) => entry.selection !== null) === index ? (
+                    <Badge variant="outline" size="sm">
+                      {tx(TRACK_FIRST[track])}
+                    </Badge>
+                  ) : null}
+                  {row.free ? (
+                    <Badge variant="info" size="sm">
+                      {tx("Free, used last")}
+                    </Badge>
+                  ) : null}
+                  {row.misplaced ? (
+                    <Badge variant="warning" size="sm">
+                      {tx("Free model: remove it, hard work waits for a reset")}
+                    </Badge>
+                  ) : null}
+                  {row.follows !== null ? (
+                    <Badge variant="outline" size="sm">
+                      {`${tx("Follows newest")}: ${followsName(row, providers)}`}
+                    </Badge>
+                  ) : null}
+                  {row.route !== null ? (
+                    <Badge variant="outline" size="sm">
+                      {tx("Your route")}
+                    </Badge>
+                  ) : null}
+                </div>
+                <ul
+                  aria-label={`${tx("Sources for")} ${row.name}`}
+                  className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+                >
+                  {row.sources.length === 0 ? (
+                    props.environmentId === null ? (
+                      <li>
+                        <Badge variant="outline" size="sm">
+                          {tx("Not installed")}
+                        </Badge>{" "}
+                        {tx("No source on this machine lists it.")}
                       </li>
-                    );
-                  })
-                )}
-              </ul>
-            </div>
-            <TrackEffortSelect
-              selection={row.selection}
-              effort={row.effort}
-              sources={row.sources}
-              providers={providers}
-              label={`${tx("Effort for")} ${row.name}`}
-              disabled={props.mixed}
-              onChange={(selection) =>
-                props.onSave(
-                  current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
-                )
-              }
-            />
-            {row.selection !== null ? (
-              <Button
-                type="button"
-                variant="ghost-muted"
-                size="icon-xs"
-                aria-label={`${tx("Remove")} ${row.name}`}
-                onClick={() => props.onSave(current.filter((_, at) => at !== movable.indexOf(row)))}
-              >
-                <XIcon className="size-3" />
-              </Button>
+                    ) : (
+                      <MissingTrackSource
+                        environmentId={props.environmentId}
+                        providers={providers}
+                        model={row.model}
+                        pinned={row.selection?.instanceId ?? null}
+                        nowMs={props.nowMs}
+                        sourceName={props.sourceName}
+                        configuredAgents={props.configuredAgents}
+                      />
+                    )
+                  ) : (
+                    row.sources.map((source, at) => {
+                      const chip = statusChip(source.status, tx);
+                      const hold = holdNote(source, track, tx);
+                      return (
+                        <li key={source.provider.instanceId} className="flex items-center gap-1">
+                          {at > 0 && source.used ? <span aria-hidden>{tx("then")}</span> : null}
+                          <span className="text-foreground">
+                            {props.sourceName(source.provider)}
+                          </span>
+                          {source.ask ? (
+                            <Badge variant="warning" size="sm">
+                              {tx("Asks first")}
+                            </Badge>
+                          ) : source.used ? (
+                            <Badge variant={chip.variant} size="sm">
+                              {chip.label}
+                            </Badge>
+                          ) : null}
+                          {hold !== null && !source.ask ? (
+                            <Badge variant="warning" size="sm">
+                              {hold}
+                            </Badge>
+                          ) : null}
+                        </li>
+                      );
+                    })
+                  )}
+                </ul>
+              </div>
+              <TrackEffortSelect
+                selection={row.selection}
+                effort={row.effort}
+                sources={row.sources}
+                providers={providers}
+                label={`${tx("Effort for")} ${row.name}`}
+                disabled={props.mixed}
+                onChange={(selection) =>
+                  props.onSave(
+                    current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
+                  )
+                }
+              />
+              {props.onSaveRoute !== undefined ? (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant={opened === key(row) ? "default" : "outline"}
+                  aria-expanded={opened === key(row)}
+                  aria-label={`${tx("Route for")} ${row.name}`}
+                  onClick={() => setOpened(opened === key(row) ? null : key(row))}
+                >
+                  {tx("Route")}
+                  {opened === key(row) ? (
+                    <ChevronUpIcon className="size-3" />
+                  ) : (
+                    <ChevronDownIcon className="size-3" />
+                  )}
+                </Button>
+              ) : null}
+              {row.selection !== null ? (
+                <Button
+                  type="button"
+                  variant="ghost-muted"
+                  size="icon-xs"
+                  aria-label={`${tx("Remove")} ${row.name}`}
+                  onClick={() =>
+                    props.onSave(current.filter((_, at) => at !== movable.indexOf(row)))
+                  }
+                >
+                  <XIcon className="size-3" />
+                </Button>
+              ) : null}
+            </SortableRow>
+            {opened === key(row) && props.onSaveRoute !== undefined ? (
+              <li className="border-b border-border/70 last:border-b-0">
+                <ModelRoutePanel
+                  environmentId={props.environmentId}
+                  row={row}
+                  providers={providers}
+                  nowMs={props.nowMs}
+                  sourceName={props.sourceName}
+                  onSave={(route) => props.onSaveRoute?.(row, route)}
+                />
+              </li>
             ) : null}
-          </SortableRow>
+          </Fragment>
         ))}
       </SortableList>
       <div className="flex flex-wrap items-center gap-2 border-t border-border/70 px-3 py-2">
@@ -412,7 +464,7 @@ function TrackCard(props: {
  */
 export function ModelTracksSettings({ sources = true }: { readonly sources?: boolean } = {}) {
   const tx = useTx();
-  const { target } = useSettingsScope();
+  const { target, scope } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { environments } = useEnvironments();
@@ -454,6 +506,13 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
     entries.find((entry) => entry.instanceId === provider.instanceId)?.displayName ??
     provider.displayName ??
     provider.instanceId;
+  // Routes are kept for the whole machine, so they change only where the machine's settings do.
+  const machineScope = scope.kind === "environment" || scope.kind === "all";
+  const routes = settings.modelRoutes ?? {};
+  const saveRoute = (row: TrackRow, route: ModelRoute) =>
+    updateSettings({
+      modelRoutes: withModelRoute(routes, { slug: row.model, name: row.name }, route),
+    });
   const pickerSelection = resolveDefaultProviderModelSelection(providers, saved.daily[0] ?? null);
   const picker =
     (track: ModelTrack) => (onPick: (selection: ModelSelection) => void, disabled: boolean) =>
@@ -484,6 +543,8 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
       {(["daily", "complex", "review"] as const).map((track) => (
         <TrackCard
           key={track}
+          routes={routes}
+          onSaveRoute={machineScope ? saveRoute : undefined}
           environmentId={target?.environmentId ?? null}
           configuredAgents={configuredAgents}
           track={track}

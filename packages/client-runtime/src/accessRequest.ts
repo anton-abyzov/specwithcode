@@ -23,6 +23,14 @@ export const ACCESS_REQUEST_SCOPES: ReadonlyArray<{
 export const ACCESS_REQUEST_FOOTNOTE =
   "You can take back an Always grant in Settings → Integrations.";
 
+/** The footnote on a card that asks to run a model on a paid source. */
+export const ACCESS_SOURCE_FOOTNOTE =
+  "You can take it back in Settings → Models, in the model's route.";
+
+/** Whether a card asks only to run models on paid sources: its buttons read "once" and "for this model". */
+export const asksForSources = (subjects: ReadonlyArray<Pick<AccessRequestSubject, "kind">>) =>
+  subjects.length > 0 && subjects.every((subject) => subject.kind === "source");
+
 /** What an access request card shows: the choice while pending, otherwise a one-line outcome. */
 export type AccessRequestDisplay =
   | { readonly kind: "pending" }
@@ -78,6 +86,7 @@ export function accessSubjectGlyph(subject: AccessRequestSubject): AccessSubject
       if (subject.platform === "android") return "android";
       return /\bipad\b/i.test(subject.label) ? "tablet" : "phone";
     case "machine":
+    case "source":
       return "machine";
     case "folder":
       return "folder";
@@ -177,6 +186,9 @@ export function accessRequestNote(subjects: ReadonlyArray<SubjectLike>): string 
   if (isPermissionRequest(subjects)) {
     return "Every agent on this machine, in every project and with every provider, gets this until you turn it off in System Settings.";
   }
+  if (subjects.some((subject) => subject.kind === "source")) {
+    return "Work there is billed per token or its billing is unknown. Nothing runs there until you allow it.";
+  }
   return "The agent can see your screen and click and type in these apps while it works.";
 }
 
@@ -189,6 +201,7 @@ export function accessRequestWaitingSubtitle(subjects: ReadonlyArray<SubjectLike
   if (kinds.size === 1 && kinds.has("folder")) return "Asking to use a folder";
   if (kinds.size === 1 && kinds.has("machine")) return "Asking to work on another machine";
   if (kinds.has("permission")) return "Asking for Full Disk Access";
+  if (kinds.size === 1 && kinds.has("source")) return "Asking to run a model on a paid source";
   return "Asking to use apps on your computer";
 }
 

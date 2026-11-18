@@ -17,7 +17,14 @@ import {
   routingDecisionRequest,
   type RoutingDecision,
 } from "@specweave-studio/shared/decisionModel";
+import { describeModel } from "@specweave-studio/shared/modelIdentity";
 import { classifyLane, resolveLaneRouting } from "@specweave-studio/shared/modelLanes";
+import {
+  allowRouteSource,
+  routeConsent,
+  routeFor,
+  withModelRoute,
+} from "@specweave-studio/shared/modelRoutes";
 import { isHeldSource, launchTrackLanes } from "@specweave-studio/shared/modelTracks";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
@@ -80,6 +87,19 @@ export function autoRoutingApplies(input: {
  * two seconds and any failure keeps the rules' answer. The decision is logged
  * whether or not it moved the worker.
  */
+/** The person's answer to running a model on a paid source its route lists. */
+export type RouteSourceAnswer = "once" | "always" | "no";
+
+/**
+ * Asks the person, on the access card in the calling thread, before a model
+ * first runs on a per-token or unknown-billing source its route lists.
+ */
+export type AskRouteSource = (input: {
+  readonly provider: ServerProvider;
+  readonly model: string;
+  readonly modelName: string;
+}) => Effect.Effect<RouteSourceAnswer>;
+
 export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (input: {
   readonly project: Project;
   readonly baseline: ModelSelection;
@@ -92,6 +112,11 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
   readonly settings?: Option.Option<ServerSettings.ServerSettingsService["Service"]>;
   /** How the decision model is reached; tests pass a fake. */
   readonly decisionFetch?: typeof fetch;
+  /**
+   * Asks before a paid source a model's route lists runs it. Without it
+   * (no thread to ask in) such a source is skipped: nothing paid runs silently.
+   */
+  readonly askRouteSource?: AskRouteSource;
 }) {
   const settings =
     input.settings !== undefined && Option.isSome(input.settings)
@@ -114,6 +139,7 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
           input.providers,
           resolved.defaultModelProviders,
           nowMs,
+          { routes: preferences.modelRoutes, askable: input.askRouteSource !== undefined },
         ),
       }
     : resolved;
@@ -192,25 +218,71 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
     needsLane && decided?.lane != null
       ? { lane: decided.lane.value, probability: decided.lane.probability }
       : null;
-  const lane = lanesSet
-    ? resolveLaneRouting({
-        lanes: rule.modelLanes,
-        preferences: rule.learnedModelPreferences,
-        task: input.task,
-        classification,
-        laneHint: input.laneHint,
-        laneDecision,
-        baseline: input.baseline,
-        providers: input.providers,
-        nowMs,
-        policy: rule.taskRouting,
-        switchAtPercent: rule.providerLimitSwitchAtPercent,
-        limitedInstanceIds: limited,
-        ...(input.runnableInstanceIds === undefined
-          ? {}
-          : { runnableInstanceIds: input.runnableInstanceIds }),
-      })
-    : null;
+  // A paid source the person refused for this launch is passed over, and the lanes resolve again.
+  const refused = new Set<string>();
+  const runnable = (): ReadonlySet<string> | undefined =>
+    refused.size === 0
+      ? input.runnableInstanceIds
+      : new Set(
+          [
+            ...(input.runnableInstanceIds ??
+              input.providers.map((provider) => provider.instanceId as string)),
+          ].filter((instanceId) => !refused.has(instanceId)),
+        );
+  const resolveLane = () =>
+    resolveLaneRouting({
+      lanes: rule.modelLanes,
+      preferences: rule.learnedModelPreferences,
+      task: input.task,
+      classification,
+      laneHint: input.laneHint,
+      laneDecision,
+      baseline: input.baseline,
+      providers: input.providers,
+      nowMs,
+      policy: rule.taskRouting,
+      switchAtPercent: rule.providerLimitSwitchAtPercent,
+      limitedInstanceIds: limited,
+      ...(runnable() === undefined ? {} : { runnableInstanceIds: runnable()! }),
+    });
+  let lane = lanesSet ? resolveLane() : null;
+  while (tracks && lane !== null && lane.found) {
+    const { selection } = lane.decision;
+    const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+    if (provider === undefined) break;
+    const names = describeModel(provider, selection.model);
+    const route = routeFor(preferences.modelRoutes, names);
+    if (routeConsent(route, provider.instanceId, isHeldSource(provider, selection.model)) !== "ask")
+      break;
+    const answer: RouteSourceAnswer =
+      input.askRouteSource === undefined
+        ? "no"
+        : yield* input.askRouteSource({
+            provider,
+            model: selection.model,
+            modelName: names.name ?? selection.model,
+          });
+    if (answer === "always" && Option.isSome(settings)) {
+      const service = settings.value;
+      yield* Effect.gen(function* () {
+        const current = yield* service.getSettings;
+        yield* service.updateSettings({
+          modelRoutes: withModelRoute(
+            current.modelRoutes,
+            names,
+            allowRouteSource(routeFor(current.modelRoutes, names) ?? route, provider.instanceId),
+          ),
+        });
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("project.task-routing.allow-source-failed", { reason: String(error) }),
+        ),
+      );
+    }
+    if (answer !== "no") break;
+    refused.add(provider.instanceId);
+    lane = resolveLane();
+  }
   if (lane !== null) {
     if (!lane.found && lane.baselineUnavailable !== null)
       return yield* new OrchestratorMcpFailure({

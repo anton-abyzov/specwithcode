@@ -5507,4 +5507,30 @@ export const ru: PhraseCatalog = {
   "Not set up on this machine": "На этом компьютере не настроен",
   "Where a model runs, first to last. A source not listed is tried after these.":
     "Где работает модель, от первого к последнему. Источники не из списка пробуются после них.",
+  Subscription: "Подписка",
+  Credits: "Кредиты",
+  "Per token": "Оплата за токены",
+  "Billing unknown": "Оплата неизвестна",
+  "Route for": "Маршрут для",
+  "First to last. Saved for this model on every track.":
+    "Сверху вниз. Действует для этой модели во всех списках.",
+  "Use the automatic order": "Использовать автоматический порядок",
+  "Asks before first run": "Спросит перед первым запуском",
+  "Never run it on": "Никогда не запускать на",
+  "No source here runs this model now.":
+    "Сейчас ни один источник здесь не может запустить эту модель.",
+  "Pinned: only this source runs the model. When it cannot, the next model is tried.":
+    "Закреплено: модель запускает только этот источник. Если он не может, пробуется следующая модель.",
+  "Never runs this model": "Никогда не запускает эту модель",
+  "Never runs this model:": "Никогда не запускает эту модель:",
+  Restore: "Вернуть",
+  "Paid sources": "Платные источники",
+  "Asks before its first run once added.": "После добавления спросит перед первым запуском.",
+  "Available via": "Доступно через",
+  "Usually offers it": "Обычно предлагает",
+  "Your route": "Свой маршрут",
+  "Asks first": "Сначала спросит",
+  Route: "Маршрут",
+  "Allow once": "Разрешить один раз",
+  "Always for this model": "Всегда для этой модели",
 };

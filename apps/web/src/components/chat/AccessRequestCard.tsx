@@ -2,7 +2,9 @@ import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import {
   ACCESS_REQUEST_FOOTNOTE,
+  ACCESS_SOURCE_FOOTNOTE,
   accessRequestAnswerInput,
+  asksForSources,
   accessRequestDisplay,
   accessRequestFailureMessage,
   accessRequestHeadline,
@@ -231,6 +233,9 @@ export function AccessRequestPrompt(props: {
     }
   };
   const describedBy = error !== null ? errorId : undefined;
+  // A paid-source card keeps its answer in the model's route: once, or always for that model.
+  const forSources = asksForSources(item.subjects);
+  const footnote = forSources ? ACCESS_SOURCE_FOOTNOTE : ACCESS_REQUEST_FOOTNOTE;
   const buttonsDisabled = submitting || props.disabled === true;
 
   return (
@@ -296,7 +301,7 @@ export function AccessRequestPrompt(props: {
           aria-describedby={describedBy}
           onClick={() => void send({ type: "allow", scope: "thread" })}
         >
-          {tx("Allow for this session")}
+          {forSources ? tx("Allow once") : tx("Allow for this session")}
         </button>
         <Tooltip>
           <TooltipTrigger
@@ -307,15 +312,15 @@ export function AccessRequestPrompt(props: {
                 disabled={buttonsDisabled}
                 data-access-decision="allow-machine"
                 data-access-scope="machine"
-                aria-description={ACCESS_REQUEST_FOOTNOTE}
+                aria-description={footnote}
                 aria-describedby={describedBy}
                 onClick={() => void send({ type: "allow", scope: "machine" })}
               />
             }
           >
-            {tx("Always allow on this machine")}
+            {forSources ? tx("Always for this model") : tx("Always allow on this machine")}
           </TooltipTrigger>
-          <TooltipPopup>{ACCESS_REQUEST_FOOTNOTE}</TooltipPopup>
+          <TooltipPopup>{footnote}</TooltipPopup>
         </Tooltip>
       </div>
       )}

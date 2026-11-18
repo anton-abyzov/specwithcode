@@ -47,6 +47,7 @@ import {
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { ModelRoutes } from "./modelRoutes.ts";
 import {
   LearnedModelPreferences,
   ModelLanes,
@@ -1986,6 +1987,8 @@ export const ServerSettings = Schema.Struct({
    * every provider that lists the same model.
    */
   defaultModelProviders: DefaultModelProviders.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Per-model routes: where one model may run, in what order (see `ModelRoutes`). */
+  modelRoutes: ModelRoutes.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   defaultRuntimeMode: RuntimeMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
   ),
@@ -2581,6 +2584,7 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   threadModelMode: Schema.optionalKey(ThreadModelMode),
   defaultModelProviders: Schema.optionalKey(DefaultModelProviders),
+  modelRoutes: Schema.optionalKey(ModelRoutes),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   /**
    * Per-project entry replacement: each entry replaces that project's whole

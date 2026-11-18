@@ -35,6 +35,7 @@ import {
   NodeId,
   RuntimeRequestId,
   TurnItemId,
+  accessGrantKey,
   type AccessRequestSubject,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
@@ -1188,8 +1189,10 @@ import {
 } from "../project/ProjectDelegation.ts";
 import { type WorkerLaunch, workerLaunchWithRoom } from "../project/WorkerLaunchRoom.ts";
 import {
+  type AskRouteSource,
   autoRoutingApplies,
   promptWithRoutingNote,
+  type RouteSourceAnswer,
   routeWorkerTask,
   routedSelection,
   routedTarget,
@@ -1218,6 +1221,7 @@ import { fileChangePatchText } from "../orchestration-v2/fileChangePatches.ts";
 import { buildAdvisorBrief } from "../orchestration-v2/AdvisorBrief.ts";
 import { resolveAdvisor } from "@specweave-studio/shared/advisor";
 import { describeModel, isSameModel } from "@specweave-studio/shared/modelIdentity";
+import { modelRouteKey } from "@specweave-studio/shared/modelRoutes";
 import { projectCompatibleProviders } from "../project/ProjectProviderCompatibility.ts";
 import {
   type AdvisorCaller,
@@ -2181,6 +2185,7 @@ const make = Effect.gen(function* () {
         tiers: settings.modelTiers,
         excludedModels: settings.providerLimitExcludedModels,
         sourceOrder: settings.defaultModelProviders,
+        routes: settings.modelRoutes,
         policy: input.policy,
         nowMs,
         limitedInstanceIds: limited,
@@ -2251,6 +2256,8 @@ const make = Effect.gen(function* () {
     readonly providers: ReadonlyArray<ServerProvider>;
     readonly baseline: ResolvedTarget;
     readonly options: WorkerRoutingOptions | undefined;
+    /** Asks in the caller's thread before a paid source a model's route lists runs the worker. */
+    readonly askRouteSource?: AskRouteSource;
   }) =>
     Effect.gen(function* () {
       const unrouted = { target: input.baseline, routing: null as TaskRoutingDecision | null };
@@ -2295,6 +2302,7 @@ const make = Effect.gen(function* () {
         laneHint: input.taskLane,
         runnableInstanceIds: yield* loadOrchestrationCapableInstanceIds(),
         settings: serverSettings,
+        ...(input.askRouteSource === undefined ? {} : { askRouteSource: input.askRouteSource }),
       });
       if (decision === null) return unrouted;
       if (!decision.moved) return { target: input.baseline, routing: decision };
@@ -3032,6 +3040,87 @@ const make = Effect.gen(function* () {
     };
   };
 
+  /** The access card in the caller's thread; `requestAccess` and the paid-source ask both use it. */
+  const requestAccessCard = (scope: McpInvocationScope, input: AccessRequestCardInput) =>
+    Effect.gen(function* () {
+      // The card is shown in, and answered from, the caller's own thread.
+      const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "request_access");
+      const threadId = threadScope.thread.threadId;
+      const run = ThreadManagementService.latestActiveRun(parent);
+      if (
+        run === undefined ||
+        run.rootNodeId === null ||
+        run.providerInstanceId !== threadScope.thread.providerInstanceId
+      ) {
+        const verdict = parentLiveness(threadScope, parent);
+        return yield* failure(
+          "parent_not_active",
+          verdict.live
+            ? "Asking for access needs a live turn of this thread, and this call came between turns. Ask for it in the thread's next turn."
+            : verdict.message,
+        );
+      }
+      const runId = run.id;
+      const nodeId = run.rootNodeId;
+      const subjects = input.subjects as AccessRequestSubject[];
+      if (subjects.length === 0) {
+        return yield* failure("invalid_request", "Name at least one app or device to ask for.");
+      }
+      // The same clientRequestId with other subjects is a new card, never another card's answer.
+      const key = accessRequestKey(yield* requestKey(input.clientRequestId), subjects);
+      const turnItemId = TurnItemId.make(
+        `turn-item:access-request:${stablePart(threadId)}:${stablePart(key)}`,
+      );
+      return yield* waitForAccessRequestCard(
+        {
+          threadManagement,
+          threadId,
+          runId,
+          nodeId,
+          turnItemId,
+          commandId: (accessStatus) =>
+            stableCommandId({ scope, requestKey: key, operation: `access-${accessStatus}` }),
+          timeoutMs: Math.min(input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS, MAX_WAIT_TIMEOUT_MS),
+        },
+        { ...input, subjects: [subjects[0]!, ...subjects.slice(1)] },
+      );
+    }).pipe(Effect.withSpan("OrchestratorMcpService.requestAccess"));
+
+  /** How long a worker launch waits for an answer about a paid source. */
+  const ROUTE_SOURCE_ASK_TIMEOUT_MS = 4 * 60 * 1000;
+
+  /**
+   * Asks in the caller's thread before a model first runs on a per-token or
+   * unknown-billing source its route lists. No answer, or no live turn to
+   * ask in, is a no: the source is skipped.
+   */
+  const routeSourceAsk =
+    (scope: McpInvocationScope): AskRouteSource =>
+    ({ provider, model, modelName }) => {
+      const source = provider.displayName ?? provider.instanceId;
+      return requestAccessCard(scope, {
+        accessTitle: `Run ${modelName} on ${source}`,
+        reason: `${modelName}'s route lists ${source}, which bills per token or does not report its billing.`,
+        subjects: [
+          {
+            kind: "source",
+            key: accessGrantKey(
+              "source",
+              `${provider.instanceId}:${modelRouteKey({ slug: model })}`,
+            ),
+            label: `${modelName} on ${source}`,
+            detail: "Billed per token, or billing unknown",
+          },
+        ],
+        timeoutMs: ROUTE_SOURCE_ASK_TIMEOUT_MS,
+      }).pipe(
+        Effect.map((result): RouteSourceAnswer =>
+          result.status !== "allowed" ? "no" : result.scope === "machine" ? "always" : "once",
+        ),
+        Effect.catch(() => Effect.succeed<RouteSourceAnswer>("no")),
+      );
+    };
+
   return OrchestratorMcpService.of({
     scheduleTask: (scope, input) =>
       Effect.gen(function* () {
@@ -3377,50 +3466,7 @@ const make = Effect.gen(function* () {
         }
         return { status, secretRef: secretRef.value };
       }).pipe(Effect.withSpan("OrchestratorMcpService.requestSecret")),
-    requestAccess: (scope, input) =>
-      Effect.gen(function* () {
-        // The card is shown in, and answered from, the caller's own thread.
-        const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "request_access");
-        const threadId = threadScope.thread.threadId;
-        const run = ThreadManagementService.latestActiveRun(parent);
-        if (
-          run === undefined ||
-          run.rootNodeId === null ||
-          run.providerInstanceId !== threadScope.thread.providerInstanceId
-        ) {
-          const verdict = parentLiveness(threadScope, parent);
-          return yield* failure(
-            "parent_not_active",
-            verdict.live
-              ? "Asking for access needs a live turn of this thread, and this call came between turns. Ask for it in the thread's next turn."
-              : verdict.message,
-          );
-        }
-        const runId = run.id;
-        const nodeId = run.rootNodeId;
-        const subjects = input.subjects as AccessRequestSubject[];
-        if (subjects.length === 0) {
-          return yield* failure("invalid_request", "Name at least one app or device to ask for.");
-        }
-        // The same clientRequestId with other subjects is a new card, never another card's answer.
-        const key = accessRequestKey(yield* requestKey(input.clientRequestId), subjects);
-        const turnItemId = TurnItemId.make(
-          `turn-item:access-request:${stablePart(threadId)}:${stablePart(key)}`,
-        );
-        return yield* waitForAccessRequestCard(
-          {
-            threadManagement,
-            threadId,
-            runId,
-            nodeId,
-            turnItemId,
-            commandId: (accessStatus) =>
-              stableCommandId({ scope, requestKey: key, operation: `access-${accessStatus}` }),
-            timeoutMs: Math.min(input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS, MAX_WAIT_TIMEOUT_MS),
-          },
-          { ...input, subjects: [subjects[0]!, ...subjects.slice(1)] },
-        );
-      }).pipe(Effect.withSpan("OrchestratorMcpService.requestAccess")),
+    requestAccess: requestAccessCard,
     askUser: (scope, input) =>
       Effect.gen(function* () {
         const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "ask_user");
@@ -3621,6 +3667,7 @@ const make = Effect.gen(function* () {
             : yield* routeResolvedTarget({
                 project,
                 parent,
+                askRouteSource: routeSourceAsk(callerScope),
                 requested: input.target,
                 taskClass: input.taskClass,
                 taskLane: input.taskLane,
@@ -4088,6 +4135,7 @@ const make = Effect.gen(function* () {
               const { target, routing } = yield* routeResolvedTarget({
                 project: latest,
                 parent,
+                askRouteSource: routeSourceAsk(callerScope),
                 requested: request.target,
                 taskClass: request.taskClass,
                 taskLane: request.taskLane,

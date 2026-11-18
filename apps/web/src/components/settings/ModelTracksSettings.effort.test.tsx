@@ -27,7 +27,10 @@ vi.mock("./ModelSourcesCard", () => ({
   SourcesCard: () => null,
 }));
 vi.mock("./SettingsScopeContext", () => ({
-  useSettingsScope: () => ({ target: { environmentId: "mac" } }),
+  useSettingsScope: () => ({
+    target: { environmentId: "mac" },
+    scope: { kind: "environment", environmentId: "mac" },
+  }),
 }));
 vi.mock("./settingsLayout", () => ({
   SETTINGS_PICKER_TRIGGER_CLASSNAME: "",

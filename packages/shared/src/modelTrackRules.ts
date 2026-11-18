@@ -11,6 +11,8 @@ import {
   isPaidModelBilling,
   MAX_LANE_MODELS,
   providerModelBilling,
+  type ModelRoute,
+  type ModelRoutes,
   type ModelSelection,
   type ModelTrack,
   type ProviderInstanceId,
@@ -18,6 +20,7 @@ import {
 } from "@specweave-studio/contracts";
 import { modelSelectionEffortValue } from "./effortLevel.ts";
 import { describeModel, isSameModel } from "./modelIdentity.ts";
+import { applyRoute, routeConsent, routeFor } from "./modelRoutes.ts";
 import { newerOfFamily } from "./modelTiers.ts";
 import {
   builtInTrackSelection,
@@ -192,6 +195,8 @@ export interface TrackSource {
    * named, and for any held source in Review, which never reviews on one.
    */
   readonly used: boolean;
+  /** A held source the model's route lists: work starts here only after the person allows it. */
+  readonly ask: boolean;
 }
 
 export interface TrackRow {
@@ -214,6 +219,8 @@ export interface TrackRow {
    * entry's own level (Medium unless it names one), a saved entry's saved one.
    */
   readonly effort: string | null;
+  /** The model's saved route, or null for the automatic order. */
+  readonly route: ModelRoute | null;
 }
 
 /**
@@ -228,47 +235,73 @@ export function describeTrack(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | null | undefined;
   readonly nowMs: number;
+  /** Per-model routes (`modelRoutes`): reorder, drop or pin a model's sources. */
+  readonly routes?: ModelRoutes | null | undefined;
 }): ReadonlyArray<TrackRow> {
   // The order the resolvers walk: the entry's own source (for a built-in row,
   // the best one before room is read), then the others by the Sources order,
   // the maker's harness and, outside Review, the most room. Held sources come
   // last and are never started on unless the person named one.
-  const sourcesOf = (slug: string, free: boolean, named?: ProviderInstanceId) => {
+  const sourcesOf = (
+    slug: string,
+    free: boolean,
+    named: ProviderInstanceId | undefined,
+    route: ModelRoute | null,
+  ) => {
     const ranked = (withRoom: boolean) =>
-      providersForModel({
-        providers: input.providers,
-        model: { slug },
-        order: input.sourceOrder ?? undefined,
-        preferFree: free,
-        // A built-in row runs on whichever release of its family a source lists.
-        family: named === undefined,
-        ...(withRoom && input.track !== "review"
-          ? {
-              usedPercent: (provider: ServerProvider, served: string) =>
-                providerUsedPercent(provider, input.nowMs, served),
-            }
-          : {}),
-      });
-    const open = (list: ReturnType<typeof ranked>) =>
-      list.filter((choice) => sourceHold(choice.provider, choice.slug) === null);
-    const first =
-      named ?? open(ranked(false))[0]?.provider.instanceId ?? ranked(false)[0]?.provider.instanceId;
+      applyRoute(
+        providersForModel({
+          providers: input.providers,
+          model: { slug },
+          order: input.sourceOrder ?? undefined,
+          preferFree: free,
+          // A built-in row runs on whichever release of its family a source lists.
+          family: named === undefined,
+          ...(withRoom && input.track !== "review"
+            ? {
+                usedPercent: (provider: ServerProvider, served: string) =>
+                  providerUsedPercent(provider, input.nowMs, served),
+              }
+            : {}),
+        }),
+        route,
+      );
+    const consent = (choice: ReturnType<typeof ranked>[number]) =>
+      routeConsent(
+        route,
+        choice.provider.instanceId,
+        sourceHold(choice.provider, choice.slug) !== null,
+      );
+    // A held source runs only when the route allows it, the person named it, or after asking.
+    const runs = (choice: ReturnType<typeof ranked>[number]) =>
+      consent(choice) !== "never" || choice.provider.instanceId === named;
+    const open = (list: ReturnType<typeof ranked>) => list.filter(runs);
+    const routed = route !== null && route.order.length > 0;
+    const first = routed
+      ? undefined
+      : (named ??
+        open(ranked(false))[0]?.provider.instanceId ??
+        ranked(false)[0]?.provider.instanceId);
     const all = ranked(true);
     return [
       ...all.filter(({ provider }) => provider.instanceId === first),
       ...open(all).filter(({ provider }) => provider.instanceId !== first),
-      ...all.filter(
-        (choice) =>
-          choice.provider.instanceId !== first && sourceHold(choice.provider, choice.slug) !== null,
-      ),
-    ].map(({ provider, slug: served }) => {
+      ...all.filter((choice) => choice.provider.instanceId !== first && !runs(choice)),
+    ].map((choice) => {
+      const { provider, slug: served } = choice;
       const hold = sourceHold(provider, served);
+      const said = consent(choice);
       return {
         provider,
         slug: served,
         status: sourceStatus(provider, input.nowMs, served),
         hold,
-        used: hold === null || (provider.instanceId === named && input.track !== "review"),
+        used:
+          said === "plan" ||
+          said === "allowed" ||
+          said === "ask" ||
+          (provider.instanceId === named && input.track !== "review"),
+        ask: said === "ask",
       };
     });
   };
@@ -282,6 +315,7 @@ export function describeTrack(input: {
         provider !== undefined && provider.models.some((model) => model.slug === selection.model)
           ? newerOfFamily(provider, selection.model)
           : undefined;
+      const route = routeFor(input.routes, names);
       return {
         selection,
         model: selection.model,
@@ -290,17 +324,19 @@ export function describeTrack(input: {
         free,
         misplaced: freeModel && input.track !== "daily",
         follows: newer ?? null,
-        sources: sourcesOf(selection.model, free, selection.instanceId),
+        sources: sourcesOf(selection.model, free, selection.instanceId, route),
         effort:
           modelSelectionEffortValue(selection) ?? trackStartEffort(input.track, selection.model),
+        route,
       };
     });
   }
   return DEFAULT_MODEL_TRACKS[input.track].map((entry) => {
     const free = entry.free === true;
-    const sources = sourcesOf(entry.model, free);
+    const route = routeFor(input.routes, { slug: entry.model });
+    const sources = sourcesOf(entry.model, free, undefined, route);
     // A built-in row starts only on a source the app picks by itself.
-    const first = sources.find((source) => source.used);
+    const first = sources.find((source) => source.used && !source.ask);
     const effort = entry.effort ?? TRACK_DEFAULT_EFFORT;
     // A source that names the model by its bare id reads worse than the built-in name.
     const listedName =
@@ -316,6 +352,7 @@ export function describeTrack(input: {
       follows: first === undefined ? null : (newerOfFamily(first.provider, first.slug) ?? null),
       sources,
       effort,
+      route,
     };
   });
 }

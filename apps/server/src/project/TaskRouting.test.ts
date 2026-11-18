@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_TASK_ROUTING_SETTINGS,
@@ -507,4 +507,82 @@ it("starts a routed worker at its track entry's saved effort, over the baseline'
   });
   // An effort the caller named still wins.
   assert.strictEqual(routedTarget(decision, { effort: "low" } as never)?.effort, "low");
+});
+
+describe("a paid source a model's route lists", () => {
+  const fable = {
+    slug: "claude-fable-5-2",
+    name: "Claude Fable 5.2",
+    isCustom: false,
+    capabilities: null,
+  };
+  const fableProviders = [
+    signedOut(instance(claudeMax, { status: "authenticated", type: "max" }, { models: [fable] })),
+    instance(
+      claudeApi,
+      { status: "authenticated", type: "apiKey", apiKeyBilling: true },
+      { models: [fable] },
+    ),
+    trackProviders[1]!,
+  ];
+  const fableRoute = { order: [claudeMax, claudeApi], dropped: [], pinned: false, allowed: [] };
+  const run = (askRouteSource?: Parameters<typeof routeWorkerTask>[0]["askRouteSource"]) => {
+    const updates: Array<unknown> = [];
+    const settings = Option.some({
+      getSettings: Effect.succeed({
+        ...DEFAULT_SERVER_SETTINGS,
+        modelRoutes: { "claude-fable-5-2": fableRoute },
+        projectSettingsOverrides: { [projectId]: { threadModelMode: "tracks" } },
+      }),
+      updateSettings: (patch: unknown) =>
+        Effect.sync(() => {
+          updates.push(patch);
+          return DEFAULT_SERVER_SETTINGS;
+        }),
+    } as unknown as ServerSettings.ServerSettingsService["Service"]);
+    return routeWorkerTask({
+      project: projectFixture(projectId),
+      baseline: { instanceId: codexSub, model: "gpt-6.1-sol" },
+      providers: fableProviders,
+      task: { title: "Design the sync protocol", text: "Design the sync protocol" },
+      laneHint: "complex",
+      settings,
+      ...(askRouteSource === undefined ? {} : { askRouteSource }),
+    }).pipe(Effect.map((decision) => ({ decision, updates })));
+  };
+
+  it.effect("is never used without a thread to ask in", () =>
+    Effect.gen(function* () {
+      const { decision } = yield* run();
+      assert.notStrictEqual(decision?.selection.instanceId, claudeApi);
+    }),
+  );
+
+  it.effect("asks first, and a no skips it for this launch", () =>
+    Effect.gen(function* () {
+      const asked: Array<string> = [];
+      const { decision, updates } = yield* run(({ provider, modelName }) =>
+        Effect.sync(() => {
+          asked.push(`${modelName} on ${provider.instanceId}`);
+          return "no" as const;
+        }),
+      );
+      assert.deepStrictEqual(asked, ["Claude Fable 5.2 on claude-api"]);
+      assert.notStrictEqual(decision?.selection.instanceId, claudeApi);
+      assert.deepStrictEqual(updates, []);
+    }),
+  );
+
+  it.effect("runs there once allowed, and Always is kept in the model's route", () =>
+    Effect.gen(function* () {
+      const once = yield* run(() => Effect.succeed("once" as const));
+      assert.strictEqual(once.decision?.selection.instanceId, claudeApi);
+      assert.deepStrictEqual(once.updates, []);
+      const always = yield* run(() => Effect.succeed("always" as const));
+      assert.strictEqual(always.decision?.selection.instanceId, claudeApi);
+      assert.deepStrictEqual(always.updates, [
+        { modelRoutes: { "claude-fable-5-2": { ...fableRoute, allowed: [claudeApi] } } },
+      ]);
+    }),
+  );
 });

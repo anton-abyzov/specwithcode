@@ -296,6 +296,14 @@
       "types": "./src/modelTrackRules.ts",
       "import": "./src/modelTrackRules.ts"
     },
+    "./modelOffers": {
+      "types": "./src/modelOffers.ts",
+      "import": "./src/modelOffers.ts"
+    },
+    "./modelRoutes": {
+      "types": "./src/modelRoutes.ts",
+      "import": "./src/modelRoutes.ts"
+    },
     "./modelSources": {
       "types": "./src/modelSources.ts",
       "import": "./src/modelSources.ts"

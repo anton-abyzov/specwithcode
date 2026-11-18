@@ -144,7 +144,7 @@ export function useSourceFixer(environmentId: EnvironmentId) {
   };
 }
 
-function FixButton(props: {
+export function FixButton(props: {
   readonly provider: ServerProvider;
   readonly fix: SourceFix;
   readonly fixer: ReturnType<typeof useSourceFixer>;

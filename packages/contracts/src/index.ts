@@ -27,6 +27,7 @@ export * from "./taskRouting.ts";
 export * from "./adversarialReview.ts";
 export * from "./advisor.ts";
 export * from "./modelTracks.ts";
+export * from "./modelRoutes.ts";
 export * from "./chatAttachment.ts";
 export * from "./checkpointDiff.ts";
 export * from "./model.ts";

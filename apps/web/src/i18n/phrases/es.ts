@@ -5542,4 +5542,30 @@ export const es: PhraseCatalog = {
   "Not set up on this machine": "No configurado en esta máquina",
   "Where a model runs, first to last. A source not listed is tried after these.":
     "Dónde se ejecuta un modelo, de la primera a la última. Una fuente que no está en la lista se prueba después.",
+  Subscription: "Suscripción",
+  Credits: "Créditos",
+  "Per token": "Por token",
+  "Billing unknown": "Facturación desconocida",
+  "Route for": "Ruta de",
+  "First to last. Saved for this model on every track.":
+    "De la primera a la última. Se guarda para este modelo en todas las listas.",
+  "Use the automatic order": "Usar el orden automático",
+  "Asks before first run": "Pregunta antes de la primera ejecución",
+  "Never run it on": "Nunca ejecutar en",
+  "No source here runs this model now.": "Ninguna fuente aquí puede ejecutar este modelo ahora.",
+  "Pinned: only this source runs the model. When it cannot, the next model is tried.":
+    "Fijada: solo esta fuente ejecuta el modelo. Si no puede, se prueba el siguiente modelo.",
+  "Never runs this model": "Nunca ejecuta este modelo",
+  "Never runs this model:": "Nunca ejecuta este modelo:",
+  Restore: "Restaurar",
+  "Paid sources": "Fuentes de pago",
+  "Asks before its first run once added.":
+    "Pregunta antes de su primera ejecución una vez añadida.",
+  "Available via": "Disponible en",
+  "Usually offers it": "Suele ofrecerlo",
+  "Your route": "Tu ruta",
+  "Asks first": "Pregunta antes",
+  Route: "Ruta",
+  "Allow once": "Permitir una vez",
+  "Always for this model": "Siempre para este modelo",
 };
