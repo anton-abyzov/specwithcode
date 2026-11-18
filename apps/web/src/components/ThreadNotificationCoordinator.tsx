@@ -98,6 +98,27 @@ export function isStaleExecutionCopy(
 /** Records a shown notification, or forgets it with `posted` false when the system declined it. */
 type OnNotification = (tag: string, shown: ShownNotification, posted?: boolean) => void;
 
+/**
+ * Whether a thread's open question is its lead's to settle (see
+ * subagentQuestionWait), so it alerts nobody, as Needs you counts it.
+ */
+function questionGoesToLeadIn(
+  environmentId: EnvironmentId,
+  thread: ReturnType<typeof presentThreadShell>,
+  threadById: (id: string) => OrchestrationV2ThreadShell | undefined,
+  coordinatorThreadId: string | null,
+): boolean {
+  const leadId = attentionLeadThreadId(thread);
+  const leadRaw = leadId === null ? undefined : threadById(leadId);
+  return (
+    subagentQuestionWait(
+      thread,
+      leadRaw === undefined ? undefined : presentThreadShell(environmentId, leadRaw),
+      coordinatorThreadId,
+    ) !== null
+  );
+}
+
 export function ThreadNotificationCoordinator() {
   const environmentIds = useEnvironmentIds();
   const connected = useNotificationsConnected();
@@ -322,16 +343,16 @@ function EnvironmentNotifications({
       const thread = presentThreadShell(environmentId, rawThread);
       let status = resolveThreadAlertStatus(thread);
       if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
-      // A subagent's question its lead settles alerts nobody, as Needs you counts it.
-      const leadId = attentionLeadThreadId(thread);
-      const leadRaw = leadId === null ? undefined : threadById.get(leadId);
-      const questionGoesToLead =
-        subagentQuestionWait(
+      const observation = observeProjectThread(
+        thread,
+        "live",
+        questionGoesToLeadIn(
+          environmentId,
           thread,
-          leadRaw === undefined ? undefined : presentThreadShell(environmentId, leadRaw),
+          (id) => threadById.get(id),
           coordinatorIds.current.get(thread.projectId) ?? null,
-        ) !== null;
-      const observation = observeProjectThread(thread, "live", questionGoesToLead);
+        ),
+      );
       const observedActions = classifyProjectActions(observation);
       // Baseline absence must end persisted episodes too, including after every client restarted.
       for (const reason of ["plan", "held"] as const) {
@@ -499,9 +520,22 @@ function EnvironmentNotifications({
                   currentRaw.pendingRuntimeRequest?.id !== rawThread.pendingRuntimeRequest?.id)
               )
                 return null;
+              // The lead may have taken the question over since it was seen.
               if (
                 action &&
-                !projectActionIsCurrent(action, observeProjectThread(currentThread, "live"))
+                !projectActionIsCurrent(
+                  action,
+                  observeProjectThread(
+                    currentThread,
+                    "live",
+                    questionGoesToLeadIn(
+                      environmentId,
+                      currentThread,
+                      (id) => latest.current.threads?.find((candidate) => candidate.id === id),
+                      coordinatorIds.current.get(currentThread.projectId) ?? null,
+                    ),
+                  ),
+                )
               )
                 return null;
               if (
