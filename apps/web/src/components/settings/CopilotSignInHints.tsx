@@ -78,7 +78,10 @@ export function pickedCopilotHost(value: CopilotHostChoice): string | null | und
 
 /** github.com and every enterprise host gh is signed in to, github.com first. */
 export function copilotHostOptions(found: ProviderAuthState["copilotExistingSignIns"]): string[] {
-  const hosts = new Set(["github.com", ...(found?.ghAccounts.map((account) => account.host) ?? [])]);
+  const hosts = new Set([
+    "github.com",
+    ...(found?.ghAccounts.map((account) => account.host) ?? []),
+  ]);
   return [...hosts];
 }
 

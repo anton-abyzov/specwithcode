@@ -859,7 +859,14 @@ it.effect("signs in to the host picked in the sign-in step over gh's hosts", () 
         },
       },
     );
-    yield* h.controller.start("owner", Effect.void, undefined, undefined, undefined, "acme.ghe.com");
+    yield* h.controller.start(
+      "owner",
+      Effect.void,
+      undefined,
+      undefined,
+      undefined,
+      "acme.ghe.com",
+    );
     yield* h.phase("waiting");
     assert.deepEqual(h.terminalSpawn()?.args, [
       "--no-auto-update",

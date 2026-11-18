@@ -34,7 +34,6 @@ let renderer: ReactTestRenderer;
 const text = (node: ReactTestInstance): string =>
   node.children.map((child) => (typeof child === "string" ? child : text(child))).join("");
 
-
 function render(props: Partial<Parameters<typeof CopilotSignInHints>[0]>) {
   act(() => {
     renderer = create(

@@ -121,7 +121,9 @@ export const ProviderAuthStartInput = Schema.Struct({
   host: Schema.optionalKey(
     Schema.String.check(
       Schema.isMaxLength(253),
-      Schema.isPattern(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/u),
+      Schema.isPattern(
+        /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/u,
+      ),
     ),
   ),
 });

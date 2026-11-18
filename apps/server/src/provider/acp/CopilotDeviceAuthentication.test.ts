@@ -281,12 +281,26 @@ describe("GitHub host for Copilot device sign-in", () => {
     assert.isUndefined(resolve(undefined, {}));
   });
   it("leaves github.com to the CLI default unless a host variable points elsewhere", () => {
-    assert.isUndefined(resolveCopilotLoginHost({ picked: "github.com", environment: {}, ghEnterpriseHost: "x.ghe.com" }));
     assert.isUndefined(
-      resolveCopilotLoginHost({ picked: undefined, environment: { GH_HOST: "github.com" }, ghEnterpriseHost: "x.ghe.com" }),
+      resolveCopilotLoginHost({
+        picked: "github.com",
+        environment: {},
+        ghEnterpriseHost: "x.ghe.com",
+      }),
+    );
+    assert.isUndefined(
+      resolveCopilotLoginHost({
+        picked: undefined,
+        environment: { GH_HOST: "github.com" },
+        ghEnterpriseHost: "x.ghe.com",
+      }),
     );
     assert.strictEqual(
-      resolveCopilotLoginHost({ picked: "github.com", environment: { COPILOT_GH_HOST: "env.ghe.com" }, ghEnterpriseHost: undefined }),
+      resolveCopilotLoginHost({
+        picked: "github.com",
+        environment: { COPILOT_GH_HOST: "env.ghe.com" },
+        ghEnterpriseHost: undefined,
+      }),
       "github.com",
     );
   });
