@@ -20,6 +20,10 @@ function fakeChrome(stored, session = {}) {
     };
   };
   const storage = { ...stored };
+  const openTabs = [];
+  const activated = [];
+  const focusedWindows = [];
+  let nextTabId = 100;
   return {
     storage: {
       local: {
@@ -50,14 +54,35 @@ function fakeChrome(stored, session = {}) {
     alarms: { create: () => {}, onAlarm: listeners() },
     runtime: {
       id: "okoinngelinfjfkmkcnbgndapeiofgbb",
+      getURL: (file) => `chrome-extension://okoinngelinfjfkmkcnbgndapeiofgbb/${file}`,
       getManifest: () => ({ version: "1.0.3" }),
       onMessage: listeners(),
       onStartup: listeners(),
       onInstalled: listeners(),
     },
     tabGroups: { query: async () => [] },
+    windows: { focused: [], update: async (id) => void focusedWindows.push(id) },
     tabs: {
-      query: async () => [],
+      open: openTabs,
+      query: async () => openTabs.map((tab) => ({ ...tab })),
+      create: async ({ url }) => {
+        const tab = { id: nextTabId++, url, windowId: 1 };
+        openTabs.push(tab);
+        return tab;
+      },
+      update: async (id, props) => {
+        const tab = openTabs.find((t) => t.id === id);
+        if (props.active) activated.push(id);
+        return tab;
+      },
+      remove: async (ids) => {
+        for (const id of [ids].flat())
+          openTabs.splice(
+            openTabs.findIndex((t) => t.id === id),
+            1,
+          );
+      },
+      activated,
       ungroup: async () => {},
       onUpdated: listeners(),
       onCreated: listeners(),
@@ -383,5 +408,80 @@ describe("staying connected for days", () => {
       await tick(1_000);
     }
     expect(FakeWebSocket.opened).toHaveLength(2);
+  });
+});
+
+const PAIR_URL = "chrome-extension://okoinngelinfjfkmkcnbgndapeiofgbb/src/pair.html";
+const pairTabs = (chrome) => chrome.tabs.open.filter((tab) => tab.url.startsWith(PAIR_URL));
+
+describe("pairing page and the profile name", () => {
+  it("opens its own pairing page on a first install, and only then", async () => {
+    const { chrome } = await startWorker({});
+    chrome.runtime.onInstalled.fire({ reason: "update", previousVersion: "1.0.6" });
+    chrome.runtime.onInstalled.fire({ reason: "chrome_update" });
+    chrome.runtime.onInstalled.fire({ reason: "shared_module_update" });
+    await flush();
+    expect(pairTabs(chrome)).toHaveLength(0);
+    chrome.runtime.onInstalled.fire({ reason: "install" });
+    await flush();
+    expect(pairTabs(chrome).map((tab) => tab.url)).toEqual([PAIR_URL]);
+  });
+
+  it("keeps one pairing tab: a second open brings the first to the front", async () => {
+    const { chrome, ask } = await startWorker({});
+    chrome.runtime.onInstalled.fire({ reason: "install" });
+    chrome.runtime.onInstalled.fire({ reason: "install" });
+    await flush();
+    expect(pairTabs(chrome)).toHaveLength(1);
+    await ask({ type: "openPairPage" });
+    expect(pairTabs(chrome)).toHaveLength(1);
+    expect(chrome.tabs.activated).toEqual([pairTabs(chrome)[0].id]);
+    // A pairing page someone opened by hand closes the older one when it loads.
+    chrome.tabs.open.push({ id: 7, url: `${PAIR_URL}#again`, windowId: 1 });
+    await new Promise((resolve) =>
+      chrome.runtime.onMessage.fire({ type: "pairPageOpened" }, { tab: { id: 7 } }, resolve),
+    );
+    expect(pairTabs(chrome).map((tab) => tab.id)).toEqual([7]);
+  });
+
+  it("pairs only with a name, and never names the profile Chrome", async () => {
+    const { chrome, ask } = await startWorker({});
+    const code = `swc-chrome:1:${Buffer.from(JSON.stringify({ u: pairing.relayUrl, t: pairing.token, m: "mac" })).toString("base64url")}`;
+    const refused = await ask({ type: "pair", code, label: "   " });
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toMatch(/name/);
+    expect(chrome.stored.pairing).toBeUndefined();
+    expect((await ask({ type: "rename", label: "" })).ok).toBe(false);
+    expect((await ask({ type: "pair", code, label: "Agents" })).ok).toBe(true);
+    expect(chrome.stored.label).toBe("Agents");
+    await flush();
+    expect(FakeWebSocket.opened.at(-1).url).toBe(pairing.relayUrl);
+  });
+
+  it("asks a profile still called Chrome for a name, and says which machine it is paired with", async () => {
+    const { ask } = await startWorker({ pairing });
+    await flush();
+    const unnamed = (await ask({ type: "status" })).state;
+    expect(unnamed.label).toBe("");
+    expect(unnamed.needsName).toBe(true);
+    expect(unnamed.machine).toBe("mac");
+    const { ask: askOld } = await startWorker({ pairing, label: "Chrome" });
+    await flush();
+    expect((await askOld({ type: "status" })).state.needsName).toBe(true);
+    const { ask: askNamed } = await startWorker({ pairing, label: "Work" });
+    await flush();
+    expect((await askNamed({ type: "status" })).state.needsName).toBe(false);
+  });
+
+  it("explains a refusal of a copy that is not from the Chrome Web Store", async () => {
+    const { ask } = await startWorker();
+    await flush();
+    const ws = FakeWebSocket.opened.at(-1);
+    ws.open();
+    ws.serverClose(4403);
+    await flush();
+    const status = (await ask({ type: "status" })).state;
+    expect(status.phase).toBe("rejected");
+    expect(status.message).toMatch(/Chrome Web Store/);
   });
 });

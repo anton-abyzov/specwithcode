@@ -28,6 +28,9 @@ const POPUP_RETRY_MS = 10_000;
 const WATCHDOG_ALARM = "specwithcode-reconnect";
 /** The service closes with this code when the pairing token is wrong or was reset. */
 const CLOSE_REJECTED = 4401;
+/** The service closes with this code when it accepts only the Chrome Web Store copy. */
+const CLOSE_NOT_ALLOWED = 4403;
+const PAIR_PAGE = "src/pair.html";
 
 const state = {
   /** "not_paired" | "connecting" | "connected" | "disconnected" | "rejected" | "paused" */
@@ -61,6 +64,60 @@ let generation = 0;
 
 const cleanup = cleanupStaleGroups();
 
+/** A profile name, trimmed and bounded. Empty means the person has not named it yet. */
+export function cleanLabel(label) {
+  return typeof label === "string" ? label.trim().slice(0, 60) : "";
+}
+
+/** "Chrome" was the default name before 1.0.7, and the service numbers repeats "Chrome (2)". */
+export function needsName(label) {
+  return !cleanLabel(label) || /^Chrome( \(\d+\))?$/.test(cleanLabel(label));
+}
+
+function requireLabel(label) {
+  const name = cleanLabel(label);
+  if (!name) throw new Error("Give this profile a name first, so agents can tell it apart.");
+  return name;
+}
+
+let pairTabOpening = null;
+/**
+ * Shows the extension's own pairing page, keeping one pairing tab: an open one is brought to the
+ * front instead of opening another. Claimed before the first await, like connect().
+ */
+export function openPairingPage() {
+  if (pairTabOpening) return pairTabOpening;
+  pairTabOpening = (async () => {
+    const url = chrome.runtime.getURL(PAIR_PAGE);
+    const tabs = await chrome.tabs.query({}).catch(() => []);
+    const open = tabs.filter((tab) => typeof tab.url === "string" && tab.url.startsWith(url));
+    const [keep, ...extra] = open;
+    if (extra.length) await chrome.tabs.remove(extra.map((tab) => tab.id)).catch(() => {});
+    if (keep) {
+      await chrome.tabs.update(keep.id, { active: true }).catch(() => {});
+      if (keep.windowId !== undefined)
+        await chrome.windows?.update(keep.windowId, { focused: true }).catch(() => {});
+      return keep.id;
+    }
+    const tab = await chrome.tabs.create({ url, active: true });
+    return tab?.id;
+  })().finally(() => {
+    pairTabOpening = null;
+  });
+  return pairTabOpening;
+}
+
+/** A pairing page just loaded: close any other pairing tab, so one stays. */
+async function keepOnePairingTab(tabId) {
+  if (tabId === undefined) return;
+  const url = chrome.runtime.getURL(PAIR_PAGE);
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  const others = tabs.filter(
+    (tab) => tab.id !== tabId && typeof tab.url === "string" && tab.url.startsWith(url),
+  );
+  if (others.length) await chrome.tabs.remove(others.map((tab) => tab.id)).catch(() => {});
+}
+
 async function readSettings() {
   const stored = await chrome.storage.local.get(["pairing", "label", "paused", "instanceId"]);
   // Store installs share one extension id across Chrome profiles; this id tells them apart.
@@ -72,7 +129,7 @@ async function readSettings() {
   return {
     instanceId,
     pairing: stored.pairing ?? null,
-    label: typeof stored.label === "string" && stored.label.trim() ? stored.label.trim() : "Chrome",
+    label: cleanLabel(stored.label),
     paused: stored.paused === true,
   };
 }
@@ -193,6 +250,7 @@ async function connect() {
     return scheduleRetry();
   }
   state.label = settings.label;
+  state.machine = settings.pairing?.machine ?? "";
   if (!settings.pairing) {
     connecting = false;
     return setPhase("not_paired");
@@ -304,10 +362,17 @@ async function connect() {
     clearTimeout(handshakeTimer);
     if (stale()) return;
     teardown("socket closed");
+    if (event.code === CLOSE_NOT_ALLOWED) {
+      setPhase(
+        "rejected",
+        "SpecWithCode accepts only the extension from the Chrome Web Store. Install it from there, or turn on the developer switch in Settings > Chrome for a copy you loaded by hand.",
+      );
+      return scheduleRetry();
+    }
     if (event.code === CLOSE_REJECTED) {
       setPhase(
         "rejected",
-        "SpecWithCode did not accept this pairing code. Trying again on its own; if it keeps failing, paste the current code from Settings › Chrome.",
+        "SpecWithCode did not accept this pairing code. Trying again on its own; if it keeps failing, copy the code again from SpecWithCode: first-run setup, or Settings > Chrome.",
       );
       return scheduleRetry();
     }
@@ -360,7 +425,7 @@ const ready = restoreStatus()
     if (!waiting) void connect();
   });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const respond = (promise) => {
     promise.then(
       (value) => sendResponse({ ok: true, ...value }),
@@ -380,17 +445,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           void connect();
         }
       }
-      sendResponse({ ok: true, state: { ...state, shownPhase, now: Date.now() } });
+      sendResponse({
+        ok: true,
+        state: { ...state, shownPhase, needsName: needsName(state.label), now: Date.now() },
+      });
       return false;
     }
     case "pair":
       return respond(
         (async () => {
+          const label = requireLabel(message.label);
           const pairing = parsePairingCode(message.code);
-          const label =
-            String(message.label ?? "")
-              .trim()
-              .slice(0, 60) || "Chrome";
           await chrome.storage.local.set({ pairing, label, paused: false });
           await reconnectNow();
           return {};
@@ -399,10 +464,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     case "rename":
       return respond(
         (async () => {
-          const label =
-            String(message.label ?? "")
-              .trim()
-              .slice(0, 60) || "Chrome";
+          const label = requireLabel(message.label);
           await chrome.storage.local.set({ label });
           await reconnectNow();
           return {};
@@ -428,6 +490,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       );
     case "reconnect":
       return respond(reconnectNow().then(() => ({})));
+    case "pairPageOpened":
+      return respond(keepOnePairingTab(sender?.tab?.id).then(() => ({})));
+    case "openPairPage":
+      return respond(openPairingPage().then(() => ({})));
   }
   return false;
 });
@@ -442,4 +508,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   });
 });
 chrome.runtime.onStartup.addListener(() => void ready.then(() => connect()));
-chrome.runtime.onInstalled.addListener(() => void ready.then(() => connect()));
+chrome.runtime.onInstalled.addListener((details) => {
+  // Only a first install opens the pairing page; an update or a Chrome update never does.
+  if (details?.reason === "install") void openPairingPage().catch(() => {});
+  void ready.then(() => connect());
+});

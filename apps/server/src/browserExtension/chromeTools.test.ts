@@ -21,7 +21,9 @@ import {
   CLOSE_REJECTED,
   CLOSE_REPLACED,
   OTHER_BROWSERS_LAST,
+  parseHello,
   TAB_IDLE_MS,
+  UNNAMED_PROFILE,
 } from "./relayHub.ts";
 import {
   BROWSER_EXTENSION_DIR,
@@ -473,5 +475,15 @@ describe("ChromeTools", () => {
     );
     expect(status.profiles[0]).toMatchObject({ label: "Personal", fromStore: false });
     expect(status.profiles[0]).not.toHaveProperty("extensionId");
+  });
+});
+
+describe("parseHello: a profile name", () => {
+  it("keeps the name the extension sent, and never makes one up as Chrome", () => {
+    const hello = (label: unknown) =>
+      parseHello(JSON.stringify({ method: "hello", params: { protocol: 1, token: "t", label } }));
+    expect(hello("  Work ")?.label).toBe("Work");
+    expect(hello("")?.label).toBe(UNNAMED_PROFILE);
+    expect(hello(undefined)?.label).toBe("Unnamed profile");
   });
 });
