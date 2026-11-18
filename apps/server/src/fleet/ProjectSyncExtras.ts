@@ -85,9 +85,10 @@ const capped = <A>(items: ReadonlyArray<A>) => ({
  * files the content check flags or does not reach.
  */
 export async function snapshotLeftOut(root: string): Promise<Array<ProjectSyncLeftOutFile>> {
-  const [untracked, changed] = await Promise.all([
+  const [untracked, changed, ignored] = await Promise.all([
     runGit(root, ["ls-files", "-z", "--others", "--exclude-standard"]),
     runGit(root, ["diff", "--name-only", "-z", "--no-renames", "HEAD"], { allowFailure: true }),
+    runGit(root, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]),
   ]);
   const untrackedPaths = untracked.stdout.split("\0").filter(Boolean).toSorted();
   const out: Array<Omit<ProjectSyncLeftOutFile, "modifiedAtMs">> = [];
@@ -100,6 +101,13 @@ export async function snapshotLeftOut(root: string): Promise<Array<ProjectSyncLe
     if (isSecretLikeProjectPath(path) || isUntrackedSecretConfigPath(path))
       out.push({ path, reason: "name", kind: null });
     else toCheck.push(path);
+  }
+  // Ignored secrets (a `.env` under `.gitignore`) are never in a snapshot; they are listed so
+  // the sealed route can offer them.
+  for (const path of ignored.stdout.split("\0").filter(Boolean).toSorted()) {
+    if (path.endsWith("/")) continue;
+    if (isSecretLikeProjectPath(path) || isUntrackedSecretConfigPath(path))
+      out.push({ path, reason: "name", kind: null });
   }
   const checked = await checkSnapshotContent({ root, untracked: toCheck, pastLimit: "leave-out" });
   out.push(...checked.leftOut);

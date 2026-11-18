@@ -85,8 +85,8 @@ describe("landing a Sync extra (1390 AC-13)", () => {
 
   it("makes a machine label safe for a ref name", () => {
     expect(extraBranchName("M4", "main")).toBe("swc/from-M4/main");
-    const odd = extraBranchName("Anton's MacBook: M4 Max", "main");
-    expect(odd).toMatch(/^swc\/from-Anton-s-MacBook-M4-Max-[0-9a-f]{16}\/main$/);
+    const odd = extraBranchName("Sam's laptop: 16 inch", "main");
+    expect(odd).toMatch(/^swc\/from-Sam-s-laptop-16-inch-[0-9a-f]{16}\/main$/);
     expect(extraId(OPERATION)).toBe("0a1b2c");
   });
 

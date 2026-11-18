@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
 import { describe, expect, it } from "@effect/vitest";
-import { EnvironmentId } from "@specweave-studio/contracts";
+import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { verifyDpopProof } from "@specweave-studio/shared/dpop";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -66,6 +66,9 @@ function worker(
         expectedAccessToken: grant,
       }).ok;
     if (!proven) return Response.json({ error: "unauthorized" }, { status: 401 });
+    // This worker is from before Sync extras: it has no such path.
+    if (url.pathname.includes("/extras-"))
+      return Response.json({ error: "not_found", code: "not_found" }, { status: 404 });
     return Response.json({ machineLabel: "M1", continued: [] });
   }) as typeof fetch;
   return { fetcher, sent };
@@ -147,6 +150,50 @@ describe("handoff peers over SpecWithCode Connect", () => {
           expect(
             sent.filter((call) => call.url === `${CONNECT_ORIGIN}/.well-known/studio/environment`),
           ).toHaveLength(1);
+        }),
+    ),
+  );
+
+  it.effect("reads a machine without the Sync extras paths as needing an update", () =>
+    withPeers(
+      { grant: (jkt) => studioToken({ sid: "grant", jkt }), offline: new Set([ORIGIN]) },
+      (peers, { sent }) =>
+        Effect.gen(function* () {
+          const request = {
+            sourceEnvironmentId: EnvironmentId.make("env-m4"),
+            sourceProjectId: ProjectId.make("project-m4"),
+            repositoryPath: "",
+          };
+          const negotiated = yield* Effect.result(
+            peers.extrasNegotiate(machine.environmentId, { ...request, candidates: [] }),
+          );
+          const replicated = yield* Effect.result(
+            peers.extrasReplicate(
+              machine.environmentId,
+              {
+                ...request,
+                sourceLabel: "M4",
+                operationId: "0a1b2c3d-1111-4222-8333-444455556666",
+                leaf: "main",
+                commit: "a".repeat(40),
+              },
+              new Uint8Array([1, 2, 3]),
+            ),
+          );
+          const failures = [
+            Result.isFailure(negotiated) ? negotiated.failure : null,
+            Result.isFailure(replicated) ? replicated.failure : null,
+          ];
+          for (const failure of failures) {
+            expect(failure).toMatchObject({ needsUpdate: true, uncertain: false });
+            expect(failure?.message).toContain("Update SpecWithCode");
+          }
+          expect(
+            sent.filter((call) => call.url.includes("/extras-")).map((call) => call.url),
+          ).toEqual([
+            `${CONNECT_ORIGIN}${HANDOFF_PEER_PREFIX}/extras-negotiate`,
+            `${CONNECT_ORIGIN}${HANDOFF_PEER_PREFIX}/extras-replicate`,
+          ]);
         }),
     ),
   );

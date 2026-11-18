@@ -302,6 +302,7 @@ describe("project sync on real repositories (1390 AC-11)", () => {
     NodeFS.rmSync(goneRemote, { recursive: true, force: true });
     const tip = f.publish();
     const before = snapshot(nested);
+    const remote = remoteSnapshot(f.remote);
     const { run } = recording();
     const ctx = context(run);
     const repositories = await syncRepositories(run, f.a, [".", "repositories/gone"]);
@@ -325,6 +326,7 @@ describe("project sync on real repositories (1390 AC-11)", () => {
     ]);
     expect(git(f.a, "rev-parse", "HEAD")).toBe(tip);
     expect(snapshot(nested)).toEqual(before);
+    expect(remoteSnapshot(f.remote)).toBe(remote);
   });
 
   it("row 11: a repository missing here that has a remote is cloned", async () => {
@@ -367,12 +369,22 @@ describe("project sync on real repositories (1390 AC-11)", () => {
     commit(localOnly, "notes.md", "# notes\n");
     const { run } = recording();
     const ctx = context(run);
+    const before = snapshot(f.a);
+    const remote = remoteSnapshot(f.remote);
     const here = await fetchAll(ctx, await syncRepositories(run, f.a, ["."]));
     const there = await fetchAll(ctx, await syncRepositories(run, f.b, [".", "notes"]));
     expect(there[1]).toMatchObject({ fetch: "no-remote", remote: null });
     const plan = planProjectSync(here, there);
     expect(`${plan[1]!.path} ${say(plan[1]!)}`).toBe("notes none:missing-no-remote");
+    // The plan asks for nothing there, and a clone asked for anyway has no address to use.
+    const results = await runSync(ctx, f.a, [root(f.a)], {
+      fastForward: [],
+      clone: [{ path: "notes", remote: "" }],
+    });
+    expect(results[0]).toMatchObject({ action: "none", reason: "refused" });
     expect(NodeFS.existsSync(NodePath.join(f.a, "notes"))).toBe(false);
+    expect(snapshot(f.a)).toEqual(before);
+    expect(remoteSnapshot(f.remote)).toBe(remote);
   });
 });
 

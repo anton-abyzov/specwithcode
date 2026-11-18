@@ -79,7 +79,10 @@ export const ProjectSyncStatusResult = Schema.Struct({
   repositories: Schema.Array(ProjectSyncRepositoryStatus).check(
     Schema.isMaxLength(PROJECT_SYNC_MAX_REPOSITORIES),
   ),
-  /** The folder is past the scan limits: only the root repository is listed. */
+  /**
+   * The folder could not be scanned in full (past the scan limits, a link to a folder, or a
+   * nested folder whose Git data is broken): only the root repository is listed.
+   */
   scanLimited: Schema.Boolean,
 });
 export type ProjectSyncStatusResult = typeof ProjectSyncStatusResult.Type;

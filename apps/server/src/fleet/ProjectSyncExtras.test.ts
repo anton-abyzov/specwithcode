@@ -90,6 +90,10 @@ describe("what Git does not carry (1390 AC-12)", () => {
     write(f.a, "new.txt", "new\n");
     write(f.a, "notes.txt", `key ${fakeToken()}\n`);
     write(f.a, ".env", "API_KEY=abc\n");
+    // A secret Git ignores is listed too: only the sealed route can bring it.
+    git(f.a, "config", "core.excludesFile", NodePath.join(f.base, "excludes"));
+    write(f.base, "excludes", ".env.local\n");
+    write(f.a, ".env.local", "API_KEY=local\n");
     const before = snapshot(f.a);
     const refs = allRefs(f.a);
     const extras = await inventoryRepository({ path: ".", cwd: f.a });
@@ -107,6 +111,7 @@ describe("what Git does not carry (1390 AC-12)", () => {
     });
     expect(extras.leftOut.map((file) => `${file.path} ${file.reason} ${file.kind}`)).toEqual([
       ".env name null",
+      ".env.local name null",
       "notes.txt content GitHub token",
     ]);
     expect(extras.leftOut.every((file) => typeof file.modifiedAtMs === "number")).toBe(true);

@@ -475,21 +475,24 @@ const make = Effect.gen(function* () {
     if (isPersonalAssistantProject(project))
       return yield* failed("A personal project is not synced between machines.", "personal");
     const root = yield* attempt(() => NodeFSP.realpath(project.workspaceRoot));
-    // A tree past the scan limits lists its root alone, marked as such.
+    // A tree the scan cannot finish (past its limits, a link to a folder, a nested folder
+    // whose Git data is broken) lists its root alone, marked as such: today's fallback of a
+    // Git sync move. The root itself must be a repository.
     const scanned = yield* handoffGit.discover({ workspaceRoot: root }).pipe(
       Effect.map((paths) => ({ paths, scanLimited: false })),
       Effect.catchTags({
-        HandoffGitError: (error) =>
-          error.reason === "scan-limit"
-            ? Effect.succeed({ paths: ["."] as ReadonlyArray<string>, scanLimited: true })
-            : Effect.fail(
-                failed(
-                  error.reason === "missing-repository"
-                    ? "The project folder is not a Git repository."
-                    : `The project folder could not be scanned: ${error.reason}.`,
-                  error.reason === "missing-repository" ? "invalid" : "failed",
-                ),
-              ),
+        HandoffGitError: () =>
+          attempt(async () => {
+            const top = await read(defaultGit, root, ["rev-parse", "--show-toplevel"]);
+            const real = top.ok ? await NodeFSP.realpath(top.text).catch(() => null) : null;
+            return real === root;
+          }).pipe(
+            Effect.flatMap((isRepository) =>
+              isRepository
+                ? Effect.succeed({ paths: ["."] as ReadonlyArray<string>, scanLimited: true })
+                : Effect.fail(failed("The project folder is not a Git repository.", "invalid")),
+            ),
+          ),
       }),
     );
     return {
