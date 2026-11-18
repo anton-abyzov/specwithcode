@@ -176,6 +176,13 @@ public final class LiveEngine: AppEngine {
       await bootstrap()
       await startConnect()
     }
+    if let connect {
+      Task { [weak self] in
+        guard let thumbprint = try? await connect.relay.thumbprint() else { return }
+        connect.shortID = DeviceShortID.make(thumbprint: thumbprint)
+        self?.schedulePublish()
+      }
+    }
     let timeout = options.loadingTimeout
     Task { [weak self] in
       try? await Task.sleep(for: timeout)
@@ -530,6 +537,7 @@ public final class LiveEngine: AppEngine {
     assign(model, \.machines, entries.map { summary($0, nicknames: nicknames, now: now) })
     // The name machines list for this phone: Connect's, frozen when it started.
     assign(model, \.thisPhoneName, connect?.clientLabel ?? options.clientLabel())
+    assign(model, \.thisPhoneShortID, connect?.shortID)
     // Percy is a switch in the desktop's settings; any machine saying so shows it.
     let aideEnabled = AideSetting.visible(entries.map { aideMachine($0, nicknames: nicknames) }, previous: model.aideEnabled)
     assign(model, \.aideEnabled, aideEnabled)

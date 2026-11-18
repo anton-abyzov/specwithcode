@@ -10,6 +10,8 @@ public final class ConnectRuntime {
   let authorizer: ConnectAuthorizer
   /// Identifies this phone to the relay; kept across launches.
   let deviceId: String
+  /// The four characters machines show beside this phone (1406), from its DPoP key.
+  var shortID: String?
   var checkedAt: [String: Date] = [:]
   var lastRefresh: Date?
   var refreshTask: Task<Void, Never>?
