@@ -238,6 +238,7 @@ export const pushSkillToFleet = Effect.fn("projectSkills.pushSkillToFleet")(func
       ...(entry.target.expectedHash ? { expectedHash: entry.target.expectedHash } : {}),
       ...(input.github ? { source: input.github } : {}),
       ...(input.action ? { action: input.action } : {}),
+      ...(input.replaces ? { replaces: input.replaces } : {}),
     };
     const ask: FleetSkillAsk =
       entry.target.scope === "user"

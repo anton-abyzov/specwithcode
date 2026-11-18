@@ -718,9 +718,23 @@ export const StudioFleetSkillSource = Schema.Struct({
 });
 export type StudioFleetSkillSource = typeof StudioFleetSkillSource.Type;
 
-/** The copy a machine had before a GitHub-source install, from the same repo; Undo puts it back. */
+/**
+ * The copy an Undo replaces: the one the rollout installed. The machine acts only
+ * while its lock still records this commit and SKILL.md hash, so a later update
+ * there is never rolled back by an old Undo.
+ */
+export const StudioFleetSkillReplaces = Schema.Struct({
+  commit: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/)),
+  contentHash: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
+});
+export type StudioFleetSkillReplaces = typeof StudioFleetSkillReplaces.Type;
+
+/**
+ * The copy a machine had before a GitHub-source install, from the same repo; Undo
+ * puts it back. `version` is null when that lock entry records none.
+ */
 export const StudioFleetSkillPrevious = Schema.Struct({
-  version: Schema.String,
+  version: Schema.NullOr(Schema.String),
   commit: Schema.NullOr(Schema.String),
   contentHash: Schema.NullOr(Schema.String),
   branch: Schema.NullOr(Schema.String),
@@ -879,6 +893,8 @@ export const StudioFleetSkillInput = Schema.Union([
     source: Schema.optionalKey(StudioFleetSkillSource),
     /** Remove the skill this source installed, matched by `contentHash` (Undo). */
     action: Schema.optionalKey(Schema.Literal("remove")),
+    /** Undo only: the copy it replaces; refused once that machine holds another one. */
+    replaces: Schema.optionalKey(StudioFleetSkillReplaces),
   }),
   exactStruct({
     coordinatorEnvironmentId: EnvironmentId,
@@ -900,6 +916,8 @@ export const StudioFleetSkillInput = Schema.Union([
     source: Schema.optionalKey(StudioFleetSkillSource),
     /** Remove the skill this source installed, matched by `contentHash` (Undo). */
     action: Schema.optionalKey(Schema.Literal("remove")),
+    /** Undo only: the copy it replaces; refused once that machine holds another one. */
+    replaces: Schema.optionalKey(StudioFleetSkillReplaces),
   }),
 ]);
 export type StudioFleetSkillInput = typeof StudioFleetSkillInput.Type;

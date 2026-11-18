@@ -135,6 +135,36 @@ describe("Adopt", () => {
     }),
   );
 
+  it.live("never replaces a vskill lock it cannot read, so no other skill is untracked", () =>
+    Effect.gen(function* () {
+      const root = yield* home();
+      yield* write(join(root, ".agents/skills/remotion-best-practices/SKILL.md"), SOURCE);
+      // The lock is a link to a file elsewhere: it is not followed and not overwritten.
+      const elsewhere = join(root, "elsewhere.lock");
+      yield* write(
+        elsewhere,
+        JSON.stringify({ version: 1, skills: { other: { version: "1.0.0" } } }),
+      );
+      yield* Effect.promise(() => NodeFSP.symlink(elsewhere, join(root, ".agents/vskill.lock")));
+      const service = yield* adopt(deps(root));
+      const result = yield* service.adopt({
+        projectId,
+        operation: "adopt",
+        skill: "remotion-best-practices",
+      });
+      expect(result.outcome).toMatchObject({
+        outcome: "failed",
+        message: expect.stringMatching(/vskill.lock could not be read/),
+      });
+      expect(JSON.parse(yield* read(elsewhere)).skills).toHaveProperty("other");
+      expect(
+        (yield* Effect.promise(() =>
+          NodeFSP.lstat(join(root, ".agents/vskill.lock")),
+        )).isSymbolicLink(),
+      ).toBe(true);
+    }),
+  );
+
   it.live("matches a copy whose Claude-only fields were stripped, like the fleet path", () =>
     Effect.gen(function* () {
       const root = yield* home();
@@ -225,7 +255,9 @@ describe("Adopt", () => {
       yield* write(join(root, ".agents/skills/gws/SKILL.md"), "---\nname: gws\n---\nHand copy.\n");
       const service = yield* adopt(deps(root));
       const result = yield* service.adopt({ projectId, operation: "adopt", skill: "gws" });
-      expect(result.outcome).toMatchObject({ outcome: "failed" });
+      expect(result.outcome).toMatchObject({
+        outcome: "failed",
+      });
       expect(yield* exists(join(root, ".agents/vskill.lock"))).toBe(false);
     }),
   );
@@ -309,6 +341,48 @@ describe("Add to a skill repo", () => {
       expect(calls.some((call) => call.args.some((arg) => /\/merge$/.test(arg)))).toBe(false);
       expect(calls.some((call) => call.args.includes("repos/someone/private-skills/pulls"))).toBe(
         true,
+      );
+    }),
+  );
+
+  it.live("deletes its branch again when a file upload fails part way", () =>
+    Effect.gen(function* () {
+      const root = yield* home();
+      yield* write(join(root, ".agents/skills/gws/SKILL.md"), "---\nname: gws\n---\nHand copy.\n");
+      const calls: Array<{ args: ReadonlyArray<string>; stdin?: string }> = [];
+      const failing = (args: ReadonlyArray<string>): CliRun =>
+        args.includes("PUT")
+          ? { exitCode: 1, stdout: "", stderr: "HTTP 422", timedOut: false }
+          : ghAnswers(args);
+      const service = yield* adopt(
+        deps(root, {
+          repos: { "someone/private-skills": repoRead("someone/private-skills", []) },
+          gh: failing,
+          calls,
+        }),
+      );
+      const preview = yield* service.adopt({
+        projectId,
+        operation: "propose-preview",
+        skill: "gws",
+        repo: "someone/private-skills",
+      });
+      yield* service
+        .adopt({
+          projectId,
+          operation: "propose",
+          skill: "gws",
+          repo: "someone/private-skills",
+          fingerprint: preview.proposal!.fingerprint,
+          confirmed: true,
+        })
+        .pipe(Effect.flip);
+      const deleted = calls.find((call) => call.args.includes("DELETE"));
+      expect(deleted?.args.at(-1)).toMatch(
+        /^repos\/someone\/private-skills\/git\/refs\/heads\/add-skill-gws-/,
+      );
+      expect(calls.some((call) => call.args.includes("repos/someone/private-skills/pulls"))).toBe(
+        false,
       );
     }),
   );

@@ -731,6 +731,8 @@ export const discoverClaudePluginSkills = Effect.fn("discoverClaudePluginSkills"
     readonly settingsFiles: ReadonlyArray<ClaudeSettingsFile>;
     readonly cwd: string | undefined;
     readonly repositoryRoot: string | undefined;
+    /** Told when a folder or skill file that is there could not be read. */
+    readonly onUnreadable?: ((error: unknown) => void) | undefined;
   }): Effect.fn.Return<
     ReadonlyArray<ServerProviderSkill>,
     never,
@@ -784,9 +786,10 @@ export const discoverClaudePluginSkills = Effect.fn("discoverClaudePluginSkills"
       seenNamespaces.add(namespace);
 
       for (const file of yield* listPluginSkillFiles(pluginRoot, manifest, namespace)) {
-        const contents = yield* fileSystem
-          .readFileString(file.skillPath)
-          .pipe(Effect.orElseSucceed(() => undefined));
+        const contents = yield* fileSystem.readFileString(file.skillPath).pipe(
+          Effect.tapError((error) => Effect.sync(() => input.onUnreadable?.(error))),
+          Effect.orElseSucceed(() => undefined),
+        );
         if (contents === undefined) continue;
         const frontmatter = parseSkillFrontmatter(contents);
         if (frontmatter.kind === "malformed") continue;
@@ -857,6 +860,7 @@ export const readClaudeSkillSwitches = Effect.fn("readClaudeSkillSwitches")(func
  */
 const discoverClaudeSyncedSkills = Effect.fn("discoverClaudeSyncedSkills")(function* (
   skillsRoot: string,
+  onUnreadable?: (error: unknown) => void,
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -864,6 +868,7 @@ const discoverClaudeSyncedSkills = Effect.fn("discoverClaudeSyncedSkills")(funct
   const list = (directory: string) =>
     fileSystem.readDirectory(directory).pipe(
       Effect.map((entries) => entries.filter((entry) => !entry.startsWith(".")).sort()),
+      Effect.tapError((error) => Effect.sync(() => onUnreadable?.(error))),
       Effect.orElseSucceed((): ReadonlyArray<string> => []),
     );
   const decodeManifest = Schema.decodeUnknownOption(SyncedManifestJson);
@@ -882,9 +887,10 @@ const discoverClaudeSyncedSkills = Effect.fn("discoverClaudeSyncedSkills")(funct
       decoded !== undefined && decoded._tag === "Some" ? (decoded.value.lastUpdated ?? 0) : 0;
     for (const entry of yield* list(bucketPath)) {
       const skillPath = path.join(bucketPath, entry, "SKILL.md");
-      const contents = yield* fileSystem
-        .readFileString(skillPath)
-        .pipe(Effect.orElseSucceed(() => undefined));
+      const contents = yield* fileSystem.readFileString(skillPath).pipe(
+        Effect.tapError((error) => Effect.sync(() => onUnreadable?.(error))),
+        Effect.orElseSucceed(() => undefined),
+      );
       if (contents === undefined) continue;
       const frontmatter = parseSkillFrontmatter(contents);
       if (frontmatter.kind === "malformed") continue;
@@ -1038,7 +1044,10 @@ export const discoverClaudeSkillsReport = Effect.fn("discoverClaudeSkillsReport"
     }
   }
 
-  for (const skill of yield* discoverClaudeSyncedSkills(path.join(configDirPath, "skills"))) {
+  for (const skill of yield* discoverClaudeSyncedSkills(
+    path.join(configDirPath, "skills"),
+    noteUnreadable,
+  )) {
     if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
   }
 
@@ -1047,6 +1056,7 @@ export const discoverClaudeSkillsReport = Effect.fn("discoverClaudeSkillsReport"
     settingsFiles,
     cwd,
     repositoryRoot,
+    onUnreadable: noteUnreadable,
   });
   for (const skill of pluginSkills) {
     if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);

@@ -300,7 +300,10 @@ export function SkillRollout({
       version: plan.version,
       contentHash: plan.contentHash,
       github: plan.github,
-      ...(plan.kind === "remove" ? { action: "remove" as const } : {}),
+      ...(plan.kind === "remove"
+        ? { action: "remove" as const }
+        : // A restore names the copy the rollout put there; a later update there is left alone.
+          { replaces: { commit: source.github.commit, contentHash: source.contentHash } }),
     };
     const target = { machineId: row.machineId, scope: "user" as const };
     const looked = await push({ ...send, preview: true, targets: [target] });

@@ -87,6 +87,21 @@ it.layer(NodeServices.layer)("discoverClaudeSkillsReport", (it) => {
     }),
   );
 
+  it.effect("marks the scan incomplete when a synced claude.ai skill cannot be read", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temp = yield* fs.makeTempDirectoryScoped({ prefix: "studio-claude-incomplete-" });
+      const bucket = path.join(temp, "home", "skills", "synced", "bucket");
+      yield* fs.makeDirectory(path.join(bucket, "blocked-sync"), { recursive: true });
+      yield* fs.writeFileString(path.join(bucket, "blocked-sync", "SKILL.md"), SKILL);
+      const report = yield* withBlocked(
+        discoverClaudeSkillsReport({ homePath: path.join(temp, "home") }, undefined, {}),
+      );
+      assert.strictEqual(report.incomplete, true);
+    }),
+  );
+
   it.effect("a missing folder, plain files and empty folders leave the scan complete", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

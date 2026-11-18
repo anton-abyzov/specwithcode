@@ -302,12 +302,59 @@ describe("a GitHub-source skill install on a fleet machine", () => {
     "fails, without claiming success, when the lock does not record the reviewed copy",
     () =>
       Effect.gen(function* () {
-        const { deps } = fake({ lock: null, writes: installedEntry(COMMIT, OLD_HASH) });
+        const { deps, runs } = fake({ lock: null, writes: installedEntry(COMMIT, OLD_HASH) });
         const plan = yield* prepareGithubSkill(deps, ask());
         const result = yield* runGithubSkill(deps, ask(), plan);
         expect(result.ok).toBe(false);
-        if (!result.ok) expect(result.message).toMatch(/lock records/);
+        if (!result.ok) expect(result.message).toMatch(/lock records.*removed again/);
+        // The unreviewed new copy was removed again.
+        expect(runs.some((run) => run.args.includes("remove"))).toBe(true);
       }),
+  );
+
+  it.effect("keeps a previous copy that records no version, so Undo never removes it", () =>
+    Effect.gen(function* () {
+      const { deps } = fake({
+        lock: installedEntry(OLD_COMMIT, OLD_HASH, { version: null, sourceBranch: "main" }),
+      });
+      const plan = yield* prepareGithubSkill(deps, ask());
+      expect(plan.previous).toMatchObject({ version: null, commit: OLD_COMMIT });
+    }),
+  );
+
+  it.effect("restores the replaced copy only while the rolled-out one is still there", () =>
+    Effect.gen(function* () {
+      const restore = ask({
+        version: "1.1.2",
+        contentHash: OLD_HASH,
+        source: {
+          kind: "github",
+          path: "skills/html-report/SKILL.md",
+          branch: "main",
+          commit: OLD_COMMIT,
+        },
+        replaces: { commit: COMMIT, contentHash: HASH },
+      });
+      const oldRead = {
+        state: "ok",
+        visibility: "public",
+        branch: OLD_COMMIT,
+        skill: {
+          name: "html-report",
+          path: "skills/html-report/SKILL.md",
+          plugin: null,
+          version: "1.1.2",
+          commit: OLD_COMMIT,
+          contentHash: OLD_HASH,
+        },
+      } as const;
+      const still = fake({ lock: installedEntry(COMMIT, HASH), read: oldRead });
+      expect((yield* prepareGithubSkill(still.deps, restore)).removing).toBe(false);
+      // Someone updated it there after the rollout: an old Undo must not downgrade it.
+      const NEWER = "d".repeat(40);
+      const moved = fake({ lock: installedEntry(NEWER, HASH), read: oldRead });
+      expect(yield* refusalOf(moved.deps, restore)).toBe("stale");
+    }),
   );
 
   it.effect("reports the vskill error text when the install fails", () =>
@@ -336,6 +383,9 @@ describe("a GitHub-source skill install on a fleet machine", () => {
       const changed = fake({ lock: installedEntry(OLD_COMMIT, OLD_HASH) });
       expect(yield* refusalOf(changed.deps, ask({ action: "remove" }))).toBe("stale");
       expect(changed.runs).toHaveLength(0);
+      // Same SKILL.md from a later commit: not the copy this rollout installed.
+      const later = fake({ lock: installedEntry("e".repeat(40), HASH) });
+      expect(yield* refusalOf(later.deps, ask({ action: "remove" }))).toBe("stale");
     }),
   );
 });

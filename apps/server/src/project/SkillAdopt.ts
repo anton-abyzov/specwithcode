@@ -240,6 +240,13 @@ export const makeSkillAdopt = Effect.fn("SkillAdopt.make")(function* (deps: Skil
         const { kept } = yield* folderFiles(folder);
         const now = yield* nowIso;
         const lockText = yield* readSmall(vskillLock, MAX_LOCK_BYTES);
+        // A lock that is there but cannot be read (a link, too large, unreadable) is never
+        // replaced by a fresh one: that would untrack every other skill.
+        const lockPresent =
+          Option.isSome(yield* fs.readLink(vskillLock).pipe(Effect.option)) ||
+          (yield* fs.exists(vskillLock).pipe(Effect.orElseSucceed(() => true)));
+        if (lockText === null && lockPresent)
+          return failed("~/.agents/vskill.lock could not be read, so nothing was changed.");
         const lock = parseJson(lockText) ?? {
           version: 1,
           agents: [],
@@ -247,6 +254,8 @@ export const makeSkillAdopt = Effect.fn("SkillAdopt.make")(function* (deps: Skil
           createdAt: now,
         };
         if (lockText !== null && parseJson(lockText) === null)
+          return failed("~/.agents/vskill.lock could not be read, so nothing was changed.");
+        if (lock.skills !== undefined && !isRecord(lock.skills))
           return failed("~/.agents/vskill.lock could not be read, so nothing was changed.");
         const skills = isRecord(lock.skills) ? lock.skills : {};
         skills[skill] = {
@@ -437,26 +446,42 @@ export const makeSkillAdopt = Effect.fn("SkillAdopt.make")(function* (deps: Skil
         ref: `refs/heads/${branch}`,
         sha,
       });
-      for (const file of prepared.files)
-        yield* ghJson(
-          input.projectId,
-          [
-            "--method",
-            "PUT",
-            `repos/${repo}/contents/${file.path.split("/").map(encodeURIComponent).join("/")}`,
-          ],
-          {
-            message: `Add ${input.skill} skill: ${file.path}`,
-            content: Buffer.from(file.text, "utf8").toString("base64"),
-            branch,
-          },
-        );
-      const pull = yield* ghJson(input.projectId, ["--method", "POST", `repos/${repo}/pulls`], {
-        title: `Add ${input.skill} skill`,
-        head: branch,
-        base,
-        body: `Adds the ${input.skill} skill folder (${prepared.files.length} files) so it can be installed with vskill.`,
-      });
+      // A proposal that fails part way leaves no half-filled branch behind on GitHub.
+      const dropBranch = deps
+        .gh([
+          "api",
+          "--hostname",
+          "github.com",
+          "--method",
+          "DELETE",
+          `repos/${repo}/git/refs/heads/${encodeURIComponent(branch)}`,
+        ])
+        .pipe(Effect.ignore);
+      const pull = yield* Effect.gen(function* () {
+        for (const file of prepared.files)
+          yield* ghJson(
+            input.projectId,
+            [
+              "--method",
+              "PUT",
+              `repos/${repo}/contents/${file.path.split("/").map(encodeURIComponent).join("/")}`,
+            ],
+            {
+              message: `Add ${input.skill} skill: ${file.path}`,
+              content: Buffer.from(file.text, "utf8").toString("base64"),
+              branch,
+            },
+          );
+        const pull = yield* ghJson(input.projectId, ["--method", "POST", `repos/${repo}/pulls`], {
+          title: `Add ${input.skill} skill`,
+          head: branch,
+          base,
+          body: `Adds the ${input.skill} skill folder (${prepared.files.length} files) so it can be installed with vskill.`,
+        });
+        const opened = typeof pull.html_url === "string";
+        if (!opened) yield* dropBranch;
+        return pull;
+      }).pipe(Effect.tapError(() => dropBranch));
       const url = typeof pull.html_url === "string" ? pull.html_url : undefined;
       if (url === undefined)
         return yield* actionError(

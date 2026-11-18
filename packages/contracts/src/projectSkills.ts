@@ -13,6 +13,7 @@ import {
   StudioFleetMachineId,
   StudioFleetSkillName,
   StudioFleetSkillPrevious,
+  StudioFleetSkillReplaces,
   StudioFleetSkillSource,
   StudioFleetSkillVia,
   StudioFleetUpdateVersion,
@@ -461,6 +462,8 @@ export const ProjectSkillsFleetPushInput = Schema.Struct({
   github: Schema.optional(StudioFleetSkillSource),
   /** Undo of a new install: remove the copy `github` installed there. */
   action: Schema.optional(Schema.Literal("remove")),
+  /** Undo only: the copy the rollout installed there, which this Undo replaces. */
+  replaces: Schema.optional(StudioFleetSkillReplaces),
 });
 export type ProjectSkillsFleetPushInput = typeof ProjectSkillsFleetPushInput.Type;
 

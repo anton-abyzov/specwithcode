@@ -33,6 +33,7 @@ import type {
   StudioFleetSkillRefusal,
   StudioFleetSkillResult,
   StudioFleetSkillScope,
+  StudioFleetSkillReplaces,
   StudioFleetSkillSource,
   StudioFleetSkillStatus,
 } from "@specweave-studio/contracts/studioFleet";
@@ -139,6 +140,7 @@ export type FleetSkillAsk = {
   /** A GitHub repo at one commit instead of a registry version (fleetSkillsGithubSource.ts). */
   readonly source?: StudioFleetSkillSource;
   readonly action?: "remove";
+  readonly replaces?: StudioFleetSkillReplaces;
 } & ({ readonly scope: "user" } | { readonly scope: "project"; readonly projectId: string });
 
 export const fleetSkillAskOf = (input: StudioFleetSkillInput): FleetSkillAsk =>
@@ -153,6 +155,7 @@ export const fleetSkillAskOf = (input: StudioFleetSkillInput): FleetSkillAsk =>
         ...(input.expectedHash ? { expectedHash: input.expectedHash } : {}),
         ...(input.source ? { source: input.source } : {}),
         ...(input.action ? { action: input.action } : {}),
+        ...(input.replaces ? { replaces: input.replaces } : {}),
         scope: "project",
         projectId: input.projectId,
       }
@@ -167,6 +170,7 @@ export const fleetSkillAskOf = (input: StudioFleetSkillInput): FleetSkillAsk =>
         ...(input.expectedHash ? { expectedHash: input.expectedHash } : {}),
         ...(input.source ? { source: input.source } : {}),
         ...(input.action ? { action: input.action } : {}),
+        ...(input.replaces ? { replaces: input.replaces } : {}),
       };
 
 /** The name vskill keys the skill by in its lock: the last segment of `owner/repo/name`. */
@@ -1201,6 +1205,7 @@ export async function runFleetSkillInstall(
     ...(ask.expectedHash ? { expectedHash: ask.expectedHash } : {}),
     ...(ask.source ? { source: ask.source } : {}),
     ...(ask.action ? { action: ask.action } : {}),
+    ...(ask.replaces ? { replaces: ask.replaces } : {}),
   };
   let response: Response;
   let address;

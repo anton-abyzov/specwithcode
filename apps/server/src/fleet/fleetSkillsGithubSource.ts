@@ -220,13 +220,25 @@ export const prepareGithubSkill = (deps: GithubSkillDeps, ask: FleetSkillAsk) =>
     const locked = lockedCopy(yield* deps.readLockText(lockPath), name);
     const removing = ask.action === "remove";
 
-    if (removing) {
-      if (locked === null || !sameRepo(locked, repo) || locked.sha !== ask.contentHash)
+    // Undo acts only on the copy the rollout put there: same repo, commit, path and SKILL.md.
+    const holdsRolledOut =
+      locked !== null &&
+      sameRepo(locked, repo) &&
+      (removing
+        ? locked.sha === ask.contentHash &&
+          locked.commit === source.commit &&
+          locked.path === source.path
+        : ask.replaces !== undefined &&
+          locked.sha === ask.replaces.contentHash &&
+          locked.commit === ask.replaces.commit);
+    if (removing || ask.replaces !== undefined) {
+      if (!holdsRolledOut)
         return yield* refuse(
           "stale",
           `${name} changed on this machine since it was added, so Undo left it as it is.`,
         );
-    } else {
+    }
+    if (!removing) {
       const connected = yield* deps.connectedRepos;
       if (!connected.some((entry) => entry.toLowerCase() === repo.toLowerCase()))
         return yield* refuse(
@@ -291,7 +303,7 @@ export const prepareGithubSkill = (deps: GithubSkillDeps, ask: FleetSkillAsk) =>
           : `vskill on this machine is older than ${GITHUB_SOURCE_MIN_VSKILL} and npx is missing. Update vskill there.`,
       );
     const previous: StudioFleetSkillPrevious | null =
-      locked !== null && !removing && locked.version !== null
+      locked !== null && !removing
         ? {
             version: locked.version,
             commit: locked.commit,
@@ -379,14 +391,33 @@ export const runGithubSkill = (
       after.sha !== ask.contentHash ||
       after.commit !== source.commit ||
       after.path !== source.path
-    )
+    ) {
+      // A copy nobody reviewed stays nowhere it was not before: a new one is removed again.
+      const rolledBack =
+        plan.previous === null && after !== null && sameRepo(after, plan.repo)
+          ? yield* deps
+              .run({
+                command: plan.command,
+                args: [...plan.prefixArgs, "remove", plan.name, "--force", ...global],
+                cwd: plan.cwd,
+                timeout: INSTALL_TIMEOUT,
+                env: plan.env,
+              })
+              .pipe(Effect.map((removed) => removed.exitCode === 0 && !removed.timedOut))
+          : false;
+      const kept = rolledBack
+        ? " It was removed again."
+        : plan.previous === null
+          ? ""
+          : " The copy it installed is still there; check it on that machine.";
       return {
         ok: false as const,
         message:
           after === null
             ? `vskill finished, but its lock has no entry for ${plan.name}.`
-            : `vskill finished, but the lock records ${after.commit?.slice(0, 7) ?? "another copy"} from ${after.path ?? "an unknown path"}, not the reviewed ${source.commit.slice(0, 7)}.`,
+            : `vskill finished, but the lock records ${after.commit?.slice(0, 7) ?? "another copy"} from ${after.path ?? "an unknown path"}, not the reviewed ${source.commit.slice(0, 7)}.${kept}`,
       };
+    }
     // vskill records the commit as the branch; the branch goes back so updates compare its head.
     if (after.branch !== source.branch) {
       const next = text === null ? null : lockWithBranch(text, plan.name, source.branch);
