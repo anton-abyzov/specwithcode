@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { useT } from "../../i18n";
+import { FirstRunFullDiskAccess } from "../access/FullDiskAccess";
 import { FullAccessGlyph, SupervisedAccessGlyph } from "../chat/AccessGlyph";
 import { FullAccessExplanation } from "./FullAccessExplanation";
 import { StepShell, WizardStepFooter } from "./WizardFrame";
@@ -74,6 +75,7 @@ export function AccessStep({
           </p>
         </div>
       </section>
+      <FirstRunFullDiskAccess />
       <p className="mt-3 text-xs text-muted-foreground">{t("wizard.access.askedOnce")}</p>
       <WizardStepFooter
         back={{ onClick: onBack, disabled: saving !== null }}

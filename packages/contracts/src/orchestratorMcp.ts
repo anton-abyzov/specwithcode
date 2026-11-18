@@ -1396,6 +1396,10 @@ export const OrchestratorMcpRequestAccessInput = Schema.Struct({
       Schema.isMaxLength(4),
     ),
   ).annotate({ description: "Simulators or emulators to drive with the device_* tools." }),
+  permission: Schema.optional(Schema.Literals(["full-disk-access"])).annotate({
+    description:
+      "A macOS privacy permission, asked for alone: 'full-disk-access' when a read of another app's data (Chrome or Safari profiles, Mail, Messages, ~/Library/Containers) failed with 'Operation not permitted'. The card tells the user what it unlocks and that every agent on this machine gets it; it resolves allowed once System Settings grants it.",
+  }),
   timeoutMs: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60 * 60 * 1_000 })),
   ).annotate({ description: "How long to wait for the user. Default 10 minutes." }),
@@ -1407,9 +1411,9 @@ export const OrchestratorMcpRequestAccessInput = Schema.Struct({
 export type OrchestratorMcpRequestAccessInput = typeof OrchestratorMcpRequestAccessInput.Type;
 
 export const OrchestratorMcpRequestAccessResult = Schema.Struct({
-  status: Schema.Literals(["allowed", "denied", "cancelled", "timed_out"]).annotate({
+  status: Schema.Literals(["allowed", "denied", "cancelled", "timed_out", "not_applicable"]).annotate({
     description:
-      "allowed: use what you asked for. denied: the user said no; do not ask again for the same thing in this turn. cancelled: the request ended with the run. timed_out: the user did not answer in time.",
+      "allowed: use what you asked for. denied: the user said no; do not ask again for the same thing in this turn. cancelled: the request ended with the run. timed_out: the user did not answer in time. not_applicable: nothing to grant on this machine (a permission off macOS); the failure has another cause.",
   }),
   scope: Schema.optional(Schema.Literals(["thread", "machine"])).annotate({
     description: "How long an Allow lasts: this thread, or every thread on this machine.",

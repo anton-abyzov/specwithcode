@@ -184,6 +184,33 @@ describe("OrchestratorMcpService.requestAccess", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("a system-resolved card closes as allowed once the OS reports the grant", () => {
+    const { layer, cards, statuses } = harness();
+    let granted = false;
+    let checks = 0;
+    return Effect.gen(function* () {
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const fiber = yield* service
+        .requestAccess(scope, {
+          ...card("fda"),
+          resolvedBySystem: Effect.sync(() => {
+            checks += 1;
+            return granted;
+          }),
+        })
+        .pipe(Effect.forkChild);
+      yield* settle;
+      assert.deepEqual(statuses(), ["pending"]);
+      yield* TestClock.adjust("3 seconds");
+      assert.isAtLeast(checks, 1);
+      granted = true;
+      yield* TestClock.adjust("3 seconds");
+      assert.deepEqual(yield* Fiber.join(fiber), { status: "allowed", scope: "machine" });
+      assert.deepEqual(statuses(), ["pending", "allowed"]);
+      assert.equal(Array.from(cards.values())[0]?.accessScope, "machine");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("returns denied without a scope", () => {
     const { layer, answer } = harness();
     return Effect.gen(function* () {
