@@ -5,6 +5,7 @@ import { useRef, type KeyboardEvent, type ReactNode } from "react";
 
 import { useTx } from "../../../i18n";
 import { cn } from "../../../lib/utils";
+import { hostReachOr, machineReachWords } from "../../../lib/machineStatus";
 import { useEnvironmentScopeAccess } from "../../../state/session";
 import { useSettingsScope } from "../SettingsScopeContext";
 import {
@@ -127,8 +128,8 @@ export function IntegrationsTabPanel({
 
 /**
  * What a per-machine tab shows in place of, or above, its rows when the
- * machine cannot be set up right now: gone from the list, offline, or reached
- * with a sign-in that may look but not change.
+ * machine cannot be set up right now: gone from the list, not connected, or
+ * reached with a sign-in that may look but not change.
  */
 export function IntegrationsMachineState({
   children,
@@ -145,13 +146,16 @@ export function IntegrationsMachineState({
   readonly disableRows?: boolean;
 }) {
   const tx = useTx();
-  const { scope, connectedEnvironments } = useSettingsScope();
+  const { scope, environments } = useSettingsScope();
   const environmentId = scope.kind === "environment" ? scope.environmentId : null;
-  const offline = scope.kind === "environment" && connectedEnvironments.length === 0;
+  const machine =
+    environments.find((environment) => environment.environmentId === environmentId) ?? null;
+  // Judged from the connection alone, as the scope line's status is, so the two never disagree.
+  const reach = machine ? hostReachOr(undefined, machine.connection) : null;
+  const away = reach !== null && reach !== "connected";
   // "denied" is a sign-in that may read only; a session still loading or
   // signed out says nothing about what this sign-in may change.
-  const viewOnly =
-    useEnvironmentScopeAccess(offline ? null : environmentId, changeScope) === "denied";
+  const viewOnly = useEnvironmentScopeAccess(away ? null : environmentId, changeScope) === "denied";
   const locked = viewOnly && disableRows;
   if (scope.kind === "unavailable") {
     return (
@@ -160,21 +164,29 @@ export function IntegrationsMachineState({
       </p>
     );
   }
-  if (offline) {
+  if (machine && reach !== null && away) {
+    // A machine that is still on its way says so; only one that is down
+    // sends the reader to another machine.
+    const arriving = reach === "connecting" || reach === "catching-up" || reach === "reconnecting";
     return (
       <div
         role="status"
-        data-testid="integrations-machine-offline"
+        data-testid="integrations-machine-away"
+        data-reach={reach}
         className="rounded-xl border border-border bg-card px-4 py-6 text-center"
       >
         <p className="text-base font-medium">
-          {tx("{machine} is offline", { machine: scope.label })}
+          {tx(machineReachWords(reach, machine.connection.phase).headline, {
+            machine: scope.label,
+          })}
         </p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {tx(
-            "Its settings show when it reconnects. Pick another machine above to set that one up.",
-          )}
-        </p>
+        {arriving ? null : (
+          <p className="mt-1 text-sm text-muted-foreground">
+            {tx(
+              "Its settings show when it reconnects. Pick another machine above to set that one up.",
+            )}
+          </p>
+        )}
       </div>
     );
   }
@@ -199,7 +211,12 @@ export function IntegrationsMachineState({
       <div
         inert={locked}
         data-testid="integrations-machine-rows"
-        className={cn("flex min-w-0 flex-col gap-8", locked && "opacity-60")}
+        className={cn(
+          "flex min-w-0 flex-col gap-8",
+          // Only the controls dim; the words beside them stay as readable as ever.
+          locked &&
+            "[&_[role=combobox]]:opacity-60 [&_[role=switch]]:opacity-60 [&_button]:opacity-60 [&_input]:opacity-60",
+        )}
       >
         {children}
       </div>

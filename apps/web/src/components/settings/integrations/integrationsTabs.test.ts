@@ -128,16 +128,16 @@ describe("Integrations tabs", () => {
   });
 
   it("redirects an old row link to its tab and keeps the machine and the row", async () => {
-    const router = createIntegrationsRouter("/settings/integrations?machine=m5#mcp-connections");
+    const router = createIntegrationsRouter("/settings/integrations?machine=mini#mcp-connections");
     await router.load();
     await follow(router);
     expect(router.state.location.pathname).toBe("/settings/integrations/mcp");
-    expect(router.state.location.search).toEqual({ machine: "m5" });
+    expect(router.state.location.search).toEqual({ machine: "mini" });
     expect(router.state.location.hash).toBe("mcp-connections");
   });
 
   it("moves a settings-search result between tabs without dropping the machine", async () => {
-    const router = createIntegrationsRouter("/settings/integrations/mcp?machine=m5");
+    const router = createIntegrationsRouter("/settings/integrations/mcp?machine=mini");
     await router.load();
     // Settings search still navigates to the page with the row as the hash.
     await router.navigate({
@@ -147,16 +147,16 @@ describe("Integrations tabs", () => {
     } as never);
     await follow(router);
     expect(router.state.location.pathname).toBe("/settings/integrations/preview");
-    expect(router.state.location.search).toEqual({ machine: "m5" });
+    expect(router.state.location.search).toEqual({ machine: "mini" });
     expect(router.state.location.hash).toBe("browser-recording-frame-rate");
   });
 
   it("opens a tab by its own link", async () => {
     for (const tab of INTEGRATIONS_TABS) {
-      const router = createIntegrationsRouter(`${tab.path}?machine=m5`);
+      const router = createIntegrationsRouter(`${tab.path}?machine=mini`);
       await router.load();
       expect(router.state.location.pathname).toBe(tab.path);
-      expect(router.state.location.search).toEqual({ machine: "m5" });
+      expect(router.state.location.search).toEqual({ machine: "mini" });
     }
   });
 });

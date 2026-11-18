@@ -121,7 +121,8 @@ try {
   await page.close();
   checks.push("Set up on a machine, one picker, no All environments, seat line, MCP follows it");
 
-  // Old links and settings search.
+  // Old links and settings search: the tab opens, the row scrolls into view, and
+  // clearing the handled hash leaves the page on that tab.
   for (const [hash, tab, path] of [
     ["mcp-connections", "MCP servers", "/settings/integrations/mcp"],
     ["agent-browser-access", "Agent access", "/settings/integrations/access"],
@@ -130,10 +131,18 @@ try {
   ]) {
     page = await open({ open: `/settings/integrations#${hash}` });
     await page.getByRole("tabpanel", { name: tab }).waitFor();
-    NodeAssert.equal((await where(page)).split("#")[0], path);
+    await page.waitForFunction(() => !window.fixtureRouter.state.location.href.includes("#"));
+    NodeAssert.equal(await where(page), path, `${hash}: the page left its tab`);
+    NodeAssert.equal(await page.getByRole("tab", { selected: true }).innerText(), tab);
+    await page.waitForFunction((id) => {
+      const row = document.getElementById(id);
+      if (!row) return false;
+      const box = row.getBoundingClientRect();
+      return box.top >= 0 && box.top < window.innerHeight;
+    }, hash);
     await page.close();
   }
-  checks.push("Old row links open the tab that holds the row");
+  checks.push("Old row links open the row's tab, scroll to the row and stay there");
 
   // Machine states.
   page = await open({ state: "single", open: "/settings/integrations/devices" });
@@ -141,10 +150,20 @@ try {
   NodeAssert.equal(await page.getByRole("button", { name: /^Machine:/ }).count(), 0);
   await page.close();
   page = await open({ state: "offline", open: "/settings/integrations/devices" });
-  NodeAssert.match(await page.getByTestId("integrations-machine-offline").innerText(), /offline/);
+  NodeAssert.match(
+    await page.getByTestId("integrations-machine-away").innerText(),
+    /Pick another machine above/,
+  );
   NodeAssert.equal(await page.getByRole("switch").count(), 0);
   NodeAssert.equal(await page.getByRole("tab").count(), 4, "the tabs stay on an offline machine");
   await shot(page, "offline-1100-light");
+  await page.close();
+  page = await open({ state: "connecting", open: "/settings/integrations/devices" });
+  NodeAssert.equal(
+    await page.getByTestId("integrations-machine-away").innerText(),
+    "Connecting to Studio Mini…",
+  );
+  NodeAssert.equal(await page.getByTestId("settings-scope-status").innerText(), "Connecting");
   await page.close();
   page = await open({ state: "viewonly", open: "/settings/integrations/access" });
   await page.getByTestId("integrations-machine-view-only").waitFor();
@@ -173,7 +192,7 @@ try {
   await page.getByText("This environment is no longer available.").first().waitFor();
   NodeAssert.equal(await page.getByRole("tab").count(), 4);
   await page.close();
-  checks.push("One machine, offline, view only and a machine that left the list");
+  checks.push("One machine, offline, connecting, view only and a machine that left the list");
 
   // Layout at the settings window's widths, in both themes and three languages.
   for (const width of [360, 390, 560, 728, 1100, 1600])

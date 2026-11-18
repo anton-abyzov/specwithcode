@@ -8,8 +8,8 @@ const state = vi.hoisted(() => ({
   navigate: vi.fn(() => Promise.resolve()),
   access: "granted" as "granted" | "denied" | "signed-out" | "unknown",
   accessFor: vi.fn(),
-  scope: { kind: "environment", environmentId: "m5", label: "M5" } as Record<string, unknown>,
-  connectedEnvironments: [{ environmentId: "m5" }] as ReadonlyArray<unknown>,
+  scope: { kind: "environment", environmentId: "mini", label: "Mini" } as Record<string, unknown>,
+  phase: "connected",
 }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
@@ -23,7 +23,7 @@ vi.mock("../../../state/session", () => ({
 vi.mock("../SettingsScopeContext", () => ({
   useSettingsScope: () => ({
     scope: state.scope,
-    connectedEnvironments: state.connectedEnvironments,
+    environments: [{ environmentId: "mini", connection: { phase: state.phase } }],
   }),
 }));
 
@@ -47,8 +47,8 @@ function render(node: React.ReactNode) {
 beforeEach(() => {
   vi.clearAllMocks();
   state.access = "granted";
-  state.scope = { kind: "environment", environmentId: "m5", label: "M5" };
-  state.connectedEnvironments = [{ environmentId: "m5" }];
+  state.scope = { kind: "environment", environmentId: "mini", label: "Mini" };
+  state.phase = "connected";
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -133,18 +133,28 @@ describe("IntegrationsMachineState", () => {
       shown.querySelector('[data-testid="integrations-machine-rows"]')!.hasAttribute("inert"),
     ).toBe(false);
     expect(shown.textContent).toBe("rows");
-    expect(state.accessFor).toHaveBeenLastCalledWith("m5", AuthSettingsWriteScope);
+    expect(state.accessFor).toHaveBeenLastCalledWith("mini", AuthSettingsWriteScope);
   });
 
-  it("says a machine is offline instead of showing rows it cannot read", () => {
-    state.connectedEnvironments = [];
+  it("says a machine is down instead of showing rows it cannot read", () => {
+    state.phase = "error";
     const shown = view();
-    expect(shown.querySelector('[data-testid="integrations-machine-offline"]')!.textContent).toBe(
-      "M5 is offlineIts settings show when it reconnects. Pick another machine above to set that one up.",
+    const card = shown.querySelector('[data-testid="integrations-machine-away"]')!;
+    expect(card.textContent).toContain("Mini");
+    expect(card.textContent).toContain(
+      "Its settings show when it reconnects. Pick another machine above to set that one up.",
     );
     expect(shown.textContent).not.toContain("rows");
-    // An offline machine's last grant says nothing about now.
+    // A machine that is away keeps its last grant; it says nothing about now.
     expect(state.accessFor).toHaveBeenLastCalledWith(null);
+  });
+
+  it("says a machine is connecting, without sending the reader elsewhere", () => {
+    state.phase = "connecting";
+    const shown = view();
+    const card = shown.querySelector('[data-testid="integrations-machine-away"]')!;
+    expect(card.textContent).toBe("Connecting to Mini…");
+    expect(shown.textContent).not.toContain("rows");
   });
 
   it("keeps the rows readable for a sign-in that may not change them", () => {
@@ -154,7 +164,7 @@ describe("IntegrationsMachineState", () => {
       shown.querySelector('[data-testid="integrations-machine-rows"]')!.hasAttribute("inert"),
     ).toBe(true);
     expect(shown.querySelector('[data-testid="integrations-machine-view-only"]')!.textContent).toBe(
-      "You can look at M5's settings from this sign-in, but not change them.",
+      "You can look at Mini's settings from this sign-in, but not change them.",
     );
     expect(shown.textContent).toContain("rows");
   });
@@ -179,7 +189,7 @@ describe("IntegrationsMachineState", () => {
     );
     expect(shown.querySelector('[data-testid="integrations-machine-view-only"]')).not.toBeNull();
     expect(shown.querySelector("button")!.closest("[inert]")).toBeNull();
-    expect(state.accessFor).toHaveBeenLastCalledWith("m5", "filesystem:write");
+    expect(state.accessFor).toHaveBeenLastCalledWith("mini", "filesystem:write");
   });
 
   it.each(["unknown", "signed-out"] as const)(
@@ -200,7 +210,6 @@ describe("IntegrationsMachineState", () => {
 
   it("shows the rows' own empty states when no machine is connected", () => {
     state.scope = { kind: "all", label: "All environments" };
-    state.connectedEnvironments = [];
     expect(view().textContent).toBe("rows");
   });
 });

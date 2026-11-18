@@ -10,9 +10,16 @@ export {
 /**
  * What the page is shown: `ready` (two machines, both connected), `single`
  * (one machine), `other` (setting up the machine you are not sitting at),
- * `offline`, `viewonly` and `unavailable`.
+ * `offline`, `connecting`, `viewonly` and `unavailable`.
  */
-export type FixtureState = "ready" | "single" | "other" | "offline" | "viewonly" | "unavailable";
+export type FixtureState =
+  | "ready"
+  | "single"
+  | "other"
+  | "offline"
+  | "connecting"
+  | "viewonly"
+  | "unavailable";
 
 const params = new URLSearchParams(location.search);
 export const fixtureState = (params.get("state") ?? "ready") as FixtureState;
@@ -28,7 +35,14 @@ const here = {
 const other = {
   environmentId: EnvironmentId.make("remote"),
   label: "Studio Mini",
-  connection: { phase: fixtureState === "offline" ? "available" : "connected" },
+  connection: {
+    phase:
+      fixtureState === "offline"
+        ? "error"
+        : fixtureState === "connecting"
+          ? "connecting"
+          : "connected",
+  },
   serverConfig: null,
   entry: { target: { _tag: "RemoteConnectionTarget" } },
 };
@@ -37,7 +51,7 @@ const environments = fixtureState === "single" ? [here] : [here, other];
 let machine: string =
   fixtureState === "unavailable"
     ? "gone"
-    : fixtureState === "other" || fixtureState === "offline"
+    : fixtureState === "other" || fixtureState === "offline" || fixtureState === "connecting"
       ? other.environmentId
       : here.environmentId;
 const listeners = new Set<() => void>();

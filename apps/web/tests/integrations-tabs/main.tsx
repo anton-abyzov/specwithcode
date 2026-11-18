@@ -38,13 +38,23 @@ for (const element of [document.documentElement, document.body])
 const locale = params.get("locale");
 if (locale) setLocalePreference(locale as never);
 
+/** A row each tab really holds, so a link to it has somewhere to land. */
+const ROW_ANCHOR = {
+  access: "agent-browser-access",
+  devices: "max-booted-devices",
+  preview: "browser-default-zoom",
+} as const;
+
 /** Stand-in rows: the tab's real rows need a server, the shell around them does not. */
 function FixtureRows({ tab }: { tab: Exclude<IntegrationsTabId, "mcp"> }) {
   const [on, setOn] = useState(true);
   const rows = (
     <SettingsSection id={`fixture-${tab}`} title="Fixture rows" literal>
+      {/* Far enough down that a link to the row below has to scroll. */}
+      <div aria-hidden className="h-[1200px]" />
       <SettingsRow
         literal
+        id={ROW_ANCHOR[tab]}
         title="A setting on this machine"
         description="Stands in for the tab's rows, which need a running server."
         control={
