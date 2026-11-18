@@ -5,21 +5,21 @@ import { describe, expect, it } from "vite-plus/test";
 import { relaySessionRejected } from "./ConnectSessionGuard";
 
 describe("relaySessionRejected", () => {
-  it("is true only for an authentication refusal", () => {
+  it("is true only for a refusal of the sign-in itself (1417)", () => {
     const refused = new ConnectionBlockedError({
       reason: "authentication",
-      detail: "Your sign-in expired.",
+      detail: "Relay rejected the cloud session token.",
+      connectSessionRefused: true,
     });
     expect(relaySessionRejected(Option.some(refused))).toBe(true);
   });
 
-  it("ignores a proof this device could not make, which never reached the relay (1417)", () => {
-    const local = new ConnectionBlockedError({
+  it("ignores other authentication failures a new sign-in would not fix", () => {
+    const proof = new ConnectionBlockedError({
       reason: "authentication",
-      detail: "Could not load the relay key.",
-      localProofFailure: true,
+      detail: "Relay rejected the DPoP proof.",
     });
-    expect(relaySessionRejected(Option.some(local))).toBe(false);
+    expect(relaySessionRejected(Option.some(proof))).toBe(false);
   });
 
   it("ignores other failures and success", () => {

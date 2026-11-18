@@ -1,4 +1,4 @@
-import { useAuth, useClerk } from "@clerk/react";
+import { useAuth, useClerk, useSession } from "@clerk/react";
 
 import {
   clearConnectRenewStarted,
@@ -18,10 +18,20 @@ import { resolveClerkSignOutRedirectUrl } from "./authRedirect";
  */
 export function useConnectRenew(): () => void {
   const { userId } = useAuth();
+  const { session } = useSession();
   const clerk = useClerk();
+  const expireAt = session?.expireAt?.getTime() ?? null;
   return () => {
     if (!userId) return;
-    markConnectRenewStarted(userId);
+    if (!markConnectRenewStarted(userId, expireAt)) {
+      // Signing out now would remove the machines this renew means to keep.
+      toastManager.add({
+        type: "error",
+        title: "Could not start a new sign-in",
+        description: "This window could not save its sign-in state. Reload it and try again.",
+      });
+      return;
+    }
     markConnectRenewOpen();
     void clerk
       .signOut({ redirectUrl: resolveClerkSignOutRedirectUrl(window.location.href, isElectron) })

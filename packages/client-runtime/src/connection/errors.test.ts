@@ -25,7 +25,45 @@ import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import { RemoteEnvironmentAuthFetchError, RemoteEnvironmentAuthTimeoutError } from "../rpc/http.ts";
 
 describe("mapManagedRelayError", () => {
-  it("marks a proof this device could not make, which is no refusal of the sign-in (1417)", () => {
+  it("marks only the refusals a new sign-in fixes (1417, AC-13)", () => {
+    const refusal = (
+      reason:
+        | "missing_bearer"
+        | "invalid_bearer"
+        | "invalid_dpop"
+        | "not_authorized"
+        | "device_removed",
+    ) => {
+      const relayError = new RelayAuthInvalidError({
+        code: "auth_invalid",
+        reason,
+        traceId: "trace-auth",
+      });
+      return mapManagedRelayError(
+        new ManagedRelayRequestFailedError({
+          action: "connect relay environment",
+          cause: relayError,
+          relayError,
+        }),
+      );
+    };
+    for (const reason of ["missing_bearer", "invalid_bearer", "device_removed"] as const)
+      expect(refusal(reason), reason).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "authentication",
+        connectSessionRefused: true,
+      });
+    for (const reason of ["invalid_dpop", "not_authorized"] as const) {
+      const mapped = refusal(reason);
+      expect(mapped, reason).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "authentication",
+      });
+      expect("connectSessionRefused" in mapped, reason).toBe(false);
+    }
+  });
+
+  it("never marks a proof this device could not make", () => {
     const failures = [
       new ManagedRelayDpopKeyLoadError({ keyStore: "indexed-db", cause: new Error("locked") }),
       new ManagedRelayTokenProofCreationError({
@@ -40,29 +78,10 @@ describe("mapManagedRelayError", () => {
       }),
     ];
     for (const failure of failures) {
-      expect(mapManagedRelayError(failure)).toMatchObject({
-        _tag: "ConnectionBlockedError",
-        reason: "authentication",
-        localProofFailure: true,
-      });
+      const mapped = mapManagedRelayError(failure);
+      expect(mapped).toMatchObject({ _tag: "ConnectionBlockedError", reason: "authentication" });
+      expect("connectSessionRefused" in mapped).toBe(false);
     }
-  });
-
-  it("leaves a relay refusal of the sign-in unmarked", () => {
-    const relayError = new RelayAuthInvalidError({
-      code: "auth_invalid",
-      reason: "invalid_bearer",
-      traceId: "trace-auth",
-    });
-    const mapped = mapManagedRelayError(
-      new ManagedRelayRequestFailedError({
-        action: "connect relay environment",
-        cause: relayError,
-        relayError,
-      }),
-    );
-    expect(mapped).toMatchObject({ _tag: "ConnectionBlockedError", reason: "authentication" });
-    expect("localProofFailure" in mapped).toBe(false);
   });
 
   it("keeps a timeout reported by the relay distinct from a local network failure", () => {

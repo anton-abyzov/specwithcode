@@ -11,16 +11,16 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
 
 /**
- * The relay refused this browser's Clerk session when listing its machines.
- * A proof this device could not make (its key or a signature) never reached
- * the relay, so it is no refusal of the sign-in (1417, AC-13).
+ * The relay refused this browser's Connect sign-in itself when listing its
+ * machines: a missing or refused session token, or a removed device. A DPoP
+ * proof the relay rejected, or one this device could not make, is not such a
+ * refusal: a new sign-in would not fix it (1417, AC-13).
  */
 export function relaySessionRejected(error: Option.Option<ConnectionAttemptError>): boolean {
   return (
     Option.isSome(error) &&
     error.value._tag === "ConnectionBlockedError" &&
-    error.value.reason === "authentication" &&
-    error.value.localProofFailure !== true
+    error.value.connectSessionRefused === true
   );
 }
 
@@ -51,6 +51,9 @@ export function ConnectSessionGuard() {
     reportFailure: false,
   });
   const checking = useRef(false);
+  // The listing error the last check ended on. Each check's own listing makes
+  // a new error, so without this a refusal that lasts would check again at once.
+  const answered = useRef<ConnectionAttemptError | null>(null);
   const rejected = relaySessionRejected(discovery.error);
 
   // A listing the relay accepts again ends the report; so does leaving this account.
@@ -60,8 +63,9 @@ export function ConnectSessionGuard() {
   useEffect(() => () => setConnectSessionRejected(false), []);
 
   useEffect(() => {
-    if (!rejected || discovery.refreshing || checking.current) return;
     const trigger = Option.getOrNull(discovery.error);
+    if (!rejected || discovery.refreshing || checking.current || trigger === answered.current)
+      return;
     checking.current = true;
     void (async () => {
       try {
@@ -86,6 +90,9 @@ export function ConnectSessionGuard() {
           setConnectSessionRejected(true);
         }
       } finally {
+        answered.current = Option.getOrNull(
+          appAtomRegistry.get(relayEnvironmentDiscovery.stateValueAtom).error,
+        );
         checking.current = false;
       }
     })();

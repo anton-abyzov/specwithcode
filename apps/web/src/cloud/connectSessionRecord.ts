@@ -66,11 +66,22 @@ export function clearConnectSessionRecord(): void {
   }
 }
 
-/** Notes that the person is renewing this account's sign-in, just before the sign-out. */
-export function markConnectRenewStarted(accountId: string, now = Date.now()): void {
-  const record = readConnectSessionRecord();
-  if (record === null || record.accountId !== accountId) return;
+/**
+ * Notes that the person is renewing this account's sign-in, just before the
+ * sign-out. Writes the record first when the window has none yet. False when
+ * the note could not be kept (no storage, no known end, another account's
+ * record): the renew must not sign out then, or the cleanup would remove the
+ * machines it means to keep.
+ */
+export function markConnectRenewStarted(
+  accountId: string,
+  expireAt: number | null,
+  now = Date.now(),
+): boolean {
+  const record = readConnectSessionRecord() ?? (expireAt === null ? null : { accountId, expireAt });
+  if (record === null || record.accountId !== accountId) return false;
   writeConnectSessionRecord({ ...record, renewStartedAt: now });
+  return readConnectSessionRecord()?.renewStartedAt === now;
 }
 
 /** Undoes {@link markConnectRenewStarted} when the renew's sign-out failed. */

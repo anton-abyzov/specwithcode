@@ -54,13 +54,24 @@ describe("which sign-outs keep the machines reached through Connect (1417, AC-16
 describe("the stored record", () => {
   it("round-trips and marks a renew only for the same account", () => {
     writeConnectSessionRecord({ accountId: "user-1", expireAt: NOW });
-    markConnectRenewStarted("user-2", NOW);
+    expect(markConnectRenewStarted("user-2", NOW, NOW)).toBe(false);
     expect(readConnectSessionRecord()).toEqual({ accountId: "user-1", expireAt: NOW });
-    markConnectRenewStarted("user-1", NOW + 5);
+    expect(markConnectRenewStarted("user-1", NOW, NOW + 5)).toBe(true);
     expect(readConnectSessionRecord()).toEqual({
       accountId: "user-1",
       expireAt: NOW,
       renewStartedAt: NOW + 5,
+    });
+  });
+
+  it("writes the record for a renew when there is none, and refuses without a known end", () => {
+    expect(markConnectRenewStarted("user-1", null, NOW)).toBe(false);
+    expect(readConnectSessionRecord()).toBeNull();
+    expect(markConnectRenewStarted("user-1", NOW + HOUR, NOW)).toBe(true);
+    expect(readConnectSessionRecord()).toEqual({
+      accountId: "user-1",
+      expireAt: NOW + HOUR,
+      renewStartedAt: NOW,
     });
   });
 
