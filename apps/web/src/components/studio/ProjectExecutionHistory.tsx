@@ -12,6 +12,7 @@ import { useMachineStillChecking } from "../../studio/machineChecking";
 import {
   hostReachOr,
   useHostReachStates,
+  useHostDownNotes,
   useIdentityMismatchedHosts,
 } from "../../studio/unreachableHosts";
 import { useClockWhile } from "../../hooks/useClockWhile";
@@ -203,6 +204,7 @@ export function ProjectThreadAvailability({
   const stillChecking = useMachineStillChecking();
   const reach = useHostReachStates();
   const identityMismatched = useIdentityMismatchedHosts();
+  const notes = useHostDownNotes();
   const tx = useTx();
   useMachineLastSeenVersion();
   const down = [...new Set(scopes.map((scope) => scope.environmentId))].some((environmentId) => {
@@ -239,7 +241,12 @@ export function ProjectThreadAvailability({
         const mismatched = identityMismatchShown(state, identityMismatched.has(environmentId));
         const words =
           environment && state
-            ? machineReachWords(state, environment.connection.phase, mismatched)
+            ? machineReachWords(
+                state,
+                environment.connection.phase,
+                mismatched,
+                notes.get(environmentId) ?? null,
+              )
             : null;
         // Reconnecting, connecting and catching up are calm: the threads below
         // keep their groups, and nothing is wrong yet.

@@ -10,7 +10,12 @@ import { MessagesSquareIcon } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 
 import { threadCardStatus } from "../studio/projectThreadCards";
-import { useHostIdentityMismatch, useHostOffline, useHostReach } from "../studio/unreachableHosts";
+import {
+  useHostDownNote,
+  useHostIdentityMismatch,
+  useHostOffline,
+  useHostReach,
+} from "../studio/unreachableHosts";
 import { Tip } from "./studio/shell/Tip";
 import { toastManager } from "./ui/toast";
 
@@ -48,6 +53,7 @@ export function ThreadLinkChipButton(props: {
     useHostOffline(props.thread.environmentId),
     useHostReach(props.thread.environmentId),
     useHostIdentityMismatch(props.thread.environmentId),
+    useHostDownNote(props.thread.environmentId),
   );
   const title = liveTitle(props.thread, props.label);
   return (
@@ -83,6 +89,7 @@ export function ThreadLinkChipLink(props: {
     useHostOffline(props.thread.environmentId),
     useHostReach(props.thread.environmentId),
     useHostIdentityMismatch(props.thread.environmentId),
+    useHostDownNote(props.thread.environmentId),
   );
   const title = liveTitle(props.thread, props.label);
   const onClick = (event: MouseEvent<HTMLAnchorElement>) => {

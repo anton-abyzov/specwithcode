@@ -1066,24 +1066,16 @@ export const de: PhraseCatalog = {
   Copy: "Kopieren",
   "This device cannot read that machine's settings.":
     "Dieses Gerät kann die Einstellungen dieses Rechners nicht lesen.",
-  "1. Install the SpecWithCode Browser extension":
-    "1. SpecWithCode Browser-Erweiterung installieren",
   "Add to Chrome": "Zu Chrome hinzufügen",
   "(opens the Chrome Web Store)": "(öffnet den Chrome Web Store)",
   "Chrome Web Store link": "Link zum Chrome Web Store",
   "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.":
     "Installiere sie in Chrome auf {machine}: Kopiere den Link und öffne ihn dort, im Profil, das Agents nutzen sollen.",
-  "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.":
-    "Öffne den Link im Chrome-Profil, das Agents nutzen sollen. Chrome hält die Erweiterung aktuell.",
-  "2. Pair it with {machine}": "2. Mit {machine} koppeln",
   "This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.":
     "Dieser Code funktioniert nur in Chrome auf {machine}, nicht in Chrome auf {thisComputer}.",
-  "Show pairing code": "Kopplungscode anzeigen",
   "Pairing code": "Kopplungscode",
   "pairing code": "Kopplungscode",
   "Reset code": "Code zurücksetzen",
-  "The code lets a Chrome profile act for agents on {machine}. Keep it private.":
-    "Mit dem Code kann ein Chrome-Profil für Agents auf {machine} handeln. Halte ihn geheim.",
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "Du bist auf {b}. Hier wird Chrome auf {b2} eingerichtet, einem anderen Computer; sein Kopplungscode funktioniert hier in Chrome nicht.",
   "Set up Chrome on {thisComputer}": "Chrome auf {thisComputer} einrichten",
@@ -3647,12 +3639,6 @@ export const de: PhraseCatalog = {
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
     "Deine eigenen Regeln, gesendet mit jeder Anfrage von Koordinator und Workern, bei jedem Anbieter, in jedem Projekt in jeder ausgewählten Umgebung. Standardmäßig leer.",
   "Effective instructions for {label}": "Wirksame Anweisungen für {label}",
-  "Click the SpecWithCode icon in Chrome's toolbar.":
-    "Klicke in der Chrome-Symbolleiste auf das SpecWithCode-Symbol.",
-  "Paste the pairing code.": "Füge den Kopplungscode ein.",
-  "Name the profile, for example Work or Marketing.":
-    "Benenne das Profil, zum Beispiel Arbeit oder Marketing.",
-  "Click Pair.": "Klicke auf Koppeln.",
   "Ask Google for {service}": "Google nach {service} fragen",
   "Edit shortcut for {command}: {shortcut}": "Tastenkürzel für {command} bearbeiten: {shortcut}",
   "Edit when clause for {command}": "Bedingung für {command} bearbeiten",
@@ -5662,4 +5648,25 @@ export const de: PhraseCatalog = {
   "Manage profiles": "Profile verwalten",
   "Profiles: {count}": "Profile: {count}",
   "Device hosts: {count}": "Geräte-Hosts: {count}",
+  "Not reachable from here": "Von hier nicht erreichbar",
+  "Sign in to reach {machine}": "Anmelden, um {machine} zu erreichen",
+  "Can't reach {machine} from this window": "{machine} ist von diesem Fenster aus nicht erreichbar",
+  "Signed out of SpecWithCode Connect": "Von SpecWithCode Connect abgemeldet",
+  "This machine is not affected.": "Dieser Rechner ist nicht betroffen.",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "Anmeldung nötig. Melde dich bei SpecWithCode Connect an, um ihn von diesem Fenster aus zu erreichen",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "Melde dich bei SpecWithCode Connect an, um ihn von diesem Fenster aus zu erreichen.",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.":
+    "Dieses Fenster erreicht ihn über SpecWithCode Connect und ist abgemeldet. Melde dich an, um ihn wieder zu erreichen.",
+  "{machines} can't be reached from this window until you sign in.":
+    "{machines} ist von diesem Fenster aus erst nach der Anmeldung erreichbar.",
+  "Still connected: {machines}.": "Weiter verbunden: {machines}.",
+  "Some of your machines can't be reached from this window until you sign in. This machine is not affected.":
+    "Einige deiner Rechner sind von diesem Fenster aus erst nach der Anmeldung erreichbar. Dieser Rechner ist nicht betroffen.",
+  "{machine} is running, but this window can't reach it until you sign in.":
+    "{machine} läuft, aber dieses Fenster erreicht ihn erst nach der Anmeldung.",
+  "{machines} are running, but this window can't reach them until you sign in.":
+    "{machines} laufen, aber dieses Fenster erreicht sie erst nach der Anmeldung.",
+  "Sign in to reach this machine": "Anmelden, um diesen Rechner zu erreichen",
 };

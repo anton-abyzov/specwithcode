@@ -31,6 +31,7 @@ import {
 } from "../studio/coordinatorContinuation";
 import { latestWorkStep } from "../studio/coordinatorProgress";
 import {
+  useHostDownNote,
   useHostIdentityMismatch,
   useHostReach,
   useUnreachableHosts,
@@ -814,6 +815,7 @@ import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { deriveThreadPlanView, displayFolder } from "../studio/threadPlanProgress";
 import { useThreadIncrementState } from "../studio/useThreadIncrementProgress";
+import { NotOnBoardNote, SpecweaveOffer } from "./chat/SpecweaveOffer";
 import { useUnplannedNoticeShown } from "../studio/unplannedNotice";
 import { ThreadPlanCard } from "./chat/ThreadPlanCard";
 import { ThreadBlockerNote } from "./chat/ThreadBlockerNote";
@@ -3096,6 +3098,17 @@ function useChatViewState(props: ChatViewProps) {
     [activeCoordinatorThreadId, activeThread],
   );
   const coordinatorThreadShell = useThreadShell(activeCoordinatorTarget);
+  // 1396 AC-18: the coordinator's composer may offer SpecWeave once.
+  const specweaveOffer = useMemo(
+    () =>
+      activeThread && activeCoordinatorThreadId === activeThread.id && activeThread.projectId ? (
+        <SpecweaveOffer
+          environmentId={activeThread.environmentId}
+          projectId={activeThread.projectId}
+        />
+      ) : null,
+    [activeCoordinatorThreadId, activeThread],
+  );
   const activeCoordinatorShell = useMemo(
     () =>
       coordinatorThreadShell === null
@@ -3325,6 +3338,7 @@ function useChatViewState(props: ChatViewProps) {
   const activeEnvironmentIdentityMismatch = useHostIdentityMismatch(
     activeEnvironment?.environmentId,
   );
+  const activeEnvironmentNote = useHostDownNote(activeEnvironment?.environmentId);
   const [reconnectWarningGraceElapsedEnvironmentId, setReconnectWarningGraceElapsedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const reconnectWarningGraceElapsed = hasEnvironmentReconnectWarningGraceElapsed(
@@ -3827,6 +3841,7 @@ function useChatViewState(props: ChatViewProps) {
             isThisMachine: activeEnvironmentUnavailableState.isThisMachine,
             reach: activeEnvironmentReach,
             identityMismatch: activeEnvironmentIdentityMismatch,
+            note: activeEnvironmentNote,
           })
         : null;
     const unavailableStatus = unavailableBanner?.status ?? null;
@@ -3970,6 +3985,7 @@ function useChatViewState(props: ChatViewProps) {
     automaticEnvironment,
     activeEnvironmentReach,
     activeEnvironmentIdentityMismatch,
+    activeEnvironmentNote,
     activeEnvironmentUnavailableState,
     handleReconnectActiveEnvironment,
     canDisconnectActiveEnvironment,
@@ -5645,6 +5661,7 @@ function useChatViewState(props: ChatViewProps) {
     supportsProviderSwitchingViaHandoff,
     supportsPullRequests,
     supportsQuestionAttachments,
+    specweaveOffer,
     suspendChatInput,
     switchGitRevision,
     systemComposerBannerItems,
@@ -10134,6 +10151,7 @@ export default function ChatView(props: ChatViewProps) {
     supportsProviderSwitchingViaHandoff,
     supportsPullRequests,
     supportsQuestionAttachments,
+    specweaveOffer,
     suspendChatInput,
     systemComposerBannerItems,
     terminalFocusRequestId,
@@ -15789,6 +15807,12 @@ export default function ChatView(props: ChatViewProps) {
                         status={threadPlanStatus}
                       />
                     ) : null}
+                    {threadPlanView?.increment && activeThreadShell?.projectId ? (
+                      <NotOnBoardNote
+                        environmentId={activeThreadShell.environmentId}
+                        projectId={activeThreadShell.projectId}
+                      />
+                    ) : null}
                   </ThreadHeaderLine>
                   {activeThreadBlocker !== null ? (
                     <ThreadBlockerNote blocker={activeThreadBlocker} />
@@ -16174,6 +16198,7 @@ export default function ChatView(props: ChatViewProps) {
                                 onAppCommand={appCommandsOffered ? runAppCommand : undefined}
                                 environmentUnavailable={activeEnvironmentUnavailableState}
                                 accessRequestCard={pendingAccessRequestPanel}
+                                specweaveOffer={specweaveOffer}
                                 activePendingApproval={activePendingApproval}
                                 pendingApprovals={pendingApprovals}
                                 pendingUserInputs={pendingUserInputs}

@@ -111,6 +111,12 @@ export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlocked
     serverUpdateRequired: Schema.optionalKey(Schema.Boolean),
     /** The host no longer accepts this device's approval; pairing again restores the connection. */
     reapprovalRequired: Schema.optionalKey(Schema.Boolean),
+    /**
+     * This device has no SpecWithCode Connect sign-in, and the route needs one;
+     * signing in restores the connection. Never set for a machine's own
+     * credential refusal, which signing in does not fix.
+     */
+    connectSignInRequired: Schema.optionalKey(Schema.Boolean),
   },
 ) {
   override get message(): string {

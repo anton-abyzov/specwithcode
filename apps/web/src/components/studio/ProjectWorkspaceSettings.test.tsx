@@ -155,7 +155,10 @@ vi.mock("../../state/query", () => ({
     error: null,
   }),
 }));
-vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
+// The Board's SpecWeave row (1396) reaches the real command runtime, so only
+// the failure reader is replaced.
+vi.mock("@specweave-studio/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   squashAtomCommandFailure: (r: { error: Error }) => r.error,
 }));
 vi.mock("@tanstack/react-router", () => ({

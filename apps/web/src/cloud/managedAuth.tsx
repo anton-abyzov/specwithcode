@@ -13,6 +13,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useAtomCommand } from "../state/use-atom-command";
+import { setConnectAccountState } from "./connectAccountState";
 import { ConnectRouteReconciler } from "./ConnectRouteReconciler";
 import { ConnectSessionGuard } from "./ConnectSessionGuard";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
@@ -78,6 +79,8 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
 
   useEffect(() => {
     if (!isLoaded) {
+      // Not settled yet: a refusal now is never read as a sign-out (1417).
+      setConnectAccountState("unknown");
       return;
     }
 
@@ -107,11 +110,13 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
     };
 
     if (!isSignedIn || !userId) {
+      setConnectAccountState("signed-out");
       deactivateManagedRelayAuthentication();
       if (previousAccount !== null) {
         void queueAccountCleanup();
       }
     } else {
+      setConnectAccountState("signed-in");
       const tokenProvider = () => getToken(resolveRelayClerkTokenOptions());
       const activateSession = () => {
         if (!cancelled) {
@@ -139,7 +144,14 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
     };
   }, [getToken, isLoaded, isSignedIn, removeRelayEnvironments, userId]);
 
-  useEffect(() => () => deactivateManagedRelayAuthentication(), []);
+  useEffect(
+    () => () => {
+      deactivateManagedRelayAuthentication();
+      // A remounted provider settles again before anything says "Needs sign-in".
+      setConnectAccountState("unknown");
+    },
+    [],
+  );
 
   return (
     <ManagedTunnelPolicyContext

@@ -41,7 +41,11 @@ export function remoteWorkerCardStatus(worker: StudioFleetRemoteWorker): ThreadC
         label: `Allow workers on ${worker.machineLabel} again to keep following`,
       };
     case "launch_unknown":
-      return { tone: "failed", label: "Start not confirmed; check the other machine" };
+      // The app looks for the thread again whenever that machine answers (RemoteWorkerFollower).
+      return {
+        tone: "failed",
+        label: `${worker.machineLabel} didn't confirm the start; checking again`,
+      };
     case "stopped":
       return { tone: "failed", label: "No longer followed" };
     case "disposed":

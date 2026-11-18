@@ -45,6 +45,9 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const named = (buttons) =>
   buttons.length ? buttons.map((name) => JSON.stringify(name)).join(", ") : "none";
 
+/** What Playwright says when the page navigated in the middle of a read. */
+const NAVIGATED = /Execution context was destroyed|Cannot find context with specified id|navigat/i;
+
 /**
  * Walks setup from wherever it is to its end.
  *
@@ -74,7 +77,19 @@ export async function walkFirstRun(
   /** When a wait of `ms` ends: its own limit or the walk's, whichever comes first. */
   const by = (ms) => Math.min(Date.now() + ms, end);
   const late = (limit, ms) => (limit === end ? `the walk's ${timeoutMs} ms` : `${ms} ms`);
-  const read = () => page.evaluate(readWizard, { dialog: WIZARD_DIALOG });
+  // A page that navigates while it is read (the pair link redirecting) is read
+  // again once the new document is there; any other error ends the walk.
+  const read = async () => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await page.evaluate(readWizard, { dialog: WIZARD_DIALOG });
+      } catch (error) {
+        if (!NAVIGATED.test(String(error?.message ?? error)) || attempt >= 40 || Date.now() >= end)
+          throw error;
+        await pause(pollMs);
+      }
+    }
+  };
   const steps = [];
   let missed = 0;
   const fail = (message, state) => {
@@ -90,7 +105,16 @@ export async function walkFirstRun(
 
   // Setup shows, or the app is ready without it.
   let state = await read();
-  for (const deadline = by(appearTimeoutMs); state.step === null; ) {
+  for (const deadline = by(appearTimeoutMs); state.step === null;) {
+    // Checked first, so a ready check that keeps flipping cannot outlast the deadline.
+    if (Date.now() >= deadline) {
+      if (until)
+        fail(
+          `neither setup nor the ready app showed within ${late(deadline, appearTimeoutMs)}`,
+          state,
+        );
+      return steps;
+    }
     if (until && (await until().catch(() => false))) {
       // The app can draw before setup opens over it: ready twice in a row counts.
       await pause(pollMs);
@@ -98,18 +122,13 @@ export async function walkFirstRun(
       if (state.step === null && (await until().catch(() => false))) return steps;
       continue;
     }
-    if (Date.now() >= deadline) {
-      if (until)
-        fail(`neither setup nor the ready app showed within ${late(deadline, appearTimeoutMs)}`, state);
-      return steps;
-    }
     await pause(pollMs);
     state = await read();
   }
 
   while (state.step !== null) {
     const step = state.step;
-    for (const deadline = by(stepTimeoutMs); state.step === step && state.neutral === 0; ) {
+    for (const deadline = by(stepTimeoutMs); state.step === step && state.neutral === 0;) {
       if (Date.now() >= deadline)
         fail(
           `step "${step}" offered no enabled neutral control within ${late(deadline, stepTimeoutMs)}`,
@@ -125,9 +144,9 @@ export async function walkFirstRun(
     await onStep?.(step);
     // Scoped to the step read: a press never lands on the step after it.
     try {
-      await page
-        .locator(enabledNeutral(step))
-        .click({ timeout: Math.max(1, Math.min(CLICK_TIMEOUT_MS, stepTimeoutMs, end - Date.now())) });
+      await page.locator(enabledNeutral(step)).click({
+        timeout: Math.max(1, Math.min(CLICK_TIMEOUT_MS, stepTimeoutMs, end - Date.now())),
+      });
     } catch (error) {
       state = await read();
       // The step changed or went busy between the read and the press: read it again.
@@ -135,11 +154,14 @@ export async function walkFirstRun(
         steps.pop();
         continue;
       }
-      fail(`could not press the neutral control of step "${step}": ${error.message.split("\n")[0]}`, state);
+      fail(
+        `could not press the neutral control of step "${step}": ${error.message.split("\n")[0]}`,
+        state,
+      );
     }
     // The step moves on, or setup ends. Pressing again on the same step would hide a stuck step.
     state = await read();
-    for (const deadline = by(stepTimeoutMs); state.step === step; ) {
+    for (const deadline = by(stepTimeoutMs); state.step === step;) {
       if (Date.now() >= deadline)
         fail(
           `step "${step}" did not move on within ${late(deadline, stepTimeoutMs)} of its neutral control`,

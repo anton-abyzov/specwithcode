@@ -108,25 +108,51 @@ const changeInline = (environmentId: string, by: 1 | -1) => {
 };
 
 /**
- * Whether this code is on screen. Only then does it stand in for the floating
- * card: a collapsed panel that keeps its rows mounted, or a row scrolled out of
- * view, leaves the floating card up (1416). Counts as on screen until the
- * browser says otherwise, and always where there is no IntersectionObserver.
+ * True when the middle of the code is the topmost thing there, so a dialog's
+ * backdrop or sheet over the row counts as covering it. Where the browser
+ * cannot say (tests without layout), the code counts as on top.
+ */
+function codeOnTop(code: Element): boolean {
+  const view = code.ownerDocument;
+  if (typeof view.elementFromPoint !== "function") return true;
+  const box = code.getBoundingClientRect();
+  if (box.width === 0 || box.height === 0) return false;
+  const top = view.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+  return top !== null && (top === code || code.contains(top));
+}
+
+/**
+ * Whether this code can be read: in view and not covered. Only then does it
+ * stand in for the floating card (1416). A collapsed panel that keeps its rows
+ * mounted, a row scrolled out of view, and a dialog opened over the row all
+ * leave the floating card up, which is drawn above dialogs. Dialogs and sheets
+ * mount in portals on the page body, so a change there checks again. Counts as
+ * readable until the browser says otherwise, and always where there is no
+ * IntersectionObserver.
  */
 function useCodeOnScreen(ref: { readonly current: HTMLElement | null }) {
   const [onScreen, setOnScreen] = useState(true);
   useEffect(() => {
     const code = ref.current?.querySelector("[data-device-waiting-code]") ?? ref.current;
     if (!code || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(
+    let inView = true;
+    const check = () => setOnScreen(inView && codeOnTop(code));
+    const intersection = new IntersectionObserver(
       (entries) => {
         const entry = entries.at(-1);
-        if (entry) setOnScreen(entry.isIntersecting && entry.intersectionRatio > 0.9);
+        if (entry) inView = entry.isIntersecting && entry.intersectionRatio > 0.9;
+        check();
       },
       { threshold: [0, 0.9, 1] },
     );
-    observer.observe(code);
-    return () => observer.disconnect();
+    intersection.observe(code);
+    const overlays =
+      typeof MutationObserver === "undefined" ? null : new MutationObserver(() => check());
+    overlays?.observe(code.ownerDocument.body, { childList: true });
+    return () => {
+      intersection.disconnect();
+      overlays?.disconnect();
+    };
   }, [ref]);
   return onScreen;
 }

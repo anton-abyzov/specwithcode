@@ -1058,23 +1058,16 @@ export const ru: PhraseCatalog = {
   Copy: "Копировать",
   "This device cannot read that machine's settings.":
     "Это устройство не может читать настройки той машины.",
-  "1. Install the SpecWithCode Browser extension": "1. Установите расширение SpecWithCode Browser",
   "Add to Chrome": "Добавить в Chrome",
   "(opens the Chrome Web Store)": "(открывает Chrome Web Store)",
   "Chrome Web Store link": "Ссылка на Chrome Web Store",
   "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.":
     "Установите его в Chrome на {machine}: скопируйте ссылку и откройте её там, в профиле, который должны использовать агенты.",
-  "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.":
-    "Откройте ссылку в профиле Chrome, который должны использовать агенты. Chrome сам обновляет расширение.",
-  "2. Pair it with {machine}": "2. Свяжите его с {machine}",
   "This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.":
     "Этот код работает только в Chrome на {machine}, а не в Chrome на {thisComputer}.",
-  "Show pairing code": "Показать код связывания",
   "Pairing code": "Код связывания",
   "pairing code": "код связывания",
   "Reset code": "Сбросить код",
-  "The code lets a Chrome profile act for agents on {machine}. Keep it private.":
-    "Код позволяет профилю Chrome действовать за агентов на {machine}. Держите его в секрете.",
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "Вы на {b}. Здесь настраивается Chrome на {b2}, другом компьютере; его код связывания не работает в Chrome здесь.",
   "Set up Chrome on {thisComputer}": "Настроить Chrome на {thisComputer}",
@@ -3625,12 +3618,6 @@ export const ru: PhraseCatalog = {
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
     "Ваши собственные правила, отправляемые с каждым запросом координатора и исполнителей, у любого провайдера, в каждом проекте в каждом выбранном окружении. По умолчанию пусто.",
   "Effective instructions for {label}": "Действующие инструкции: {label}",
-  "Click the SpecWithCode icon in Chrome's toolbar.":
-    "Нажмите значок SpecWithCode на панели инструментов Chrome.",
-  "Paste the pairing code.": "Вставьте код сопряжения.",
-  "Name the profile, for example Work or Marketing.":
-    "Назовите профиль, например «Работа» или «Маркетинг».",
-  "Click Pair.": "Нажмите «Связать».",
   "Ask Google for {service}": "Запросить у Google: {service}",
   "Edit shortcut for {command}: {shortcut}": "Изменить сочетание для {command}: {shortcut}",
   "Edit when clause for {command}": "Изменить условие для {command}",
@@ -5620,4 +5607,25 @@ export const ru: PhraseCatalog = {
   "Manage profiles": "Управлять профилями",
   "Profiles: {count}": "Профили: {count}",
   "Device hosts: {count}": "Хосты устройств: {count}",
+  "Not reachable from here": "Недоступно отсюда",
+  "Sign in to reach {machine}": "Войдите, чтобы открыть {machine}",
+  "Can't reach {machine} from this window": "{machine} недоступен из этого окна",
+  "Signed out of SpecWithCode Connect": "Вы вышли из SpecWithCode Connect",
+  "This machine is not affected.": "Этот компьютер работает как обычно.",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "Нужен вход. Войдите в SpecWithCode Connect, чтобы открыть его из этого окна",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "Войдите в SpecWithCode Connect, чтобы открыть его из этого окна.",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.":
+    "Это окно подключается к нему через SpecWithCode Connect, а вход не выполнен. Войдите, чтобы снова подключиться.",
+  "{machines} can't be reached from this window until you sign in.":
+    "{machines}: недоступно из этого окна, пока вы не войдёте.",
+  "Still connected: {machines}.": "Подключены: {machines}.",
+  "Some of your machines can't be reached from this window until you sign in. This machine is not affected.":
+    "Некоторые ваши компьютеры недоступны из этого окна, пока вы не войдёте. Этот компьютер работает как обычно.",
+  "{machine} is running, but this window can't reach it until you sign in.":
+    "{machine} работает, но это окно не подключится к нему, пока вы не войдёте.",
+  "{machines} are running, but this window can't reach them until you sign in.":
+    "{machines} работают, но это окно не подключится к ним, пока вы не войдёте.",
+  "Sign in to reach this machine": "Войдите, чтобы подключиться к этому компьютеру",
 };

@@ -1050,23 +1050,16 @@ export const ko: PhraseCatalog = {
   Copy: "복사",
   "This device cannot read that machine's settings.":
     "이 기기에서는 해당 컴퓨터의 설정을 읽을 수 없습니다.",
-  "1. Install the SpecWithCode Browser extension": "1. SpecWithCode Browser 확장 프로그램 설치",
   "Add to Chrome": "Chrome에 추가",
   "(opens the Chrome Web Store)": "(Chrome 웹 스토어가 열립니다)",
   "Chrome Web Store link": "Chrome 웹 스토어 링크",
   "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.":
     "{machine}의 Chrome에 설치하세요. 링크를 복사해 에이전트가 사용할 프로필에서 여세요.",
-  "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.":
-    "에이전트가 사용할 Chrome 프로필에서 링크를 여세요. 확장 프로그램은 Chrome이 최신 상태로 유지합니다.",
-  "2. Pair it with {machine}": "2. {machine}과(와) 페어링",
   "This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.":
     "이 코드는 {machine}의 Chrome에서만 작동하며 {thisComputer}의 Chrome에서는 작동하지 않습니다.",
-  "Show pairing code": "페어링 코드 표시",
   "Pairing code": "페어링 코드",
   "pairing code": "페어링 코드",
   "Reset code": "코드 재설정",
-  "The code lets a Chrome profile act for agents on {machine}. Keep it private.":
-    "이 코드를 사용하면 Chrome 프로필이 {machine}의 에이전트를 대신해 동작할 수 있습니다. 비공개로 유지하세요.",
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "지금은 {b}에 있습니다. 여기서는 다른 컴퓨터인 {b2}의 Chrome을 설정합니다. 그 페어링 코드는 이곳의 Chrome에서 작동하지 않습니다.",
   "Set up Chrome on {thisComputer}": "{thisComputer}에서 Chrome 설정",
@@ -3598,11 +3591,6 @@ export const ko: PhraseCatalog = {
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
     "코디네이터와 워커의 모든 요청에 함께 전송되는 나만의 규칙으로, 모든 공급자와 선택한 각 환경의 모든 프로젝트에 적용됩니다. 기본값은 비어 있음입니다.",
   "Effective instructions for {label}": "{label}의 적용 지침",
-  "Click the SpecWithCode icon in Chrome's toolbar.":
-    "Chrome 도구 모음에서 SpecWithCode 아이콘을 클릭하세요.",
-  "Paste the pairing code.": "페어링 코드를 붙여 넣으세요.",
-  "Name the profile, for example Work or Marketing.": "프로필 이름을 지정하세요(예: 업무, 마케팅).",
-  "Click Pair.": "페어링을 클릭하세요.",
   "Ask Google for {service}": "Google에 요청: {service}",
   "Edit shortcut for {command}: {shortcut}": "{command} 단축키 편집: {shortcut}",
   "Edit when clause for {command}": "{command} 조건 편집",
@@ -5553,4 +5541,25 @@ export const ko: PhraseCatalog = {
   "Manage profiles": "프로필 관리",
   "Profiles: {count}": "프로필: {count}",
   "Device hosts: {count}": "기기 호스트: {count}",
+  "Not reachable from here": "여기서 연결할 수 없음",
+  "Sign in to reach {machine}": "{machine}에 연결하려면 로그인",
+  "Can't reach {machine} from this window": "이 창에서 {machine}에 연결할 수 없습니다",
+  "Signed out of SpecWithCode Connect": "SpecWithCode Connect에서 로그아웃됨",
+  "This machine is not affected.": "이 컴퓨터는 영향을 받지 않습니다.",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "로그인 필요. 이 창에서 연결하려면 SpecWithCode Connect에 로그인하세요",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "이 창에서 연결하려면 SpecWithCode Connect에 로그인하세요.",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.":
+    "이 창은 SpecWithCode Connect를 통해 연결되며 로그아웃 상태입니다. 로그인하면 다시 연결할 수 있습니다.",
+  "{machines} can't be reached from this window until you sign in.":
+    "{machines}은(는) 로그인할 때까지 이 창에서 연결할 수 없습니다.",
+  "Still connected: {machines}.": "연결됨: {machines}.",
+  "Some of your machines can't be reached from this window until you sign in. This machine is not affected.":
+    "일부 컴퓨터는 로그인할 때까지 이 창에서 연결할 수 없습니다. 이 컴퓨터는 영향을 받지 않습니다.",
+  "{machine} is running, but this window can't reach it until you sign in.":
+    "{machine}은(는) 실행 중이지만 로그인할 때까지 이 창에서 연결할 수 없습니다.",
+  "{machines} are running, but this window can't reach them until you sign in.":
+    "{machines}은(는) 실행 중이지만 로그인할 때까지 이 창에서 연결할 수 없습니다.",
+  "Sign in to reach this machine": "이 컴퓨터에 연결하려면 로그인",
 };

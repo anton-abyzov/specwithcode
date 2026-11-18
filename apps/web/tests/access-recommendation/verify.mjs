@@ -1,7 +1,7 @@
-// Headless check of the Full access recommendation: the first-run Access step in
-// its real frame and the composer's chip callout, in light and dark at 1100 and
-// 390 px. Checks sideways scroll, where focus starts, Enter, both answers and a
-// failed save. Run after building:
+// Headless check of the first-run Access step in its real frame, every state of
+// its rows, and the composer's chip callout, in light and dark at 1280 and 390
+// px. Checks sideways scroll, where focus starts, that Enter leaves without an
+// answer, both answers, a failed save, and each row's states. Run after building:
 //   node node_modules/vite-plus/bin/vp build --config apps/web/tests/access-recommendation/vite.config.ts
 //   node apps/web/tests/access-recommendation/verify.mjs /absolute/owned/report-dir
 import * as NodeFSP from "node:fs/promises";
@@ -61,7 +61,7 @@ const layout = (page, selector) =>
 
 for (const theme of ["light", "dark"]) {
   for (const [width, height] of [
-    [1100, 800],
+    [1280, 860],
     [390, 844],
   ]) {
     const context = await browser.newContext({
@@ -76,38 +76,159 @@ for (const theme of ["light", "dark"]) {
     };
     const at = `${theme} ${width}`;
 
-    // The Access step.
-    await open("view=wizard");
-    await page.getByText("Let agents work without stopping to ask?").waitFor();
-    await page.waitForTimeout(200);
+    // The Access step: a list of rows, and Continue grants nothing.
+    const shot = (name) =>
+      page.screenshot({ path: NodePath.join(output, `${name}-${theme}-${width}.png`) });
+    // Shots wait for an opening body to finish moving.
+    const settled = () =>
+      page.waitForFunction(() =>
+        document.getAnimations().every((animation) => animation.playState !== "running"),
+      );
+    const rowShot = async (row, name) => {
+      await settled();
+      await page.waitForTimeout(100);
+      await page
+        .locator(`[data-access-row="${row}"]`)
+        .screenshot({ path: NodePath.join(output, `${name}-${theme}-${width}.png`) });
+    };
+    const ready = async (query) => {
+      await open(`view=wizard&${query}`);
+      await page.getByRole("heading", { name: "What agents can use on this Mac" }).waitFor();
+      await page.waitForTimeout(250);
+    };
+    await ready("");
     for (const problem of await layout(page, '[data-slot="dialog-popup"]'))
       fail(`wizard ${at}`, problem);
-    if (!(await focused(page)).startsWith("Use Full access"))
+    if ((await focused(page)) !== "Continue")
       fail(`wizard ${at}`, `focus starts on "${await focused(page)}"`);
     for (const text of [
-      "Recommended",
-      "Run terminal commands: install packages, run tests, use git",
-      "Still stops for your decisions, sign-ins and app approvals such as sending email",
-      "Agents ask before every command and file change. Work waits until you answer.",
+      "Full access: agents edit and run without asking each time.",
+      "Agents use only the Chrome profiles you pair, and only while they are paired.",
+      "Agents see the screen and click and type in any app.",
+      "Full Disk Access for agents (optional)",
+      ...(width >= 640 ? ["Continue changes nothing."] : []),
     ])
-      if (!(await page.getByText(text, { exact: true }).isVisible()))
+      if (!(await page.getByText(text, { exact: false }).first().isVisible()))
         fail(`wizard ${at}`, `missing "${text}"`);
-    await page.screenshot({ path: NodePath.join(output, `wizard-${theme}-${width}.png`) });
-    // Enter presses the recommended action.
+    const rowOrder = await page.evaluate(() =>
+      [...document.querySelectorAll("[data-access-row]")].map((row) =>
+        row.getAttribute("data-access-row"),
+      ),
+    );
+    if (rowOrder.join() !== "files,browser,mac-apps,full-disk-access")
+      fail(`wizard ${at}`, `rows ${rowOrder.join()}`);
+    if ((await page.locator("[data-wizard-neutral]").count()) !== 1)
+      fail(`wizard ${at}`, "Continue is not the one neutral control");
+    await shot("access");
+    // Everything set up: the picture draws a thread to each row that is done.
+    await ready("files=before-accepted&chrome=paired&mac=allowed");
+    await settled();
+    await shot("access-done");
+    await ready("");
+    // Enter goes on and answers nothing.
     await page.keyboard.press("Enter");
-    await page.locator('[data-fixture-done="accepted"]').waitFor();
-    if ((await calls(page)).join() !== "accept") fail(`wizard ${at}`, "Enter did not accept");
-    await open("view=wizard");
-    await page.getByRole("button", { name: "Keep Supervised" }).click();
-    await page.locator('[data-fixture-done="declined"]').waitFor();
-    if ((await calls(page)).includes("accept")) fail(`wizard ${at}`, "Keep Supervised accepted");
-    // A failed save keeps the step open and says so.
-    await open("view=wizard&save=fails");
-    await page.getByRole("button", { name: /Use Full access/ }).click();
+    await page.locator('[data-fixture-done="none"]').waitFor();
+    if ((await calls(page)).join() !== "continue")
+      fail(`wizard ${at}`, `Enter called ${await calls(page)}`);
+
+    // Files and commands: an answer stays on the step, and focus goes to Change.
+    await ready("");
+    await page.getByRole("button", { name: "Use Full access" }).click();
+    await page.locator('[data-access-row="files"] [data-slot="access-row-chip"]').waitFor();
+    if (await page.locator("[data-fixture-done]").count())
+      fail(`wizard ${at}`, "an answer left the step");
+    if ((await focused(page)) !== "Change")
+      fail(`wizard ${at}`, `focus after an answer is on "${await focused(page)}"`);
+    await rowShot("files", "files-accepted");
+    await ready("");
+    await page.getByRole("button", { name: /^Keep/ }).click();
+    await page.locator('[data-access-row="files"] [data-slot="access-row-chip"]').waitFor();
+    if ((await calls(page)).includes("accept")) fail(`wizard ${at}`, "Keep accepted");
+    await rowShot("files", "files-kept");
+    await ready("save=fails");
+    await page.getByRole("button", { name: "Use Full access" }).click();
     await page.getByRole("alert").waitFor();
     if (await page.locator("[data-fixture-done]").count())
       fail(`wizard ${at}`, "left the step after a failed save");
-    await page.screenshot({ path: NodePath.join(output, `wizard-failed-${theme}-${width}.png`) });
+    await rowShot("files", "files-failed");
+    await ready("files=before-accepted");
+    if (!(await page.locator('[data-access-row="files"]').innerText()).includes("Settings"))
+      fail(`wizard ${at}`, "an earlier answer does not say where it lives");
+    await rowShot("files", "files-before");
+
+    // Your browser: every state the row can be in.
+    for (const kind of [
+      "not-set-up",
+      "loading",
+      "offline",
+      "team-rules",
+      "not-allowed",
+      "chrome-missing",
+      "waiting",
+      "paired",
+      "paired-many",
+      "not-answering",
+      "approval",
+    ]) {
+      await ready(`chrome=${kind}`);
+      const shown = await page
+        .locator('[data-access-row="browser"] [data-chrome-state]')
+        .getAttribute("data-chrome-state");
+      if (shown !== (kind === "paired-many" ? "paired" : kind))
+        fail(`chrome ${kind} ${at}`, `drew ${shown}`);
+      await rowShot("browser", `chrome-${kind}`);
+    }
+    // Set up: the copy path, where the code is copied without being shown.
+    await ready("chrome=not-set-up");
+    await page.getByRole("button", { name: "Set up", exact: true }).click();
+    await page.getByRole("button", { name: "Copy code" }).click();
+    await page.getByText("Waiting for Chrome…").waitFor();
+    if (await page.getByText("K7QX-2MZD-94HF").count())
+      fail(`chrome copy ${at}`, "Copy showed the code");
+    if (
+      !(await page
+        .getByText("It opens in the Chrome profile you used last.", { exact: false })
+        .isVisible())
+    )
+      fail(`chrome copy ${at}`, "no sentence on which profile the store link opens in");
+    for (const problem of await layout(page, '[data-access-row="browser"]'))
+      fail(`chrome copy ${at}`, problem);
+    await rowShot("browser", "chrome-setup-copied");
+    await page.getByRole("button", { name: "Show", exact: true }).click();
+    if (!(await page.getByLabel("Pairing code").isVisible()))
+      fail(`chrome show ${at}`, "Show did not reveal the code");
+    await rowShot("browser", "chrome-setup-shown");
+    // Where the desktop app lists Chrome's profiles, the store opens in the one picked.
+    await ready("chrome=not-set-up&profiles=3");
+    await page.getByRole("button", { name: "Set up", exact: true }).click();
+    await page.getByRole("radio", { name: "Work" }).click();
+    await page.getByRole("button", { name: "Add to Chrome" }).click();
+    const added = await page.evaluate(() =>
+      window.fixtureCalls.find((call) => call[0] === "add-to-chrome"),
+    );
+    if (added?.[1] !== "Profile 1") fail(`chrome profiles ${at}`, `opened in ${added?.[1]}`);
+    await rowShot("browser", "chrome-setup-profiles");
+
+    // Mac apps: every state, and Allow opens the existing checklist.
+    for (const kind of ["not-allowed", "partly", "needs-reopening", "could-not-check", "allowed"]) {
+      await ready(`mac=${kind}`);
+      const shown = await page.locator("[data-mac-apps-state]").getAttribute("data-mac-apps-state");
+      if (shown !== kind) fail(`mac ${kind} ${at}`, `drew ${shown}`);
+      await rowShot("mac-apps", `mac-${kind}`);
+    }
+    await ready("mac=not-allowed");
+    await page.getByRole("button", { name: "Allow", exact: true }).click();
+    await page.getByRole("list", { name: "macOS permissions" }).waitFor();
+    await rowShot("mac-apps", "mac-open");
+    await ready("mac=needs-reopening");
+    await page.getByRole("button", { name: "Reopen", exact: true }).click();
+    await page.getByRole("button", { name: "Quit & Reopen" }).waitFor();
+    await rowShot("mac-apps", "mac-reopen");
+    // One row open at a time.
+    await page.getByRole("button", { name: "Set up", exact: true }).click();
+    if (await page.getByRole("button", { name: "Quit & Reopen" }).isVisible())
+      fail(`rows ${at}`, "two rows open at once");
+    await shot("access-chrome-open");
 
     // The composer's chip and callout.
     await open("view=composer");
@@ -156,4 +277,6 @@ if (problems.length > 0) {
   console.error(problems.join("\n"));
   process.exit(1);
 }
-console.log(`Access recommendation: ${report.length} layouts checked, no problems. ${output}`);
+console.log(
+  `Access step and recommendation: ${report.length} layouts checked, no problems. ${output}`,
+);
