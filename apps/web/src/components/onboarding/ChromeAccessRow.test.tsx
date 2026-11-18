@@ -369,7 +369,17 @@ describe("ChromeAccessRow", () => {
   it("an answer the machine refuses says so", async () => {
     state.query = {
       ...state.query,
-      data: status({ peers: [{ id: "g1", machine: "Studio", state: "pending" }] }),
+      data: status({
+        peers: [
+          {
+            id: "g1",
+            machine: "Studio",
+            label: "Studio",
+            state: "pending",
+            requestedAt: "2026-11-18T00:00:00Z",
+          },
+        ],
+      }),
     };
     state.command.mockResolvedValue({ _tag: "Failure", cause: "refused" });
     await render();
