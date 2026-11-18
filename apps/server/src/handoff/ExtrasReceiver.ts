@@ -91,27 +91,44 @@ export async function checkedOutBranches(root: string): Promise<Set<string>> {
 }
 
 /**
- * Moves an arrival branch forward from the head it was read at. Git itself
- * does the move (`git branch -f`), because Git refuses it for a branch that
- * any worktree has checked out, also one checked out after the worktrees were
- * listed; a plain ref update would move the branch under that worktree. The
- * head is read again first, so a branch that changed meanwhile stays.
+ * Moves an arrival branch forward from the head it was read at, to `commit`,
+ * which the hidden ref `via` of this repository holds. Git itself does the
+ * move, as a fetch from the repository into its own branch with no `+`:
+ *
+ * - Git refuses it for a branch any worktree has checked out, also one checked
+ *   out after the worktrees were listed; a plain ref update would move the
+ *   branch under that worktree.
+ * - Git moves the branch only when the new head continues the head Git itself
+ *   read, and writes it only if the branch still is at that head. A branch
+ *   that changed between the read here and the move is therefore never
+ *   written over: it moves only when `commit` continues what it holds now.
  */
 export async function moveBranchForward(input: {
   readonly root: string;
   readonly branch: string;
   readonly commit: string;
+  /** A ref of this repository that is at `commit`. */
+  readonly via: string;
   readonly from: string;
 }): Promise<boolean> {
-  const { root, branch, commit } = input;
+  const { root, branch, commit, via } = input;
   if ((await refCommit(root, `refs/heads/${branch}`)) !== input.from) return false;
-  const continues = await runGit(root, ["merge-base", "--is-ancestor", input.from, commit], {
-    allowFailure: true,
-  });
-  if (continues.code !== 0) return false;
-  const moved = await runGit(root, ["branch", "--no-track", "-f", "--", branch, commit], {
-    allowFailure: true,
-  });
+  if ((await refCommit(root, via)) !== commit || /[:+*^]/.test(`${via}${branch}`)) return false;
+  const moved = await runGit(
+    root,
+    [
+      "fetch",
+      "--quiet",
+      "--no-tags",
+      "--no-prune",
+      "--no-recurse-submodules",
+      "--no-write-fetch-head",
+      "--refmap=",
+      ".",
+      `${via}:refs/heads/${branch}`,
+    ],
+    { allowFailure: true },
+  );
   return moved.code === 0 && (await refCommit(root, `refs/heads/${branch}`)) === commit;
 }
 
@@ -213,7 +230,7 @@ export async function landExtra(input: {
         if (await create(base)) return { branch: base, landed: "created" };
       } else {
         // Moves only from the head just read, and never under a worktree that has it checked out.
-        if (await moveBranchForward({ root, branch: base, commit, from: existing }))
+        if (await moveBranchForward({ root, branch: base, commit, via: incoming, from: existing }))
           return { branch: base, landed: "moved-forward" };
       }
     }

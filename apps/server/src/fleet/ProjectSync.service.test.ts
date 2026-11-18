@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import { vi } from "vite-plus/test";
 
 import { ExtrasReceiver, layer as extrasReceiverLayer } from "../handoff/ExtrasReceiver.ts";
 import {
@@ -28,6 +29,7 @@ import {
   commit,
   filesOf,
   git,
+  gitHooks,
   isolateGit,
   restoreGit,
   snapshot,
@@ -43,6 +45,11 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSync from "./ProjectSync.ts";
 import * as ProjectSyncExtras from "./ProjectSyncExtras.ts";
 import { unscopedGrant } from "./workGrantPolicy.ts";
+
+vi.mock("./folderTransfer/git.ts", async (importOriginal) => {
+  const kit = await import("../handoff/extrasTestKit.ts");
+  return kit.recordingGit(await importOriginal<typeof import("./folderTransfer/git.ts")>());
+});
 
 beforeAll(isolateGit);
 afterAll(restoreGit);
@@ -414,7 +421,8 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
           `[url "git://127.0.0.1:${port}/"]\n\tinsteadOf = git://sync.test/\n`,
         );
         process.env.GIT_CONFIG_GLOBAL = config;
-        const target = NodePath.join(f.a, "repositories", "slow");
+        const parent = NodePath.join(f.a, "repositories");
+        const target = NodePath.join(parent, "slow");
         const run = yield* Effect.forkChild(
           sync.run({
             ...input,
@@ -423,17 +431,21 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
           }),
         );
         yield* Effect.promise(() => connection);
-        expect(NodeFS.existsSync(target)).toBe(true);
+        // The clone is filling a folder of its own beside the target, which is not there yet.
+        expect(NodeFS.readdirSync(parent).map((name) => name.slice(0, 16))).toEqual([
+          ".swc-clone-slow-",
+        ]);
+        expect(NodeFS.existsSync(target)).toBe(false);
         // A second call waits for the lock the clone holds.
         const seen: Array<boolean> = [];
         const next = yield* Effect.forkChild(
           sync
             .fetch(input)
-            .pipe(Effect.tap(() => Effect.sync(() => seen.push(NodeFS.existsSync(target))))),
+            .pipe(Effect.tap(() => Effect.sync(() => seen.push(NodeFS.existsSync(parent))))),
         );
         yield* Fiber.interrupt(run);
         // The cancel returned: Git has ended and the folder it was filling is gone.
-        expect(NodeFS.existsSync(target)).toBe(false);
+        expect(NodeFS.existsSync(parent)).toBe(false);
         yield* Fiber.join(next);
         // The next call got the lock only after the folder was removed.
         expect(seen).toEqual([false]);
@@ -610,6 +622,77 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
       },
     );
   });
+
+  it.effect(
+    "keeps the hidden ref of a send that began while another send was sweeping (P2-14)",
+    () => {
+      const f = twoMachines();
+      const tip = commit(f.a, "app.ts", "export const a = 2;\n");
+      const OTHER = "1b2c3d4e-1111-4222-8333-444455556666";
+      const hiddenRefs = "refs/specwithcode/extras/";
+      const gate = <A = void>() => {
+        let open: (value: A) => void = () => {};
+        const opened = new Promise<A>((resolve) => (open = resolve));
+        return { open, opened };
+      };
+      const listing = gate();
+      const otherRef = gate();
+      const sweepOver = gate();
+      let listingCommand: unknown = null;
+      let listingEnded = false;
+      let otherHeld = false;
+      let otherCreated = false;
+      // The first send lists the hidden refs only once the second send has made its own;
+      // the second send then waits until the first one's sweep is over.
+      gitHooks.before = async (command) => {
+        if (command.cwd !== f.a) return;
+        const [verb, ...rest] = command.args;
+        if (listingCommand === null && verb === "for-each-ref" && rest.includes(hiddenRefs)) {
+          listingCommand = command;
+          listing.open();
+          await otherRef.opened;
+          return;
+        }
+        if (!otherCreated || (verb === "update-ref" && rest[0] === "-d")) return;
+        if (!otherHeld) {
+          otherHeld = true;
+          await sweepOver.opened;
+        } else if (listingEnded) sweepOver.open();
+      };
+      gitHooks.after = (command) => {
+        if (command === listingCommand) listingEnded = true;
+        if (
+          command.args[0] === "update-ref" &&
+          command.args[1]?.startsWith(`${hiddenRefs}${OTHER}/`)
+        ) {
+          otherCreated = true;
+          otherRef.open();
+        }
+      };
+      return withMachines(f, unscopedGrant(m4), (extras) =>
+        Effect.gen(function* () {
+          const send = (operationId: string) =>
+            extras.sendExtras({
+              projectId: projectA,
+              targetEnvironmentId: m5,
+              operationId,
+              items: [{ kind: "branch", path: ".", branch: "main" }],
+            });
+          const first = yield* Effect.forkChild(send(OPERATION));
+          yield* Effect.promise(() => listing.opened);
+          const second = yield* send(OTHER);
+          const firstSent = yield* Fiber.join(first);
+          expect(otherHeld && listingEnded).toBe(true);
+          // The second send's ref was listed by the first one's sweep and is not a dead one.
+          expect(second.items[0]).toMatchObject({ status: "sent", stays: null });
+          expect(firstSent.items[0]).toMatchObject({ status: "sent", stays: null });
+          expect(git(f.b, "rev-parse", "refs/heads/swc/from-M4/main")).toBe(tip);
+          for (const repository of [f.a, f.b])
+            expect(git(repository, "for-each-ref", "refs/specwithcode")).toBe("");
+        }),
+      );
+    },
+  );
 
   it.effect("keeps an extra when the other machine's grant does not cover the project", () => {
     const f = twoMachines();
