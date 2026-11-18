@@ -22,7 +22,7 @@ Upload the new package on the existing item; the listing, privacy tab and permis
 - A profile still named "Chrome" (the old default) is asked to "Give it a name agents can tell apart".
 - When SpecWithCode accepts only the Chrome Web Store copy (close code 4403), the popup says so instead of "not reachable".
 
-The sections below are the original first-submission notes, kept for reference.
+The sections below describe the listing as submitted. For 1.0.7 follow the update steps above: never create a new item, since a new item gets a new extension id that SpecWithCode refuses (close code 4403).
 
 Every field the developer dashboard asks for, in the order it asks, with paste-ready values. Images are in `screenshots/`; the privacy policy text is in `privacy-policy.md`.
 
@@ -189,7 +189,7 @@ The `debugger` permission usually triggers an in-depth review, so expect more th
 1. Sign in to <https://chrome.google.com/webstore/devconsole> as anton.abyzov@gmail.com.
 2. Account: add a contact email and verify it from the link Google sends.
 3. Confirm <https://spec-weave.com/specwithcode/chrome-extension-privacy> loads with the text of `privacy-policy.md`.
-4. Items → New item → upload `apps/chrome-extension/dist/specwithcode-browser-1.0.7.zip`.
+4. Open the existing **SpecWithCode Browser** item → **Package** → **Upload new package** → `apps/chrome-extension/dist/specwithcode-browser-1.0.7.zip`. Never use Items → New item: it makes a new extension id.
 5. Store listing: paste the detailed description; set category Developer Tools and language English.
 6. Store listing: upload the store icon, the five screenshots in order and both promo tiles.
 7. Store listing: set homepage and support URLs to `https://spec-weave.com`.

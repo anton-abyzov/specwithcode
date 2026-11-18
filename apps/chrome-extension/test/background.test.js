@@ -76,11 +76,10 @@ function fakeChrome(stored, session = {}) {
         return tab;
       },
       remove: async (ids) => {
-        for (const id of [ids].flat())
-          openTabs.splice(
-            openTabs.findIndex((t) => t.id === id),
-            1,
-          );
+        for (const id of [ids].flat()) {
+          const index = openTabs.findIndex((t) => t.id === id);
+          if (index >= 0) openTabs.splice(index, 1);
+        }
       },
       activated,
       ungroup: async () => {},
@@ -427,21 +426,26 @@ describe("pairing page and the profile name", () => {
     expect(pairTabs(chrome).map((tab) => tab.url)).toEqual([PAIR_URL]);
   });
 
-  it("keeps one pairing tab: a second open brings the first to the front", async () => {
-    const { chrome, ask } = await startWorker({});
+  it("keeps one pairing tab: the newest stays, and two loading together never close each other", async () => {
+    const { chrome } = await startWorker({});
     chrome.runtime.onInstalled.fire({ reason: "install" });
     chrome.runtime.onInstalled.fire({ reason: "install" });
     await flush();
     expect(pairTabs(chrome)).toHaveLength(1);
-    await ask({ type: "openPairPage" });
-    expect(pairTabs(chrome)).toHaveLength(1);
-    expect(chrome.tabs.activated).toEqual([pairTabs(chrome)[0].id]);
-    // A pairing page someone opened by hand closes the older one when it loads.
-    chrome.tabs.open.push({ id: 7, url: `${PAIR_URL}#again`, windowId: 1 });
-    await new Promise((resolve) =>
-      chrome.runtime.onMessage.fire({ type: "pairPageOpened" }, { tab: { id: 7 } }, resolve),
-    );
-    expect(pairTabs(chrome).map((tab) => tab.id)).toEqual([7]);
+    // A restored session loads two pairing pages at once: each reports, the newer one stays.
+    chrome.tabs.open.push({ id: 7, url: PAIR_URL, windowId: 1 });
+    chrome.tabs.open.push({ id: 300, url: `${PAIR_URL}#again`, windowId: 1 });
+    const loaded = (id) =>
+      new Promise((resolve) =>
+        chrome.runtime.onMessage.fire({ type: "pairPageOpened" }, { tab: { id } }, resolve),
+      );
+    await Promise.all([loaded(7), loaded(300)]);
+    expect(pairTabs(chrome).map((tab) => tab.id)).toEqual([300]);
+    // Installing again brings the open one to the front instead of opening another.
+    chrome.runtime.onInstalled.fire({ reason: "install" });
+    await flush();
+    expect(pairTabs(chrome).map((tab) => tab.id)).toEqual([300]);
+    expect(chrome.tabs.activated).toContain(300);
   });
 
   it("pairs only with a name, and never names the profile Chrome", async () => {
@@ -452,6 +456,11 @@ describe("pairing page and the profile name", () => {
     expect(refused.error).toMatch(/name/);
     expect(chrome.stored.pairing).toBeUndefined();
     expect((await ask({ type: "rename", label: "" })).ok).toBe(false);
+    for (const label of ["Chrome", "Chrome (2)", "Unnamed profile"]) {
+      const answer = await ask({ type: "pair", code, label });
+      expect(answer.ok).toBe(false);
+      expect(answer.error).toMatch(/tell apart/);
+    }
     expect((await ask({ type: "pair", code, label: "Agents" })).ok).toBe(true);
     expect(chrome.stored.label).toBe("Agents");
     await flush();
@@ -471,6 +480,26 @@ describe("pairing page and the profile name", () => {
     const { ask: askNamed } = await startWorker({ pairing, label: "Work" });
     await flush();
     expect((await askNamed({ type: "status" })).state.needsName).toBe(false);
+  });
+
+  it("answers status from stored settings on a cold worker", async () => {
+    vi.resetModules();
+    const chrome = fakeChrome({ pairing, label: "Work" });
+    const get = chrome.storage.local.get;
+    // Storage answers late, as on a worker Chrome just woke.
+    chrome.storage.local.get = (keys) =>
+      new Promise((resolve) => setTimeout(() => resolve(get(keys)), 20));
+    globalThis.chrome = chrome;
+    globalThis.WebSocket = FakeWebSocket;
+    await import("../src/background.js");
+    const ask = (message) =>
+      new Promise((resolve) => chrome.runtime.onMessage.fire(message, {}, resolve));
+    globalThis.__swcAsk = ask;
+    const state = (await ask({ type: "status" })).state;
+    expect(state.label).toBe("Work");
+    expect(state.machine).toBe("mac");
+    expect(state.phase).not.toBe("not_paired");
+    expect(state.needsName).toBe(false);
   });
 
   it("explains a refusal of a copy that is not from the Chrome Web Store", async () => {

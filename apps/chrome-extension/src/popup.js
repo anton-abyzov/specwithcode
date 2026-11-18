@@ -19,9 +19,14 @@ function send(message) {
 const form = wirePairForm(document, {
   onPaired: () => refresh(),
   onRename: async (label) => {
-    if (!label.trim()) return;
-    const response = await send({ type: "status" });
-    if (response?.state?.phase !== "not_paired") await send({ type: "rename", label });
+    const name = label.trim();
+    if (!name) return;
+    const current = (await send({ type: "status" }))?.state;
+    // Renaming reconnects, so only a paired profile with a different name is renamed.
+    if (current && current.phase !== "not_paired" && current.label !== name) {
+      const response = await send({ type: "rename", label: name });
+      $("error").textContent = response?.ok ? "" : (response?.error ?? "");
+    }
     await refresh();
   },
 });

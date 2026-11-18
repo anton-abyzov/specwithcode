@@ -37,12 +37,18 @@ export function wirePairForm(doc, { onPaired, onRename } = {}) {
     button.disabled = !label.value.trim();
     if (label.value.trim() && hint) hint.hidden = true;
   };
-  label.addEventListener("input", sync);
+  /** Set once the person types or picks a name; the worker's name never overwrites theirs. */
+  let touched = false;
+  label.addEventListener("input", () => {
+    touched = true;
+    sync();
+  });
   if (onRename) label.addEventListener("change", () => onRename(label.value));
 
   for (const suggestion of doc.querySelectorAll("[data-name]")) {
     suggestion.addEventListener("click", () => {
       label.value = suggestion.dataset.name;
+      touched = true;
       sync();
       label.dispatchEvent(new Event("change"));
       if (code.value.trim()) button.focus();
@@ -83,13 +89,11 @@ export function wirePairForm(doc, { onPaired, onRename } = {}) {
   });
 
   sync();
-  let prefilled = false;
   return {
-    /** Fill the name once from the worker, unless it is a name that still needs choosing. */
+    /** Fill the name from the worker until the person types one, unless it still needs one. */
     prefill(state) {
-      if (prefilled || !state) return;
-      prefilled = true;
-      if (!label.value && state.label && !state.needsName) {
+      if (touched || !state) return;
+      if (state.label && !state.needsName && label.value !== state.label) {
         label.value = state.label;
         sync();
       }
@@ -125,6 +129,15 @@ async function startPairPage() {
       return;
     }
     const shown = state.shownPhase ?? state.phase;
+    if (state.phase === "rejected") {
+      // The code was refused: bring the form back with the reason, for another code.
+      paired = false;
+      $("done").hidden = true;
+      $("pair-form").hidden = false;
+      $("error").textContent = state.message || "SpecWithCode did not accept this code.";
+      controls.focusCode();
+      return;
+    }
     $("done-status").textContent = PHASE_TEXT[shown] ?? "Connecting…";
     $("done-status").dataset.phase = shown;
     $("done-detail").textContent =

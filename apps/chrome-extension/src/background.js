@@ -65,18 +65,23 @@ let generation = 0;
 const cleanup = cleanupStaleGroups();
 
 /** A profile name, trimmed and bounded. Empty means the person has not named it yet. */
-export function cleanLabel(label) {
+function cleanLabel(label) {
   return typeof label === "string" ? label.trim().slice(0, 60) : "";
 }
 
-/** "Chrome" was the default name before 1.0.7, and the service numbers repeats "Chrome (2)". */
-export function needsName(label) {
-  return !cleanLabel(label) || /^Chrome( \(\d+\))?$/.test(cleanLabel(label));
+/**
+ * A name agents cannot tell apart: none, "Chrome" (the default before 1.0.7, numbered by the
+ * service when repeated) or the service's "Unnamed profile". The app's list uses the same rule.
+ */
+function needsName(label) {
+  const name = cleanLabel(label);
+  return !name || /^(Chrome|Unnamed profile)( \(\d+\))?$/.test(name);
 }
 
 function requireLabel(label) {
   const name = cleanLabel(label);
   if (!name) throw new Error("Give this profile a name first, so agents can tell it apart.");
+  if (needsName(name)) throw new Error(`Pick a name agents can tell apart, not "${name}".`);
   return name;
 }
 
@@ -85,12 +90,15 @@ let pairTabOpening = null;
  * Shows the extension's own pairing page, keeping one pairing tab: an open one is brought to the
  * front instead of opening another. Claimed before the first await, like connect().
  */
-export function openPairingPage() {
+function openPairingPage() {
   if (pairTabOpening) return pairTabOpening;
   pairTabOpening = (async () => {
     const url = chrome.runtime.getURL(PAIR_PAGE);
     const tabs = await chrome.tabs.query({}).catch(() => []);
-    const open = tabs.filter((tab) => typeof tab.url === "string" && tab.url.startsWith(url));
+    // The newest pairing tab stays, the rule keepOnePairingTab follows too.
+    const open = tabs
+      .filter((tab) => typeof tab.url === "string" && tab.url.startsWith(url))
+      .sort((a, b) => b.id - a.id);
     const [keep, ...extra] = open;
     if (extra.length) await chrome.tabs.remove(extra.map((tab) => tab.id)).catch(() => {});
     if (keep) {
@@ -107,13 +115,16 @@ export function openPairingPage() {
   return pairTabOpening;
 }
 
-/** A pairing page just loaded: close any other pairing tab, so one stays. */
+/**
+ * A pairing page just loaded: close older pairing tabs, so one stays. Only tabs with a lower id
+ * close, so two pages loading together (a restored session) never close each other.
+ */
 async function keepOnePairingTab(tabId) {
   if (tabId === undefined) return;
   const url = chrome.runtime.getURL(PAIR_PAGE);
   const tabs = await chrome.tabs.query({}).catch(() => []);
   const others = tabs.filter(
-    (tab) => tab.id !== tabId && typeof tab.url === "string" && tab.url.startsWith(url),
+    (tab) => tab.id < tabId && typeof tab.url === "string" && tab.url.startsWith(url),
   );
   if (others.length) await chrome.tabs.remove(others.map((tab) => tab.id)).catch(() => {});
 }
@@ -419,11 +430,40 @@ async function restoreStatus() {
   return true;
 }
 
+/** The stored name and pairing, read once when the worker starts. */
+const loaded = Promise.resolve(chrome.storage.local.get(["pairing", "label", "paused"]))
+  .then((stored) => {
+    if (!state.label) state.label = cleanLabel(stored.label);
+    if (!state.machine) state.machine = stored.pairing?.machine ?? "";
+    // Paired but not yet trying: say so, instead of "not paired", until connect() takes over.
+    if (stored.pairing && stored.paused !== true && state.phase === "not_paired")
+      setPhase("connecting");
+  })
+  .catch(() => {});
+
 const ready = restoreStatus()
   .catch(() => false)
   .then((waiting) => {
     if (!waiting) void connect();
   });
+
+/** Answers the popup and the pairing page; someone is looking at this profile's state. */
+function answerStatus(sendResponse) {
+  // A disconnected profile gets a fresh attempt instead of a stale wait.
+  const idle = !socket && !connecting;
+  if (idle && (state.phase === "disconnected" || state.phase === "rejected")) {
+    const now = Date.now();
+    if (now >= popupRetryAt) {
+      popupRetryAt = now + POPUP_RETRY_MS;
+      clearRetry();
+      void connect();
+    }
+  }
+  sendResponse({
+    ok: true,
+    state: { ...state, shownPhase, needsName: needsName(state.label), now: Date.now() },
+  });
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const respond = (promise) => {
@@ -434,23 +474,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   };
   switch (message?.type) {
-    case "status": {
-      // Someone is looking: a disconnected profile gets a fresh attempt instead of a stale wait.
-      const idle = !socket && !connecting;
-      if (idle && (state.phase === "disconnected" || state.phase === "rejected")) {
-        const now = Date.now();
-        if (now >= popupRetryAt) {
-          popupRetryAt = now + POPUP_RETRY_MS;
-          clearRetry();
-          void connect();
-        }
-      }
-      sendResponse({
-        ok: true,
-        state: { ...state, shownPhase, needsName: needsName(state.label), now: Date.now() },
-      });
-      return false;
-    }
+    case "status":
+      // A cold worker reads this profile's settings first, so the name and pairing are true.
+      void loaded.then(() => answerStatus(sendResponse));
+      return true;
     case "pair":
       return respond(
         (async () => {
@@ -492,8 +519,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return respond(reconnectNow().then(() => ({})));
     case "pairPageOpened":
       return respond(keepOnePairingTab(sender?.tab?.id).then(() => ({})));
-    case "openPairPage":
-      return respond(openPairingPage().then(() => ({})));
   }
   return false;
 });
