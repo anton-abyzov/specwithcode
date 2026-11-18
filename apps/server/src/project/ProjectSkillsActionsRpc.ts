@@ -43,6 +43,7 @@ import {
 } from "./ProjectSkillsActionsCommon.ts";
 import { makeStudioLink, pushSkillToFleet } from "./ProjectSkillsFleet.ts";
 import * as SkillAuthoringService from "./SkillAuthoringService.ts";
+import { makeSkillManagementHandlers } from "./SkillUpdateRpc.ts";
 import * as ProjectSkillsService from "./ProjectSkillsService.ts";
 
 const CODEX_START_TIMEOUT = "20 seconds";
@@ -160,6 +161,19 @@ const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
 
       const copies = yield* makeProjectSkillCopies(deps);
 
+      // Skill repos, search and updates on this machine (see SkillUpdateRpc).
+      const management = yield* makeSkillManagementHandlers({
+        home,
+        environment: hostEnvironment,
+        platform,
+        stateDir: config.stateDir,
+        skills,
+        registry,
+      }).pipe(
+        Effect.provide(ProcessRunner.layer),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+
       const studio = yield* makeStudioLink({
         home,
         resolveCwd: (input: ProjectSkillsStudioLinkInput) =>
@@ -268,6 +282,7 @@ const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
         [WS_METHODS.projectsSkillsFleetPush]: (input: ProjectSkillsFleetPushInput) =>
           pushSkillToFleet(fleet, input),
         [WS_METHODS.projectsSkillsStudioLink]: studio.link,
+        ...management,
       };
     }),
   )

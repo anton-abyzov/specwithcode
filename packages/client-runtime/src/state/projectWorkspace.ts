@@ -207,6 +207,32 @@ export function createProjectWorkspaceAtoms<R, E>(
       label: "project-workspace:skill-studio-link",
       tag: WS_METHODS.projectsSkillsStudioLink,
     }),
+    /** This machine's connected skill repos and what each offers; reads GitHub, so on demand. */
+    skillRepos: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
+      label: "project-workspace:skill-repos",
+      tag: WS_METHODS.projectsSkillRepos,
+      staleTimeMs: 60_000,
+      idleTtlMs: 60_000,
+    }),
+    skillReposChange: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skill-repos-change",
+      tag: WS_METHODS.projectsSkillRepos,
+    }),
+    skillsSearch: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skills-search",
+      tag: WS_METHODS.projectsSkillsSearch,
+    }),
+    /** Installed against latest for every tracked skill; reads each source, so on demand. */
+    skillSources: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
+      label: "project-workspace:skill-sources",
+      tag: WS_METHODS.projectsSkillsUpdate,
+      staleTimeMs: 60_000,
+      idleTtlMs: 60_000,
+    }),
+    skillsUpdate: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skills-update",
+      tag: WS_METHODS.projectsSkillsUpdate,
+    }),
     library: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-workspace:library",
       tag: WS_METHODS.projectsLibraryRead,
