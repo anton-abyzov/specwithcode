@@ -49,6 +49,9 @@ import {
   CoordinatorReplicaRequest,
   CoordinatorReplicaResponse,
   encodeFrame,
+  ExtrasNegotiateRequest,
+  ExtrasReplicateMeta,
+  ExtrasReplicateResponse,
   HANDOFF_JSON_MAX_BYTES,
   HANDOFF_PEER_PREFIX,
   HeartbeatRequest,
@@ -100,6 +103,8 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   "linked-members": 15_000,
   "plan-export": 60_000,
   "plan-merge": 60_000,
+  "extras-negotiate": 15_000,
+  "extras-replicate": 120_000,
 };
 /** A memory page, a coordinator's content or a plan answers with up to the link cap; the rest is small. */
 const answerLimit = (path: PeerPath) =>
@@ -132,6 +137,8 @@ export class HandoffPeerError extends Data.TaggedError("HandoffPeerError")<{
    * whether the grant it held was revoked there or expired.
    */
   readonly grant?: "none" | "revoked" | "expired" | undefined;
+  /** The destination runs a version from before this call existed. */
+  readonly needsUpdate?: boolean | undefined;
 }> {}
 
 const unreachable = (label: string, uncertain: boolean, local = false) =>
@@ -231,10 +238,24 @@ export class HandoffPeers extends Context.Service<
       environmentId: EnvironmentId,
       request: LinkedPlanMergeRequest,
     ) => Effect.Effect<ProjectPlanLinkMergeResult, HandoffPeerError>;
+    /** Sync extras (1390): which of these commits the repository there holds. */
+    readonly extrasNegotiate: (
+      environmentId: EnvironmentId,
+      request: ExtrasNegotiateRequest,
+    ) => Effect.Effect<NegotiateResponse, HandoffPeerError>;
+    /** Sync extras: one bundle, landed there as a branch `swc/from-{machine}/…`. */
+    readonly extrasReplicate: (
+      environmentId: EnvironmentId,
+      meta: ExtrasReplicateMeta,
+      bundle: Uint8Array | null,
+    ) => Effect.Effect<ExtrasReplicateResponse, HandoffPeerError>;
   }
 >()("specweave-studio/handoff/handoffPeers") {}
 
 const encodeNegotiate = Schema.encodeSync(NegotiateRequest);
+const encodeExtrasNegotiate = Schema.encodeSync(ExtrasNegotiateRequest);
+const encodeExtrasMeta = Schema.encodeSync(ExtrasReplicateMeta);
+const decodeExtrasReplicate = Schema.decodeUnknownOption(ExtrasReplicateResponse);
 const encodeMeta = Schema.encodeSync(ReplicateMeta);
 const encodePreflight = Schema.encodeSync(PeerPreflightRequest);
 const encodeTakeover = Schema.encodeSync(TakeoverRequest);
@@ -422,7 +443,7 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const target = yield* findTarget(environmentId);
       // Work leaves here only under readable rules: a broken file could be hiding `none`.
-      if (path === "replicate" || path === "takeover") {
+      if (path === "replicate" || path === "takeover" || path === "extras-replicate") {
         const held = teamRulesHoldRefusal(yield* currentTeamRules);
         if (held !== null) {
           return yield* new HandoffPeerError({
@@ -466,6 +487,15 @@ export const make = Effect.gen(function* () {
         try: () => readBoundedJson(answer, answerLimit(path)),
         catch: () => null,
       }).pipe(Effect.orElseSucceed(() => undefined));
+      // A machine from before Sync extras has no such path.
+      if (answer.status === 404 && (path === "extras-negotiate" || path === "extras-replicate")) {
+        return yield* new HandoffPeerError({
+          code: "failed",
+          message: `${target.label} runs a SpecWithCode from before Sync. Update SpecWithCode on ${target.label}.`,
+          uncertain: false,
+          needsUpdate: true,
+        });
+      }
       if (!answer.ok) {
         const refusal = decodeError(json);
         if (Option.isSome(refusal)) {
@@ -577,6 +607,34 @@ export const make = Effect.gen(function* () {
       postJson(environmentId, "plan-export", encodePlanExport(request), decodePlanExport),
     planMerge: (environmentId, request) =>
       postJson(environmentId, "plan-merge", encodePlanMerge(request), decodePlanMerge),
+    extrasNegotiate: (environmentId, request) =>
+      postJson(
+        environmentId,
+        "extras-negotiate",
+        encodeExtrasNegotiate(request),
+        decodeNegotiate,
+      ),
+    extrasReplicate: (environmentId, meta, bundle) =>
+      Effect.try({
+        try: () => encodeFrame(encodeExtrasMeta(meta), bundle),
+        catch: (cause) =>
+          new HandoffPeerError({
+            code: "too_large",
+            message: cause instanceof Error ? cause.message : "The bundle is too large.",
+            uncertain: false,
+            local: true,
+          }),
+      }).pipe(
+        Effect.flatMap((frame) =>
+          post(
+            environmentId,
+            "extras-replicate",
+            frame,
+            "application/octet-stream",
+            decodeExtrasReplicate,
+          ),
+        ),
+      ),
   });
 });
 

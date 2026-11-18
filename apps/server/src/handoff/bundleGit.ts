@@ -531,3 +531,50 @@ export async function copyRequiredFiles(input: {
   }
   return { copied, missing };
 }
+
+/**
+ * What a bundle of `commit` minus `exclude` would carry, measured before it is
+ * built: the first file over `maxFileBytes`, and how many files its commits
+ * touch. Used for the per-file and file-count limits of a branch that travels.
+ */
+export async function measureCommitRange(input: {
+  readonly root: string;
+  readonly commit: string;
+  readonly exclude: ReadonlyArray<string>;
+  readonly maxFileBytes: number;
+}): Promise<{ readonly oversizedFile: string | null; readonly files: number }> {
+  const range = [
+    input.commit,
+    ...input.exclude
+      .filter((sha) => isCommitSha(sha) && sha !== input.commit)
+      .map((sha) => `^${sha}`),
+  ];
+  // `blob:limit=n` leaves out blobs of n bytes or more and prints each as `~<id>`.
+  const omitted = await runGit(input.root, [
+    "rev-list",
+    "--objects",
+    `--filter=blob:limit=${input.maxFileBytes + 1}`,
+    "--filter-print-omitted",
+    ...range,
+  ]);
+  const large = omitted.stdout
+    .split("\n")
+    .filter((line) => line.startsWith("~"))
+    .map((line) => line.slice(1).trim());
+  let oversizedFile: string | null = null;
+  if (large.length > 0) {
+    const objects = await runGit(input.root, ["rev-list", "--objects", ...range]);
+    const named = objects.stdout.split("\n").find((line) => line.startsWith(`${large[0]} `));
+    oversizedFile = named === undefined ? large[0]! : named.slice(large[0]!.length + 1);
+  }
+  const touched = await runGit(input.root, [
+    "log",
+    "--format=",
+    "--name-only",
+    "--no-renames",
+    "-z",
+    ...range,
+  ]);
+  const files = new Set(touched.stdout.split("\0").map((path) => path.trim()).filter(Boolean));
+  return { oversizedFile, files: files.size };
+}

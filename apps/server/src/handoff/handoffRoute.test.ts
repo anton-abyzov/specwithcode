@@ -24,6 +24,7 @@ import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
 import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
+import { ExtrasReceiver } from "./ExtrasReceiver.ts";
 import { HandoffReceiver, type ReceiverCaller } from "./HandoffReceiver.ts";
 import * as HandoffRoute from "./handoffRoute.ts";
 import { HANDOFF_PEER_PREFIX, LINKED_SYNC_PEER_MAX_BYTES } from "./handoffWire.ts";
@@ -88,6 +89,13 @@ function api() {
             Effect.sync(() => {
               callers.push(caller);
               return { replayed: false, changed: true };
+            }),
+        }),
+        Layer.mock(ExtrasReceiver)({
+          negotiate: (caller) =>
+            Effect.sync(() => {
+              callers.push(caller);
+              return { known: [] };
             }),
         }),
         Layer.mock(HandoffReceiver)({
