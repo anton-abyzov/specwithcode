@@ -175,19 +175,27 @@ describe("ModelsBlock", () => {
   });
 
   it("says there is no reviewer with one family ready, and Add one goes to an agent", () => {
+    // The step's shapes: a ready Codex card nests its own unmarked row, tool rows carry no
+    // mark, and a found agent that is signed in but not turned on is not ready.
     const rows = (
       <>
-        <div data-agent-row="claudeAgent" data-agent-state="ready">
-          <button type="button">Claude</button>
+        <div data-agent-ready="true">
+          <div data-agent-row="claudeAgent" data-agent-state="ready">
+            <button type="button">Claude</button>
+          </div>
+        </div>
+        <div data-agent-ready="true">
+          <div data-agent-row="codex">
+            <button type="button">Use another account</button>
+          </div>
+        </div>
+        <div data-agent-ready="false">
+          <div data-agent-row="muse" data-agent-state="ready">
+            <button type="button">Turn on Muse Code</button>
+          </div>
         </div>
         <div data-agent-row="node" data-agent-state="present">
           <button type="button">Node details</button>
-        </div>
-        <div data-agent-row="git" data-agent-state="missing">
-          <button type="button">Install Git</button>
-        </div>
-        <div data-agent-row="codex" data-agent-state="signIn">
-          <button type="button">Sign in to Codex</button>
         </div>
       </>
     );
@@ -200,7 +208,7 @@ describe("ModelsBlock", () => {
     expect(marks("review")).toEqual(["openai", "meta"]);
     expect(review?.textContent).not.toMatch(/Claude/);
     act(() => button("Add one")?.click());
-    expect(document.activeElement?.textContent).toBe("Sign in to Codex");
+    expect(document.activeElement?.textContent).toBe("Turn on Muse Code");
   });
 
   it("Change opens the Models editor for this machine only, without Sources", async () => {

@@ -412,6 +412,116 @@ function ConnectedAgentsStep({
     </Menu>
   );
 
+  const renderRow = (row: OnboardingAgentRow) => {
+    if (row.kind === "install") {
+      const failed = installFailed === row.agent;
+      const installing =
+        !failed && terminalSession?.purpose === "install" && terminalSession.agent === row.agent;
+      return (
+        <InstallAgentRow
+          key={row.key}
+          agent={row.agent}
+          name={rowName(row.agent)}
+          command={
+            os && canInstallOnboardingAgent(row.agent)
+              ? resolveOnboardingProviderInstallCommand(row.agent, os)
+              : null
+          }
+          installing={installing}
+          failed={failed}
+          disabled={panelBlocked || !os}
+          onInstall={() => install(row.agent)}
+        />
+      );
+    }
+    if (row.kind === "found") {
+      return (
+        <FoundAgentRow
+          key={row.key}
+          found={{
+            agent: row.agent,
+            kind: row.registry ? "registry" : "builtIn",
+            state: row.state,
+          }}
+          name={rowName(row.agent)}
+          readOnly={!canManage}
+          onTurnOn={() => turnOn(row.agent)}
+          onSignIn={() => {
+            setSignInAfterTurnOn(row.agent);
+            turnOn(row.agent);
+          }}
+          onAdd={() => setAddingAgent(true)}
+        />
+      );
+    }
+    if (row.agent === "codex") {
+      const command =
+        row.provider && settings && os
+          ? resolveAgentSignInCommand(row.provider, settings, os)
+          : null;
+      return serverConfig !== null ? (
+        <OnboardingCodexSetup
+          key={row.key}
+          environmentId={environmentId}
+          provider={row.provider}
+          serverConfig={serverConfig}
+          createdAccount={row.key === createdAccount?.instanceId ? createdAccount : null}
+          onAutoStartConsumed={() =>
+            setCreatedAccount((account) => (account ? { ...account, autoStart: false } : null))
+          }
+          menu={codexMenu}
+          signedOutFooter={command ? <AgentCommand command={command} flush /> : null}
+        />
+      ) : (
+        <AgentRow
+          key={row.key}
+          agent="codex"
+          state="checking"
+          icon={<OpenAI className="size-5 shrink-0 fill-foreground" />}
+          name={rowName("codex", row.provider)}
+          uses={tx(onboardingAgentUses("codex"))}
+          status={<AgentRowStatus tone="checking">{tx("Checking…")}</AgentRowStatus>}
+        />
+      );
+    }
+    const provider = row.provider;
+    if (provider === undefined) return null;
+    const command = settings && os ? resolveAgentSignInCommand(provider, settings, os) : null;
+    const name = rowName(row.agent, provider);
+    return (
+      <ProviderAgentRow
+        key={row.key}
+        environmentId={environmentId}
+        machineLabel={machineLabel}
+        provider={provider}
+        name={name}
+        os={os}
+        command={command}
+        registryAgentId={
+          provider.driver === "acpRegistry"
+            ? acpAgentIdForInstanceConfig(settings?.providerInstances[provider.instanceId]?.config)
+            : undefined
+        }
+        panelOpen={terminalSession !== null}
+        panelAvailable={panel.available}
+        onOpenPanel={() => {
+          if (command === null) return;
+          openPanel({
+            agent: row.agent,
+            agentName: name,
+            providerInstanceId: provider.instanceId,
+            command,
+            purpose: "signIn",
+          });
+        }}
+        checking={panel.checkingInstance === provider.instanceId}
+        signInEnded={panel.endedInstance === provider.instanceId}
+        autoSignIn={signInAfterTurnOn === row.agent}
+        onAutoSignInDone={autoSignInDone}
+      />
+    );
+  };
+
   return (
     <section>
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -437,123 +547,15 @@ function ConnectedAgentsStep({
         <p className="mb-2 text-sm text-muted-foreground">{t("wizard.agents.noTerminal")}</p>
       ) : null}
       <div className="space-y-1.5">
-        {rows.map((row) => {
-          if (row.kind === "install") {
-            const failed = installFailed === row.agent;
-            const installing =
-              !failed &&
-              terminalSession?.purpose === "install" &&
-              terminalSession.agent === row.agent;
-            return (
-              <InstallAgentRow
-                key={row.key}
-                agent={row.agent}
-                name={rowName(row.agent)}
-                command={
-                  os && canInstallOnboardingAgent(row.agent)
-                    ? resolveOnboardingProviderInstallCommand(row.agent, os)
-                    : null
-                }
-                installing={installing}
-                failed={failed}
-                disabled={panelBlocked || !os}
-                onInstall={() => install(row.agent)}
-              />
-            );
-          }
-          if (row.kind === "found") {
-            return (
-              <FoundAgentRow
-                key={row.key}
-                found={{
-                  agent: row.agent,
-                  kind: row.registry ? "registry" : "builtIn",
-                  state: row.state,
-                }}
-                name={rowName(row.agent)}
-                readOnly={!canManage}
-                onTurnOn={() => turnOn(row.agent)}
-                onSignIn={() => {
-                  setSignInAfterTurnOn(row.agent);
-                  turnOn(row.agent);
-                }}
-                onAdd={() => setAddingAgent(true)}
-              />
-            );
-          }
-          if (row.agent === "codex") {
-            const command =
-              row.provider && settings && os
-                ? resolveAgentSignInCommand(row.provider, settings, os)
-                : null;
-            return serverConfig !== null ? (
-              // The Models block's "Add one" finds a row that is not ready by these.
-              <div key={row.key} data-agent-row="codex" data-agent-state={row.state}>
-                <OnboardingCodexSetup
-                  environmentId={environmentId}
-                  provider={row.provider}
-                  serverConfig={serverConfig}
-                  createdAccount={row.key === createdAccount?.instanceId ? createdAccount : null}
-                  onAutoStartConsumed={() =>
-                    setCreatedAccount((account) =>
-                      account ? { ...account, autoStart: false } : null,
-                    )
-                  }
-                  menu={codexMenu}
-                  signedOutFooter={command ? <AgentCommand command={command} flush /> : null}
-                />
-              </div>
-            ) : (
-              <AgentRow
-                key={row.key}
-                agent="codex"
-                state="checking"
-                icon={<OpenAI className="size-5 shrink-0 fill-foreground" />}
-                name={rowName("codex", row.provider)}
-                uses={tx(onboardingAgentUses("codex"))}
-                status={<AgentRowStatus tone="checking">{tx("Checking…")}</AgentRowStatus>}
-              />
-            );
-          }
-          const provider = row.provider;
-          if (provider === undefined) return null;
-          const command = settings && os ? resolveAgentSignInCommand(provider, settings, os) : null;
-          const name = rowName(row.agent, provider);
-          return (
-            <ProviderAgentRow
-              key={row.key}
-              environmentId={environmentId}
-              machineLabel={machineLabel}
-              provider={provider}
-              name={name}
-              os={os}
-              command={command}
-              registryAgentId={
-                provider.driver === "acpRegistry"
-                  ? acpAgentIdForInstanceConfig(
-                      settings?.providerInstances[provider.instanceId]?.config,
-                    )
-                  : undefined
-              }
-              panelOpen={terminalSession !== null}
-              panelAvailable={panel.available}
-              onOpenPanel={() => {
-                if (command === null) return;
-                openPanel({
-                  agent: row.agent,
-                  agentName: name,
-                  providerInstanceId: provider.instanceId,
-                  command,
-                  purpose: "signIn",
-                });
-              }}
-              checking={panel.checkingInstance === provider.instanceId}
-              signInEnded={panel.endedInstance === provider.instanceId}
-              autoSignIn={signInAfterTurnOn === row.agent}
-              onAutoSignInDone={autoSignInDone}
-            />
-          );
-        })}
+        {rows.map((row) => (
+          // The Models block's "Add one" moves focus to the first row here that is not ready.
+          <div
+            key={row.key}
+            data-agent-ready={row.kind === "agent" && row.state === "ready" ? "true" : "false"}
+          >
+            {renderRow(row)}
+          </div>
+        ))}
       </div>
       <ModelsBlock environmentId={environmentId} machineLabel={machineLabel} />
       {list.notInstalled.length > 0 ? (

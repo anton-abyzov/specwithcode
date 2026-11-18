@@ -1,10 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { providerInstanceInitials } from "@specweave-studio/client-runtime/state/provider-instance-display";
-import {
-  type EnvironmentId,
-  MachineReadinessToolId,
-  MODEL_TRACK_LABELS,
-} from "@specweave-studio/contracts";
+import { type EnvironmentId, MODEL_TRACK_LABELS } from "@specweave-studio/contracts";
 import { Fragment, lazy, type ReactNode, Suspense, useMemo, useRef, useState } from "react";
 
 import { useTx } from "../../i18n";
@@ -51,18 +47,14 @@ const MachineModelsEditor = lazy(async () => {
   };
 });
 
-/** Rows the step draws for a machine's tools (`MachineReadinessToolId`), not its agents. */
-const TOOL_ROWS: ReadonlyArray<string> = MachineReadinessToolId.literals;
-
 /**
  * "Add one": focus moves to the first agent row on this machine that is not
- * ready, onto its first button when it has one. Tool rows are skipped.
+ * ready, onto its first button when it has one. The Agents step marks each
+ * agent row with `data-agent-ready`; tool rows carry no mark.
  */
 export function focusFirstAgentNotReady(from: Element | null): boolean {
   const section = from?.closest("section") ?? null;
-  const row = section?.querySelector<HTMLElement>(
-    `[data-agent-row]${TOOL_ROWS.map((tool) => `:not([data-agent-row="${tool}"])`).join("")}:not([data-agent-state="ready"])`,
-  );
+  const row = section?.querySelector<HTMLElement>('[data-agent-ready="false"]');
   if (!row) return false;
   const control = row.querySelector<HTMLElement>("button:not([disabled]), a[href], input");
   if (control) {
