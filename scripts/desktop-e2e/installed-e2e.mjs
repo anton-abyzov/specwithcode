@@ -537,7 +537,11 @@ const main = async () => {
     const ready = () => nav.isVisible().catch(() => false);
     try {
       wizardSteps.push(
-        ...(await walkFirstRun(page, { until: ready, appearTimeoutMs: TIMEOUT_MS })),
+        ...(await walkFirstRun(page, {
+          until: ready,
+          appearTimeoutMs: TIMEOUT_MS,
+          timeoutMs: TIMEOUT_MS,
+        })),
       );
     } catch (error) {
       wizardSteps.push(...(error.firstRunSteps ?? []));

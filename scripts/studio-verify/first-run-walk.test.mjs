@@ -31,14 +31,16 @@ const SETUP_LABELS = [
   "Keep current access",
   "Continue without an agent",
 ];
+/** Pieces of the old regex forms of those labels. */
+const SETUP_FRAGMENTS = ["without an account", "import projects", "Keep (Supervised", "without an agent"];
 
 /**
  * A page whose setup is a list of steps. Each step: `{ id, neutral, waits, moves }`:
  * `neutral` enabled neutral controls once `waits` reads have passed, `moves`
  * false for a step that stays open after its press.
  */
-function fakePage(steps, { readyAfter = null, buttons = ["Back", "Install"] } = {}) {
-  const state = { index: 0, reads: 0, presses: [], selectors: [] };
+function fakePage(steps, { readyAfter = null, buttons = ["Back", "Install"], clickFails = 0 } = {}) {
+  const state = { index: 0, reads: 0, presses: [], selectors: [], clickFails };
   const current = () => steps[state.index];
   return {
     state,
@@ -55,6 +57,12 @@ function fakePage(steps, { readyAfter = null, buttons = ["Back", "Install"] } = 
         click: async () => {
           state.selectors.push(selector);
           const step = current();
+          // The step went on by itself between the read and the press.
+          if (state.clickFails > 0) {
+            state.clickFails--;
+            if (step.skipOnFail) state.index++;
+            throw new Error("locator.click: Timeout 5000ms exceeded.\nCall log: ...");
+          }
           assert.equal(selector, enabledNeutral(step.id));
           state.presses.push(step.id);
           if (step.moves !== false) state.index++;
@@ -112,6 +120,34 @@ test("a step that stays open after its neutral control fails instead of pressing
   assert.deepEqual(state.presses, ["import"]);
 });
 
+test("a press that misses because the step moved on reads the step again", async () => {
+  const { page, state } = fakePage(
+    [{ id: "start", skipOnFail: true }, { id: "agents" }, { id: "import" }],
+    { clickFails: 1 },
+  );
+  assert.deepEqual(await walkFirstRun(page, quick), ["agents", "import"]);
+  assert.deepEqual(state.presses, ["agents", "import"]);
+});
+
+test("a press that fails on the same step fails naming the step", async () => {
+  const { page } = fakePage([{ id: "access" }], { clickFails: 1 });
+  await assert.rejects(walkFirstRun(page, quick), (error) => {
+    assert.match(error.message, /could not press the neutral control of step "access": locator.click/);
+    assert.deepEqual(error.firstRunSteps, ["access"]);
+    return true;
+  });
+});
+
+test("the whole walk ends by its budget, whatever each step allows", async () => {
+  const { page } = fakePage([{ id: "agents", waits: 1_000_000 }]);
+  const started = Date.now();
+  await assert.rejects(
+    walkFirstRun(page, { pollMs: 1, stepTimeoutMs: 60_000, timeoutMs: 60 }),
+    /step "agents" offered no enabled neutral control within the walk's 60 ms/,
+  );
+  assert.ok(Date.now() - started < 5_000);
+});
+
 test("fails after twelve steps", async () => {
   const { page, state } = fakePage(Array.from({ length: 20 }, (_, index) => ({ id: `s${index}` })));
   await assert.rejects(walkFirstRun(page, quick), /did not end after 12 steps/);
@@ -156,7 +192,7 @@ test("no script outside this test holds a setup-only label", () => {
     } catch {
       continue;
     }
-    for (const label of SETUP_LABELS)
+    for (const label of [...SETUP_LABELS, ...SETUP_FRAGMENTS])
       if (text.includes(label)) found.push(`${relative(scripts, path)}: "${label}"`);
   }
   assert.deepEqual(found, []);

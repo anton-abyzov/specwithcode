@@ -295,6 +295,16 @@ it("offers Continue as the neutral action once signed in, and none while this ma
   expect(button("Continue")).toBeDefined();
 });
 
+it("offers no neutral action while this machine's link is still being read", async () => {
+  world.cloud = true;
+  Object.assign(window, { desktopBridge: {} });
+  world.auth = { isLoaded: true, isSignedIn: true, userId: "user_1" };
+  world.link = { ...world.link, data: null, isPending: true };
+  await render(true);
+  expect(contract().step).toBe("start");
+  expect(contract().neutral).toHaveLength(0);
+});
+
 it("has no enabled neutral control while the Access step saves", async () => {
   let finish = (_: unknown) => {};
   world.accept.mockImplementation(() => new Promise((resolve) => (finish = resolve)));

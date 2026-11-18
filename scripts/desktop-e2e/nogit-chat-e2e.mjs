@@ -492,6 +492,7 @@ const main = async () => {
         ...(await walkFirstRun(page, {
           until: () => nav.isVisible().catch(() => false),
           appearTimeoutMs: TIMEOUT_MS,
+          timeoutMs: TIMEOUT_MS,
         })),
       );
     } catch (error) {

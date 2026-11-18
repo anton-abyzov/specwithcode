@@ -20,6 +20,8 @@ export const enabledNeutral = (step) =>
 
 const STEP_TIMEOUT_MS = 60_000;
 const MAX_STEPS = 12;
+const CLICK_TIMEOUT_MS = 5_000;
+const MAX_MISSED_PRESSES = 3;
 
 /** Read in the page: the open step, its enabled neutral controls and its enabled buttons. */
 function readWizard(selectors) {
@@ -52,6 +54,8 @@ const named = (buttons) =>
  *   is not an error.
  * - `stepTimeoutMs` (60 s): how long a step may take to offer its neutral action
  *   and to move on after it.
+ * - `timeoutMs`: the whole walk's budget, so a caller's own deadline holds; every
+ *   wait above ends by it.
  * - `onStep(id)`: called before each press.
  */
 export async function walkFirstRun(
@@ -62,11 +66,17 @@ export async function walkFirstRun(
     stepTimeoutMs = STEP_TIMEOUT_MS,
     maxSteps = MAX_STEPS,
     pollMs = 250,
+    timeoutMs = Infinity,
     onStep,
   } = {},
 ) {
+  const end = Date.now() + timeoutMs;
+  /** When a wait of `ms` ends: its own limit or the walk's, whichever comes first. */
+  const by = (ms) => Math.min(Date.now() + ms, end);
+  const late = (limit, ms) => (limit === end ? `the walk's ${timeoutMs} ms` : `${ms} ms`);
   const read = () => page.evaluate(readWizard, { dialog: WIZARD_DIALOG });
   const steps = [];
+  let missed = 0;
   const fail = (message, state) => {
     const error = new Error(
       `first-run setup: ${message}; enabled buttons: ${named(state?.buttons ?? [])}; steps: ${
@@ -80,7 +90,7 @@ export async function walkFirstRun(
 
   // Setup shows, or the app is ready without it.
   let state = await read();
-  for (const deadline = Date.now() + appearTimeoutMs; state.step === null; ) {
+  for (const deadline = by(appearTimeoutMs); state.step === null; ) {
     if (until && (await until().catch(() => false))) {
       // The app can draw before setup opens over it: ready twice in a row counts.
       await pause(pollMs);
@@ -89,7 +99,8 @@ export async function walkFirstRun(
       continue;
     }
     if (Date.now() >= deadline) {
-      if (until) fail(`neither setup nor the ready app showed within ${appearTimeoutMs} ms`, state);
+      if (until)
+        fail(`neither setup nor the ready app showed within ${late(deadline, appearTimeoutMs)}`, state);
       return steps;
     }
     await pause(pollMs);
@@ -98,9 +109,12 @@ export async function walkFirstRun(
 
   while (state.step !== null) {
     const step = state.step;
-    for (const deadline = Date.now() + stepTimeoutMs; state.step === step && state.neutral === 0; ) {
+    for (const deadline = by(stepTimeoutMs); state.step === step && state.neutral === 0; ) {
       if (Date.now() >= deadline)
-        fail(`step "${step}" offered no enabled neutral control within ${stepTimeoutMs} ms`, state);
+        fail(
+          `step "${step}" offered no enabled neutral control within ${late(deadline, stepTimeoutMs)}`,
+          state,
+        );
       await pause(pollMs);
       state = await read();
     }
@@ -110,13 +124,27 @@ export async function walkFirstRun(
     steps.push(step);
     await onStep?.(step);
     // Scoped to the step read: a press never lands on the step after it.
-    await page.locator(enabledNeutral(step)).click({ timeout: stepTimeoutMs });
+    try {
+      await page
+        .locator(enabledNeutral(step))
+        .click({ timeout: Math.max(1, Math.min(CLICK_TIMEOUT_MS, stepTimeoutMs, end - Date.now())) });
+    } catch (error) {
+      state = await read();
+      // The step changed or went busy between the read and the press: read it again.
+      if ((state.step !== step || state.neutral === 0) && ++missed <= MAX_MISSED_PRESSES) {
+        steps.pop();
+        continue;
+      }
+      fail(`could not press the neutral control of step "${step}": ${error.message.split("\n")[0]}`, state);
+    }
     // The step moves on, or setup ends. Pressing again on the same step would hide a stuck step.
-    const pressedAt = Date.now();
     state = await read();
-    while (state.step === step) {
-      if (Date.now() - pressedAt >= stepTimeoutMs)
-        fail(`step "${step}" did not move on within ${stepTimeoutMs} ms of its neutral control`, state);
+    for (const deadline = by(stepTimeoutMs); state.step === step; ) {
+      if (Date.now() >= deadline)
+        fail(
+          `step "${step}" did not move on within ${late(deadline, stepTimeoutMs)} of its neutral control`,
+          state,
+        );
       await pause(pollMs);
       state = await read();
     }

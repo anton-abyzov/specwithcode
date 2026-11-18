@@ -247,6 +247,8 @@ export function SignInFirstStep({
 
   const mainActionPending =
     account === null || canTurnOnFromSignInFirst(link) || link.kind === "linking";
+  // Reading or making the link: the step is busy, so it offers no neutral action.
+  const linkBusy = link.kind === "checking" || link.kind === "linking";
 
   return (
     <>
@@ -323,12 +325,12 @@ export function SignInFirstStep({
         skip={
           !choosing && mainActionPending && account !== null
             ? // While this machine links, going on is not the walker's to press.
-              { label: tx("Continue"), onClick: onContinue, neutral: link.kind !== "linking" }
+              { label: tx("Continue"), onClick: onContinue, neutral: !linkBusy }
             : undefined
         }
         primary={
           !choosing && !mainActionPending
-            ? { label: tx("Continue"), onClick: onContinue, neutral: true }
+            ? { label: tx("Continue"), onClick: onContinue, neutral: !linkBusy }
             : undefined
         }
       />
