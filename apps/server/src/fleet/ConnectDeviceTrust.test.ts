@@ -606,6 +606,36 @@ it.effect("two phones with one name read differently, and the typed code picks t
   ),
 );
 
+it.effect(
+  "a waiting device keeps one reference across requests, and a look-alike has another",
+  () =>
+    withMachine(
+      Effect.gen(function* () {
+        const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+        const fileSystem = yield* FileSystem.FileSystem;
+        // Same name and the same four characters, another key.
+        const twin = `${KEY_TSKR.slice(0, 6)}${"A".repeat(KEY_TSKR.length - 6)}`;
+        refusedCode(yield* trust.check(connect(KEY_TSKR, "iPhone")));
+        refusedCode(yield* trust.check(connect(twin, "iPhone")));
+        const [real, alike] = (yield* trust.snapshot).pending;
+        expect(real!.shortId).toBe(alike!.shortId);
+        expect(real!.device).not.toBe(alike!.device);
+        expect(real!.device).toBe(ConnectDeviceTrust.deviceReferenceOfKey(`jkt:${KEY_TSKR}`));
+        // The reference is not the key and does not carry it.
+        expect(real!.device).not.toContain(KEY_TSKR);
+
+        // Its request runs out and it asks again: a new request, the same reference.
+        yield* TestClock.adjust("11 minutes");
+        refusedCode(yield* trust.check(connect(KEY_TSKR, "iPhone")));
+        const [renewed] = (yield* trust.snapshot).pending;
+        expect(renewed!.id).not.toBe(real!.id);
+        expect(renewed!.device).toBe(real!.device);
+        // Made when the list is read, like the short ID: the file does not hold it.
+        expect(yield* fileSystem.readFileString(yield* storePath)).not.toContain(real!.device);
+      }),
+    ),
+);
+
 it.effect("a device that looks like an allowed one gets nothing without its own code", () =>
   withMachine(
     Effect.gen(function* () {

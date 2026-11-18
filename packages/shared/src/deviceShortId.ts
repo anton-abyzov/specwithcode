@@ -37,10 +37,11 @@ const leadingBytes = (text: string, count: number): ReadonlyArray<number> | null
 
 /**
  * "7K3Q" for a key's RFC 7638 thumbprint (base64url of a SHA-256): each of its
- * first four bytes picks one character. Undefined when the text is not a thumbprint.
+ * first four bytes picks one character. Undefined when the text is not a thumbprint;
+ * the text is read as given, never trimmed, so this and the Swift rule agree on every input.
  */
 export const deviceShortIdOfThumbprint = (thumbprint: string): string | undefined => {
-  const bytes = leadingBytes(thumbprint.trim(), DEVICE_SHORT_ID_LENGTH);
+  const bytes = leadingBytes(thumbprint, DEVICE_SHORT_ID_LENGTH);
   if (bytes === null) return undefined;
   return bytes.map((byte) => ID_ALPHABET[byte % ID_ALPHABET.length]).join("");
 };

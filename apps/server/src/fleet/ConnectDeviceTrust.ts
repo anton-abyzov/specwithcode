@@ -137,6 +137,14 @@ export const deviceShortIdOfKey = (key: string): string => {
   );
 };
 
+/**
+ * One device across its requests (1406): a hash of its whole key, so a window
+ * can remember which waiting devices Later hid without holding their keys.
+ * Display only, like the short ID, but as long as the key is strong.
+ */
+export const deviceReferenceOfKey = (key: string): string =>
+  NodeCrypto.createHash("sha256").update(`device-reference:${key}`, "utf8").digest("base64url");
+
 /** A stored device as the list shows it. The file never holds the short ID. */
 export type ListedDevice = DeviceRecord & { readonly shortId: string };
 export const listedDevice = (device: DeviceRecord): ListedDevice => ({
@@ -352,6 +360,8 @@ export interface PendingSummary {
   readonly kind: DeviceKind;
   readonly label: string;
   readonly shortId: string;
+  /** The same across this device's requests; see `deviceReferenceOfKey`. */
+  readonly device: string;
   readonly named?: boolean;
   readonly deviceType?: string;
   readonly system?: string;
@@ -935,6 +945,7 @@ export const makeWith = (options: MakeOptions = {}) =>
           kind: entry.kind,
           ...describedFields(entry),
           shortId: deviceShortIdOfKey(entry.key),
+          device: deviceReferenceOfKey(entry.key),
           // The hub machine a phone was paired through, so the owner can tell where it came from.
           ...(entry.account.startsWith("hub:") ? { via: entry.account.slice(4) } : {}),
           askedAt: entry.createdAt,

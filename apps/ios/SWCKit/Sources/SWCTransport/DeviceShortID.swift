@@ -9,13 +9,15 @@ import Foundation
 public enum DeviceShortID {
   /// The characters approval codes are made of: no 0, 1, I, L or O to misread.
   static let alphabet = Array("23456789ABCDEFGHJKMNPQRSTUVWXYZ")
-  static let base64url = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+  static let base64url = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".utf16)
   public static let length = 4
 
   /// "7K3Q" for a DPoP key thumbprint (base64url of a SHA-256): each of its
   /// first four bytes picks one character. Nil when the text is not a thumbprint.
+  /// The text is read as given, never trimmed, as the TypeScript rule does.
   public static func make(thumbprint: String) -> String? {
-    let text = Array(thumbprint.trimmingCharacters(in: .whitespacesAndNewlines))
+    // UTF-16 units, as JavaScript indexes a string, so both rules read the same six.
+    let text = Array(thumbprint.utf16)
     // Six base64url characters hold the first four bytes.
     let needed = (length * 8 + 5) / 6
     guard text.count >= needed else { return nil }

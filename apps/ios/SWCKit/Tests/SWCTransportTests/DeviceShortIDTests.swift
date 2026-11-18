@@ -16,11 +16,30 @@ import Testing
     let id = try #require(DeviceShortID.make(thumbprint: key.thumbprint))
     #expect(id.count == DeviceShortID.length)
     #expect(id.allSatisfy { DeviceShortID.alphabet.contains($0) })
-    #expect(DeviceShortID.make(thumbprint: " \(key.thumbprint)\n") == id)
+    #expect(DeviceShortID.make(thumbprint: key.thumbprint) == id)
+    // Only the first six characters are read, so what follows them never matters.
+    #expect(DeviceShortID.make(thumbprint: String(key.thumbprint.prefix(6))) == id)
+    #expect(DeviceShortID.make(thumbprint: "\(key.thumbprint.prefix(6)) \n") == id)
   }
 
   @Test func textThatIsNoThumbprintGetsNothing() {
     for text in ["", "abc", "not a thumbprint", "abc+/=xyz"] {
+      #expect(DeviceShortID.make(thumbprint: text) == nil)
+    }
+  }
+
+  // The TypeScript suite asserts the same list: the text is read as given, never trimmed.
+  @Test func textWhoseFirstSixCharactersAreNotAllBase64urlGetsNothing() {
+    let key = "z3tKzoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    for text in [
+      " \(key)",
+      "\n\(key)",
+      "\u{FEFF}\(key)",
+      "\u{0085}\(key)",
+      "z3tK\u{1F600}o",
+      "z3tKz\u{00E9}AAAA",
+      "z\u{0301}tKzoAAAA",
+    ] {
       #expect(DeviceShortID.make(thumbprint: text) == nil)
     }
   }

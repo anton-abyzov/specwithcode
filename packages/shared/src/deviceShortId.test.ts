@@ -32,11 +32,29 @@ describe("deviceShortIdOfThumbprint (1406)", () => {
     const a = deviceShortIdOfThumbprint("z3tKzoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     const b = deviceShortIdOfThumbprint("4LRcG8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     expect(a).not.toBe(b);
-    expect(deviceShortIdOfThumbprint(" z3tKzoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA ")).toBe(a);
+    expect(deviceShortIdOfThumbprint("z3tKzoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).toBe(a);
+    // Only the first six characters are read, so what follows them never matters.
+    expect(deviceShortIdOfThumbprint("z3tKzo")).toBe(a);
+    expect(deviceShortIdOfThumbprint("z3tKzo \n")).toBe(a);
   });
 
   it("gives nothing for text that is not a thumbprint", () => {
     for (const text of ["", "abc", "not a thumbprint", "abc+/=xyz"])
+      expect(deviceShortIdOfThumbprint(text)).toBeUndefined();
+  });
+
+  // The Swift suite asserts the same list: the text is read as given, never trimmed.
+  it("gives nothing when the first six characters are not all base64url", () => {
+    const key = "z3tKzoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    for (const text of [
+      ` ${key}`,
+      `\n${key}`,
+      `\uFEFF${key}`,
+      `\u0085${key}`,
+      "z3tK\u{1F600}o",
+      "z3tKz\u00E9AAAA",
+      "z\u0301tKzoAAAA",
+    ])
       expect(deviceShortIdOfThumbprint(text)).toBeUndefined();
   });
 });
