@@ -29,7 +29,7 @@ import type {
   ProjectSkillsActionResult,
   ProjectSkillsLiveness,
 } from "@specweave-studio/contracts";
-import { ProjectSkillsActionError } from "@specweave-studio/contracts";
+import { CLAUDE_AI_SKILL_SCOPE, ProjectSkillsActionError } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -445,6 +445,12 @@ export const makeSkillsToggles = (deps: ProjectSkillsActionsDeps, run: RunCli) =
     ) =>
       Effect.gen(function* () {
         const presence = yield* presenceOf(ctx, action);
+        if (presence.scope === CLAUDE_AI_SKILL_SCOPE)
+          return yield* actionError(
+            ctx.projectId,
+            "scope_unsupported",
+            `${ctx.row.name} is synced from claude.ai. Manage it on claude.ai.`,
+          );
         switch (presence.driver) {
           case "claudeAgent":
             if (presence.scope === "plugin")
@@ -688,6 +694,12 @@ export const makeSkillsToggles = (deps: ProjectSkillsActionsDeps, run: RunCli) =
     ) =>
       Effect.gen(function* () {
         const presence = yield* presenceOf(ctx, action);
+        if (presence.scope === CLAUDE_AI_SKILL_SCOPE)
+          return yield* actionError(
+            ctx.projectId,
+            "scope_unsupported",
+            `${ctx.row.name} is synced from claude.ai. Manage it on claude.ai.`,
+          );
         switch (presence.driver) {
           case "claudeAgent":
           case "grok":

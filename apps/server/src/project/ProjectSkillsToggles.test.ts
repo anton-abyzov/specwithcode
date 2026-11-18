@@ -282,6 +282,28 @@ describe("Claude switches", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("refuses to switch a claude.ai-synced skill before changing settings", () =>
+    Effect.gen(function* () {
+      const h = yield* harness({
+        row: () =>
+          rowOf("anthropic-skills:pdf", [
+            presence("claudeAgent", { scope: "claude.ai", name: "anthropic-skills:pdf" }),
+          ]),
+      });
+      const action = skillToggle("claudeAgent", false);
+      for (const preview of [true, false]) {
+        const error = yield* h.toggles
+          .toggleSkill(h.ctx, input(action, { preview }), action, serialized)
+          .pipe(Effect.flip);
+        expect(error.reason).toBe("scope_unsupported");
+        expect(error.message).toContain("claude.ai");
+      }
+      expect(h.runs).toEqual([]);
+      expect(h.writes).toEqual([]);
+      expect(yield* readOr(join(h.configDir, "settings.json"))).toBeNull();
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("refuses unsupported per-skill plugin writes before changing settings", () =>
     Effect.gen(function* () {
       const h = yield* harness({
