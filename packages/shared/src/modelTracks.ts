@@ -8,7 +8,12 @@
  *
  * @module modelTracks
  */
-import { resolveEffort, withEffortSelection } from "./effortLevel.ts";
+import {
+  findEffortDescriptor,
+  modelSelectionEffortValue,
+  resolveEffort,
+  withEffortSelection,
+} from "./effortLevel.ts";
 import {
   DEFAULT_MODEL_TRACKS,
   isPaidModelBilling,
@@ -177,7 +182,15 @@ export function defaultTrackSelections(
       ({ provider, slug }) =>
         !isHeldSource(provider as Partial<ServerProvider> as ServerProvider, slug),
     );
-    return best === undefined ? [] : [builtInTrackSelection(entry, best.provider, best.slug)];
+    return best === undefined
+      ? []
+      : [
+          builtInTrackSelection(
+            { effort: entry.effort ?? TRACK_DEFAULT_EFFORT },
+            best.provider,
+            best.slug,
+          ),
+        ];
   });
 }
 
@@ -200,6 +213,64 @@ export function builtInTrackSelection(
     : { ...selection, options: withEffortSelection(undefined, effort) };
 }
 
+/** The effort a track entry starts at when nobody picked one; Muse Wonder Full reviews at Extra High. */
+export const TRACK_DEFAULT_EFFORT = "medium";
+
+/**
+ * The effort `selection` runs at as a track entry: its saved level, else
+ * `fallback` (Medium) matched to the nearest level its model offers. Null for
+ * a model its source lists with no effort setting, or a source that no longer
+ * lists it. The Models page shows this level and every launch uses it.
+ */
+export function trackEntryEffort(
+  selection: Pick<ModelSelection, "instanceId" | "model" | "options">,
+  providers: ReadonlyArray<Pick<TrackProvider, "instanceId" | "models">>,
+  fallback: string = TRACK_DEFAULT_EFFORT,
+): { readonly optionId: string; readonly value: string; readonly saved: boolean } | null {
+  const descriptors = providers
+    .find((provider) => provider.instanceId === selection.instanceId)
+    ?.models.find((model) => model.slug === selection.model)?.capabilities?.optionDescriptors;
+  const descriptor = findEffortDescriptor(descriptors);
+  if (descriptor === undefined) return null;
+  const saved = selection.options?.find((option) => option.id === descriptor.id)?.value;
+  if (typeof saved === "string") return { optionId: descriptor.id, value: saved, saved: true };
+  const resolved = resolveEffort(fallback, descriptors);
+  return resolved.ok ? { optionId: resolved.optionId, value: resolved.value, saved: false } : null;
+}
+
+/** A track entry with the effort it runs at written into its options (see `trackEntryEffort`). */
+export function withTrackEffort<S extends ModelSelection>(
+  selection: S,
+  providers: ReadonlyArray<Pick<TrackProvider, "instanceId" | "models">>,
+  fallback?: string,
+): S {
+  const effort = trackEntryEffort(selection, providers, fallback);
+  return effort === null || effort.saved
+    ? selection
+    : { ...selection, options: withEffortSelection(selection.options, effort) };
+}
+
+/**
+ * The same model on another source: the options go along when the source
+ * runs the same harness, else the entry's effort is matched to the nearest
+ * level that source offers. An entry with no effort sends none.
+ */
+export function trackAlternate(
+  entry: ModelSelection,
+  alternate: { readonly instanceId: ProviderInstanceId; readonly model: string },
+  providers: ReadonlyArray<Pick<TrackProvider, "instanceId" | "models" | "driver">>,
+): ModelSelection {
+  const driverOf = (instanceId: ProviderInstanceId) =>
+    providers.find((source) => source.instanceId === instanceId)?.driver;
+  if (entry.options === undefined) return { ...alternate };
+  if (driverOf(entry.instanceId) === driverOf(alternate.instanceId))
+    return { ...alternate, options: entry.options };
+  const effort = modelSelectionEffortValue(entry);
+  return effort === undefined
+    ? { ...alternate }
+    : withTrackEffort({ ...alternate }, providers, effort);
+}
+
 export interface EffectiveModelLanes {
   readonly lanes: ModelLanes;
   /** Lanes whose order is the built-in one: the person saved nothing for them. */
@@ -216,7 +287,9 @@ export function effectiveModelLanes(
   providers: ReadonlyArray<TrackProvider>,
   order?: ReadonlyArray<ProviderInstanceId> | null,
 ): EffectiveModelLanes {
-  const saved = (lane: ModelLane) => lanes?.[lane] ?? [];
+  // A saved entry without an effort runs at Medium, as the Models page shows it.
+  const saved = (lane: ModelLane) =>
+    (lanes?.[lane] ?? []).map((entry) => withTrackEffort(entry, providers));
   const builtIn = {
     routine: saved("routine").length === 0,
     complex: saved("complex").length === 0,
@@ -289,16 +362,7 @@ export function launchTrackLanes(
       })) {
         if (provider.instanceId === entry.instanceId) continue;
         if (isHeldSource(provider as ServerProvider, slug)) continue;
-        // The entry's effort carries to another account of the same driver, whose options match.
-        const sameDriver =
-          entry.options !== undefined &&
-          providers.find((source) => source.instanceId === entry.instanceId)?.driver ===
-            provider.driver;
-        push({
-          instanceId: provider.instanceId,
-          model: slug,
-          ...(sameDriver ? { options: entry.options } : {}),
-        });
+        push(trackAlternate(entry, { instanceId: provider.instanceId, model: slug }, providers));
       }
     }
     return out;
