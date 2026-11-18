@@ -723,9 +723,7 @@ function GitReview({
                 onCheckedChange={(value) => staleCopy.onAccept(value === true)}
               />
             </span>
-            <span className="min-w-0 wrap-anywhere leading-5">
-              Make {targetLabel} main anyway, on its older commits
-            </span>
+            <span className="min-w-0 wrap-anywhere leading-5">{stale.anyway}</span>
           </label>
           {staleCopy.onKeepHere && (
             <Button variant="outline" size="sm" disabled={busy} onClick={staleCopy.onKeepHere}>

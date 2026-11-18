@@ -697,7 +697,12 @@ export function ProjectMachineHandoff({
       setPreviewCheckout(checked.value.workspacePath);
       setStaleCopy(
         checked.value.updateSkipped
-          ? { skipped: checked.value.updateSkipped, accepted: false, published: false }
+          ? {
+              skipped: checked.value.updateSkipped,
+              accepted: false,
+              // A resumed operation may already be published: Keep Main must release it.
+              published: prepared.value.publication === "published",
+            }
           : null,
       );
       if (checked.value.phase === "started" && checked.value.coordinatorThreadId) {
@@ -726,7 +731,18 @@ export function ProjectMachineHandoff({
         },
       });
       if (released._tag === "Failure") throw squashAtomCommandFailure(released);
-      localStorage.removeItem(storageKey);
+      // Forget only this operation's pointer; another window may have stored a newer one.
+      const stored = localStorage.getItem(storageKey);
+      if (stored?.includes(operationId)) localStorage.removeItem(storageKey);
+      if (!released.value.released) {
+        setSnapshot(null);
+        setStaleCopy(null);
+        setPhase("choose");
+        setError(
+          "That move is no longer waiting on this machine. Check where Main is now before moving again.",
+        );
+        return;
+      }
       markUnpublished(null);
       setSnapshot(null);
       setStaleCopy(null);

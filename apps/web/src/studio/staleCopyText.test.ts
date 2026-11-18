@@ -50,5 +50,18 @@ describe("staleCopyText", () => {
     expect(sameStaleReason(a, { ...a, repository: "nested" })).toBe(false);
     expect(sameStaleReason(a, { reason: "local-commits", message: "m" })).toBe(false);
     expect(sameStaleReason(a, null)).toBe(false);
+    // New unsafe Git keys are a new reason the person has not seen.
+    const unsafe = { reason: "unsafe-git-config", message: "m", unsafeConfig: ["core.fsmonitor"] };
+    expect(sameStaleReason(unsafe, { ...unsafe })).toBe(true);
+    expect(
+      sameStaleReason(unsafe, { ...unsafe, unsafeConfig: ["core.fsmonitor", "core.hooksPath"] }),
+    ).toBe(false);
+  });
+
+  it("words the anyway choice for what it really leaves", () => {
+    expect(words("local-commits", "x").anyway).toBe("Make M5 main anyway, on its older commits");
+    expect(words("lfs-failed", "x").anyway).toBe("Make M5 main anyway, without those large files");
+    expect(words("missing-repository", "x").anyway).toBe("Make M5 main anyway, without x");
+    expect(words("identity-mismatch", "x").anyway).toBe("Make M5 main anyway, with x as it is");
   });
 });

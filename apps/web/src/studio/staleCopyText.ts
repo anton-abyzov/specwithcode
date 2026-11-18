@@ -6,7 +6,11 @@ export function sameStaleReason(
   b: MachineHandoffUpdateSkipped | null | undefined,
 ): boolean {
   if (!a || !b) return false;
-  return a.reason === b.reason && (a.repository ?? ".") === (b.repository ?? ".");
+  return (
+    a.reason === b.reason &&
+    (a.repository ?? ".") === (b.repository ?? ".") &&
+    (a.unsafeConfig ?? []).join("\n") === (b.unsafeConfig ?? []).join("\n")
+  );
 }
 
 /**
@@ -19,7 +23,7 @@ export function staleCopyText(input: {
   readonly source: string;
   readonly target: string;
   readonly projectTitle: string;
-}): { readonly headline: string; readonly detail: string } {
+}): { readonly headline: string; readonly detail: string; readonly anyway: string } {
   const { skipped, source, target } = input;
   const repo =
     skipped.repository === undefined || skipped.repository === "."
@@ -28,7 +32,12 @@ export function staleCopyText(input: {
   const older = `Nothing on ${target} is overwritten: moving anyway leaves it on its older commits.`;
   const asIs = `Nothing on ${target} is overwritten: moving anyway leaves that repository as it is.`;
   const headline = `${target}'s copy will not be updated to ${source}'s latest commits`;
-  const said = (why: string, tail: string) => ({ headline, detail: `${why} ${tail}` });
+  const anyway = `Make ${target} main anyway, on its older commits`;
+  const said = (why: string, tail: string, label = anyway) => ({
+    headline,
+    detail: `${why} ${tail}`,
+    anyway: label,
+  });
   switch (skipped.reason) {
     case "local-commits":
       return said(
@@ -64,28 +73,37 @@ export function staleCopyText(input: {
       return said(
         `${repo} is missing from the project folder on ${target}. Add it there, then check again.`,
         `Nothing on ${target} is overwritten: moving anyway starts there without it.`,
+        `Make ${target} main anyway, without ${repo}`,
       );
     case "identity-mismatch":
       return said(
         `${repo} on ${target} points at a different remote than on ${source}. Fix its origin there, then check again.`,
         asIs,
+        `Make ${target} main anyway, with ${repo} as it is`,
       );
     case "unsafe-git-config":
       return said(
         `${repo} on ${target} has Git settings the app does not run with${skipped.unsafeConfig?.length ? ` (${skipped.unsafeConfig.join(", ")})` : ""}. Remove them there, then check again.`,
         asIs,
+        `Make ${target} main anyway, with ${repo} as it is`,
       );
     case "external-storage":
       return said(
         `${repo} on ${target} keeps its Git data outside the project folder, so the app does not update it.`,
         asIs,
+        `Make ${target} main anyway, with ${repo} as it is`,
       );
     case "lfs-failed":
       return {
         headline: `${target}'s copy was updated, but its Git LFS files did not download`,
         detail: `${repo} on ${target} has ${source}'s latest commits, with some large files still as pointers. Run git lfs pull there.`,
+        anyway: `Make ${target} main anyway, without those large files`,
       };
     default:
-      return said(`${skipped.message} Check the repository on ${target}, then check again.`, asIs);
+      return said(
+        `${skipped.message} Check the repository on ${target}, then check again.`,
+        asIs,
+        `Make ${target} main anyway, with ${repo} as it is`,
+      );
   }
 }

@@ -1614,3 +1614,37 @@ it("keeps Main here after a refused move, releasing the source", async () => {
   expect(props().phase).toBe("choose");
   expect(props().staleCopy).toBeNull();
 });
+
+it("says so when Keep Main finds the move already gone, keeping a newer pointer", async () => {
+  const syncBundle = { ...bundle, destination: { ...bundle.destination, transport: "git-sync" } };
+  const diverged = { reason: "local-commits", message: "m", repository: "." };
+  state.prepare.mockImplementation(async ({ input }) => ({
+    _tag: "Success",
+    value: {
+      bundle: syncBundle,
+      publication: input.publish ? "published" : "unpublished",
+      messageCount: 5,
+    },
+  }));
+  state.receive.mockImplementation(async ({ input }) =>
+    input.mode === "preview"
+      ? { _tag: "Success", value: ready }
+      : {
+          _tag: "Failure",
+          error: Object.assign(new Error("m"), { code: "git_refused", updateSkipped: diverged }),
+        },
+  );
+  state.copyRelease.mockResolvedValue({ _tag: "Success", value: { released: false } });
+  await mount();
+  await review();
+  await consent();
+  await transfer();
+  // Another window started a newer move meanwhile.
+  localStorage.setItem(
+    key,
+    JSON.stringify({ operationId: "newer-operation", targetKey: "m1:target" }),
+  );
+  await act(async () => props().staleCopy!.onKeepHere!());
+  expect(localStorage.getItem(key)).toContain("newer-operation");
+  expect(props().error).toContain("no longer waiting on this machine");
+});
