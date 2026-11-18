@@ -527,6 +527,7 @@ public final class LiveEngine: AppEngine {
     let nicknames = fleetNicknames
     let now = options.now()
     assign(model, \.machines, entries.map { summary($0, nicknames: nicknames, now: now) })
+    assign(model, \.thisPhoneName, options.clientLabel())
     // Percy is a switch in the desktop's settings; any machine saying so shows it.
     let aideEnabled = AideSetting.visible(entries.map { aideMachine($0, nicknames: nicknames) }, previous: model.aideEnabled)
     assign(model, \.aideEnabled, aideEnabled)

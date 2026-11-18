@@ -113,6 +113,35 @@ import SWCWire
     }
   }
 
+  /// One row per machine still waiting, the chat's machine first; a machine
+  /// that let the phone in leaves the list (1406 AC-06).
+  @MainActor @Test func everyWaitingMachineGetsARowUntilItLetsThePhoneIn() {
+    let model = AppModel(engine: FixtureEngine(scenario: .empty))
+    var m1 = MachineSummary(id: "m1", label: "m1", status: .offline)
+    m1.deviceApprovalCode = "6X9SF6"
+    var m5 = MachineSummary(id: "m5", label: "M5", status: .offline)
+    m5.deviceApprovalCode = "K7QX2M"
+    let m4 = MachineSummary(id: "m4", label: "m4", status: .connected)
+    var off = MachineSummary(id: "off", label: "old", status: .offline)
+    off.deviceApprovalCode = "AAAAAA"
+    off.isDisconnected = true
+    model.machines = [m1, m4, m5, off]
+    #expect(model.machinesAwaitingApproval(first: "m5").map(\.id) == ["m5", "m1"])
+    model.machines[0].status = .connected
+    model.machines[0].deviceApprovalCode = nil
+    #expect(model.machinesAwaitingApproval(first: "m5").map(\.id) == ["m5"])
+  }
+
+  /// The phone names itself the way machines list it (1406 AC-07).
+  @MainActor @Test func thePhoneLineMatchesTheMachinesList() {
+    let model = AppModel(engine: FixtureEngine(scenario: .empty))
+    #expect(model.thisPhoneLine == nil)
+    model.thisPhoneName = "iPhone 16 Pro"
+    #expect(model.thisPhoneLine == "This phone: iPhone 16 Pro")
+    model.thisPhoneShortID = "7KQ2"
+    #expect(model.thisPhoneLine == "This phone: iPhone 16 Pro · ID 7KQ2")
+  }
+
   @Test func aRefusalReadsAsRulesNotAnExpiredPairing() {
     var machine = MachineSummary(id: "e", label: "Mac", status: .reconnecting)
     machine.teamRulesRefusal = "Acme's rules turn off phones on this machine."

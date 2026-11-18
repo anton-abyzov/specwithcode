@@ -376,16 +376,49 @@ private struct ChatScreen: View {
     }
   }
 
-  /// One steady view while the machine waits for its owner to allow this phone:
-  /// the code to type, and no Reconnect, since the phone keeps asking by itself.
+  /// One steady view while machines wait for their owner to allow this phone:
+  /// a row per waiting machine with its latest code, and no Reconnect, since
+  /// the phone keeps asking by itself (1408; the list and phone line are 1406).
   private func approvalTranscript(_ machine: MachineSummary, code: String) -> some View {
-    VStack(spacing: WeaveSpacing.s3) {
+    let waiting = model.machinesAwaitingApproval(first: machine.id)
+    return VStack(spacing: WeaveSpacing.s3) {
       Text(machine.approvalTitle)
         .weaveFont(.title)
         .foregroundStyle(Color.weave.ink)
         .multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityAddTraits(.isHeader)
+      ForEach(waiting.isEmpty ? [machine] : waiting) { row in
+        approvalRow(row, code: row.deviceApprovalCode ?? code)
+      }
+      HStack(spacing: WeaveSpacing.s2) {
+        ProgressView().controlSize(.small)
+        Text(waiting.count > 1 ? "Connects to each machine on its own once it allows this phone." : machine.approvalProgress)
+          .weaveFont(.caption)
+          .foregroundStyle(Color.weave.muted)
+          .multilineTextAlignment(.center)
+      }
+      if let line = model.thisPhoneLine {
+        Text(line)
+          .weaveFont(.caption)
+          .foregroundStyle(Color.weave.muted)
+          .accessibilityIdentifier("chat.approval-this-phone")
+      }
+      if let other = reachableOrchestrator {
+        WeaveButton("View on \(other.machineLabel)", kind: .secondary) { showOrchestrator(other.ref) }
+          .padding(.top, WeaveSpacing.s2)
+      }
+      recoveryButton
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.horizontal, WeaveSpacing.s6)
+    .padding(.top, WeaveSpacing.s8 * 3)
+    .accessibilityIdentifier("chat.approval-wait")
+  }
+
+  /// "Open SpecWithCode on m1 and type this code:" over the code, which copies on tap.
+  private func approvalRow(_ machine: MachineSummary, code: String) -> some View {
+    VStack(spacing: WeaveSpacing.s1) {
       Text(machine.approvalInstruction)
         .weaveFont(.callout)
         .foregroundStyle(Color.weave.muted)
@@ -403,24 +436,10 @@ private struct ChatScreen: View {
         }
       }
       .buttonStyle(.plain)
-      .accessibilityLabel("Code \(code.map(String.init).joined(separator: " ")). Copy")
-      .accessibilityIdentifier("chat.approval-code")
-      HStack(spacing: WeaveSpacing.s2) {
-        ProgressView().controlSize(.small)
-        Text(machine.approvalProgress)
-          .weaveFont(.caption)
-          .foregroundStyle(Color.weave.muted)
-      }
-      if let other = reachableOrchestrator {
-        WeaveButton("View on \(other.machineLabel)", kind: .secondary) { showOrchestrator(other.ref) }
-          .padding(.top, WeaveSpacing.s2)
-      }
-      recoveryButton
+      .accessibilityLabel("\(machine.displayName) code \(code.map(String.init).joined(separator: " ")). Copy")
+      .accessibilityIdentifier("chat.approval-code.\(machine.id)")
     }
-    .frame(maxWidth: .infinity)
-    .padding(.horizontal, WeaveSpacing.s6)
-    .padding(.top, WeaveSpacing.s8 * 3)
-    .accessibilityIdentifier("chat.approval-wait")
+    .padding(.vertical, WeaveSpacing.s1)
   }
 
   private var recoveryButton: some View {

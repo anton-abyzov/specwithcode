@@ -768,6 +768,11 @@ public final class AppModel {
   public var unloadedShells: Set<String> = []
   /// SpecWithCode Connect, nil when this build has no Connect configuration.
   public var connect: ConnectState?
+  /// How machines name this phone in their approval dialogs and device lists
+  /// (1406). The short ID is the four characters they show beside it; nil
+  /// until this build can work it out.
+  public var thisPhoneName: String?
+  public var thisPhoneShortID: String?
   /// Open simulators and emulators by machine; missing until a machine answers.
   public var devices: [String: MachineDevices] = [:]
   public var appearance: AppearancePreference {
@@ -859,5 +864,22 @@ public final class AppModel {
     }
     sessions[target] = s
     return s
+  }
+}
+
+extension AppModel {
+  /// "This phone: iPhone 16 Pro · ID 7KQ2", so the owner can match this phone
+  /// to the row a machine shows in its approval dialog (1406).
+  public var thisPhoneLine: String? {
+    guard let name = thisPhoneName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { return nil }
+    guard let id = thisPhoneShortID, !id.isEmpty else { return "This phone: \(name)" }
+    return "This phone: \(name) · ID \(id)"
+  }
+
+  /// Every machine still waiting to let this phone in, `first` on top. A machine
+  /// leaves the list only once it connects or is switched off on this phone.
+  public func machinesAwaitingApproval(first: String? = nil) -> [MachineSummary] {
+    let waiting = machines.filter { $0.deviceApprovalCode != nil && !$0.isDisconnected && !$0.status.isOnline }
+    return waiting.filter { $0.id == first } + waiting.filter { $0.id != first }
   }
 }
