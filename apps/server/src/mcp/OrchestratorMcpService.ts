@@ -2432,6 +2432,11 @@ const make = Effect.gen(function* () {
             null);
       const resultTransfer = resultTransfers.at(-1) ?? null;
       const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
+      // The child's own open question cards: its result may not name them,
+      // and the app leaves them to this lead (see subagentQuestionWait).
+      const openQuestions = yield* openMessageQuestions(task.childThreadId).pipe(
+        Effect.orElseSucceed(() => [] as const),
+      );
       const response = {
         taskId: task.id,
         childThreadId: task.childThreadId,
@@ -2460,6 +2465,7 @@ const make = Effect.gen(function* () {
             : subagentResultForRun(childProjection, terminalRun).text
           : null,
         latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
+        ...(openQuestions.length > 0 ? { openQuestions } : {}),
         waitTimedOut,
       } satisfies OrchestratorMcpDelegateTaskResult;
       if (

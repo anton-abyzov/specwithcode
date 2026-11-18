@@ -29,16 +29,20 @@ export function capAsk(text: string, max = ATTENTION_ASK_MAX_LENGTH): string {
 const SENTENCE = /^.*?[.?!](?=\s|$)/u;
 const firstSentence = (text: string): string => SENTENCE.exec(text)?.[0] ?? text;
 
+const LIST_ITEM = /^(?:[-*+]|\d+[.)])\s+/u;
+
 /**
- * The ask in a Blockers part: its first line that is not a list item, without
- * markdown or a short lead-in such as "Still yours from the last report:",
- * cut to its first sentence. Null when nothing readable is left.
+ * The ask in a Blockers part: its first line that is not a list item (or its
+ * first item, when it is only a list), without markdown or a short lead-in
+ * such as "Still yours from the last report:", cut to its first sentence.
+ * Null when nothing readable is left.
  */
 export function blockerAsk(blocker: string, max = ATTENTION_ASK_MAX_LENGTH): string | null {
-  const line = blocker
+  const lines = blocker
     .split(/\n/u)
     .map((entry) => entry.trim())
-    .find((entry) => entry.length > 0 && !/^([-*+]|\d+[.)])\s/u.test(entry));
+    .filter((entry) => entry.length > 0);
+  const line = lines.find((entry) => !LIST_ITEM.test(entry)) ?? lines[0]?.replace(LIST_ITEM, "");
   let text = plain(line ?? "");
   const leadIn = /^[^?:]{1,60}:\s+(?=\S)/u.exec(text);
   if (leadIn) text = text.slice(leadIn[0].length);

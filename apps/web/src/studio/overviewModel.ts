@@ -1,5 +1,9 @@
 import { classifyProjectActions } from "@specweave-studio/shared/projectAttention";
-import { observeProjectThread } from "@specweave-studio/client-runtime/state/projectAttention";
+import {
+  attentionLeadThreadId,
+  observeProjectThread,
+  subagentQuestionWait,
+} from "@specweave-studio/client-runtime/state/projectAttention";
 import { THREAD_LIFECYCLE_LABELS } from "@specweave-studio/shared/threadLifecycleLabels";
 import type {
   EnvironmentProject,
@@ -165,6 +169,7 @@ export function deriveSessions(
   nowMs: number = Date.now(),
 ): SessionView[] {
   const projectByKey = new Map(projects.map((p) => [`${p.environmentId}:${p.id}`, p]));
+  const threadByKey = new Map(threads.map((t) => [`${t.environmentId}:${t.id}`, t]));
   return threads
     .filter((thread) => thread.deletedAt === null && thread.archivedAt === null)
     .map((thread): SessionView => {
@@ -175,8 +180,16 @@ export function deriveSessions(
         ? threadRunHealth(thread, nowMs)
         : null;
       const stall = needsYouStall(health);
+      // A subagent's question its lead settles is not the person's, as in Needs you.
+      const leadId = attentionLeadThreadId(thread);
+      const questionGoesToLead =
+        subagentQuestionWait(
+          thread,
+          leadId === null ? undefined : threadByKey.get(`${thread.environmentId}:${leadId}`),
+        ) !== null;
       const observedAttention: AttentionKind | null =
-        classifyProjectActions(observeProjectThread(thread))[0]?.reason ?? null;
+        classifyProjectActions(observeProjectThread(thread, "live", questionGoesToLead))[0]
+          ?.reason ?? null;
       const settled = thread.settledOverride === "settled";
       const waitingOnStep =
         health?.state === "waiting" &&

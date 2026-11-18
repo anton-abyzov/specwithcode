@@ -31,6 +31,12 @@ describe("blockerAsk", () => {
     expect(long.endsWith("machine…")).toBe(true);
     expect(blockerAsk("   ")).toBeNull();
   });
+
+  it("reads the first item of a Blockers part that is only a list", () => {
+    expect(blockerAsk("- **Pick a banner layout.** A is ready.\n- Approve the paid font.")).toBe(
+      "Pick a banner layout.",
+    );
+  });
 });
 
 describe("pendingQuestionPrompt", () => {
