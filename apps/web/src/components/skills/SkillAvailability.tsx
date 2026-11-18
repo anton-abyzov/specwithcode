@@ -7,12 +7,11 @@ import type {
 import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useEnvironment } from "../../state/environments";
-import { useEnvironmentQuery } from "../../state/query";
 import { useStudioFleet } from "../../studio/fleet";
-import { projectWorkspace } from "../../studio/projectWorkspace";
 import { useSkillControls, type SkillControls } from "../settings/ProjectSkillControls";
 import { Button } from "../ui/button";
 import { SkillMachineInstall, scopeLabel } from "./SkillMachineInstall";
+import { useSkillMachineRead } from "./skillMachineReads";
 
 export interface SkillAvailabilityState {
   readonly state: "installed" | "missing" | "offline" | "denied" | "unknown" | "stale";
@@ -92,26 +91,16 @@ function AvailabilityMachine({
   /** The fleet id of another machine; absent for this machine. */
   machineId?: string | undefined;
 }) {
-  const environment = useEnvironment(environmentId);
-  const connected = reachable && environment?.connection.phase === "connected";
-  const query = useEnvironmentQuery(
-    connected && projectId
-      ? projectWorkspace.skills({
-          environmentId,
-          input: {
-            projectId,
-            refresh: true,
-            ...(controls.userLevel ? { userLevel: true } : {}),
-            ...(environmentId === controls.environmentId && !controls.userLevel
-              ? {
-                  ...(controls.cwd ? { cwd: controls.cwd } : {}),
-                  ...(controls.threadId ? { threadId: controls.threadId } : {}),
-                }
-              : {}),
-          },
-        })
-      : null,
-  );
+  const { environment, connected, query } = useSkillMachineRead({
+    environmentId,
+    projectId,
+    reachable,
+    userLevel: Boolean(controls.userLevel),
+    local:
+      environmentId === controls.environmentId
+        ? { cwd: controls.cwd, threadId: controls.threadId }
+        : undefined,
+  });
   useEffect(() => {
     const refresh = (event: Event) => {
       const detail = (event as CustomEvent<{ sourceEnvironmentId: string; skillId: string }>)
