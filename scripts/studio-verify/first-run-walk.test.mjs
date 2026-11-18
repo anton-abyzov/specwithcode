@@ -97,6 +97,19 @@ test("fails when neither setup nor the ready app shows", async () => {
   await assert.rejects(walkFirstRun(page, { ...quick, until }), /neither setup nor the ready app/);
 });
 
+test("a ready check that keeps flipping still ends at the deadline", async () => {
+  const { page } = fakePage([]);
+  let calls = 0;
+  // True, then false on the confirming read, again and again.
+  const until = async () => calls++ % 2 === 0;
+  const started = Date.now();
+  await assert.rejects(
+    walkFirstRun(page, { ...quick, appearTimeoutMs: 30, until }),
+    /neither setup nor the ready app/,
+  );
+  assert.ok(Date.now() - started < 1_000, "the flipping check outlasted the deadline");
+});
+
 test("a step that offers no neutral control fails naming the step and the enabled buttons", async () => {
   const { page } = fakePage([{ id: "connection" }, { id: "agents", waits: 1_000 }]);
   await assert.rejects(walkFirstRun(page, quick), (error) => {

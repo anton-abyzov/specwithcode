@@ -91,17 +91,18 @@ export async function walkFirstRun(
   // Setup shows, or the app is ready without it.
   let state = await read();
   for (const deadline = by(appearTimeoutMs); state.step === null; ) {
+    // Checked first, so a ready check that keeps flipping cannot outlast the deadline.
+    if (Date.now() >= deadline) {
+      if (until)
+        fail(`neither setup nor the ready app showed within ${late(deadline, appearTimeoutMs)}`, state);
+      return steps;
+    }
     if (until && (await until().catch(() => false))) {
       // The app can draw before setup opens over it: ready twice in a row counts.
       await pause(pollMs);
       state = await read();
       if (state.step === null && (await until().catch(() => false))) return steps;
       continue;
-    }
-    if (Date.now() >= deadline) {
-      if (until)
-        fail(`neither setup nor the ready app showed within ${late(deadline, appearTimeoutMs)}`, state);
-      return steps;
     }
     await pause(pollMs);
     state = await read();

@@ -485,6 +485,13 @@ jobs:
           node scripts/release/verify-built-app.mjs --mode fresh --no-proofs --archive "$(ls release/SpecWithCode-*-arm64.zip | head -1)" \
             --version "$v" --out "$RUNNER_TEMP/verify-macos"
 
+      # TEMPORARY (1387 T-06): what the Chrome profile list returns on a fresh account, and the
+      # TCC log around it. Removed before the PR is ready.
+      - name: Chrome profile list on a fresh account
+        if: ${{ success() || failure() }}
+        continue-on-error: true
+        run: node scripts/desktop-e2e/chrome-profile-diagnostic.mjs "$RUNNER_TEMP/macos-app/SpecWithCode.app" "$RUNNER_TEMP/macos-chrome-profiles"
+
       - name: Upload the app and results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -494,6 +501,7 @@ jobs:
             release/*.zip
             ${{ runner.temp }}/macos-*.json
             ${{ runner.temp }}/verify-macos
+            ${{ runner.temp }}/macos-chrome-profiles
           if-no-files-found: warn
           retention-days: 14
 
