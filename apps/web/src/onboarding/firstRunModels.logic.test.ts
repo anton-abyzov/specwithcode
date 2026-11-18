@@ -222,6 +222,34 @@ describe("firstRunModels", () => {
     }
   });
 
+  it("leaves out a saved entry that nothing ready runs, and names it by its listing", () => {
+    const saved: ModelTrackSettings = {
+      modelLanes: {
+        routine: [sel("codex", "gpt-6.1-sol"), sel("claudeAgent", "claude-opus-5-5")],
+        complex: [],
+      },
+      adversarialReview: { reviewers: [sel("codex", "gpt-6.1-sol")] },
+    };
+    const result = firstRunModels({ settings: saved, providers: [claude, signedOut(codex)] });
+    expect(names(lineOf(result, "daily"))).toEqual(["Claude Opus 5.5"]);
+    expect(lineOf(result, "review")?.kind).toBe("no-reviewer");
+    // Copilot is ready and runs the same model, so the saved Codex entry stays, by its name.
+    const viaCopilot = firstRunModels({
+      settings: saved,
+      providers: [claude, signedOut(codex), copilot],
+    });
+    expect(names(lineOf(viaCopilot, "daily"))).toEqual(["GPT-6.1 Sol", "Claude Opus 5.5"]);
+    expect(names(lineOf(viaCopilot, "review"))).toEqual(["GPT-6.1 Sol"]);
+  });
+
+  it("shows a saved same-family reviewer while a second family is ready", () => {
+    const result = firstRunModels({
+      settings: { adversarialReview: { reviewers: [sel("claudeAgent", "claude-fable-5-2")] } },
+      providers: [claude, codex],
+    });
+    expect(names(lineOf(result, "review"))).toEqual(["Claude Fable 5.2"]);
+  });
+
   it("gives every model a provider mark: Claude, OpenAI for GPT, Meta for Muse", () => {
     for (const ready of subsets(FIVE)) {
       const result = firstRunModels({ settings: builtIn, providers: ready });

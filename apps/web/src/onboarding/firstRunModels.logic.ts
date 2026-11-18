@@ -17,7 +17,12 @@ import {
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import { describeModel } from "@specweave-studio/shared/modelIdentity";
-import { defaultTrackSelections, effectiveModelLanes } from "@specweave-studio/shared/modelTracks";
+import {
+  defaultTrackSelections,
+  effectiveModelLanes,
+  isHeldSource,
+  providersForModel,
+} from "@specweave-studio/shared/modelTracks";
 import { type ModelFamily, modelFamily } from "@specweave-studio/shared/modelVendor";
 
 import type { ProviderBrand } from "../components/ProviderLogo";
@@ -112,7 +117,7 @@ export type ModelLine =
     }
   /** Agents are ready, and none of them runs a model of this list. */
   | { readonly track: ModelTrack; readonly kind: "empty" }
-  /** No reviewer outside the family that does the everyday work. */
+  /** Nothing ready reviews, or one model family is all the lists name. */
   | {
       readonly track: "review";
       readonly kind: "no-reviewer";
@@ -130,6 +135,19 @@ const REVIEWER_EXAMPLES: ReadonlyArray<ReviewerExample & { readonly family: Mode
   { name: "Muse Code", brand: "meta", family: "meta" },
   { name: "Claude Code", brand: "claude", family: "claude" },
 ];
+
+/**
+ * Whether a list entry can run on the ready agents: its own agent is ready, or
+ * a ready agent the app would pick by itself runs the same model, as a thread
+ * walking the track would (`launchTrackLanes`). A saved entry on a signed-out
+ * agent that nothing ready runs is left out of the block.
+ */
+function runsOnReady(selection: ModelSelection, ready: ReadonlyArray<ServerProvider>): boolean {
+  if (ready.some((provider) => provider.instanceId === selection.instanceId)) return true;
+  return providersForModel({ providers: ready, model: { slug: selection.model } }).some(
+    ({ provider, slug }) => !isHeldSource(provider, slug),
+  );
+}
 
 function familyOf(selection: ModelSelection, providers: ReadonlyArray<ServerProvider>) {
   const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
@@ -159,15 +177,26 @@ export function firstRunModels(input: {
 }): FirstRunModels {
   const ready = readyAgents(input.providers);
   if (ready.length === 0) return { kind: "none-ready" };
+  // Names come from every listed agent: a saved entry may name an agent that is not ready.
+  const listed = input.providers ?? [];
   const lists = modelTrackLists(input.settings, ready);
-  const first = lists.daily[0];
-  const firstFamily = first === undefined ? null : familyOf(first, ready);
+  const shown = Object.fromEntries(
+    MODEL_TRACKS.map((track) => [
+      track,
+      lists[track].filter((selection) => runsOnReady(selection, ready)),
+    ]),
+  ) as Record<ModelTrack, ReadonlyArray<ModelSelection>>;
+  const families = new Set(
+    MODEL_TRACKS.flatMap((track) => shown[track].map((selection) => familyOf(selection, listed))),
+  );
+  const first = shown.daily[0];
+  const firstFamily =
+    first === undefined ? ([...families][0] ?? null) : familyOf(first, listed);
+  // No reviewer: nothing ready reviews, or every model the lists name is of one family.
+  const noReviewer = shown.review.length === 0 || families.size <= 1;
   const lines = MODEL_TRACKS.map((track): ModelLine => {
-    const list = lists[track];
-    if (
-      track === "review" &&
-      !list.some((selection) => familyOf(selection, ready) !== firstFamily)
-    ) {
+    const list = shown[track];
+    if (track === "review" && noReviewer) {
       const [one, two] = REVIEWER_EXAMPLES.filter((example) => example.family !== firstFamily);
       return {
         track,
@@ -182,7 +211,7 @@ export function firstRunModels(input: {
     return {
       track,
       kind: "models",
-      shown: list.slice(0, SHOWN_MODELS).map((selection) => entryOf(selection, ready)),
+      shown: list.slice(0, SHOWN_MODELS).map((selection) => entryOf(selection, listed)),
       more: Math.max(0, list.length - SHOWN_MODELS),
     };
   });

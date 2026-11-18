@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { providerInstanceInitials } from "@specweave-studio/client-runtime/state/provider-instance-display";
 import { type EnvironmentId, MODEL_TRACK_LABELS } from "@specweave-studio/contracts";
 import { Fragment, lazy, type ReactNode, Suspense, useMemo, useRef, useState } from "react";
 
@@ -27,14 +28,17 @@ const ModelTracksSettings = lazy(() =>
 /** The scope stays on this machine: the dialog has no scope picker to move it. */
 const KEEP_SCOPE = () => {};
 
+/** Rows the step draws for a machine's tools (`MachineReadinessToolId`), not its agents. */
+const TOOL_ROWS = ["git", "node", "gh", "specweave"];
+
 /**
  * "Add one": focus moves to the first agent row on this machine that is not
- * ready, onto its first button when it has one. Git is a tool, not an agent.
+ * ready, onto its first button when it has one. Tool rows are skipped.
  */
 export function focusFirstAgentNotReady(from: Element | null): boolean {
   const section = from?.closest("section") ?? null;
   const row = section?.querySelector<HTMLElement>(
-    '[data-agent-row]:not([data-agent-row="git"]):not([data-agent-state="ready"])',
+    `[data-agent-row]${TOOL_ROWS.map((tool) => `:not([data-agent-row="${tool}"])`).join("")}:not([data-agent-state="ready"])`,
   );
   if (!row) return false;
   const control = row.querySelector<HTMLElement>("button:not([disabled]), a[href], input");
@@ -55,7 +59,7 @@ function Mark(props: { readonly brand: ProviderBrand | null; readonly name: stri
       aria-hidden
       className="inline-flex size-3.5 shrink-0 items-center justify-center text-4xs font-semibold text-muted-foreground"
     >
-      {props.name.slice(0, 2).toUpperCase()}
+      {providerInstanceInitials(props.name)}
     </span>
   );
 }

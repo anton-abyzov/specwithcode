@@ -143,11 +143,15 @@ describe("ModelsBlock", () => {
     }
   });
 
-  it("draws each model's own provider mark", () => {
-    show([claude, codex, muse]);
-    expect(marks("daily")).toEqual(["claude", "openai", "meta"]);
-    expect(marks("complex")).toEqual(["claude", "openai"]);
-    expect(marks("review")).toEqual(["meta", "openai"]);
+  it("draws each model's own provider mark, in light and dark", () => {
+    for (const dark of [false, true]) {
+      document.documentElement.classList.toggle("dark", dark);
+      show([claude, codex, muse]);
+      expect(marks("daily")).toEqual(["claude", "openai", "meta"]);
+      expect(marks("complex")).toEqual(["claude", "openai"]);
+      expect(marks("review")).toEqual(["meta", "openai"]);
+    }
+    document.documentElement.classList.remove("dark");
   });
 
   it("reads one line while no agent is ready", () => {
@@ -175,6 +179,9 @@ describe("ModelsBlock", () => {
       <>
         <div data-agent-row="claudeAgent" data-agent-state="ready">
           <button type="button">Claude</button>
+        </div>
+        <div data-agent-row="node" data-agent-state="present">
+          <button type="button">Node details</button>
         </div>
         <div data-agent-row="git" data-agent-state="missing">
           <button type="button">Install Git</button>
