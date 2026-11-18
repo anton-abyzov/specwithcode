@@ -106,11 +106,7 @@ const readCloneUrl = Effect.fn("mcp.addToMachine.readCloneUrl")(function* (proje
 });
 
 /** What the agent does about the secret files a folder copy left here. */
-const secretsNext = (
-  machineLabel: string,
-  workspaceRoot: string,
-  secrets: ReadonlyArray<string>,
-) =>
+const secretsNext = (machineLabel: string, workspaceRoot: string, secrets: ReadonlyArray<string>) =>
   secrets.length === 0
     ? ""
     : ` Secret files stayed here: ${secrets.join(", ")}. Send each one the work there needs with studio_file_transfer {machine:"${machineLabel}", direction:"send", path, destinationPath} (under ${workspaceRoot} for a file in the project); the owner approves each one.`;
@@ -155,7 +151,7 @@ export const addProjectToMachine = Effect.fn("mcp.addProjectToMachine")(function
       )?.projectId ?? RemoteWorkers.savedWorkerMachine(source.project, machine)?.projectId;
     if (listedThere != null)
       return yield* invalid(
-        `This project already has ${listedThere} as its copy on ${machine.label}. Launch there with machineProjectId:"${listedThere}"; if that copy is gone or was unlinked, ask the user to relink it (its sidebar menu > Link…) or remove it in Settings > Machines, or pass destinationPath to clone one more copy.`,
+        `This project is already on ${machine.label} as ${listedThere}. Launch there with machineProjectId:"${listedThere}"; if it is gone or was unlinked, ask the user to relink it (its sidebar menu > Link…) or remove it in Settings > Machines, or pass destinationPath to clone one more copy.`,
       );
     // A failed search is reported, not read as "no copy": cloning then would add the
     // very duplicate this check prevents.
@@ -473,7 +469,7 @@ export const linkExistingCopy = Effect.fn("mcp.addToMachine.linkExistingCopy")(f
       kind: "unlinked",
       copy,
       linkTried: false,
-      problem: `It has threads of its own, so it was not linked automatically: linking makes this project's coordinator the one for both copies. Open its menu in the sidebar and choose Link… to compare both and choose what to keep.`,
+      problem: `It has threads of its own, so it was not linked automatically: linking makes this project's coordinator the one for both machines. Open its menu in the sidebar and choose Link… to compare both and choose what to keep.`,
     } as ExistingCopyOutcome;
   const outcome = yield* linkCopy({
     sourceId: input.project.id,
@@ -504,7 +500,7 @@ const unlinkedCopyFailure = (
 ) =>
   new OrchestratorMcpFailure({
     code: "project_unavailable_on_machine",
-    message: `${machine.label} has this project as ${copy.id} at ${copy.workspaceRoot}, but it is not linked to the project here, so work cannot start there yet. ${problem} Once the user has linked it, studio_machine_list shows it as this project's copy on ${machine.label}.`,
+    message: `${machine.label} has this repository as a separate project, ${copy.id} at ${copy.workspaceRoot}, but it is not linked to the project here, so work cannot start there yet. ${problem} Once the user has linked it, studio_machine_list shows this project on ${machine.label}.`,
   });
 
 /** Links the copy, trying once more after a first attempt that failed; fails when it still cannot. */
@@ -540,7 +536,7 @@ const linkCopy = Effect.fn("mcp.addToMachine.linkCopy")(function* (input: {
     problem: `${reason} It is listed as a separate project until you link it: open its menu in the sidebar and choose Link….`,
   });
   const link = Option.getOrUndefined(yield* Effect.serviceOption(ProjectLink.ProjectLink));
-  if (link === undefined) return unlinked("This machine could not link the copy.");
+  if (link === undefined) return unlinked("This machine could not link the project there.");
   const remote = yield* RemoteWorkers.RemoteWorkers;
   const operationId = yield* randomUuidV4;
   const linked = Effect.gen(function* () {
@@ -579,7 +575,7 @@ const linkCopy = Effect.fn("mcp.addToMachine.linkCopy")(function* (input: {
   return yield* linked.pipe(
     Effect.catch((error) =>
       Effect.succeed(
-        unlinked(`The copy on ${input.machine.label} was not linked: ${error.message}`),
+        unlinked(`The project on ${input.machine.label} was not linked: ${error.message}`),
       ),
     ),
   );

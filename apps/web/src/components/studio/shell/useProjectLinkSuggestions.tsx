@@ -60,7 +60,7 @@ export function useProjectLinkSuggestions(
     const machines =
       waiting.length === 1 ? machine : `${waiting.slice(0, -1).join(", ")} and ${waiting.at(-1)!}`;
     const label = suggestion.sameRow
-      ? `Same repository${repository} also added on ${machines}, not linked`
+      ? `Same repository${repository} is a separate project on ${machines}`
       : `Same repository${repository} as ${suggestion.anchorTitle} on ${machine}`;
     return {
       label,

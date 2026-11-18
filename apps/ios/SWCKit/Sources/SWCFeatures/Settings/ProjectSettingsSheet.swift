@@ -90,7 +90,7 @@ struct ProjectSettingsSheet: View {
           .frame(maxWidth: .infinity)
           .padding(.top, WeaveSpacing.s8)
           // A linked copy whose machine is away still lists the other
-          // machines, so "Take over coordinator here" stays in reach.
+          // machines, so "Continue the coordinator here" stays in reach.
           LinkedProjectMachinesCard(project: project)
             .padding(.horizontal, WeaveSpacing.gutter)
         }

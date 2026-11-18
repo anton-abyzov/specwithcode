@@ -13,7 +13,6 @@ import { projectThreads } from "./projectWorkspaceModel";
 import { isOrchestratorThreadId } from "./projectCoordinatorThreads";
 import { modelLabel, shortMachineName, type ProviderNameSource } from "./shellModel";
 import { isNestedSubagentThread } from "./threadSubagents";
-import { copyRoleLabel } from "./workersOnlyCopy";
 
 export interface ProjectExecutionScope {
   environmentId: EnvironmentId;
@@ -341,9 +340,16 @@ export function requestExecutionLabel(
   return `${machine} · ${model}`;
 }
 
+/** Words with `{slot}` values: an English phrase the place that shows it translates. */
+export interface CopyRolesText {
+  readonly text: string;
+  readonly values: Readonly<Record<string, string>>;
+}
+
 /**
- * "M4: Main · M3: Copy" for a project shared across machines; null for a project with
- * one copy. The sidebar shows the project once and names each copy here.
+ * "On M4 (coordinator) and M3" for a project that is on several machines; null for a project
+ * on one. The sidebar shows the project once and names each machine here. The coordinator's
+ * machine leads, so one phrase per shape carries the names and translates.
  */
 export function copyRolesSummary<
   T extends EnvironmentProject & { readonly environmentLabel?: string | null },
@@ -352,14 +358,20 @@ export function copyRolesSummary<
   nameOf: (member: T) => string = (member) =>
     shortMachineName(member.environmentLabel ?? "Machine"),
   retired?: { has(environmentId: string): boolean },
-): string | null {
+): CopyRolesText | null {
   const shared = members.filter((member) => member.workspaceSettings?.logicalProject);
   if (new Set(shared.map((member) => member.environmentId)).size < 2) return null;
   const roles = copyRoles(shared, retired);
-  return shared
-    .map((member) => {
-      const role = roles.get(memberKey(member))?.role ?? "copy";
-      return `${nameOf(member)}: ${copyRoleLabel(role, null).text}`;
-    })
-    .join(" · ");
+  const main = shared.find((member) => roles.get(memberKey(member))?.role === "main");
+  const others = shared.filter((member) => member !== main).map(nameOf);
+  const last = others.at(-1) ?? "";
+  const machines = others.slice(0, -1).join(", ");
+  if (!main) return { text: "On {machines} and {last}", values: { machines, last } };
+  const coordinator = nameOf(main);
+  return machines
+    ? {
+        text: "On {coordinator} (coordinator), {machines} and {last}",
+        values: { coordinator, machines, last },
+      }
+    : { text: "On {coordinator} (coordinator) and {last}", values: { coordinator, last } };
 }

@@ -142,7 +142,7 @@ export function MachineHandoffDialog({
 }: {
   /** What the chosen machine already holds, where Main is, and the plan sentence. */
   readonly send?: SendFacts | null;
-  /** "Make {machine} main" on a finished copy's done screen; null where there is none. */
+  /** "Continue the coordinator on {machine}" on a finished copy's done screen; null where there is none. */
   readonly makeMain?: MakeMainAction | null;
   /**
    * The review found that the destination's existing copy cannot fast-forward to the source
@@ -239,7 +239,7 @@ export function MachineHandoffDialog({
   // Main may not move to the copy that is Main, nor into a project this one is not linked to.
   const refused = moving ? moveRefusal(send) : null;
   // Git only, into a copy the machine already has: nothing is copied, only Main switches, so
-  // the dialog reads as "Make {machine} main", not as a project move.
+  // the dialog reads as "Continue the coordinator on {machine}", not as a project move.
   const switchesMain =
     !copying &&
     method === "folder" &&
@@ -292,7 +292,7 @@ export function MachineHandoffDialog({
                     : there
                       ? tx(
                           switchesMain
-                            ? "Make {machine} main for {project}"
+                            ? "Continue the coordinator on {machine}"
                             : moving
                               ? "Move {project} to {machine}"
                               : "Copy {project} to {machine}",
@@ -311,7 +311,7 @@ export function MachineHandoffDialog({
                 {complete
                   ? `The coordinator now runs on ${targetLabel}.`
                   : sync && copying
-                    ? `${sync.machine} already has this project at ${sync.folder}. Sync compares the two copies and adds what ${sync.machine} is missing: repositories or folders of the workspace, and files Git doesn't carry. Anything that differs there is shown to you before it changes. The coordinator stays on ${sourceLabel}.`
+                    ? `${sync.machine} already has this project at ${sync.folder}. Sync compares the two folders and adds what ${sync.machine} is missing: repositories or folders of the workspace, and files Git doesn't carry. Anything that differs there is shown to you before it changes. The coordinator stays on ${sourceLabel}.`
                     : `${tx(header.text, header.values)} ${tx(
                         "Nothing on {machine} is replaced without asking.",
                         { machine: there ?? tx("the other machine") },
@@ -431,7 +431,7 @@ export function MachineHandoffDialog({
                   {busy
                     ? "Moving…"
                     : switchesMain
-                      ? tx("Make {machine} main", { machine: targetLabel })
+                      ? tx("Continue here")
                       : `Move project to ${target?.label ?? "selected machine"}`}
                 </Button>
               </>
@@ -458,7 +458,7 @@ export function MachineHandoffDialog({
                     ? "Checking…"
                     : machineLabel
                       ? switchesMain
-                        ? tx("Make {machine} main", { machine: machineLabel })
+                        ? tx("Continue here")
                         : `Move project to ${machineLabel}`
                       : "Move project"}
                 </Button>
@@ -703,8 +703,8 @@ function GitReview({
         )}
         {preview.gitSync
           ? stale
-            ? `${sourceLabel} pushes its commits. ${targetLabel}'s copy fast-forwards only where nothing there would be overwritten. Uncommitted files, sign-ins and running processes stay here.`
-            : `${sourceLabel} pushes its commits, and ${targetLabel}'s copy fast-forwards to them in every repository. Uncommitted files, sign-ins and running processes stay here.`
+            ? `${sourceLabel} pushes its commits. ${projectTitle} on ${targetLabel} fast-forwards only where nothing there would be overwritten. Uncommitted files, sign-ins and running processes stay here.`
+            : `${sourceLabel} pushes its commits, and ${projectTitle} on ${targetLabel} fast-forwards to them in every repository. Uncommitted files, sign-ins and running processes stay here.`
           : "Committed work only. Uncommitted files, sign-ins and running processes stay here."}
       </p>
       {stale && staleCopy && (
@@ -727,7 +727,7 @@ function GitReview({
           </label>
           {staleCopy.onKeepHere && (
             <Button variant="outline" size="sm" disabled={busy} onClick={staleCopy.onKeepHere}>
-              Keep Main on {sourceLabel}
+              Keep the coordinator on {sourceLabel}
             </Button>
           )}
         </div>

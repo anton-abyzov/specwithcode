@@ -16,8 +16,8 @@ const keyOf = (candidate: LinkCandidate) =>
   `${candidate.project.environmentId}:${candidate.project.id}`;
 
 /**
- * The first step's subtitle. A project already linked with another copy names where Main
- * is, by the role derivation the menus, Settings and the copy dialog share. One that is
+ * The first step's subtitle. A project already linked with another machine names where the
+ * coordinator is, by the role derivation the menus, Settings and the copy dialog share. One that is
  * not linked yet names none: its review decides which side keeps the coordinator.
  */
 export function ProjectLinkChooseDescription({
@@ -33,11 +33,11 @@ export function ProjectLinkChooseDescription({
   const title = logicalProjectTitle(project);
   return main === null
     ? tx(
-        "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.",
+        "Pick {project} on another machine. Linking makes them one project with one coordinator.",
         { project: title },
       )
     : tx(
-        "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.",
+        "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.",
         { project: title, main: machines.label(main as EnvironmentId) },
       );
 }
@@ -119,7 +119,7 @@ export function ProjectLinkCandidates({
     <RadioGroup
       value={selected}
       onValueChange={(value) => onSelect(String(value))}
-      aria-label={tx("Other copy")}
+      aria-label={tx("Other machine")}
     >
       {copies.map(row)}
       {copies.length === 0 && (
@@ -128,7 +128,7 @@ export function ProjectLinkCandidates({
           {...(noCopy ? { "data-link-no-copy": "" } : { role: "status" })}
         >
           {noCopy
-            ? tx("No copy of {project} was found on another machine.", { project: projectTitle })
+            ? tx("{project} was not found on another machine.", { project: projectTitle })
             : tx("Reading folders…")}
         </p>
       )}

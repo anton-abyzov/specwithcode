@@ -204,8 +204,7 @@ import { CoordinatorConversation } from "./CoordinatorConversation";
 import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
 import { CoordinatorBlockedNotice, OfflineSwitchNotice } from "./CoordinatorBlockedNotice";
 import { useMakeMain } from "./useMakeMain";
-import { useRouteToMain } from "./useRouteToMain";
-import { composerMachines, ROUTED_FILES_MESSAGE } from "../../studio/routeToMain";
+import { useCoordinatorBox } from "./useRouteToMain";
 import { ProjectComposerHostStatus } from "./ComposerHostStatus";
 import { useTx } from "../../i18n";
 import {
@@ -433,8 +432,8 @@ export function ProjectWorkspaceSurface({
   // The machine menu's "Send to another machine…": the dialog opens on the copy, once.
   const handoff = useMachineHandoffRequest();
   const requestHandoff = handoff.ask;
-  // "Make X main": this page's confirmed move, main's page for a move asked from a copy, or
-  // the copy's takeover once the old main has been unreachable long enough.
+  // "Continue the coordinator here": this page's confirmed move, the coordinator's page for a
+  // move asked from another machine, or a takeover once its machine has been silent long enough.
   const mainSwitch = useMakeMain({
     project,
     members: iconCheckouts,
@@ -670,44 +669,35 @@ export function ProjectWorkspaceSurface({
   const hostStatus = connected
     ? null
     : composerHostStatus(environment?.connection, admissionContext);
-  // A workers-only copy names where its work starts; only one that ran a coordinator keeps history.
+  // A machine without the coordinator names where it is; only one that ran a coordinator keeps history.
   const keptConversation = shells.some(
     (t) => t.id === mainCoordinatorId && t.environmentId === project.environmentId,
   );
   const workersOnly = coordinatorElsewhere
     ? workersOnlyProblem(coordinatorElsewhere.machine, keptConversation, projectTitle)
     : null;
-  // This copy became main while the old main was unreachable: its conversation stayed there.
+  // The coordinator continued here while its old machine was offline: its conversation stayed there.
   const switchedFrom = offlineSwitchPredecessor(project);
   // An unreachable machine refuses first: a typed message is never sent elsewhere.
   const blocked = (connected ? null : admission) ?? workersOnly ?? ownershipProblem ?? admission;
-  // A copy whose main is elsewhere: its message box is off and says where to write.
+  // The coordinator is elsewhere: the box says where, and Send goes there when it can.
   const copyOff = blocked !== null && blocked === workersOnly;
-  // Main's machine is connected and may run work: what is typed here goes to main's coordinator.
-  const route = useRouteToMain({
+  const sendHere = useRef<(text: string) => Promise<unknown>>(() => Promise.resolve());
+  const box = useCoordinatorBox({
     mainKey: coordinatorElsewhere?.key ?? null,
+    machine: coordinatorElsewhere?.machine ?? null,
+    project: projectTitle,
     copyOff,
     mainLive: coordinatorElsewhere?.live === true,
     onOpen: onCheckout,
+    composer,
+    offer:
+      mainSwitch.offers.find((offer) => offer.key === `${project.environmentId}:${project.id}`) ??
+      null,
+    onContinue: mainSwitch.run,
+    sendHere: (text) => sendHere.current(text),
   });
-  const routes = route.ready;
-  // One rule names the machine on the chip under the box and on Send: on a copy whose main
-  // is elsewhere both say main, never the copy's machine beside main's.
-  const named = composerMachines({
-    viewed: project.environmentId,
-    mainKey: coordinatorElsewhere?.key ?? null,
-    routes,
-  });
-  const chipEnvironment = useEnvironment(named.chip as EnvironmentId);
-  // Main's name, one fallback chain for the chip and the header tag.
-  const mainName = chipEnvironment?.label ?? coordinatorElsewhere?.machine ?? named.chip;
-  // Files were attached on this machine; a routed message carries text only.
-  const draftHasFiles = useSyncExternalStore(
-    composer.subscribe,
-    () => composer.getSnapshot().attachments.length > 0,
-    () => false,
-  );
-  const routedFilesBlock = routes && draftHasFiles ? tx(ROUTED_FILES_MESSAGE) : null;
+  const routes = box.routes;
   // Memoized, not just computed: these feed memoized callbacks below, and the
   // React Compiler keeps those only for values it knows are not changed later.
   const coordinator = useMemo(
@@ -1422,6 +1412,7 @@ export function ProjectWorkspaceSurface({
         : routingSend(text, undefined, attachments),
     [coordinatorQuestion, routingSend],
   );
+  sendHere.current = (text) => sendFromComposer(text, undefined);
   // While the composer can answer, the card above it is the request: no second notice.
   const answersInChat = coordinatorQuestion?.composerCanAnswer === true;
   const retryMessage = coordinatorRetryMessage(coordinatorThread?.projection.messages ?? []);
@@ -1857,13 +1848,13 @@ export function ProjectWorkspaceSurface({
                   <h1>{projectTitle}</h1>
                 </Tip>
                 {primaryEnvironmentId !== null && project.environmentId !== primaryEnvironmentId ? (
-                  // Another machine holds this copy: its workers and sign-ins. On a copy whose main
-                  // is elsewhere the coordinator runs on main, which the composer chip names.
+                  // The page shows another machine: its workers and sign-ins. The coordinator may
+                  // be on a third one, which the tag names.
                   <Tip
                     label={
                       coordinatorElsewhere
-                        ? `Copy on ${machineName}, not this computer. Its coordinator runs on ${mainName}`
-                        : `Runs on ${machineName}, not this computer`
+                        ? `${projectTitle} on ${machineName}, not this computer. Coordinator on ${coordinatorElsewhere.machine ?? "another machine"}`
+                        : `On ${machineName}, not this computer`
                     }
                   >
                     <span
@@ -1876,9 +1867,7 @@ export function ProjectWorkspaceSurface({
                       ) : (
                         <LaptopIcon aria-hidden />
                       )}
-                      <span className="sr-only">
-                        {coordinatorElsewhere ? "Copy on " : "Runs on "}
-                      </span>
+                      <span className="sr-only">On </span>
                       {machineName}
                     </span>
                   </Tip>
@@ -2064,12 +2053,12 @@ export function ProjectWorkspaceSurface({
                 composer={composer}
                 // A viewer showing the coordinator borrows this composer.
                 threadRef={coordinatorRef}
-                // Main's machine on a copy, so the box wears the machine the chip names.
-                environmentId={(named.send ?? named.chip) as EnvironmentId}
+                // The box wears the machine the chip names: the one shown.
+                environmentId={project.environmentId}
                 cwd={project.workspaceRoot}
                 sendBlocked={
-                  routes
-                    ? route.sending || sending || routedFilesBlock !== null
+                  box.state
+                    ? box.sending || sending || !box.state.send.enabled
                     : Boolean(blocked) ||
                       Boolean(modelCompatibility) ||
                       (!model && !coordinatorId) ||
@@ -2077,38 +2066,36 @@ export function ProjectWorkspaceSurface({
                       sending
                 }
                 missingModel={
-                  routedFilesBlock ??
-                  (!blocked && !model && !coordinatorId
+                  !blocked && !model && !coordinatorId
                     ? missingModelMessage(modelsLoading, machinePrivate)
-                    : null)
+                    : null
                 }
-                canAttach={canOperate && connected && named.send === project.environmentId}
+                canAttach={canOperate && connected && !routes}
                 uploadsSupported={uploadsSupported}
                 maxFileBytes={maxFileBytes}
                 sending={sending}
                 placeholder={
-                  routes && coordinatorElsewhere?.machine
-                    ? tx("Message {machine}'s coordinator for {project}.", {
-                        project: projectTitle,
-                        machine: coordinatorElsewhere.machine,
-                      })
-                    : copyOff
-                      ? coordinatorElsewhere?.machine
-                        ? tx("Work for {project} starts on {machine}.", {
-                            project: projectTitle,
-                            machine: coordinatorElsewhere.machine,
-                          })
-                        : tx("Work for {project} starts on another machine.", {
-                            project: projectTitle,
-                          })
-                      : coordinatorQuestion
-                        ? say("Answer the coordinator: type, paste or attach, then send")
-                        : hostStatus?.keepsDraft
-                          ? tx("Your draft stays here until it reconnects.")
-                          : promptPlaceholder
+                  box.state
+                    ? tx(box.state.placeholder.text, box.state.placeholder.values)
+                    : coordinatorQuestion
+                      ? say("Answer the coordinator: type, paste or attach, then send")
+                      : hostStatus?.keepsDraft
+                        ? tx("Your draft stays here until it reconnects.")
+                        : promptPlaceholder
                 }
                 hostReachable={connected}
-                writesElsewhere={copyOff && !routes}
+                primary={box.primary}
+                coordinatorElsewhere={box.state !== null}
+                sendTo={
+                  routes && coordinatorElsewhere?.machine
+                    ? {
+                        machine: coordinatorElsewhere.machine,
+                        tip: tx("Goes to the coordinator on {machine} and opens it there", {
+                          machine: coordinatorElsewhere.machine,
+                        }),
+                      }
+                    : null
+                }
                 draftSentElsewhere={() =>
                   durableCoordinatorDraftSentElsewhere(project.environmentId, project.id)
                 }
@@ -2134,10 +2121,10 @@ export function ProjectWorkspaceSurface({
                 keybindings={keybindings}
                 isPhoneKeyboard={isPhoneKeyboard}
                 sendShortcut={sendShortcut}
-                // A routed message goes to main as typed: commands and skills here act on this copy.
+                // A routed message goes to the coordinator as typed: commands and skills here act on this machine.
                 onAppCommand={appCommandsOffered && !routes ? runAppCommand : null}
                 provider={model && !routes ? (providerEntries.get(model.instanceId) ?? null) : null}
-                onSend={routes ? (text, files) => route.send(text, files) : sendFromComposer}
+                onSend={box.state ? box.send : sendFromComposer}
                 onError={setError}
                 status={
                   <>
@@ -2150,19 +2137,10 @@ export function ProjectWorkspaceSurface({
                     {blocked && !hostStatus && (
                       <CoordinatorBlockedNotice
                         text={blocked}
-                        coordinator={blocked === workersOnly ? coordinatorElsewhere : null}
-                        projectTitle={projectTitle}
+                        box={box.state}
+                        coordinatorKey={coordinatorElsewhere?.key ?? null}
                         hadConversation={keptConversation}
-                        current={`${project.environmentId}:${project.id}`}
-                        copies={checkouts}
-                        onOpen={onCheckout}
-                        mainOffer={
-                          mainSwitch.offers.find(
-                            (offer) => offer.key === `${project.environmentId}:${project.id}`,
-                          ) ?? null
-                        }
-                        onMakeMain={mainSwitch.run}
-                        routesToMain={routes}
+                        onContinue={box.continueHere}
                       />
                     )}
                     {switchedFrom && !blocked && !hostStatus ? (
@@ -2221,24 +2199,9 @@ export function ProjectWorkspaceSurface({
                         environment?.connection,
                         admissionContext,
                       )}
-                      // A copy whose main is elsewhere: its coordinator runs on main.
-                      runsOn={
-                        named.chip === project.environmentId
-                          ? null
-                          : {
-                              environmentId: named.chip as EnvironmentId,
-                              label: mainName,
-                              connected: chipEnvironment?.connection.phase === "connected",
-                              // Main's own connection, not this page's machine's context.
-                              disconnectedLabel: hostDisconnectedLabel(
-                                chipEnvironment?.connection,
-                                named.chip === primaryEnvironmentId
-                                  ? { isThisDevice: true, graceElapsed: true }
-                                  : undefined,
-                              ),
-                            }
-                      }
+                      projectTitle={projectTitle}
                       current={`${project.environmentId}:${project.id}`}
+                      onOpenSettings={() => openSettingsAt("general", null)}
                       copies={checkouts}
                       unknown={unknownMachines}
                       savedMachineMissing={savedMachineMissing}
@@ -2250,7 +2213,7 @@ export function ProjectWorkspaceSurface({
                             }
                           : null
                       }
-                      // Making a copy main is its own confirmed action.
+                      // Continuing the coordinator here is its own confirmed action.
                       mainOffers={mainSwitch.offers}
                       onMakeMain={mainSwitch.run}
                       // One Send to another machine: its dialog offers Copy or Move.

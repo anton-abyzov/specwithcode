@@ -167,8 +167,8 @@ describe("copy", () => {
     expect(lines.slice(0, 6)).toEqual([
       "If this machine goes quiet",
       "If M4 goes quiet",
-      "M3 lets M1 take over.",
-      "Ready. M1 can take over.",
+      "M3 lets M1 continue the coordinator.",
+      "Ready. M1 can continue the coordinator.",
       "Not ready. M3 has not allowed M1 yet.",
       "M1 must stay awake. If it is off, this machine pauses its coordinator.",
     ]);
@@ -337,7 +337,7 @@ describe("CoordinatorStandbySettings", () => {
     expect(text()).toContain(
       "M1 took over while this machine was away. This machine now runs workers.",
     );
-    await click(button("Make this machine the coordinator again"));
+    await click(button("Continue the coordinator on this machine again"));
     expect(state.handoff).toMatchObject({ requestedTarget: "m4:p4" });
   });
 
@@ -360,7 +360,7 @@ describe("CoordinatorStandbySettings", () => {
       ),
     );
     expect(text()).toContain("Open M1 and hand the coordinator back.");
-    expect(text()).not.toContain("Make this machine the coordinator again");
+    expect(text()).not.toContain("Continue the coordinator on this machine again");
   });
 
   it("says nothing about a takeover the owner made by hand", async () => {

@@ -89,7 +89,7 @@ const env = (environmentId: EnvironmentId, label: string, phase = "connected") =
 });
 
 describe("one role derivation for the project menu and Settings", () => {
-  it("calls a copy that was taken over a Copy in both, and names Main the same", () => {
+  it("gives a machine that was taken over no role in both, and names the coordinator the same", () => {
     const old = easyChamp(m4, "p-m4", "/Users/a/ec");
     const newer = easyChamp(m3, "p-m3", "/Users/b/ec");
     // m3 took over from m4 at a newer epoch; m4 has not heard yet and still says active.
@@ -119,8 +119,8 @@ describe("one role derivation for the project menu and Settings", () => {
       () => true,
     );
     expect(menu.map((copy) => [copy.role, copy.main, copy.label])).toEqual([
-      ["workers", false, { text: "Copy · main on {machine}", values: { machine: "m3" } }],
-      ["coordinator", true, { text: "Main" }],
+      ["workers", false, { text: "" }],
+      ["coordinator", true, { text: "Coordinator" }],
     ]);
   });
 });
@@ -322,7 +322,7 @@ describe("machine rows", () => {
       key: "logical-easychamp",
       title: "EasyChamp",
       role: "coordinator",
-      roleLabel: "Main",
+      roleLabel: "Coordinator",
       alsoOn: ["MacBook Pro"],
       elsewhere: [
         {
@@ -330,18 +330,15 @@ describe("machine rows", () => {
           name: "MacBook Pro",
           seen: { state: "connected", text: "Online" },
           folder: "/Users/a/easychamp",
-          roleLabel: "Copy · main on {machine}",
-          roleValues: { machine: "M4MAX" },
+          roleLabel: "",
         },
       ],
       folder: "/Users/a/Projects/sw-easychamp",
     });
     expect(rows[1]?.projects.own[0]?.elsewhere).toMatchObject([
-      { name: "M4MAX", seen: { state: "this-machine" }, roleLabel: "Main" },
+      { name: "M4MAX", seen: { state: "this-machine" }, roleLabel: "Coordinator" },
     ]);
-    expect(rows[1]?.projects.own.map((project) => project.roleLabel)).toEqual([
-      "Copy · main on {machine}",
-    ]);
+    expect(rows[1]?.projects.own.map((project) => project.roleLabel)).toEqual([""]);
     expect(rows[1]?.projects.own[0]?.roleValues).toEqual({ machine: "M4MAX" });
 
     const hidden = buildMachineRows({
@@ -352,20 +349,20 @@ describe("machine rows", () => {
       projects: [easyChamp(m4, "p-m4", "/Users/a/Projects/sw-easychamp", "transferring")],
       hostBlocks: [],
     });
-    expect(hidden[0]?.projects.own[0]?.roleLabel).toBe("Moving main");
+    expect(hidden[0]?.projects.own[0]?.roleLabel).toBe("Handing off the coordinator…");
     expect(hidden[1]?.projects.own).toMatchObject([
       {
         key: "logical-easychamp",
         title: "EasyChamp",
         role: null,
-        roleLabel: "Connect to see its role",
+        roleLabel: "Connect to see its state",
         folder: null,
         elsewhere: [
           {
             name: "M4MAX",
             seen: { state: "this-machine" },
             folder: "/Users/a/Projects/sw-easychamp",
-            roleLabel: "Moving main",
+            roleLabel: "Handing off the coordinator…",
           },
         ],
       },
@@ -567,13 +564,13 @@ describe("buildMachineRows project lists", () => {
       project("scratch", {}, "/Users/a/scratch"),
     ]);
     expect(row?.projects.own.map((entry) => [entry.title, entry.roleLabel])).toEqual([
-      ["mine", "Not shared"],
+      ["mine", "Only on this machine"],
     ]);
     expect(row?.projects.automated.map((entry) => entry.title)).toEqual(["check"]);
     expect(row?.projects.archived.map((entry) => entry.title)).toEqual(["old", "old-check"]);
   });
 
-  it("labels an unlinked copy that exists elsewhere Not linked, also on that machine", () => {
+  it("labels an unlinked copy that exists elsewhere a separate project, also on that machine", () => {
     const identity = (rootPath: string) =>
       ({
         canonicalKey: "github.com/anton-abyzov/easychamp",
@@ -598,11 +595,11 @@ describe("buildMachineRows project lists", () => {
     };
     const [row] = rowsFor([mine, theirs]);
     const entry = row?.projects.own.find((candidate) => candidate.title === "solo-m4");
-    expect(entry?.roleLabel).toBe("Not linked · also on {machine}");
+    expect(entry?.roleLabel).toBe("Separate project · also on {machine}");
     expect(entry?.roleValues).toEqual({ machine: "Windows" });
     expect(entry?.alsoOn).toEqual(["Windows"]);
     const [otherRow] = rowsFor([project("alone")]);
-    expect(otherRow?.projects.own[0]?.roleLabel).toBe("Not shared");
+    expect(otherRow?.projects.own[0]?.roleLabel).toBe("Only on this machine");
   });
 
   it("puts shared copies ahead of the ones only this machine has", () => {
@@ -910,7 +907,7 @@ describe("old records of a machine that joined again", () => {
       replaced: new Map([[m3, m1]]),
     });
     const here = rows[0]!.projects.own[0]!;
-    expect(here.roleLabel).toBe("Main");
-    expect(here.elsewhere[0]?.roleLabel).toBe("Copy · main on {machine}");
+    expect(here.roleLabel).toBe("Coordinator");
+    expect(here.elsewhere[0]?.roleLabel).toBe("Extra coordinator");
   });
 });

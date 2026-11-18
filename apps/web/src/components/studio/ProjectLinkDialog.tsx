@@ -58,9 +58,9 @@ export interface ProjectLinkTarget {
 type Phase = "choose" | "checking" | "review" | "linking" | "complete";
 type Step = "prepare" | "accept" | "commit";
 const STEP_TEXT: Record<Step, string> = {
-  prepare: "Preparing the copy that keeps its coordinator…",
-  accept: "Joining the other copy…",
-  commit: "Copying notes and listing both copies…",
+  prepare: "Preparing the machine that keeps its coordinator…",
+  accept: "Joining the other machine…",
+  commit: "Copying notes and listing both machines…",
 };
 
 const keyOf = (project: Pick<EnvironmentProject, "environmentId" | "id">) =>
@@ -294,7 +294,7 @@ export function ProjectLinkDialog({
       const next = { here: own.value, there: other.value };
       setPreviews(next);
       // A link that stopped with the other copy kept finishes that way; nothing else
-      // moves main away from a project the other copy joins.
+      // moves the coordinator away from a project the other machine joins.
       setKept(
         joining && !linkIsResuming(next.there, next.here)
           ? "here"
@@ -393,7 +393,7 @@ export function ProjectLinkDialog({
       }
       setError(
         current === "commit"
-          ? `${message} The copy on ${sides.joiningLabel} already defers to ${sides.keptLabel}; retry to finish listing it there.`
+          ? `${message} ${sides.joiningLabel} already defers to ${sides.keptLabel}; retry to finish listing it there.`
           : message,
       );
       setPhase("review");
@@ -420,10 +420,10 @@ export function ProjectLinkDialog({
           </DialogTitle>
           <DialogDescription className="wrap-anywhere">
             {complete && sides
-              ? `${logicalProjectTitle(project)} is one project on ${sides.keptLabel} and ${sides.joiningLabel}. The coordinator on ${sides.keptLabel} can send work to both copies.`
+              ? `${logicalProjectTitle(project)} is one project on ${sides.keptLabel} and ${sides.joiningLabel}. The coordinator on ${sides.keptLabel} can start work on both machines.`
               : joins
                 ? tx(
-                    "{machine} joins {project} as a copy. Main stays on {main}: linking does not change it.",
+                    "{machine} joins {project}. The coordinator stays on {main}: linking does not move it.",
                     { machine: thereLabel, project: logicalProjectTitle(project), main: hereLabel },
                   )
                 : null}
@@ -464,7 +464,7 @@ export function ProjectLinkDialog({
             />
           ) : (
             <fieldset disabled={busy} className="min-w-0 space-y-2">
-              <legend className="mb-2 text-sm font-medium">{tx("Other copy")}</legend>
+              <legend className="mb-2 text-sm font-medium">{tx("Other machine")}</legend>
               {hereProblem ? (
                 <p className="text-sm text-muted-foreground">{hereProblem}</p>
               ) : ranked.length === 0 ? (
@@ -500,7 +500,11 @@ export function ProjectLinkDialog({
           )}
           {busy && (
             <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
-              {phase === "checking" ? "Reading both copies…" : step ? STEP_TEXT[step] : "Linking…"}
+              {phase === "checking"
+                ? "Reading both machines…"
+                : step
+                  ? STEP_TEXT[step]
+                  : "Linking…"}
             </p>
           )}
         </DialogPanel>
@@ -606,7 +610,7 @@ function LinkReview({
       {joins ? (
         <p data-link-main-stays="">
           {tx(
-            "Main stays on {main}. To have main on {machine}, make {machine} main after linking.",
+            "The coordinator stays on {main}. To continue it on {machine}, use Continue here after linking.",
             { main: keptLabel, machine: joiningLabel },
           )}
         </p>
@@ -772,14 +776,14 @@ function LinkReview({
         <span className="min-w-0 wrap-anywhere leading-5" data-link-consent="">
           {joins ? (
             tx(
-              "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.",
+              "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if the coordinator continues there. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. The coordinator stays on {main}. Files are not copied.",
               { machine: joiningLabel, main: keptLabel },
             )
           ) : (
             <>
               Make these one project. The coordinator on {joiningLabel} becomes read-only history
-              and its workers keep running; the coordinator on {keptLabel} can send work to both
-              copies. Files are not copied.
+              and its workers keep running; the coordinator on {keptLabel} can start work on both
+              machines. Files are not copied.
             </>
           )}
         </span>

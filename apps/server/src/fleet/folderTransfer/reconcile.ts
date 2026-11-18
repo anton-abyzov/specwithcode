@@ -455,7 +455,7 @@ export function planReconcile(input: PlanInput): Plan {
       case "destination-behind":
         if (destinationChanged) {
           status = "dirty";
-          detail = "Behind the source, with uncommitted changes here.";
+          detail = `Behind ${input.sourceMachine}, with uncommitted changes here.`;
           choices = ["keep-mine", "take-theirs"];
           if (decision === "take-theirs") {
             moveHead = "fast-forward";
@@ -463,14 +463,14 @@ export function planReconcile(input: PlanInput): Plan {
           }
         } else {
           status = "fast-forward";
-          detail = "Behind the source; moves forward to its commit.";
+          detail = `Behind ${input.sourceMachine}; moves forward to its commit.`;
           moveHead = "fast-forward";
           effective = null;
         }
         break;
       case "destination-ahead":
         status = "ahead";
-        detail = `Ahead of the source; kept. Source branches arrive as swc/from-${machine}/….`;
+        detail = `Ahead of ${input.sourceMachine}; kept. Source branches arrive as swc/from-${machine}/….`;
         break;
       default:
         status = "diverged";

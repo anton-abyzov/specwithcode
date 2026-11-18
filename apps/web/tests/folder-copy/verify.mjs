@@ -287,10 +287,10 @@ const chooseFirst = async (page) => {
   if (!(await box.isVisible())) await page.getByRole("button", { name: "Details" }).click();
   await box.click();
 };
-/** What the dialog does, from its title: "Copy …" keeps Main, "Move …" moves it. */
+/** What the dialog does, from its title: "Copy …" keeps the coordinator, "Move …" moves it. */
 const intent = async (page) =>
   (await page.getByRole("dialog").getByRole("heading").first().textContent()).trim();
-/** A move asked for with "Make X main": the fixture opens a fresh flow set to move. */
+/** A move asked for with "Continue the coordinator here": the fixture opens a fresh flow set to move. */
 const moveCoordinator = (page) =>
   page.evaluate(() => window.dispatchEvent(new Event("fixture-move")));
 const COPY_TITLE = "Copy SpecWeave to ministorm";
@@ -319,7 +319,11 @@ const choosing = async (page, w) => {
     title: COPY_TITLE,
   });
   NodeAssert.equal(await action("Cancel").count(), 1, "Where offers Cancel");
-  NodeAssert.match(await intent(page), /^Copy /, "the dialog opened as a copy: Main stays");
+  NodeAssert.match(
+    await intent(page),
+    /^Copy /,
+    "the dialog opened as a copy: the coordinator stays",
+  );
   await chooseFirst(page);
   await check("where-choose", {
     primary: "Copy to ministorm",
@@ -461,7 +465,7 @@ const choosing = async (page, w) => {
     leading: "Undo…",
     title: COPIED_TITLE,
   });
-  NodeAssert.match(await body(), /ministorm has a copy\. The coordinator stays here\./);
+  NodeAssert.match(await body(), /SpecWeave is on ministorm\. The coordinator stays here\./);
 
   // Done was seen: the reopen still shows the finished copy. Copy changes again archives it
   // and starts at Where with a last-copy strip.

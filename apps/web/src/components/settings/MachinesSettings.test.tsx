@@ -454,7 +454,8 @@ describe("Settings > Machines", () => {
     expect(html).not.toContain("Limits");
     expect(html).not.toContain("Its app sees this machine");
     expect(html).toContain("EasyChamp");
-    expect(html).toContain("<span>Copy");
+    // A machine without the coordinator carries no role word.
+    expect(html).not.toContain("<span>Copy");
     expect(html).not.toContain("orkers only");
     // The row keeps the folder short; the button says it in full.
     expect(html).toContain("~/easychamp");

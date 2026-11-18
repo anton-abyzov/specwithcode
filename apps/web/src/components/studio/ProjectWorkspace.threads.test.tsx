@@ -328,8 +328,9 @@ describe("switching the coordinator machine", () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(state.send).not.toHaveBeenCalled();
   });
-  it("keeps the coordinator, worker and draft until a confirmed move completes", async () => {
-    // laptop is a linked copy; main is here. "Make laptop main" opens the confirmed move.
+  it("offers no coordinator move from the machine that already holds the coordinator", async () => {
+    // laptop is a linked machine; the coordinator is here. Shown on laptop, "Continue the
+    // coordinator here" opens the confirmed move on the coordinator's page.
     const logicalProject = { id: "one", title: "Atlas", coordinatorId: "c", members: [] };
     Object.assign(state.project, {
       workspaceSettings: { logicalProject, coordinatorBinding: { epoch: 1, state: "active" } },
@@ -367,12 +368,13 @@ describe("switching the coordinator machine", () => {
     await openSwitcher();
     try {
       expect(menuItem("menuitem", "Move coordinator to laptop…")).toBeUndefined();
-      await act(async () => menuItem("menuitem", "Make laptop main")!.click());
+      // The coordinator's own machine offers no coordinator item.
+      expect(menuItem("menuitem", "Continue the coordinator here")).toBeUndefined();
+      expect(menuItem("menuitem", "Make laptop main")).toBeUndefined();
       expect(state.savedMachines).toEqual({});
-      await renderOpen();
       expect(onSelectThread).not.toHaveBeenCalled();
       expect(state.navigate).not.toHaveBeenCalled();
-      expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
       expect(container.querySelector('[data-native-thread="old-checkout-thread"]')).not.toBeNull();
     } finally {
       delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;
@@ -385,6 +387,7 @@ describe("switching the coordinator machine", () => {
     expect(menuItem("menuitemradio", "laptop")).toBeDefined();
     expect(menuItem("menuitem", "Move coordinator to laptop…")).toBeUndefined();
     expect(menuItem("menuitem", "Make laptop main")).toBeUndefined();
+    expect(menuItem("menuitem", "Continue the coordinator here")).toBeUndefined();
   });
 });
 

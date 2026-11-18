@@ -16,7 +16,7 @@ const state = vi.hoisted(() => ({
   lastSeen: new Map<string, number>(),
   takeover: vi.fn(),
   acceptStandby: vi.fn(),
-  startCoordinator: vi.fn(),
+  other: vi.fn(),
   toast: vi.fn(),
 }));
 
@@ -31,7 +31,7 @@ vi.mock("../../state/use-atom-command", () => ({
       ? state.takeover
       : /acceptStandby/i.test(tag)
         ? state.acceptStandby
-        : state.startCoordinator,
+        : state.other,
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
@@ -113,7 +113,8 @@ const copies: OrchestratorCopy[] = members.map((item) => ({
   folder: item.workspaceRoot,
   role: item.environmentId === "m4" ? "coordinator" : "workers",
   main: item.environmentId === "m4",
-  label: { text: item.environmentId === "m4" ? "Main" : "Copy" },
+  rowRole: item.environmentId === "m4" ? "main" : "copy",
+  label: { text: item.environmentId === "m4" ? "Coordinator" : "" },
   canStart: false,
 }));
 
@@ -150,7 +151,7 @@ beforeEach(() => {
   state.deniedScopes = new Set();
   state.writable = new Set(["m4", "m5", "mini"]);
   state.lastSeen = new Map();
-  for (const mock of [state.takeover, state.acceptStandby, state.startCoordinator, state.toast])
+  for (const mock of [state.takeover, state.acceptStandby, state.other, state.toast])
     mock.mockReset();
   state.acceptStandby.mockResolvedValue({ _tag: "Success", value: {} });
   openMove.mockReset();
@@ -178,7 +179,7 @@ it("opens main's own confirmed move when main is the page in view", async () => 
   expect(onCheckout).not.toHaveBeenCalled();
   expect(dialog()).toBeNull();
   expect(state.takeover).not.toHaveBeenCalled();
-  expect(state.startCoordinator).not.toHaveBeenCalled();
+  expect(state.other).not.toHaveBeenCalled();
 });
 
 it("shows main's page from a copy's page, opens the move there and returns when it closes", async () => {
@@ -210,7 +211,10 @@ it("says so when main's page cannot open the move, instead of leaving the click 
   await view("m4", false);
   expect(openMove).not.toHaveBeenCalled();
   expect(state.toast).toHaveBeenCalledWith(
-    expect.objectContaining({ type: "warning", title: "Main cannot move from this machine yet." }),
+    expect.objectContaining({
+      type: "warning",
+      title: "The coordinator cannot be handed off from this machine yet.",
+    }),
   );
 });
 
@@ -219,12 +223,24 @@ it("refuses a move this window could only read from, with what to do instead", a
   await view("m5");
   const offer = main.offers.find((item) => item.key === "m5:p")!;
   expect(offer.kind).toBe("blocked");
-  expect(offer.reason?.text).toContain("This window can only read {main}");
-  await act(async () => main.run!("m5:p"));
+  expect(offer.block).toBe("main-read-only");
+  expect(offer.reason?.text).toBe(
+    "This window can only read {main}, so it cannot hand the coordinator off from there. Open SpecWithCode on {main}, or connect to it with full access.",
+  );
+  const after = { continued: vi.fn(), stopped: vi.fn() };
+  await act(async () => main.run!("m5:p", after));
   expect(onCheckout).not.toHaveBeenCalled();
   expect(state.toast).toHaveBeenCalledWith(
-    expect.objectContaining({ type: "warning", title: "M5 cannot become main yet." }),
+    expect.objectContaining({
+      type: "warning",
+      title: "The coordinator cannot continue on M5 yet.",
+      description:
+        "This window can only read M4, so it cannot hand the coordinator off from there. Open SpecWithCode on M4, or connect to it with full access.",
+    }),
   );
+  // A refused switch continued nothing.
+  expect(after.continued).not.toHaveBeenCalled();
+  expect(after.stopped).toHaveBeenCalledTimes(1);
 });
 
 it("refuses the move when any one of the three scopes on main is missing", async () => {
@@ -243,9 +259,11 @@ it("stays off, counting down, until the old main has been unreachable for 10 min
   await view("m5");
   const offer = () => main.offers.find((item) => item.key === "m5:p")!;
   expect(offer().kind).toBe("blocked");
+  expect(offer().block).toBe("waiting");
   expect(offer().note).toMatchObject({ text: "in {minutes} min", values: { minutes: "6" } });
   await act(async () => vi.advanceTimersByTime(TAKEOVER_UNREACHABLE_MS - 4 * 60_000));
   expect(offer().kind).toBe("takeover");
+  expect(offer().silentMinutes).toBe(10);
 });
 
 it("asks once, then takes over from the unreachable main and never starts a second coordinator", async () => {
@@ -264,20 +282,23 @@ it("asks once, then takes over from the unreachable main and never starts a seco
   });
   await view("m5");
   expect(kinds()).toEqual({ "m5:p": "takeover", "mini:p": "takeover" });
-  await act(async () => main.run!("m5:p"));
+  const after = { continued: vi.fn(), stopped: vi.fn() };
+  await act(async () => main.run!("m5:p", after));
   // Nothing has run: the old conversation stays behind, so the person confirms first.
   expect(state.takeover).not.toHaveBeenCalled();
-  expect(dialog()?.querySelector("h2")?.textContent).toBe("Make M5 main?");
-  expect(dialog()?.querySelector("p")?.textContent).toContain(
-    "The conversation on M4 stays there as history.",
+  expect(after.continued).not.toHaveBeenCalled();
+  expect(after.stopped).not.toHaveBeenCalled();
+  expect(dialog()?.querySelector("h2")?.textContent).toBe("Continue the coordinator on M5?");
+  expect(dialog()?.querySelector("p")?.textContent).toBe(
+    "M4 has been offline for 10 minutes or more. The coordinator starts on M5 from the shared goal, memory and plan. The conversation on M4 stays there as history. Until M4 is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.",
   );
-  await press("Make M5 main");
+  await press("Continue here");
   expect(state.takeover).toHaveBeenCalledTimes(1);
   expect(state.takeover.mock.calls[0]![0]).toMatchObject({
     environmentId: "m5",
     input: { projectId: "p", knownEpoch: 3, predecessor: { environmentId: "m4", projectId: "p" } },
   });
-  expect(state.startCoordinator).not.toHaveBeenCalled();
+  expect(state.other).not.toHaveBeenCalled();
   expect(openMove).not.toHaveBeenCalled();
   // The other reachable copy's standby stands down; the unreachable old main is not asked.
   expect(state.acceptStandby.mock.calls.map((call) => call[0].environmentId)).toEqual(["mini"]);
@@ -287,24 +308,53 @@ it("asks once, then takes over from the unreachable main and never starts a seco
   });
   expect(dialog()).toBeNull();
   expect(state.toast).toHaveBeenCalledWith(
-    expect.objectContaining({ type: "success", title: "M5 is main now" }),
+    expect.objectContaining({
+      type: "success",
+      title: "The coordinator continues on M5",
+      description:
+        "It starts from the shared goal, memory and plan. The conversation on M4 stays there as history, and M4 gives way when it is back.",
+    }),
   );
   expect(state.toast).toHaveBeenCalledWith(
     expect.objectContaining({
       type: "warning",
-      title: "M5 is main now, with machines not yet following it",
+      title: "The coordinator continues on M5. MINI have not confirmed it yet.",
     }),
   );
+  // The caller is told once that the coordinator continues here, and never that it stopped.
+  expect(after.continued).toHaveBeenCalledTimes(1);
+  expect(after.stopped).not.toHaveBeenCalled();
+});
+
+it("shows Starting the coordinator… while the offline switch runs", async () => {
+  state.offline = new Set(["m4"]);
+  state.lastSeen.set("m4", NOW - TAKEOVER_UNREACHABLE_MS);
+  let finish: (value: unknown) => void = () => {};
+  state.takeover.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+  await view("m5");
+  await act(async () => main.run!("m5:p"));
+  await press("Continue here");
+  const buttons = [...container.querySelectorAll("button")];
+  expect(buttons.map((button) => button.textContent)).toEqual([
+    "Cancel",
+    "Starting the coordinator…",
+  ]);
+  expect(buttons.every((button) => button.disabled)).toBe(true);
+  await act(async () => finish({ _tag: "Failure", cause: new Error("Refused.") }));
+  expect(dialog()).toBeNull();
 });
 
 it("cancels an offline switch without running anything", async () => {
   state.offline = new Set(["m4"]);
   state.lastSeen.set("m4", NOW - TAKEOVER_UNREACHABLE_MS);
   await view("m5");
-  await act(async () => main.run!("m5:p"));
+  const after = { continued: vi.fn(), stopped: vi.fn() };
+  await act(async () => main.run!("m5:p", after));
   await press("Cancel");
   expect(dialog()).toBeNull();
   expect(state.takeover).not.toHaveBeenCalled();
+  expect(after.stopped).toHaveBeenCalledTimes(1);
+  expect(after.continued).not.toHaveBeenCalled();
 });
 
 it("says why when the takeover is refused", async () => {
@@ -315,16 +365,49 @@ it("says why when the takeover is refused", async () => {
     cause: new Error("Another machine already took over."),
   });
   await view("m5");
-  await act(async () => main.run!("m5:p"));
-  await press("Make M5 main");
+  const after = { continued: vi.fn(), stopped: vi.fn() };
+  await act(async () => main.run!("m5:p", after));
+  await press("Continue here");
   expect(state.toast).toHaveBeenCalledWith(
     expect.objectContaining({
       type: "error",
-      title: "M5 did not become main",
+      title: "The coordinator stayed on M4",
       description: "Another machine already took over.",
     }),
   );
   expect(dialog()).toBeNull();
+  expect(after.stopped).toHaveBeenCalledTimes(1);
+  expect(after.continued).not.toHaveBeenCalled();
+});
+
+it("tells the caller nothing continued when the switch only opens the confirmed move", async () => {
+  await view("m4");
+  const after = { continued: vi.fn(), stopped: vi.fn() };
+  await act(async () => main.run!("m5:p", after));
+  expect(openMove).toHaveBeenCalledWith("m5:p");
+  expect(after.stopped).toHaveBeenCalledTimes(1);
+  expect(after.continued).not.toHaveBeenCalled();
+});
+
+it("tells the caller nothing continued for a machine without the switch", async () => {
+  await view("m5");
+  const after = { continued: vi.fn(), stopped: vi.fn() };
+  await act(async () => main.run!("m1:p", after));
+  expect(after.stopped).toHaveBeenCalledTimes(1);
+  expect(after.continued).not.toHaveBeenCalled();
+});
+
+it("tells an earlier caller it stopped when a second switch replaces its confirm", async () => {
+  state.offline = new Set(["m4"]);
+  state.lastSeen.set("m4", NOW - TAKEOVER_UNREACHABLE_MS);
+  await view("m5");
+  const first = { continued: vi.fn(), stopped: vi.fn() };
+  const second = { continued: vi.fn(), stopped: vi.fn() };
+  await act(async () => main.run!("m5:p", first));
+  await act(async () => main.run!("mini:p", second));
+  expect(first.stopped).toHaveBeenCalledTimes(1);
+  expect(second.stopped).not.toHaveBeenCalled();
+  expect(dialog()?.querySelector("h2")?.textContent).toBe("Continue the coordinator on MINI?");
 });
 
 it("offers nothing for a project that never moves", async () => {

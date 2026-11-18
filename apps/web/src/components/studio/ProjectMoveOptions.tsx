@@ -46,7 +46,7 @@ export interface ProjectMoveDialogContext {
   readonly sync?: boolean;
   /** What the chosen machine already holds of this project, where Main is, and the plan. */
   readonly send?: SendFacts | null;
-  /** "Make {machine} main" for the finished copy, on its done screen; null where there is none. */
+  /** "Continue the coordinator on {machine}" for the finished copy, on its done screen; null where there is none. */
   readonly makeMain?: MakeMainAction | null;
 }
 
@@ -123,7 +123,7 @@ export function SendSummary({
   const note = other
     ? refused
       ? {
-          text: "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.",
+          text: "The coordinator cannot continue on {machine}: it has this repository as a separate project. Link it first.",
           values: { source: sourceLabel, machine: targetLabel },
         }
       : otherProjectNote({ source: sourceLabel, there: targetLabel, main: other.main })
@@ -210,7 +210,7 @@ function CopyPicker({
               {displayFolder(copy.workspaceRoot)}
             </span>
             {copy.id === mainId && (
-              <span className="ms-auto text-xs text-muted-foreground">Main</span>
+              <span className="ms-auto text-xs text-muted-foreground">Coordinator</span>
             )}
           </label>
         ))}
@@ -308,7 +308,7 @@ const METHODS: ReadonlyArray<{
     value: "folder",
     label: "Git only, no file copy",
     detail:
-      "Continues in a folder already saved there, which updates from origin. Always moves Main there.",
+      "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.",
   },
 ];
 
@@ -348,10 +348,8 @@ export function FilesTravelChoice() {
                 <span className="block wrap-anywhere text-xs text-muted-foreground">
                   {blocked
                     ? refused === "main"
-                      ? tx("Not available: that machine already has Main.")
-                      : tx(
-                          "Not available: it would move Main into a project this copy is not linked to.",
-                        )
+                      ? tx("Not available: that machine already has the coordinator.")
+                      : tx("Not available: it would move the coordinator into a separate project.")
                     : item.detail}
                 </span>
               </span>
