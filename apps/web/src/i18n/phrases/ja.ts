@@ -5392,6 +5392,27 @@ export const ja: PhraseCatalog = {
   "A device cannot approve itself. Type this code on another device or on the machine.":
     "デバイスは自分自身を承認できません。このコードを別のデバイスかマシンで入力してください。",
   "A new device wants to use {machine}": "新しいデバイスが {machine} の使用を求めています",
+  "{count} devices want to use {machine}": "{count} 台のデバイスが {machine} の使用を求めています",
+  "Each one shows its own code. Type the code from the device you want to allow.":
+    "デバイスごとに固有のコードが表示されます。許可するデバイスのコードを入力してください。",
+  "Type the code shown on the device you want to allow": "許可するデバイスに表示されたコードを入力",
+  "Allowed {device}. It can now use {machine}.":
+    "{device} を許可しました。{machine} を使えるようになりました。",
+  "ID {id}": "ID {id}",
+  "Deny {device}": "{device} を拒否",
+  "Signed in to SpecWithCode Connect as {account}":
+    "SpecWithCode Connect に {account} としてサインイン",
+  "Signed in to your SpecWithCode Connect account":
+    "あなたの SpecWithCode Connect アカウントにサインイン",
+  "Paired through {hub}": "{hub} 経由でペアリング",
+  "Paired through another of your machines": "別のマシン経由でペアリング",
+  "Waiting for approval": "承認待ち",
+  "This device's ID is {id}. The machine shows the same ID next to it.":
+    "このデバイスの ID は {id} です。マシン側でも同じ ID が横に表示されます。",
+  "Open SpecWithCode on each machine below and type its code:":
+    "下の各マシンで SpecWithCode を開き、それぞれのコードを入力してください:",
+  "This device connects on its own once a machine allows it.":
+    "いずれかのマシンが許可すると、このデバイスは自動で接続します。",
   "A phone": "スマートフォン",
   "A tablet": "タブレット",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
@@ -5404,7 +5425,6 @@ export const ja: PhraseCatalog = {
   "Approve this device on the machine.": "このデバイスをマシンで承認してください。",
   "Approved {date} by {approver}": "{date} に {approver} が承認",
   "Checking devices…": "デバイスを確認しています…",
-  "Code shown on {device}": "{device} に表示されたコード",
   "Could not reach this machine.": "このマシンに接続できませんでした。",
   "Could not reach this machine. Try again.":
     "このマシンに接続できませんでした。もう一度お試しください。",
@@ -5471,7 +5491,6 @@ export const ja: PhraseCatalog = {
   "{label} joined": "{label} が参加しました",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} はこのデバイスの接続を許可しなくなりました。{machine} の SpecWithCode でもう一度承認してください。",
-  "{position} of {total} waiting": "待機中 {position}/{total}",
   "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
     "許可すると、このアプリと同じように {machine} のターミナル、ファイル、設定、サインインを使い、そこで作業を始められるようになります。",
   "Asked at {time}": "{time} に申請",

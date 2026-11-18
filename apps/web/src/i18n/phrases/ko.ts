@@ -5327,6 +5327,26 @@ export const ko: PhraseCatalog = {
   "A device cannot approve itself. Type this code on another device or on the machine.":
     "기기는 스스로를 승인할 수 없습니다. 다른 기기나 컴퓨터에서 이 코드를 입력하세요.",
   "A new device wants to use {machine}": "새 기기가 {machine}을(를) 사용하려고 합니다",
+  "{count} devices want to use {machine}": "기기 {count}대가 {machine}을(를) 사용하려고 합니다",
+  "Each one shows its own code. Type the code from the device you want to allow.":
+    "기기마다 고유한 코드가 표시됩니다. 허용할 기기의 코드를 입력하세요.",
+  "Type the code shown on the device you want to allow": "허용할 기기에 표시된 코드를 입력하세요",
+  "Allowed {device}. It can now use {machine}.":
+    "{device}을(를) 허용했습니다. 이제 {machine}을(를) 사용할 수 있습니다.",
+  "ID {id}": "ID {id}",
+  "Deny {device}": "{device} 거부",
+  "Signed in to SpecWithCode Connect as {account}":
+    "{account}(으)로 SpecWithCode Connect에 로그인함",
+  "Signed in to your SpecWithCode Connect account": "내 SpecWithCode Connect 계정에 로그인함",
+  "Paired through {hub}": "{hub}을(를) 통해 페어링됨",
+  "Paired through another of your machines": "내 다른 컴퓨터를 통해 페어링됨",
+  "Waiting for approval": "승인 대기 중",
+  "This device's ID is {id}. The machine shows the same ID next to it.":
+    "이 기기의 ID는 {id}입니다. 컴퓨터에서도 같은 ID가 옆에 표시됩니다.",
+  "Open SpecWithCode on each machine below and type its code:":
+    "아래 각 컴퓨터에서 SpecWithCode를 열고 해당 코드를 입력하세요:",
+  "This device connects on its own once a machine allows it.":
+    "컴퓨터 중 하나가 허용하면 이 기기가 자동으로 연결됩니다.",
   "A phone": "휴대폰",
   "A tablet": "태블릿",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
@@ -5339,7 +5359,6 @@ export const ko: PhraseCatalog = {
   "Approve this device on the machine.": "컴퓨터에서 이 기기를 승인하세요.",
   "Approved {date} by {approver}": "{date}에 승인됨 ({approver})",
   "Checking devices…": "기기 확인 중…",
-  "Code shown on {device}": "{device}에 표시된 코드",
   "Could not reach this machine.": "이 컴퓨터에 연결할 수 없습니다.",
   "Could not reach this machine. Try again.": "이 컴퓨터에 연결할 수 없습니다. 다시 시도하세요.",
   "Could not remove {device}": "{device}을(를) 제거하지 못했습니다",
@@ -5403,7 +5422,6 @@ export const ko: PhraseCatalog = {
   "{label} joined": "{label} 참여함",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine}에서 더 이상 이 기기의 연결을 허용하지 않습니다. {machine}의 SpecWithCode에서 다시 승인하세요.",
-  "{position} of {total} waiting": "대기 중 {position}/{total}",
   "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
     "허용하면 이 앱처럼 {machine}의 터미널, 파일, 설정, 로그인을 사용하고 그곳에서 작업을 시작할 수 있습니다.",
   "Asked at {time}": "{time}에 요청",

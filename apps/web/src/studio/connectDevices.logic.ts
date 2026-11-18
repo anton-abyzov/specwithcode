@@ -64,6 +64,48 @@ export function connectDeviceName(device: DeviceFacts, tx: TranslatePhrase = eng
   return own ? label : tx(standInDeviceName(device));
 }
 
+/** "ID 7K3Q", or nothing for a machine that sends no short ID yet (1406). */
+export function connectDeviceIdLabel(
+  device: { readonly shortId?: string | undefined },
+  tx: TranslatePhrase = englishPhrase,
+) {
+  const id = device.shortId?.trim();
+  return id ? tx("ID {id}", { id }) : "";
+}
+
+/**
+ * "iPhone · ID 7K3Q": the name with the four characters that tell two devices
+ * of one name apart. The device shows the same ID. Both are hints for the
+ * owner; the typed code is what approves.
+ */
+export function connectDeviceTitle(
+  device: DeviceFacts & { readonly shortId?: string | undefined },
+  tx: TranslatePhrase = englishPhrase,
+) {
+  const name = connectDeviceName(device, tx);
+  const id = connectDeviceIdLabel(device, tx);
+  return id ? `${name} · ${id}` : name;
+}
+
+/**
+ * What Later remembers a hidden request by: the device, not the request, so the
+ * same device asking again after its request ran out stays hidden. Later only
+ * hides the pop-up; the device stays listed in Settings and gains nothing.
+ */
+export const laterKey = (request: Pick<ConnectDeviceRequest, "id" | "kind" | "shortId">) =>
+  request.shortId ? `${request.kind}:${request.shortId}` : request.id;
+
+/**
+ * The pop-up's waiting list: every request while at least one of them was not
+ * put off with Later, else none. A new device brings the hidden ones back with it.
+ */
+export function requestsToPrompt(
+  pending: ReadonlyArray<ConnectDeviceRequest>,
+  later: ReadonlySet<string>,
+): ReadonlyArray<ConnectDeviceRequest> {
+  return pending.some((request) => !later.has(laterKey(request))) ? pending : [];
+}
+
 /** "macOS · SpecWithCode 1.0.338 · First seen November 17, 2026": what tells devices apart. */
 export function connectDeviceDetails(
   device: Partial<Pick<ConnectDevice, "system" | "app" | "firstSeenAt">> & {

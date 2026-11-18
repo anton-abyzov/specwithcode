@@ -179,9 +179,40 @@ describe("Devices that can use this machine", () => {
       <ConnectDevicesList snapshot={snapshot()} actions={actions} />,
     );
     expect(html).toContain("Anton&#x27;s iPhone is waiting to use m4.");
-    expect(html).toContain('data-device-code-form="request-1"');
+    expect(html).toContain('data-device-code-form="list"');
     expect(html).toContain(">Allow<");
     expect(html).toContain(">Deny<");
+  });
+
+  it("lists waiting devices apart from allowed ones, with one code box and IDs (1406)", () => {
+    const twoPhones = snapshot({
+      devices: [{ ...snapshot().devices[0]!, label: "iPhone", shortId: "ABCD" }],
+      pending: ["TSKR", "9229"].map((shortId, index) => ({
+        id: `request-${index}`,
+        kind: "connect" as const,
+        label: "iPhone",
+        shortId,
+        deviceType: "mobile",
+        system: "iOS",
+        askedAt: "2026-11-13T15:10:00.000Z",
+        expiresAt: "2026-11-13T15:20:00.000Z",
+      })),
+    });
+    const html = renderToStaticMarkup(
+      <ConnectDevicesList snapshot={twoPhones} actions={actions} />,
+    );
+    // Any code box used to approve any device, so there is one for the group.
+    expect(html.match(/data-device-code-form=/g)).toHaveLength(1);
+    expect(html).toContain("Type the code shown on the device you want to allow");
+    expect(html.match(/data-device-deny=/g)).toHaveLength(2);
+    expect(html).toContain('aria-label="Deny iPhone · ID TSKR"');
+    expect(html).toContain('aria-label="Deny iPhone · ID 9229"');
+    const waiting = html.indexOf("Waiting for approval");
+    const allowed = html.indexOf("data-connect-devices-allowed");
+    expect(waiting).toBeGreaterThan(-1);
+    expect(allowed).toBeGreaterThan(waiting);
+    expect(html.indexOf("ID TSKR")).toBeLessThan(allowed);
+    expect(html.indexOf("ID ABCD")).toBeGreaterThan(allowed);
   });
 
   it("lists approved devices with who approved them and a Remove button", () => {

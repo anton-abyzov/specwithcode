@@ -16,18 +16,21 @@ import {
   type ConnectDevice,
   type ConnectDevicesSnapshot,
   approveOutcomeMessage,
-  connectDeviceName,
+  connectDeviceTitle,
   connectDevices,
+  laterKey,
   makeSeenNotices,
   noticeMessage,
+  requestsToPrompt,
 } from "../../studio/connectDevices";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   type ConnectDevicesListActions,
   DeviceApprovalPrompt,
-  DeviceWaitingCard,
+  DeviceWaitingList,
 } from "./ConnectDeviceViews";
 import { inlineCodeShown, inlineCodesVersion, subscribeInlineCodes } from "./inlineApprovalCode";
+import { useOwnDeviceShortId } from "./ownDeviceId";
 
 const POLL_MS = 4_000;
 const HIDDEN_POLL_MS = 20_000;
@@ -129,6 +132,8 @@ export function useConnectDevicesActions(
   environmentId: EnvironmentId,
   machine: string,
   refresh: () => Promise<void>,
+  /** Told which device a typed code allowed, so the pop-up can name it (1406). */
+  onApproved?: (device: ConnectDevice) => void,
 ): ConnectDevicesListActions {
   const tx = useTx();
   return {
@@ -136,16 +141,18 @@ export function useConnectDevicesActions(
       try {
         const result = await connectDevices.approve(environmentId, code);
         const problem = approveOutcomeMessage(result, machine, tx);
-        if (problem === null && result.device)
+        if (problem === null && result.device) {
+          onApproved?.(result.device);
           toastManager.add(
             stackedThreadToast({
               type: "success",
               title: tx("{device} can now use {machine}", {
-                device: connectDeviceName(result.device, tx),
+                device: connectDeviceTitle(result.device, tx),
                 machine,
               }),
             }),
           );
+        }
         return problem;
       } catch (cause) {
         return cause instanceof Error
@@ -164,7 +171,7 @@ export function useConnectDevicesActions(
       await refresh();
     },
     onRemove: async (device: ConnectDevice) => {
-      const name = connectDeviceName(device, tx);
+      const name = connectDeviceTitle(device, tx);
       const confirmed = await requestConfirmDialog(
         `${tx("Remove {device}?", { device: name })}\n${tx(
           "It stops using {machine} right away. To use it again, it asks with a new code.",
@@ -200,27 +207,36 @@ export function useConnectDevicesActions(
 }
 
 /**
- * Pops up on this machine's own app as soon as a device asks, with the code box,
- * Allow and Deny. Later hides a request until a new one comes.
+ * Pops up on this machine's own app as soon as a device asks: every waiting
+ * device, one code box, a Deny per device. Later hides it until a device that
+ * was not listed asks. It closes by itself when nothing waits (1406).
  */
 export function DeviceApprovalPromptHost() {
   const environmentId = usePrimaryEnvironmentId();
   const supported = useDeviceApprovalSupported(environmentId);
   const { snapshot, refresh } = useConnectDevices(environmentId, supported);
   const [later, setLater] = useState<ReadonlySet<string>>(() => new Set());
-  if (environmentId === null || snapshot === null || !snapshot.canApprove) return null;
-  const waiting = snapshot.pending.filter((request) => !later.has(request.id));
-  const request = waiting[0];
-  if (!request) return null;
+  // Devices allowed while this pop-up is open, so it can say which one a code let in.
+  const [allowed, setAllowed] = useState<ReadonlyArray<ConnectDevice>>([]);
+  const requests =
+    environmentId === null || snapshot === null || !snapshot.canApprove
+      ? []
+      : requestsToPrompt(snapshot.pending, later);
+  const open = requests.length > 0;
+  // A closed pop-up forgets whom it allowed, so the next one starts clean.
+  if (!open && allowed.length > 0) setAllowed([]);
+  if (environmentId === null || snapshot === null || !open) return null;
   return (
     <DeviceApprovalPromptForMachine
       environmentId={environmentId}
       snapshot={snapshot}
       refresh={refresh}
-      request={request}
-      position={snapshot.pending.indexOf(request) + 1}
-      total={snapshot.pending.length}
-      onLater={() => setLater((current) => new Set([...current, request.id]))}
+      requests={requests}
+      allowed={allowed}
+      onApproved={(device) =>
+        setAllowed((current) => [...current.filter((entry) => entry.key !== device.key), device])
+      }
+      onLater={() => setLater((current) => new Set([...current, ...requests.map(laterKey)]))}
     />
   );
 }
@@ -229,47 +245,33 @@ function DeviceApprovalPromptForMachine({
   environmentId,
   snapshot,
   refresh,
-  request,
-  position,
-  total,
+  requests,
+  allowed,
+  onApproved,
   onLater,
 }: {
   environmentId: EnvironmentId;
   snapshot: ConnectDevicesSnapshot;
   refresh: () => Promise<void>;
-  request: ConnectDevicesSnapshot["pending"][number];
-  position: number;
-  total: number;
+  requests: ConnectDevicesSnapshot["pending"];
+  allowed: ReadonlyArray<ConnectDevice>;
+  onApproved: (device: ConnectDevice) => void;
   onLater: () => void;
 }) {
-  const actions = useConnectDevicesActions(environmentId, snapshot.machine, refresh);
+  const actions = useConnectDevicesActions(environmentId, snapshot.machine, refresh, onApproved);
   const { environments } = useEnvironments();
   // A phone's hub by the name this app knows it under; unknown hubs read as "another machine".
-  const hub =
-    request.via === undefined
-      ? null
-      : (environments.find((environment) => environment.environmentId === request.via)?.label ??
-        null);
-  return hasCloudPublicConfig() ? (
-    <DeviceApprovalPromptWithAccount
+  const hubName = (via: string) =>
+    environments.find((environment) => environment.environmentId === via)?.label ?? null;
+  const Prompt = hasCloudPublicConfig() ? DeviceApprovalPromptWithAccount : DeviceApprovalPrompt;
+  return (
+    <Prompt
       machine={snapshot.machine}
-      hub={hub}
-      request={request}
-      position={position}
-      total={total}
+      hubName={hubName}
+      requests={requests}
+      allowed={allowed}
       onApprove={actions.onApprove}
-      onDeny={() => actions.onDeny(request.id)}
-      onLater={onLater}
-    />
-  ) : (
-    <DeviceApprovalPrompt
-      machine={snapshot.machine}
-      hub={hub}
-      request={request}
-      position={position}
-      total={total}
-      onApprove={actions.onApprove}
-      onDeny={() => actions.onDeny(request.id)}
+      onDeny={actions.onDeny}
       onLater={onLater}
     />
   );
@@ -288,26 +290,32 @@ function DeviceApprovalPromptWithAccount(
   );
 }
 
-/** On a device a machine has not approved yet: where to go, and the code to type there. */
+/**
+ * On a device machines have not approved yet: one card with every machine it
+ * waits on and that machine's code, and which device this is (1406).
+ */
 export function DeviceWaitingForApprovalHost() {
   const { environments } = useEnvironments();
   useSyncExternalStore(subscribeInlineCodes, inlineCodesVersion);
-  const waiting = environments.filter(
-    (environment) =>
-      environment.connection.deviceApprovalCode !== undefined &&
-      !inlineCodeShown(environment.environmentId),
+  const deviceId = useOwnDeviceShortId();
+  const waiting = environments.flatMap((environment) =>
+    environment.connection.deviceApprovalCode !== undefined &&
+    !inlineCodeShown(environment.environmentId)
+      ? [
+          {
+            id: environment.environmentId,
+            machine: environment.label,
+            code: environment.connection.deviceApprovalCode,
+          },
+        ]
+      : [],
   );
   if (waiting.length === 0) return null;
   return (
     <div className="pointer-events-none fixed inset-x-0 top-3 z-50 flex flex-col items-center gap-2">
-      {waiting.map((environment) => (
-        <div key={environment.environmentId} className="pointer-events-auto">
-          <DeviceWaitingCard
-            machine={environment.label}
-            code={environment.connection.deviceApprovalCode ?? ""}
-          />
-        </div>
-      ))}
+      <div className="pointer-events-auto">
+        <DeviceWaitingList waiting={waiting} deviceId={deviceId} />
+      </div>
     </div>
   );
 }

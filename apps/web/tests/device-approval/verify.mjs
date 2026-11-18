@@ -68,12 +68,13 @@ try {
       );
       assert.equal(
         await prompt.locator("[data-device-approval-line]").textContent(),
-        "Anton's iPhone (phone) is asking. Allow lets it use m4 like this app does.",
+        "Anton's iPhone is asking. It was paired through another of your machines.",
       );
+      assert.match(await prompt.locator("[data-device-approval-row]").textContent(), /ID H4WN/);
       assert.equal(await prompt.getByRole("textbox").count(), 1);
-      const allow = prompt.getByRole("button", { name: "Allow" });
+      const allow = prompt.getByRole("button", { name: "Allow", exact: true });
       assert.equal(await allow.isDisabled(), true);
-      assert.equal(await prompt.getByRole("button", { name: "Deny" }).count(), 1);
+      assert.equal(await prompt.locator("[data-device-deny]").count(), 1);
       // The code box has focus as soon as the pop-up opens.
       await page.keyboard.type("k7q-x2m");
       assert.equal(await allow.isDisabled(), false);
@@ -95,7 +96,7 @@ try {
       const { page, errors } = await open("scene=prompt", theme, [1280, 800]);
       await page.locator("[data-device-approval-prompt]").waitFor();
       await page.keyboard.type("ABCDEF");
-      await page.getByRole("button", { name: "Allow" }).click();
+      await page.getByRole("button", { name: "Allow", exact: true }).click();
       await page.getByRole("alert").waitFor();
       assert.match(
         await page.getByRole("alert").textContent(),
@@ -105,14 +106,76 @@ try {
       receipt.checks.push({ theme, scene: "popup-wrong-code", ok: true });
       await page.close();
     }
+    // Two phones of one name (1406): the typed code allows the phone that shows it,
+    // the pop-up names it and keeps the other one listed.
+    {
+      const { page, errors } = await open("scene=two-phones", theme, [1280, 860]);
+      const prompt = page.locator("[data-device-approval-prompt]");
+      await prompt.waitFor();
+      assert.equal(
+        await prompt.getByRole("heading").first().textContent(),
+        "2 devices want to use m4",
+      );
+      const rows = prompt.locator("[data-device-approval-row]");
+      assert.equal(await rows.count(), 2);
+      assert.match(await rows.nth(0).textContent(), /iPhone.*ID TSKR/);
+      assert.match(await rows.nth(1).textContent(), /iPhone.*ID 9229/);
+      assert.equal(await prompt.getByRole("textbox").count(), 1);
+      assert.equal(await prompt.getByRole("button", { name: "Deny iPhone · ID 9229" }).count(), 1);
+      await shot(page, `two-phones-${theme}.png`);
+      // The owner reads the code off the second phone.
+      await page.keyboard.type("p4r-t9w");
+      await prompt.getByRole("button", { name: "Allow", exact: true }).click();
+      const allowed = prompt.locator("[data-device-approval-allowed]");
+      await allowed.waitFor();
+      assert.equal(await allowed.textContent(), "Allowed iPhone · ID 9229. It can now use m4.");
+      assert.equal(await rows.count(), 1);
+      assert.match(await rows.first().textContent(), /ID TSKR/);
+      assert.equal(await prompt.getByRole("textbox").inputValue(), "");
+      assert.match(
+        await prompt.locator("[data-device-approval-count]").textContent(),
+        /^1 device waiting/,
+      );
+      assert.equal(await log(page), "approve request-phone-b");
+      await shot(page, `two-phones-one-allowed-${theme}.png`);
+      // The last one allowed: the pop-up closes by itself.
+      await prompt.getByRole("textbox").fill("K7QX2M");
+      await prompt.getByRole("button", { name: "Allow", exact: true }).click();
+      await prompt.waitFor({ state: "detached" });
+      assert.deepEqual(errors, []);
+      receipt.checks.push({ theme, scene: "two-phones", ok: true });
+      await page.close();
+    }
+    // A device waiting on three machines: one card, each machine's own code, and its ID.
+    {
+      const { page, errors } = await open("scene=waiting&machines=3", theme, [390, 844]);
+      const card = page.locator("[data-device-waiting-list]");
+      await card.waitFor();
+      assert.equal(await card.locator("[data-device-waiting]").count(), 3);
+      assert.deepEqual(await card.locator("[data-device-waiting-code]").allTextContents(), [
+        "K7QX2M",
+        "P4RT9W",
+        "D8HJ3N",
+      ]);
+      assert.match(await card.locator("[data-own-device-id]").textContent(), /ID is 9229/);
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - window.innerWidth,
+      );
+      assert.ok(overflow <= 0, `no horizontal scroll (${overflow}px)`);
+      await shot(page, `waiting-three-machines-${theme}.png`);
+      assert.deepEqual(errors, []);
+      receipt.checks.push({ theme, scene: "waiting-three-machines", ok: true });
+      await page.close();
+    }
     // 2. The waiting device: where to go, the code large, Copy.
     for (const size of [
       [390, 844],
       [1280, 800],
     ]) {
       const { page, errors } = await open("scene=waiting", theme, size);
-      const card = page.locator("[data-device-waiting]");
+      const card = page.locator("section[data-device-waiting]");
       await card.waitFor();
+      assert.match(await card.locator("[data-own-device-id]").textContent(), /ID is 9229/);
       assert.equal(
         await card.locator("[data-device-waiting-line]").textContent(),
         "Open SpecWithCode on m4 and type this code:",
@@ -142,14 +205,20 @@ try {
         await section.locator("[data-connect-devices-waiting-count]").textContent(),
         "1 device waiting",
       );
-      const waiting = section.locator("[data-connect-device-waiting]");
-      assert.equal(await waiting.getByRole("button", { name: "Allow" }).count(), 1);
-      assert.equal(await waiting.getByRole("button", { name: "Deny" }).count(), 1);
+      const waiting = section.locator("[data-connect-devices-waiting]");
+      assert.match(await waiting.textContent(), /Waiting for approval/);
+      assert.match(await waiting.textContent(), /ID H4WN/);
+      assert.equal(await waiting.getByRole("button", { name: "Allow", exact: true }).count(), 1);
+      assert.equal(await waiting.locator("[data-device-deny]").count(), 1);
+      assert.equal(
+        await section.locator("[data-connect-devices-allowed]").textContent(),
+        "Allowed",
+      );
       assert.match(await section.textContent(), /Kept by the update\. Check this list\./);
       assert.match(await section.textContent(), /Approved November 13, 2026 by this machine/);
       assert.equal(await section.getByRole("button", { name: "Remove" }).count(), 2);
       await shot(page, `device-list-${theme}.png`);
-      await waiting.getByRole("button", { name: "Deny" }).click();
+      await waiting.locator("[data-device-deny]").click();
       await section
         .locator("[data-connect-device]")
         .first()
