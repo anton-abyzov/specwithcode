@@ -203,15 +203,35 @@ export function projectSkillFacets(rows: ReadonlyArray<ProjectSkillRow>): {
     tiers: facet(
       rows,
       (row) => [projectSkillTierKey(row)],
-      (value) =>
-        value === UNLOCKED_TIER
-          ? "Not from vskill"
-          : value === "untiered"
-            ? "No tier"
-            : titleCase(value),
+      projectSkillTierLabel,
       rankOrder(["VERIFIED", "CERTIFIED", "untiered", UNLOCKED_TIER]),
     ),
   };
+}
+
+/** Display label for a key from {@link projectSkillTierKey}. */
+export function projectSkillTierLabel(value: string): string {
+  return value === UNLOCKED_TIER
+    ? "Not from vskill"
+    : value === "untiered"
+      ? "No tier"
+      : titleCase(value);
+}
+
+/**
+ * The options plus each selected value no row has, as a chip with count 0, so a filter
+ * seeded from a link (such as `?agent=claudeAgent` on a Codex-only machine) stays visible
+ * and one click clears it.
+ */
+export function withSelectedFacetOptions(
+  options: ReadonlyArray<ProjectSkillFacetOption>,
+  selected: ReadonlyArray<string>,
+  labelOf: (value: string) => string,
+): ReadonlyArray<ProjectSkillFacetOption> {
+  const offered = new Set(options.map((option) => option.value));
+  const missing = [...new Set(selected)].filter((value) => !offered.has(value));
+  if (missing.length === 0) return options;
+  return [...options, ...missing.map((value) => ({ value, label: labelOf(value), count: 0 }))];
 }
 
 export interface ProjectSkillSourceLinks {

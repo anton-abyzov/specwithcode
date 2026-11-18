@@ -3,6 +3,8 @@ import { useTx } from "../../i18n";
 import { WorkflowCapabilities } from "./WorkflowCapabilities";
 import {
   EnvironmentId,
+  isProviderDriverKind,
+  PROVIDER_DISPLAY_NAMES,
   ThreadId,
   summarizeProjectSkills,
   type ProjectId,
@@ -64,9 +66,11 @@ import {
   projectSkillProviderBadges,
   projectSkillSourceLinks,
   projectSkillStatusBadge,
+  projectSkillTierLabel,
   projectSkillVersions,
   pickSkillsMember,
   type ProjectSkillFacetOption,
+  withSelectedFacetOptions,
 } from "./ProjectSkillsSettings.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
@@ -269,7 +273,7 @@ function SkillProviderMark({
   entries,
   dimmed = false,
 }: {
-  presence: ProjectSkillPresence;
+  presence: Pick<ProjectSkillPresence, "instanceId" | "driver" | "label">;
   entries: ProviderEntries;
   dimmed?: boolean;
 }) {
@@ -833,12 +837,41 @@ function ScopedProjectSkillsView({
   const attention = snapshot ? projectSkillAttentionCount(snapshot.rows) : 0;
   const entries = useProviderEntries(environmentId);
   const presenceByLabel = useMemo(() => {
-    const byLabel = new Map<string, ProjectSkillPresence>();
+    const byLabel = new Map<
+      string,
+      Pick<ProjectSkillPresence, "instanceId" | "driver" | "label">
+    >();
     for (const row of snapshot?.rows ?? [])
       for (const presence of row.providers)
         if (!byLabel.has(presence.instanceId)) byLabel.set(presence.instanceId, presence);
+    // An agent with no skill here still has a mark, so a chip for it reads like the others.
+    for (const provider of snapshot?.providers ?? [])
+      if (!byLabel.has(provider.instanceId)) byLabel.set(provider.instanceId, provider);
     return byLabel;
   }, [snapshot]);
+  // A selected value no row has stays a selected chip with count 0, so it never filters unseen.
+  const agentOptions = useMemo(
+    () =>
+      withSelectedFacetOptions(
+        facets.providers,
+        providers,
+        // A built-in agent this machine does not run still reads "Claude", never `claudeAgent`.
+        (value) =>
+          entries.get(value)?.displayName ??
+          presenceByLabel.get(value)?.label ??
+          (isProviderDriverKind(value) ? PROVIDER_DISPLAY_NAMES[value] : undefined) ??
+          value,
+      ),
+    [facets.providers, providers, entries, presenceByLabel],
+  );
+  const levelOptions = useMemo(
+    () => withSelectedFacetOptions(facets.levels, levels, projectSkillLevelLabel),
+    [facets.levels, levels],
+  );
+  const tierOptions = useMemo(
+    () => withSelectedFacetOptions(facets.tiers, tiers, projectSkillTierLabel),
+    [facets.tiers, tiers],
+  );
 
   return (
     <SettingsSection
@@ -971,11 +1004,11 @@ function ScopedProjectSkillsView({
             })}
           </label>
         </div>
-        {snapshot && snapshot.rows.length > 0 ? (
+        {snapshot && (snapshot.rows.length > 0 || chipsActive) ? (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="skills-filters">
             <FacetGroup
               label={tx("Agent")}
-              options={facets.providers}
+              options={agentOptions}
               value={providers}
               onChange={setProviders}
               renderIcon={(label) => {
@@ -987,13 +1020,13 @@ function ScopedProjectSkillsView({
             />
             <FacetGroup
               label={tx("Level")}
-              options={facets.levels}
+              options={levelOptions}
               value={levels}
               onChange={setLevels}
             />
             <FacetGroup
               label={tx("Tier")}
-              options={facets.tiers}
+              options={tierOptions}
               value={tiers}
               onChange={setTiers}
             />
