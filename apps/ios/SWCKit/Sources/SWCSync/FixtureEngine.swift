@@ -49,6 +49,10 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   /// Like `default`, with Team rules: a limit on the Office Mac, a broken rules
   /// file on the build box, and the travel laptop refusing phones.
   case teamRules = "team-rules"
+  /// Every machine is waiting for its owner to allow this phone (1408):
+  /// nothing loaded yet, or saved messages with `approvalSaved`.
+  case approval
+  case approvalSaved = "approval-saved"
 
   var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
 }
@@ -205,6 +209,13 @@ public final class FixtureEngine: AppEngine {
     if scenario == .connect {
       model.connect = ConnectState(methods: [.apple, .github], user: FixtureSample.connectUser)
       phones = FixtureSample.phones(now: now)
+    }
+    if scenario == .approval || scenario == .approvalSaved {
+      for i in model.machines.indices {
+        model.machines[i].status = .offline
+        model.machines[i].deviceApprovalCode = "6X9SF6"
+        unreachable.insert(model.machines[i].id)
+      }
     }
     if scenario == .offlineRecovery || scenario == .offlineStartup {
       model.connect = ConnectState(methods: [.apple])
@@ -618,8 +629,8 @@ public final class FixtureEngine: AppEngine {
     let machine = model.machine(target.environmentId)
     let online = machine?.status.isOnline ?? false
     session.rows = rows
-    session.isLoaded = scenario != .offlineRecovery
-    if scenario == .offlineRecovery { session.rows = [] }
+    session.isLoaded = scenario != .offlineRecovery && scenario != .approval
+    if scenario == .offlineRecovery || scenario == .approval { session.rows = [] }
     session.isRunning = running.contains(target)
     session.queuedCount = queued[target] ?? 0
     session.plan = Self.plan(in: rows, running: running.contains(target))
