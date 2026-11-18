@@ -250,8 +250,6 @@ export class ManagedProjectFolders extends Context.Service<
         readonly specweaveNeedsNode?: boolean;
         /** SpecWeave was set up in a folder that already existed and had none. */
         readonly specweaveAdded?: boolean;
-        /** A folder used as it is already had SpecWeave. */
-        readonly specweavePresent?: boolean;
       },
       NamedProjectError
     >;
@@ -840,11 +838,11 @@ const make = Effect.gen(function* () {
   // files are left for the person to commit, since the repository is theirs.
   const addSpecweaveToExisting = Effect.fn("ManagedProjectFolders.addSpecweaveToExisting")(
     function* (projectId: ProjectId, workspaceRoot: string, wanted: boolean) {
+      if (!wanted) return {};
       const present = yield* fileSystem
         .exists(path.join(workspaceRoot, ".specweave"))
         .pipe(Effect.orElseSucceed(() => false));
-      if (present) return { specweavePresent: true };
-      if (!wanted) return {};
+      if (present) return {};
       // Ticking Use SpecWeave asks for Git too when the folder has none; git
       // init stages nothing, so the person's files stay theirs to commit.
       const failure = yield* setUpSpecweave(workspaceRoot, { initGit: true });

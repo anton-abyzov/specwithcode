@@ -121,6 +121,14 @@ import {
 } from "../orchestrator/requestSpecweaveSetup.ts";
 
 /** Shows the approval card in the calling thread; the user's answer applies the change. */
+/** Whether SpecWeave is on in a folder used as it is (1396); unknown counts as not. */
+const specweaveIsOn = (workspaceRoot: string) =>
+  Effect.tryPromise(() => readSpecweaveState(workspaceRoot)).pipe(
+    Effect.timeoutOption("3 seconds"),
+    Effect.map((state) => Option.isSome(state) && state.value === "on"),
+    Effect.orElseSucceed(() => false),
+  );
+
 const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (input: {
   readonly action: ProjectActionRequests.ProjectAction;
   readonly projectId?: ProjectId | undefined;
@@ -1104,7 +1112,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               ? {
                   skipped: "existing_folder" as const,
                   workspaceRoot: created.workspaceRoot,
-                  present: created.specweavePresent,
+                  present: yield* specweaveIsOn(created.workspaceRoot),
                 }
               : {}),
             error: created.specweaveError,
@@ -1127,13 +1135,18 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           });
         const commandId = yield* newCommandId();
         // A folder that is registered keeps its files as they are.
-        const registeredNote = specweaveCreateNote({
-          kind: input.kind,
-          asked: specweave,
-          skipped: "registered",
-        });
-        const withNote = <A extends object>(result: A) =>
-          registeredNote === undefined ? result : { ...result, specweave: registeredNote };
+        const withNote = <A extends { readonly workspaceRoot: string }>(result: A) =>
+          Effect.gen(function* () {
+            const wanted = input.kind !== "personal" && specweave !== false;
+            const note = specweaveCreateNote({
+              kind: input.kind,
+              asked: specweave,
+              skipped: "registered",
+              workspaceRoot: result.workspaceRoot,
+              present: wanted ? yield* specweaveIsOn(result.workspaceRoot) : false,
+            });
+            return note === undefined ? result : { ...result, specweave: note };
+          });
         return yield* projects
           .create({
             ...input,
@@ -1166,7 +1179,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ),
               ),
             ),
-            Effect.map(withNote),
+            Effect.flatMap(withNote),
           );
       }),
   ),

@@ -8,6 +8,9 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@specweave-studio/contracts";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -64,7 +67,7 @@ const setup = (
     readonly localResult?: {
       readonly existing?: true;
       readonly specweaveError?: string;
-      readonly specweavePresent?: true;
+      readonly workspaceRoot?: string;
     };
   } = {},
 ) => {
@@ -359,14 +362,30 @@ describe("studio_project_create's specweave (1396 AC-17)", () => {
     });
   });
 
-  it.effect("a folder used as it is that has SpecWeave says it is set up", () => {
-    const { create } = setup({ localResult: { existing: true, specweavePresent: true } });
+  it.effect("a folder used as it is says SpecWeave is set up only where it is on", () => {
+    const planned = mkdtempSync(join(tmpdir(), "t09-planned-"));
+    mkdirSync(join(planned, ".specweave"), { recursive: true });
+    writeFileSync(join(planned, ".specweave", "config.json"), "{}");
+    // Increments but no config: unfinished, not on.
+    const unfinished = mkdtempSync(join(tmpdir(), "t09-unfinished-"));
+    mkdirSync(join(unfinished, ".specweave", "increments", "0001-first"), { recursive: true });
+    const on = setup({ localResult: { existing: true, workspaceRoot: planned } });
+    const half = setup({ localResult: { existing: true, workspaceRoot: unfinished } });
     return Effect.gen(function* () {
-      const result = yield* create({ title: "site", parentPath: "/w/site" });
+      const result = yield* on.create({ title: "site", parentPath: "/w/site" });
       expect(result.specweave).toBe(
-        "SpecWeave is already set up in /projects/local, which is used as it is.",
+        `SpecWeave is already set up in ${planned}, which is used as it is.`,
       );
-    });
+      const other = yield* half.create({ title: "site", parentPath: "/w/site" });
+      expect(String(other.specweave)).toContain(`${unfinished} already existed`);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(planned, { recursive: true, force: true });
+          rmSync(unfinished, { recursive: true, force: true });
+        }),
+      ),
+    );
   });
 
   it.effect("a failed setup keeps the project and says why", () => {

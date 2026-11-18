@@ -72,7 +72,7 @@ export function specweaveCreateNote(input: {
   readonly asked: boolean | undefined;
   /** Why setup was not run although wanted. */
   readonly skipped?: "registered" | "existing_folder" | undefined;
-  /** The folder used as it is already has SpecWeave. */
+  /** The folder used as it is already has SpecWeave on (its state is "on"). */
   readonly present?: boolean | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly error?: string | undefined;
@@ -83,10 +83,10 @@ export function specweaveCreateNote(input: {
       ? "SpecWeave not set up: a personal assistant has no repository to plan in."
       : undefined;
   if (input.asked === false) return `SpecWeave not set up: specweave was false. ${BOARD_PRESS}`;
+  if (input.skipped !== undefined && input.present === true)
+    return `SpecWeave is already set up in ${input.workspaceRoot ?? "the folder"}, which is used as it is.`;
   if (input.skipped === "registered")
     return `SpecWeave not set up: an existing folder is registered as it is, and SpecWeave is never added to one without the user's press. ${BOARD_PRESS}`;
-  if (input.skipped === "existing_folder" && input.present === true)
-    return `SpecWeave is already set up in ${input.workspaceRoot ?? "the folder"}, which is used as it is.`;
   if (input.skipped === "existing_folder")
     return `SpecWeave not set up: ${input.workspaceRoot ?? "the folder"} already existed, so it is used as it is, and SpecWeave is never added to an existing folder without the user's press. ${BOARD_PRESS}`;
   if (input.needsNode === true)
