@@ -14,7 +14,7 @@ final class ManualClock: Sendable {
 
 /// How the fake machine's HTTP answers the first attempt.
 final class AttemptGate: Sendable {
-  enum Mode: Sendable { case hang, fail, answer }
+  enum Mode: Sendable { case hang, fail, answer, approval }
   private let mode: Mutex<Mode>
   init(_ mode: Mode) { self.mode = Mutex(mode) }
   var current: Mode { mode.withLock { $0 } }
@@ -49,6 +49,7 @@ final class AttemptGate: Sendable {
     let http = FakeHTTP { request in
       while gate.current == .hang { try await Task.sleep(for: .milliseconds(5)) }
       if gate.current == .fail { throw URLError(.cannotConnectToHost) }
+      if gate.current == .approval, request.url?.path == "/api/auth/websocket-ticket" { return (401, ConnectingGraceTests.waitingForCode) }
       let (data, response) = try await inner.send(request)
       return (response.statusCode, String(decoding: data, as: UTF8.self))
     }
@@ -153,6 +154,59 @@ final class AttemptGate: Sendable {
     #expect(connected)
     #expect(!sawOffline)
     #expect(h.model.machine(env)?.isSettling == false)
+  }
+
+  nonisolated static let waitingForCode = #"{"code":"auth_invalid","reason":"invalid_credential","teamRulesMessage":"Open SpecWithCode on M4 and type this code: K7QX2M","refusal":"device_not_approved","approvalCode":"K7QX2M","traceId":"t"}"#
+
+  /// The code stays on screen, never "Connecting", while the phone tries
+  /// again, is sent to the background and comes back (1408).
+  @Test func aPhoneWaitingForItsCodeNeverFlashesConnecting() async throws {
+    let h = try await harness(.approval, grace: .seconds(60))
+    defer { h.engine.setActive(false) }
+    func waiting() -> Bool {
+      guard let machine = h.model.machine(env) else { return false }
+      return machine.deviceApprovalCode == "K7QX2M" && machine.status == .offline && !machine.isSettling
+    }
+    #expect(await until { waiting() })
+    var flashed = false
+    func record() { if !waiting() { flashed = true } }
+
+    // Reconnect with the next attempt still out: the attempt reads "connecting".
+    h.gate.set(.hang)
+    h.engine.reconnect(machineId: env)
+    // The attempt is really out before the screen is read.
+    #expect(await until { h.engine.machines[env]?.status.state == .connecting })
+    for _ in 0..<20 {
+      h.engine.publishNow()
+      record()
+      try await Task.sleep(for: .milliseconds(5))
+    }
+
+    // To the background and back, as when the owner goes to type the code.
+    h.engine.setActive(false)
+    #expect(await until { h.engine.machines[env]?.status.state == .offline })
+    h.engine.publishNow()
+    record()
+    h.engine.setActive(true)
+    #expect(await until { h.engine.machines[env]?.status.state == .connecting })
+    for _ in 0..<20 {
+      h.engine.publishNow()
+      record()
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(!flashed)
+
+    // The machine drops off the network mid-wait: the row and code stay up.
+    h.gate.set(.fail)
+    h.engine.reconnect(machineId: env)
+    #expect(await until { if case .unreachable? = h.engine.machines[env]?.status.lastError { return true } else { return false } })
+    h.engine.publishNow()
+    #expect(waiting())
+
+    // Approved: the next attempt connects and the code goes away.
+    h.gate.set(.answer)
+    h.engine.reconnect(machineId: env)
+    #expect(await until { h.model.machine(env)?.status == .connected && h.model.machine(env)?.deviceApprovalCode == nil })
   }
 
   @Test func aLaterDisconnectStillShowsOffline() async throws {

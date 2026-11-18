@@ -350,7 +350,9 @@ private struct ChatScreen: View {
   @ViewBuilder private var offlineTranscript: some View {
     let machineId = target.environmentId
     if let machine = model.machine(machineId) {
-      if let other = reachableOrchestrator, !machine.isDisconnected {
+      if let code = machine.deviceApprovalCode, !machine.isDisconnected {
+        approvalTranscript(machine, code: code)
+      } else if let other = reachableOrchestrator, !machine.isDisconnected {
         transcriptPlaceholder(
           title: machine.recoveryTitle,
           message: "This machine is unavailable. \(other.machineLabel)'s coordinator for this project is available now.",
@@ -367,11 +369,77 @@ private struct ChatScreen: View {
             : machine.canRetryConnection ? { model.engine.reconnect(machineId: machineId) } : nil
         )
       }
-      recoveryButton
+      if machine.deviceApprovalCode == nil || machine.isDisconnected { recoveryButton }
     } else {
       transcriptPlaceholder(title: "Machine unavailable", message: "Choose a machine or pair again.")
       WeaveButton("Machines", kind: .secondary) { nav.push(.machines) }
     }
+  }
+
+  /// One steady view while machines wait for their owner to allow this phone:
+  /// a row per waiting machine with its latest code, and no Reconnect, since
+  /// the phone keeps asking by itself (1408; the list and phone line are 1406).
+  private func approvalTranscript(_ machine: MachineSummary, code: String) -> some View {
+    let waiting = model.machinesAwaitingApproval(first: machine.id)
+    return VStack(spacing: WeaveSpacing.s3) {
+      Text(machine.approvalTitle)
+        .weaveFont(.title)
+        .foregroundStyle(Color.weave.ink)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityAddTraits(.isHeader)
+      ForEach(waiting.isEmpty ? [machine] : waiting) { row in
+        approvalRow(row, code: row.deviceApprovalCode ?? code)
+      }
+      HStack(spacing: WeaveSpacing.s2) {
+        ProgressView().controlSize(.small)
+        Text(waiting.count > 1 ? "Connects to each machine on its own once it allows this phone." : machine.approvalProgress)
+          .weaveFont(.caption)
+          .foregroundStyle(Color.weave.muted)
+          .multilineTextAlignment(.center)
+      }
+      if let line = model.thisPhoneLine {
+        Text(line)
+          .weaveFont(.caption)
+          .foregroundStyle(Color.weave.muted)
+          .accessibilityIdentifier("chat.approval-this-phone")
+      }
+      if let other = reachableOrchestrator {
+        WeaveButton("View on \(other.machineLabel)", kind: .secondary) { showOrchestrator(other.ref) }
+          .padding(.top, WeaveSpacing.s2)
+      }
+      recoveryButton
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.horizontal, WeaveSpacing.s6)
+    .padding(.top, WeaveSpacing.s8 * 3)
+    .accessibilityIdentifier("chat.approval-wait")
+  }
+
+  /// "Open SpecWithCode on m1 and type this code:" over the code, which copies on tap.
+  private func approvalRow(_ machine: MachineSummary, code: String) -> some View {
+    VStack(spacing: WeaveSpacing.s1) {
+      Text(machine.approvalInstruction)
+        .weaveFont(.callout)
+        .foregroundStyle(Color.weave.muted)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+      Button { WeaveClipboard.copyAnnounced(code) } label: {
+        HStack(spacing: WeaveSpacing.s2) {
+          Text(code)
+            .font(Font.weave(.display).monospaced())
+            .tracking(4)
+            .foregroundStyle(Color.weave.ink)
+          Image(systemName: "doc.on.doc")
+            .foregroundStyle(Color.weave.muted)
+            .accessibilityHidden(true)
+        }
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("\(machine.displayName) code \(code.map(String.init).joined(separator: " ")). Copy")
+      .accessibilityIdentifier("chat.approval-code.\(machine.id)")
+    }
+    .padding(.vertical, WeaveSpacing.s1)
   }
 
   private var recoveryButton: some View {
@@ -380,6 +448,12 @@ private struct ChatScreen: View {
     }
     .frame(maxWidth: .infinity)
     .accessibilityIdentifier("chat.connection-options-body")
+  }
+
+  /// This chat's machine while it waits for its owner to allow this phone.
+  private var approvalMachine: MachineSummary? {
+    guard let machine = model.machine(target.environmentId), machine.deviceApprovalCode != nil, !machine.isDisconnected, !machine.status.isOnline else { return nil }
+    return machine
   }
 
   /// Another machine's copy of this project whose orchestrator is reachable.
@@ -901,7 +975,7 @@ private struct ChatScreen: View {
         text: draft,
         isRunning: session.isRunning && !session.isStale,
         placeholder: session.isRunning ? nil : placeholder,
-        blockedReason: session.machineOnline ? (session.sendBlockedReason ?? (photosPending ? "Preparing photos…" : nil)) : session.machineSettling ? "Connecting…" : "Machine unavailable. Your draft is kept.",
+        blockedReason: session.machineOnline ? (session.sendBlockedReason ?? (photosPending ? "Preparing photos…" : nil)) : session.machineSettling ? "Connecting…" : approvalMachine?.approvalComposerLine ?? "Machine unavailable. Your draft is kept.",
         hasAttachments: !pendingImages.isEmpty,
         // Set only from a thread's runs, so chats without runs offer none.
         suggestion: session.isStale ? nil : session.promptSuggestion,
@@ -979,6 +1053,14 @@ private struct ChatScreen: View {
     if !session.machineOnline {
       // The transcript itself says the machine is offline and offers Reconnect.
       if showsOfflineTranscript { return nil }
+      if let machine = approvalMachine, let code = machine.deviceApprovalCode {
+        // One action fits the banner: the way to keep working wins; the
+        // toolbar's laptop button still opens Connection options.
+        if let other = reachableOrchestrator {
+          return ConnectionNotice(message: "\(machine.approvalBanner(code: code)) \(other.machineLabel)'s coordinator is available.", kind: .info, actionTitle: "View on \(other.machineLabel)", action: { showOrchestrator(other.ref) })
+        }
+        return ConnectionNotice(message: machine.approvalBanner(code: code), kind: .info, actionTitle: "Connection options", action: { nav.push(.machine(machineId)) })
+      }
       if let machine = model.machine(machineId), machine.isDisconnected || !machine.canRetryConnection {
         return ConnectionNotice(message: machine.recoveryTitle, kind: .info, actionTitle: "Connection options", action: { nav.push(.machine(machineId)) })
       }

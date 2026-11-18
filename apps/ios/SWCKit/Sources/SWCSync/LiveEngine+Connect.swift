@@ -70,6 +70,9 @@ public final class ConnectRuntime {
     set { defaults.set(newValue, forKey: Self.signedInKey) }
   }
 
+  /// The name machines were told for this phone; their approval dialogs show it.
+  public let clientLabel: String
+
   public init(
     account: any ConnectAccount,
     credentials: any CredentialStore,
@@ -83,6 +86,7 @@ public final class ConnectRuntime {
     self.account = account
     self.device = device
     self.defaults = defaults
+    self.clientLabel = clientLabel
     let bridge = ConnectSessionBridge { [account] refresh in try await account.sessionToken(refresh: refresh) }
     let deviceId = Self.deviceId(defaults)
     self.deviceId = deviceId
