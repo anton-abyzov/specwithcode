@@ -36,6 +36,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { fromLenientJson } from "@specweave-studio/shared/schemaJson";
@@ -915,11 +916,39 @@ const discoverClaudeSyncedSkills = Effect.fn("discoverClaudeSyncedSkills")(funct
   return [...found.values()].map((entry) => entry.skill);
 });
 
+/** What a Claude skill scan found, and whether a folder it should have read refused. */
+export interface ClaudeSkillsReport {
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
+  /**
+   * A skills folder or a skill's SKILL.md is there but could not be read
+   * (permission denied or another error that is not "not found"), so a skill
+   * missing from `skills` may still be installed.
+   */
+  readonly incomplete: boolean;
+}
+
+/**
+ * Whether a failed read means "there is nothing here" (no folder, no
+ * SKILL.md, a plain file where a folder was expected) rather than "there is
+ * something here this scan could not open".
+ */
+const isAbsentRead = (error: unknown): boolean =>
+  PlatformError.isPlatformError(error) &&
+  (error.reason._tag === "NotFound" || error.reason._tag === "BadResource");
+
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   cwd?: string,
   environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+  return (yield* discoverClaudeSkillsReport(config, cwd, environment)).skills;
+});
+
+export const discoverClaudeSkillsReport = Effect.fn("discoverClaudeSkillsReport")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  cwd?: string,
+  environment?: NodeJS.ProcessEnv,
+): Effect.fn.Return<ClaudeSkillsReport, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env, cwd);
@@ -943,16 +972,23 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();
+  // Discovery stays best-effort, but a folder that is there and refused is remembered.
+  let incomplete = false;
+  const noteUnreadable = (error: unknown) => {
+    if (!isAbsentRead(error)) incomplete = true;
+  };
   for (const root of roots) {
-    const entries = yield* fileSystem
-      .readDirectory(root.directory)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const entries = yield* fileSystem.readDirectory(root.directory).pipe(
+      Effect.tapError((error) => Effect.sync(() => noteUnreadable(error))),
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    );
 
     for (const entry of [...entries].sort()) {
       const skillPath = path.join(root.directory, entry, "SKILL.md");
-      const contents = yield* fileSystem
-        .readFileString(skillPath)
-        .pipe(Effect.orElseSucceed(() => undefined));
+      const contents = yield* fileSystem.readFileString(skillPath).pipe(
+        Effect.tapError((error) => Effect.sync(() => noteUnreadable(error))),
+        Effect.orElseSucceed(() => undefined),
+      );
       if (contents === undefined) {
         continue;
       }
@@ -1016,5 +1052,8 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
   }
 
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return {
+    skills: [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name)),
+    incomplete,
+  };
 });

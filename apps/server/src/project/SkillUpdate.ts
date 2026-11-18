@@ -168,7 +168,8 @@ export function skillReadiness(
 }
 
 /** `owner/repo` when the lock records a plain GitHub source this page can reinstall from. */
-function lockRepo(lock: ProjectSkillLock): string | null {
+/** The `owner/repo` a GitHub-sourced lock entry came from, or null. */
+export function lockRepo(lock: ProjectSkillLock): string | null {
   const match = /^github:([^/#\s]+\/[^/#\s]+?)(?:\.git)?$/.exec(lock.source ?? "");
   return match && lock.skillId && lock.name && lock.skillId === `${match[1]}/${lock.name}`
     ? match[1]!

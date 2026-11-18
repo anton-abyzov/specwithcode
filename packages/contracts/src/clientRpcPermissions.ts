@@ -49,6 +49,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsSkillRepos]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsSkillsSearch]: AuthFilesystemReadScope,
   [WS_METHODS.projectsSkillsUpdate]: AuthFilesystemWriteScope,
+  // "Keep updated on these machines" records and Adopt. Each widens per operation below.
+  [WS_METHODS.projectsSkillsRolloutKeep]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectsSkillsAdopt]: AuthFilesystemReadScope,
   [WS_METHODS.managedUpdatesEnroll]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesRevoke]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesCheck]: AuthEnvironmentMaintainScope,
@@ -450,6 +453,18 @@ export function clientRpcRequiredScopes(
     return operation === "status"
       ? [AuthOrchestrationReadScope]
       : [AuthFilesystemWriteScope, AuthTerminalOperateScope];
+  // The record is this machine's own setting; reading it is like reading the page.
+  if (method === WS_METHODS.projectsSkillsRolloutKeep)
+    return operation === "read"
+      ? [AuthOrchestrationReadScope]
+      : [AuthOrchestrationReadScope, AuthSettingsWriteScope];
+  // Adopt writes the skill locks; a proposal opens a pull request on GitHub.
+  if (method === WS_METHODS.projectsSkillsAdopt)
+    return operation === "check" || operation === "propose-preview"
+      ? [AuthFilesystemReadScope]
+      : operation === "adopt"
+        ? [AuthFilesystemReadScope, AuthFilesystemWriteScope]
+        : [AuthFilesystemReadScope, AuthSourceControlWriteScope, AuthTerminalOperateScope];
   // Writes another tool's configuration, which that tool then runs as commands.
   if (method === WS_METHODS.nativeConnectionApply)
     return [AuthFilesystemWriteScope, AuthTerminalOperateScope];

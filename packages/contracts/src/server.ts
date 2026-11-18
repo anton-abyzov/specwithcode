@@ -191,6 +191,11 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   /** Skills are available, but command discovery still needs a retry. */
   slashCommandsPending: Schema.optional(Schema.Boolean),
   skills: Schema.Array(ServerProviderSkill),
+  /**
+   * A skill folder or its SKILL.md is there but could not be read, so a skill
+   * missing from `skills` may still be installed. Absent when every folder read.
+   */
+  skillsIncomplete: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 
@@ -369,6 +374,8 @@ export const ServerProvider = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** As on a workspace snapshot: the machine-wide skill list missed folders it could not read. */
+  skillsIncomplete: Schema.optionalKey(Schema.Boolean),
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
   // Absent when the driver has no notion of subscription usage.
   usageLimits: Schema.optional(ServerProviderUsageLimits),
