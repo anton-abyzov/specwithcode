@@ -292,9 +292,14 @@ export function FullDiskAccessRow({
  */
 export function FirstRunFullDiskAccess({
   onAllowedChange,
+  open,
+  onOpenChange,
 }: {
   /** Whether Full Disk Access is allowed, as last read; for first run's picture. */
   readonly onAllowedChange?: ((allowed: boolean) => void) | undefined;
+  /** Given by a list that keeps one row open at a time; left out, the item opens on its own. */
+  readonly open?: boolean | undefined;
+  readonly onOpenChange?: ((open: boolean) => void) | undefined;
 } = {}) {
   const tx = useTx();
   const primary = usePrimaryEnvironment();
@@ -306,6 +311,8 @@ export function FirstRunFullDiskAccess({
       machine={primary.label}
       tx={tx}
       onAllowedChange={onAllowedChange}
+      open={open}
+      onOpenChange={onOpenChange}
     />
   );
 }
@@ -315,13 +322,17 @@ function FirstRunFullDiskAccessBody({
   machine,
   tx,
   onAllowedChange,
+  ...props
 }: {
   readonly environmentId: EnvironmentId;
   readonly machine: string;
   readonly tx: ReturnType<typeof useTx>;
   readonly onAllowedChange?: ((allowed: boolean) => void) | undefined;
+  readonly open?: boolean | undefined;
+  readonly onOpenChange?: ((open: boolean) => void) | undefined;
 }) {
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = props.open ?? ownOpen;
   const { access, openSettings } = useFullDiskAccess(environmentId, open);
   // Told only once read: an unread status on a fresh mount is not "not allowed".
   const read = access !== null;
@@ -334,7 +345,13 @@ function FirstRunFullDiskAccessBody({
     <details
       data-slot="first-run-fda"
       className="mt-3 rounded-xl border border-border bg-card p-4 text-sm"
-      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+      open={open}
+      onToggle={(event) => {
+        const next = (event.currentTarget as HTMLDetailsElement).open;
+        if (next === open) return;
+        setOwnOpen(next);
+        props.onOpenChange?.(next);
+      }}
     >
       <summary className="cursor-pointer font-semibold text-foreground">
         {tx("Full Disk Access for agents (optional)")}

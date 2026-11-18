@@ -53,7 +53,6 @@ import { OpenAI } from "../Icons";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
-import { cn } from "../../lib/utils";
 import { useT, useTx } from "../../i18n";
 import { AgentCommand, AgentRow, AgentRowStatus } from "./AgentRow";
 import { FoundAgentRow, GitRow, InstallAgentRow, ProviderAgentRow } from "./AgentRows";
@@ -160,25 +159,20 @@ export function AgentsStep({
           ))}
         </div>
       </ScrollArea>
-      <p
-        role="status"
-        className={cn(
-          "mt-4 text-sm leading-relaxed",
-          readiness.kind === "ready"
-            ? "text-success-foreground"
-            : readiness.kind === "checking"
-              ? "text-muted-foreground"
-              : "text-warning-foreground",
-        )}
-      >
-        {agentReadinessMessage(readiness, tx)}
-      </p>
       <WizardStepFooter
         back={onBack ? { onClick: onBack, disabled: busy } : undefined}
+        // In the footer, so the gate's own line is in view without scrolling past the agents.
         note={
           busy
             ? tx("An install is running. Wait for it to end, or close its log to stop it.")
-            : null
+            : agentReadinessMessage(readiness, tx)
+        }
+        noteTone={
+          busy || readiness.kind === "checking"
+            ? "muted"
+            : readiness.kind === "ready"
+              ? "success"
+              : "warning"
         }
         primary={{
           disabled: busy,

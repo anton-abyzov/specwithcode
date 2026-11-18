@@ -149,7 +149,13 @@ export function ChromeAccessRowView({
   );
   const actions: ReactNode =
     state.kind === "not-set-up" || state.kind === "waiting" ? (
-      toggle(tx("Set up"))
+      <>
+        {/* The closed row says its state in words, not only through its button. */}
+        <AccessRowChip>
+          {state.kind === "waiting" ? tx("Waiting for Chrome…") : tx("Not set up")}
+        </AccessRowChip>
+        {toggle(tx("Set up"))}
+      </>
     ) : state.kind === "approval" && canAnswer ? (
       <>
         <AccessRowAction disabled={busy} onClick={() => onAnswer(true)}>

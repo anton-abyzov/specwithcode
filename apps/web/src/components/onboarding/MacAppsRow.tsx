@@ -83,13 +83,17 @@ export function MacAppsRowView({
     ) : state.kind === "could-not-check" ? (
       <AccessRowAction onClick={onRetry}>{tx("Retry")}</AccessRowAction>
     ) : (
-      <AccessRowAction
-        expands={{ row: "mac-apps", open }}
-        onClick={() => onOpenChange(!open)}
-        data-access-focus="mac-apps-toggle"
-      >
-        {open ? tx("Hide") : state.kind === "needs-reopening" ? tx("Reopen") : tx("Allow")}
-      </AccessRowAction>
+      <>
+        {/* The closed row says its state in words, not only through its button. */}
+        {state.kind === "not-allowed" ? <AccessRowChip>{tx("Not allowed")}</AccessRowChip> : null}
+        <AccessRowAction
+          expands={{ row: "mac-apps", open }}
+          onClick={() => onOpenChange(!open)}
+          data-access-focus="mac-apps-toggle"
+        >
+          {open ? tx("Hide") : state.kind === "needs-reopening" ? tx("Reopen") : tx("Allow")}
+        </AccessRowAction>
+      </>
     );
   return (
     <AccessRow

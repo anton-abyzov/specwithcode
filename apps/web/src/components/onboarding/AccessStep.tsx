@@ -86,7 +86,11 @@ export function AccessStep({
               <FilesRow key="files" {...files} {...openFor("files")} />
             ) : null
           ) : row.id === "full-disk-access" ? (
-            <FullDiskAccessListRow key={row.id} onAllowedChange={onFullDiskAccessAllowed} />
+            <FullDiskAccessListRow
+              key={row.id}
+              onAllowedChange={onFullDiskAccessAllowed}
+              {...openFor(row.id)}
+            />
           ) : (
             <RowSlot key={row.id}>{renderRow?.(row.id, openFor(row.id)) ?? null}</RowSlot>
           ),
@@ -115,7 +119,9 @@ function RowSlot({ children }: { readonly children: ReactNode }) {
  */
 function FullDiskAccessListRow({
   onAllowedChange,
-}: {
+  open,
+  onOpenChange,
+}: AccessRowOpen & {
   readonly onAllowedChange?: ((allowed: boolean) => void) | undefined;
 }) {
   return (
@@ -130,7 +136,11 @@ function FullDiskAccessListRow({
         <FolderRowGlyph />
       </span>
       <div className="min-w-0">
-        <FirstRunFullDiskAccess onAllowedChange={onAllowedChange} />
+        <FirstRunFullDiskAccess
+          onAllowedChange={onAllowedChange}
+          open={open}
+          onOpenChange={onOpenChange}
+        />
       </div>
     </li>
   );

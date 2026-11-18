@@ -83,6 +83,9 @@ const profile = (id: string, label: string) => ({
   lease: null,
 });
 
+type TextNode = string | { readonly children: readonly TextNode[] };
+const textOf = (node: TextNode): string =>
+  typeof node === "string" ? node : node.children.map(textOf).join("");
 let renderer: ReactTestRenderer;
 let setOpen: (open: boolean) => void = () => {};
 const onOpenChange = vi.fn();
@@ -212,6 +215,19 @@ describe("ChromeAccessRowView", () => {
     expect(bodyHidden()).toBe(true);
     await act(() => button("Set up").props.onClick());
     expect(onOpenChange).toHaveBeenCalledWith(true);
+  });
+
+  it.each([
+    ["not-set-up", input(), "Not set up"],
+    ["waiting", input({ codeHandedOut: true }), "Waiting for Chrome…"],
+  ] as const)("closed and %s, it says so in words beside Set up", async (expected, given, word) => {
+    await view(given);
+    expect(kind()).toBe(expected);
+    const chip = renderer.root.find(
+      (node) => typeof node.type === "string" && node.props["data-slot"] === "access-row-chip",
+    );
+    expect(textOf(chip)).toContain(word);
+    expect(button("Set up")).toBeDefined();
   });
 
   it("open, the steps show with why the extension is safer", async () => {

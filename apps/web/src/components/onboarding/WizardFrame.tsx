@@ -12,6 +12,7 @@ import {
 import { createPortal } from "react-dom";
 import { isElectron } from "../../env";
 import { useT } from "../../i18n";
+import { cn } from "../../lib/utils";
 import { currentPlatform, keyLabel } from "../../lib/platformConventions";
 import { StarOnGitHubLink } from "../github/StarOnGitHub";
 import { LanguageSelect } from "../settings/LanguageSelect";
@@ -211,6 +212,7 @@ export function WizardStepFooter({
   primary,
   primaryRef,
   note,
+  noteTone = "muted",
   error,
 }: {
   /** Absent on the first step. */
@@ -222,6 +224,8 @@ export function WizardStepFooter({
   readonly primaryRef?: Ref<HTMLButtonElement> | undefined;
   /** Says why an action is off, such as an import still running. */
   readonly note?: string | null | undefined;
+  /** A note that is the step's own state line takes that state's colour. */
+  readonly noteTone?: "muted" | "warning" | "success" | undefined;
   readonly error?: string | null | undefined;
 }) {
   const t = useT();
@@ -234,7 +238,17 @@ export function WizardStepFooter({
         </p>
       ) : null}
       {note ? (
-        <p role="status" className="px-6 pt-3 text-xs leading-relaxed text-muted-foreground">
+        <p
+          role="status"
+          className={cn(
+            "px-6 pt-3 text-xs leading-relaxed",
+            noteTone === "warning"
+              ? "text-warning-foreground"
+              : noteTone === "success"
+                ? "text-success-foreground"
+                : "text-muted-foreground",
+          )}
+        >
           {note}
         </p>
       ) : null}
@@ -265,7 +279,8 @@ export function WizardStepFooter({
             ref={primaryRef}
             data-wizard-primary=""
             {...(primary.neutral ? WIZARD_NEUTRAL : {})}
-            aria-keyshortcuts="Enter"
+            // A disabled primary does not take Enter, so it shows no Enter hint either.
+            aria-keyshortcuts={primary.disabled ? undefined : "Enter"}
             // Not before the footer is in its slot: focus inside the panel would scroll the step.
             autoFocus={slot !== null && (primary.autoFocus ?? true)}
             variant={primary.variant ?? "default"}
@@ -274,12 +289,14 @@ export function WizardStepFooter({
           >
             {primary.label}
             {/* A hint for the eye, drawn by CSS: the button's name and text stay its label. */}
-            <kbd
-              aria-hidden
-              data-slot="kbd"
-              data-key={keyLabel("enter", currentPlatform())}
-              className="pointer-events-none inline-flex h-5 min-w-5 items-center justify-center rounded bg-current/12 px-1 font-sans text-xs font-medium opacity-80 select-none before:content-[attr(data-key)]"
-            />
+            {primary.disabled ? null : (
+              <kbd
+                aria-hidden
+                data-slot="kbd"
+                data-key={keyLabel("enter", currentPlatform())}
+                className="pointer-events-none inline-flex h-5 min-w-5 items-center justify-center rounded bg-current/12 px-1 font-sans text-xs font-medium opacity-80 select-none before:content-[attr(data-key)]"
+              />
+            )}
           </Button>
         ) : null}
       </WizardFooter>
@@ -428,7 +445,8 @@ export function FirstRunFrame<Id extends string>({
                   SpecWithCode
                 </span>
               </div>
-              <div className="flex items-center gap-1">
+              {/* Wraps on a narrow window, so the language select is never cut off at the edge. */}
+              <div className="flex max-w-full min-w-0 flex-wrap items-center gap-1">
                 <StarOnGitHubLink />
                 <LanguageSelect showIcon className="w-auto sm:w-auto" />
               </div>
