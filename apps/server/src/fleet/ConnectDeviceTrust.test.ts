@@ -552,3 +552,163 @@ it.effect("unwired, the gate refuses every gated device and lets local sessions 
     expect(yield* trust.check({ subject: "desktop-bootstrap" })).toEqual({ _tag: "allowed" });
   }),
 );
+
+// 1406: several devices that look alike.
+const SHORT_ID = /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/;
+/** The vectors `packages/shared/src/deviceShortId.test.ts` and the iPhone tests assert. */
+const KEY_TSKR = "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs";
+const KEY_9229 = "_wAA_0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1w";
+
+it("gives every device key a short ID, the thumbprint's own for a Connect device", () => {
+  expect(ConnectDeviceTrust.deviceShortIdOfKey(`jkt:${KEY_TSKR}`)).toBe("TSKR");
+  expect(ConnectDeviceTrust.deviceShortIdOfKey(`jkt:${KEY_9229}`)).toBe("9229");
+  // A hub-linked phone without a key, and a key that is no thumbprint, still get one.
+  for (const key of ["link:phone-link:hub-1:session-9", "jkt:k", "jkt:not a thumbprint"]) {
+    const id = ConnectDeviceTrust.deviceShortIdOfKey(key);
+    expect(id).toMatch(SHORT_ID);
+    expect(ConnectDeviceTrust.deviceShortIdOfKey(key)).toBe(id);
+  }
+});
+
+it.effect("two phones with one name read differently, and the typed code picks the phone", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const fileSystem = yield* FileSystem.FileSystem;
+      refusedCode(yield* trust.check(connect(KEY_TSKR, "iPhone")));
+      const secondCode = refusedCode(yield* trust.check(connect(KEY_9229, "iPhone")));
+      const waiting = (yield* trust.snapshot).pending;
+      expect(waiting.map((request) => [request.label, request.shortId])).toEqual([
+        ["iPhone", "TSKR"],
+        ["iPhone", "9229"],
+      ]);
+
+      // The owner types the second phone's code while the first is listed first.
+      const approved = yield* trust.approve({
+        code: secondCode,
+        approvedBy: "this machine",
+        approverKey: null,
+      });
+      if (approved.status !== "approved")
+        throw new Error(`expected approval, got ${approved.status}`);
+      expect(approved.device.key).toBe(`jkt:${KEY_9229}`);
+      expect(ConnectDeviceTrust.listedDevice(approved.device).shortId).toBe("9229");
+
+      const after = yield* trust.snapshot;
+      expect(after.pending.map((request) => request.shortId)).toEqual(["TSKR"]);
+      expect(after.devices.map((device) => [device.label, device.shortId])).toEqual([
+        ["iPhone", "9229"],
+      ]);
+      expect((yield* trust.check(connect(KEY_TSKR, "iPhone")))._tag).toBe("refused");
+      // The ID is made when the list is read: the file keeps its 1327 shape.
+      expect(yield* fileSystem.readFileString(yield* storePath)).not.toContain("shortId");
+    }),
+  ),
+);
+
+it.effect(
+  "a waiting device keeps one reference across requests, and a look-alike has another",
+  () =>
+    withMachine(
+      Effect.gen(function* () {
+        const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+        const fileSystem = yield* FileSystem.FileSystem;
+        // Same name and the same four characters, another key.
+        const twin = `${KEY_TSKR.slice(0, 6)}${"A".repeat(KEY_TSKR.length - 6)}`;
+        refusedCode(yield* trust.check(connect(KEY_TSKR, "iPhone")));
+        refusedCode(yield* trust.check(connect(twin, "iPhone")));
+        const [real, alike] = (yield* trust.snapshot).pending;
+        expect(real!.shortId).toBe(alike!.shortId);
+        expect(real!.device).not.toBe(alike!.device);
+        expect(real!.device).toBe(ConnectDeviceTrust.deviceReferenceOfKey(`jkt:${KEY_TSKR}`));
+        // The reference is not the key and does not carry it.
+        expect(real!.device).not.toContain(KEY_TSKR);
+
+        // Its request runs out and it asks again: a new request, the same reference.
+        yield* TestClock.adjust("11 minutes");
+        refusedCode(yield* trust.check(connect(KEY_TSKR, "iPhone")));
+        const [renewed] = (yield* trust.snapshot).pending;
+        expect(renewed!.id).not.toBe(real!.id);
+        expect(renewed!.device).toBe(real!.device);
+        // Made when the list is read, like the short ID: the file does not hold it.
+        expect(yield* fileSystem.readFileString(yield* storePath)).not.toContain(real!.device);
+      }),
+    ),
+);
+
+it.effect("a device that looks like an allowed one gets nothing without its own code", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const code = refusedCode(yield* trust.check(connect(KEY_TSKR, "iPhone")));
+      yield* trust.approve({ code, approvedBy: "this machine", approverKey: null });
+
+      // Same name and, with a ground key, the same four characters.
+      const twin = `${KEY_TSKR.slice(0, 6)}${"A".repeat(KEY_TSKR.length - 6)}`;
+      expect(ConnectDeviceTrust.deviceShortIdOfKey(`jkt:${twin}`)).toBe("TSKR");
+      const twinCode = refusedCode(yield* trust.check(connect(twin, "iPhone")));
+      expect(twinCode).not.toBe(code);
+      expect((yield* trust.check(connect(twin, "iPhone")))._tag).toBe("refused");
+      expect(yield* trust.isApproved(`jkt:${twin}`)).toBe(false);
+      // The spent code of the device it imitates does not let it in either.
+      expect(yield* trust.approve({ code, approvedBy: "this machine", approverKey: null })).toEqual(
+        { status: "not-found" },
+      );
+
+      const listed = yield* trust.snapshot;
+      expect(listed.devices.map((device) => device.key)).toEqual([`jkt:${KEY_TSKR}`]);
+      expect(listed.pending.map((request) => request.shortId)).toEqual(["TSKR"]);
+      // Turning the twin away or removing the real one never touches the other.
+      yield* trust.deny(listed.pending[0]!.id);
+      expect(yield* trust.check(connect(KEY_TSKR, "iPhone"))).toEqual({ _tag: "allowed" });
+      yield* trust.remove(`jkt:${KEY_TSKR}`);
+      expect(yield* trust.isTurnedAway(`jkt:${twin}`)).toBe(true);
+      expect(yield* trust.isApproved(`jkt:${twin}`)).toBe(false);
+    }),
+  ),
+);
+
+it.effect("a list written before short IDs loads unchanged and is listed with them", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const file = yield* storePath;
+      const written = JSON.stringify({
+        version: 1,
+        initializedAt: "2026-11-17T23:42:28.000Z",
+        reviewedAt: null,
+        devices: [
+          {
+            key: `jkt:${KEY_TSKR}`,
+            kind: "connect",
+            label: "An iPhone",
+            deviceType: "mobile",
+            named: false,
+            system: "iOS",
+            app: "SpecWithCode",
+            firstSeenAt: "2026-11-17T23:39:59.000Z",
+            approvedAt: "2026-11-17T23:42:28.000Z",
+            approvedBy: "the update",
+            keptByUpdate: true,
+            approvalId: "kept-1",
+          },
+        ],
+        pending: [],
+        denied: [],
+        notices: [],
+      });
+      yield* fileSystem.writeFileString(file, written);
+
+      const restarted = yield* ConnectDeviceTrust.make;
+      const snapshot = yield* restarted.snapshot;
+      expect(snapshot.health).toBe("ok");
+      expect(snapshot.devices).toMatchObject([
+        { label: "An iPhone", shortId: "TSKR", keptByUpdate: true },
+      ]);
+      expect(yield* restarted.check(connect(KEY_TSKR, "iPhone"))).toEqual({ _tag: "allowed" });
+      // Reading the list wrote nothing.
+      expect(yield* fileSystem.readFileString(file)).toBe(written);
+    }),
+  ),
+);

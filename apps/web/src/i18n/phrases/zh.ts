@@ -5172,6 +5172,24 @@ export const zh: PhraseCatalog = {
   "A device cannot approve itself. Type this code on another device or on the machine.":
     "设备不能批准自己。请在另一台设备或该电脑上输入此代码。",
   "A new device wants to use {machine}": "有新设备想使用 {machine}",
+  "{count} devices want to use {machine}": "有 {count} 台设备想使用 {machine}",
+  "Each one shows its own code. Type the code from the device you want to allow.":
+    "每台设备显示各自的代码。请输入你要允许的那台设备上的代码。",
+  "Type the code shown on the device you want to allow": "输入你要允许的设备上显示的代码",
+  "Allowed {device}. It can now use {machine}.": "已允许 {device}。它现在可以使用 {machine}。",
+  "ID {id}": "ID {id}",
+  "Deny {device}": "拒绝 {device}",
+  "Signed in to SpecWithCode Connect as {account}": "已以 {account} 登录 SpecWithCode Connect",
+  "Signed in to your SpecWithCode Connect account": "已登录你的 SpecWithCode Connect 账户",
+  "Paired through {hub}": "通过 {hub} 配对",
+  "Paired through another of your machines": "通过你的另一台电脑配对",
+  "Waiting for approval": "等待批准",
+  "This device's ID is {id}. The machine shows the same ID next to it.":
+    "此设备的 ID 是 {id}。电脑会在它旁边显示相同的 ID。",
+  "Open SpecWithCode on each machine below and type its code:":
+    "在下面的每台电脑上打开 SpecWithCode，然后输入对应的代码：",
+  "This device connects on its own once a machine allows it.":
+    "任意一台电脑允许后，此设备会自动连接。",
   "A phone": "一部手机",
   "A tablet": "一台平板",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
@@ -5184,7 +5202,6 @@ export const zh: PhraseCatalog = {
   "Approve this device on the machine.": "请在电脑上批准此设备。",
   "Approved {date} by {approver}": "{date} 由{approver}批准",
   "Checking devices…": "正在检查设备…",
-  "Code shown on {device}": "{device} 上显示的代码",
   "Could not reach this machine.": "无法连接到这台电脑。",
   "Could not reach this machine. Try again.": "无法连接到这台电脑。请重试。",
   "Could not remove {device}": "无法移除 {device}",
@@ -5248,7 +5265,6 @@ export const zh: PhraseCatalog = {
   "{label} joined": "{label} 已加入",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} 不再允许此设备连接。请在 {machine} 上的 SpecWithCode 中重新批准。",
-  "{position} of {total} waiting": "等待中：第 {position} 个，共 {total} 个",
   "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
     "允许后，它可以像此应用一样使用 {machine} 上的终端、文件、设置和登录，并在那里开始工作。",
   "Asked at {time}": "申请于 {time}",

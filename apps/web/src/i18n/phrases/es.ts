@@ -5422,6 +5422,27 @@ export const es: PhraseCatalog = {
   "A device cannot approve itself. Type this code on another device or on the machine.":
     "Un dispositivo no puede aprobarse a sí mismo. Escribe este código en otro dispositivo o en el equipo.",
   "A new device wants to use {machine}": "Un dispositivo nuevo quiere usar {machine}",
+  "{count} devices want to use {machine}": "{count} dispositivos quieren usar {machine}",
+  "Each one shows its own code. Type the code from the device you want to allow.":
+    "Cada uno muestra su propio código. Escribe el código del dispositivo que quieres permitir.",
+  "Type the code shown on the device you want to allow":
+    "Escribe el código que muestra el dispositivo que quieres permitir",
+  "Allowed {device}. It can now use {machine}.": "{device} permitido. Ya puede usar {machine}.",
+  "ID {id}": "ID {id}",
+  "Deny {device}": "Denegar {device}",
+  "Signed in to SpecWithCode Connect as {account}":
+    "Inició sesión en SpecWithCode Connect como {account}",
+  "Signed in to your SpecWithCode Connect account":
+    "Inició sesión en tu cuenta de SpecWithCode Connect",
+  "Paired through {hub}": "Vinculado a través de {hub}",
+  "Paired through another of your machines": "Vinculado a través de otro de tus equipos",
+  "Waiting for approval": "Esperando aprobación",
+  "This device's ID is {id}. The machine shows the same ID next to it.":
+    "El ID de este dispositivo es {id}. El equipo muestra el mismo ID a su lado.",
+  "Open SpecWithCode on each machine below and type its code:":
+    "Abre SpecWithCode en cada equipo de abajo y escribe su código:",
+  "This device connects on its own once a machine allows it.":
+    "Este dispositivo se conecta solo en cuanto un equipo lo permita.",
   "A phone": "Un teléfono",
   "A tablet": "Una tableta",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
@@ -5434,7 +5455,6 @@ export const es: PhraseCatalog = {
   "Approve this device on the machine.": "Aprueba este dispositivo en el equipo.",
   "Approved {date} by {approver}": "Aprobado el {date} por {approver}",
   "Checking devices…": "Comprobando dispositivos…",
-  "Code shown on {device}": "Código mostrado en {device}",
   "Could not reach this machine.": "No se pudo contactar con este equipo.",
   "Could not reach this machine. Try again.":
     "No se pudo contactar con este equipo. Inténtalo de nuevo.",
@@ -5500,7 +5520,6 @@ export const es: PhraseCatalog = {
   "{label} joined": "{label} se unió",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} ya no deja entrar a este dispositivo. Vuelve a aprobarlo en SpecWithCode en {machine}.",
-  "{position} of {total} waiting": "{position} de {total} en espera",
   "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
     "Permitir le deja usar terminales, archivos, ajustes e inicios de sesión en {machine} y empezar trabajo allí, igual que esta app.",
   "Asked at {time}": "Pedido a las {time}",

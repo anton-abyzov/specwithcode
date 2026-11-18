@@ -5389,6 +5389,29 @@ export const ru: PhraseCatalog = {
   "A device cannot approve itself. Type this code on another device or on the machine.":
     "Устройство не может одобрить само себя. Введите этот код на другом устройстве или на машине.",
   "A new device wants to use {machine}": "Новое устройство хочет использовать {machine}",
+  "{count} devices want to use {machine}":
+    "Устройств, которые хотят использовать {machine}: {count}",
+  "Each one shows its own code. Type the code from the device you want to allow.":
+    "У каждого свой код. Введите код с того устройства, которое хотите разрешить.",
+  "Type the code shown on the device you want to allow":
+    "Введите код с устройства, которое хотите разрешить",
+  "Allowed {device}. It can now use {machine}.":
+    "{device} разрешено. Теперь оно может использовать {machine}.",
+  "ID {id}": "ID {id}",
+  "Deny {device}": "Отклонить {device}",
+  "Signed in to SpecWithCode Connect as {account}":
+    "Вход в SpecWithCode Connect выполнен как {account}",
+  "Signed in to your SpecWithCode Connect account":
+    "Вход выполнен в ваш аккаунт SpecWithCode Connect",
+  "Paired through {hub}": "Подключено через {hub}",
+  "Paired through another of your machines": "Подключено через другую вашу машину",
+  "Waiting for approval": "Ожидают разрешения",
+  "This device's ID is {id}. The machine shows the same ID next to it.":
+    "ID этого устройства: {id}. Машина показывает тот же ID рядом с ним.",
+  "Open SpecWithCode on each machine below and type its code:":
+    "Откройте SpecWithCode на каждой машине ниже и введите её код:",
+  "This device connects on its own once a machine allows it.":
+    "Это устройство подключится само, как только одна из машин его разрешит.",
   "A phone": "Телефон",
   "A tablet": "Планшет",
   "Allow {coordinatorLabel} to run work on {hereLabel}?":
@@ -5401,7 +5424,6 @@ export const ru: PhraseCatalog = {
   "Approve this device on the machine.": "Одобрите это устройство на машине.",
   "Approved {date} by {approver}": "Одобрено {date} ({approver})",
   "Checking devices…": "Проверка устройств…",
-  "Code shown on {device}": "Код, который показывает {device}",
   "Could not reach this machine.": "Не удалось связаться с этой машиной.",
   "Could not reach this machine. Try again.":
     "Не удалось связаться с этой машиной. Попробуйте ещё раз.",
@@ -5467,7 +5489,6 @@ export const ru: PhraseCatalog = {
   "{label} joined": "Подключено: {label}",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} больше не пускает это устройство. Одобрите его снова в SpecWithCode на {machine}.",
-  "{position} of {total} waiting": "{position} из {total} в ожидании",
   "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
     "«Разрешить» даёт ему терминалы, файлы, настройки и входы в аккаунты на {machine}, а также запуск работы там, так же как это приложение.",
   "Asked at {time}": "Запрос в {time}",
