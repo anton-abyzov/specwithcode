@@ -1,3 +1,5 @@
+// The foot's own rules load with the markup they style.
+import "./shell/composer-foot.css";
 import type {
   ChatAttachment,
   EnvironmentId,
