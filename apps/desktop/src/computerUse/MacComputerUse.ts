@@ -259,16 +259,39 @@ async function applicationAt(
   }
 }
 
+/** iPhone Mirroring's process name, for a cheap check before reading any window. */
+const IPHONE_MIRRORING_PROCESS = "iPhone Mirroring";
+/** How long the window read may take; a busy Mac can need seconds to start osascript. */
+const MIRRORING_SCENE_TIMEOUT_MS = 10_000;
+
+/**
+ * Whether iPhone Mirroring runs: one `pgrep`, so actions on a Mac that is not
+ * mirroring a phone never start the window read. Undefined when it cannot tell.
+ */
+function mirroringRunning(): Promise<boolean | undefined> {
+  return new Promise((resolve) => {
+    NodeChildProcess.execFile(
+      "/usr/bin/pgrep",
+      ["-x", IPHONE_MIRRORING_PROCESS],
+      { timeout: 5_000 },
+      (error) => {
+        if (error === null) resolve(true);
+        else resolve((error as { code?: unknown }).code === 1 ? false : undefined);
+      },
+    );
+  });
+}
+
 /**
  * The windows and frontmost app as iPhone Mirroring needs them; undefined when
- * they cannot be read, and the action then takes its usual steps.
+ * they cannot be read.
  */
 async function readMirroringScene(): Promise<MirroringScene | undefined> {
   try {
     const output = await execFile(
       "/usr/bin/osascript",
       ["-l", "JavaScript", "-e", JXA_MIRRORING_SCRIPT, IPHONE_MIRRORING_BUNDLE_ID],
-      5_000,
+      MIRRORING_SCENE_TIMEOUT_MS,
     );
     const scene = JSON.parse(output.trim()) as MirroringScene;
     return Array.isArray(scene.windows) ? scene : undefined;
@@ -282,15 +305,28 @@ let lastMirroringPoint: DisplayPoint | undefined;
 
 /**
  * Runs an action on the iPhone Mirroring window when it lands there, and
- * reports the frontmost app afterwards; undefined when it does not land there.
+ * reports the frontmost app afterwards; undefined when it does not land there,
+ * and the action takes its usual steps. When iPhone Mirroring is not running
+ * nothing is read. When it runs but its window cannot be read in time, a
+ * click, scroll or drag takes its usual steps, while typing and keys are
+ * refused, because pasted text and unguarded keys go wrong on the phone.
  * The app comes forward through Launch Services, as `computer_open` does.
  */
 async function runOnMirroring(
   action: ComputerUseAction,
   display: DisplayGeometry,
 ): Promise<{ frontmost: string | undefined } | undefined> {
+  if ((await mirroringRunning()) === false) return undefined;
   const scene = await readMirroringScene();
-  if (scene === undefined || scene.windows.length === 0) return undefined;
+  if (scene === undefined) {
+    if (action.kind === "type" || action.kind === "key") {
+      throw new ComputerUseInputError(
+        "iPhone Mirroring is open and the Mac was too busy to tell whether it is in front, so nothing was sent, in case it would have reached the phone the wrong way. Try again.",
+      );
+    }
+    return undefined;
+  }
+  if (scene.windows.length === 0) return undefined;
   const plan = mirroringActionSteps(action, display, {
     scene,
     cursor: Electron.screen.getCursorScreenPoint(),

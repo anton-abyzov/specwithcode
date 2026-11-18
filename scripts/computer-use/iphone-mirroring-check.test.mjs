@@ -120,7 +120,15 @@ describe("dry run", () => {
     );
   });
 
-  it("stops at once when access is denied", async () => {
+  const invalidResult = (result) => {
+    expect(result.pass).toBe(false);
+    expect(result.invalid).toBe(true);
+    expect(result.lines.at(-1)).toMatch(/^Result: INVALID \(/);
+    expect(result.lines.some((entry) => entry.startsWith("Clicks landed"))).toBe(false);
+    expect(result.lines.some((entry) => entry.startsWith("Result: FAIL"))).toBe(false);
+  };
+
+  it("is invalid, posting nothing, when access is denied", async () => {
     const phone = simulatedPhone();
     const call = phone.deps.call;
     phone.deps.call = (tool, args) =>
@@ -128,30 +136,83 @@ describe("dry run", () => {
         ? Promise.resolve({ data: { status: "denied" } })
         : call(tool, args);
     const result = await runCheck(phone.deps);
-    expect(result.pass).toBe(false);
+    invalidResult(result);
     expect(phone.state.calls).toEqual([]);
-    expect(result.lines).toContain("Clicks landed: 0 of 20");
   });
 
-  it("stops when the window shows a connection prompt instead of the phone", async () => {
+  it("is invalid when the window shows a connection prompt instead of the phone", async () => {
     const phone = simulatedPhone();
     phone.deps.ocr = async () => [line("Lock your iPhone to connect", 620, 400)];
     const result = await runCheck(phone.deps);
-    expect(
-      result.lines.some((entry) => entry.startsWith('FAIL connected: shows "Lock your iPhone')),
-    ).toBe(true);
-    expect(phone.state.calls.includes("computer_click")).toBe(false);
+    invalidResult(result);
+    expect(result.lines.at(-1)).toContain(
+      'not connected and showing the phone: it shows "Lock your iPhone',
+    );
+    expect(phone.state.calls.includes("computer_type")).toBe(false);
   });
 
-  it("asks for the window on the main display", async () => {
+  it("is invalid when the window is not on the main display", async () => {
     const phone = simulatedPhone();
     phone.deps.window = async () => ({ window, onMainDisplay: false });
     const result = await runCheck(phone.deps);
-    expect(
-      result.lines.some(
-        (entry) => entry.startsWith("FAIL open: ") && entry.includes("main display"),
-      ),
-    ).toBe(true);
+    invalidResult(result);
+    expect(result.lines.at(-1)).toContain("main display");
+  });
+
+  it("first shows the installed app has the iPhone Mirroring path", async () => {
+    const result = await runCheck(simulatedPhone().deps);
+    const firstCheck = result.lines.find((entry) => /^(PASS|FAIL) /.test(entry));
+    expect(firstCheck).toMatch(
+      /^PASS mirroring path: computer_type refused "é" before pressing any key/,
+    );
+    expect(result.lines[0]).toBe("Load (1 min) at start: 3");
+    expect(result.lines).toContain("Desktop app: SpecWithCode simulated (simulated)");
+    expect(result.lines).toContain("Load (1 min) at end: 3");
+  });
+
+  it("is invalid on an installed app without the path, saying where the stray key went", async () => {
+    const phone = simulatedPhone({ mirroringPath: false });
+    const result = await runCheck(phone.deps);
+    invalidResult(result);
+    expect(result.lines.at(-1)).toContain("has no iPhone Mirroring path");
+    expect(result.lines.at(-1)).toContain("Spotlight search field, where a stray key is harmless");
+    // The probe went only into Spotlight, then was cleared, and no tap followed.
+    expect(phone.state.query).toBe("");
+    expect(phone.state.calls.includes("computer_click")).toBe(false);
+  });
+
+  it("is invalid when no desktop app runs", async () => {
+    const phone = simulatedPhone();
+    phone.deps.desktopApps = async () => [];
+    const result = await runCheck(phone.deps);
+    invalidResult(result);
+    expect(phone.state.calls).toEqual([]);
+  });
+
+  it("calls a failed run invalid when it started above load 48, without a click total", async () => {
+    // 20 taps land but a scroll fails, at a high load: no "20 of 20" may appear.
+    const phone = simulatedPhone({ load: 120 });
+    const call = phone.deps.call;
+    phone.deps.call = (tool, args) =>
+      tool === "computer_scroll" ? Promise.resolve({ data: {} }) : call(tool, args);
+    const result = await runCheck(phone.deps);
+    invalidResult(result);
+    expect(result.lines.at(-1)).toContain("started at a 1-minute load of 120, above 48");
+    expect(result.lines.some((entry) => entry.includes("20 of 20"))).toBe(false);
+  });
+
+  it("still fails a run that started at load 48 or less", async () => {
+    const result = await runCheck(simulatedPhone({ load: 48, missClick: 2 }).deps);
+    expect(result.invalid).toBe(false);
+    expect(result.lines).toContain("Clicks landed: 19 of 20");
+    expect(result.lines.at(-1)).toMatch(/^Result: FAIL/);
+  });
+
+  it("counts a passing run at any load", async () => {
+    const result = await runCheck(simulatedPhone({ load: 300 }).deps);
+    expect(result.pass).toBe(true);
+    expect(result.lines).toContain("Clicks landed: 20 of 20");
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
   });
 
   it("reopens iPhone Mirroring once when the gate says the app in front changed", async () => {

@@ -2,24 +2,34 @@
 // Checks that agents can drive an iPhone through the iPhone Mirroring window
 // with the product's own computer_* tools: 20 taps on named controls, Latin
 // typing and scrolling. It needs a paired iPhone, so no CI can run it; run it
-// by hand before any release that changes apps/desktop/src/computerUse/.
+// by hand on the Mac that mirrors the phone right after any release that
+// changes apps/desktop/src/computerUse/ (increment 1395, AC-01 and D-04).
 //
 //   node scripts/computer-use/iphone-mirroring-check.mjs --out <dir> [--ios <version>]
 //   node scripts/computer-use/iphone-mirroring-check.mjs --dry-run [--out <dir>] [--miss <n>]
 //
-// Live mode runs from the shell of a SpecWithCode thread on the Mac that
-// mirrors the phone. It speaks MCP to this machine's SpecWithCode service as
-// that thread (SPECWITHCODE_STUDIO_MCP_AUTHORIZATION, set in Claude threads),
-// so every tap, key and scroll goes through the same computer_* tools and
-// access card an agent gets. The script only reads besides that: the iPhone
-// Mirroring window's bounds, and the text in screenshots the tools returned,
-// with macOS's own text recognition, to find controls by name and to judge
-// each step. It writes <out>/check.log, one line per check and the total
-// "Clicks landed: N of 20".
+// Live mode runs from the shell of a SpecWithCode Claude thread. It speaks MCP
+// to this machine's SpecWithCode service as that thread
+// (SPECWITHCODE_STUDIO_MCP_AUTHORIZATION), so every tap, key and scroll goes
+// through the same computer_* tools and access card an agent gets, performed
+// by the installed desktop app. Besides that the script only reads: the
+// running desktop app's version, the load average, the iPhone Mirroring
+// window's bounds, and the text in screenshots the tools returned, with
+// macOS's own text recognition, to find controls by name and judge each step.
+//
+// It writes <out>/check.log, one line per check, and ends with one of:
+//   Result: PASS     after "Clicks landed: 20 of 20"
+//   Result: FAIL     after "Clicks landed: N of 20"
+//   Result: INVALID  with no click total: the run proves nothing and is
+//                    repeated. Setup did not finish (access, window,
+//                    connection), the installed app has no iPhone Mirroring
+//                    path, or a failed run started at a 1-minute load above 48.
 //
 // Before a live run: the phone is near the Mac, locked, with its language set
 // to English; iPhone Mirroring shows the phone (connected) on the main
 // display; nothing else covers the window. The run takes about three minutes.
+//
+// Exit code: 0 PASS, 1 FAIL, 3 INVALID, 2 a usage error.
 //
 // --dry-run drives a simulated phone through the same steps and writes
 // <out>/dry-run.log (never check.log). --miss <n> makes counted click n miss.
@@ -42,6 +52,16 @@ export const DEFAULTS = {
   openMs: 2_200,
   minScrollPx: 20,
 };
+/** A failed run that started above this 1-minute load average is invalid (three times 16 cores). */
+export const MAX_FAIL_LOAD = 48;
+/**
+ * Typed into the phone's Spotlight field to show the installed app has the
+ * iPhone Mirroring path: that path refuses it before pressing any key. An app
+ * without the path pastes it instead, a stray key in a search field.
+ */
+export const PATH_PROBE = "é";
+/** The start of the refusal the iPhone Mirroring path gives for PATH_PROBE. */
+export const PATH_REFUSAL = "passes only the keys of a US keyboard";
 /** What iPhone Mirroring shows instead of the phone when it is not connected. */
 const NOT_CONNECTED = [
   "lock your iphone",
@@ -166,6 +186,8 @@ export function scrolled(before, after, window, direction, minPx) {
  * deps.call(tool, args) -> { data, image } and throws on a tool error;
  * deps.window(size) -> { window, onMainDisplay } | undefined, in screenshot pixels;
  * deps.ocr(image, region) -> [{ text, x, y, width, height }] in screenshot pixels;
+ * deps.loadavg() -> the 1-minute load average;
+ * deps.desktopApps() -> [{ version, path }] of the running SpecWithCode desktop apps;
  * deps.sleep(ms).
  */
 export async function runCheck(deps, options = {}) {
@@ -220,28 +242,57 @@ export async function runCheck(deps, options = {}) {
       .map((line) => JSON.stringify(line.text))
       .join(", ") || "no text";
 
+  const load = () => {
+    const value = deps.loadavg();
+    return Number.isFinite(value) ? Math.round(value * 100) / 100 : undefined;
+  };
+  const startLoad = load();
+  log(`Load (1 min) at start: ${startLoad ?? "unknown"}`);
+  const endLoad = () => log(`Load (1 min) at end: ${load() ?? "unknown"}`);
+
+  const invalid = (reason) => {
+    endLoad();
+    log(`Result: INVALID (${reason}). Repeat the run; this does not count against AC-01.`);
+    return { lines, pass: false, invalid: true, landed: undefined, checks };
+  };
+
   const finish = () => {
     const clickChecks = checks.filter((entry) => entry.name.startsWith("click "));
     const landed = clickChecks.filter((entry) => entry.ok).length;
-    log(`Clicks landed: ${landed} of ${CLICK_TARGET}`);
     const passed = checks.filter((entry) => entry.ok).length;
     const pass =
       passed === checks.length && clickChecks.length === CLICK_TARGET && landed === CLICK_TARGET;
     const firstFailure = checks.find((entry) => !entry.ok);
-    log(
-      pass
-        ? `Result: PASS (${passed}/${checks.length} checks)`
-        : `Result: FAIL (${passed}/${checks.length} checks passed${firstFailure ? `; first failure: ${firstFailure.name}` : ""})`,
-    );
-    return { lines, pass, landed, checks };
+    const failure = `${passed}/${checks.length} checks passed${firstFailure ? `; first failure: ${firstFailure.name}` : ""}`;
+    if (!pass && startLoad !== undefined && startLoad > MAX_FAIL_LOAD) {
+      // No click total: an invalid log must never read as a result.
+      return invalid(
+        `failed (${failure}; ${landed} clicks landed) but started at a 1-minute load of ${startLoad}, above ${MAX_FAIL_LOAD}`,
+      );
+    }
+    log(`Clicks landed: ${landed} of ${CLICK_TARGET}`);
+    endLoad();
+    log(pass ? `Result: PASS (${passed}/${checks.length} checks)` : `Result: FAIL (${failure})`);
+    return { lines, pass, invalid: false, landed, checks };
   };
 
   const stop = (name, detail) => {
     check(name, false, detail);
     return finish();
   };
+  const setup = (detail) => log(`SETUP ${detail}`);
 
-  // 1. Access and the window ------------------------------------------------------
+  // 1. The desktop app, access and the window ---------------------------------------
+  const apps = await deps.desktopApps();
+  if (apps.length === 0)
+    return invalid("no SpecWithCode desktop app is running to perform the steps");
+  for (const app of apps) log(`Desktop app: SpecWithCode ${app.version} (${app.path})`);
+  if (apps.length > 1) {
+    note(
+      "more than one SpecWithCode desktop app runs; the path check below shows how the one that performs the steps behaves",
+    );
+  }
+
   try {
     const access = await deps.call("request_access", {
       reason:
@@ -249,52 +300,69 @@ export async function runCheck(deps, options = {}) {
       apps: [MIRRORING_APP],
     });
     const status = access.data?.status ?? "unknown";
-    if (!check("access", status === "allowed", `request_access answered ${status}`)) {
-      return finish();
-    }
+    if (status !== "allowed") return invalid(`request_access answered ${status}`);
+    setup("access allowed");
   } catch (error) {
-    return stop("access", `request_access failed: ${error.message}`);
+    return invalid(`request_access failed: ${error.message}`);
   }
 
   try {
     await call("computer_open", { application: MIRRORING_APP });
   } catch (error) {
-    return stop("open", `computer_open failed: ${error.message}`);
+    return invalid(`computer_open failed: ${error.message}`);
   }
   await deps.sleep(config.openMs);
   let seen = await look();
-  if (seen.window === undefined) {
-    return stop("open", `no ${MIRRORING_APP} window on screen; ${front()}`);
-  }
+  if (seen.window === undefined) return invalid(`no ${MIRRORING_APP} window on screen; ${front()}`);
   if (!seen.onMainDisplay) {
-    return stop(
-      "open",
-      `the ${MIRRORING_APP} window is not on the main display, where screenshots are taken. Move it there (Window menu) and run again.`,
+    return invalid(
+      `the ${MIRRORING_APP} window is not on the main display, where screenshots are taken; move it there (Window menu)`,
     );
   }
-  check(
-    "open",
-    true,
+  setup(
     `window at (${seen.window.x}, ${seen.window.y}) ${seen.window.width}x${seen.window.height}; ${front()}`,
   );
   const blocked = seen.lines.find((line) =>
     NOT_CONNECTED.some((phrase) => normalize(line.text).includes(phrase)),
   );
-  if (
-    !check("connected", blocked === undefined, blocked ? `shows "${blocked.text}"` : summary(seen))
-  ) {
-    return finish();
+  if (blocked !== undefined) {
+    return invalid(
+      `${MIRRORING_APP} is not connected and showing the phone: it shows "${blocked.text}"`,
+    );
   }
+  if (seen.lines.length === 0) {
+    return invalid(`no text in the ${MIRRORING_APP} window, so it is not showing the phone`);
+  }
+  setup(`connected: ${summary(seen)}`);
 
-  // 2. Typing into Spotlight on the phone -----------------------------------------
+  // 2. The installed app has the iPhone Mirroring path -------------------------------
   try {
     await call("computer_key", { keys: "cmd+1" });
     await deps.sleep(config.settleMs);
     await call("computer_key", { keys: "cmd+3" });
     await deps.sleep(config.settleMs);
   } catch (error) {
-    return stop("spotlight", `computer_key failed: ${error.message}`);
+    return invalid(`opening the phone's Spotlight failed: ${error.message}`);
   }
+  try {
+    await call("computer_type", { text: PATH_PROBE });
+    // An app without the path pasted the probe: at most a stray key in the search field.
+    await call("computer_key", { keys: "backspace", repeat: 2 }).catch(() => undefined);
+    return invalid(
+      `the installed desktop app has no iPhone Mirroring path: computer_type took "${PATH_PROBE}" instead of refusing it. It went to the phone's Spotlight search field, where a stray key is harmless, and was cleared with backspace`,
+    );
+  } catch (error) {
+    if (!String(error?.message).includes(PATH_REFUSAL)) {
+      return invalid(`the iPhone Mirroring path probe failed for another reason: ${error.message}`);
+    }
+    check(
+      "mirroring path",
+      true,
+      `computer_type refused "${PATH_PROBE}" before pressing any key, as only the iPhone Mirroring path does; nothing reached the phone`,
+    );
+  }
+
+  // 3. Typing into Spotlight on the phone -----------------------------------------
   for (const sample of TYPE_SAMPLES) {
     try {
       await call("computer_type", { text: sample });
@@ -313,7 +381,7 @@ export async function runCheck(deps, options = {}) {
     }
   }
 
-  // 3. Taps on the Clock app's tabs ------------------------------------------------
+  // 4. Taps on the Clock app's tabs ------------------------------------------------
   const openApp = async (name) => {
     await call("computer_key", { keys: "cmd+3" });
     await deps.sleep(config.settleMs);
@@ -402,7 +470,7 @@ export async function runCheck(deps, options = {}) {
     }
   }
 
-  // 4. Scrolling the Settings list --------------------------------------------------
+  // 5. Scrolling the Settings list --------------------------------------------------
   try {
     seen = await openApp(config.listApp);
     const start = seen.lines;
@@ -460,7 +528,13 @@ export async function runCheck(deps, options = {}) {
 // A simulated phone for --dry-run -------------------------------------------------
 
 /** A phone behind a Mirroring window that answers the tools the way the real one should. */
-export function simulatedPhone({ missClick, pages: pageOverride, deadClicks = false } = {}) {
+export function simulatedPhone({
+  missClick,
+  pages: pageOverride,
+  deadClicks = false,
+  load = 3,
+  mirroringPath = true,
+} = {}) {
   const window = { x: 600, y: 100, width: 360, height: 760 };
   const display = { width: 1512, height: 982 };
   const tabs = {
@@ -544,6 +618,12 @@ export function simulatedPhone({ missClick, pages: pageOverride, deadClicks = fa
         return done();
       }
       case "computer_type":
+        // The iPhone Mirroring path refuses what a US keyboard cannot type; an older app pastes it.
+        if (mirroringPath && /[^\x20-\x7e\n\t]/.test(args.text)) {
+          throw new Error(
+            `iPhone Mirroring ${PATH_REFUSAL} to the phone, so "${args.text}" cannot be typed there and nothing was typed.`,
+          );
+        }
         if (state.app === "spotlight") state.query += args.text;
         return done();
       case "computer_click": {
@@ -583,6 +663,8 @@ export function simulatedPhone({ missClick, pages: pageOverride, deadClicks = fa
       call,
       window: async () => ({ window, onMainDisplay: true }),
       ocr: async () => ocr(),
+      loadavg: () => load,
+      desktopApps: async () => [{ version: "simulated", path: "simulated" }],
       sleep: async () => {},
     },
   };
@@ -710,6 +792,24 @@ function run(argv) {
   return JSON.stringify({ lines: lines });
 }`;
 
+const DESKTOP_APPS_SCRIPT = `
+ObjC.import("AppKit");
+function run() {
+  var apps = $.NSWorkspace.sharedWorkspace.runningApplications;
+  var found = [];
+  for (var i = 0; i < apps.count; i++) {
+    var app = apps.objectAtIndex(i);
+    var id = app.bundleIdentifier;
+    var name = app.localizedName;
+    var ours = (id && !id.isNil() && id.js === "com.specweave.studio") || (name && !name.isNil() && name.js === "SpecWithCode");
+    if (!ours || app.bundleURL.isNil()) continue;
+    var bundle = $.NSBundle.bundleWithURL(app.bundleURL);
+    var version = bundle.isNil() ? null : bundle.objectForInfoDictionaryKey("CFBundleShortVersionString");
+    found.push({ path: app.bundleURL.path.js, version: version && !version.isNil() ? version.js : "unknown" });
+  }
+  return JSON.stringify(found);
+}`;
+
 /** Converts a window in display points to screenshot pixels, and says whether it is on the main display. */
 export function windowInScreenshot(found, main, size) {
   if (found === null || found === undefined) return undefined;
@@ -777,6 +877,9 @@ export async function liveDeps({ client, scratch, saveScreenshots, outDir }) {
       );
       return regionToScreenshot(answer.lines, clipped);
     },
+    loadavg: () => NodeOS.loadavg()[0],
+    desktopApps: async () =>
+      JSON.parse(run("/usr/bin/osascript", ["-l", "JavaScript", "-e", DESKTOP_APPS_SCRIPT])),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   };
 }
@@ -870,7 +973,7 @@ export async function main(argv, env = process.env) {
     NodeFS.writeFileSync(file, [...header(meta), ...result.lines, ""].join("\n"));
     console.log([...header(meta), ...result.lines].join("\n"));
     console.log(`Log: ${file}`);
-    return result.pass ? 0 : 1;
+    return result.pass ? 0 : result.invalid ? 3 : 1;
   }
 
   // osascript reads the window and the text; it exists only on macOS.
@@ -892,6 +995,7 @@ export async function main(argv, env = process.env) {
   const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "iphone-mirroring-check-"));
   const file = NodePath.join(outDir, "check.log");
   const client = mcpClient({ url, authorization });
+  const startLoad = NodeOS.loadavg()[0];
   const printed = [];
   const print = (line) => {
     printed.push(line);
@@ -926,14 +1030,21 @@ export async function main(argv, env = process.env) {
       service: "unreachable",
     };
     const landed = printed.filter((line) => /^PASS click \d+\//.test(line)).length;
-    for (const line of [
-      `FAIL stopped: ${error.message}`,
-      `Clicks landed: ${landed} of ${CLICK_TARGET}`,
-      "Result: FAIL (stopped early)",
-    ]) {
-      print(line);
+    const pathShown = printed.some((line) => line.startsWith("PASS mirroring path"));
+    const end = [`FAIL stopped: ${error.message}`];
+    if (!pathShown) {
+      end.push(
+        `Result: INVALID (stopped before the iPhone Mirroring path was shown). Repeat the run.`,
+      );
+    } else if (startLoad > MAX_FAIL_LOAD) {
+      end.push(
+        `Result: INVALID (stopped early with ${landed} clicks landed, at a 1-minute start load of ${startLoad}, above ${MAX_FAIL_LOAD}). Repeat the run.`,
+      );
+    } else {
+      end.push(`Clicks landed: ${landed} of ${CLICK_TARGET}`, "Result: FAIL (stopped early)");
     }
-    result = { lines: printed, pass: false };
+    for (const line of end) print(line);
+    result = { lines: printed, pass: false, invalid: end.at(-1).startsWith("Result: INVALID") };
   } finally {
     NodeFS.rmSync(scratch, { recursive: true, force: true });
   }
@@ -942,7 +1053,7 @@ export async function main(argv, env = process.env) {
     [...header(meta), ...result.lines, `Finished: ${new Date().toISOString()}`, ""].join("\n"),
   );
   console.log(`Log: ${file}`);
-  return result.pass ? 0 : 1;
+  return result.pass ? 0 : result.invalid ? 3 : 1;
 }
 
 if (
