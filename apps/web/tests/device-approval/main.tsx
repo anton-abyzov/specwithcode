@@ -221,6 +221,65 @@ function JoinDialog() {
   );
 }
 
+/** The floating card as the app's host draws it for a machine whose row code is not readable. */
+function HostFloatingCard() {
+  return (
+    <div className={FLOATING_CODE_LAYER_CLASS} data-fixture-floating>
+      <div className="pointer-events-auto">
+        <DeviceWaitingList
+          deviceId="R2DK"
+          waiting={[{ id: "env-work-mac", machine: "Work Mac", code: "K7QX2M" }]}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Settings > Connections (1416): a waiting row shows its code on the page. A
+ * dialog opened over the page covers the row, so the floating card comes up
+ * above the dialog, and leaves again once the dialog closes.
+ */
+function PageRowUnderDialog() {
+  useSyncExternalStore(subscribeInlineCodes, inlineCodesVersion);
+  const shown = inlineCodeShown("env-work-mac");
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="fixture-shell">
+      <div className="fixture-bar">SpecWithCode · Laptop</div>
+      {shown ? null : <HostFloatingCard />}
+      <div
+        className="fixture-page"
+        style={{ paddingTop: 280 }}
+        data-fixture-inline-shown={String(shown)}
+      >
+        <div className="rounded-xl border border-border px-3 py-3">
+          <p className="mb-3 text-sm font-medium">Work Mac · Waiting for approval</p>
+          <InlineDeviceApprovalCode
+            environmentId={"env-work-mac" as never}
+            machine="Work Mac"
+            code="K7QX2M"
+          />
+        </div>
+        <Button className="mt-3" variant="outline" onClick={() => setOpen(true)} data-fixture-open>
+          Rename this machine
+        </Button>
+      </div>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogPopup>
+          <DialogHeader>
+            <DialogTitle>Rename this machine</DialogTitle>
+            <DialogDescription>Choose the name your other devices see.</DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <p className="text-sm">Laptop</p>
+          </DialogPanel>
+        </DialogPopup>
+      </Dialog>
+    </div>
+  );
+}
+
 /**
  * First run's Connect section (1416): its panel keeps the machine rows mounted
  * while collapsed. The floating card, drawn as the app's host draws it, must
@@ -232,16 +291,7 @@ function FirstRunCollapsed() {
   return (
     <div className="fixture-shell">
       <div className="fixture-bar">SpecWithCode · Laptop</div>
-      {shown ? null : (
-        <div className={FLOATING_CODE_LAYER_CLASS} data-fixture-floating>
-          <div className="pointer-events-auto">
-            <DeviceWaitingList
-              deviceId="R2DK"
-              waiting={[{ id: "env-work-mac", machine: "Work Mac", code: "K7QX2M" }]}
-            />
-          </div>
-        </div>
-      )}
+      {shown ? null : <HostFloatingCard />}
       <div
         className="fixture-page"
         style={{ paddingTop: 280 }}
@@ -288,6 +338,7 @@ function Fixture() {
   );
   if (scene === "join-dialog") return <JoinDialog />;
   if (scene === "first-run-collapsed") return <FirstRunCollapsed />;
+  if (scene === "page-row-under-dialog") return <PageRowUnderDialog />;
   if (scene === "waiting")
     return (
       <div className="fixture-shell">

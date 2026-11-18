@@ -320,6 +320,16 @@ describe("Later (1406)", () => {
     ).toHaveLength(1);
   });
 
+  it("treats Escape like Later, so closing the pop-up is remembered too (1416)", async () => {
+    await open([first, second]);
+    await act(async () => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    expect(prompt()).toBeNull();
+  });
+
   it("hides the pop-up in the real view until a new device asks", async () => {
     await open([first, second]);
     await act(async () => button("Later").click());
