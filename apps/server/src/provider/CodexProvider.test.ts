@@ -739,3 +739,33 @@ describe("withAccountBilling", () => {
     expect(withAccountBilling(models, "something-new")).toBe(models);
   });
 });
+
+it("starts every Astra release at Medium, whatever Codex marks as default", () => {
+  const astra = (model: string) =>
+    mapCodexModelCapabilities({
+      additionalSpeedTiers: [],
+      defaultReasoningEffort: "high",
+      defaultServiceTier: null,
+      description: "Astra",
+      displayName: model,
+      hidden: false,
+      id: model,
+      isDefault: false,
+      model,
+      serviceTiers: [],
+      supportedReasoningEfforts: [
+        { reasoningEffort: "low", description: "Low" },
+        { reasoningEffort: "medium", description: "Medium" },
+        { reasoningEffort: "high", description: "High" },
+      ],
+    }).optionDescriptors?.find((descriptor) => descriptor.id === "reasoningEffort");
+  const defaultOf = (model: string) =>
+    (astra(model) as { options: ReadonlyArray<{ id: string; isDefault?: boolean }> }).options.find(
+      (option) => option.isDefault,
+    )?.id;
+  assert.strictEqual(defaultOf("gpt-6-astra"), "medium");
+  assert.strictEqual(defaultOf("gpt-6.2-astra"), "medium");
+  assert.strictEqual(defaultOf("openai.gpt-6.2-astra"), "medium");
+  // Other lines keep the default Codex reports.
+  assert.strictEqual(defaultOf("gpt-6.2-sol"), "high");
+});
