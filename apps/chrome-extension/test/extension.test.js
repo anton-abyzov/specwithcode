@@ -277,3 +277,42 @@ describe("status text", () => {
     expect(popup).toContain('from "./status.js"');
   });
 });
+
+describe("pairing page and popup words", () => {
+  const read = (file) => NodeFS.readFileSync(NodePath.join(root, file), "utf8");
+  it("say where to copy the code from, offer names and start Pair off", () => {
+    for (const file of ["src/pair.html", "src/popup.html"]) {
+      const html = read(file);
+      expect(html).toContain(
+        "Copy the code from SpecWithCode: first-run setup, or Settings &gt; Chrome.",
+      );
+      for (const name of ["Personal", "Work", "Agents"])
+        expect(html).toContain(`data-name="${name}"`);
+      expect(html).toMatch(/<button id="pair-button" type="submit" disabled>/);
+      // No default name: the name field starts empty, with no placeholder name either.
+      expect(html).toMatch(/<input id="label" maxlength="60" autocomplete="off" \/>/);
+      expect(html).not.toMatch(/EasyChamp admin/);
+    }
+    expect(read("src/pair.html")).toContain('data-page="pair"');
+  });
+
+  it("never falls back to the name Chrome", () => {
+    for (const file of ["src/background.js", "src/popup.js", "src/pair.js"])
+      expect(read(file)).not.toMatch(/\|\| "Chrome"/);
+  });
+
+  it("tells an already paired profile what pairing again replaces", async () => {
+    const { replacesText, WHERE_TO_COPY } = await import("../src/pair.js");
+    expect(replacesText({ phase: "connected", machine: "MacBook Pro" })).toBe(
+      "This profile is paired with MacBook Pro. Pairing here replaces that.",
+    );
+    expect(replacesText({ phase: "not_paired", machine: "MacBook Pro" })).toBe("");
+    expect(WHERE_TO_COPY).toBe(
+      "Copy the code from SpecWithCode: first-run setup, or Settings > Chrome.",
+    );
+  });
+
+  it("ships the pairing page in the store package", () => {
+    expect(packageFiles()).toEqual(expect.arrayContaining(["src/pair.html", "src/pair.js"]));
+  });
+});

@@ -7,7 +7,11 @@ import {
   type BrowserExtensionStatus,
   EnvironmentId,
 } from "@specweave-studio/contracts";
-import { BROWSER_EXTENSION_POLL_MS, BrowserExtensionCard } from "./BrowserExtensionSettings";
+import {
+  BROWSER_EXTENSION_POLL_MS,
+  BrowserExtensionCard,
+  profileNeedsName,
+} from "./BrowserExtensionSettings";
 
 const state = vi.hoisted(() => ({
   permitted: true,
@@ -180,6 +184,35 @@ const render = () =>
   });
 
 describe("BrowserExtensionCard", () => {
+  it("asks a profile still named Chrome for a name agents can tell apart", async () => {
+    const [first, second] = status.profiles;
+    state.query = {
+      ...state.query,
+      data: {
+        ...status,
+        profiles: [
+          { ...first!, label: "Chrome" },
+          { ...second!, label: "Chrome (2)" },
+        ],
+      },
+    };
+    await render();
+    expect(text().split("Give it a name agents can tell apart").length - 1).toBe(2);
+    state.query = { ...state.query, data: status };
+    await render();
+    expect(text()).not.toContain("Give it a name agents can tell apart");
+  });
+
+  it.each([
+    ["Chrome", true],
+    ["Chrome (3)", true],
+    ["Unnamed profile", true],
+    ["Chrome work", false],
+    ["Personal", false],
+  ])("profileNeedsName(%s) is %s", (label, expected) => {
+    expect(profileNeedsName(label)).toBe(expected);
+  });
+
   it("turns the SpecWithCode Browser preference for Claude threads on and off", async () => {
     await render();
     const toggle = () =>
