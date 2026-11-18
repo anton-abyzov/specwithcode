@@ -493,8 +493,12 @@ export const es: PhraseCatalog = {
   "Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed.":
     "Envía cada sincronización a origin en refs/specwithcode/handoff, incluidos los archivos sin confirmar y sin seguimiento. Mover no lo necesita. Tus ramas nunca se envían.",
   Query: "Consulta",
-  "Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access.":
-    "Leer tu inicio de sesión de Cursor CLI desde el Llavero de macOS para mostrar el historial de la cuenta y los límites del plan. macOS puede pedirte que permitas el acceso.",
+  "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
+    "Muestra los límites del plan y el historial de Cursor leyendo el inicio de sesión de Cursor de este equipo. Cursor no tiene una API pública de uso, así que sigue desactivado hasta que lo actives.",
+  "Turn on Cursor account usage?":
+    "¿Activar el uso de la cuenta de Cursor?",
+  "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
+    "Cursor no tiene una API pública de uso. La app lee tu inicio de sesión de Cursor y llama a endpoints privados de Cursor, lo que según Cursor incumple sus términos y puede hacer que bloqueen tu cuenta.",
   "Reconnect this device to set up its provider, or select another device.":
     "Vuelve a conectar este dispositivo para configurar su proveedor, o selecciona otro dispositivo.",
   "Refresh provider status, versions, and models in the background. Set to 0 to disable.":

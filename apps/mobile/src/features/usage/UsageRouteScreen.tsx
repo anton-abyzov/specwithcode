@@ -22,7 +22,7 @@ import {
   makeWindow,
 } from "@specweave-studio/shared/usageFormat";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, RefreshControl, View } from "react-native";
+import { Alert, Platform, Pressable, RefreshControl, View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -65,7 +65,9 @@ const METRIC_OPTIONS = [
 ] as const satisfies readonly { value: UsageChartMetric; label: string }[];
 
 const CHART_HEIGHT = 180;
-const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
+const CURSOR_USAGE_COPY = "Reads your Cursor sign-in on this machine.";
+const CURSOR_USAGE_WARNING =
+  "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.";
 
 /**
  * Two tabs over one screen. Usage is the transcript-derived spend for a
@@ -424,9 +426,15 @@ function CursorEnableAction({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Enable Cursor usage from ${label}`}
-      accessibilityHint={CURSOR_KEYCHAIN_COPY}
+      accessibilityHint={CURSOR_USAGE_COPY}
       disabled={pending}
-      onPress={() => void enable()}
+      onPress={() =>
+        // The same warning as the web app: the person decides before anything is read.
+        Alert.alert("Turn on Cursor account usage?", CURSOR_USAGE_WARNING, [
+          { text: "Cancel", style: "cancel" },
+          { text: "Turn on", onPress: () => void enable() },
+        ])
+      }
       className="rounded-full bg-primary px-4 py-2"
     >
       <Text className="text-sm font-medium text-primary-foreground">{buttonText}</Text>
@@ -480,7 +488,7 @@ function CursorEnableLimits({
         <Text className="text-base font-studio-medium text-foreground">Cursor</Text>
       </View>
       <View className="items-start gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
-        <Text className="text-xs text-foreground-muted">{CURSOR_KEYCHAIN_COPY}</Text>
+        <Text className="text-xs text-foreground-muted">{CURSOR_USAGE_COPY}</Text>
         <View className="flex-row flex-wrap gap-2">
           {environments.map((environment) => (
             <CursorEnableAction
