@@ -224,6 +224,14 @@ const make = Effect.gen(function* () {
     // in a subfolder it nests a second repository. Only the repository's top runs it.
     // A git that cannot start or does not answer is said as such, never as
     // "not a repository", so no second repository is made inside a real one.
+    // A missing folder fails the spawn too; say that, not that Git is missing.
+    if (!(yield* fs.exists(cwd).pipe(Effect.orElseSucceed(() => true)))) {
+      return {
+        ok: false,
+        reason: "failed",
+        detail: `This project's folder is no longer there: ${cwd}`,
+      } as const;
+    }
     const top = yield* git(cwd, ["rev-parse", "--show-toplevel"]);
     if (Option.isNone(top)) {
       return {

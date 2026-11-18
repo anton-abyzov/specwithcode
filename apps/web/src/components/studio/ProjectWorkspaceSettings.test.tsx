@@ -591,6 +591,30 @@ describe("project folder placement", () => {
       delete mutable.gitRepository;
     }
   });
+  it("turns a not-a-repository refusal into the Git offer when the read said nothing", async () => {
+    state.specweaveSetUp
+      .mockResolvedValueOnce({
+        _tag: "Failure",
+        error: new Error(
+          "SpecWeave needs a Git repository: this folder is not one. Run git init here first, then try again.",
+        ),
+      })
+      .mockResolvedValueOnce({
+        _tag: "Success",
+        value: { alreadySetUp: false, gitInitialized: true },
+      });
+    await render("general", true, { kind: "code" });
+    await click("Set up SpecWeave");
+    await click("Run specweave init");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.textContent).toContain("first runs git init here");
+    await click("Set up Git and SpecWeave");
+    expect(state.specweaveSetUp).toHaveBeenLastCalledWith({
+      environmentId: project.environmentId,
+      input: { projectId: project.id, initGit: true },
+    });
+    expect(state.saved).toHaveBeenCalled();
+  });
   it("shows why SpecWeave setup failed and keeps the button", async () => {
     state.specweaveSetUp.mockResolvedValue({
       _tag: "Failure",

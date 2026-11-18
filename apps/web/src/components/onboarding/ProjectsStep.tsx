@@ -238,6 +238,9 @@ export function ImportStep({
         : 0;
     let importedThreadCount = 0;
     let skippedThreadCount = 0;
+    // Why a picked folder's first commit was not made (no Git name or email,
+    // say): the project stands, and the person is told with the import's notice.
+    let commitNotice = "";
     const refreshEnvironments = new Set<EnvironmentId>();
     for (const candidate of selection) {
       const { environmentId } = candidate;
@@ -277,9 +280,12 @@ export function ImportStep({
         // folder disagree; then it is not this candidate, so fall back below.
         if (created._tag === "Success" && sameFolder(created.value.workspaceRoot, candidate.path)) {
           projectId = created.value.projectId;
+          if (created.value.commitError) commitNotice = created.value.commitError;
         } else if (created._tag !== "Success" && isAtomCommandInterrupted(created)) {
           continue;
         }
+        // Any other failure (a folder New project refuses, say) falls back to
+        // adding the folder as it is, as first-run setup always did.
       }
       if (projectId === null) {
         let attempt = projectAttempts.get(candidate.key);
@@ -372,6 +378,11 @@ export function ImportStep({
       } else {
         importWarningRef.current = t("wizard.import.historyFailed");
       }
+    }
+    if (commitNotice) {
+      importWarningRef.current = [importWarningRef.current, commitNotice]
+        .filter(Boolean)
+        .join(t("common.sentenceSpace"));
     }
     finishAfterImport();
   };
