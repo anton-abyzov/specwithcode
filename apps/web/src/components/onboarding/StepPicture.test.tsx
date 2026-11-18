@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- a test that reads its stylesheet.
 import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- a test that reads its stylesheet.
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { act } from "react";

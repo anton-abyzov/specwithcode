@@ -65,6 +65,7 @@ const status = (overrides: Partial<BrowserExtensionStatus> = {}): BrowserExtensi
   bundledVersion: "0.1.0",
   storeUrl: null,
   profiles: [],
+  recentActions: [],
   ...overrides,
 });
 const profile = (id: string, label: string) => ({

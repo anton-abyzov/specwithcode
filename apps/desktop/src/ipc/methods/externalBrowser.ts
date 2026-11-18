@@ -41,10 +41,13 @@ export const clearClipboardIfText = DesktopIpc.makeIpcMethod({
   payload: Schema.String.check(Schema.isMaxLength(4096)),
   result: Schema.Boolean,
   handler: Effect.fn("desktop.ipc.externalBrowser.clearClipboardIfText")(function* (text) {
-    return yield* Effect.sync(() => {
-      if (text === "" || Electron.clipboard.readText() !== text) return false;
-      Electron.clipboard.clear();
-      return true;
-    });
+    if (text === "") return false;
+    // This Electron's readText resolves asynchronously.
+    const current = yield* Effect.promise(async () => Electron.clipboard.readText()).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    if (current !== text) return false;
+    yield* Effect.sync(() => Electron.clipboard.clear());
+    return true;
   }),
 });

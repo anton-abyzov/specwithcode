@@ -64,6 +64,7 @@ export const FirstRunResumeMarker = Schema.Struct({
   at: Schema.Number,
 });
 export type FirstRunResumeMarker = typeof FirstRunResumeMarker.Type;
+const FirstRunResumeMarkerJson = Schema.fromJsonString(FirstRunResumeMarker);
 
 /** Writes the marker whole (a temporary file renamed over it), so a reader never sees half. */
 export const writeFirstRunResume = Effect.fn("desktop.firstRunResume.write")(function* (
@@ -75,7 +76,8 @@ export const writeFirstRunResume = Effect.fn("desktop.firstRunResume.write")(fun
   const file = path.join(dir, FIRST_RUN_RESUME_FILE);
   const temporary = `${file}.${process.pid}.tmp`;
   yield* fs.makeDirectory(dir, { recursive: true });
-  yield* fs.writeFileString(temporary, JSON.stringify(marker), { mode: 0o600 });
+  const text = yield* Schema.encodeEffect(FirstRunResumeMarkerJson)(marker);
+  yield* fs.writeFileString(temporary, text, { mode: 0o600 });
   yield* fs.rename(temporary, file);
 });
 
@@ -95,16 +97,12 @@ export const takeFirstRunResume = Effect.fn("desktop.firstRunResume.take")(funct
   const claimed = `${file}.${process.pid}-${yield* Random.nextIntBetween(0, 2 ** 31)}.taken`;
   const renamed = yield* fs.rename(file, claimed).pipe(
     Effect.as(true),
-    Effect.catch(() => Effect.succeed(false)),
+    Effect.orElseSucceed(() => false),
   );
   if (!renamed) return null;
   const marker = yield* fs.readFileString(claimed).pipe(
-    Effect.flatMap((text) =>
-      Effect.try(() => JSON.parse(text) as unknown).pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(FirstRunResumeMarker)),
-      ),
-    ),
-    Effect.catch(() => Effect.succeed(null)),
+    Effect.flatMap(Schema.decodeEffect(FirstRunResumeMarkerJson)),
+    Effect.orElseSucceed(() => null),
   );
   yield* fs.remove(claimed, { force: true }).pipe(Effect.ignore);
   if (marker === null) return null;
