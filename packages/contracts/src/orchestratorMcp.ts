@@ -464,7 +464,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
       }),
     ).annotate({
       description:
-        "Questions the child asked with ask_user that are still open. They are yours to settle, not the user's: the app stops showing them as waiting on the user once you finish a turn after the child ended. Answer one with studio_pending_request_respond (or studio_thread_send with answersRequestIds), or put a decision only the user can make in your own report's Blockers. Omitted when none are open.",
+        "Questions your subagent asked with ask_user that are still open. They are yours to settle, not the user's: the app stops showing them as waiting on the user once you finish a turn after the child ended. Answer one with studio_pending_request_respond (or studio_thread_send with answersRequestIds), or put a decision only the user can make in your own report's Blockers. Omitted when none are open, and always for a project coordinator: its workers' questions are the user's.",
     }),
   ),
   waitTimedOut: Schema.Boolean.annotate({

@@ -952,6 +952,16 @@ function launchIncrementFor(
   );
 }
 
+/**
+ * Whether a delegated child's open question cards are its lead's to settle,
+ * read the way the app's attention does (`reportsToParentAgent` in
+ * client-runtime): a worker's own subagents report to it, but a project
+ * coordinator's workers report to the person, so their cards stay the person's.
+ */
+export function childQuestionsGoToLead(leadThreadId: string): boolean {
+  return !leadThreadId.startsWith("project-coordinator:");
+}
+
 /** `heldQueuedMessages` for a thread whose queue holds messages; nothing otherwise. */
 export function heldQueuedMessagesField(
   runs: ReadonlyArray<Pick<OrchestrationV2Run, "status" | "queueHeld">>,
@@ -2433,10 +2443,13 @@ const make = Effect.gen(function* () {
       const resultTransfer = resultTransfers.at(-1) ?? null;
       const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
       // The child's own open question cards: its result may not name them,
-      // and the app leaves them to this lead (see subagentQuestionWait).
-      const openQuestions = yield* openMessageQuestions(task.childThreadId).pipe(
-        Effect.orElseSucceed(() => [] as const),
-      );
+      // and the app leaves them to this lead (see subagentQuestionWait). A
+      // coordinator's worker asks the person, so the coordinator is not told.
+      const openQuestions = childQuestionsGoToLead(scope.thread.threadId)
+        ? yield* openMessageQuestions(task.childThreadId).pipe(
+            Effect.orElseSucceed(() => [] as const),
+          )
+        : [];
       const response = {
         taskId: task.id,
         childThreadId: task.childThreadId,
