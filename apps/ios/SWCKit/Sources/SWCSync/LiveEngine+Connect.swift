@@ -320,6 +320,8 @@ extension LiveEngine {
 
   public func connectDeleteAccount() async throws {
     guard let connect else { return }
+    // A refusal check still in flight must not run beside the deletion.
+    connect.endRejectionHandling()
     updateConnect { $0.isBusy = true; $0.lastError = nil }
     defer { updateConnect { $0.isBusy = false } }
     // The relay removes this phone's push registration with the account.
@@ -331,7 +333,6 @@ extension LiveEngine {
       throw error
     }
     connect.registeredPush = nil
-    connect.endRejectionHandling()
     connect.wasSignedIn = false
     connect.sessionEndedElsewhere = false
     connect.signingOut = true
