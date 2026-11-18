@@ -1,19 +1,21 @@
 /**
- * The model a thread on another machine starts on when its caller names none.
+ * The model this project's settings pick for a thread on another machine
+ * whose caller names none.
  *
  * It is picked here, on the machine that asks, by the rules a thread started
  * here follows: the project's own model first, else the project's tracks or
  * lanes with the caller's `taskLane` and `taskClass`, else what the caller
- * would inherit. The other machine then maps it to its own sign-ins, and uses
- * its default when it has no such model.
+ * would inherit. The other machine then maps it to its own sign-ins.
+ *
+ * The pick is the app's choice, not the caller's, so RemoteWorkers never
+ * starts it there on a sign-in that machine's grant excludes or holds back
+ * (billed per use, or billing unknown; see `translateModel`). The model the
+ * caller itself runs on is sent beside it and is tried next, exactly as
+ * before this pick existed, so a launch that ran then still runs.
  *
  * Two things a launch here does are left out on purpose, because they read
  * this machine's sign-ins and say nothing about the other machine's: a quota
  * boost, and moving off a provider that has no room left.
- *
- * Billing and the other machine's grant are judged there: RemoteWorkers drops
- * an unnamed model that machine bills per use or whose sign-in its grant
- * excludes (see `translateModel`), and that machine's default runs instead.
  */
 import type {
   ModelLane,
@@ -63,7 +65,7 @@ function withCarriedEffort(
     : routed;
 }
 
-export const remoteInheritedModel = Effect.fn("mcp.remoteInheritedModel")(function* (input: {
+export const remotePickedModel = Effect.fn("mcp.remotePickedModel")(function* (input: {
   /** The project here the launch is for; undefined for a scratch launch. */
   readonly project: Project | undefined;
   readonly callerModel: ModelSelection | undefined;
@@ -115,8 +117,8 @@ export const remoteInheritedModel = Effect.fn("mcp.remoteInheritedModel")(functi
     return baseline;
   // Routing judges this machine's sign-ins. One with no room here says nothing
   // about the other machine, so a refusal keeps the baseline and never stops the
-  // launch. The one exception: on tracks, a baseline billed per use here is never
-  // started unasked, so the other machine picks its own default.
+  // launch. The one exception: on tracks, a baseline held back here is never the
+  // app's pick, so only the caller's own model is sent.
   const baselineProvider = providers.find(
     (provider) => provider.instanceId === baseline.instanceId,
   );

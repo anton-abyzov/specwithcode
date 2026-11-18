@@ -13,7 +13,7 @@ import * as Layer from "effect/Layer";
 import { projectFixture } from "../../../project/ProjectWorkspace.testkit.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
-import { remoteInheritedModel } from "./remoteLaunchModel.ts";
+import { remotePickedModel } from "./remoteLaunchModel.ts";
 
 const projectId = ProjectId.make("project:remote-model");
 const claude = ProviderInstanceId.make("claudeAgent");
@@ -68,12 +68,12 @@ const pick = (
     readonly taskLane?: "complex" | "routine";
     readonly taskClass?: "code" | "research";
     readonly scratch?: boolean;
-    readonly grant?: Parameters<typeof remoteInheritedModel>[0]["grantAccounts"];
+    readonly grant?: Parameters<typeof remotePickedModel>[0]["grantAccounts"];
   },
   overrides: Record<string, unknown> | null = {},
   listed: ReadonlyArray<ServerProvider> = providers,
 ) =>
-  remoteInheritedModel({
+  remotePickedModel({
     project: input.scratch
       ? undefined
       : projectFixture(projectId, { defaultModelSelection: input.projectModel ?? null }),

@@ -568,15 +568,20 @@ describe("a linked copy whose coordinator runs on another machine", () => {
       }),
     ).toBe(false);
     // Nor is one whose shared project has no readable id, on either side.
-    const unnamed = <M extends { workspaceSettings: object }>(member: M) => ({
+    const withId = <M extends { workspaceSettings: object }>(
+      member: M,
+      logicalProject: object,
+    ) => ({
       ...member,
-      workspaceSettings: { ...member.workspaceSettings, logicalProject: {} },
+      workspaceSettings: { ...member.workspaceSettings, logicalProject },
     });
+    const unnamed = <M extends { workspaceSettings: object }>(member: M) => withId(member, {});
     const pendingCopy = copy({ coordinatorBinding: undefined });
     for (const memberProjects of [
       [unnamed(main), pendingCopy],
       [main, unnamed(pendingCopy)],
       [unnamed(main), unnamed(pendingCopy)],
+      [withId(main, { id: "" }), withId(pendingCopy, { id: "" })],
     ])
       expect(owns(onCopy("mcp:probe", "agent"), { ...group, memberProjects })).toBe(false);
   });

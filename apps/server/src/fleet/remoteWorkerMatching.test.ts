@@ -291,13 +291,15 @@ describe("translateModel", () => {
     ).toBe("unavailable");
   });
 
-  it("never lands an unnamed model on per-use billing or a sign-in the grant excludes", () => {
+  it("never lands the app's pick on a held sign-in or one the grant excludes", () => {
     const paid = { ...provider("codex", "codex", ["gpt-5.5"]), paidModels: ["gpt-5.5"] };
+    // Billing unknown there: it may be a plan or a key, so it is held back too.
+    const unknown = { ...provider("codex", "codex", ["gpt-5.5"]), heldModels: ["gpt-5.5"] };
     const excluded = { ...provider("codex", "codex", ["gpt-5.5"]), allowedByGrant: false };
-    for (const there of [paid, excluded]) {
+    for (const there of [paid, unknown, excluded]) {
       const input = { selection, driverKind: "codex", remote: [there] };
-      expect(translateModel({ ...input, unnamed: true }).type).toBe("unavailable");
-      // A model the caller named is the caller's choice: that machine answers for it.
+      expect(translateModel({ ...input, picked: true }).type).toBe("unavailable");
+      // A model the caller named or runs on itself is matched as before.
       expect(translateModel(input).type).toBe("same");
     }
     // It moves to the one sign-in of that kind that may run it on a plan.
@@ -306,7 +308,7 @@ describe("translateModel", () => {
         selection,
         driverKind: "codex",
         remote: [paid, provider("codex-plan", "codex", ["gpt-5.5"])],
-        unnamed: true,
+        picked: true,
       }),
     ).toEqual({ type: "translated", modelSelection: { ...selection, instanceId: "codex-plan" } });
     // Another model the same sign-in bills per use does not hold this one back.
@@ -314,8 +316,14 @@ describe("translateModel", () => {
       translateModel({
         selection,
         driverKind: "codex",
-        remote: [{ ...provider("codex", "codex", ["gpt-5.5", "o-pro"]), paidModels: ["o-pro"] }],
-        unnamed: true,
+        remote: [
+          {
+            ...provider("codex", "codex", ["gpt-5.5", "o-pro", "o-key"]),
+            paidModels: ["o-pro"],
+            heldModels: ["o-pro", "o-key"],
+          },
+        ],
+        picked: true,
       }).type,
     ).toBe("same");
   });

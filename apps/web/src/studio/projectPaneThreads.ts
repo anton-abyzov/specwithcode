@@ -332,7 +332,7 @@ const logicalIdOf = (member: ChatProjectMember): string | null => {
   const logical = member.workspaceSettings?.logicalProject;
   if (logical === null || typeof logical !== "object") return null;
   const id = (logical as { readonly id?: unknown }).id;
-  return typeof id === "string" ? id : null;
+  return typeof id === "string" && id !== "" ? id : null;
 };
 
 /**

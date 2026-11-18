@@ -31,7 +31,7 @@ import { currentTeamRules, teamRulesForFolder } from "../../../teamRules/TeamRul
 import type { Caller } from "../../threadAccess.ts";
 import { fleetPrincipalOf } from "../orchestrator/remote.ts";
 import { addToMachineHint, type ExistingCopyOutcome, linkExistingCopy } from "./addToMachine.ts";
-import { remoteInheritedModel } from "./remoteLaunchModel.ts";
+import { remotePickedModel } from "./remoteLaunchModel.ts";
 import { workGrantOf } from "../../workGrantAccess.ts";
 
 export interface LaunchTargetInput {
@@ -369,12 +369,12 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
   // Picked once per request: a retry in a copy linked a moment ago, and each
   // machine placement tries, is the same project and task.
   const picked = pickedModels.get(params);
-  const inheritedModelSelection =
+  const pickedModelSelection =
     params.modelSelection !== undefined
       ? undefined
       : picked !== undefined
         ? picked.selection
-        : yield* remoteInheritedModel({
+        : yield* remotePickedModel({
             project,
             callerModel: caller?.modelSelection ?? undefined,
             isCoordinator,
@@ -384,7 +384,7 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
             taskLane: params.taskLane,
             grantAccounts: (yield* workGrantOf(context))?.grant.accounts,
           });
-  pickedModels.set(params, { selection: inheritedModelSelection });
+  pickedModels.set(params, { selection: pickedModelSelection });
   const launch = (localProject: Project | undefined = project) =>
     remote.launch({
       machine: input.machine.machine,
@@ -399,7 +399,13 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
       machineProjectId: params.scratch === true ? undefined : params.machineProjectId,
       title: params.title,
       explicitModelSelection: params.modelSelection,
-      inheritedModelSelection,
+      // What the caller itself runs on: the model a thread there started on
+      // before the project's models picked one, and still the one after them.
+      inheritedModelSelection:
+        (isCoordinator
+          ? project?.defaultModelSelection
+          : (caller?.modelSelection ?? project?.defaultModelSelection)) ?? undefined,
+      pickedModelSelection,
       runtimeMode: input.runtimeMode,
       requestedRuntimeMode: params.runtimeMode,
       interactionMode: input.interactionMode,

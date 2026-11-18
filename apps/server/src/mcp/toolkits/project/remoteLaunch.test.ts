@@ -1319,9 +1319,11 @@ it.effect("picks an unnamed remote thread's model as a thread started here would
   });
   return Effect.gen(function* () {
     yield* pinned.launch({ title: "Check", message: "Check it", machine: "M1" });
+    // The worker's own model goes beside it, for a machine that holds the pick back.
     expect(pinned.remoteLaunches[0]).toMatchObject({
       explicitModelSelection: undefined,
-      inheritedModelSelection: workerModel,
+      pickedModelSelection: workerModel,
+      inheritedModelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
     });
     yield* tracks.launch({
       title: "Check",
@@ -1329,7 +1331,7 @@ it.effect("picks an unnamed remote thread's model as a thread started here would
       machine: "M1",
       taskLane: "routine",
     });
-    expect(tracks.remoteLaunches[0]?.inheritedModelSelection).toMatchObject(routine);
+    expect(tracks.remoteLaunches[0]?.pickedModelSelection).toMatchObject(routine);
     // A named model is sent as named and nothing is picked for it.
     const named = { instanceId: providerInstanceId, model: "gpt-5" };
     yield* tracks.launch({
@@ -1341,7 +1343,7 @@ it.effect("picks an unnamed remote thread's model as a thread started here would
     });
     expect(tracks.remoteLaunches[1]).toMatchObject({
       explicitModelSelection: named,
-      inheritedModelSelection: undefined,
+      pickedModelSelection: undefined,
     });
     // Placement that skips a machine picks once: the second machine reuses the pick.
     const projectSettings = {
@@ -1357,7 +1359,7 @@ it.effect("picks an unnamed remote thread's model as a thread started here would
     for (const placed of [one, two]) {
       const result = yield* placed.launch({ title: "Check", message: "Check it" });
       expect(result.placement).toMatchObject({ machine: "M1" });
-      expect(placed.remoteLaunches.at(-1)?.inheritedModelSelection).toMatchObject(workerModel);
+      expect(placed.remoteLaunches.at(-1)?.pickedModelSelection).toMatchObject(workerModel);
     }
     expect(two.remoteLaunches).toHaveLength(2);
     expect(one.providerReads.count).toBeGreaterThan(0);

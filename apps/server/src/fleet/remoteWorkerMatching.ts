@@ -261,22 +261,24 @@ export type ModelTranslation =
  * so an id that also exists there must offer the model, and otherwise exactly
  * one instance of the same provider kind must.
  *
- * `unnamed` is a model nobody asked for by name (inherited, or picked by the
- * project's models): it never lands on a sign-in the grant there excludes, or
- * on a model that machine bills per use. That machine's default runs instead.
+ * `picked` is a model the app chose and nobody runs or named (the project's
+ * model, a track or Auto pick): it never lands on a sign-in the grant there
+ * excludes, or on a model that machine holds back (billed per use, or billing
+ * unknown). The caller's own model, inherited, is matched as a named one is.
  */
 export function translateModel(input: {
   readonly selection: ModelSelection;
   readonly driverKind: string | undefined;
   readonly remote: ReadonlyArray<OrchestratorMcpMachineProvider>;
-  readonly unnamed?: boolean | undefined;
+  readonly picked?: boolean | undefined;
 }): ModelTranslation {
   const { selection } = input;
   const offers = (provider: OrchestratorMcpMachineProvider) =>
     provider.models.includes(selection.model) &&
-    (input.unnamed !== true ||
+    (input.picked !== true ||
       (provider.allowedByGrant !== false &&
-        provider.paidModels?.includes(selection.model) !== true));
+        provider.paidModels?.includes(selection.model) !== true &&
+        provider.heldModels?.includes(selection.model) !== true));
   const sameInstance = input.remote.find(
     (provider) => provider.providerInstanceId === selection.instanceId,
   );
