@@ -279,6 +279,8 @@ export function projectCreationGroups(input: {
       ? [
           {
             value: "new-project-specweave",
+            // No heading: the row stands on its own, outside Options.
+            label: "",
             items: [
               {
                 kind: "action" as const,

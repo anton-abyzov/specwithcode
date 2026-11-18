@@ -41,7 +41,7 @@ describe("project creation choices", () => {
     });
     // Its own group, never under the Options heading (1396 AC-16).
     expect(groups.map((g) => g.value)).toEqual(["new-project-specweave"]);
-    expect(groups[0]?.label).toBeUndefined();
+    expect(groups[0]?.label).toBe("");
     const option = groups[0]?.items.find((i) => i.value === "new-project:specweave");
     expect(option?.title).toBe("Use SpecWeave");
     expect(option?.description).toBe(SPECWEAVE_SETUP_SUMMARY);
