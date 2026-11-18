@@ -10,6 +10,7 @@
  * @module project/projectSkillsInventory
  */
 import * as NodeCrypto from "node:crypto";
+import { isBuiltInAgentSkill } from "@specweave-studio/contracts";
 import * as NodePath from "node:path";
 
 import type {
@@ -410,11 +411,13 @@ function pluginNamespace(name: string): string | undefined {
  * Names vskill could have locked a loaded copy under: its folder and the
  * name its provider lists. A plugin skill (`plugin` scope) is excluded: its
  * folder sits inside the plugin, so a standalone skill locked under the same
- * folder name (`lint` for `frontend:lint`) is a different skill.
+ * folder name (`lint` for `frontend:lint`) is a different skill. So is a copy
+ * built into the agent (claude.ai sync, Codex system skills): vskill never
+ * installed it, and a lock for `pdf` must not attach to `anthropic-skills:pdf`.
  */
 function lockableNames(presences: ReadonlyArray<PendingPresence>): Array<string> {
   return presences.flatMap((pending) =>
-    pending.presence.scope === "plugin"
+    pending.presence.scope === "plugin" || isBuiltInAgentSkill(pending.presence)
       ? []
       : [skillFolderName(pending.presence.path), pending.providerName],
   );
@@ -432,6 +435,9 @@ function selectLock(
   locks: ReadonlyArray<VskillLockSource>,
   cwd: string,
 ): { readonly source: VskillLockSource; readonly entry: VskillLockEntry } | undefined {
+  // Nothing vskill installed: a lock under the same name belongs to another skill.
+  if (presences.length > 0 && presences.every((pending) => isBuiltInAgentSkill(pending.presence)))
+    return undefined;
   const keys = new Set([name, ...lockableNames(presences)]);
   const direct = locks.flatMap((source) =>
     [...keys].flatMap((key) => {

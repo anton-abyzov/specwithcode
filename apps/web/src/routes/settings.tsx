@@ -23,7 +23,7 @@ import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScope
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
   effectiveSettingsSearch,
-  SETTINGS_SINGLE_MACHINE_PATHS,
+  settingsPageScopeOptions,
   settingsSearchAfterScopeChange,
 } from "../components/settings/settingsPageScope";
 import { redirectSettingsEntry } from "../components/settings/settingsEntryScope";
@@ -176,7 +176,7 @@ function SettingsRouteLayout() {
   return (
     <SettingsScopeProvider
       search={search}
-      singleEnvironment={SETTINGS_SINGLE_MACHINE_PATHS.has(pathname)}
+      singleEnvironment={settingsPageScopeOptions(pathname).singleMachine}
       onChange={(selected) => {
         const next = settingsSearchAfterScopeChange(pathname, rawSearch, selected);
         // Send every axis so the retain middleware sees an explicit target

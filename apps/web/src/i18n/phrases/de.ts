@@ -5552,4 +5552,40 @@ export const de: PhraseCatalog = {
     "Erledigter Verlauf von {machines} konnte nicht geladen werden.",
   "Resolved history from another machine could not be loaded.":
     "Erledigter Verlauf von einem anderen Rechner konnte nicht geladen werden.",
+  "Set up for {project} on {machine}": "Einrichten für {project} auf {machine}",
+  "Unavailable machine": "Computer nicht verfügbar",
+  "No machines": "Keine Computer",
+  "Each machine keeps its own. Changes here only affect {machine}.":
+    "Jeder Computer hat seine eigenen. Änderungen hier betreffen nur {machine}.",
+  "On this machine": "Auf diesem Computer",
+  "Not on {machine}": "Nicht auf {machine}",
+  "Needs sign-in": "Anmeldung nötig",
+  "Update available {version}": "Update verfügbar: {version}",
+  "Built into the agent": "Im Agenten enthalten",
+  "Read {time}, scan incomplete": "Gelesen {time}, Scan unvollständig",
+  "Read {time}": "Gelesen {time}",
+  "Offline, not read": "Offline, nicht gelesen",
+  "No project there, not read": "Dort kein Projekt, nicht gelesen",
+  "Could not be read": "Konnte nicht gelesen werden",
+  "copies differ": "Kopien weichen ab",
+  "Across machines": "Alle Computer im Vergleich",
+  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
+    "Nur lesen. Jeder Computer meldet seine eigenen Skills. Ein Computer, der nicht gelesen werden konnte, wird nie als fehlend angezeigt.",
+  "No skills on the machines that were read.": "Auf den gelesenen Computern gibt es keine Skills.",
+  "Showing the first 32 machines. Open Connections to inspect the rest.":
+    "Die ersten 32 Computer werden angezeigt. Öffnen Sie Verbindungen für die übrigen.",
+  "The machine list could not be refreshed. Listed machines may be out of date.":
+    "Die Computerliste konnte nicht aktualisiert werden. Die aufgeführten Computer sind möglicherweise veraltet.",
+  "These come with the agent or its account. They are listed so you can see what it loads, and cannot be installed, switched off or edited here.":
+    "Diese gehören zum Agenten oder zu seinem Konto. Sie sind aufgeführt, damit Sie sehen, was er lädt, und können hier nicht installiert, ausgeschaltet oder bearbeitet werden.",
+  "{agent}: no skills installed on {machine}": "{agent}: keine Skills auf {machine} installiert",
+  "This project has no folder on {machine}. Pick another machine above.":
+    "Dieses Projekt hat keinen Ordner auf {machine}. Wählen Sie oben einen anderen Computer.",
+  "Nothing is installed on {machine} yet.": "Auf {machine} ist noch nichts installiert.",
+  "Skills view": "Skills-Ansicht",
+  "You are on {machine}": "Sie sind auf {machine}",
+  "{machine} is offline. Its settings show when it reconnects.":
+    "{machine} ist offline. Die Einstellungen erscheinen, sobald die Verbindung wieder steht.",
+  "You can look at {machine}'s settings from this sign-in, but not change them.":
+    "Mit dieser Anmeldung können Sie die Einstellungen von {machine} ansehen, aber nicht ändern.",
 };

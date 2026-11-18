@@ -567,3 +567,26 @@ export function isListableSkillPath(skillPath: string): boolean {
     .slice(skillsIndex + 1, -1)
     .every((segment) => !segment.startsWith(".") || segment === ".system");
 }
+
+/**
+ * The scope of a skill Claude Code loads from claude.ai sync
+ * (`<config dir>/skills/synced/<id>/<name>/SKILL.md`). The folder is rewritten
+ * by the sync, so the skill is managed on claude.ai: it is listed, never
+ * switched or edited here.
+ */
+export const CLAUDE_AI_SKILL_SCOPE = "claude.ai";
+
+/** The namespace Claude Code publishes claude.ai-synced skills under. */
+export const CLAUDE_AI_SKILL_NAMESPACE = "anthropic-skills";
+
+/**
+ * A copy that ships with the agent or its account: claude.ai-synced skills and
+ * Codex's own `.system` skills. Never installable, switchable or editable.
+ */
+export function isBuiltInAgentSkill(skill: {
+  readonly scope?: string | null | undefined;
+  readonly path: string;
+}): boolean {
+  if (skill.scope === CLAUDE_AI_SKILL_SCOPE || skill.scope === "system") return true;
+  return /[\\/]skills[\\/]\.system[\\/]/.test(skill.path);
+}
