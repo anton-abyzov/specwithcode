@@ -67,6 +67,50 @@ describe("featureCompleteForReview", () => {
   });
 });
 
+describe("runMayTakeAutoReview", () => {
+  const delegated = { ...personThread, lineage: { relationshipToParent: "subagent" } };
+  const fromCoordinator = { scheduledTaskId: undefined, senderThreadId: "thread:coordinator" };
+  it("follows the person-only rules while the thread follows the project", () => {
+    expect(AdversarialReviewReactor.runMayTakeAutoReview(personThread as never, undefined)).toBe(
+      true,
+    );
+    expect(
+      AdversarialReviewReactor.runMayTakeAutoReview(personThread as never, fromCoordinator as never),
+    ).toBe(false);
+    expect(AdversarialReviewReactor.runMayTakeAutoReview(delegated as never, undefined)).toBe(
+      false,
+    );
+  });
+
+  it("lets the thread's own On review a delegated thread and an agent's run", () => {
+    const on = { ...delegated, reviewMode: "on" };
+    expect(AdversarialReviewReactor.runMayTakeAutoReview(on as never, fromCoordinator as never)).toBe(
+      true,
+    );
+    expect(
+      AdversarialReviewReactor.runMayTakeAutoReview(
+        { ...on, title: AdversarialReviewService.adversarialReviewTitle("x") } as never,
+        undefined,
+      ),
+    ).toBe(false);
+    expect(
+      AdversarialReviewReactor.runMayTakeAutoReview(
+        { ...on, archivedAt: "2026-11-18T00:00:00.000Z" } as never,
+        undefined,
+      ),
+    ).toBe(false);
+  });
+
+  it("never reviews a thread set to Off", () => {
+    expect(
+      AdversarialReviewReactor.runMayTakeAutoReview(
+        { ...personThread, reviewMode: "off" } as never,
+        undefined,
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("threadTakesAutoReview", () => {
   it("skips review threads, subagents, outside clients and archived threads", () => {
     expect(AdversarialReviewReactor.threadTakesAutoReview(personThread as never)).toBe(true);
@@ -112,6 +156,8 @@ const completed = (threadId: ThreadId, runId: string) =>
 
 const runReactor = (input: {
   readonly auto: boolean;
+  /** The source thread's own review choice. */
+  readonly reviewMode?: "on" | "off" | null;
   readonly tasks: ReadonlyArray<never>;
   /** Tasks from the second read on, as a cached first read would lag them. */
   readonly laterTasks?: ReadonlyArray<never>;
@@ -145,6 +191,9 @@ const runReactor = (input: {
           Effect.succeed({
             thread: {
               ...personThread,
+              ...(threadId === sourceId && input.reviewMode !== undefined
+                ? { reviewMode: input.reviewMode }
+                : {}),
               id: threadId,
               projectId,
               title:
@@ -233,6 +282,32 @@ describe("AdversarialReviewReactor", () => {
       });
       expect(off).toEqual([]);
       expect(open).toEqual([]);
+    }),
+  );
+
+  it.effect("reads the thread's own choice before the project's", () =>
+    Effect.gen(function* () {
+      const onOverOff = yield* runReactor({
+        auto: false,
+        reviewMode: "on",
+        tasks: [task("done")],
+        events: [completed(sourceId, "run-1")],
+      });
+      const offOverOn = yield* runReactor({
+        auto: true,
+        reviewMode: "off",
+        tasks: [task("done")],
+        events: [completed(sourceId, "run-1")],
+      });
+      const follows = yield* runReactor({
+        auto: true,
+        reviewMode: null,
+        tasks: [task("done")],
+        events: [completed(sourceId, "run-1")],
+      });
+      expect(onOverOff.map((start) => start.threadId)).toEqual([sourceId]);
+      expect(offOverOn).toEqual([]);
+      expect(follows.map((start) => start.threadId)).toEqual([sourceId]);
     }),
   );
 

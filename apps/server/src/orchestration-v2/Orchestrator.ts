@@ -118,6 +118,7 @@ import {
   type LifecycleReceipt,
   type TurnItemId,
 } from "@specweave-studio/contracts";
+import { isAdversarialReviewThreadTitle } from "@specweave-studio/shared/adversarialReview";
 import { modelSelectionsEqual } from "@specweave-studio/shared/model";
 import {
   teamRulesCarriedRefusal,
@@ -742,6 +743,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.interaction-mode.set":
     case "thread.model-selection.set":
     case "thread.advisor-mode.set":
+    case "thread.review-mode.set":
     case "provider-session.detach":
     case "message.dispatch":
     case "notification.delivery.accept":
@@ -3283,6 +3285,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.interaction-mode.set"
           | "thread.model-selection.set"
           | "thread.advisor-mode.set"
+          | "thread.review-mode.set"
           | "provider.switch";
       }
     >,
@@ -4151,6 +4154,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (thread.advisorMode ?? null) === command.advisorMode
             ? thread
             : { ...thread, advisorMode: command.advisorMode, updatedAt: now };
+        case "thread.review-mode.set":
+          // A review thread never starts a review of its own work.
+          return isAdversarialReviewThreadTitle(thread.title) ||
+            (thread.reviewMode ?? null) === command.reviewMode
+            ? thread
+            : { ...thread, reviewMode: command.reviewMode, updatedAt: now };
         case "thread.model-selection.set":
         case "provider.switch":
           return {
@@ -4211,6 +4220,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.interaction-mode-updated" as const;
         // An existing event type, so clients from before the advisor still read the stream.
         case "thread.advisor-mode.set":
+        case "thread.review-mode.set":
           return "thread.metadata-updated" as const;
         case "thread.model-selection.set":
           return thread.providerInstanceId === command.modelSelection.instanceId
@@ -13091,6 +13101,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.interaction-mode.set":
       case "thread.model-selection.set":
       case "thread.advisor-mode.set":
+      case "thread.review-mode.set":
       case "provider.switch":
         yield* dispatchThreadMutation(command, events, effects);
         break;
