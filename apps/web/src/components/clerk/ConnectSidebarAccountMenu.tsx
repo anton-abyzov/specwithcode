@@ -1,10 +1,7 @@
 import { useAuth, useClerk, useUser } from "@clerk/react";
 import { useEffect, useState } from "react";
 
-import {
-  machinesDependingOnConnectSignIn,
-  sessionTimeLeft,
-} from "../../cloud/connectSessionEnd";
+import { machinesDependingOnConnectSignIn, sessionTimeLeft } from "../../cloud/connectSessionEnd";
 import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
 import { useEnvironments } from "../../state/environments";
 import { useMachineNicknames } from "../../studio/machineNickname";

@@ -105,3 +105,16 @@ export function sessionEndingBanner(
     }),
   };
 }
+
+/**
+ * The banner while the relay refuses this window's sign-in even with a fresh
+ * token (1417, AC-13). The window stays signed in; signing out is the person's choice.
+ */
+export function sessionRejectedBanner(
+  tx: TranslatePhrase = englishPhrase,
+): Omit<SignedOutBannerContent, "cutOff"> {
+  return {
+    title: tx("SpecWithCode Connect did not accept this sign-in"),
+    body: tx("Sign in again to reach your machines through SpecWithCode Connect."),
+  };
+}

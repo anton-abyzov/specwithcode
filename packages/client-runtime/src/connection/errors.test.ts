@@ -15,13 +15,56 @@ import {
 } from "./errors.ts";
 import { DPOP_RETRY_HINT, DPOP_UNKNOWN_HINT } from "../relay/errorPresentation.ts";
 import {
+  ManagedRelayDpopKeyLoadError,
   ManagedRelayRequestFailedError,
+  ManagedRelayRequestProofCreationError,
   ManagedRelayRequestTimeoutError,
+  ManagedRelayTokenProofCreationError,
 } from "../relay/managedRelay.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import { RemoteEnvironmentAuthFetchError, RemoteEnvironmentAuthTimeoutError } from "../rpc/http.ts";
 
 describe("mapManagedRelayError", () => {
+  it("marks a proof this device could not make, which is no refusal of the sign-in (1417)", () => {
+    const failures = [
+      new ManagedRelayDpopKeyLoadError({ keyStore: "indexed-db", cause: new Error("locked") }),
+      new ManagedRelayTokenProofCreationError({
+        method: "POST",
+        url: "https://relay.example.test/v1/token",
+        cause: new Error("sign failed"),
+      }),
+      new ManagedRelayRequestProofCreationError({
+        method: "GET",
+        url: "https://relay.example.test/v1/environments",
+        cause: new Error("sign failed"),
+      }),
+    ];
+    for (const failure of failures) {
+      expect(mapManagedRelayError(failure)).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "authentication",
+        localProofFailure: true,
+      });
+    }
+  });
+
+  it("leaves a relay refusal of the sign-in unmarked", () => {
+    const relayError = new RelayAuthInvalidError({
+      code: "auth_invalid",
+      reason: "invalid_bearer",
+      traceId: "trace-auth",
+    });
+    const mapped = mapManagedRelayError(
+      new ManagedRelayRequestFailedError({
+        action: "connect relay environment",
+        cause: relayError,
+        relayError,
+      }),
+    );
+    expect(mapped).toMatchObject({ _tag: "ConnectionBlockedError", reason: "authentication" });
+    expect("localProofFailure" in mapped).toBe(false);
+  });
+
   it("keeps a timeout reported by the relay distinct from a local network failure", () => {
     const relayError = new RelayEnvironmentEndpointTimedOutError({
       code: "environment_endpoint_timed_out",

@@ -5756,6 +5756,11 @@ export const ru: PhraseCatalog = {
   "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
     "Используйте claude, codex и specweave и в Терминале. Добавляет один помеченный блок в файл запуска оболочки; выключить можно в любой момент в Настройки > Общие.",
   "Your Connect sign-in ends at {time}": "Вход в Connect закончится в {time}",
-  "Sign in again to keep reaching {machines} from this window.": "Войдите снова, чтобы и дальше открывать {machines} из этого окна.",
+  "Sign in again to keep reaching {machines} from this window.":
+    "Войдите снова, чтобы и дальше открывать {machines} из этого окна.",
   "Sign in again now": "Войти снова сейчас",
+  "SpecWithCode Connect did not accept this sign-in": "SpecWithCode Connect не принял этот вход",
+  "Sign in again to reach your machines through SpecWithCode Connect.":
+    "Войдите снова, чтобы открывать свои машины через SpecWithCode Connect.",
+  "Sign in again": "Войти снова",
 };

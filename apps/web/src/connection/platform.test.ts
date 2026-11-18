@@ -383,10 +383,7 @@ describe("backendRestarts", () => {
     const bridge = stubBackendReadyBridge();
     return Effect.gen(function* () {
       const wakeups = yield* Wakeups.ConnectionWakeups;
-      const next = yield* Stream.take(wakeups.changes, 1).pipe(
-        Stream.runCollect,
-        Effect.forkChild,
-      );
+      const next = yield* Stream.take(wakeups.changes, 1).pipe(Stream.runCollect, Effect.forkChild);
       yield* bridge.subscribed;
       bridge.fire();
       expect([...(yield* Fiber.join(next))]).toEqual(["local-backend-ready"]);
@@ -411,9 +408,7 @@ describe("readConnectClerkToken", () => {
     Effect.gen(function* () {
       const error = yield* Effect.flip(
         readConnectClerkToken(
-          session(() =>
-            Effect.fail(new ManagedRelaySessionError({ message: "Failed to fetch" })),
-          ),
+          session(() => Effect.fail(new ManagedRelaySessionError({ message: "Failed to fetch" }))),
         ),
       );
       expect(error).toBeInstanceOf(ConnectionTransientError);

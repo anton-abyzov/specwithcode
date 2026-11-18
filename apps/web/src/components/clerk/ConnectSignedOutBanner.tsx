@@ -1,14 +1,20 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useAuth } from "@clerk/react";
 import { ClockAlertIcon, LogInIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { connectSessionRejectedAtom } from "../../cloud/ConnectSessionGuard";
 import { machinesDependingOnConnectSignIn } from "../../cloud/connectSessionEnd";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import { useLocale, useTx } from "../../i18n";
 import { useEnvironments } from "../../state/environments";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { useFleetReachableHosts, useHostDownNotes } from "../../studio/unreachableHosts";
-import { sessionEndingBanner, signedOutBanner } from "../studio/shell/signedOutBannerModel";
+import {
+  sessionEndingBanner,
+  sessionRejectedBanner,
+  signedOutBanner,
+} from "../studio/shell/signedOutBannerModel";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { useConnectRenew } from "./useConnectRenew";
@@ -32,6 +38,7 @@ export default function ConnectSignedOutBanner() {
   const locale = useLocale();
   const sessionEnd = useConnectSessionEnd();
   const renew = useConnectRenew();
+  const rejected = useAtomValue(connectSessionRejectedAtom);
   // "Later" hides the warning for this sign-in until the window reloads.
   const [laterFor, setLaterFor] = useState<number | null>(null);
   const ending = useMemo(() => {
@@ -66,6 +73,21 @@ export default function ConnectSignedOutBanner() {
       (names) => list.format(names),
     );
   }, [environments, isLoaded, isSignedIn, locale, nameOf, notes, reachable, tx]);
+  if (isLoaded && isSignedIn && rejected) {
+    const refused = sessionRejectedBanner(tx);
+    return (
+      <Alert variant="warning" role="status" data-connect-session-rejected="" className="mx-2 mb-2">
+        <LogInIcon aria-hidden />
+        <AlertTitle>{refused.title}</AlertTitle>
+        <AlertDescription>{refused.body}</AlertDescription>
+        <AlertAction>
+          <Button size="xs" onClick={renew}>
+            {tx("Sign in again")}
+          </Button>
+        </AlertAction>
+      </Alert>
+    );
+  }
   if (ending !== null)
     return (
       <Alert variant="warning" role="status" data-connect-session-ending="" className="mx-2 mb-2">

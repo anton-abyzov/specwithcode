@@ -151,7 +151,10 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
       const switchedAccount =
         previousAccount !== undefined && previousAccount !== null && previousAccount !== userId;
       // Machines kept after another account's sign-in ran out go before this one starts.
-      if (switchedAccount || keptConnectMachinesBelongToAnother(readConnectSessionRecord(), userId)) {
+      if (
+        switchedAccount ||
+        keptConnectMachinesBelongToAnother(readConnectSessionRecord(), userId)
+      ) {
         deactivateManagedRelayAuthentication();
         activateAfterTransition(queueAccountCleanup());
       } else {

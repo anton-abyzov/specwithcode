@@ -91,7 +91,12 @@ describe("accountMenuPresentation", () => {
 
   it("warns before Clerk ends the sign-in and offers a new one (1417, AC-11)", () => {
     const view = accountMenuPresentation(
-      { status: "signedIn", name: "Ada Lovelace", email: "ada@example.com", sessionEndsIn: "1h 40m" },
+      {
+        status: "signedIn",
+        name: "Ada Lovelace",
+        email: "ada@example.com",
+        sessionEndsIn: "1h 40m",
+      },
       MACHINE,
     );
     expect(view.name).toBe("Sign-in ends in 1h 40m");

@@ -1,6 +1,9 @@
 import { useAuth, useClerk } from "@clerk/react";
 
-import { clearConnectRenewStarted, markConnectRenewStarted } from "../../cloud/connectSessionRecord";
+import {
+  clearConnectRenewStarted,
+  markConnectRenewStarted,
+} from "../../cloud/connectSessionRecord";
 import { markConnectRenewOpen, takeConnectRenewOpen } from "../../cloud/connectSignInStarted";
 import { isElectron } from "../../env";
 import { toastManager } from "../ui/toast";

@@ -117,6 +117,12 @@ export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlocked
      * credential refusal, which signing in does not fix.
      */
     connectSignInRequired: Schema.optionalKey(Schema.Boolean),
+    /**
+     * This device could not make its own relay proof (its DPoP key or a proof
+     * signature failed). The relay never saw the sign-in, so this is not a
+     * refusal of it, and signing in again does not fix it (1417, AC-13).
+     */
+    localProofFailure: Schema.optionalKey(Schema.Boolean),
   },
 ) {
   override get message(): string {

@@ -62,7 +62,9 @@ export function dependsOnConnectSignIn(
   return connectionRoutes(entry as ConnectionCatalogEntry).every((route) => {
     if (route.target._tag === "RelayConnectionTarget") return true;
     const profile = Option.getOrNull(route.profile);
-    return profile?._tag === "BearerConnectionProfile" && profile.authorization === "studio-connect";
+    return (
+      profile?._tag === "BearerConnectionProfile" && profile.authorization === "studio-connect"
+    );
   });
 }
 
@@ -77,8 +79,7 @@ export function machinesDependingOnConnectSignIn(
 ): ReadonlyArray<string> {
   return environments
     .filter(
-      ({ entry }) =>
-        entry.enabled && !isThisMachineTarget(entry) && dependsOnConnectSignIn(entry),
+      ({ entry }) => entry.enabled && !isThisMachineTarget(entry) && dependsOnConnectSignIn(entry),
     )
     .map(({ environmentId, label }) => nameOf(environmentId, label));
 }

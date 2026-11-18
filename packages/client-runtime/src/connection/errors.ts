@@ -115,6 +115,7 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
       return new ConnectionBlockedError({
         reason: "authentication",
         detail: error.message,
+        localProofFailure: true,
       });
   }
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   joinNames,
   sessionEndingBanner,
+  sessionRejectedBanner,
   signedOutBanner,
   type SignedOutBannerMachine,
 } from "./signedOutBannerModel";
@@ -107,7 +108,9 @@ describe("joinNames", () => {
 
 describe("sessionEndingBanner (1417, AC-11)", () => {
   it("says when the sign-in ends and which machines it keeps reaching", () => {
-    expect(sessionEndingBanner({ endsAt: "2:43 PM", machines: ["Office Mac", "Mac mini"] })).toEqual({
+    expect(
+      sessionEndingBanner({ endsAt: "2:43 PM", machines: ["Office Mac", "Mac mini"] }),
+    ).toEqual({
       title: "Your Connect sign-in ends at 2:43 PM",
       body: "Sign in again to keep reaching Office Mac and Mac mini from this window.",
     });
@@ -115,5 +118,14 @@ describe("sessionEndingBanner (1417, AC-11)", () => {
 
   it("shows nothing when no saved machine depends on the sign-in", () => {
     expect(sessionEndingBanner({ endsAt: "2:43 PM", machines: [] })).toBeNull();
+  });
+});
+
+describe("sessionRejectedBanner (1417, AC-13)", () => {
+  it("says the relay did not accept the sign-in and asks for a new one", () => {
+    expect(sessionRejectedBanner()).toEqual({
+      title: "SpecWithCode Connect did not accept this sign-in",
+      body: "Sign in again to reach your machines through SpecWithCode Connect.",
+    });
   });
 });

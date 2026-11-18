@@ -5690,6 +5690,12 @@ export const ko: PhraseCatalog = {
   "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
     "터미널에서도 claude, codex, specweave를 사용하세요. 셸 시작 파일에 표시된 블록 하나를 추가하며, 설정 > 일반에서 언제든 끌 수 있습니다.",
   "Your Connect sign-in ends at {time}": "Connect 로그인이 {time}에 끝납니다",
-  "Sign in again to keep reaching {machines} from this window.": "이 창에서 {machines}에 계속 접근하려면 다시 로그인하세요.",
+  "Sign in again to keep reaching {machines} from this window.":
+    "이 창에서 {machines}에 계속 접근하려면 다시 로그인하세요.",
   "Sign in again now": "지금 다시 로그인",
+  "SpecWithCode Connect did not accept this sign-in":
+    "SpecWithCode Connect가 이 로그인을 받아들이지 않았습니다",
+  "Sign in again to reach your machines through SpecWithCode Connect.":
+    "SpecWithCode Connect를 통해 머신에 접근하려면 다시 로그인하세요.",
+  "Sign in again": "다시 로그인",
 };
