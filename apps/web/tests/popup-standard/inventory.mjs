@@ -39,7 +39,7 @@ export const EXEMPT = {
 async function walk(dir, filter) {
   const out = [];
   for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
-    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+    if (entry.name === "node_modules" || entry.name === "build" || entry.name.startsWith(".")) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) out.push(...(await walk(full, filter)));
     else if (filter(full)) out.push(full);
@@ -110,8 +110,8 @@ export async function inventory() {
 
   // iPhone (SwiftUI): system presentations and custom overlays.
   const IOS = [
-    [/\.sheet\(/g, "sheet"],
-    [/\.fullScreenCover\(/g, "full-screen cover"],
+    [/(?<![\w])\.?sheet\((?=\s*(?:isPresented|item))/g, "sheet"],
+    [/(?<![\w])\.?fullScreenCover\(/g, "full-screen cover"],
     [/\.alert\(/g, "alert"],
     [/\.confirmationDialog\(/g, "confirmation dialog"],
     [/\.popover\(/g, "popover"],
