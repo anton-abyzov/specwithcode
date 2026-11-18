@@ -16,10 +16,12 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
 } from "@specweave-studio/contracts";
+import { modelSelectionEffortValue } from "./effortLevel.ts";
 import { describeModel, isSameModel } from "./modelIdentity.ts";
 import { newerOfFamily } from "./modelTiers.ts";
 import {
   builtInTrackSelection,
+  TRACK_DEFAULT_EFFORT,
   isFreePlanProvider,
   isFreeTrackModel,
   providerHomeFamily,
@@ -197,6 +199,11 @@ export interface TrackRow {
   readonly follows: string | null;
   /** Where the model runs, first tried first. Empty when nothing here lists it. */
   readonly sources: ReadonlyArray<TrackSource>;
+  /**
+   * The effort the entry starts at before a source lists its levels: a built-in
+   * entry's own level (Medium unless it names one), a saved entry's saved one.
+   */
+  readonly effort: string | null;
 }
 
 /**
@@ -223,6 +230,8 @@ export function describeTrack(input: {
         model: { slug },
         order: input.sourceOrder ?? undefined,
         preferFree: free,
+        // A built-in row runs on whichever release of its family a source lists.
+        family: named === undefined,
         ...(withRoom && input.track !== "review"
           ? {
               usedPercent: (provider: ServerProvider, served: string) =>
@@ -272,6 +281,7 @@ export function describeTrack(input: {
         misplaced: freeModel && input.track !== "daily",
         follows: newer ?? null,
         sources: sourcesOf(selection.model, free, selection.instanceId),
+        effort: modelSelectionEffortValue(selection) ?? null,
       };
     });
   }
@@ -280,19 +290,21 @@ export function describeTrack(input: {
     const sources = sourcesOf(entry.model, free);
     // A built-in row starts only on a source the app picks by itself.
     const first = sources.find((source) => source.used);
+    const effort = entry.effort ?? TRACK_DEFAULT_EFFORT;
+    // A source that names the model by its bare id reads worse than the built-in name.
+    const listedName =
+      first === undefined ? undefined : describeModel(first.provider, first.slug).name;
     return {
       selection:
-        first === undefined ? null : builtInTrackSelection(entry, first.provider, first.slug),
+        first === undefined ? null : builtInTrackSelection({ effort }, first.provider, first.slug),
       model: entry.model,
-      name:
-        first === undefined
-          ? entry.name
-          : (describeModel(first.provider, first.slug).name ?? entry.name),
+      name: listedName === undefined || listedName === first?.slug ? entry.name : listedName,
       builtIn: true,
       free,
       misplaced: false,
       follows: first === undefined ? null : (newerOfFamily(first.provider, first.slug) ?? null),
       sources,
+      effort,
     };
   });
 }

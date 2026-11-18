@@ -15,7 +15,12 @@ import type {
   ProviderModelTiers,
   ServerProvider,
 } from "@specweave-studio/contracts";
-import { defaultTrackSelections, providersForModel } from "./modelTracks.ts";
+import {
+  defaultTrackSelections,
+  providersForModel,
+  trackAlternate,
+  withTrackEffort,
+} from "./modelTracks.ts";
 import { type ModelFamily, modelFamily } from "./fallbackOptions.ts";
 import { describeModel, isSameModel, sameModelOn } from "./modelIdentity.ts";
 import { fallbackSelectionKey, tierModelFor } from "./modelTiers.ts";
@@ -120,7 +125,11 @@ export function reviewerOrderGroups(input: {
   /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
 }): ReadonlyArray<ReviewerOrderGroup> {
-  const base = input.reviewers.length > 0 ? input.reviewers : defaultReviewerChain(input);
+  // A listed reviewer without an effort runs at Medium, as the Models page shows it.
+  const base =
+    input.reviewers.length > 0
+      ? input.reviewers.map((entry) => withTrackEffort(entry, input.providers))
+      : defaultReviewerChain(input);
   // Only a person's own list pins places; the default order groups freely.
   const listed = new Set(input.reviewers.map(fallbackSelectionKey));
   const seen = new Set<string>();
@@ -143,18 +152,16 @@ export function reviewerOrderGroups(input: {
       providers: input.providers,
       model: names,
       order: input.sourceOrder,
+      // The built-in order stands for each model's whole family; a listed reviewer for itself.
+      family: input.reviewers.length === 0,
     })) {
       if (provider.instanceId === entry.instanceId) continue;
-      // The entry's effort goes with it to another account of the same driver, whose options match.
-      const sameDriver =
-        entry.options !== undefined &&
-        input.providers.find((source) => source.instanceId === entry.instanceId)?.driver ===
-          provider.driver;
-      const alternate = {
-        instanceId: provider.instanceId,
-        model: slug,
-        ...(sameDriver ? { options: entry.options } : {}),
-      };
+      // The entry's effort goes with it, matched to the levels that source offers.
+      const alternate = trackAlternate(
+        entry,
+        { instanceId: provider.instanceId, model: slug },
+        input.providers,
+      );
       if (listed.has(fallbackSelectionKey(alternate))) continue;
       if (claim(alternate)) alternates.push(alternate);
     }

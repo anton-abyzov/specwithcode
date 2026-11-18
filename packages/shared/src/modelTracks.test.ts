@@ -13,7 +13,7 @@ import {
   followNewestReleases,
   tierModelFor,
 } from "./modelTiers.ts";
-import { resolveReviewer } from "./adversarialReview.ts";
+import { resolveReviewer, reviewerChain } from "./adversarialReview.ts";
 import {
   defaultTrackSelections,
   effectiveModelLanes,
@@ -23,6 +23,7 @@ import {
   projectDraftModelSelection,
   providerHomeFamily,
   providersForModel,
+  trackEntryEffort,
 } from "./modelTracks.ts";
 import { describeFallbackOrder, resolveProviderFallback } from "./providerFallback.ts";
 
@@ -550,5 +551,144 @@ describe("tracks at launch", () => {
     expect(
       projectDraftModelSelection({ threadModelMode: "tracks", defaultModelSelection: one }, []),
     ).toEqual(one);
+  });
+});
+
+describe("track effort", () => {
+  const levels = (id: string, ids: ReadonlyArray<string>) => ({
+    optionDescriptors: [
+      {
+        id,
+        label: "Reasoning",
+        type: "select" as const,
+        options: ids.map((level) => ({
+          id: level,
+          label: level,
+          ...(level === "high" ? { isDefault: true } : {}),
+        })),
+      },
+    ],
+  });
+  const withLevels = (source: ServerProvider, id: string, ids: ReadonlyArray<string>) => ({
+    ...source,
+    models: source.models.map((model) => ({ ...model, capabilities: levels(id, ids) })),
+  });
+  const claudeE = withLevels(
+    provider("claudeAgent", "claudeAgent", ["claude-opus-5-5"], 10),
+    "effort",
+    ["low", "medium", "high"],
+  );
+  const copilotE = withLevels(
+    provider("copilot", "acpRegistry", ["claude-opus-5.5"], 10, {
+      iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+    }),
+    "reasoning_effort",
+    ["low", "medium", "high", "xhigh"],
+  );
+  const codexE = withLevels(provider("codex", "codex", ["gpt-6.1-sol"], 10), "reasoningEffort", [
+    "low",
+    "high",
+  ]);
+
+  it("starts a built-in entry at Medium, the nearest level a model offers otherwise", () => {
+    expect(defaultTrackSelections("daily", [claudeE, codexE])).toEqual([
+      { ...sel("claudeAgent", "claude-opus-5-5"), options: [{ id: "effort", value: "medium" }] },
+      // Codex offers low and high here: a tie goes to the higher level.
+      { ...sel("codex", "gpt-6.1-sol"), options: [{ id: "reasoningEffort", value: "high" }] },
+    ]);
+  });
+
+  it("runs a saved entry without an effort at Medium and keeps a saved one", () => {
+    const lanes = effectiveModelLanes(
+      {
+        routine: [
+          sel("claudeAgent", "claude-opus-5-5"),
+          { ...sel("codex", "gpt-6.1-sol"), options: [{ id: "reasoningEffort", value: "low" }] },
+        ],
+        complex: [],
+      },
+      [claudeE, codexE],
+    ).lanes.routine;
+    expect(lanes).toEqual([
+      { ...sel("claudeAgent", "claude-opus-5-5"), options: [{ id: "effort", value: "medium" }] },
+      { ...sel("codex", "gpt-6.1-sol"), options: [{ id: "reasoningEffort", value: "low" }] },
+    ]);
+    expect(trackEntryEffort(sel("claudeAgent", "claude-opus-5-5"), [claudeE])).toEqual({
+      optionId: "effort",
+      value: "medium",
+      saved: false,
+    });
+    // A model its source lists with no effort setting has none.
+    expect(trackEntryEffort(sel("claudeAgent", "claude-opus-5-5"), [claude])).toBeNull();
+  });
+
+  it("carries an entry's level to the same model on another harness", () => {
+    const saved = {
+      routine: [
+        { ...sel("claudeAgent", "claude-opus-5-5"), options: [{ id: "effort", value: "high" }] },
+      ],
+      complex: [],
+    };
+    expect(launchTrackLanes(saved, [claudeE, copilotE]).routine).toEqual([
+      { ...sel("claudeAgent", "claude-opus-5-5"), options: [{ id: "effort", value: "high" }] },
+      {
+        ...sel("copilot", "claude-opus-5.5"),
+        options: [{ id: "reasoning_effort", value: "high" }],
+      },
+    ]);
+  });
+
+  it("runs a listed reviewer without an effort at Medium", () => {
+    expect(
+      reviewerChain({
+        providers: [codexE],
+        reviewers: [sel("codex", "gpt-6.1-sol")],
+        tier: "regular",
+      })[0],
+    ).toEqual({
+      ...sel("codex", "gpt-6.1-sol"),
+      options: [{ id: "reasoningEffort", value: "high" }],
+    });
+  });
+});
+
+describe("GPT-6.2 in the built-in tracks", () => {
+  const codex61 = provider("codex", "codex", ["gpt-6.1-sol", "gpt-6-astra"], 10);
+  const codex62 = provider(
+    "codex",
+    "codex",
+    ["gpt-6.1-sol", "gpt-6.2-sol", "gpt-6-astra", "gpt-6.2-astra"],
+    10,
+  );
+
+  it("runs the 6.2 entries on 6.2 where a source lists it, else on the release it lists", () => {
+    expect(defaultTrackSelections("complex", [codex62]).map((entry) => entry.model)).toEqual([
+      "gpt-6.2-astra",
+    ]);
+    expect(defaultTrackSelections("complex", [codex61]).map((entry) => entry.model)).toEqual([
+      "gpt-6-astra",
+    ]);
+    expect(defaultTrackSelections("daily", [codex61]).map((entry) => entry.model)).toContain(
+      "gpt-6.1-sol",
+    );
+    expect(tierModelFor(codex62, "regular")).toBe("gpt-6.2-sol");
+    expect(tierModelFor(codex61, "regular")).toBe("gpt-6.1-sol");
+    expect(tierModelFor(codex61, "frontier")).toBe("gpt-6-astra");
+  });
+
+  it("lets a saved 6.1 entry follow 6.2 once its source lists it", () => {
+    expect(followNewestReleases([sel("codex", "gpt-6.1-sol")], [codex62])).toEqual([
+      sel("codex", "gpt-6.2-sol"),
+      sel("codex", "gpt-6.1-sol"),
+    ]);
+  });
+
+  it("adds a source that lists only 6.2 as another account of a built-in entry", () => {
+    const copilot62 = provider("copilot", "acpRegistry", ["gpt-6.2-sol"], null, {
+      iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+    });
+    const routine = launchTrackLanes(null, [codex61, copilot62]).routine;
+    expect(routine).toContainEqual(sel("codex", "gpt-6.1-sol"));
+    expect(routine).toContainEqual(sel("copilot", "gpt-6.2-sol"));
   });
 });

@@ -133,7 +133,8 @@ describe("track rows", () => {
       ["claude-opus-5-5", ["claudeAgent", "copilot", "claude-api"]],
       // Nothing here lists Sonnet 5.5: its row waits for a source.
       ["claude-sonnet-5-5", []],
-      ["gpt-6.1-sol", ["codex", "copilot"]],
+      // The built-in GPT-6.2 Sol entry runs on the GPT-6.1 Sol these sources list.
+      ["gpt-6.2-sol", ["codex", "copilot"]],
       ["gpt-6-luna", ["codex", "copilot"]],
     ]);
     expect(rows.every((row) => row.builtIn)).toBe(true);

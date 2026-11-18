@@ -26,8 +26,8 @@ import {
 } from "@specweave-studio/contracts";
 import { createModelSelection } from "@specweave-studio/shared/model";
 import {
+  effortLabel,
   findEffortDescriptor,
-  modelSelectionEffortValue,
   withEffortSelection,
 } from "@specweave-studio/shared/effortLevel";
 import { describeModel } from "@specweave-studio/shared/modelIdentity";
@@ -46,7 +46,7 @@ import {
   type TrackRow,
   type TrackSource,
 } from "@specweave-studio/shared/modelTrackRules";
-import { TRACK_LANES } from "@specweave-studio/shared/modelTracks";
+import { TRACK_LANES, trackEntryEffort } from "@specweave-studio/shared/modelTracks";
 import { GripVerticalIcon, XIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -142,28 +142,44 @@ const TRACK_FIRST: Record<ModelTrack, string> = {
 };
 
 /**
- * The reasoning effort one track entry starts at, from the levels its source
- * offers. Hidden for a model with no effort setting. Unset shows the model's
- * own default; a pick is saved on the entry and every launch from it.
+ * The reasoning effort one track entry runs at, from the levels its source
+ * offers: the saved level, else Medium (`trackEntryEffort`), which is also
+ * what a launch from the entry uses. A model whose source offers no effort
+ * shows none. A model no source here lists shows the level it will start at,
+ * read-only, until a source lists its levels.
  */
-function EffortSelect(props: {
-  readonly selection: ModelSelection;
+export function TrackEffortSelect(props: {
+  readonly selection: ModelSelection | null;
+  /** The row's own level (`TrackRow.effort`), shown read-only while nothing lists the model. */
+  readonly effort: string | null;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly label: string;
   readonly disabled: boolean;
   readonly onChange: (selection: ModelSelection) => void;
 }) {
-  const descriptor = findEffortDescriptor(
-    props.providers
-      .find((provider) => provider.instanceId === props.selection.instanceId)
-      ?.models.find((model) => model.slug === props.selection.model)?.capabilities
-      ?.optionDescriptors,
-  );
-  if (descriptor === undefined) return null;
-  const value =
-    modelSelectionEffortValue(props.selection) ??
-    descriptor.options.find((choice) => choice.isDefault)?.id ??
-    null;
+  const tx = useTx();
+  const { selection } = props;
+  const listed =
+    selection === null
+      ? undefined
+      : props.providers
+          .find((provider) => provider.instanceId === selection.instanceId)
+          ?.models.find((model) => model.slug === selection.model);
+  const descriptor = findEffortDescriptor(listed?.capabilities?.optionDescriptors);
+  if (selection === null || listed === undefined || descriptor === undefined) {
+    if (listed !== undefined || props.effort === null) return null;
+    return (
+      <Badge
+        variant="outline"
+        size="sm"
+        aria-label={`${props.label}: ${effortLabel(props.effort)}, ${tx("set once a source lists it")}`}
+        title={tx("Set once a source on this machine lists it")}
+      >
+        {effortLabel(props.effort)}
+      </Badge>
+    );
+  }
+  const value = trackEntryEffort(selection, props.providers)?.value ?? null;
   return (
     <Select
       value={value}
@@ -171,8 +187,8 @@ function EffortSelect(props: {
       onValueChange={(next) => {
         if (typeof next !== "string" || next === value) return;
         props.onChange({
-          ...props.selection,
-          options: withEffortSelection(props.selection.options, {
+          ...selection,
+          options: withEffortSelection(selection.options, {
             optionId: descriptor.id,
             value: next,
           }),
@@ -193,6 +209,13 @@ function EffortSelect(props: {
       </SelectPopup>
     </Select>
   );
+}
+
+/** The newer release a row runs on, as the source that lists it names it (GPT-6.2 Sol). */
+function followsName(row: TrackRow, providers: ReadonlyArray<ServerProvider>): string {
+  const slug = row.follows ?? row.model;
+  const source = providers.find((provider) => provider.instanceId === row.selection?.instanceId);
+  return describeModel(source, slug).name ?? slug;
 }
 
 /** A grip, a position and the row's content; the grip also reorders by keyboard. */
@@ -391,7 +414,7 @@ function TrackCard(props: {
                 ) : null}
                 {row.follows !== null ? (
                   <Badge variant="outline" size="sm">
-                    {tx("Follows newest")}
+                    {`${tx("Follows newest")}: ${followsName(row, providers)}`}
                   </Badge>
                 ) : null}
               </div>
@@ -430,19 +453,18 @@ function TrackCard(props: {
                 )}
               </ul>
             </div>
-            {row.selection !== null ? (
-              <EffortSelect
-                selection={row.selection}
-                providers={providers}
-                label={`${tx("Effort for")} ${row.name}`}
-                disabled={props.mixed}
-                onChange={(selection) =>
-                  props.onSave(
-                    current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
-                  )
-                }
-              />
-            ) : null}
+            <TrackEffortSelect
+              selection={row.selection}
+              effort={row.effort}
+              providers={providers}
+              label={`${tx("Effort for")} ${row.name}`}
+              disabled={props.mixed}
+              onChange={(selection) =>
+                props.onSave(
+                  current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
+                )
+              }
+            />
             {row.selection !== null ? (
               <Button
                 type="button"

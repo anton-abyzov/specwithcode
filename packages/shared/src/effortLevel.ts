@@ -44,6 +44,12 @@ export function effortRank(value: string): number | undefined {
   return LADDER.find(([, , aliases]) => aliases.includes(key))?.[0];
 }
 
+/** A person-facing name for an effort value ("xhigh" is "Extra High"); the value itself off the ladder. */
+export function effortLabel(value: string): string {
+  const rank = effortRank(value);
+  return LADDER.find(([at]) => at === rank)?.[1] ?? value;
+}
+
 const choiceRank = (choice: { readonly id: string; readonly label: string }) =>
   effortRank(choice.id) ?? effortRank(choice.label);
 

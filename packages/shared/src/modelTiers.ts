@@ -66,8 +66,14 @@ export function tierOfModel(
       if ((lanes?.[lane] ?? []).some((entry) => covers(entry.model))) return lane;
     }
   }
-  // A track the person never saved ranks the built-in models.
-  const builtIn = defaultLaneOfModel({ slug: model }, laneEntryCovers);
+  // A track the person never saved ranks the built-in models, each standing
+  // for every release of its family (the GPT-6.2 Sol entry runs GPT-6.1 Sol
+  // where that is what a source lists).
+  const builtIn = defaultLaneOfModel({ slug: model }, (entry, slug) => {
+    if (laneEntryCovers(entry, slug)) return true;
+    const [a, b] = [modelFamily(slug), modelFamily(entry)];
+    return a !== null && b !== null && a.stem === b.stem;
+  });
   return builtIn !== null && (lanes?.[builtIn] ?? []).length === 0 ? builtIn : null;
 }
 
@@ -254,7 +260,10 @@ export function tierModelFor(
     }
     const own = chosen ?? builtIn;
     if (own !== undefined) {
-      const slug = sameModelOn(provider, { slug: own });
+      // A built-in default the provider lists in another release only still names that release.
+      const slug =
+        sameModelOn(provider, { slug: own }) ??
+        (chosen === undefined ? newestOfFamily(provider, own) : undefined);
       if (slug !== undefined) return slug;
       continue;
     }
@@ -265,7 +274,8 @@ export function tierModelFor(
         named === undefined
           ? undefined
           : ((person === undefined ? newestPlanBilled(provider, named) : undefined) ??
-            sameModelOn(provider, { slug: named }));
+            sameModelOn(provider, { slug: named }) ??
+            (person === undefined ? newestOfFamily(provider, named) : undefined));
       if (slug !== undefined) return slug;
     }
   }
@@ -281,11 +291,20 @@ function newestPlanBilled(
   provider: Pick<ServerProvider, "models">,
   slug: string,
 ): string | undefined {
-  const newest = newestOfFamily(provider, slug);
-  const billing = providerModelBilling(provider, newest);
-  return newest !== undefined && billing !== "unknown" && !isPaidModelBilling(billing)
-    ? newest
-    : undefined;
+  const base = modelFamily(slug);
+  if (!base) return undefined;
+  // Newest first, past any release billed per use: GPT-6.1 Sol on a plan
+  // before GPT-6.2 Sol billed per token.
+  return provider.models
+    .flatMap((model) => {
+      const family = model.isCustom ? null : modelFamily(model.slug);
+      if (!family || family.stem !== base.stem) return [];
+      const billing = providerModelBilling(provider, model.slug);
+      return billing === "unknown" || isPaidModelBilling(billing)
+        ? []
+        : [{ slug: model.slug, version: family.version }];
+    })
+    .sort((a, b) => compareModelVersions(b.version, a.version))[0]?.slug;
 }
 
 const VERSIONED_SLUG = /^(.*[a-z])-(\d{1,3}(?:[.-]\d{1,3})*)$/;
