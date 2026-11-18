@@ -73,7 +73,11 @@ export function SkillSearch({
   const search = useAtomCommand(projectWorkspace.skillsSearch, { reportFailure: false });
   const { canRun, run } = useSkillUpdateRun(scope, onChanged);
   const [text, setText] = useState("");
-  const [result, setResult] = useState<ProjectSkillsSearchResult | null>(null);
+  /** The last answer, with the machine and folder it was asked for. */
+  const [answered, setAnswered] = useState<{
+    readonly scope: string;
+    readonly value: ProjectSkillsSearchResult;
+  } | null>(null);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
@@ -82,10 +86,16 @@ export function SkillSearch({
   const asked = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const folder = JSON.stringify(skillFolderInput(scope));
+  const scopeKey = `${environmentId}\u0000${folder}`;
   const query = text.trim();
+  // An answer for another machine or folder is never shown; one for an older query is
+  // shown dimmed, with nothing to install, until the new answer arrives.
+  const result = answered !== null && answered.scope === scopeKey ? answered.value : null;
+  const stale = result !== null && result.query !== query;
 
   const ask = async (value: string) => {
-    const ticket = ++asked.current;
+    const ticket = asked.current;
+    const askedFor = scopeKey;
     setSearching(true);
     const answer = await search({
       environmentId,
@@ -99,18 +109,18 @@ export function SkillSearch({
       return;
     }
     setError(null);
-    setResult(answer.value);
+    setAnswered({ scope: askedFor, value: answer.value });
   };
 
   const change = (value: string) => {
     setText(value);
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = null;
+    // Every edit drops any answer still on its way.
+    asked.current += 1;
     const next = value.trim();
     if (next.length < MIN_QUERY) {
-      // Drops any answer still on its way.
-      asked.current += 1;
-      setResult(null);
+      setAnswered(null);
       setSearching(false);
       setError(null);
       return;
@@ -138,7 +148,10 @@ export function SkillSearch({
       return;
     }
     setOutcomes(done.value.outcomes ?? []);
-    if (query.length >= MIN_QUERY) void ask(query);
+    if (query.length >= MIN_QUERY) {
+      asked.current += 1;
+      void ask(query);
+    }
   };
 
   const openNote = async (path: string) => {
@@ -180,7 +193,11 @@ export function SkillSearch({
         <SkillUpdateOutcomeLine key={outcome.skill} outcome={outcome} />
       ))}
       {result ? (
-        <div className="space-y-4">
+        <div
+          className={stale ? "space-y-4 opacity-60" : "space-y-4"}
+          aria-busy={stale || undefined}
+          data-stale={stale || undefined}
+        >
           <Group
             name="installed"
             title={tx("Installed on {machine}", { machine })}
@@ -254,7 +271,7 @@ export function SkillSearch({
                           size="xs"
                           variant="outline"
                           type="button"
-                          disabled={!canRun || installing !== null}
+                          disabled={!canRun || stale || installing !== null}
                           onClick={() => void install(entry)}
                         >
                           {installing === key ? <Spinner className="size-3" /> : null}

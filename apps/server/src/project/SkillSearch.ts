@@ -48,6 +48,9 @@ export interface SkillNotesLimits {
   /** Files whose text is read for one query. */
   readonly maxContentFiles: number;
   readonly maxFileBytes: number;
+  /** Every name the walk looks at (folders, notes and other files) before it stops. */
+  readonly maxEntries: number;
+  /** One deadline for the walk and the reads of one query. */
   readonly budgetMs: number;
 }
 
@@ -57,8 +60,11 @@ const DEFAULT_LIMITS: SkillNotesLimits = {
   maxResults: 12,
   maxContentFiles: 2_000,
   maxFileBytes: 256 * 1024,
+  maxEntries: 100_000,
   budgetMs: 1_500,
 };
+/** Longest one filesystem call may take; a hung network folder stops nothing else. */
+const FS_CALL_TIMEOUT = "2 seconds";
 
 export interface SkillSearchDeps {
   readonly home: string;
@@ -185,9 +191,7 @@ export const makeSkillSearch = Effect.fn("SkillSearch.make")(function* (deps: Sk
 
   const configPaths = (): ReadonlyArray<string> => {
     if (deps.platform === "darwin")
-      return [
-        path.join(deps.home, "Library", "Application Support", "obsidian", "obsidian.json"),
-      ];
+      return [path.join(deps.home, "Library", "Application Support", "obsidian", "obsidian.json")];
     if (deps.platform === "win32")
       return [
         path.join(
@@ -243,44 +247,71 @@ export const makeSkillSearch = Effect.fn("SkillSearch.make")(function* (deps: Sk
     return vaultCache.root;
   });
 
-  /** Every markdown note in the vault, up to the walk's limits. */
-  const indexOf = (root: string): Effect.Effect<NoteIndex> =>
+  /** The vault-relative path of a real location, or null when it leaves the vault or is hidden. */
+  const insideVault = (root: string, real: string): string | null => {
+    if (real === root) return "";
+    if (!real.startsWith(`${root}${path.sep}`)) return null;
+    const rel = real.slice(root.length + 1);
+    return rel.split(path.sep).some((segment) => segment.startsWith(".")) ? null : rel;
+  };
+
+  const bounded = <A, E>(effect: Effect.Effect<A, E>, fallback: A): Effect.Effect<A> =>
+    effect.pipe(
+      Effect.timeout(FS_CALL_TIMEOUT),
+      Effect.orElseSucceed(() => fallback),
+    );
+
+  /**
+   * Every markdown note in the vault, up to the walk's limits. `deadline` is
+   * the query's own; a walk it cuts short is kept for a while as partial.
+   */
+  const indexOf = (root: string, deadline: number): Effect.Effect<NoteIndex> =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const cached = indexes.get(root);
       if (cached !== undefined && now - cached.at < INDEX_TTL_MS) return cached;
       const files: NoteFile[] = [];
       let truncated = false;
+      let entries = 0;
+      const visited = new Set<string>([root]);
       const queue: Array<{ readonly dir: string; readonly rel: string; readonly depth: number }> = [
         { dir: root, rel: "", depth: 0 },
       ];
-      while (queue.length > 0 && !truncated) {
+      walk: while (queue.length > 0) {
+        if ((yield* Clock.currentTimeMillis) > deadline) {
+          truncated = true;
+          break;
+        }
         const current = queue.shift()!;
-        const names = yield* fs
-          .readDirectory(current.dir)
-          .pipe(Effect.orElseSucceed((): string[] => []));
+        const names = yield* bounded(fs.readDirectory(current.dir), [] as string[]);
         for (const name of names.toSorted()) {
+          entries += 1;
+          if (entries > limits.maxEntries) {
+            truncated = true;
+            break walk;
+          }
           if (name.startsWith(".")) continue;
           const rel = current.rel === "" ? name : `${current.rel}/${name}`;
           if (/\.md$/i.test(name)) {
             if (files.length >= limits.maxFiles) {
               truncated = true;
-              break;
+              break walk;
             }
             const title = name.replace(/\.md$/i, "");
             files.push({ rel, title, titleLower: title.toLowerCase() });
             continue;
           }
           const child = path.join(current.dir, name);
-          if (!(yield* isDirectory(child))) continue;
+          if (!(yield* bounded(isDirectory(child), false))) continue;
           if (current.depth + 1 > limits.maxDepth) {
             truncated = true;
             continue;
           }
-          // A link that leaves the vault is not part of it.
-          const real = yield* fs.realPath(child).pipe(Effect.orElseSucceed(() => ""));
-          if (real !== root && !real.startsWith(`${root}${path.sep}`)) continue;
-          queue.push({ dir: child, rel, depth: current.depth + 1 });
+          // A link that leaves the vault, points into a hidden folder or loops is not walked.
+          const real = yield* bounded(fs.realPath(child), "");
+          if (insideVault(root, real) === null || visited.has(real)) continue;
+          visited.add(real);
+          queue.push({ dir: real, rel, depth: current.depth + 1 });
         }
       }
       const index = { at: now, files, truncated };
@@ -288,17 +319,21 @@ export const makeSkillSearch = Effect.fn("SkillSearch.make")(function* (deps: Sk
       return index;
     });
 
+  /** A note's text, read from its real location only when that is inside the vault. */
   const readNote = (root: string, rel: string) =>
     Effect.gen(function* () {
-      const file = path.join(root, ...rel.split("/"));
-      const info = yield* fs.stat(file).pipe(Effect.option);
+      const real = yield* bounded(fs.realPath(path.join(root, ...rel.split("/"))), "");
+      const inside = insideVault(root, real);
+      if (inside === null || !/\.md$/i.test(inside)) return null;
+      const info = yield* bounded(fs.stat(real).pipe(Effect.asSome), Option.none());
       if (
         Option.isNone(info) ||
         info.value.type !== "File" ||
         info.value.size > BigInt(limits.maxFileBytes)
       )
         return null;
-      return yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => null));
+      const text = yield* bounded(fs.readFileString(real), null as string | null);
+      return text !== null && text.length <= limits.maxFileBytes ? text : null;
     });
 
   const searchNotes = (
@@ -308,21 +343,24 @@ export const makeSkillSearch = Effect.fn("SkillSearch.make")(function* (deps: Sk
       const root = yield* findVault;
       if (root === null) return { notes: [], notesState: "none" as const };
       if (query === "") return { notes: [], notesState: "ok" as const };
-      const index = yield* indexOf(root);
-      const vault = path.basename(root);
       const started = yield* Clock.currentTimeMillis;
+      const deadline = started + limits.budgetMs;
+      const index = yield* indexOf(root, deadline);
+      const vault = path.basename(root);
       const notes: ProjectSkillSearchNote[] = [];
       const titled = index.files
         .filter((file) => file.titleLower.includes(query))
         .toSorted(
           (left, right) =>
-            Number(right.titleLower.startsWith(query)) - Number(left.titleLower.startsWith(query)) ||
+            Number(right.titleLower.startsWith(query)) -
+              Number(left.titleLower.startsWith(query)) ||
             left.title.length - right.title.length ||
             left.rel.localeCompare(right.rel),
         )
         .slice(0, limits.maxResults);
       for (const file of titled) {
-        const text = yield* readNote(root, file.rel);
+        const late = (yield* Clock.currentTimeMillis) > deadline;
+        const text = late ? null : yield* readNote(root, file.rel);
         const snippet = text === null ? undefined : snippetOf(text, query);
         notes.push({
           title: file.title,
@@ -337,10 +375,7 @@ export const makeSkillSearch = Effect.fn("SkillSearch.make")(function* (deps: Sk
       for (const file of index.files) {
         if (notes.length >= limits.maxResults) break;
         if (seen.has(file.rel)) continue;
-        if (
-          examined >= limits.maxContentFiles ||
-          (yield* Clock.currentTimeMillis) - started > limits.budgetMs
-        ) {
+        if (examined >= limits.maxContentFiles || (yield* Clock.currentTimeMillis) > deadline) {
           partial = true;
           break;
         }
@@ -364,7 +399,8 @@ export const makeSkillSearch = Effect.fn("SkillSearch.make")(function* (deps: Sk
       const root = yield* findVault;
       if (root === null) return { ...empty, notesState: "none" as const, opened: false };
       // Only a note the walk itself listed can be opened, so no path is built from the request.
-      const found = (yield* indexOf(root)).files.find((file) => file.rel === note);
+      const deadline = (yield* Clock.currentTimeMillis) + limits.budgetMs;
+      const found = (yield* indexOf(root, deadline)).files.find((file) => file.rel === note);
       if (found === undefined) return { ...empty, notesState: "ok" as const, opened: false };
       const opened = yield* deps.openUrl(
         `obsidian://open?vault=${encodeURIComponent(path.basename(root))}&file=${encodeURIComponent(

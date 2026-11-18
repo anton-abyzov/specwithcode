@@ -10,6 +10,7 @@ import * as NodeOS from "node:os";
 import { sha256 } from "../nodeCrypto.ts";
 import { join } from "../nodePath.ts";
 import type { CliRun } from "./ProjectSkillsActionsCommon.ts";
+import { vskillContentSha } from "./projectSkillsInventory.ts";
 import {
   discoverRepoSkillPaths,
   makeSkillRepoSources,
@@ -19,6 +20,7 @@ import {
 
 const projectId = ProjectId.make("skill-repos");
 const COMMIT = "b2b7b7eb4a8de7b1afcaea8ce5ff5f668dbe4681";
+const OTHER_COMMIT = "c".repeat(40);
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -215,10 +217,7 @@ describe("SkillRepoSources", () => {
           version: "1.0.12",
           description: "Does obsidian-brain things",
           commit: COMMIT,
-          contentHash: sha256(
-            [FILES["plugins/personal/skills/obsidian-brain/SKILL.md"]!],
-            "hex",
-          ),
+          contentHash: sha256([FILES["plugins/personal/skills/obsidian-brain/SKILL.md"]!], "hex"),
         },
       ]);
       // Without a sign-in, every read is an anonymous GET to GitHub's own hosts.
@@ -241,8 +240,9 @@ describe("SkillRepoSources", () => {
       expect(skillRepoRefusalMessage(result.refusal!.reason, result.refusal!.repo, "M5")).toBe(
         "Sign in to GitHub on M5 to read acme/private-skills",
       );
-      expect(yield* Effect.promise(() => NodeFSP.readFile(fx.storePath, "utf8").catch(() => null)))
-        .toBeNull();
+      expect(
+        yield* Effect.promise(() => NodeFSP.readFile(fx.storePath, "utf8").catch(() => null)),
+      ).toBeNull();
       // The only thing asked was GitHub itself; nothing went to a skill registry.
       expect(fx.urls).toEqual(["https://api.github.com/repos/acme/private-skills"]);
       expect(fx.urls.some((url) => url.includes("verified-skill"))).toBe(false);
@@ -355,9 +355,59 @@ describe("SkillRepoSources", () => {
       expect(latest).toEqual({
         state: "ok",
         visibility: "public",
+        branch: "main",
         skill: expect.objectContaining({ name: "html-report", version: "1.1.3", commit: COMMIT }),
       });
       expect((yield* sources.repos({ projectId, operation: "read" })).repos).toEqual([]);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("hashes a CRLF or BOM file the way vskill records it", () =>
+    Effect.gen(function* () {
+      const lf = "---\nname: crlf-skill\nmetadata:\n  version: 1.0.0\n---\n# Body\n";
+      const crlf = `\uFEFF${lf.replace(/\n/g, "\r\n")}`;
+      const raw = `https://raw.githubusercontent.com/anton-abyzov/vskill/${COMMIT}/`;
+      const fx = yield* harness({
+        get: (url) =>
+          url === `${raw}skills/crlf-skill/SKILL.md` ? { status: 200, body: crlf } : publicGet(url),
+      });
+      const sources = yield* makeSkillRepoSources(fx.deps);
+      const read = yield* sources.readSkill({
+        repo: "anton-abyzov/vskill",
+        name: "crlf-skill",
+        path: "skills/crlf-skill/SKILL.md",
+      });
+      expect(read.state).toBe("ok");
+      // The same digest vskill writes to vskill.lock for this file.
+      if (read.state === "ok") expect(read.skill.contentHash).toBe(vskillContentSha(lf));
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("reads a recorded branch and never swaps in the default branch or another path", () =>
+    Effect.gen(function* () {
+      const api = "https://api.github.com/repos/anton-abyzov/vskill";
+      const fx = yield* harness({
+        get: (url) =>
+          url === `${api}/commits/release` ? { status: 200, body: OTHER_COMMIT } : publicGet(url),
+      });
+      const sources = yield* makeSkillRepoSources(fx.deps);
+      // Fill the default-branch listing first: it must not answer for another branch.
+      yield* sources.readRepo("anton-abyzov/vskill");
+      const onRelease = yield* sources.readSkill({
+        repo: "anton-abyzov/vskill",
+        name: "html-report",
+        path: "skills/html-report/SKILL.md",
+        branch: "release",
+      });
+      expect(fx.urls).toContain(`${api}/commits/release`);
+      expect(onRelease).toMatchObject({ state: "not-found" });
+      const moved = yield* sources.readSkill({
+        repo: "anton-abyzov/vskill",
+        name: "html-report",
+        path: "skills/gone/SKILL.md",
+        refresh: true,
+      });
+      expect(moved).toEqual({ state: "not-found" });
     }).pipe(Effect.provide(live)),
   );
 });

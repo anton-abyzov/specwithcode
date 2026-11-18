@@ -22,6 +22,7 @@ import {
   makeSkillUpdates,
   PRIVATE_SOURCE_MIN_VSKILL,
   skillReadiness,
+  skillSourceLink,
   type SkillUpdatesDeps,
 } from "./SkillUpdate.ts";
 
@@ -48,6 +49,7 @@ interface LockEntry {
   readonly source?: string;
   readonly pinnedVersion?: string;
   readonly path?: string;
+  readonly branch?: string;
   readonly installedAt?: string;
 }
 
@@ -68,7 +70,7 @@ const lockJson = (skills: Record<string, LockEntry>) =>
             scope: "user",
             sourceRepoUrl: "https://github.com/anton-abyzov/vskill",
             sourceSkillPath: entry.path ?? `skills/${name}/SKILL.md`,
-            sourceBranch: "main",
+            sourceBranch: entry.branch ?? "main",
             sourceCommitSha: entry.commit ?? OLD_COMMIT,
             ...(entry.pinnedVersion ? { pinnedVersion: entry.pinnedVersion } : {}),
           },
@@ -113,7 +115,7 @@ const rowFor = (
     pinnedVersion: entry.pinnedVersion ?? null,
     sourceRepoUrl: "https://github.com/anton-abyzov/vskill",
     sourceSkillPath: entry.path ?? `skills/${name}/SKILL.md`,
-    sourceBranch: "main",
+    sourceBranch: entry.branch ?? "main",
     sourceCommitSha: entry.commit ?? OLD_COMMIT,
     skillId: /^github:[^#]+$/.test(source) ? `${source.slice("github:".length)}/${name}` : null,
   };
@@ -256,12 +258,14 @@ const latest = (
   version: string,
   contentHash: string,
   visibility: "public" | "private" = "public",
+  where: { readonly branch?: string; readonly path?: string } = {},
 ): SkillSourceRead => ({
   state: "ok",
   visibility,
+  branch: where.branch ?? "main",
   skill: {
     name,
-    path: `skills/${name}/SKILL.md`,
+    path: where.path ?? `skills/${name}/SKILL.md`,
     plugin: null,
     version,
     commit: NEW_COMMIT,
@@ -269,6 +273,8 @@ const latest = (
   },
 });
 
+const link = (repo: string, name: string, branch = "main", folder = `skills/${name}`) =>
+  `https://github.com/${repo}/tree/${branch}/${folder}`;
 const installCalls = (calls: ReadonlyArray<Call>) => calls.filter((c) => c.args[0] === "install");
 const live = NodeServices.layer;
 
@@ -363,7 +369,7 @@ describe("SkillUpdates update", () => {
       expect(installCalls(fx.calls)).toEqual([
         expect.objectContaining({
           command: "/opt/bin/vskill",
-          args: ["install", "anton-abyzov/vskill/html-report", "-y", "--global"],
+          args: ["install", link("anton-abyzov/vskill", "html-report"), "-y", "--global"],
           cwd: fx.home,
         }),
       ]);
@@ -404,7 +410,7 @@ describe("SkillUpdates update", () => {
           skill: "html-report",
           outcome: "failed",
           after: { version: "1.0.0", commit: OLD_COMMIT, contentHash: OLD_SHA },
-          message: expect.stringContaining("still records"),
+          message: expect.stringContaining("The source may have moved"),
         }),
       ]);
     }).pipe(Effect.provide(live)),
@@ -453,8 +459,8 @@ describe("SkillUpdates update", () => {
       });
       const result = yield* fx.service.update({ projectId, userLevel: true, operation: "update" });
       expect(installCalls(fx.calls).map((call) => call.args[1])).toEqual([
-        "anton-abyzov/vskill/moved",
-        "anton-abyzov/vskill/newer",
+        link("anton-abyzov/vskill", "moved"),
+        link("anton-abyzov/vskill", "newer"),
       ]);
       expect(result.outcomes!.map((outcome) => [outcome.skill, outcome.outcome])).toEqual([
         ["moved", "updated"],
@@ -490,7 +496,12 @@ describe("SkillUpdates update", () => {
         expect(call.args.join(" ")).not.toContain("@");
       }
       const install = installCalls(fx.calls)[0]!;
-      expect(install.args).toEqual(["install", "acme/private-skills/secret", "-y", "--global"]);
+      expect(install.args).toEqual([
+        "install",
+        link("acme/private-skills", "secret"),
+        "-y",
+        "--global",
+      ]);
       expect(install.env).toMatchObject({
         VSKILL_NO_TELEMETRY: "1",
         VSKILL_API_BASE: "http://127.0.0.1:9",
@@ -551,6 +562,105 @@ describe("SkillUpdates update", () => {
   );
 });
 
+describe("SkillUpdates source identity", () => {
+  it("builds the one-skill address vskill installs, or refuses a shape it cannot", () => {
+    expect(
+      skillSourceLink(
+        "acme/skills",
+        { branch: "release", path: "skills/sample/SKILL.md" },
+        "sample",
+      ),
+    ).toBe("https://github.com/acme/skills/tree/release/skills/sample");
+    for (const [branch, path] of [
+      ["feature/x", "skills/sample/SKILL.md"],
+      ["main", "SKILL.md"],
+      ["main", "skills/other/SKILL.md"],
+      ["main", "skills/../sample/SKILL.md"],
+      ["-x", "skills/sample/SKILL.md"],
+      ["main", "skills/sample/README.md"],
+    ] as const)
+      expect(skillSourceLink("acme/skills", { branch, path }, "sample"), `${branch} ${path}`).toBe(
+        null,
+      );
+  });
+
+  it.live("updates from the recorded branch and path, not the default branch", () =>
+    Effect.gen(function* () {
+      const path = "plugins/team/skills/sample/SKILL.md";
+      const fx = yield* fixture({
+        lock: { sample: { version: "1.0.0", branch: "release", path } },
+        latest: {
+          sample: latest("sample", "1.1.0", NEW_SHA, "public", { branch: "release", path }),
+        },
+        afterInstall: () => ({
+          version: "1.1.0",
+          sha: NEW_SHA,
+          commit: NEW_COMMIT,
+          branch: "release",
+          path,
+        }),
+      });
+      const result = yield* fx.service.update({ projectId, userLevel: true, operation: "update" });
+      expect(installCalls(fx.calls)[0]!.args[1]).toBe(
+        link("anton-abyzov/vskill", "sample", "release", "plugins/team/skills/sample"),
+      );
+      expect(result.outcomes![0]!.outcome).toBe("updated");
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("fails a run that only rewrote the lock's timestamp", () =>
+    Effect.gen(function* () {
+      const fx = yield* fixture({
+        lock: { sample: { version: "1.0.0" } },
+        latest: { sample: latest("sample", "2.0.0", NEW_SHA) },
+        afterInstall: () => ({ version: "1.0.0", installedAt: "2026-11-18T09:00:00.000Z" }),
+      });
+      const result = yield* fx.service.update({ projectId, userLevel: true, operation: "update" });
+      expect(result.outcomes![0]).toMatchObject({
+        outcome: "failed",
+        after: { version: "1.0.0", commit: OLD_COMMIT, contentHash: OLD_SHA },
+        message: expect.stringContaining("not 2.0.0"),
+      });
+      expect(fx.rescans).toEqual([]);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("fails a run whose lock records another branch or path", () =>
+    Effect.gen(function* () {
+      const fx = yield* fixture({
+        lock: { sample: { version: "1.0.0", branch: "release" } },
+        latest: { sample: latest("sample", "1.1.0", NEW_SHA, "public", { branch: "release" }) },
+        afterInstall: () => ({
+          version: "1.1.0",
+          sha: NEW_SHA,
+          commit: NEW_COMMIT,
+          branch: "main",
+        }),
+      });
+      const result = yield* fx.service.update({ projectId, userLevel: true, operation: "update" });
+      expect(result.outcomes![0]).toMatchObject({
+        outcome: "failed",
+        message: expect.stringContaining("on main, not"),
+      });
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("refuses a source vskill cannot install by itself and starts nothing", () =>
+    Effect.gen(function* () {
+      const fx = yield* fixture({
+        lock: { sample: { version: "1.0.0", path: "SKILL.md" } },
+        latest: { sample: latest("sample", "1.1.0", NEW_SHA, "public", { path: "SKILL.md" }) },
+      });
+      const result = yield* fx.service.update({ projectId, userLevel: true, operation: "update" });
+      expect(result.outcomes![0]).toMatchObject({
+        outcome: "failed",
+        message: expect.stringContaining("Install it with vskill directly"),
+      });
+      expect(fx.calls).toEqual([]);
+    }).pipe(Effect.provide(live)),
+  );
+});
+
 describe("SkillUpdates install", () => {
   const repo = (visibility: "public" | "private" = "public"): ProjectSkillRepo => ({
     repo: "anton-abyzov/vskill",
@@ -575,7 +685,11 @@ describe("SkillUpdates install", () => {
     Effect.gen(function* () {
       const fx = yield* fixture({
         lock: {},
-        latest: {},
+        latest: {
+          "obsidian-brain": latest("obsidian-brain", "1.0.12", NEW_SHA, "public", {
+            path: "plugins/personal/skills/obsidian-brain/SKILL.md",
+          }),
+        },
         connected: [repo()],
         afterInstall: () => ({
           version: "1.0.12",
@@ -593,7 +707,12 @@ describe("SkillUpdates install", () => {
       });
       expect(installCalls(fx.calls)[0]!.args).toEqual([
         "install",
-        "anton-abyzov/vskill/obsidian-brain",
+        link(
+          "anton-abyzov/vskill",
+          "obsidian-brain",
+          "main",
+          "plugins/personal/skills/obsidian-brain",
+        ),
         "-y",
         "--global",
       ]);
@@ -637,6 +756,29 @@ describe("SkillUpdates install", () => {
         .pipe(Effect.flip);
       expect(missing.message).toContain("has no skill named nope");
       expect(fx.calls).toEqual([]);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("calls an install current when the lock already held that exact copy", () =>
+    Effect.gen(function* () {
+      const path = "plugins/personal/skills/obsidian-brain/SKILL.md";
+      const same = { version: "1.0.12", sha: NEW_SHA, commit: NEW_COMMIT, path };
+      const fx = yield* fixture({
+        lock: { "obsidian-brain": same },
+        latest: {
+          "obsidian-brain": latest("obsidian-brain", "1.0.12", NEW_SHA, "public", { path }),
+        },
+        connected: [repo()],
+        afterInstall: () => ({ ...same, installedAt: "2026-11-18T09:00:00.000Z" }),
+      });
+      const result = yield* fx.service.update({
+        projectId,
+        userLevel: true,
+        operation: "install",
+        install: { repo: "anton-abyzov/vskill", skill: "obsidian-brain" },
+      });
+      expect(result.outcomes![0]!.outcome).toBe("current");
+      expect(fx.rescans).toEqual([]);
     }).pipe(Effect.provide(live)),
   );
 });

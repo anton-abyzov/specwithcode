@@ -31,6 +31,7 @@
  */
 import {
   compareSkillSourceVersions,
+  formatSkillSourceVersion,
   ProjectSkillsActionError,
   skillRepoRefusalMessage,
   type ProjectId,
@@ -207,6 +208,29 @@ interface Tracked {
   readonly repo: string | null;
   /** Null until GitHub has confirmed it; then treated as private. */
   readonly visibility: "public" | "private" | null;
+  /** Where the latest copy was read; null when the source was not read. */
+  readonly source: { readonly branch: string; readonly path: string } | null;
+}
+
+/** One folder or branch name vskill takes as a single URL segment. */
+const LINK_SEGMENT = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,199}$/;
+
+/**
+ * The GitHub address vskill installs exactly one skill from: the branch and
+ * folder the comparison read (`.../tree/<branch>/<folder>`), or null when
+ * vskill could not install that shape by itself (a branch with a slash, a
+ * root-level SKILL.md, a folder not named after the skill).
+ */
+export function skillSourceLink(
+  repo: string,
+  source: { readonly branch: string; readonly path: string },
+  name: string,
+): string | null {
+  if (!source.path.endsWith("/SKILL.md")) return null;
+  const folder = source.path.slice(0, -"/SKILL.md".length).split("/");
+  const valid = (segment: string) => LINK_SEGMENT.test(segment) && segment !== "..";
+  if (!valid(source.branch) || !folder.every(valid) || folder.at(-1) !== name) return null;
+  return `https://github.com/${repo}/tree/${source.branch}/${folder.join("/")}`;
 }
 
 export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: SkillUpdatesDeps) {
@@ -241,7 +265,8 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
       return entry === undefined
         ? null
         : {
-            installedAt: entry.installedAt,
+            path: entry.sourceSkillPath ?? null,
+            branch: entry.sourceBranch ?? null,
             version: {
               version: entry.version,
               commit: entry.sourceCommitSha ?? null,
@@ -262,6 +287,7 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
           lock,
           repo,
           visibility: null,
+          source: null,
           status: {
             ...base,
             repo: null,
@@ -275,6 +301,7 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
           lock,
           repo,
           visibility: null,
+          source: null,
           status: {
             ...base,
             repo,
@@ -295,6 +322,7 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
           lock,
           repo,
           visibility: null,
+          source: null,
           status: {
             ...base,
             repo,
@@ -318,6 +346,7 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
         lock,
         repo,
         visibility: read.visibility,
+        source: { branch: read.branch, path: read.skill.path },
         status: {
           ...base,
           repo,
@@ -356,7 +385,9 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
     readonly user: boolean;
     readonly cwd: string;
     readonly lockPath: string;
-    readonly fresh: boolean;
+    /** The source the comparison read, which the lock must record afterwards. */
+    readonly source: { readonly branch: string; readonly path: string };
+    readonly expected: ProjectSkillSourceVersion;
   }): Effect.Effect<RunResult> =>
     Effect.gen(function* () {
       const before = yield* lockEntry(input.lockPath, input.lockName);
@@ -367,6 +398,11 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
         after: before?.version ?? null,
         message,
       });
+      const link = skillSourceLink(input.repo, input.source, input.lockName);
+      if (link === null)
+        return failed(
+          `${input.repo} keeps ${input.lockName} at ${input.source.path} on ${input.source.branch}, which vskill cannot install by itself. Install it with vskill directly.`,
+        );
       const vskill = yield* deps.findVskill;
       if (vskill === null) return failed(VSKILL_MISSING);
       const env = vskillEnv(input.visibility);
@@ -383,12 +419,7 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
             `${input.repo} is private, or GitHub did not confirm it is public. Update vskill to ${PRIVATE_SOURCE_MIN_VSKILL} or newer first: an older vskill can name the skill to its registry.`,
           );
       }
-      const args = [
-        "install",
-        `${input.repo}/${input.lockName}`,
-        "-y",
-        ...(input.user ? ["--global"] : []),
-      ];
+      const args = ["install", link, "-y", ...(input.user ? ["--global"] : [])];
       const result = yield* deps.run({
         command: vskill,
         args,
@@ -406,25 +437,30 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
       }
       const after = yield* lockEntry(input.lockPath, input.lockName);
       if (after === null)
-        return failed(
-          `vskill finished, but ${input.lockPath} has no entry for ${input.lockName}.`,
-        );
+        return failed(`vskill finished, but ${input.lockPath} has no entry for ${input.lockName}.`);
+      // Success is the lock recording the compared content from the compared source.
+      // A rewritten timestamp proves nothing.
       if (
-        !input.fresh &&
-        before !== null &&
-        after.installedAt === before.installedAt &&
-        after.version.contentHash === before.version.contentHash &&
-        after.version.commit === before.version.commit
+        after.path !== input.source.path ||
+        after.branch !== input.source.branch ||
+        after.version.contentHash === null ||
+        after.version.contentHash !== input.expected.contentHash
       )
         return {
           ...failed(
-            `vskill finished, but the lock still records ${before.version.version ?? "the same copy"}${before.version.commit ? ` at ${before.version.commit.slice(0, 7)}` : ""}.`,
+            `vskill finished, but the lock records ${formatSkillSourceVersion(after.version) || "another copy"} from ${after.path ?? "an unknown path"} on ${after.branch ?? "an unknown branch"}, not ${formatSkillSourceVersion(input.expected)} from ${input.source.path} on ${input.source.branch}. The source may have moved; check again.`,
           ),
           after: after.version,
         };
+      const outcome =
+        before === null
+          ? "installed"
+          : before.version.contentHash === after.version.contentHash
+            ? "current"
+            : "updated";
       return {
         skill: input.skill,
-        outcome: before === null ? "installed" : "updated",
+        outcome,
         before: before?.version ?? null,
         after: after.version,
       };
@@ -514,7 +550,8 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
             user: lock.lockScope === "user",
             cwd: lockDirCwd(lock),
             lockPath: lock.lockPath,
-            fresh: false,
+            source: entry.source!,
+            expected: status.latest!,
           }),
         );
       }
@@ -525,7 +562,11 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
     Effect.gen(function* () {
       const ask = input.install;
       if (ask === undefined)
-        return yield* actionError(input.projectId, "scope_unsupported", "Name the skill to install.");
+        return yield* actionError(
+          input.projectId,
+          "scope_unsupported",
+          "Name the skill to install.",
+        );
       const connected: ReadonlyArray<ProjectSkillRepo> = yield* deps.sources.connected();
       const repo = connected.find((entry) => entry.repo.toLowerCase() === ask.repo.toLowerCase());
       if (repo === undefined)
@@ -540,11 +581,29 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
           "agent_unavailable",
           skillRepoRefusalMessage(repo.state, repo.repo, "this machine"),
         );
-      if (!repo.skills.some((skill) => skill.name === ask.skill))
+      const listed = repo.skills.filter((skill) => skill.name === ask.skill);
+      if (listed.length !== 1)
         return yield* actionError(
           input.projectId,
           "skill_not_found",
-          `${repo.repo} has no skill named ${ask.skill}.`,
+          listed.length === 0
+            ? `${repo.repo} has no skill named ${ask.skill}.`
+            : `${repo.repo} holds ${ask.skill} in more than one folder. Install it with vskill directly.`,
+        );
+      // Read it again so the lock is checked against what GitHub holds now.
+      const read = yield* deps.sources.readSkill({
+        repo: repo.repo,
+        name: ask.skill,
+        path: listed[0]!.path,
+        refresh: true,
+      });
+      if (read.state !== "ok")
+        return yield* actionError(
+          input.projectId,
+          read.state === "not-found" ? "skill_not_found" : "agent_unavailable",
+          read.state === "not-found"
+            ? `${repo.repo} no longer holds ${ask.skill}.`
+            : skillRepoRefusalMessage(read.state, repo.repo, "this machine"),
         );
       const user = input.userLevel === true;
       const cwd = user ? deps.home : yield* deps.resolveCwd(folderOf(input));
@@ -552,11 +611,16 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
         skill: ask.skill,
         lockName: ask.skill,
         repo: repo.repo,
-        visibility: repo.visibility,
+        visibility: read.visibility,
         user,
         cwd,
         lockPath: user ? userLockPath : path.join(cwd, "vskill.lock"),
-        fresh: true,
+        source: { branch: read.branch, path: read.skill.path },
+        expected: {
+          version: read.skill.version,
+          commit: read.skill.commit,
+          contentHash: read.skill.contentHash,
+        },
       });
       return yield* settle(input, [result]);
     });
@@ -571,7 +635,9 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
         return { checkedAt: yield* nowIso, statuses: tracked.map((entry) => entry.status) };
       });
     // One vskill run at a time: each rewrites the same lock.
-    return writes.withPermits(1)(input.operation === "install" ? runInstall(input) : runUpdate(input));
+    return writes.withPermits(1)(
+      input.operation === "install" ? runInstall(input) : runUpdate(input),
+    );
   };
 
   return { update };

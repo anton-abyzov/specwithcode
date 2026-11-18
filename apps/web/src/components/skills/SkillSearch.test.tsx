@@ -237,4 +237,34 @@ describe("skill search", () => {
     await type("reports");
     expect(group("notes").textContent).toContain("More notes may match. Narrow the search.");
   });
+
+  it("drops an older answer that arrives while a newer query waits", async () => {
+    let resolveOld: (value: unknown) => void = () => {};
+    mocks.search.mockImplementationOnce(() => new Promise((resolve) => (resolveOld = resolve)));
+    await render();
+    await type("old");
+    expect(mocks.search).toHaveBeenCalledTimes(1);
+    // A new query is typed; its request has not been sent yet when the old one answers.
+    const input = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(input, "report");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => resolveOld(success({ ...found, query: "old" })));
+    expect(host.querySelector("[data-group]")).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(group("available").textContent).toContain("report-builder");
+  });
+
+  it("dims the last answer and offers no install while a new query is pending", async () => {
+    await render();
+    await type("report");
+    mocks.search.mockImplementation(() => new Promise(() => {}));
+    await type("reports");
+    expect(host.querySelector("[data-stale]")).not.toBeNull();
+    expect(button("Install").disabled).toBe(true);
+  });
 });

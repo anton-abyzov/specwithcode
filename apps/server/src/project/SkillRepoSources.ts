@@ -38,9 +38,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
-import { sha256 } from "../nodeCrypto.ts";
 import type { CliRun } from "./ProjectSkillsActionsCommon.ts";
-import { readSkillFrontmatter } from "./projectSkillsInventory.ts";
+import { readSkillFrontmatter, vskillContentSha } from "./projectSkillsInventory.ts";
 
 const CACHE_TTL_MS = 60_000;
 const MAX_SKILLS_PER_REPO = 200;
@@ -72,6 +71,7 @@ export type SkillRepoRead =
       readonly repo: string;
       readonly visibility: "public" | "private";
       readonly commit: string;
+      readonly branch: string;
       readonly checkedAt: string;
       readonly skills: ReadonlyArray<ProjectSkillRepoSkill>;
       readonly truncated: boolean;
@@ -84,6 +84,8 @@ export type SkillSourceRead =
       readonly state: "ok";
       readonly visibility: "public" | "private";
       readonly skill: ProjectSkillRepoSkill;
+      /** The branch the skill was read on; an update installs from this branch. */
+      readonly branch: string;
     }
   | { readonly state: SkillRepoRefusalReason };
 
@@ -221,11 +223,7 @@ export const makeSkillRepoSources = Effect.fn("SkillRepoSources.make")(function*
   interface Session {
     readonly via: "gh" | "anonymous";
     readonly api: (endpoint: string, accept: string) => Effect.Effect<Answer>;
-    readonly file: (
-      repo: string,
-      commit: string,
-      filePath: string,
-    ) => Effect.Effect<Answer>;
+    readonly file: (repo: string, commit: string, filePath: string) => Effect.Effect<Answer>;
   }
 
   const ghSession: Session = {
@@ -334,7 +332,8 @@ export const makeSkillRepoSources = Effect.fn("SkillRepoSources.make")(function*
           version: readSkillFrontmatter(answer.body).version,
           ...(description === undefined ? {} : { description }),
           commit,
-          contentHash: sha256([answer.body], "hex"),
+          // vskill hashes the normalized text (no BOM, LF endings); compare like for like.
+          contentHash: vskillContentSha(answer.body),
         };
       }),
     );
@@ -365,6 +364,7 @@ export const makeSkillRepoSources = Effect.fn("SkillRepoSources.make")(function*
         repo: opened.repo,
         visibility: opened.visibility,
         commit: head.commit,
+        branch: opened.defaultBranch,
         checkedAt: yield* nowIso,
         skills: skills.filter((skill): skill is ProjectSkillRepoSkill => skill !== null),
         truncated: tree.value.truncated === true || paths.length > MAX_SKILLS_PER_REPO,
@@ -405,37 +405,51 @@ export const makeSkillRepoSources = Effect.fn("SkillRepoSources.make")(function*
         input.path && /^[A-Za-z0-9._/-]{1,400}$/.test(input.path) && !input.path.includes("..")
           ? input.path
           : null;
-      // A listing read moments ago already holds the standard layouts.
+      const wanted = input.branch && BRANCH_NAME.test(input.branch) ? input.branch : null;
+      // A listing read moments ago holds the standard layouts on the default branch.
       if (input.refresh !== true && cached !== undefined && now - cached.at < CACHE_TTL_MS) {
         const read = cached.read;
-        if (read.state === "ok") {
+        if (read.state === "ok" && (wanted === null || wanted === read.branch)) {
           const listed = read.skills.find((skill) =>
             recorded === null ? skill.name === input.name : skill.path === recorded,
           );
-          if (listed) return { state: "ok" as const, visibility: read.visibility, skill: listed };
+          if (listed)
+            return {
+              state: "ok" as const,
+              visibility: read.visibility,
+              skill: listed,
+              branch: read.branch,
+            };
         }
       }
       if (recorded !== null) {
         const opened = yield* open(repo);
         if ("state" in opened) return opened;
-        const branch =
-          input.branch && BRANCH_NAME.test(input.branch) ? input.branch : opened.defaultBranch;
+        const branch = wanted ?? opened.defaultBranch;
         const head = yield* headCommit(opened, branch);
-        if (head.commit !== undefined) {
-          const skill = yield* readFile(opened, head.commit, {
-            name: input.name,
-            path: recorded,
-            plugin: /^plugins\/([^/]+)\/skills\//.exec(recorded)?.[1] ?? null,
-          });
-          if (skill !== null)
-            return { state: "ok" as const, visibility: opened.visibility, skill };
-        }
+        if (head.state !== undefined) return { state: head.state };
+        const skill = yield* readFile(opened, head.commit, {
+          name: input.name,
+          path: recorded,
+          plugin: /^plugins\/([^/]+)\/skills\//.exec(recorded)?.[1] ?? null,
+        });
+        // A recorded source that moved is not swapped for another branch or path.
+        return skill === null
+          ? { state: "not-found" as const }
+          : { state: "ok" as const, visibility: opened.visibility, skill, branch };
       }
       const read = yield* readRepo(repo, input.refresh === true);
       if (read.state !== "ok") return read;
-      const listed = read.skills.find((skill) => skill.name === input.name);
-      return listed
-        ? { state: "ok" as const, visibility: read.visibility, skill: listed }
+      if (wanted !== null && wanted !== read.branch) return { state: "not-found" as const };
+      const listed = read.skills.filter((skill) => skill.name === input.name);
+      // Two layouts holding the same name leave nothing to choose by.
+      return listed.length === 1
+        ? {
+            state: "ok" as const,
+            visibility: read.visibility,
+            skill: listed[0]!,
+            branch: read.branch,
+          }
         : { state: "not-found" as const };
     });
 
@@ -443,7 +457,11 @@ export const makeSkillRepoSources = Effect.fn("SkillRepoSources.make")(function*
 
   const readStore: Effect.Effect<ReadonlyArray<StoredRepo>> = Effect.gen(function* () {
     const info = yield* fs.stat(deps.storePath).pipe(Effect.option);
-    if (Option.isNone(info) || info.value.type !== "File" || info.value.size > BigInt(MAX_STORE_BYTES))
+    if (
+      Option.isNone(info) ||
+      info.value.type !== "File" ||
+      info.value.size > BigInt(MAX_STORE_BYTES)
+    )
       return [];
     const text = yield* fs.readFileString(deps.storePath).pipe(Effect.option);
     if (Option.isNone(text)) return [];

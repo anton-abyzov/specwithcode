@@ -127,10 +127,7 @@ const fixture = (options: Options, files: Record<string, string> = {}) =>
     for (const [name, text] of Object.entries(files)) yield* write(join(vault, name), text);
     const vaults = options.vaults ?? { a: { path: vault, open: true, ts: 1 } };
     if (Object.keys(vaults).length > 0)
-      yield* write(
-        join(home, ".config", "obsidian", "obsidian.json"),
-        JSON.stringify({ vaults }),
-      );
+      yield* write(join(home, ".config", "obsidian", "obsidian.json"), JSON.stringify({ vaults }));
     const opened: string[] = [];
     const deps: SkillSearchDeps = {
       home,
@@ -310,6 +307,50 @@ describe("SkillSearch", () => {
         expect(refused.opened).toBe(false);
       }
       expect(fx.opened).toHaveLength(1);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("never reads a note whose link leaves the vault or points into a hidden folder", () =>
+    Effect.gen(function* () {
+      const fx = yield* fixture(
+        {},
+        { "Inside.md": "zebra inside", ".obsidian/app.md": "zebra app" },
+      );
+      const outside = join(fx.home, "outside.json");
+      yield* write(outside, '{"token":"zebra outside secret"}');
+      yield* Effect.promise(async () => {
+        await NodeFSP.symlink(outside, join(fx.vault, "leak.md"));
+        await NodeFSP.symlink(join(fx.vault, ".obsidian", "app.md"), join(fx.vault, "hidden.md"));
+        await NodeFSP.symlink(join(fx.home), join(fx.vault, "up"));
+      });
+      const result = yield* fx.service.search({ projectId, operation: "search", query: "zebra" });
+      const text = JSON.stringify(result);
+      expect(text).not.toContain("outside secret");
+      expect(text).not.toContain("zebra app");
+      expect(result.notes.map((note) => note.path)).toContain("Inside.md");
+      // A title match on the link's own name shows no text from its target.
+      const byTitle = yield* fx.service.search({ projectId, operation: "search", query: "leak" });
+      expect(byTitle.notes.every((note) => note.snippet === undefined)).toBe(true);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("stops a walk of many folders and other files at its entry limit", () =>
+    Effect.gen(function* () {
+      const files = Object.fromEntries(
+        Array.from({ length: 40 }, (_, index) => [`assets/a${index}/image.png`, "x"]),
+      );
+      const fx = yield* fixture({ limits: { maxEntries: 10 } }, { ...files, "zz.md": "gardens" });
+      const result = yield* fx.service.search({ projectId, operation: "search", query: "gardens" });
+      expect(result.notesState).toBe("partial");
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("starts its deadline before the walk, so a slow walk answers partial", () =>
+    Effect.gen(function* () {
+      const fx = yield* fixture({ limits: { budgetMs: -1 } }, { "a/b/c.md": "gardens" });
+      const result = yield* fx.service.search({ projectId, operation: "search", query: "gardens" });
+      expect(result.notes).toEqual([]);
+      expect(result.notesState).toBe("partial");
     }).pipe(Effect.provide(live)),
   );
 });
