@@ -21,7 +21,7 @@ import {
   serializedBytes,
 } from "./mcpResultBudget.ts";
 import { assertPersonalChatBoundary } from "./personalChatBoundary.ts";
-import { isPaidModel } from "@specweave-studio/shared/modelBilling";
+import { modelBillingFlags } from "../fleet/remoteWorkerProbe.ts";
 import {
   CommandId,
   type OrchestrationV2ThreadShell,
@@ -3518,7 +3518,7 @@ const make = Effect.gen(function* () {
                   // The instance's own sign-in counts too: a Claude CLI on API
                   // credits or Gemini/Vertex bills every model per token, and a
                   // remote machine never offers such a model as a limit handoff.
-                  ...(isPaidModel(provider, model.slug) ? { paid: true } : {}),
+                  ...modelBillingFlags(provider, model.slug),
                 })) ?? [],
               canRunChildTask: constraints.length === 0,
               canRunCrossProviderChildTask: constraints.length === 0,

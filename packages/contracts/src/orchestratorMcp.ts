@@ -1045,6 +1045,11 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
        * Bedrock, Gemini/Vertex). Older machines omit it.
        */
       paid: Schema.optional(Schema.Boolean),
+      /**
+       * True when this machine never starts the model unasked: it is billed per
+       * token, or nothing says how its sign-in is billed. Older machines omit it.
+       */
+      held: Schema.optional(Schema.Boolean),
     }),
   ),
   canRunChildTask: Schema.Boolean,
@@ -1150,6 +1155,8 @@ export const OrchestratorMcpMachineProvider = Schema.Struct({
   allowedByGrant: Schema.optional(Schema.Boolean),
   /** Models billed per token (by their router, API or the instance's sign-in); never a limit handoff target. */
   paidModels: Schema.optional(Schema.Array(Schema.String)),
+  /** Models that machine never starts unasked: billed per token, or billing unknown. */
+  heldModels: Schema.optional(Schema.Array(Schema.String)),
 });
 export type OrchestratorMcpMachineProvider = typeof OrchestratorMcpMachineProvider.Type;
 

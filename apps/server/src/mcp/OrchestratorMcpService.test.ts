@@ -1068,6 +1068,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
   it.effect("flags every model of an instance billed per token as paid", () =>
     Effect.gen(function* () {
+      const pi = ProviderInstanceId.make("pi");
       const claudeApi = ProviderInstanceId.make("claude-api");
       const claudeMax = ProviderInstanceId.make("claudeAgent");
       const gemini = ProviderInstanceId.make("acpRegistry_gemini");
@@ -1102,6 +1103,19 @@ describe("OrchestratorMcpService provider resolution", () => {
           }),
           auth: { status: "authenticated", type: "vertex-ai" },
         },
+        // A plan login or an API key, nothing says which: held back, not proven paid.
+        (() => {
+          const base = providerSnapshot({
+            instanceId: pi,
+            driver: ProviderDriverKind.make("pi"),
+            model: "anthropic/claude-opus-5-5",
+          });
+          return {
+            ...base,
+            auth: { status: "authenticated", type: "max" },
+            models: base.models.map((model) => ({ ...model, billing: "unknown" })),
+          } as ServerProvider;
+        })(),
       ];
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -1128,6 +1142,17 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(paid(gemini), [true]);
         assert.deepEqual(paid(claudeMax), [false]);
         assert.deepEqual(paid(codexInstanceId), [false]);
+        assert.deepEqual(paid(pi), [false]);
+        // Another machine never starts the app's own pick on a held model (`heldModels`).
+        const held = (instanceId: ProviderInstanceId) =>
+          capabilities.providers
+            .find((provider) => provider.providerInstanceId === instanceId)
+            ?.models.map((model) => model.held === true);
+        assert.deepEqual(held(claudeApi), [true]);
+        assert.deepEqual(held(gemini), [true]);
+        assert.deepEqual(held(pi), [true]);
+        assert.deepEqual(held(claudeMax), [false]);
+        assert.deepEqual(held(codexInstanceId), [false]);
       }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))));
     }),
   );
