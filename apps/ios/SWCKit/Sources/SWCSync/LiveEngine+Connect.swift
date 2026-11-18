@@ -34,6 +34,13 @@ public final class ConnectRuntime {
   var sessionEndedElsewhere = false
   /// A rejected session is being turned into signed out.
   var rejectingSession = false
+  /// Goes up with every sign-in, so a rejection raised under an earlier
+  /// session cannot end a newer one.
+  var signInGeneration = 0
+  /// When computers refused for a session Clerk still holds were last
+  /// retried; such retries run at most once per `rejectionRetryInterval`.
+  var lastRejectionRetry: Date?
+  var rejectionRetryTask: Task<Void, Never>?
 
   /// The relay said this phone was removed from the account; cleared by the
   /// next successful sign-in.
@@ -109,6 +116,7 @@ extension LiveEngine {
       updateConnect { $0.lastError = error.localizedDescription }
       throw error
     }
+    connect.signInGeneration += 1
     connect.wasRemoved = false
     connect.wasSignedIn = true
     connect.sessionEndedElsewhere = false
@@ -128,6 +136,8 @@ extension LiveEngine {
     updateConnect { $0.isBusy = true }
     connect.signingOut = true
     defer { connect.signingOut = false }
+    connect.rejectionRetryTask?.cancel()
+    connect.rejectionRetryTask = nil
     connect.wasSignedIn = false
     connect.sessionEndedElsewhere = false
     if unregister {
@@ -230,15 +240,25 @@ extension LiveEngine {
 
   /// The relay refused this phone's Clerk session even after a fresh token,
   /// from the account screen or from any computer reached through Connect.
-  /// Clerk's saved user is only a cache: it is cleared too, so this phone
-  /// shows signed out everywhere, now and after the next launch, until the
-  /// person signs in again. Computers stay listed and reconnect then.
+  /// A refusal is only a guess (a relay key fetch that failed reads the same),
+  /// so Clerk is asked first. Only when Clerk confirms the session is over is
+  /// it cleared, so this phone shows signed out everywhere, now and after the
+  /// next launch. Computers stay listed and reconnect after the next sign-in.
   func connectSessionRejected() async {
     guard let connect, !connect.signingOut, !connect.handlingRemoval, !connect.wasRemoved, !connect.rejectingSession else { return }
     guard connect.account.currentUser != nil || model?.connect?.user != nil else { return }
     connect.rejectingSession = true
     defer { connect.rejectingSession = false }
-    Self.log.info("Connect session rejected; showing signed out")
+    let generation = connect.signInGeneration
+    let ended = await connect.account.confirmSessionEnded()
+    // A sign-in that finished meanwhile is newer than the refusal.
+    guard generation == connect.signInGeneration, !connect.signingOut, !connect.handlingRemoval, !connect.wasRemoved else { return }
+    guard ended else {
+      Self.log.info("Connect refused a session Clerk still holds; staying signed in")
+      await retryRejectedMachines(connect)
+      return
+    }
+    Self.log.info("Connect session ended; showing signed out")
     connect.wasSignedIn = true
     connect.lastRefresh = Date()
     updateConnect { $0.user = nil; $0.lastError = nil }
@@ -246,10 +266,37 @@ extension LiveEngine {
     do {
       try await connect.account.signOut()
     } catch {
-      Self.log.error("Clearing the rejected session failed: \(String(describing: error), privacy: .public)")
+      Self.log.error("Clearing the ended session failed: \(String(describing: error), privacy: .public)")
     }
     connect.signingOut = false
     await connectSessionEnded()
+  }
+
+  static let rejectionRetryInterval: TimeInterval = 30
+
+  /// Drops the relay tokens and tries again the computers that stopped on
+  /// "signed out", at most once per `rejectionRetryInterval`; a refusal
+  /// inside the window waits for its end instead of looping.
+  func retryRejectedMachines(_ connect: ConnectRuntime) async {
+    if let last = connect.lastRejectionRetry {
+      let wait = Self.rejectionRetryInterval - Date().timeIntervalSince(last)
+      if wait > 0 {
+        guard connect.rejectionRetryTask == nil else { return }
+        connect.rejectionRetryTask = Task { [weak self] in
+          try? await Task.sleep(for: .seconds(wait))
+          guard let self, let connect = self.connect else { return }
+          connect.rejectionRetryTask = nil
+          await self.retryRejectedMachines(connect)
+        }
+        return
+      }
+    }
+    connect.lastRejectionRetry = Date()
+    await connect.relay.reset()
+    for entry in machines.values where entry.status.lastError == .connect(.signedOut) {
+      let connection = entry.connection
+      Task { await connection.reconnect() }
+    }
   }
 
   public func connectDeleteAccount() async throws {

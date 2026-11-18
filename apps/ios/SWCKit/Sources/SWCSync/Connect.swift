@@ -50,6 +50,9 @@ public protocol ConnectAccount: AnyObject, Sendable {
   func signOut() async throws
   /// A session JWT from the relay's JWT template, nil when signed out.
   func sessionToken(refresh: Bool) async throws -> String?
+  /// Asks the account service again whether the session is over. True only
+  /// when it confirms there is no session; a check that fails says false.
+  func confirmSessionEnded() async -> Bool
 }
 
 /// What the app shows about SpecWithCode Connect. Nil on `AppModel` when the

@@ -143,12 +143,49 @@ import SWCWire
     #expect(await until { h.model.machines.first?.status == .connected })
     #expect(h.model.connect?.isSignedIn == true)
     h.rules.refusal = .sessionRejected
+    h.account.serverSessionAlive = false
     await h.engine.connectRefresh()
     #expect(await until { h.model.connect?.isSignedIn == false })
     #expect(h.account.currentUser == nil, "Clerk's cached user must not bring 'signed in' back")
     #expect(h.account.signOutCount == 1)
     #expect(h.model.connect?.wasRemoved == false)
     #expect(h.model.machines.count == 1, "The computer stays listed and reconnects after sign-in")
+  }
+
+  /// A relay refusal Clerk does not confirm (a relay key fetch that failed
+  /// reads the same) never ends the session.
+  @Test func aRefusalClerkDoesNotConfirmKeepsThePhoneSignedIn() async throws {
+    let h = try await harness()
+    #expect(await until { h.model.machines.first?.status == .connected })
+    h.rules.refusal = .sessionRejected
+    await h.engine.connectRefresh()
+    #expect(h.account.confirmCount == 1)
+    #expect(h.account.signOutCount == 0)
+    #expect(h.account.currentUser != nil)
+    #expect(h.model.connect?.isSignedIn == true)
+    // Refused again inside the retry window: Clerk is asked, nothing loops or signs out.
+    await h.engine.connectRefresh()
+    #expect(h.account.signOutCount == 0)
+    #expect(h.model.connect?.isSignedIn == true)
+    #expect(h.relay.requests(path: "/v1/client/removal-status").isEmpty)
+  }
+
+  /// A refusal raised under the old session cannot end a sign-in that
+  /// finished while Clerk was being asked.
+  @Test func aStaleRefusalDoesNotEndANewerSignIn() async throws {
+    let h = try await harness()
+    #expect(await until { h.model.machines.first?.status == .connected })
+    h.rules.refusal = .sessionRejected
+    h.account.serverSessionAlive = false
+    // connectSignIn would wait on this very refresh, so land its effect directly:
+    // a new Clerk session and the next sign-in generation.
+    h.account.duringConfirm = { [engine = h.engine, account = h.account] in
+      account.duringConfirm = nil
+      engine.connect?.signInGeneration += 1
+    }
+    await h.engine.connectRefresh()
+    #expect(h.account.signOutCount == 0)
+    #expect(h.model.connect?.isSignedIn == true)
   }
 
   @Test func refusedConnectSignsOutAndSaysWhy() async throws {
