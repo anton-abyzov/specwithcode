@@ -249,7 +249,7 @@ export function FirstFeatureGuideView(props: FirstFeatureGuideViewProps) {
               ) : null}
               <Button
                 size="sm"
-                variant={view.card === null ? "ghost" : "outline"}
+                variant="outline"
                 onClick={props.onOpenThread}
               >
                 {tx(OPEN_THE_THREAD)}
@@ -271,7 +271,7 @@ export function FirstFeatureGuideView(props: FirstFeatureGuideViewProps) {
                 {tx(OPEN_THE_REVIEW)}
               </Button>
               {view.reviewNote?.kind === "no-second-family" ? (
-                <Button size="sm" variant="ghost" onClick={props.onAddReviewer}>
+                <Button size="sm" variant="outline" onClick={props.onAddReviewer}>
                   {tx(ADD_ONE)}
                 </Button>
               ) : null}
@@ -364,7 +364,7 @@ function GuideEnd(props: FirstFeatureGuideViewProps) {
             </Button>
             <Button
               size="sm"
-              variant="ghost"
+              variant="outline"
               disabled={removing === "removing"}
               onClick={props.onRemoveCancel}
             >
