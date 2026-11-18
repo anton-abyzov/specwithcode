@@ -69,7 +69,7 @@ function setup(allowHandLoaded?: () => boolean) {
 /** What the route does after `relayRequestAllowed`: open a socket bound to the Origin's id. */
 function connect(
   extension: ReturnType<typeof makeBrowserExtension>,
-  input: { origin: string; token?: string; claimedId?: string; label?: string },
+  input: { origin: string; token?: string | undefined; claimedId?: string; label?: string },
 ) {
   const closed: Array<{ code: number; reason: string }> = [];
   const session = extension.hub.open(
