@@ -231,3 +231,15 @@ it("after reopening, Files and commands waits for settings before it shows", asy
     "Settings > General",
   );
 });
+
+it("a second Quit & Reopen before settings load keeps the restored Files machines", async () => {
+  mocks.hydrated = false;
+  mocks.take.mockResolvedValue(marker({ filesIds: ["this-mac", "studio"] }));
+  await render();
+  expect(step()).toBe("access");
+  expect(document.querySelector("[data-access-row='files']")).toBeNull();
+  await click("Quit and reopen");
+  expect(mocks.save).toHaveBeenCalledWith(
+    expect.objectContaining({ step: "access", filesIds: ["this-mac", "studio"] }),
+  );
+});

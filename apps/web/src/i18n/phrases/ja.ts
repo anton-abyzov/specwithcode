@@ -5636,4 +5636,129 @@ export const ja: PhraseCatalog = {
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} は動作中ですが、サインインするまでこのウィンドウから接続できません。",
   "Sign in to reach this machine": "サインインしてこのマシンに接続",
+  // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Chrome と Safari のプロファイルと履歴",
+  Mail: "メール",
+  Messages: "メッセージ",
+  "Photos library": "写真ライブラリ",
+  "Time Machine backups": "Time Machine のバックアップ",
+  "Other apps' data": "ほかのアプリのデータ",
+  "Screen Recording": "画面収録",
+  Accessibility: "アクセシビリティ",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "{machine} 上のすべてのエージェントが、どのプロジェクトでもどのプロバイダーでも、システム設定でオフにするまでこの権限を持ちます。",
+  "Setup works without Connect, and you can add it later in Settings > Machines.":
+    "セットアップは Connect なしでも動作します。あとで 設定 > マシン から追加できます。",
+  "Each row has its own button. Change any of it later in Settings.":
+    "各行に専用のボタンがあります。どれも後で設定から変更できます。",
+  "Continue changes nothing.": "「続ける」では何も変わりません。",
+  "On {machines}.": "{machines} で。",
+  "Full access: agents edit and run without asking each time.":
+    "フルアクセス: エージェントは毎回確認せずに編集・実行します。",
+  "What it allows": "許可される内容",
+  "New chats start with Full access.": "新しいチャットはフルアクセスで始まります。",
+  "New chats stay Supervised.": "新しいチャットは監督付きのままです。",
+  "New chats keep their current access.": "新しいチャットは現在のアクセスのままです。",
+  "Change it in Settings > General.": "設定 > 一般 で変更できます。",
+  "Files and commands": "ファイルとコマンド",
+  "Not changed": "変更なし",
+  Change: "変更",
+  "Checking Chrome…": "Chrome を確認中…",
+  "{machine} is offline.": "{machine} はオフラインです。",
+  "Turned off by your team's rules.": "チームのルールでオフになっています。",
+  "This window cannot pair a browser with {machine}.":
+    "このウィンドウからはブラウザを {machine} とペアリングできません。",
+  "Chrome is not installed on {machine}.": "{machine} に Chrome がインストールされていません。",
+  "{asking} asks to use this Chrome for its threads.":
+    "{asking} がスレッドでこの Chrome を使う許可を求めています。",
+  "{asking} asks to use this Chrome for its threads. This window cannot answer it: answer in Settings > Chrome where you can change access.":
+    "{asking} がスレッドでこの Chrome を使う許可を求めています。このウィンドウからは応答できません。アクセスを変更できる 設定 > Chrome で応答してください。",
+  "Paired, not answering. Open Chrome, or reconnect.":
+    "ペアリング済み、応答なし。Chrome を開くか、再接続してください。",
+  "{profiles}: an older extension.": "{profiles}: 古い拡張機能です。",
+  "Update the extension": "拡張機能を更新",
+  "{profiles}: not from the Chrome Web Store.":
+    "{profiles}: Chrome ウェブストアからのものではありません。",
+  "{profiles}: give it a name agents can tell apart.":
+    "{profiles}: エージェントが区別できる名前を付けてください。",
+  "Paired: {names}": "ペアリング済み: {names}",
+  "Pair another profile": "別のプロファイルをペアリング",
+  "Your browser": "ブラウザ",
+  "That did not go through. Try again.": "うまくいきませんでした。もう一度お試しください。",
+  "Screen Recording and Accessibility are allowed.":
+    "画面収録とアクセシビリティが許可されています。",
+  "Partly allowed: {missing} is still off.": "一部のみ許可: {missing} がまだオフです。",
+  "Needs reopening: macOS applies Screen Recording after SpecWithCode reopens.":
+    "再起動が必要: macOS は SpecWithCode を開き直したあとに画面収録を適用します。",
+  "Could not check the Mac's permissions.": "Mac の権限を確認できませんでした。",
+  "Agents see the screen and click and type in any app.":
+    "エージェントが画面を見て、どのアプリでもクリックや入力をします。",
+  "Mac apps": "Mac のアプリ",
+  "Agents use only the Chrome profiles you pair, and only while they are paired.":
+    "エージェントが使うのはペアリングした Chrome プロファイルだけで、ペアリング中に限られます。",
+  "They work in the live browser, in a blue tab group you can pull a tab out of. They never read Chrome's files on disk, which Full Disk Access would open to every agent.":
+    "エージェントは起動中のブラウザで、タブを引き出せる青いタブグループの中で作業します。Chrome のディスク上のファイルは決して読みません。フルディスクアクセスなら、それをすべてのエージェントに開くことになります。",
+  "SpecWithCode reads Chrome's profile names to show this list.":
+    "この一覧を表示するために、SpecWithCode は Chrome のプロファイル名を読み取ります。",
+  "Pick the profile where the accounts agents need are signed in.":
+    "エージェントが必要とするアカウントにサインインしているプロファイルを選んでください。",
+  "One profile is enough when everything agents need is signed in there. Pair a second one for a work account or another brand's accounts. The browser tools never reach a profile you did not pair.":
+    "エージェントに必要なものがすべてサインイン済みなら、プロファイルは 1 つで十分です。仕事用のアカウントや別ブランドのアカウントには 2 つ目をペアリングしてください。ペアリングしていないプロファイルにブラウザツールが届くことはありません。",
+  "Agents use the profile you name.": "エージェントは指定したプロファイルを使います。",
+  "It opens in the Chrome profile you used last. To pair another, switch to it in Chrome first.":
+    "最後に使った Chrome プロファイルで開きます。別のプロファイルをペアリングするには、先に Chrome でそちらに切り替えてください。",
+  "Anyone with this code can pair a browser with this computer.":
+    "このコードを持つ人は誰でも、ブラウザをこのコンピュータとペアリングできます。",
+  "Chrome profile": "Chrome プロファイル",
+  "Opens the store page in {profile}.": "{profile} でストアのページを開きます。",
+  "Opens the store page in Chrome.": "Chrome でストアのページを開きます。",
+  "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
+    "拡張機能のページに貼り付けるか、Chrome のツールバーにあるアイコンをクリックしてそこに貼り付けてください。",
+  "Waiting for Chrome…": "Chrome を待っています…",
+  "The pairing code could not be read. Try again.":
+    "ペアリングコードを読み取れませんでした。もう一度お試しください。",
+  "The code could not be copied. Press Show instead.":
+    "コードをコピーできませんでした。代わりに「表示」を押してください。",
+  "Developer: allow copies not from the Chrome Web Store":
+    "開発者: Chrome ウェブストア以外のコピーを許可",
+  "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, any other extension id can connect too, such as a copy loaded by hand in chrome://extensions, but still only with the pairing code, and it is marked not from the Chrome Web Store. Turning it off disconnects those copies.":
+    "オフにすると、Chrome ウェブストアの SpecWithCode Browser だけが {machine} に接続できます。オンにすると、chrome://extensions で手動で読み込んだコピーなど、ほかの拡張機能 ID も接続できます。ただしペアリングコードが必要なのは変わらず、Chrome ウェブストア以外のものとして表示されます。オフに戻すと、それらのコピーは切断されます。",
+  "Give it a name agents can tell apart": "エージェントが区別できる名前を付けてください",
+  "What agents can use on this {machine}": "この{machine}でエージェントが使えるもの",
+  "What agents can use": "エージェントが使えるもの",
+  "Some tasks need it: listing Chrome profiles, reading Mail or Messages, searching Safari history, or working with another app's files. macOS blocks these for every app until you allow it.":
+    "Chrome プロファイルの一覧、メールやメッセージの読み取り、Safari の履歴検索、別のアプリのファイルの操作など、必要になる作業があります。許可するまで、macOS はどのアプリにもこれらを禁止します。",
+  "What it unlocks": "利用できるようになるもの",
+  "A prompt hidden in a web page or file could ask an agent to read your mail. Turn it on only if you need it.":
+    "Web ページやファイルに隠れた指示が、エージェントにメールを読むよう求めるおそれがあります。必要なときだけオンにしてください。",
+  "In System Settings › Privacy & Security › Full Disk Access, turn on":
+    "システム設定 › プライバシーとセキュリティ › フルディスクアクセス で、次をオンにしてください:",
+  "Agents here run under a background service, so macOS asks about it, not the app. In System Settings › Privacy & Security › Full Disk Access, add":
+    "ここではエージェントがバックグラウンドサービスの下で動くため、macOS はアプリではなくそのサービスについて確認します。システム設定 › プライバシーとセキュリティ › フルディスクアクセス に次を追加してください:",
+  "How Full Disk Access works and how to turn it off":
+    "フルディスクアクセスの仕組みとオフにする方法",
+  "Full Disk Access for agents: allowed, restart running threads":
+    "エージェントのフルディスクアクセス: 許可済み、実行中のスレッドを再起動してください",
+  "Full Disk Access for agents: allowed": "エージェントのフルディスクアクセス: 許可済み",
+  "Full Disk Access for agents: could not be checked":
+    "エージェントのフルディスクアクセス: 確認できませんでした",
+  "Full Disk Access for agents: off": "エージェントのフルディスクアクセス: オフ",
+  "Privacy access": "プライバシーのアクセス",
+  "Restart needed": "再起動が必要",
+  Optional: "任意",
+  "New agent runs have it. Threads that were already running get it after they restart.":
+    "新しいエージェントの実行には適用されます。すでに実行中だったスレッドには再起動後に適用されます。",
+  "Optional. Agents on": "任意です。",
+  "can't read Chrome or Safari profiles, Mail, Messages, Notes or other apps' data.":
+    "のエージェントは、Chrome や Safari のプロファイル、メール、メッセージ、メモ、ほかのアプリのデータを読み取れません。",
+  "What this allows": "これで許可される内容",
+  "Open System Settings": "システム設定を開く",
+  "Open SpecWithCode on": "SpecWithCode を",
+  "to allow it there.": "で開いて、そこで許可してください。",
+  "Full Disk Access for agents (optional)": "エージェントのフルディスクアクセス (任意)",
+  "Already allowed on this Mac.": "この Mac ではすでに許可されています。",
+  "You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.":
+    "スキップしてもかまいません。設定 › マシン にもあり、作業で必要になるとエージェントが確認します。",
+  "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
+    "ターミナルでも claude、codex、specweave を使えます。シェルの起動ファイルに目印付きのブロックを 1 つ追加します。設定 > 一般 でいつでもオフにできます。",
 };

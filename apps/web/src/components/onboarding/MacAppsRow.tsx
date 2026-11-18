@@ -69,7 +69,9 @@ export function MacAppsRowView({
     state.kind === "allowed"
       ? tx("Screen Recording and Accessibility are allowed.")
       : state.kind === "partly"
-        ? tx("Partly allowed: {missing} is still off.", { missing: state.missing ?? "" })
+        ? tx("Partly allowed: {missing} is still off.", {
+            missing: state.missing === null ? "" : tx(state.missing),
+          })
         : state.kind === "needs-reopening"
           ? tx("Needs reopening: macOS applies Screen Recording after SpecWithCode reopens.")
           : state.kind === "could-not-check"

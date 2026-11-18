@@ -5631,4 +5631,128 @@ export const ru: PhraseCatalog = {
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} работают, но это окно не подключится к ним, пока вы не войдёте.",
   "Sign in to reach this machine": "Войдите, чтобы подключиться к этому компьютеру",
+  // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Профили и история Chrome и Safari",
+  Mail: "Почта",
+  Messages: "Сообщения",
+  "Photos library": "Медиатека Фото",
+  "Time Machine backups": "Резервные копии Time Machine",
+  "Other apps' data": "Данные других приложений",
+  "Screen Recording": "Запись экрана",
+  Accessibility: "Универсальный доступ",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "Каждый агент на {machine}, в любом проекте и с любым провайдером, получает это, пока вы не выключите его в Системных настройках.",
+  "Setup works without Connect, and you can add it later in Settings > Machines.":
+    "Настройка работает и без Connect, его можно добавить позже в Настройки > Машины.",
+  "Each row has its own button. Change any of it later in Settings.":
+    "У каждой строки своя кнопка. Любую можно изменить позже в настройках.",
+  "Continue changes nothing.": "«Продолжить» ничего не меняет.",
+  "On {machines}.": "На {machines}.",
+  "Full access: agents edit and run without asking each time.":
+    "Полный доступ: агенты редактируют и запускают, не спрашивая каждый раз.",
+  "What it allows": "Что это разрешает",
+  "New chats start with Full access.": "Новые чаты начинаются с полным доступом.",
+  "New chats stay Supervised.": "Новые чаты остаются под присмотром.",
+  "New chats keep their current access.": "Новые чаты сохраняют текущий доступ.",
+  "Change it in Settings > General.": "Изменить можно в Настройки > Общие.",
+  "Files and commands": "Файлы и команды",
+  "Not changed": "Без изменений",
+  Change: "Изменить",
+  "Checking Chrome…": "Проверяем Chrome…",
+  "{machine} is offline.": "{machine} не в сети.",
+  "Turned off by your team's rules.": "Отключено правилами вашей команды.",
+  "This window cannot pair a browser with {machine}.":
+    "Из этого окна нельзя связать браузер с {machine}.",
+  "Chrome is not installed on {machine}.": "Chrome не установлен на {machine}.",
+  "{asking} asks to use this Chrome for its threads.":
+    "{asking} просит использовать этот Chrome для своих тредов.",
+  "{asking} asks to use this Chrome for its threads. This window cannot answer it: answer in Settings > Chrome where you can change access.":
+    "{asking} просит использовать этот Chrome для своих тредов. Это окно не может ответить: ответьте в Настройки > Chrome, где можно изменить доступ.",
+  "Paired, not answering. Open Chrome, or reconnect.":
+    "Связан, но не отвечает. Откройте Chrome или переподключите.",
+  "{profiles}: an older extension.": "{profiles}: устаревшее расширение.",
+  "Update the extension": "Обновить расширение",
+  "{profiles}: not from the Chrome Web Store.": "{profiles}: не из Chrome Web Store.",
+  "{profiles}: give it a name agents can tell apart.":
+    "{profiles}: дайте ему имя, по которому агенты его отличат.",
+  "Paired: {names}": "Связано: {names}",
+  "Pair another profile": "Связать ещё один профиль",
+  "Your browser": "Ваш браузер",
+  "That did not go through. Try again.": "Не получилось. Попробуйте ещё раз.",
+  "Screen Recording and Accessibility are allowed.":
+    "Запись экрана и Универсальный доступ разрешены.",
+  "Partly allowed: {missing} is still off.": "Разрешено частично. Осталось включить: {missing}.",
+  "Needs reopening: macOS applies Screen Recording after SpecWithCode reopens.":
+    "Нужно перезапустить: macOS применяет «Запись экрана» после повторного запуска SpecWithCode.",
+  "Could not check the Mac's permissions.": "Не удалось проверить разрешения Mac.",
+  "Agents see the screen and click and type in any app.":
+    "Агенты видят экран, нажимают и печатают в любом приложении.",
+  "Mac apps": "Приложения Mac",
+  "Agents use only the Chrome profiles you pair, and only while they are paired.":
+    "Агенты используют только те профили Chrome, которые вы связали, и только пока они связаны.",
+  "They work in the live browser, in a blue tab group you can pull a tab out of. They never read Chrome's files on disk, which Full Disk Access would open to every agent.":
+    "Они работают в открытом браузере, в синей группе вкладок, из которой можно вытащить вкладку. Они никогда не читают файлы Chrome на диске, которые полный доступ к диску открыл бы всем агентам.",
+  "SpecWithCode reads Chrome's profile names to show this list.":
+    "SpecWithCode читает названия профилей Chrome, чтобы показать этот список.",
+  "Pick the profile where the accounts agents need are signed in.":
+    "Выберите профиль, в котором выполнен вход в нужные агентам аккаунты.",
+  "One profile is enough when everything agents need is signed in there. Pair a second one for a work account or another brand's accounts. The browser tools never reach a profile you did not pair.":
+    "Одного профиля достаточно, если в нём выполнен вход во всё, что нужно агентам. Свяжите второй для рабочего аккаунта или аккаунтов другого бренда. Инструменты браузера никогда не доберутся до профиля, который вы не связали.",
+  "Agents use the profile you name.": "Агенты используют профиль, который вы назовёте.",
+  "It opens in the Chrome profile you used last. To pair another, switch to it in Chrome first.":
+    "Откроется в последнем использованном профиле Chrome. Чтобы связать другой, сначала переключитесь на него в Chrome.",
+  "Anyone with this code can pair a browser with this computer.":
+    "Любой, у кого есть этот код, может связать браузер с этим компьютером.",
+  "Chrome profile": "Профиль Chrome",
+  "Opens the store page in {profile}.": "Открывает страницу магазина в профиле {profile}.",
+  "Opens the store page in Chrome.": "Открывает страницу магазина в Chrome.",
+  "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
+    "Вставьте его на странице расширения или нажмите его значок на панели Chrome и вставьте там.",
+  "Waiting for Chrome…": "Ждём Chrome…",
+  "The pairing code could not be read. Try again.":
+    "Не удалось прочитать код связывания. Попробуйте ещё раз.",
+  "The code could not be copied. Press Show instead.":
+    "Не удалось скопировать код. Нажмите «Показать».",
+  "Developer: allow copies not from the Chrome Web Store":
+    "Для разработчиков: разрешить копии не из Chrome Web Store",
+  "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, any other extension id can connect too, such as a copy loaded by hand in chrome://extensions, but still only with the pairing code, and it is marked not from the Chrome Web Store. Turning it off disconnects those copies.":
+    "Выключено: к {machine} может подключиться только SpecWithCode Browser из Chrome Web Store. Включено: может подключиться и любое другое расширение, например копия, загруженная вручную в chrome://extensions, но по-прежнему только с кодом связывания, и она помечается как не из Chrome Web Store. Выключение отключает эти копии.",
+  "Give it a name agents can tell apart": "Дайте ему имя, по которому агенты его отличат",
+  "What agents can use on this {machine}": "Что агенты могут использовать на этом {machine}",
+  "What agents can use": "Что могут использовать агенты",
+  "Some tasks need it: listing Chrome profiles, reading Mail or Messages, searching Safari history, or working with another app's files. macOS blocks these for every app until you allow it.":
+    "Он нужен для некоторых задач: показать профили Chrome, прочитать Почту или Сообщения, искать в истории Safari или работать с файлами другого приложения. macOS блокирует это для всех приложений, пока вы не разрешите.",
+  "What it unlocks": "Что это открывает",
+  "A prompt hidden in a web page or file could ask an agent to read your mail. Turn it on only if you need it.":
+    "Инструкция, спрятанная на веб-странице или в файле, может попросить агента прочитать вашу почту. Включайте, только если это нужно.",
+  "In System Settings › Privacy & Security › Full Disk Access, turn on":
+    "В Системные настройки › Конфиденциальность и безопасность › Полный доступ к диску включите",
+  "Agents here run under a background service, so macOS asks about it, not the app. In System Settings › Privacy & Security › Full Disk Access, add":
+    "Здесь агенты работают под фоновой службой, поэтому macOS спрашивает о ней, а не о приложении. В Системные настройки › Конфиденциальность и безопасность › Полный доступ к диску добавьте",
+  "How Full Disk Access works and how to turn it off":
+    "Как работает полный доступ к диску и как его выключить",
+  "Full Disk Access for agents: allowed, restart running threads":
+    "Полный доступ к диску для агентов: разрешён, перезапустите работающие треды",
+  "Full Disk Access for agents: allowed": "Полный доступ к диску для агентов: разрешён",
+  "Full Disk Access for agents: could not be checked":
+    "Полный доступ к диску для агентов: не удалось проверить",
+  "Full Disk Access for agents: off": "Полный доступ к диску для агентов: выключен",
+  "Privacy access": "Доступ к конфиденциальным данным",
+  "Restart needed": "Нужен перезапуск",
+  Optional: "Необязательно",
+  "New agent runs have it. Threads that were already running get it after they restart.":
+    "Новые запуски агентов его получают. Треды, которые уже работали, получат его после перезапуска.",
+  "Optional. Agents on": "Необязательно. Агенты на",
+  "can't read Chrome or Safari profiles, Mail, Messages, Notes or other apps' data.":
+    "не могут читать профили Chrome или Safari, Почту, Сообщения, Заметки и данные других приложений.",
+  "What this allows": "Что это разрешает",
+  "Open System Settings": "Открыть Системные настройки",
+  "Open SpecWithCode on": "Откройте SpecWithCode на",
+  "to allow it there.": "и разрешите там.",
+  "Full Disk Access for agents (optional)": "Полный доступ к диску для агентов (необязательно)",
+  "Already allowed on this Mac.": "На этом Mac уже разрешено.",
+  "You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.":
+    "Это можно пропустить. Это есть и в Настройки › Машины, а агенты спросят, когда задаче это понадобится.",
+  "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
+    "Используйте claude, codex и specweave и в Терминале. Добавляет один помеченный блок в файл запуска оболочки; выключить можно в любой момент в Настройки > Общие.",
 };

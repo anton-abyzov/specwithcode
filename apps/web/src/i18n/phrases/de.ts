@@ -5672,4 +5672,129 @@ export const de: PhraseCatalog = {
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} laufen, aber dieses Fenster erreicht sie erst nach der Anmeldung.",
   "Sign in to reach this machine": "Anmelden, um diesen Rechner zu erreichen",
+  // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Chrome- und Safari-Profile und -Verlauf",
+  Mail: "Mail",
+  Messages: "Nachrichten",
+  "Photos library": "Fotos-Mediathek",
+  "Time Machine backups": "Time Machine-Backups",
+  "Other apps' data": "Daten anderer Apps",
+  "Screen Recording": "Bildschirmaufnahme",
+  Accessibility: "Bedienungshilfen",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "Jeder Agent auf {machine} bekommt das, in jedem Projekt und mit jedem Anbieter, bis du es in den Systemeinstellungen ausschaltest.",
+  "Setup works without Connect, and you can add it later in Settings > Machines.":
+    "Die Einrichtung funktioniert ohne Connect, und du kannst es später unter Einstellungen > Rechner hinzufügen.",
+  "Each row has its own button. Change any of it later in Settings.":
+    "Jede Zeile hat ihre eigene Schaltfläche. Du kannst alles später in den Einstellungen ändern.",
+  "Continue changes nothing.": "Weiter ändert nichts.",
+  "On {machines}.": "Auf {machines}.",
+  "Full access: agents edit and run without asking each time.":
+    "Voller Zugriff: Agenten bearbeiten und führen aus, ohne jedes Mal zu fragen.",
+  "What it allows": "Was er erlaubt",
+  "New chats start with Full access.": "Neue Chats starten mit vollem Zugriff.",
+  "New chats stay Supervised.": "Neue Chats bleiben beaufsichtigt.",
+  "New chats keep their current access.": "Neue Chats behalten ihren aktuellen Zugriff.",
+  "Change it in Settings > General.": "Ändern unter Einstellungen > Allgemein.",
+  "Files and commands": "Dateien und Befehle",
+  "Not changed": "Nicht geändert",
+  Change: "Ändern",
+  "Checking Chrome…": "Chrome wird geprüft…",
+  "{machine} is offline.": "{machine} ist offline.",
+  "Turned off by your team's rules.": "Durch die Regeln deines Teams ausgeschaltet.",
+  "This window cannot pair a browser with {machine}.":
+    "Dieses Fenster kann keinen Browser mit {machine} koppeln.",
+  "Chrome is not installed on {machine}.": "Chrome ist auf {machine} nicht installiert.",
+  "{asking} asks to use this Chrome for its threads.":
+    "{asking} möchte dieses Chrome für seine Threads nutzen.",
+  "{asking} asks to use this Chrome for its threads. This window cannot answer it: answer in Settings > Chrome where you can change access.":
+    "{asking} möchte dieses Chrome für seine Threads nutzen. Dieses Fenster kann nicht antworten: Antworte unter Einstellungen > Chrome, wo du den Zugriff ändern kannst.",
+  "Paired, not answering. Open Chrome, or reconnect.":
+    "Gekoppelt, antwortet nicht. Öffne Chrome oder verbinde neu.",
+  "{profiles}: an older extension.": "{profiles}: eine ältere Erweiterung.",
+  "Update the extension": "Erweiterung aktualisieren",
+  "{profiles}: not from the Chrome Web Store.": "{profiles}: nicht aus dem Chrome Web Store.",
+  "{profiles}: give it a name agents can tell apart.":
+    "{profiles}: Gib ihm einen Namen, den Agenten unterscheiden können.",
+  "Paired: {names}": "Gekoppelt: {names}",
+  "Pair another profile": "Weiteres Profil koppeln",
+  "Your browser": "Dein Browser",
+  "That did not go through. Try again.": "Das hat nicht geklappt. Versuch es noch einmal.",
+  "Screen Recording and Accessibility are allowed.":
+    "Bildschirmaufnahme und Bedienungshilfen sind erlaubt.",
+  "Partly allowed: {missing} is still off.": "Teilweise erlaubt: Noch einzuschalten: {missing}.",
+  "Needs reopening: macOS applies Screen Recording after SpecWithCode reopens.":
+    "Neustart nötig: macOS wendet die Bildschirmaufnahme erst an, wenn SpecWithCode neu geöffnet wird.",
+  "Could not check the Mac's permissions.":
+    "Die Berechtigungen des Mac konnten nicht geprüft werden.",
+  "Agents see the screen and click and type in any app.":
+    "Agenten sehen den Bildschirm und klicken und tippen in jeder App.",
+  "Mac apps": "Mac-Apps",
+  "Agents use only the Chrome profiles you pair, and only while they are paired.":
+    "Agenten nutzen nur die Chrome-Profile, die du koppelst, und nur, solange sie gekoppelt sind.",
+  "They work in the live browser, in a blue tab group you can pull a tab out of. They never read Chrome's files on disk, which Full Disk Access would open to every agent.":
+    "Sie arbeiten im laufenden Browser, in einer blauen Tab-Gruppe, aus der du einen Tab herausziehen kannst. Sie lesen nie die Dateien von Chrome auf der Festplatte, die der Festplattenvollzugriff jedem Agenten öffnen würde.",
+  "SpecWithCode reads Chrome's profile names to show this list.":
+    "SpecWithCode liest die Profilnamen von Chrome, um diese Liste zu zeigen.",
+  "Pick the profile where the accounts agents need are signed in.":
+    "Wähle das Profil, in dem die Konten angemeldet sind, die Agenten brauchen.",
+  "One profile is enough when everything agents need is signed in there. Pair a second one for a work account or another brand's accounts. The browser tools never reach a profile you did not pair.":
+    "Ein Profil reicht, wenn dort alles angemeldet ist, was Agenten brauchen. Kopple ein zweites für ein Arbeitskonto oder die Konten einer anderen Marke. Die Browser-Werkzeuge erreichen nie ein Profil, das du nicht gekoppelt hast.",
+  "Agents use the profile you name.": "Agenten nutzen das Profil, das du nennst.",
+  "It opens in the Chrome profile you used last. To pair another, switch to it in Chrome first.":
+    "Er öffnet sich im zuletzt verwendeten Chrome-Profil. Um ein anderes zu koppeln, wechsle zuerst in Chrome dorthin.",
+  "Anyone with this code can pair a browser with this computer.":
+    "Jeder mit diesem Code kann einen Browser mit diesem Computer koppeln.",
+  "Chrome profile": "Chrome-Profil",
+  "Opens the store page in {profile}.": "Öffnet die Store-Seite in {profile}.",
+  "Opens the store page in Chrome.": "Öffnet die Store-Seite in Chrome.",
+  "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
+    "Füge ihn auf der Seite der Erweiterung ein, oder klicke auf ihr Symbol in der Chrome-Symbolleiste und füge ihn dort ein.",
+  "Waiting for Chrome…": "Warte auf Chrome…",
+  "The pairing code could not be read. Try again.":
+    "Der Kopplungscode konnte nicht gelesen werden. Versuch es noch einmal.",
+  "The code could not be copied. Press Show instead.":
+    "Der Code konnte nicht kopiert werden. Drücke stattdessen auf Zeigen.",
+  "Developer: allow copies not from the Chrome Web Store":
+    "Entwickler: Kopien zulassen, die nicht aus dem Chrome Web Store stammen",
+  "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, any other extension id can connect too, such as a copy loaded by hand in chrome://extensions, but still only with the pairing code, and it is marked not from the Chrome Web Store. Turning it off disconnects those copies.":
+    "Aus: Nur der SpecWithCode Browser aus dem Chrome Web Store kann sich mit {machine} verbinden. An: Auch jede andere Erweiterungs-ID kann sich verbinden, etwa eine Kopie, die von Hand in chrome://extensions geladen wurde, aber weiterhin nur mit dem Kopplungscode, und sie wird als nicht aus dem Chrome Web Store markiert. Ausschalten trennt diese Kopien.",
+  "Give it a name agents can tell apart": "Gib ihm einen Namen, den Agenten unterscheiden können",
+  "What agents can use on this {machine}": "Was Agenten auf diesem {machine} nutzen können",
+  "What agents can use": "Was Agenten nutzen können",
+  "Some tasks need it: listing Chrome profiles, reading Mail or Messages, searching Safari history, or working with another app's files. macOS blocks these for every app until you allow it.":
+    "Manche Aufgaben brauchen ihn: Chrome-Profile auflisten, Mail oder Nachrichten lesen, den Safari-Verlauf durchsuchen oder mit den Dateien einer anderen App arbeiten. macOS sperrt das für jede App, bis du es erlaubst.",
+  "What it unlocks": "Was er freischaltet",
+  "A prompt hidden in a web page or file could ask an agent to read your mail. Turn it on only if you need it.":
+    "Eine Anweisung, die in einer Webseite oder Datei versteckt ist, könnte einen Agenten auffordern, deine Mails zu lesen. Schalte ihn nur ein, wenn du ihn brauchst.",
+  "In System Settings › Privacy & Security › Full Disk Access, turn on":
+    "Schalte unter Systemeinstellungen › Datenschutz & Sicherheit › Festplattenvollzugriff Folgendes ein:",
+  "Agents here run under a background service, so macOS asks about it, not the app. In System Settings › Privacy & Security › Full Disk Access, add":
+    "Agenten laufen hier unter einem Hintergrunddienst, daher fragt macOS nach ihm und nicht nach der App. Füge unter Systemeinstellungen › Datenschutz & Sicherheit › Festplattenvollzugriff Folgendes hinzu:",
+  "How Full Disk Access works and how to turn it off":
+    "Wie der Festplattenvollzugriff funktioniert und wie du ihn ausschaltest",
+  "Full Disk Access for agents: allowed, restart running threads":
+    "Festplattenvollzugriff für Agenten: erlaubt, laufende Threads neu starten",
+  "Full Disk Access for agents: allowed": "Festplattenvollzugriff für Agenten: erlaubt",
+  "Full Disk Access for agents: could not be checked":
+    "Festplattenvollzugriff für Agenten: konnte nicht geprüft werden",
+  "Full Disk Access for agents: off": "Festplattenvollzugriff für Agenten: aus",
+  "Privacy access": "Datenschutzzugriff",
+  "Restart needed": "Neustart nötig",
+  Optional: "Optional",
+  "New agent runs have it. Threads that were already running get it after they restart.":
+    "Neue Agentenläufe haben ihn. Threads, die schon liefen, bekommen ihn nach einem Neustart.",
+  "Optional. Agents on": "Optional. Agenten auf",
+  "can't read Chrome or Safari profiles, Mail, Messages, Notes or other apps' data.":
+    "können keine Chrome- oder Safari-Profile, Mail, Nachrichten, Notizen oder Daten anderer Apps lesen.",
+  "What this allows": "Was das erlaubt",
+  "Open System Settings": "Systemeinstellungen öffnen",
+  "Open SpecWithCode on": "Öffne SpecWithCode auf",
+  "to allow it there.": "und erlaube es dort.",
+  "Full Disk Access for agents (optional)": "Festplattenvollzugriff für Agenten (optional)",
+  "Already allowed on this Mac.": "Auf diesem Mac schon erlaubt.",
+  "You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.":
+    "Du kannst das überspringen. Es ist auch unter Einstellungen › Rechner, und Agenten fragen, wenn eine Aufgabe es braucht.",
+  "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
+    "Nutze claude, codex und specweave auch im Terminal. Fügt deiner Shell-Startdatei einen markierten Block hinzu; du kannst das jederzeit unter Einstellungen > Allgemein ausschalten.",
 };

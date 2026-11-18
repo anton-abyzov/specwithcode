@@ -5401,4 +5401,120 @@ export const zh: PhraseCatalog = {
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} 正在运行，但登录前此窗口无法访问它们。",
   "Sign in to reach this machine": "登录以访问此电脑",
+  // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Chrome 和 Safari 的配置文件与历史记录",
+  Mail: "邮件",
+  Messages: "信息",
+  "Photos library": "照片图库",
+  "Time Machine backups": "时间机器备份",
+  "Other apps' data": "其他应用的数据",
+  "Screen Recording": "屏幕录制",
+  Accessibility: "辅助功能",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "{machine} 上的每个智能体，在每个项目中、使用每个提供方，都会获得此权限，直到你在系统设置中关闭它。",
+  "Setup works without Connect, and you can add it later in Settings > Machines.":
+    "设置无需 Connect 也能完成，之后可以在 设置 > 机器 中添加。",
+  "Each row has its own button. Change any of it later in Settings.":
+    "每一行都有自己的按钮。之后都可以在设置中更改。",
+  "Continue changes nothing.": "“继续”不会更改任何设置。",
+  "On {machines}.": "在 {machines} 上。",
+  "Full access: agents edit and run without asking each time.":
+    "完全访问：智能体编辑和运行时不再每次询问。",
+  "What it allows": "允许的内容",
+  "New chats start with Full access.": "新聊天以完全访问开始。",
+  "New chats stay Supervised.": "新聊天保持受监督。",
+  "New chats keep their current access.": "新聊天保持当前权限。",
+  "Change it in Settings > General.": "可在 设置 > 通用 中更改。",
+  "Files and commands": "文件和命令",
+  "Not changed": "未更改",
+  Change: "更改",
+  "Checking Chrome…": "正在检查 Chrome…",
+  "{machine} is offline.": "{machine} 已离线。",
+  "Turned off by your team's rules.": "已被团队规则关闭。",
+  "This window cannot pair a browser with {machine}.": "此窗口无法将浏览器与 {machine} 配对。",
+  "Chrome is not installed on {machine}.": "{machine} 上未安装 Chrome。",
+  "{asking} asks to use this Chrome for its threads.": "{asking} 请求在其会话中使用此 Chrome。",
+  "{asking} asks to use this Chrome for its threads. This window cannot answer it: answer in Settings > Chrome where you can change access.":
+    "{asking} 请求在其会话中使用此 Chrome。此窗口无法回应：请在可以更改权限的 设置 > Chrome 中回应。",
+  "Paired, not answering. Open Chrome, or reconnect.": "已配对，无响应。请打开 Chrome 或重新连接。",
+  "{profiles}: an older extension.": "{profiles}：扩展程序版本较旧。",
+  "Update the extension": "更新扩展程序",
+  "{profiles}: not from the Chrome Web Store.": "{profiles}：并非来自 Chrome 应用商店。",
+  "{profiles}: give it a name agents can tell apart.":
+    "{profiles}：请为它起一个智能体能区分的名称。",
+  "Paired: {names}": "已配对：{names}",
+  "Pair another profile": "配对另一个配置文件",
+  "Your browser": "你的浏览器",
+  "That did not go through. Try again.": "操作未完成。请重试。",
+  "Screen Recording and Accessibility are allowed.": "屏幕录制和辅助功能均已允许。",
+  "Partly allowed: {missing} is still off.": "部分允许：{missing} 仍未开启。",
+  "Needs reopening: macOS applies Screen Recording after SpecWithCode reopens.":
+    "需要重新打开：macOS 会在 SpecWithCode 重新打开后应用屏幕录制权限。",
+  "Could not check the Mac's permissions.": "无法检查 Mac 的权限。",
+  "Agents see the screen and click and type in any app.":
+    "智能体可以看到屏幕，并在任何应用中点击和输入。",
+  "Mac apps": "Mac 应用",
+  "Agents use only the Chrome profiles you pair, and only while they are paired.":
+    "智能体只使用你配对的 Chrome 配置文件，且仅在配对期间使用。",
+  "They work in the live browser, in a blue tab group you can pull a tab out of. They never read Chrome's files on disk, which Full Disk Access would open to every agent.":
+    "它们在正在运行的浏览器中、一个蓝色标签页组里工作，你可以把标签页拖出该组。它们从不读取 Chrome 在磁盘上的文件，而完全磁盘访问权限会向所有智能体开放这些文件。",
+  "SpecWithCode reads Chrome's profile names to show this list.":
+    "SpecWithCode 读取 Chrome 的配置文件名称以显示此列表。",
+  "Pick the profile where the accounts agents need are signed in.":
+    "选择已登录智能体所需账户的配置文件。",
+  "One profile is enough when everything agents need is signed in there. Pair a second one for a work account or another brand's accounts. The browser tools never reach a profile you did not pair.":
+    "如果智能体需要的一切都已在一个配置文件中登录，一个就够了。工作账户或其他品牌的账户可以再配对一个。浏览器工具永远不会触及你未配对的配置文件。",
+  "Agents use the profile you name.": "智能体使用你指定的配置文件。",
+  "It opens in the Chrome profile you used last. To pair another, switch to it in Chrome first.":
+    "它会在你上次使用的 Chrome 配置文件中打开。要配对其他配置文件，请先在 Chrome 中切换到它。",
+  "Anyone with this code can pair a browser with this computer.":
+    "任何拥有此代码的人都能将浏览器与这台电脑配对。",
+  "Chrome profile": "Chrome 配置文件",
+  "Opens the store page in {profile}.": "在 {profile} 中打开商店页面。",
+  "Opens the store page in Chrome.": "在 Chrome 中打开商店页面。",
+  "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
+    "将其粘贴到扩展程序的页面中，或点击 Chrome 工具栏中的扩展程序图标并粘贴到那里。",
+  "Waiting for Chrome…": "正在等待 Chrome…",
+  "The pairing code could not be read. Try again.": "无法读取配对码。请重试。",
+  "The code could not be copied. Press Show instead.": "无法复制代码。请改为点按“显示”。",
+  "Developer: allow copies not from the Chrome Web Store":
+    "开发者：允许并非来自 Chrome 应用商店的副本",
+  "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, any other extension id can connect too, such as a copy loaded by hand in chrome://extensions, but still only with the pairing code, and it is marked not from the Chrome Web Store. Turning it off disconnects those copies.":
+    "关闭时，只有来自 Chrome 应用商店的 SpecWithCode Browser 能连接到 {machine}。开启时，其他任何扩展程序 ID 也能连接，例如在 chrome://extensions 中手动加载的副本，但仍然需要配对码，并会标记为并非来自 Chrome 应用商店。关闭后这些副本会断开连接。",
+  "Give it a name agents can tell apart": "请为它起一个智能体能区分的名称",
+  "What agents can use on this {machine}": "智能体可以在这台{machine}上使用什么",
+  "What agents can use": "智能体可以使用什么",
+  "Some tasks need it: listing Chrome profiles, reading Mail or Messages, searching Safari history, or working with another app's files. macOS blocks these for every app until you allow it.":
+    "有些任务需要它：列出 Chrome 配置文件、读取邮件或信息、搜索 Safari 历史记录，或处理其他应用的文件。在你允许之前，macOS 会对所有应用阻止这些操作。",
+  "What it unlocks": "可解锁的内容",
+  "A prompt hidden in a web page or file could ask an agent to read your mail. Turn it on only if you need it.":
+    "隐藏在网页或文件中的指令可能会让智能体读取你的邮件。请仅在需要时开启。",
+  "In System Settings › Privacy & Security › Full Disk Access, turn on":
+    "在 系统设置 › 隐私与安全性 › 完全磁盘访问权限 中开启：",
+  "Agents here run under a background service, so macOS asks about it, not the app. In System Settings › Privacy & Security › Full Disk Access, add":
+    "这里的智能体在后台服务下运行，因此 macOS 询问的是该服务而不是应用。在 系统设置 › 隐私与安全性 › 完全磁盘访问权限 中添加：",
+  "How Full Disk Access works and how to turn it off": "完全磁盘访问权限如何运作以及如何关闭",
+  "Full Disk Access for agents: allowed, restart running threads":
+    "智能体的完全磁盘访问权限：已允许，请重启正在运行的会话",
+  "Full Disk Access for agents: allowed": "智能体的完全磁盘访问权限：已允许",
+  "Full Disk Access for agents: could not be checked": "智能体的完全磁盘访问权限：无法检查",
+  "Full Disk Access for agents: off": "智能体的完全磁盘访问权限：已关闭",
+  "Privacy access": "隐私访问",
+  "Restart needed": "需要重启",
+  Optional: "可选",
+  "New agent runs have it. Threads that were already running get it after they restart.":
+    "新的智能体运行会获得它。已在运行的会话需重启后才会获得。",
+  "Optional. Agents on": "可选。",
+  "can't read Chrome or Safari profiles, Mail, Messages, Notes or other apps' data.":
+    "上的智能体无法读取 Chrome 或 Safari 配置文件、邮件、信息、备忘录或其他应用的数据。",
+  "What this allows": "这允许什么",
+  "Open System Settings": "打开系统设置",
+  "Open SpecWithCode on": "在",
+  "to allow it there.": "上打开 SpecWithCode 并在那里允许。",
+  "Full Disk Access for agents (optional)": "智能体的完全磁盘访问权限（可选）",
+  "Already allowed on this Mac.": "此 Mac 上已允许。",
+  "You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.":
+    "可以跳过。它也在 设置 › 机器 中，任务需要时智能体会询问。",
+  "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
+    "在终端中也可以使用 claude、codex 和 specweave。会在你的 shell 启动文件中添加一个带标记的块；随时可在 设置 > 通用 中关闭。",
 };
