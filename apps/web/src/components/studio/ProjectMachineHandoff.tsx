@@ -737,6 +737,7 @@ export function ProjectMachineHandoff({
       if (!released.value.released) {
         setSnapshot(null);
         setStaleCopy(null);
+        setConsent(false);
         setPhase("choose");
         setError(
           "That move is no longer waiting on this machine. Check where Main is now before moving again.",

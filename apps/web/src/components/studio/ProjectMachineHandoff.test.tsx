@@ -1647,4 +1647,25 @@ it("says so when Keep Main finds the move already gone, keeping a newer pointer"
   await act(async () => props().staleCopy!.onKeepHere!());
   expect(localStorage.getItem(key)).toContain("newer-operation");
   expect(props().error).toContain("no longer waiting on this machine");
+  // The next move asks for consent again.
+  expect(props().consent).toBe(false);
+});
+
+it("offers Keep Main on a resumed move that was already published", async () => {
+  const syncBundle = { ...bundle, destination: { ...bundle.destination, transport: "git-sync" } };
+  const diverged = { reason: "local-commits", message: "m", repository: "." };
+  // The source already fenced before a reload: every prepare reports the saved publication.
+  state.prepare.mockImplementation(async () => ({
+    _tag: "Success",
+    value: { bundle: syncBundle, publication: "published", messageCount: 5 },
+  }));
+  state.receive.mockImplementation(async () => ({
+    _tag: "Success",
+    value: { ...ready, updateSkipped: diverged },
+  }));
+  await mount();
+  await review();
+  expect(props().phase).toBe("review");
+  expect(props().staleCopy).toMatchObject({ skipped: diverged, accepted: false });
+  expect(props().staleCopy?.onKeepHere).toBeDefined();
 });
