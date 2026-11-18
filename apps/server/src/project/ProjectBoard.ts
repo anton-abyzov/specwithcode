@@ -8,8 +8,9 @@
  * spec and ledger are read only for increments that are still open and for
  * the Done cards actually returned, and folded once until one of them changes
  * or a running two-hour lease ends, so a board of a thousand closed increments costs one stat each.
- * A card lists the increment's recorded reviews (incrementReview), read again
- * only when a review file changes.
+ * A card lists the increment's recorded reviews (incrementReview): one stat for
+ * an increment without `reports/`, two for one whose review folders hold none,
+ * and the review files read again only when one of them changes.
  */
 import * as NodeFSP from "node:fs/promises";
 

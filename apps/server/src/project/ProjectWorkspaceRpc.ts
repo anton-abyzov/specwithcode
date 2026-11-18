@@ -276,19 +276,7 @@ export const layerPlanningRpcHandlers = WsProjectPlanningRpcGroup.middleware(
       [WS_METHODS.projectsFirstFeatureGuide]: (input: ProjectFirstFeatureGuideInput) =>
         Effect.gen(function* () {
           const now = DateTime.formatIso(yield* DateTime.now);
-          const marked = yield* FirstFeatureSample.markFirstFeatureGuide(projects, input, now).pipe(
-            Effect.mapError(
-              () =>
-                new ProjectWorkspaceError({ code: "operation_failed", projectId: input.projectId }),
-            ),
-          );
-          if ("refused" in marked) {
-            return yield* new ProjectWorkspaceError({
-              code: marked.refused === "not_found" ? "not_found" : "invalid",
-              projectId: input.projectId,
-            });
-          }
-          return { firstFeatureGuide: marked.firstFeatureGuide };
+          return yield* FirstFeatureSample.firstFeatureGuideRpc(projects, input, now);
         }),
       [WS_METHODS.projectsRepositoriesRead]: (
         input: import("@specweave-studio/contracts").ProjectRepositoriesReadInput,

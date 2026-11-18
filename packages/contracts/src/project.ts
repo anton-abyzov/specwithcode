@@ -965,6 +965,12 @@ export const ProjectCreateNewResult = Schema.Struct({
   specweaveNeedsNode: Schema.optionalKey(Schema.Boolean),
   /** SpecWeave was set up in an existing folder that had none. Absent from older servers. */
   specweaveAdded: Schema.optionalKey(Schema.Boolean),
+  /**
+   * With `sample`: why the sample's own automatic review could not be turned
+   * off, so a review may start by itself beside the one the guide asks for.
+   * The project exists either way.
+   */
+  sampleAutoReviewError: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ProjectCreateNewResult = typeof ProjectCreateNewResult.Type;
 

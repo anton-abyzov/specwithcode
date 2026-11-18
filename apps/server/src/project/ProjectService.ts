@@ -26,6 +26,7 @@ import {
   type Project,
   type FirstFeatureGuide,
   type ProjectCreatePayload,
+  type ProjectFirstFeatureGuideMark,
   type ProjectOrigin,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
@@ -128,8 +129,11 @@ export interface ProjectUpdateInput extends ProjectUpdatePayload {
   readonly expectedDefaultModelSelection?: ModelSelection | null;
   /** Internal coordinator binding, never accepted from a client settings patch. */
   readonly coordinatorThreadId?: ThreadId;
-  /** Internal: the sample's guide facts (1398), never accepted from a client settings patch. */
-  readonly firstFeatureGuide?: FirstFeatureGuide;
+  /** Internal: a mark on the sample's guide (1398), never accepted from a client settings patch. */
+  readonly firstFeatureGuideMark?: {
+    readonly mark: ProjectFirstFeatureGuideMark;
+    readonly at: string;
+  };
   /**
    * Internal: the approval card that asked for this change. Its own pending
    * request does not count as active work in the thread that asked.
@@ -921,9 +925,9 @@ export const make = Effect.gen(function* () {
         ...(input.coordinatorThreadId === undefined
           ? {}
           : { coordinatorThreadId: input.coordinatorThreadId }),
-        ...(input.firstFeatureGuide === undefined
+        ...(input.firstFeatureGuideMark === undefined
           ? {}
-          : { firstFeatureGuide: input.firstFeatureGuide }),
+          : { firstFeatureGuideMark: input.firstFeatureGuideMark }),
         ...(input.title === undefined ? {} : { title: input.title }),
         ...(workspaceRoot === previousRoot ? {} : { workspaceRoot }),
         ...(input.defaultModelSelection === undefined

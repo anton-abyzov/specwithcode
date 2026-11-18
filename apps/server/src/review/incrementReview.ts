@@ -268,36 +268,54 @@ const canonicalOr = (family: string) => canonicalReviewFamily(family) ?? family;
  * and the author's families canonical so a client can compare them.
  * `ledgerAuthor` is the ledger's author family (ledgerAuthorFamily), used for
  * records that name none. An increment without a `reports/` folder costs one
- * stat; the files are read again only when one of them changes.
+ * stat. One whose review folders held no review costs two stats until a file
+ * is added or removed there (which changes the folder's time). One with
+ * reviews is listed again on each read and its files read again only when
+ * one of them changes.
  */
 export async function readIncrementReviews(
   incrementPath: string,
   ledgerAuthor: string | null,
 ): Promise<ReadonlyArray<ProjectBoardCardReview>> {
-  const reports = await NodeFSP.stat(NodePath.join(incrementPath, "reports")).catch(() => null);
+  const reportsPath = NodePath.join(incrementPath, "reports");
+  const reports = await NodeFSP.stat(reportsPath).catch(() => null);
   if (reports === null || !reports.isDirectory()) return [];
+  const runs = await NodeFSP.stat(NodePath.join(reportsPath, "reviews")).catch(() => null);
+  const folders = `${reports.mtimeMs}:${runs?.isDirectory() === true ? runs.mtimeMs : "-"}`;
+  const cached = reviewListCache.get(incrementPath);
+  if (cached !== undefined && cached.value.length === 0 && cached.signature === folders) return [];
   const files = await listReviewFiles(incrementPath);
-  if (files.length === 0) return [];
+  if (files.length === 0) {
+    rememberReviews(incrementPath, folders, []);
+    return [];
+  }
   const signature = [
     ledgerAuthor ?? "",
     ...files.map((file) => `${file.path}:${file.mtimeMs}:${file.size}`),
   ].join("|");
-  const cached = reviewListCache.get(incrementPath);
   if (cached?.signature === signature) return cached.value;
   const records = await readReviewRecords(files, ledgerAuthor);
-  const value = records
-    .slice(0, PROJECT_BOARD_CARD_REVIEWS)
-    .map((record): ProjectBoardCardReview => ({
+  const value = records.slice(0, PROJECT_BOARD_CARD_REVIEWS).map(
+    (record): ProjectBoardCardReview => ({
       model: record.model ?? null,
       family: canonicalOr(record.family),
       author: record.author === null ? null : canonicalOr(record.author),
       verdict: record.verdict ?? null,
       at: record.at,
-    }));
+    }),
+  );
+  rememberReviews(incrementPath, signature, value);
+  return value;
+}
+
+function rememberReviews(
+  incrementPath: string,
+  signature: string,
+  value: ReadonlyArray<ProjectBoardCardReview>,
+) {
   reviewListCache.delete(incrementPath);
   reviewListCache.set(incrementPath, { signature, value });
   if (reviewListCache.size > REVIEW_LIST_CACHE_ENTRIES) {
     reviewListCache.delete(reviewListCache.keys().next().value!);
   }
-  return value;
 }

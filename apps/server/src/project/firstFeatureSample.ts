@@ -12,9 +12,13 @@
 import {
   CommandId,
   FIRST_FEATURE_SAMPLE,
+  firstFeatureGuideAfterMark,
+  firstFeatureGuideEnd,
+  ProjectWorkspaceError,
+  sameFirstFeatureGuide,
   type FirstFeatureGuide,
-  type FirstFeatureGuideEnd,
   type Project,
+  type ProjectFirstFeatureGuideInput,
   type ProjectFirstFeatureGuideMark,
   type ProjectId,
 } from "@specweave-studio/contracts";
@@ -158,13 +162,6 @@ export const isFirstFeatureSample = (project: {
   readonly workspaceSettings?: { readonly sample?: string | undefined } | null | undefined;
 }): boolean => project.workspaceSettings?.sample === FIRST_FEATURE_SAMPLE;
 
-/** The guide's end, when it has one this version knows. */
-export function firstFeatureGuideEnd(
-  guide: FirstFeatureGuide | undefined,
-): FirstFeatureGuideEnd | undefined {
-  return guide?.ended === "left" || guide?.ended === "finished" ? guide.ended : undefined;
-}
-
 /**
  * "The sample" on this machine (AC-12): a live project made as the sample
  * whose guide has not ended, the most recently started first. Undefined when
@@ -187,34 +184,17 @@ export function activeFirstFeatureSample<P extends SampleCandidate>(
     )[0];
 }
 
-/**
- * The guide's facts after a mark. `started` opens it again after it was left
- * (a new start time, no end); `left` and `finished` end it. A finished guide
- * stays finished: its end is for good (AC-12).
- */
-export function firstFeatureGuideAfterMark(
-  current: FirstFeatureGuide | undefined,
-  mark: ProjectFirstFeatureGuideMark,
-  now: string,
-): FirstFeatureGuide {
-  const guide = current ?? {};
-  if (firstFeatureGuideEnd(guide) === "finished") return guide;
-  switch (mark) {
-    case "started":
-      return { started: now };
-    case "left":
-    case "finished":
-      return { ...(guide.started === undefined ? {} : { started: guide.started }), ended: mark };
-  }
-}
+/** Planned against the stored facts when the mark commits; see the contract. */
+export { firstFeatureGuideAfterMark, firstFeatureGuideEnd };
 
 /** Why a guide mark was refused. */
 export type FirstFeatureGuideRefusal = "not_found" | "not_sample";
 
 /**
  * Records a guide mark on the sample's project record. Refused for a project
- * that is gone or was not made as the sample. A mark that changes nothing
- * writes nothing.
+ * that is gone or was not made as the sample. The transition is planned again
+ * against the stored facts when the update commits, so a stale window's mark
+ * cannot reopen a finished guide. A mark that changes nothing writes nothing.
  */
 export const markFirstFeatureGuide = Effect.fn("firstFeatureSample.markFirstFeatureGuide")(
   function* (
@@ -230,39 +210,73 @@ export const markFirstFeatureGuide = Effect.fn("firstFeatureSample.markFirstFeat
     }
     const current = project.workspaceSettings?.firstFeatureGuide;
     const next = firstFeatureGuideAfterMark(current, input.mark, now);
-    if (next.started === current?.started && next.ended === current?.ended) {
-      return { firstFeatureGuide: next };
-    }
+    if (sameFirstFeatureGuide(next, current)) return { firstFeatureGuide: current ?? {} };
     const updated = yield* projects.update({
       commandId: CommandId.make(`first-feature-guide:${input.projectId}:${input.mark}:${now}`),
       projectId: input.projectId,
-      firstFeatureGuide: next,
+      firstFeatureGuideMark: { mark: input.mark, at: now },
     });
     return { firstFeatureGuide: updated.workspaceSettings?.firstFeatureGuide ?? next };
   },
 );
 
 /**
+ * `projects.firstFeatureGuide`: a mark, with a project that is gone said as
+ * `not_found`, one that is not the sample as `invalid`, and any other failure
+ * as `operation_failed`.
+ */
+export const firstFeatureGuideRpc = (
+  projects: ProjectService.ProjectService["Service"],
+  input: ProjectFirstFeatureGuideInput,
+  now: string,
+) =>
+  markFirstFeatureGuide(projects, input, now).pipe(
+    Effect.mapError(
+      () => new ProjectWorkspaceError({ code: "operation_failed", projectId: input.projectId }),
+    ),
+    Effect.flatMap((marked) =>
+      "refused" in marked
+        ? Effect.fail(
+            new ProjectWorkspaceError({
+              code: marked.refused === "not_found" ? "not_found" : "invalid",
+              projectId: input.projectId,
+            }),
+          )
+        : Effect.succeed({ firstFeatureGuide: marked.firstFeatureGuide }),
+    ),
+  );
+
+/** What the create result says when the sample's review switch could not be turned off. */
+export const SAMPLE_AUTO_REVIEW_ERROR =
+  "Automatic review could not be turned off for this project, so a review may start by itself when the work finishes. Turn it off in the project's settings.";
+
+/**
  * AC-21: the sample's own "Review finished features automatically" is off, as
  * a project override, so the only reviews are the ones its request asks for.
- * Soft, like the settings every new project is seeded with: a settings store
- * that cannot write never fails the create.
+ * Soft, like the settings every new project is seeded with: it never fails
+ * the create, and returns SAMPLE_AUTO_REVIEW_ERROR when the switch stays as it was.
  */
 export const turnOffSampleAutoReview = (projectId: ProjectId) =>
   Effect.gen(function* () {
     const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
-    if (Option.isNone(settings)) return;
+    if (Option.isNone(settings)) {
+      yield* Effect.logWarning("No settings service: the sample project's review stays as set", {
+        projectId,
+      });
+      return SAMPLE_AUTO_REVIEW_ERROR;
+    }
     yield* settings.value.updateSettings({
       projectSettingsOverrideChanges: {
         [projectId]: { set: { adversarialReview: { autoOnFeatureComplete: false } } },
       },
     });
+    return undefined;
   }).pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("Could not turn automatic review off for the sample project", {
         projectId,
         cause,
-      }),
+      }).pipe(Effect.as(SAMPLE_AUTO_REVIEW_ERROR)),
     ),
   );
 

@@ -104,6 +104,11 @@ describe("firstFeatureGuideAfterMark", () => {
     assert.deepEqual(after({ started: NOW, ended: "left" }, "started", "later"), {
       started: "later",
     });
+    assert.deepEqual(after(undefined, "started", "later"), { started: "later" });
+  });
+
+  it("changes nothing when a running guide is started again", () => {
+    assert.deepEqual(after({ started: NOW }, "started", "later"), { started: NOW });
   });
 
   it("keeps a finished guide finished", () => {
@@ -211,8 +216,7 @@ const withSample = <A, E>(
       }),
       () =>
         body({ baseDir }).pipe(
-          Effect.provide(ServerSettings.layerTest()),
-          Effect.provide(layer(baseDir)),
+          Effect.provide(Layer.merge(ServerSettings.layerTest(), layer(baseDir))),
         ),
       (saved) =>
         Effect.sync(() => {
@@ -472,12 +476,11 @@ it.effect("records guide marks on the sample only", () =>
       assert.deepEqual(yield* mark(plain.projectId, "left"), { refused: "not_sample" });
       assert.deepEqual(yield* mark(ProjectId.make("missing"), "left"), { refused: "not_found" });
 
+      const started = Option.getOrThrow(yield* projects.getById(sample.projectId)).workspaceSettings
+        ?.firstFeatureGuide?.started;
+      assert.isString(started);
       assert.deepEqual(yield* mark(sample.projectId, "left"), {
-        firstFeatureGuide: {
-          started: Option.getOrThrow(yield* projects.getById(sample.projectId)).workspaceSettings
-            ?.firstFeatureGuide?.started,
-          ended: "left",
-        },
+        firstFeatureGuide: { started: started!, ended: "left" },
       });
       assert.deepEqual(yield* mark(sample.projectId, "started", "2026-11-19T09:00:00.000Z"), {
         firstFeatureGuide: { started: "2026-11-19T09:00:00.000Z" },
@@ -497,4 +500,122 @@ it.effect("records guide marks on the sample only", () =>
       });
     }),
   ),
+);
+
+it.effect(
+  "two sample creates at once make one sample",
+  () =>
+    withSample(() =>
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const projects = yield* ProjectService.ProjectService;
+        const [left, right] = yield* Effect.all(
+          [0, 1].map(() =>
+            folders.createNamedProject({ name: "First feature", sample: "first-feature" }),
+          ),
+          { concurrency: "unbounded" },
+        );
+        assert.equal(left!.projectId, right!.projectId);
+        assert.equal([left!.existing, right!.existing].filter(Boolean).length, 1);
+        const samples = (yield* projects.snapshot).projects.filter(
+          FirstFeatureSample.isFirstFeatureSample,
+        );
+        assert.equal(samples.length, 1);
+      }),
+    ),
+  60_000,
+);
+
+it.effect("racing marks never reopen a finished guide", () =>
+  withSample(() =>
+    Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const projects = yield* ProjectService.ProjectService;
+      const sample = yield* folders.createNamedProject({
+        name: "First feature",
+        sample: "first-feature",
+      });
+      // A stale window marks left and started while another device finishes the guide.
+      yield* Effect.all(
+        (["left", "finished", "started", "left"] as const).map((mark, index) =>
+          FirstFeatureSample.markFirstFeatureGuide(
+            projects,
+            { projectId: sample.projectId, mark },
+            `2026-11-19T09:00:0${index}.000Z`,
+          ),
+        ),
+        { concurrency: "unbounded" },
+      );
+      const stored = Option.getOrThrow(yield* projects.getById(sample.projectId));
+      assert.equal(stored.workspaceSettings?.firstFeatureGuide?.ended, "finished");
+    }),
+  ),
+);
+
+it.effect("the guide RPC says a missing project and a project that is not the sample", () =>
+  withSample(() =>
+    Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const projects = yield* ProjectService.ProjectService;
+      const plain = yield* folders.createNamedProject({ name: "Plain" });
+      const sample = yield* folders.createNamedProject({
+        name: "First feature",
+        sample: "first-feature",
+      });
+      const call = (projectId: ProjectId) =>
+        FirstFeatureSample.firstFeatureGuideRpc(projects, { projectId, mark: "left" }, NOW);
+      const notSample = yield* Effect.flip(call(plain.projectId));
+      assert.equal(notSample._tag, "ProjectWorkspaceError");
+      assert.equal(notSample.code, "invalid");
+      assert.equal((yield* Effect.flip(call(ProjectId.make("missing")))).code, "not_found");
+      assert.equal((yield* call(sample.projectId)).firstFeatureGuide.ended, "left");
+    }),
+  ),
+);
+
+it.effect("refuses a personal sample", () =>
+  withSample(() =>
+    Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const projects = yield* ProjectService.ProjectService;
+      const refused = yield* Effect.flip(
+        folders.createNamedProject({ name: "Percy", kind: "personal", sample: "first-feature" }),
+      );
+      assert.equal(refused._tag, "NamedProjectFolderError");
+      assert.equal((yield* projects.snapshot).projects.length, 0);
+
+      const made = yield* folders.createNamedProject({
+        name: "First feature",
+        sample: "first-feature",
+      });
+      assert.isUndefined(made.sampleAutoReviewError);
+    }),
+  ),
+);
+
+it.effect("says when the sample's review could not be turned off", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("sample");
+    // No settings service on this host.
+    assert.equal(
+      yield* FirstFeatureSample.turnOffSampleAutoReview(projectId),
+      FirstFeatureSample.SAMPLE_AUTO_REVIEW_ERROR,
+    );
+    // A settings store that cannot write.
+    const failing = Layer.effect(
+      ServerSettings.ServerSettingsService,
+      ServerSettings.ServerSettingsService.pipe(
+        Effect.map((real) => ({ ...real, updateSettings: () => Effect.die("disk full") })),
+      ),
+    ).pipe(Layer.provide(ServerSettings.layerTest()));
+    assert.equal(
+      yield* FirstFeatureSample.turnOffSampleAutoReview(projectId).pipe(Effect.provide(failing)),
+      FirstFeatureSample.SAMPLE_AUTO_REVIEW_ERROR,
+    );
+    assert.isUndefined(
+      yield* FirstFeatureSample.turnOffSampleAutoReview(projectId).pipe(
+        Effect.provide(ServerSettings.layerTest()),
+      ),
+    );
+  }),
 );

@@ -252,6 +252,8 @@ export class ManagedProjectFolders extends Context.Service<
         readonly specweaveNeedsNode?: boolean;
         /** SpecWeave was set up in a folder that already existed and had none. */
         readonly specweaveAdded?: boolean;
+        /** With `sample`: why its own automatic review could not be turned off. */
+        readonly sampleAutoReviewError?: string;
       },
       NamedProjectError
     >;
@@ -921,6 +923,13 @@ const make = Effect.gen(function* () {
   const createNamedProject: ManagedProjectFolders["Service"]["createNamedProject"] = Effect.fn(
     "ManagedProjectFolders.createNamedProject",
   )(function* (input) {
+    // A sample is a code project; asking for a personal one is a client bug, not an assistant.
+    if (input.kind === "personal" && input.sample !== undefined) {
+      return yield* new NamedProjectFolderError({
+        folder: namedProjectsRoot,
+        cause: "The first feature sample is a code project.",
+      });
+    }
     if (input.kind === "personal") {
       const existing = yield* existingAssistant;
       if (existing) return { projectId: existing.id, workspaceRoot: existing.workspaceRoot };
@@ -928,7 +937,7 @@ const make = Effect.gen(function* () {
       if (!(yield* ProjectService.personalAssistantEnabled))
         return yield* new PersonalAssistantDisabledError();
     }
-    const sample = input.kind !== "personal" && input.sample === "first-feature";
+    const sample = input.sample === "first-feature";
     let name = input.name;
     if (sample) {
       // One sample per machine at a time (AC-12), decided under the create's lock.
@@ -1067,9 +1076,12 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.ignore);
     }
-    if (sample) yield* FirstFeatureSample.turnOffSampleAutoReview(project.id);
+    const sampleAutoReviewError = sample
+      ? yield* FirstFeatureSample.turnOffSampleAutoReview(project.id)
+      : undefined;
     yield* rememberFailure(project.id, specweaveResult);
     return {
+      ...(sampleAutoReviewError === undefined ? {} : { sampleAutoReviewError }),
       projectId: project.id,
       workspaceRoot,
       ...(commitError === undefined ? {} : { commitError }),

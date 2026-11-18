@@ -615,6 +615,11 @@ describe("recorded reviews on a card", () => {
     const root = await project();
     const folder = await increment(root, "0001-feature", { tasks: 1 });
     expect((await readProjectBoard(root, { now: NOW })).cards[0]).not.toHaveProperty("reviews");
+    // A reports folder with no review in it, read twice: still none.
+    await NodeFSP.mkdir(NodePath.join(folder, "reports"));
+    await NodeFSP.writeFile(NodePath.join(folder, "reports", "notes.md"), "Notes\n");
+    expect((await readProjectBoard(root, { now: NOW })).cards[0]).not.toHaveProperty("reviews");
+    expect((await readProjectBoard(root, { now: NOW })).cards[0]).not.toHaveProperty("reviews");
     await record(
       folder,
       "review-gpt-6.1-sol-1.md",

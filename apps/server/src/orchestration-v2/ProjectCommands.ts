@@ -8,7 +8,11 @@ import {
   type LogicalProject,
   type LogicalProjectMember,
   type ProjectCoordinatorBinding,
+  FIRST_FEATURE_SAMPLE,
+  firstFeatureGuideAfterMark,
+  sameFirstFeatureGuide,
   type FirstFeatureGuide,
+  type ProjectFirstFeatureGuideMark,
   type ProjectWorkspaceSettings,
   type ProjectWorkspacePatch,
   type ProjectKind,
@@ -101,8 +105,14 @@ export interface ProjectMetaUpdateCommand {
   readonly ownership?: ProjectOwnershipUpdate;
   readonly workspaceSettings?: ProjectWorkspacePatch;
   readonly coordinatorThreadId?: ThreadId;
-  /** Internal: replaces the sample's guide facts (1398); never read from a settings patch. */
-  readonly firstFeatureGuide?: FirstFeatureGuide;
+  /**
+   * Internal: a mark on the sample's guide (1398), applied to the stored facts
+   * when the command commits; never read from a settings patch.
+   */
+  readonly firstFeatureGuideMark?: {
+    readonly mark: ProjectFirstFeatureGuideMark;
+    readonly at: string;
+  };
   readonly type: "project.meta.update";
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
@@ -772,6 +782,23 @@ export function planProjectCommand(input: {
         );
         if (rejection !== undefined) return invariant(rejection);
       }
+      if (
+        command.firstFeatureGuideMark !== undefined &&
+        previousSettings.sample !== FIRST_FEATURE_SAMPLE
+      ) {
+        return invariant("Only the first feature sample project takes guide marks.");
+      }
+      const nextGuide =
+        command.firstFeatureGuideMark === undefined
+          ? undefined
+          : firstFeatureGuideAfterMark(
+              previousSettings.firstFeatureGuide,
+              command.firstFeatureGuideMark.mark,
+              command.firstFeatureGuideMark.at,
+            );
+      const guideChanged =
+        nextGuide !== undefined &&
+        !sameFirstFeatureGuide(nextGuide, previousSettings.firstFeatureGuide);
       const requestedKind = command.workspaceSettings?.kind;
       if (requestedKind !== undefined && requestedKind !== previousSettings.kind) {
         return Result.fail(new ProjectKindFixedError({ projectId: command.projectId }));
@@ -808,7 +835,7 @@ export function planProjectCommand(input: {
         command.workspaceSettings ||
         command.coordinatorThreadId ||
         command.ownership ||
-        command.firstFeatureGuide ||
+        guideChanged ||
         renamedIdentity ||
         iconSeedTitle !== undefined
           ? {
@@ -821,9 +848,7 @@ export function planProjectCommand(input: {
                 : {}),
               ...(renamedIdentity ? { logicalProject: renamedIdentity } : {}),
               ...(iconSeedTitle === undefined ? {} : { iconSeedTitle }),
-              ...(command.firstFeatureGuide
-                ? { firstFeatureGuide: command.firstFeatureGuide }
-                : {}),
+              ...(guideChanged ? { firstFeatureGuide: nextGuide } : {}),
               ...(command.ownership
                 ? {
                     logicalProject: command.ownership.logicalProject,

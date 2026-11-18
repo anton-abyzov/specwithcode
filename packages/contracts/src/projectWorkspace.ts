@@ -357,6 +357,42 @@ export type ProjectSpecweaveAnswerResult = typeof ProjectSpecweaveAnswerResult.T
  */
 export const ProjectFirstFeatureGuideMark = Schema.Literals(["started", "left", "finished"]);
 export type ProjectFirstFeatureGuideMark = typeof ProjectFirstFeatureGuideMark.Type;
+
+/** The guide's end, when it has one this version knows. */
+export function firstFeatureGuideEnd(
+  guide: FirstFeatureGuide | undefined,
+): FirstFeatureGuideEnd | undefined {
+  return guide?.ended === "left" || guide?.ended === "finished" ? guide.ended : undefined;
+}
+
+/**
+ * The guide's facts after a mark, planned against the stored facts so racing
+ * marks cannot undo each other. `started` opens a left guide again (a new start
+ * time, no end) and changes nothing on a running one; `left` and `finished`
+ * end it. A finished guide stays finished: its end is for good (AC-12).
+ */
+export function firstFeatureGuideAfterMark(
+  current: FirstFeatureGuide | undefined,
+  mark: ProjectFirstFeatureGuideMark,
+  now: string,
+): FirstFeatureGuide {
+  const guide = current ?? {};
+  const end = firstFeatureGuideEnd(guide);
+  if (end === "finished") return guide;
+  switch (mark) {
+    case "started":
+      return end === undefined && guide.started !== undefined ? guide : { started: now };
+    case "left":
+    case "finished":
+      return { ...(guide.started === undefined ? {} : { started: guide.started }), ended: mark };
+  }
+}
+
+/** Whether two sets of guide facts say the same. */
+export const sameFirstFeatureGuide = (
+  left: FirstFeatureGuide | undefined,
+  right: FirstFeatureGuide | undefined,
+) => left?.started === right?.started && left?.ended === right?.ended;
 export const ProjectFirstFeatureGuideInput = Schema.Struct({
   projectId: ProjectId,
   mark: ProjectFirstFeatureGuideMark,
