@@ -1,5 +1,6 @@
 import {
   isLocalWorkerMachine,
+  type ModelLane,
   type ModelSelection,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestratorMcpFailure,
@@ -9,6 +10,7 @@ import {
   projectWorkerMachineOrder,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type TaskClass,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -29,6 +31,7 @@ import { currentTeamRules, teamRulesForFolder } from "../../../teamRules/TeamRul
 import type { Caller } from "../../threadAccess.ts";
 import { fleetPrincipalOf } from "../orchestrator/remote.ts";
 import { addToMachineHint, type ExistingCopyOutcome, linkExistingCopy } from "./addToMachine.ts";
+import { remoteInheritedModel } from "./remoteLaunchModel.ts";
 import { workGrantOf } from "../../workGrantAccess.ts";
 
 export interface LaunchTargetInput {
@@ -47,6 +50,9 @@ export interface LaunchTargetInput {
   readonly increment?: string | undefined;
   /** What the work needs from its machine, such as an iOS Simulator. */
   readonly needs?: ReadonlyArray<OrchestratorMcpLaunchNeed> | undefined;
+  /** The caller's hints for the model pick when it names no model. */
+  readonly taskClass?: TaskClass | undefined;
+  readonly taskLane?: ModelLane | undefined;
 }
 
 const invalid = (message: string) =>
@@ -350,6 +356,19 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
         new Map([...(yield* remote.machineLabels), [context.scope.environmentId, "this machine"]]),
       ),
     });
+  // Picked once: a retry in a copy linked a moment ago is the same project and task.
+  const inheritedModelSelection =
+    params.modelSelection !== undefined
+      ? undefined
+      : yield* remoteInheritedModel({
+          project,
+          callerModel: caller?.modelSelection ?? undefined,
+          isCoordinator,
+          title: params.title,
+          message: params.message,
+          taskClass: params.taskClass,
+          taskLane: params.taskLane,
+        });
   const launch = (localProject: Project | undefined = project) =>
     remote.launch({
       machine: input.machine.machine,
@@ -364,10 +383,7 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
       machineProjectId: params.scratch === true ? undefined : params.machineProjectId,
       title: params.title,
       explicitModelSelection: params.modelSelection,
-      inheritedModelSelection:
-        (isCoordinator
-          ? project?.defaultModelSelection
-          : (caller?.modelSelection ?? project?.defaultModelSelection)) ?? undefined,
+      inheritedModelSelection,
       runtimeMode: input.runtimeMode,
       requestedRuntimeMode: params.runtimeMode,
       interactionMode: input.interactionMode,

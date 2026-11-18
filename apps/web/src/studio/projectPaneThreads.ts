@@ -295,26 +295,62 @@ export interface ProjectChatTarget {
 /** Agent-owned workers open beside their coordinator; independent chats keep their own page. */
 export function projectPaneTargetForChat(
   thread: ChatShell,
-  project: { readonly projectKey: string; readonly coordinatorThreadId: string | null } | null,
+  project: {
+    readonly projectKey: string;
+    readonly coordinatorThreadId: string | null;
+    /** A linked copy whose coordinator runs on another machine: its page still holds its threads. */
+    readonly coordinatedElsewhere?: boolean;
+  } | null,
   lookup: (threadId: string) => ChatShell | undefined = () => undefined,
 ): ProjectChatTarget | null {
   const coordinator = project?.coordinatorThreadId ?? null;
-  if (!project || coordinator === null) return null;
+  if (!project || (coordinator === null && project.coordinatedElsewhere !== true)) return null;
   if (thread.id === coordinator || isOrchestratorThreadId(thread.id)) return null;
   if (!isAgentOwnedProjectThread(thread, coordinator, lookup)) return null;
   return { projectKey: project.projectKey, threadId: thread.id };
 }
 
+interface ChatProjectMember {
+  readonly environmentId: string;
+  readonly id: string;
+  readonly workspaceSettings?:
+    | {
+        readonly coordinatorThreadId: string | null;
+        readonly logicalProject?: unknown;
+        readonly coordinatorBinding?: { readonly state?: string } | null | undefined;
+      }
+    | null
+    | undefined;
+}
+
 interface ChatProjectGroup {
   readonly projectKey: string;
-  readonly memberProjects: ReadonlyArray<{
-    readonly environmentId: string;
-    readonly id: string;
-    readonly workspaceSettings?:
-      | { readonly coordinatorThreadId: string | null; readonly logicalProject?: unknown }
-      | null
-      | undefined;
-  }>;
+  readonly memberProjects: ReadonlyArray<ChatProjectMember>;
+}
+
+const logicalIdOf = (member: ChatProjectMember): string | null => {
+  const logical = member.workspaceSettings?.logicalProject;
+  if (logical === null || typeof logical !== "object") return null;
+  const id = (logical as { readonly id?: unknown }).id;
+  return typeof id === "string" ? id : null;
+};
+
+/**
+ * A linked copy that runs no coordinator of its own, because it handed the
+ * project's coordinator to another machine or another linked copy runs it. The
+ * threads agents start in such a copy are still the project's, not chats.
+ */
+function coordinatedElsewhere(group: ChatProjectGroup, member: ChatProjectMember): boolean {
+  const settings = member.workspaceSettings;
+  if (!settings?.logicalProject || settings.coordinatorThreadId != null) return false;
+  if (settings.coordinatorBinding?.state === "transferred") return true;
+  const logicalId = logicalIdOf(member);
+  return group.memberProjects.some((other) => {
+    if (other === member || !other.workspaceSettings?.logicalProject) return false;
+    if (other.workspaceSettings.coordinatorThreadId == null) return false;
+    const otherId = logicalIdOf(other);
+    return logicalId === null || otherId === null || logicalId === otherId;
+  });
 }
 
 /** The sidebar's decision for one chat row, given the project group the chat sits in. */
@@ -333,6 +369,7 @@ export function chatProjectPaneTarget(
       ? {
           projectKey: group.projectKey,
           coordinatorThreadId: member.workspaceSettings?.coordinatorThreadId ?? null,
+          coordinatedElsewhere: coordinatedElsewhere(group, member),
         }
       : null,
     lookup,
