@@ -64,6 +64,7 @@ import {
   useAgentSetupPanel,
 } from "./AgentSetupPanel";
 import { MachineBasics } from "./MachineBasics";
+import { ModelsBlock } from "./ModelsBlock";
 import { Checkbox } from "../ui/checkbox";
 import { StepShell, useHeldFor, WizardStepFooter } from "./WizardFrame";
 
@@ -486,20 +487,22 @@ function ConnectedAgentsStep({
                 ? resolveAgentSignInCommand(row.provider, settings, os)
                 : null;
             return serverConfig !== null ? (
-              <OnboardingCodexSetup
-                key={row.key}
-                environmentId={environmentId}
-                provider={row.provider}
-                serverConfig={serverConfig}
-                createdAccount={row.key === createdAccount?.instanceId ? createdAccount : null}
-                onAutoStartConsumed={() =>
-                  setCreatedAccount((account) =>
-                    account ? { ...account, autoStart: false } : null,
-                  )
-                }
-                menu={codexMenu}
-                signedOutFooter={command ? <AgentCommand command={command} flush /> : null}
-              />
+              // The Models block's "Add one" finds a row that is not ready by these.
+              <div key={row.key} data-agent-row="codex" data-agent-state={row.state}>
+                <OnboardingCodexSetup
+                  environmentId={environmentId}
+                  provider={row.provider}
+                  serverConfig={serverConfig}
+                  createdAccount={row.key === createdAccount?.instanceId ? createdAccount : null}
+                  onAutoStartConsumed={() =>
+                    setCreatedAccount((account) =>
+                      account ? { ...account, autoStart: false } : null,
+                    )
+                  }
+                  menu={codexMenu}
+                  signedOutFooter={command ? <AgentCommand command={command} flush /> : null}
+                />
+              </div>
             ) : (
               <AgentRow
                 key={row.key}
@@ -552,6 +555,7 @@ function ConnectedAgentsStep({
           );
         })}
       </div>
+      <ModelsBlock environmentId={environmentId} machineLabel={machineLabel} />
       {list.notInstalled.length > 0 ? (
         <p className="mt-2 px-1 text-xs text-muted-foreground" data-agents-not-installed>
           {tx("Not installed: {agents}.", {
