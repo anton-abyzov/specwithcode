@@ -256,28 +256,20 @@ describe("availability refresh freshness", () => {
     const refresh = vi.fn();
     vi.mocked(useEnvironment).mockReturnValue({ connection: { phase: "connected" } } as never);
     vi.mocked(useEnvironmentQuery).mockReturnValue({
-      refresh,
-      isSuccess: true,
-      isPending: false,
-      error: null,
-      data: snapshot,
+      refresh, isSuccess: true, isPending: false, error: null, data: snapshot,
     } as never);
     vi.mocked(useStudioFleet).mockReturnValue({ snapshot: { machines: [] } } as never);
     vi.mocked(useSkillControls).mockReturnValue({
-      environmentId: "local",
-      projectId: "project",
-      memberProjects: [],
+      environmentId: "local", projectId: "project", memberProjects: [],
       row: { name: "example-skill", lock: { skillId: "owner/repo/skill", version: "1.0.0" } },
       canPush: true,
     } as never);
     const host = document.createElement("div");
     const root = createRoot(host);
     await act(async () => root.render(<SkillAvailability />));
-    expect(projectWorkspace.skills).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        input: expect.objectContaining({ refresh: true }),
-      }),
-    );
+    expect(projectWorkspace.skills).toHaveBeenLastCalledWith(expect.objectContaining({
+      input: expect.objectContaining({ refresh: true }),
+    }));
     await act(async () => refreshSkillAvailability("local", "owner/repo/skill"));
     expect(refresh).toHaveBeenCalledTimes(1);
     await act(async () => root.unmount());
