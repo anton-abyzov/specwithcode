@@ -189,6 +189,18 @@ export const makeSkillSearch = Effect.fn("SkillSearch.make")(function* (deps: Sk
       Effect.orElseSucceed(() => false),
     );
 
+  /** A filesystem call that gives up after FS_CALL_TIMEOUT; null when it timed out. */
+  const timed = <A, E>(effect: Effect.Effect<A, E>, fallback: A): Effect.Effect<A | null> =>
+    effect.pipe(
+      Effect.orElseSucceed(() => fallback),
+      Effect.timeoutOption(FS_CALL_TIMEOUT),
+      Effect.map((answer) => (Option.isSome(answer) ? answer.value : null)),
+    );
+
+  /** Like `timed`, but a timeout reads as the fallback too. */
+  const bounded = <A, E>(effect: Effect.Effect<A, E>, fallback: A): Effect.Effect<A> =>
+    timed(effect, fallback).pipe(Effect.map((answer) => answer ?? fallback));
+
   const configPaths = (): ReadonlyArray<string> => {
     if (deps.platform === "darwin")
       return [path.join(deps.home, "Library", "Application Support", "obsidian", "obsidian.json")];
@@ -224,19 +236,20 @@ export const makeSkillSearch = Effect.fn("SkillSearch.make")(function* (deps: Sk
     if (vaultCache !== null && now - vaultCache.at < VAULT_TTL_MS) return vaultCache.root;
     const candidates: Array<{ root: string; open: boolean; ts: number }> = [];
     for (const file of configPaths()) {
-      const info = yield* fs.stat(file).pipe(Effect.option);
+      const info = yield* bounded(fs.stat(file).pipe(Effect.asSome), Option.none());
       if (
         Option.isNone(info) ||
         info.value.type !== "File" ||
         info.value.size > BigInt(MAX_CONFIG_BYTES)
       )
         continue;
-      const text = yield* fs.readFileString(file).pipe(Effect.option);
+      const text = yield* bounded(fs.readFileString(file).pipe(Effect.asSome), Option.none());
       const config = Option.isNone(text) ? Option.none() : decodeObsidianConfig(text.value);
       if (Option.isNone(config)) continue;
       for (const vault of Object.values(config.value.vaults ?? {})) {
-        if (!path.isAbsolute(vault.path) || !(yield* isDirectory(vault.path))) continue;
-        const root = yield* fs.realPath(vault.path).pipe(Effect.orElseSucceed(() => vault.path));
+        if (!path.isAbsolute(vault.path) || !(yield* bounded(isDirectory(vault.path), false)))
+          continue;
+        const root = yield* bounded(fs.realPath(vault.path), vault.path);
         candidates.push({ root, open: vault.open === true, ts: vault.ts ?? 0 });
       }
     }
@@ -254,12 +267,6 @@ export const makeSkillSearch = Effect.fn("SkillSearch.make")(function* (deps: Sk
     const rel = real.slice(root.length + 1);
     return rel.split(path.sep).some((segment) => segment.startsWith(".")) ? null : rel;
   };
-
-  const bounded = <A, E>(effect: Effect.Effect<A, E>, fallback: A): Effect.Effect<A> =>
-    effect.pipe(
-      Effect.timeout(FS_CALL_TIMEOUT),
-      Effect.orElseSucceed(() => fallback),
-    );
 
   /**
    * Every markdown note in the vault, up to the walk's limits. `deadline` is
@@ -283,8 +290,17 @@ export const makeSkillSearch = Effect.fn("SkillSearch.make")(function* (deps: Sk
           break;
         }
         const current = queue.shift()!;
-        const names = yield* bounded(fs.readDirectory(current.dir), [] as string[]);
+        const names = yield* timed(fs.readDirectory(current.dir), [] as string[]);
+        // A folder that did not answer in time is missing from the index, so say so.
+        if (names === null) {
+          truncated = true;
+          continue;
+        }
         for (const name of names.toSorted()) {
+          if ((yield* Clock.currentTimeMillis) > deadline) {
+            truncated = true;
+            break walk;
+          }
           entries += 1;
           if (entries > limits.maxEntries) {
             truncated = true;
@@ -302,13 +318,19 @@ export const makeSkillSearch = Effect.fn("SkillSearch.make")(function* (deps: Sk
             continue;
           }
           const child = path.join(current.dir, name);
-          if (!(yield* bounded(isDirectory(child), false))) continue;
+          const directory = yield* timed(isDirectory(child), false);
+          if (directory === null) truncated = true;
+          if (directory !== true) continue;
           if (current.depth + 1 > limits.maxDepth) {
             truncated = true;
             continue;
           }
           // A link that leaves the vault, points into a hidden folder or loops is not walked.
-          const real = yield* bounded(fs.realPath(child), "");
+          const real = yield* timed(fs.realPath(child), "");
+          if (real === null) {
+            truncated = true;
+            continue;
+          }
           if (insideVault(root, real) === null || visited.has(real)) continue;
           visited.add(real);
           queue.push({ dir: real, rel, depth: current.depth + 1 });

@@ -11,7 +11,7 @@
  *
  * An update or install is one vskill run with a fixed argv and no shell:
  *
- *   vskill install <owner>/<repo>/<name> -y [--global]
+ *   vskill install https://github.com/<owner>/<repo>/tree/<branch>/<folder> -y [--global]
  *
  * It is the same command for both, because vskill's own `update` rewrites
  * only SKILL.md and exits 0 when it fetched nothing. The argv carries no
@@ -114,9 +114,11 @@ const rowNamed = (snapshot: ProjectSkillsSnapshot, skill: string): ProjectSkillR
  * When each agent on this machine has the skill, from the scan made after
  * the change. Codex answers from its app server's own skill list. Claude Code
  * has no live list (the app mirrors its folders), so it reads "next session";
- * no running session reports its skills to the app today. Any other agent
- * whose fresh scan holds the skill reads it with its next message. An agent
- * that did not answer, or does not list the skill, is never called ready.
+ * no running session reports its skills to the app today. Other agents hold
+ * the skill in their folders but are not known to rescan them per message,
+ * so they also read "next session". `next-message` stays in the contract for
+ * an agent that proves a per-message rescan. An agent that did not answer, or
+ * does not list the skill, is never called ready.
  */
 export function skillReadiness(
   snapshot: ProjectSkillsSnapshot,
@@ -153,12 +155,14 @@ export function skillReadiness(
           readiness: "next-session",
           detail: `${provider.label} does not list this skill.`,
         };
+      // Only Codex reports its live list. Other agents hold the skill in their folders
+      // but are not known to rescan them per message, so nothing sooner is promised.
       return provider.driver === "codex"
         ? { ...base, readiness: "loaded-now", detail: "Codex's own skill list reports it." }
         : {
             ...base,
-            readiness: "next-message",
-            detail: `${provider.label}'s skill folders hold it.`,
+            readiness: "next-session",
+            detail: `${provider.label}'s skill folders hold it; it reads them when a session starts.`,
           };
     });
 }
@@ -340,13 +344,31 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
         contentHash: read.skill.contentHash,
       };
       const compared = compareSkillSourceVersions(installed, latest);
+      const source = { branch: read.branch, path: read.skill.path };
+      if (
+        (compared === "update" || compared === "changed") &&
+        skillSourceLink(repo, source, lock.name!) === null
+      )
+        return {
+          lock,
+          repo,
+          visibility: read.visibility,
+          source,
+          status: {
+            ...base,
+            repo,
+            latest,
+            state: "unsupported",
+            detail: `${repo} keeps ${lock.name} at ${read.skill.path} on ${read.branch}, which vskill cannot install by itself. Update it with vskill directly.`,
+          },
+        };
       const pinned =
         (compared === "update" || compared === "changed") && (lock.pinnedVersion ?? null) !== null;
       return {
         lock,
         repo,
         visibility: read.visibility,
-        source: { branch: read.branch, path: read.skill.path },
+        source,
         status: {
           ...base,
           repo,
@@ -406,19 +428,21 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
       const vskill = yield* deps.findVskill;
       if (vskill === null) return failed(VSKILL_MISSING);
       const env = vskillEnv(input.visibility);
-      if (input.visibility !== "public") {
-        const version = yield* deps.run({
-          command: vskill,
-          args: ["--version"],
-          cwd: deps.home,
-          timeout: VERSION_TIMEOUT,
-          env,
-        });
-        if (version.exitCode !== 0 || !isVersionAtLeast(version.stdout, PRIVATE_SOURCE_MIN_VSKILL))
-          return failed(
-            `${input.repo} is private, or GitHub did not confirm it is public. Update vskill to ${PRIVATE_SOURCE_MIN_VSKILL} or newer first: an older vskill can name the skill to its registry.`,
-          );
-      }
+      // Deep links and keeping private sources off the registry both need a recent vskill;
+      // an older one would read the address as a whole repo and install every skill in it.
+      const version = yield* deps.run({
+        command: vskill,
+        args: ["--version"],
+        cwd: deps.home,
+        timeout: VERSION_TIMEOUT,
+        env,
+      });
+      if (version.exitCode !== 0 || !isVersionAtLeast(version.stdout, PRIVATE_SOURCE_MIN_VSKILL))
+        return failed(
+          input.visibility === "public"
+            ? `Update vskill to ${PRIVATE_SOURCE_MIN_VSKILL} or newer first: an older vskill installs every skill in ${input.repo} instead of this one.`
+            : `${input.repo} is private, or GitHub did not confirm it is public. Update vskill to ${PRIVATE_SOURCE_MIN_VSKILL} or newer first: an older vskill can name the skill to its registry.`,
+        );
       const args = ["install", link, "-y", ...(input.user ? ["--global"] : [])];
       const result = yield* deps.run({
         command: vskill,

@@ -139,21 +139,23 @@ export const makeSkillManagementHandlers = Effect.fn("SkillManagement.makeHandle
         env,
       })
       .pipe(
-        Effect.map(
-          (output): CliRun =>
-            // A cut-off answer is no answer: its text would hash and parse wrong.
-            output.stdoutTruncated
-              ? { exitCode: 1, stdout: "", stderr: "", timedOut: false }
-              : {
-                  exitCode: output.code === null ? null : Number(output.code),
-                  stdout: output.stdout,
-                  stderr: output.stderr,
-                  timedOut: output.timedOut,
-                },
+        Effect.map((output): CliRun =>
+          // A cut-off answer is no answer: its text would hash and parse wrong.
+          output.stdoutTruncated
+            ? { exitCode: 1, stdout: "", stderr: "", timedOut: false }
+            : {
+                exitCode: output.code === null ? null : Number(output.code),
+                stdout: output.stdout,
+                stderr: output.stderr,
+                timedOut: output.timedOut,
+              },
         ),
-        Effect.orElseSucceed(
-          (): CliRun => ({ exitCode: null, stdout: "", stderr: "", timedOut: false }),
-        ),
+        Effect.orElseSucceed((): CliRun => ({
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+        })),
       );
 
   const sources = yield* makeSkillRepoSources({
@@ -218,7 +220,9 @@ export const makeSkillManagementHandlers = Effect.fn("SkillManagement.makeHandle
                   .map((snapshot) => ({ instanceId: provider.instanceId, cwd: snapshot.cwd })),
               ),
             (target) =>
-              deps.registry.refreshWorkspaceSnapshot({ ...target, fresh: true }).pipe(Effect.ignore),
+              deps.registry
+                .refreshWorkspaceSnapshot({ ...target, fresh: true })
+                .pipe(Effect.ignore),
             { concurrency: 2, discard: true },
           ),
         ),

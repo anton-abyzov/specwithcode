@@ -284,7 +284,8 @@ describe("skillReadiness", () => {
     expect(skillReadiness(snapshotOf(rows), "html-report")).toEqual([
       expect.objectContaining({ label: "Claude", readiness: "next-session" }),
       expect.objectContaining({ label: "Codex", readiness: "loaded-now" }),
-      expect.objectContaining({ label: "Cursor", readiness: "next-message" }),
+      // Cursor holds it in its folders, but nothing says it rescans them per message.
+      expect.objectContaining({ label: "Cursor", readiness: "next-session" }),
     ]);
   });
   it("never reports loaded now for an agent that did not answer or does not list it", () => {
@@ -382,7 +383,7 @@ describe("SkillUpdates update", () => {
           readiness: [
             expect.objectContaining({ label: "Claude", readiness: "next-session" }),
             expect.objectContaining({ label: "Codex", readiness: "loaded-now" }),
-            expect.objectContaining({ label: "Cursor", readiness: "next-message" }),
+            expect.objectContaining({ label: "Cursor", readiness: "next-session" }),
           ],
         },
       ]);
@@ -541,7 +542,7 @@ describe("SkillUpdates update", () => {
       yield* fx.service.update({ projectId, userLevel: true, operation: "update" });
       const install = installCalls(fx.calls)[0]!;
       expect(install.env?.VSKILL_API_BASE).toBeUndefined();
-      expect(fx.calls.some((call) => call.args[0] === "--version")).toBe(false);
+      expect(install.env?.VSKILL_NO_TELEMETRY).toBeUndefined();
     }).pipe(Effect.provide(live)),
   );
 
@@ -645,18 +646,43 @@ describe("SkillUpdates source identity", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("refuses a source vskill cannot install by itself and starts nothing", () =>
+  it.live("shows a source vskill cannot install by itself as not updated from here", () =>
     Effect.gen(function* () {
       const fx = yield* fixture({
         lock: { sample: { version: "1.0.0", path: "SKILL.md" } },
         latest: { sample: latest("sample", "1.1.0", NEW_SHA, "public", { path: "SKILL.md" }) },
       });
+      const status = yield* fx.service.update({ projectId, userLevel: true, operation: "status" });
+      expect(status.statuses[0]).toMatchObject({
+        state: "unsupported",
+        detail: expect.stringContaining("Update it with vskill directly"),
+      });
+      const all = yield* fx.service.update({ projectId, userLevel: true, operation: "update" });
+      expect(all.outcomes).toEqual([]);
+      const named = yield* fx.service.update({
+        projectId,
+        userLevel: true,
+        operation: "update",
+        skills: ["sample"],
+      });
+      expect(named.outcomes![0]).toMatchObject({ outcome: "skipped" });
+      expect(fx.calls).toEqual([]);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("refuses a public install on a vskill too old to install one skill by address", () =>
+    Effect.gen(function* () {
+      const fx = yield* fixture({
+        lock: { "html-report": { version: "1.0.0" } },
+        latest: { "html-report": latest("html-report", "1.1.3", NEW_SHA) },
+        vskillVersion: "1.0.21",
+      });
       const result = yield* fx.service.update({ projectId, userLevel: true, operation: "update" });
       expect(result.outcomes![0]).toMatchObject({
         outcome: "failed",
-        message: expect.stringContaining("Install it with vskill directly"),
+        message: expect.stringContaining("installs every skill"),
       });
-      expect(fx.calls).toEqual([]);
+      expect(installCalls(fx.calls)).toEqual([]);
     }).pipe(Effect.provide(live)),
   );
 });

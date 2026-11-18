@@ -241,7 +241,7 @@ export type ProjectSkillSourceStatus = typeof ProjectSkillSourceStatus.Type;
 /**
  * When an agent has the skill, from that agent's own list, never assumed.
  * `loaded-now`: the agent's live skill list reports it.
- * `next-message`: the agent's skill folders hold it and it scans them per message.
+ * `next-message`: the agent's skill folders hold it and it is known to rescan them per message.
  * `next-session`: the agent reads its skills when a session starts, or did not confirm.
  */
 export const ProjectSkillReadiness = Schema.Literals([
