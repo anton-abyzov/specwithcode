@@ -52,6 +52,8 @@ import * as DesktopState from "./DesktopState.ts";
 import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as MacBundleName from "../updates/macBundleName.ts";
+import { refreshMacIconAfterUpdate } from "../updates/macIconRefresh.ts";
+import { isDesktopOffscreenTest } from "../electron/DesktopOffscreen.ts";
 import { runElectronSelfInstall } from "../install/electronSelfInstall.ts";
 import type { SelfInstallOutcome } from "../install/macSelfInstall.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
@@ -217,6 +219,18 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
   }
   yield* shutdown.request;
   yield* electronApp.quit;
+});
+
+/** Waits until one of the app's windows is visible, plus a moment so a prompt lands over it. */
+const whenFirstWindowShown = Effect.gen(function* () {
+  while (
+    !Electron.BrowserWindow.getAllWindows().some(
+      (window) => !window.isDestroyed() && window.isVisible(),
+    )
+  ) {
+    yield* Effect.sleep("500 millis");
+  }
+  yield* Effect.sleep("2 seconds");
 });
 
 const fatalStartupCause = <E>(stage: string, cause: Cause.Cause<E>) =>
@@ -632,6 +646,40 @@ const startup = Effect.gen(function* () {
     yield* electronApp.exit(0);
     return yield* Effect.never;
   }
+  // The first launch of each version re-registers the bundle so macOS draws its current icon.
+  const iconRefreshContext = yield* Effect.context<never>();
+  yield* Effect.forkScoped(
+    Effect.promise(() =>
+      refreshMacIconAfterUpdate({
+        platform: environment.platform,
+        isPackaged: environment.isPackaged,
+        execPath: process.execPath,
+        appVersion: environment.appVersion,
+        stateDir: environment.stateDir,
+        canAsk: !isDesktopOffscreenTest(),
+        whenWindowShown: () => Effect.runPromiseWith(iconRefreshContext)(whenFirstWindowShown),
+        ask: async (prompt) =>
+          (
+            await Electron.dialog.showMessageBox({
+              type: "info",
+              message: prompt.title,
+              detail: prompt.detail,
+              buttons: [...prompt.buttons],
+              defaultId: 0,
+              cancelId: 1,
+              noLink: true,
+            })
+          ).response,
+        log: (message, data) => {
+          void Effect.runPromiseWith(iconRefreshContext)(logStartupInfo(message, data ?? {}));
+        },
+      }),
+    ).pipe(
+      Effect.catchCause((cause) =>
+        logStartupError("could not refresh the app icon", { cause: Cause.pretty(cause) }),
+      ),
+    ),
+  );
   // After a manual install both apps can sit side by side; the older copy goes to the Trash.
   yield* Effect.forkScoped(
     Effect.promise(() =>
