@@ -1,3 +1,5 @@
+import * as NodeVM from "node:vm";
+
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -436,12 +438,118 @@ describe("iPhone Mirroring", () => {
     // After the guard passes, every later event checks the app is still in front.
     expect(JXA_INPUT_SCRIPT).toContain("guarded !== null && frontBundleId() !== guarded");
     expect(JXA_INPUT_SCRIPT).toContain("left-front");
-    // A stop releases what the replay pressed, and a pointer move alone is not "part sent".
-    expect(JXA_INPUT_SCRIPT).toContain("for (var name in held)");
-    expect(JXA_INPUT_SCRIPT).toContain("if (step.event !== 5) posted++");
+
     expect(JXA_MIRRORING_SCRIPT).toContain("visibleFrame");
     expect(JXA_INPUT_SCRIPT).toContain("CGEventSourceCreate(1)");
     expect(JXA_MIRRORING_SCRIPT).toContain("runningApplicationsWithBundleIdentifier");
     expect(JXA_MIRRORING_SCRIPT).toContain("kCGWindowOwnerPID");
+  });
+});
+
+/**
+ * Runs `JXA_INPUT_SCRIPT` in a sandbox whose Quartz bridge records events instead
+ * of posting them; the frontmost app changes after `leaveAfter` frontmost checks.
+ */
+function replayWithStubs(steps: ReadonlyArray<InputStep>, leaveAfter: number) {
+  const posted: Array<{
+    type: number;
+    x?: number;
+    key?: number;
+    down?: boolean;
+    flags: number;
+    clickState: number;
+  }> = [];
+  let checks = 0;
+  const nsString = (value: string) => ({ isNil: () => false, js: value });
+  const workspace = {
+    get frontmostApplication() {
+      checks++;
+      const id = checks > leaveAfter ? "com.example.other" : IPHONE_MIRRORING_BUNDLE_ID;
+      return { isNil: () => false, bundleIdentifier: nsString(id), localizedName: nsString(id) };
+    },
+  };
+  const make = (event: object) => ({ ...event, flags: 0, clickState: 0 });
+  const bridge = {
+    NSWorkspace: { sharedWorkspace: workspace },
+    CGEventSourceCreate: () => ({}),
+    CGEventCreateMouseEvent: (_: unknown, type: number, point: { x: number }) =>
+      make({ type, x: point.x }),
+    CGEventCreateKeyboardEvent: (_: unknown, key: number, down: boolean) =>
+      make({ type: down ? 10 : 11, key, down }),
+    CGEventCreateScrollWheelEvent2: () => make({ type: 22 }),
+    CGEventSetIntegerValueField: (event: { clickState: number }, _: number, value: number) => {
+      event.clickState = value;
+    },
+    CGEventSetFlags: (event: { flags: number }, flags: number) => {
+      event.flags = flags;
+    },
+    CGEventPost: (_: number, event: (typeof posted)[number]) => posted.push({ ...event }),
+  };
+  const context = NodeVM.createContext({
+    ObjC: { import: () => undefined },
+    $: bridge,
+    delay: () => undefined,
+  });
+  NodeVM.runInContext(JXA_INPUT_SCRIPT, context);
+  let error: string | undefined;
+  try {
+    (context.run as (argv: Array<string>) => string)([JSON.stringify(steps)]);
+  } catch (caught) {
+    error = String((caught as Error).message);
+  }
+  return { posted, error };
+}
+
+describe("input replay guard", () => {
+  const display = { width: 1512, height: 982 };
+  const mirroringWindow = { x: 600, y: 100, width: 360, height: 760 };
+  const scene: MirroringScene = {
+    frontmostBundleId: IPHONE_MIRRORING_BUNDLE_ID,
+    windows: [
+      { owner: "iPhone Mirroring", layer: 0, alpha: 1, mirroring: true, ...mirroringWindow },
+    ],
+  };
+
+  it("runs usual steps unguarded, exactly as before", () => {
+    const steps = actionSteps({ kind: "click", x: 10, y: 20 }, display);
+    const { posted, error } = replayWithStubs(steps, 0);
+    expect(error).toBeUndefined();
+    expect(posted.map((event) => event.type)).toEqual([5, 1, 2]);
+  });
+
+  it("releases the button at the last drag point when the app leaves mid-drag", () => {
+    const plan = mirroringActionSteps(
+      { kind: "drag", fromX: 700, fromY: 700, toX: 700, toY: 300 },
+      display,
+      { scene },
+    )!;
+    // Checks: awaitFront, move, down, then two dragged segments, then the app leaves.
+    const { posted, error } = replayWithStubs(plan.steps, 5);
+    expect(error).toMatch(/left-front/);
+    const last = posted.at(-1)!;
+    expect(last.type).toBe(2);
+    expect(last.clickState).toBe(1);
+    expect(last.x).toBe(posted.at(-2)!.x);
+    expect(posted.filter((event) => event.type === 2)).toHaveLength(1);
+  });
+
+  it("releases a held capital's key before its shift, clearing shift", () => {
+    const steps = mirroringTypeSteps("A", undefined);
+    // Checks: awaitFront, shift down, A down, then the app leaves.
+    const { posted, error } = replayWithStubs(steps, 3);
+    expect(error).toMatch(/left-front/);
+    expect(posted.map((event) => [event.key, event.down, event.flags])).toEqual([
+      [56, true, 0x20000],
+      [0, true, 0x20000],
+      [0, false, 0x20000],
+      [56, false, 0],
+    ]);
+  });
+
+  it("says nothing was sent when only the pointer moved", () => {
+    const steps = mirroringTypeSteps("a", { x: 700, y: 400 });
+    const { posted, error } = replayWithStubs(steps, 2);
+    expect(error).toMatch(/not-frontmost/);
+    expect(posted.map((event) => event.type)).toEqual([5]);
   });
 });
