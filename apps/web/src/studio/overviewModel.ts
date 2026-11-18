@@ -186,6 +186,8 @@ export function deriveSessions(
         subagentQuestionWait(
           thread,
           leadId === null ? undefined : threadByKey.get(`${thread.environmentId}:${leadId}`),
+          projectByKey.get(`${thread.environmentId}:${thread.projectId}`)?.workspaceSettings
+            ?.coordinatorThreadId ?? null,
         ) !== null;
       const observedAttention: AttentionKind | null =
         classifyProjectActions(observeProjectThread(thread, "live", questionGoesToLead))[0]

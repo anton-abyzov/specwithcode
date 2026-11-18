@@ -1472,6 +1472,12 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       const transfers = moved.contextTransfers.filter(
         (row) => row.sourceThreadId === child.childThreadId,
       );
+      // task_status reads the same hold, so a lead asking meanwhile is told
+      // the child still works, not that it stopped.
+      assert.equal(
+        yield* orchestrator.delegatedTaskResultPending(child.childThreadId),
+        move === "continues",
+      );
       if (move !== "continues") {
         assert.equal(task?.status, "interrupted");
         assert.equal(transfers.length, 1);

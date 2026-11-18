@@ -2675,9 +2675,17 @@ describe("OrchestratorMcpService provider resolution", () => {
 // coordinator's worker asks the person, so task_status never hands it over.
 describe("childQuestionsGoToLead", () => {
   it("leaves a coordinator's workers' questions to the person", () => {
-    assert.isFalse(OrchestratorMcpService.childQuestionsGoToLead("project-coordinator:project-1"));
+    const project = { id: "project-1", workspaceSettings: { coordinatorThreadId: "custom-lead" } };
+    assert.isFalse(
+      OrchestratorMcpService.childQuestionsGoToLead("project-coordinator:project-1", project),
+    );
+    // A coordinator the project names under its own id.
+    assert.isFalse(OrchestratorMcpService.childQuestionsGoToLead("custom-lead", project));
     assert.isTrue(
-      OrchestratorMcpService.childQuestionsGoToLead("thread:delegated-task:command:mcp:worker"),
+      OrchestratorMcpService.childQuestionsGoToLead(
+        "thread:delegated-task:command:mcp:worker",
+        project,
+      ),
     );
   });
 });

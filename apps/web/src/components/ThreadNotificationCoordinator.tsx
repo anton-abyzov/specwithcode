@@ -245,8 +245,17 @@ function EnvironmentNotifications({
   const levels = useRef(new Map<ProjectId, ProjectNotificationLevel>());
   // Percy's threads are topics, so its alerts say topic.
   const assistantIds = useRef(new Set<ProjectId>());
+  // A coordinator under a custom id still has workers that ask the person.
+  const coordinatorIds = useRef(new Map<ProjectId, string>());
   useLayoutEffect(() => {
     const here = projects.filter((project) => project.environmentId === environmentId);
+    coordinatorIds.current = new Map(
+      here.flatMap((project) =>
+        project.workspaceSettings?.coordinatorThreadId
+          ? [[project.id, project.workspaceSettings.coordinatorThreadId] as const]
+          : [],
+      ),
+    );
     levels.current = new Map(
       here.map((project) => [project.id, projectNotificationLevel(project)]),
     );
@@ -320,6 +329,7 @@ function EnvironmentNotifications({
         subagentQuestionWait(
           thread,
           leadRaw === undefined ? undefined : presentThreadShell(environmentId, leadRaw),
+          coordinatorIds.current.get(thread.projectId) ?? null,
         ) !== null;
       const observation = observeProjectThread(thread, "live", questionGoesToLead);
       const observedActions = classifyProjectActions(observation);

@@ -409,7 +409,8 @@ export interface OrchestratorV2Shape {
   readonly recoverDelegatedTask: (threadId: ThreadId, sourceRunId: RunId) => Effect.Effect<void>;
   /**
    * Whether a delegated child's apparent result is not final yet: a restart
-   * continuation is pending, or the child is working again.
+   * continuation is pending, a move into its worktree waits for its
+   * continuation, or the child is working again.
    */
   readonly delegatedTaskResultPending: (
     childThreadId: ThreadId,
@@ -12025,6 +12026,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
+  /**
+   * How much longer a child's result waits for the continuation of a move into
+   * its worktree, or undefined when it does not wait. It waits while its
+   * result run is the move's interrupted run, no later run exists (one that
+   * does owns the result), and the wait has not ended.
+   */
+  const movedChildHoldMs = (
+    childThreadId: ThreadId,
+    runs: ReadonlyArray<OrchestrationV2Run>,
+    resultRun: OrchestrationV2Run,
+  ) =>
+    Effect.gen(function* () {
+      if (
+        resultRun.status !== "interrupted" ||
+        runs.some((run) => run.ordinal > resultRun.ordinal)
+      ) {
+        return undefined;
+      }
+      const moved = (yield* readInterruptRequests(
+        { commandId: CommandId.make(`finalize:${resultRun.id}`), threadId: childThreadId },
+        resultRun.id,
+      )).find(
+        (item) =>
+          item.type === "run_interrupt_request" &&
+          item.cause === "agent" &&
+          item.message === WORKSPACE_MOVE_CONTINUES_MESSAGE,
+      );
+      if (moved === undefined) return undefined;
+      const waitedMs =
+        DateTime.toEpochMillis(yield* DateTime.now) -
+        DateTime.toEpochMillis(moved.completedAt ?? moved.updatedAt);
+      return waitedMs < WORKSPACE_MOVE_CONTINUATION_WAIT_MS
+        ? WORKSPACE_MOVE_CONTINUATION_WAIT_MS - waitedMs
+        : undefined;
+    });
+
   // Moved children whose result waits for a continuation, each rechecked when
   // its wait ends, and again a few times if that recheck fails. Server
   // recovery rechecks any wait a restart cut short.
@@ -12122,35 +12159,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // The child moved itself into a worktree and queued its continuation:
       // that run's end delivers the result, so the parent never hears of a
       // stop that was only the move (November 18, 2026: "Stopped" on a
-      // subagent already working in its worktree). The hold lasts until a
-      // later run exists, which then owns the result, or until the wait ends.
-      if (
-        childRun.status === "interrupted" &&
-        !childControls.runs.some((run) => run.ordinal > childRun.ordinal)
-      ) {
-        const moved = (yield* readInterruptRequests(
-          { commandId: CommandId.make(`finalize:${childRun.id}`), threadId: childThreadId },
+      // subagent already working in its worktree).
+      const moveHoldMs = yield* movedChildHoldMs(childThreadId, childControls.runs, childRun);
+      if (moveHoldMs !== undefined) {
+        yield* recheckMovedChildLater(
+          childControls.thread.lineage.parentThreadId,
+          childThreadId,
           childRun.id,
-        )).find(
-          (item) =>
-            item.type === "run_interrupt_request" &&
-            item.cause === "agent" &&
-            item.message === WORKSPACE_MOVE_CONTINUES_MESSAGE,
+          moveHoldMs,
         );
-        const waitedMs =
-          moved === undefined
-            ? undefined
-            : DateTime.toEpochMillis(yield* DateTime.now) -
-              DateTime.toEpochMillis(moved.completedAt ?? moved.updatedAt);
-        if (waitedMs !== undefined && waitedMs < WORKSPACE_MOVE_CONTINUATION_WAIT_MS) {
-          yield* recheckMovedChildLater(
-            childControls.thread.lineage.parentThreadId,
-            childThreadId,
-            childRun.id,
-            WORKSPACE_MOVE_CONTINUATION_WAIT_MS - waitedMs,
-          );
-          return;
-        }
+        return;
       }
 
       const childResult = yield* projectionStore.getThreadRecords(
@@ -13948,7 +13966,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // A caller's older read saw a result; newer work since then means it is not final.
       if (progress.state !== "result_available") return true;
       if (progress.resultRun === undefined) return false;
-      return yield* childAwaitsRestartContinuation(child.runs, progress.resultRun);
+      if (yield* childAwaitsRestartContinuation(child.runs, progress.resultRun)) return true;
+      // A move into its worktree holds the result for the continuation too.
+      return (yield* movedChildHoldMs(childThreadId, child.runs, progress.resultRun)) !== undefined;
     }).pipe(
       Effect.mapError(
         (cause) => new OrchestratorProjectionError({ threadId: childThreadId, cause }),

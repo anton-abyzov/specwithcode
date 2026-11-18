@@ -901,6 +901,17 @@ describe("a worker's subagent question goes to its lead", () => {
     expect(result.roots[0]?.actions).toMatchObject([{ threadId: "integrations", reason: "input" }]);
   });
 
+  it("still asks the person when the coordinator goes by its own id", () => {
+    // member.coordinatorThreadId is "coordinator", without the default prefix.
+    const coordinator = thread("coordinator", ran("14:40:00", null));
+    const integrations = asking("integrations", "coordinator", ran("14:37:25", "14:45:20"));
+    expect(subagentQuestionWait(integrations, coordinator)).toBe("lead");
+    expect(subagentQuestionWait(integrations, coordinator, "coordinator")).toBeNull();
+    const result = aggregate(integrations, coordinator);
+    expect(result.count).toBe(1);
+    expect(result.roots[0]?.actions).toMatchObject([{ threadId: "integrations", reason: "input" }]);
+  });
+
   it("still asks the person to approve a grandchild's command", () => {
     const skills = worker("skills", ran("13:47:29", "13:47:34"));
     const laneB = child("lane-b", "skills", ran("09:28:58", "09:37:50"));

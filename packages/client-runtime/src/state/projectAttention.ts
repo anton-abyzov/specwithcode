@@ -139,17 +139,20 @@ const ASK_USER_REQUEST = /(^|:)ask-user:/u;
  * started after the asker's last run ended (the turn the asker's result woke),
  * and the card no longer counts. Null when the person must answer: the thread
  * asks the person directly, the request is not an ask_user question (a
- * secret, a sign-in or an approval), the lead is gone or archived, or its turn
- * since the asker ended failed or was stopped, or it has not run since.
+ * secret, a sign-in or an approval), the lead is the project's coordinator
+ * (under any id: its workers ask the person), the lead is gone or archived, or
+ * its turn since the asker ended failed or was stopped, or it has not run since.
  */
 export function subagentQuestionWait(
   asker: EnvironmentThreadShell,
   lead: EnvironmentThreadShell | undefined,
+  coordinatorThreadId: string | null = null,
 ): "lead" | "settled" | null {
   const pending = asker.source?.pendingRuntimeRequest;
   if (!pending || !ASK_USER_REQUEST.test(pending.id) || !reportsToParentAgent(asker)) return null;
   if (threadAwaitingPerson(asker)?.kind !== "answer") return null;
   if (lead === undefined || lead.archivedAt != null || lead.deletedAt != null) return null;
+  if (coordinatorThreadId !== null && lead.id === coordinatorThreadId) return null;
   if (threadRuntimeIsActive(asker.runtime) || threadRuntimeIsActive(lead.runtime)) return "lead";
   const askerEnded = millis(asker.latestRun?.completedAt);
   const leadRun = lead.latestRun;
@@ -426,7 +429,11 @@ export function aggregateProjectAttention(input: {
     const member = members.get(keysOf(root.thread).member)!;
     const leadKey = keysOf(thread).parent;
     const leads = leadKey ? (byEnvironmentThread.get(leadKey) ?? []) : [];
-    const question = subagentQuestionWait(thread, leads.length === 1 ? leads[0] : undefined);
+    const question = subagentQuestionWait(
+      thread,
+      leads.length === 1 ? leads[0] : undefined,
+      member.coordinatorThreadId,
+    );
     const observation = inheritRootSettlement(
       observeProjectThread(thread, member.freshness, question !== null),
       root.thread,
