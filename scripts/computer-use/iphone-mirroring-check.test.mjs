@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  anchorIn,
   CLICK_TARGET,
   findTab,
   jaccard,
@@ -16,6 +17,7 @@ import {
   runCheck,
   scrolled,
   simulatedPhone,
+  tabAnchors,
   TYPE_SAMPLES,
   windowInScreenshot,
 } from "./iphone-mirroring-check.mjs";
@@ -67,6 +69,40 @@ describe("dry run", () => {
     expect(result.lines).toContain("Clicks landed: 19 of 20");
     expect(result.lines.find((entry) => entry.startsWith("FAIL click 7/20"))).toBeDefined();
     expect(result.lines.at(-1)).toMatch(/^Result: FAIL .*first failure: click 7\/20/);
+  });
+
+  it("counts no click when taps change nothing", async () => {
+    const result = await runCheck(simulatedPhone({ deadClicks: true }).deps);
+    expect(result.pass).toBe(false);
+    expect(result.lines).toContain("Clicks landed: 0 of 20");
+  });
+
+  it("refuses alternating pages that are not the named tabs' pages", async () => {
+    // Taps that land on two other tabs (Alarms, Timers) still alternate between two stable pages.
+    const phone = simulatedPhone({
+      pages: {
+        "World Clock": ["Alarms", "Edit", "7:00"],
+        Stopwatch: ["Timers", "Cancel", "Start"],
+      },
+    });
+    const result = await runCheck(phone.deps);
+    expect(result.pass).toBe(false);
+    expect(
+      result.lines.some((entry) =>
+        entry.startsWith('FAIL tabs: the page after tapping "World Clock"'),
+      ),
+    ).toBe(true);
+    expect(result.lines).toContain("Clicks landed: 0 of 20");
+  });
+
+  it("fails a tap whose page shows the other tab's words", async () => {
+    const phone = simulatedPhone({
+      pages: { "World Clock": ["World Clock", "Edit"], Stopwatch: ["Lap", "World Clock"] },
+    });
+    const result = await runCheck(phone.deps);
+    expect(result.lines.find((entry) => entry.startsWith("FAIL click 1/20"))).toContain(
+      'but shows "world clock" from World Clock',
+    );
   });
 
   it("stops at once when access is denied", async () => {
@@ -140,6 +176,11 @@ describe("options", () => {
     expect(() => parseArgs(["--out", "x", "--miss", "2"])).toThrow(/dry-run/);
     expect(() => parseArgs(["--dry-run", "--tabs", "One"])).toThrow(/two tab names/);
     expect(() => parseArgs(["--bogus"])).toThrow(/unknown option/);
+    expect(() => parseArgs(["--dry-run", "--anchors", "one"])).toThrow(/two word lists/);
+    expect(parseArgs(["--dry-run", "--anchors", "World Clock; lap,Start"]).anchors).toEqual([
+      ["world clock"],
+      ["lap", "start"],
+    ]);
     expect(parseArgs(["--out", "x", "--ios", "26.1"])).toMatchObject({ out: "x", ios: "26.1" });
   });
 
@@ -151,6 +192,16 @@ describe("options", () => {
 });
 
 describe("judging the screen", () => {
+  it("finds anchor words as whole words only", () => {
+    expect(anchorIn(["lap", "start"], ["lap"])).toBe("lap");
+    expect(anchorIn(["laptop stand"], ["lap"])).toBeUndefined();
+    expect(anchorIn(["world clock"], ["world clock"])).toBe("world clock");
+    expect(tabAnchors({ tabs: ["Alarms", "Stopwatch"] })).toEqual({
+      Alarms: ["alarms"],
+      Stopwatch: ["lap", "start", "stop", "reset"],
+    });
+  });
+
   it("finds a tab label in the bottom of the window, not a title above", () => {
     const lines = [
       line("Stopwatch", 620, 150),

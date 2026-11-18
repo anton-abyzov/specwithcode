@@ -233,12 +233,24 @@ describe("iPhone Mirroring", () => {
     mirroring = false,
     layer = 0,
   ) => ({ owner, layer, alpha: 1, mirroring, ...area });
-  const scene = (frontmostBundleId: string | null): MirroringScene => ({
+  // As macOS lists them: the menu bar and the Dock's display-wide window come before every app window.
+  const fullDisplay = { x: 0, y: 0, width: 1512, height: 982 };
+  const screens = [{ frame: fullDisplay, visible: { x: 0, y: 34, width: 1512, height: 896 } }];
+  const systemWindows = [
+    sceneWindow("Window Server", { x: 0, y: 0, width: 1512, height: 33 }, false, 24),
+    sceneWindow("Dock", fullDisplay, false, 20),
+    sceneWindow("Window Server", { x: 700, y: 400, width: 32, height: 32 }, false, 2147483630),
+  ];
+  const scene = (
+    frontmostBundleId: string | null,
+    area: typeof mirroringWindow = mirroringWindow,
+  ): MirroringScene => ({
     frontmostBundleId,
+    screens,
     windows: [
-      sceneWindow("Window Server", { x: 700, y: 400, width: 32, height: 32 }, false, 2147483630),
-      sceneWindow("iPhone Mirroring", mirroringWindow, true),
-      sceneWindow("SpecWithCode", { x: 0, y: 0, width: 1512, height: 982 }),
+      ...systemWindows,
+      sceneWindow("iPhone Mirroring", area, true),
+      sceneWindow("SpecWithCode", fullDisplay),
     ],
   });
   const behind = scene("com.example.studio");
@@ -250,6 +262,7 @@ describe("iPhone Mirroring", () => {
     expect(mirroringWindowAt(behind, { x: 100, y: 100 })).toBeUndefined();
     const covered: MirroringScene = {
       frontmostBundleId: null,
+      screens,
       windows: [
         sceneWindow("Notes", { x: 650, y: 150, width: 100, height: 100 }),
         ...behind.windows,
@@ -257,6 +270,15 @@ describe("iPhone Mirroring", () => {
     };
     expect(mirroringWindowAt(covered, { x: 700, y: 200 })).toBeUndefined();
     expect(mirroringWindowAt(covered, { x: 700, y: 600 })).toEqual(mirroringWindow);
+  });
+
+  it("looks through the Dock's display-wide window but not where the Dock is drawn", () => {
+    const tall = { x: 600, y: 20, width: 360, height: 950 };
+    const reaching = scene(null, tall);
+    expect(mirroringWindowAt(reaching, { x: 700, y: 500 })).toEqual(tall);
+    // The Dock's strip below the visible frame, and the menu bar above it.
+    expect(mirroringWindowAt(reaching, { x: 700, y: 950 })).toBeUndefined();
+    expect(mirroringWindowAt(reaching, { x: 700, y: 25 })).toBeUndefined();
   });
 
   it("knows the front window only while iPhone Mirroring is frontmost", () => {
@@ -403,9 +425,18 @@ describe("iPhone Mirroring", () => {
     expect(plan?.steps.some((step) => step.type === "mouse")).toBe(false);
   });
 
+  it("refuses text longer than one replay can type before pressing any key", () => {
+    expect(mirroringTypeSteps("a".repeat(1_000), undefined).length).toBeGreaterThan(1_000);
+    expect(() => mirroringTypeSteps("a".repeat(1_001), undefined)).toThrow(/at most 1000/);
+  });
+
   it("handles the new steps in the input script and reads windows by bundle id", () => {
     expect(JXA_INPUT_SCRIPT).toContain('step.type === "awaitFront"');
     expect(JXA_INPUT_SCRIPT).toContain("not-frontmost");
+    // After the guard passes, every later event checks the app is still in front.
+    expect(JXA_INPUT_SCRIPT).toContain("guarded !== null && frontBundleId() !== guarded");
+    expect(JXA_INPUT_SCRIPT).toContain("left-front");
+    expect(JXA_MIRRORING_SCRIPT).toContain("visibleFrame");
     expect(JXA_INPUT_SCRIPT).toContain("CGEventSourceCreate(1)");
     expect(JXA_MIRRORING_SCRIPT).toContain("runningApplicationsWithBundleIdentifier");
     expect(JXA_MIRRORING_SCRIPT).toContain("kCGWindowOwnerPID");

@@ -424,12 +424,16 @@ ObjC.import("CoreGraphics");
 ObjC.import("AppKit");
 function frontBundleId() {
   var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
-  if (front.isNil() || front.bundleIdentifier.isNil()) return null;
-  return front.bundleIdentifier.js;
+  if (front.isNil()) return null;
+  var id = front.bundleIdentifier;
+  return id && typeof id.isNil === "function" && !id.isNil() ? id.js : null;
 }
 function run(argv) {
   var steps = JSON.parse(argv[0]);
   var hid = null;
+  // Once an awaitFront step passes, every later event first checks that its app is still in front.
+  var guarded = null;
+  var posted = 0;
   for (var i = 0; i < steps.length; i++) {
     var step = steps[i];
     var event = null;
@@ -437,11 +441,15 @@ function run(argv) {
     if (step.type === "awaitFront") {
       var waited = 0;
       while (frontBundleId() !== step.bundleId) {
-        if (waited >= step.ms) throw new Error("not-frontmost: " + step.bundleId);
+        if (waited >= step.ms) throw new Error((posted === 0 ? "not-frontmost: " : "left-front: ") + step.bundleId);
         delay(0.05);
         waited += 50;
       }
+      guarded = step.bundleId;
       continue;
+    }
+    if (guarded !== null && frontBundleId() !== guarded) {
+      throw new Error((posted === 0 ? "not-frontmost: " : "left-front: ") + guarded);
     }
     if (step.type === "mouse") {
       event = $.CGEventCreateMouseEvent(null, step.event, { x: step.x, y: step.y }, step.button);
@@ -455,6 +463,7 @@ function run(argv) {
     if (event === null) continue;
     if (step.flags !== undefined) $.CGEventSetFlags(event, step.flags);
     $.CGEventPost(0, event);
+    posted++;
   }
   var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   return JSON.stringify({ frontmostApplication: front.isNil() ? null : front.localizedName.js });
@@ -528,22 +537,38 @@ export function applicationAtPoint(
   scene: ScreenScene,
   point: { readonly x: number; readonly y: number },
 ): string | undefined {
-  for (const window of scene.windows) {
+  const hit = windowAtPoint(scene.windows, scene.screens, point);
+  if (hit === "menu-bar") return named(scene.frontmost);
+  if (hit === undefined) return undefined;
+  return hit.owner === DOCK && hit.layer !== 0 ? DOCK : named(hit.owner);
+}
+
+/**
+ * The topmost window a click at a display point reaches, as `applicationAtPoint`
+ * reads it: "menu-bar" for the menu bar, other Window Server windows and the
+ * see-through part of the Dock's display-wide window passed over.
+ */
+function windowAtPoint<W extends ScreenWindow>(
+  windows: ReadonlyArray<W>,
+  screens: ReadonlyArray<ScreenDisplay> | undefined,
+  point: { readonly x: number; readonly y: number },
+): W | "menu-bar" | undefined {
+  for (const window of windows) {
     if (!(window.alpha > 0) || !contains(window, point)) continue;
     const owner = named(window.owner);
     if (owner === WINDOW_SERVER) {
-      if (MENU_BAR_LAYERS.has(window.layer)) return named(scene.frontmost);
+      if (MENU_BAR_LAYERS.has(window.layer)) return "menu-bar";
       continue;
     }
     if (owner === DOCK && window.layer !== 0) {
-      const display = scene.screens?.find((screen) => sameArea(screen.frame, window));
+      const display = screens?.find((screen) => sameArea(screen.frame, window));
       if (display !== undefined) {
         // Above the visible frame is the menu bar's strip; inside it, the windows below.
         if (contains(display.visible, point) || point.y < display.visible.y) continue;
-        return DOCK;
+        return window;
       }
     }
-    return owner;
+    return window;
   }
   return undefined;
 }
@@ -660,6 +685,8 @@ export const MIRRORING_FRONT_WAIT_MS = 1_500;
 export const MIRRORING_TAP_HOLD_MS = 50;
 /** The pause between typed characters. */
 export const MIRRORING_KEY_GAP_MS = 15;
+/** The most characters one `computer_type` sends to the phone, well inside the replay's 30 s limit. */
+export const MIRRORING_MAX_TYPED_CHARS = 1_000;
 
 /** An on-screen window, front to back, marked when iPhone Mirroring owns it. */
 export interface MirroringSceneWindow extends ScreenWindow {
@@ -671,6 +698,8 @@ export interface MirroringScene {
   readonly frontmostBundleId: string | null;
   /** Empty when iPhone Mirroring is not running. */
   readonly windows: ReadonlyArray<MirroringSceneWindow>;
+  /** The displays, so the Dock's display-wide window is read as `applicationAtPoint` reads it. */
+  readonly screens?: ReadonlyArray<ScreenDisplay> | undefined;
 }
 
 export interface DisplayPoint {
@@ -686,10 +715,22 @@ export interface DisplayPoint {
 export const JXA_MIRRORING_SCRIPT = `
 ObjC.import("CoreGraphics");
 ObjC.import("AppKit");
+function area(rect, primaryHeight) {
+  return {
+    x: Number(rect.origin.x),
+    y: primaryHeight - Number(rect.origin.y) - Number(rect.size.height),
+    width: Number(rect.size.width),
+    height: Number(rect.size.height)
+  };
+}
 function run(argv) {
   var bundleId = argv[0];
   var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
-  var frontId = front.isNil() || front.bundleIdentifier.isNil() ? null : front.bundleIdentifier.js;
+  var frontId = null;
+  if (!front.isNil()) {
+    var id = front.bundleIdentifier;
+    if (id && typeof id.isNil === "function" && !id.isNil()) frontId = id.js;
+  }
   var apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(bundleId);
   if (apps.count === 0) return JSON.stringify({ frontmostBundleId: frontId, windows: [] });
   var pids = {};
@@ -707,7 +748,16 @@ function run(argv) {
       mirroring: pids[String(w.kCGWindowOwnerPID)] === true
     });
   }
-  return JSON.stringify({ frontmostBundleId: frontId, windows: windows });
+  var screens = [];
+  var all = $.NSScreen.screens;
+  if (all.count > 0) {
+    var primaryHeight = Number(all.objectAtIndex(0).frame.size.height);
+    for (var j = 0; j < all.count; j++) {
+      var screen = all.objectAtIndex(j);
+      screens.push({ frame: area(screen.frame, primaryHeight), visible: area(screen.visibleFrame, primaryHeight) });
+    }
+  }
+  return JSON.stringify({ frontmostBundleId: frontId, windows: windows, screens: screens });
 }
 `;
 
@@ -722,20 +772,17 @@ const isMirroringWindow = (window: MirroringSceneWindow) =>
   window.mirroring && window.layer === 0 && window.alpha > 0 && window.width > 0;
 
 /**
- * The iPhone Mirroring window a point falls on: the topmost visible window
- * there must be one of its own. The cursor and other Window Server overlays
- * are passed over, as `applicationAtPoint` does.
+ * The iPhone Mirroring window a point falls on: the window a click there
+ * reaches, read as `applicationAtPoint` reads it, must be one of its own.
  */
 export function mirroringWindowAt(
   scene: MirroringScene,
   point: DisplayPoint,
 ): ScreenArea | undefined {
-  for (const window of scene.windows) {
-    if (!(window.alpha > 0) || !contains(window, point)) continue;
-    if (named(window.owner) === WINDOW_SERVER && !MENU_BAR_LAYERS.has(window.layer)) continue;
-    return isMirroringWindow(window) ? boundsOf(window) : undefined;
-  }
-  return undefined;
+  const hit = windowAtPoint(scene.windows, scene.screens, point);
+  return hit !== undefined && hit !== "menu-bar" && isMirroringWindow(hit)
+    ? boundsOf(hit)
+    : undefined;
 }
 
 /** iPhone Mirroring's front window, when the app is frontmost. */
@@ -828,6 +875,11 @@ export function mirroringTypeSteps(
   pointer: DisplayPoint | undefined,
 ): Array<InputStep> {
   const chars = Array.from(text.replace(/\r\n?/g, "\n"));
+  if (chars.length > MIRRORING_MAX_TYPED_CHARS) {
+    throw new ComputerUseInputError(
+      `iPhone Mirroring types key by key, so one computer_type sends at most ${MIRRORING_MAX_TYPED_CHARS} characters to the phone; this text has ${chars.length} and nothing was typed. Send it in parts.`,
+    );
+  }
   const strokes = chars.map((char) => ({ char, stroke: latinKeystroke(char) }));
   const refused = [
     ...new Set(strokes.filter((entry) => entry.stroke === undefined).map((e) => e.char)),
@@ -875,7 +927,8 @@ export interface MirroringPlan {
  * when it does not, and the action takes its usual steps. Clicks, scrolls and
  * drags count when their point is on the window; keys when iPhone Mirroring is
  * frontmost. Every plan waits for iPhone Mirroring to be frontmost first, so a
- * click is never spent bringing the window forward and keys never reach
+ * click is never spent bringing the window forward, and the replay stops at
+ * the first event after it leaves the front, so the rest never reaches
  * another app. Taps hold the button for a moment; keys come from the HID state
  * with the pointer inside the window.
  */

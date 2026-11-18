@@ -87,6 +87,33 @@ export function pageSignature(lines, window) {
   ];
 }
 
+/** Words that only that tab's page shows, by tab: what proves a tap landed on the named tab. */
+export const DEFAULT_ANCHORS = {
+  "World Clock": ["world clock"],
+  Stopwatch: ["lap", "start", "stop", "reset"],
+};
+
+/** The anchor words per tab: --anchors, else the defaults, else the tab's own name. */
+export function tabAnchors(config) {
+  return Object.fromEntries(
+    config.tabs.map((tab, index) => [
+      tab,
+      config.anchors?.[index] ?? DEFAULT_ANCHORS[tab] ?? [normalize(tab)],
+    ]),
+  );
+}
+
+/** The first anchor word a page signature shows, as a whole word. */
+export function anchorIn(page, words) {
+  for (const word of words) {
+    const pattern = new RegExp(
+      `(^|[^a-z])${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z])`,
+    );
+    if (page.some((entry) => pattern.test(entry))) return word;
+  }
+  return undefined;
+}
+
 /** A tab's label in the bottom part of the window, the lowest one when it shows twice. */
 export function findTab(lines, window, label) {
   const top = window.y + window.height * 0.7;
@@ -314,11 +341,14 @@ export async function runCheck(deps, options = {}) {
     if (line === undefined) return { line: undefined };
     const point = center(line);
     const before = lastFrontmost;
+    const pageBefore = pageSignature(seen.lines, seen.window);
     await call("computer_click", point);
     await deps.sleep(config.settleMs);
     seen = await look();
-    return { line, point, before };
+    return { line, point, before, pageBefore };
   };
+  const anchors = tabAnchors(config);
+  const anchorOf = (label, page) => anchorIn(page, anchors[label]);
 
   // Not counted: makes the first tab current, so every counted tap changes the page.
   const warm = await tap(tabA);
@@ -326,8 +356,11 @@ export async function runCheck(deps, options = {}) {
   note(
     `setup tap on "${tabA}" ${warm.line ? `at (${warm.point.x}, ${warm.point.y})` : "found no label"}; its page reads ${refs[tabA].slice(0, 6).join(" | ") || "nothing"}`,
   );
-  if (refs[tabA].length === 0) {
-    return stop("tabs", `no text above the tabs on "${tabA}", so a tap cannot be judged`);
+  if (anchorOf(tabA, refs[tabA]) === undefined) {
+    return stop(
+      "tabs",
+      `the page after tapping "${tabA}" shows none of ${anchors[tabA].map((word) => `"${word}"`).join(", ")}, so it is not that tab's page and no tap can be judged (--anchors sets the words)`,
+    );
   }
 
   for (let index = 1; index <= CLICK_TARGET; index++) {
@@ -335,6 +368,11 @@ export async function runCheck(deps, options = {}) {
     const other = target === tabA ? tabB : tabA;
     const name = `click ${index}/${CLICK_TARGET}`;
     try {
+      // After a miss the target's page may already show; an uncounted tap on the other tab resets it.
+      if (anchorOf(target, pageSignature(seen.lines, seen.window)) !== undefined) {
+        const reset = await tap(other);
+        note(`reset tap on "${other}" before ${name}: ${reset.line ? "done" : "label not found"}`);
+      }
       const result = await tap(target);
       if (result.line === undefined) {
         check(name, false, `"${target}" not found; read ${summary(seen)}`);
@@ -342,19 +380,17 @@ export async function runCheck(deps, options = {}) {
       }
       const page = pageSignature(seen.lines, seen.window);
       const where = `"${target}" at (${result.point.x}, ${result.point.y}); ${result.before ?? "unknown"} -> ${lastFrontmost ?? "unknown"}`;
-      if (refs[target] === undefined) {
-        const apart = jaccard(page, refs[other]);
-        const ok = apart < 0.5 && page.length > 0;
-        if (ok) refs[target] = page;
-        check(name, ok, `${where}; page changed (overlap ${apart.toFixed(2)} with "${other}")`);
-        continue;
-      }
-      const same = jaccard(page, refs[target]);
-      const apart = jaccard(page, refs[other] ?? []);
+      // Landed: the page changed, shows the target tab's own words, and not the other tab's.
+      const changed = jaccard(page, result.pageBefore) < 0.5;
+      const anchor = anchorOf(target, page);
+      const foreign = anchorOf(other, page);
+      const same = refs[target] === undefined ? 1 : jaccard(page, refs[target]);
+      const ok = changed && anchor !== undefined && foreign === undefined && same >= 0.6;
+      if (ok && refs[target] === undefined) refs[target] = page;
       check(
         name,
-        same >= 0.6 && same > apart,
-        `${where}; page matched ${same.toFixed(2)}, "${other}" ${apart.toFixed(2)}`,
+        ok,
+        `${where}; ${changed ? "page changed" : "page did not change"}, ${anchor === undefined ? "no" : `"${anchor}"`} ${target} word${foreign === undefined ? "" : `, but shows "${foreign}" from ${other}`}, matched ${same.toFixed(2)}`,
       );
     } catch (error) {
       check(name, false, `failed: ${error.message}`);
@@ -419,14 +455,14 @@ export async function runCheck(deps, options = {}) {
 // A simulated phone for --dry-run -------------------------------------------------
 
 /** A phone behind a Mirroring window that answers the tools the way the real one should. */
-export function simulatedPhone({ missClick } = {}) {
+export function simulatedPhone({ missClick, pages: pageOverride, deadClicks = false } = {}) {
   const window = { x: 600, y: 100, width: 360, height: 760 };
   const display = { width: 1512, height: 982 };
   const tabs = {
     "World Clock": { x: 640, y: 820, width: 90, height: 20 },
     Stopwatch: { x: 840, y: 820, width: 80, height: 20 },
   };
-  const pages = {
+  const pages = pageOverride ?? {
     "World Clock": ["World Clock", "Edit", "Cupertino", "Today, +0HRS", "10:42"],
     Stopwatch: ["00:00,00", "Lap", "Start"],
   };
@@ -516,7 +552,9 @@ export function simulatedPhone({ missClick } = {}) {
             args.y >= box.y &&
             args.y < box.y + box.height,
         );
-        if (state.app === "Clock" && hit !== undefined && counted !== missClick) state.tab = hit[0];
+        if (state.app === "Clock" && hit !== undefined && counted !== missClick && !deadClicks) {
+          state.tab = hit[0];
+        }
         return done();
       }
       case "computer_scroll":
@@ -763,6 +801,18 @@ export function parseArgs(argv) {
       if (options.tabs.length !== 2 || options.tabs.some((tab) => tab === "")) {
         throw new Error("--tabs takes two tab names, comma separated");
       }
+    } else if (flag === "--anchors") {
+      options.anchors = value()
+        .split(";")
+        .map((words) =>
+          words
+            .split(",")
+            .map((word) => normalize(word))
+            .filter((word) => word !== ""),
+        );
+      if (options.anchors.length !== 2 || options.anchors.some((words) => words.length === 0)) {
+        throw new Error('--anchors takes two word lists, e.g. "world clock;lap,start"');
+      }
     } else if (flag === "--url") options.url = value();
     else throw new Error(`unknown option ${flag}`);
   }
@@ -794,6 +844,7 @@ export async function main(argv, env = process.env) {
     ...(options.clockApp ? { clockApp: options.clockApp } : {}),
     ...(options.listApp ? { listApp: options.listApp } : {}),
     ...(options.tabs ? { tabs: options.tabs } : {}),
+    ...(options.anchors ? { anchors: options.anchors } : {}),
   };
   const started = new Date().toISOString();
 

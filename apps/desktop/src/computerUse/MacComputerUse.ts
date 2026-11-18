@@ -315,6 +315,11 @@ async function runOnMirroring(
         "iPhone Mirroring did not come to the front, so nothing was sent to the phone. Open it with computer_open, check that the phone is connected, then try again.",
       );
     }
+    if (error instanceof Error && error.message.includes("left-front")) {
+      throw new ComputerUseInputError(
+        "iPhone Mirroring stopped being the app in front partway through, so the rest was not sent and nothing reached another app. Part of it may be on the phone: take a screenshot to see what arrived, then continue from there.",
+      );
+    }
     throw error;
   }
 }
