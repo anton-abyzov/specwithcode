@@ -14,8 +14,11 @@ import { LSREGISTER_PATH, resolveRunningAppBundle } from "./macSwapInstall.ts";
  * cached for the old bundle: Finder shows the new icon while the Dock keeps
  * the old one until it reloads. On the first launch of each version the app
  * bumps its bundle's date and registers it with Launch Services again. When
- * the icon itself changed, the Dock still holds its own copy, and only a Dock
- * restart drops it; the app offers that once and never restarts it unasked.
+ * the icon itself changed, the Dock still draws its own saved copy from
+ * `com.apple.dock.iconcache` in the user cache folder, which survives a Dock
+ * restart (seen on macOS 27). Reloading clears that file and the user's icon
+ * services cache, both rebuilt by macOS, then restarts the Dock. The app
+ * offers that once and never does it unasked.
  */
 
 export const ICON_REFRESH_FILE = "mac-icon-refresh.json";
@@ -121,6 +124,8 @@ export interface IconRefreshHost {
 export interface IconRefreshTools {
   readonly touch: (path: string) => Promise<void>;
   readonly lsregister: (args: ReadonlyArray<string>) => Promise<void>;
+  /** Removes the user-level Dock and icon services caches; macOS rebuilds both. */
+  readonly clearDockIconCache: () => Promise<void>;
   /** Process ids of this user's Dock. */
   readonly dockPids: () => Promise<number[]>;
   readonly kill: (pid: number) => void;
@@ -141,6 +146,16 @@ export const nativeIconRefreshTools: IconRefreshTools = {
   },
   lsregister: async (args) => {
     await execFile(LSREGISTER_PATH, args);
+  },
+  clearDockIconCache: async () => {
+    const cacheDir = (await execFile("/usr/bin/getconf", ["DARWIN_USER_CACHE_DIR"])).trim();
+    // Only a per-user cache folder under /private/var/folders or /var/folders.
+    if (!/^(\/private)?\/var\/folders\/.+/.test(cacheDir)) return;
+    NodeFS.rmSync(NodePath.join(cacheDir, "com.apple.dock.iconcache"), { force: true });
+    NodeFS.rmSync(NodePath.join(cacheDir, "com.apple.iconservices"), {
+      recursive: true,
+      force: true,
+    });
   },
   dockPids: async () => {
     const uid = process.getuid?.();
@@ -205,6 +220,11 @@ export async function refreshMacIconAfterUpdate(host: IconRefreshHost): Promise<
   if (plan.offerDockRestart) {
     const choice = await host.ask(DOCK_RESTART_PROMPT).catch(() => 1);
     if (choice === 0) {
+      await tools
+        .clearDockIconCache()
+        .catch((error: unknown) =>
+          host.log("icon refresh: Dock icon cache not cleared", { error: String(error) }),
+        );
       const pids = await tools.dockPids();
       for (const pid of pids) {
         try {

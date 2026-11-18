@@ -106,6 +106,9 @@ describe("refreshMacIconAfterUpdate", () => {
       lsregister: async (args) => {
         calls.push(`lsregister ${args.join(" ")}`);
       },
+      clearDockIconCache: async () => {
+        calls.push("clear dock icon cache");
+      },
       dockPids: async () => [4242],
       kill: (pid) => calls.push(`kill ${pid}`),
     };
@@ -153,7 +156,12 @@ describe("refreshMacIconAfterUpdate", () => {
     // Next version with a new icon, and the user agrees.
     NodeFS.writeFileSync(NodePath.join(f.bundle, "Contents", "Resources", "Assets.car"), "icon2");
     await refreshMacIconAfterUpdate({ ...host, appVersion: "1.0.346", ask: async () => 0 });
-    expect(f.calls).toEqual([`touch ${f.bundle}`, `lsregister -f ${f.bundle}`, "kill 4242"]);
+    expect(f.calls).toEqual([
+      `touch ${f.bundle}`,
+      `lsregister -f ${f.bundle}`,
+      "clear dock icon cache",
+      "kill 4242",
+    ]);
   });
 
   it("never asks on a new install", async () => {
