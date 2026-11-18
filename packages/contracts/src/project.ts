@@ -916,6 +916,15 @@ export const ProjectCreateNewInput = Schema.Struct({
    * files is used as it is, with no Git and no SpecWeave (1396 AC-22).
    */
   specweaveOnlyIfNew: Schema.optional(Schema.Boolean),
+  /**
+   * Make the first feature guide's sample project (1398 AC-01) instead: a new
+   * Git repository named "First feature" (numbered when taken) holding one
+   * page, a `node --test` test and a README, with SpecWeave off whatever
+   * `specweave` says, and its own automatic review off. While this machine
+   * has a sample whose guide has not ended, that one is returned with
+   * `existing: true`. Send only to servers with `firstFeatureSample`.
+   */
+  sample: Schema.optional(Schema.Literal("first-feature")),
 });
 export type ProjectCreateNewInput = typeof ProjectCreateNewInput.Type;
 
@@ -962,6 +971,12 @@ export const ProjectCreateNewResult = Schema.Struct({
   specweaveNeedsNode: Schema.optionalKey(Schema.Boolean),
   /** SpecWeave was set up in an existing folder that had none. Absent from older servers. */
   specweaveAdded: Schema.optionalKey(Schema.Boolean),
+  /**
+   * With `sample`: why the sample's own automatic review could not be turned
+   * off, so a review may start by itself beside the one the guide asks for.
+   * The project exists either way.
+   */
+  sampleAutoReviewError: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ProjectCreateNewResult = typeof ProjectCreateNewResult.Type;
 

@@ -8,6 +8,9 @@
  * spec and ledger are read only for increments that are still open and for
  * the Done cards actually returned, and folded once until one of them changes
  * or a running two-hour lease ends, so a board of a thousand closed increments costs one stat each.
+ * A card lists the increment's recorded reviews (incrementReview): one stat for
+ * an increment without `reports/`, two for one whose review folders hold none,
+ * and the review files read again only when one of them changes.
  */
 import * as NodeFSP from "node:fs/promises";
 
@@ -30,6 +33,7 @@ import {
   type SpecweaveTaskHolder,
 } from "../mods/SpecweaveProgress.ts";
 import { nodePath as NodePath } from "../nodePath.ts";
+import { ledgerAuthorFamily, readIncrementReviews } from "../review/incrementReview.ts";
 import { incrementIds, incrementRootFor, readBounded } from "./ThreadIncrementProgress.ts";
 import { INCREMENTS_DIR } from "./ThreadReports.ts";
 
@@ -65,6 +69,8 @@ interface Detail {
   readonly hasSpec: boolean;
   /** The ledger's last write, which is newer than metadata.json while work runs. */
   readonly ledgerAt: string | null;
+  /** The family that did most of the work by the ledger, for reviews that name no author. */
+  readonly authorFamily: string | null;
   /**
    * When the first running lease ends, in epoch milliseconds. A claim turns
    * stale and a block loses its owner then without any file changing, so the
@@ -203,6 +209,7 @@ async function readDetail(root: string, folder: string, now: number): Promise<De
     pullRequests: ledgerText === null ? [] : ledgerPullRequests(ledgerText),
     hasSpec: specText !== null,
     ledgerAt: ledger.mtimeMs === null ? null : new Date(ledger.mtimeMs).toISOString(),
+    authorFamily: ledgerAuthorFamily(ledgerText),
     leaseEndsAt,
   });
 }
@@ -305,6 +312,8 @@ async function buildCard(
 ): Promise<ProjectBoardCard> {
   const folder = NodePath.join(root, INCREMENTS_DIR, id);
   const detail = await readDetail(root, folder, now);
+  // After the detail: its ledger author stands in for review records that name none.
+  const reviews = await readIncrementReviews(folder, detail.authorFamily);
   const meaning = boardStatus(meta.status);
   const closed = meaning === "completed" || meaning === "dropped";
   const paused = !closed && meaning === "paused";
@@ -338,6 +347,7 @@ async function buildCard(
     updatedAt,
     pullRequests: [...detail.pullRequests],
     specPath: detail.hasSpec ? NodePath.join(folder, "spec.md") : null,
+    ...(reviews.length === 0 ? {} : { reviews: [...reviews] }),
   };
 }
 
