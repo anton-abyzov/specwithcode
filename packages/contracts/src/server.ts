@@ -887,6 +887,12 @@ export const ServerConfig = Schema.Struct({
    * feature offer and never send `sample`.
    */
   firstFeatureSample: Schema.optionalKey(Schema.Boolean),
+  /**
+   * A first feature guide on this machine ended `finished` (1398 AC-21), in a
+   * project that may since have been removed. The offer is then gone for good;
+   * the command palette can still make a new sample. Absent means not known.
+   */
+  firstFeatureFinished: Schema.optionalKey(Schema.Boolean),
   /** Whether thread reads accept the reasoningMessages opt-in. */
   reasoningMessages: Schema.optionalKey(Schema.Boolean),
   /**

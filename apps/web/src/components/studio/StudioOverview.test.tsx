@@ -49,6 +49,7 @@ const state = vi.hoisted(() => ({
 }));
 // Attention transport is isolated; root selection and aggregation remain real.
 vi.mock("./WhatYouCanDo", () => ({ WhatYouCanDo: () => null }));
+vi.mock("./firstFeature/FirstFeatureOffer", () => ({ FirstFeatureOffer: () => null }));
 vi.mock("~/connection/catalog", () => ({ environmentCatalog: { retryNow: "retry-now" } }));
 vi.mock("~/state/shell", () => ({
   environmentShell: { stateAtom: (environmentId: string) => `shell:${environmentId}` },

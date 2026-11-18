@@ -89,6 +89,7 @@ import {
   SquarePenIcon,
   SunIcon,
   TextSearchIcon,
+  SignpostIcon,
 } from "lucide-react";
 import { requestAway } from "../studio/awayRequest";
 import { requestHandOffMachine } from "./handoff/HandOffMachineDialog";
@@ -112,6 +113,8 @@ import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useStartAdversarialReview } from "../hooks/useStartAdversarialReview";
+import { useFirstFeatureStart } from "./studio/firstFeature/FirstFeatureOffer";
+import { PALETTE_TITLE } from "./studio/firstFeature/firstFeature.logic";
 import { ADVERSARIAL_REVIEW_DESCRIPTION, ADVERSARIAL_REVIEW_LABEL } from "./threadActionMenu.logic";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
@@ -277,7 +280,7 @@ import { openLinkIncrementDialog } from "./chat/LinkIncrementDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
 import { searchSettingsBySection, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
-import { useTx } from "../i18n";
+import { txNow, useTx } from "../i18n";
 import {
   PROJECT_SETTINGS_TAB_LABELS,
   PROJECT_SETTINGS_TABS,
@@ -903,6 +906,7 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const startAdversarialReview = useStartAdversarialReview();
+  const firstFeature = useFirstFeatureStart();
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -2884,6 +2888,20 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({ to: "/pull-requests", search: readPullRequestListPreferences() });
+      },
+    });
+  }
+
+  // 1398: opens the machine's sample in progress, or makes a new one, even after a guide finished.
+  if (firstFeature.supported) {
+    actionItems.push({
+      kind: "action",
+      value: "action:first-feature",
+      searchTerms: ["first feature", "guide", "sample", "tutorial", "learn", "walkthrough"],
+      title: txNow(PALETTE_TITLE),
+      icon: <SignpostIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await firstFeature.start();
       },
     });
   }

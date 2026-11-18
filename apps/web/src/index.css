@@ -11,6 +11,7 @@
 @import "./components/studio/shell/handoff.css";
 @import "./components/office/office.css";
 @import "./components/onboarding/setupMotion.css";
+@import "./components/studio/firstFeature/firstFeature.css";
 
 :root {
   color-scheme: light;
