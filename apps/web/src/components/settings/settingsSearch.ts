@@ -891,9 +891,8 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "cursor-keychain-usage",
     title: "Cursor account usage",
     to: "/settings/providers",
-    searchTerms: ["cursor macOS keychain usage tokens cost limits permission"],
+    searchTerms: ["cursor sign-in login keychain usage tokens cost limits permission terms"],
     providerSettingsOnly: true,
-    macProviderSettingsOnly: true,
   },
   {
     id: "advisor",

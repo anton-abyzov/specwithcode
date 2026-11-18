@@ -63,8 +63,8 @@ const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
 
 /**
  * Only a configured key blocks the usage login. A browser sign-in's own key would otherwise
- * disable the opt-in Keychain and CLI login paths; the reader then checks that login is the
- * same account as the sign-in.
+ * disable the opt-in sign-in reads (Keychain, CLI file, desktop app); the reader then checks
+ * that sign-in is the same account as the instance.
  */
 export function cursorUsageEnvironment(
   processEnv: NodeJS.ProcessEnv,
@@ -235,9 +235,10 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
                       readCursorUsageLimits(
                         effectiveConfig,
                         cursorUsageEnvironment(processEnv, apiKey, auth.usesApiKey),
-                        settings.cursorKeychainUsageEnabled,
-                        undefined,
-                        auth.usesApiKey ? undefined : { email },
+                        {
+                          enabled: settings.cursorKeychainUsageEnabled,
+                          account: auth.usesApiKey ? undefined : { email },
+                        },
                       ),
                     ),
                     Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),

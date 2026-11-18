@@ -54,6 +54,7 @@ import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEn
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { readAntigravityUsage } from "./antigravityUsageReader.ts";
 import { readCursorAccountUsage } from "./cursorUsageReader.ts";
+import { CursorAccess, cursorDesktopStatePath } from "../provider/cursorDesktopToken.ts";
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -744,17 +745,9 @@ export const make = Effect.gen(function* () {
       platform === "darwin"
         ? path.join(cursorUserHome, ".cursor", "auth.json")
         : path.join(cursorHome, platform === "win32" ? "Cursor" : "cursor", "auth.json");
-    const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
-    const loginUnavailable =
-      Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) ||
-      Boolean(hostEnvironment["CURSOR_API_KEY"]?.trim()) ||
-      credentialStore === "memory";
-    if (
-      platform === "darwin" &&
-      credentialStore !== "file" &&
-      !loginUnavailable &&
-      !settings.cursorKeychainUsageEnabled
-    ) {
+    // The switch comes first on every OS: with it off no Cursor sign-in is read
+    // and Cursor's private endpoints are never called.
+    if (!settings.cursorKeychainUsageEnabled) {
       scanned.push({
         provider: "cursor",
         dir: cursorAuthPath,
@@ -765,6 +758,11 @@ export const make = Effect.gen(function* () {
       });
       return scanned;
     }
+    const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
+    const loginUnavailable =
+      Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) ||
+      Boolean(hostEnvironment["CURSOR_API_KEY"]?.trim());
+    const cursorAccess = yield* CursorAccess;
     const cursorUntilMs = yield* Clock.currentTimeMillis;
     const account = loginUnavailable
       ? {
@@ -775,11 +773,22 @@ export const make = Effect.gen(function* () {
         }
       : yield* Effect.promise(() =>
           readCursorAccountUsage(
-            platform === "darwin" && credentialStore !== "file"
-              ? { kind: "keychain" }
-              : cursorAuthPath,
+            credentialStore === "memory"
+              ? { kind: "none" }
+              : platform === "darwin" && credentialStore !== "file"
+                ? { kind: "keychain" }
+                : cursorAuthPath,
             windowStartMs,
             cursorUntilMs,
+            {
+              request: cursorAccess.fetch,
+              keychainToken: cursorAccess.keychainToken,
+              desktop: {
+                statePath: cursorDesktopStatePath(platform, hostEnvironment, cursorUserHome),
+                read: cursorAccess.desktopSignIn,
+              },
+              nowMs: cursorUntilMs,
+            },
           ),
         );
     // No saved login means there is no account source to report, not a setup error.
