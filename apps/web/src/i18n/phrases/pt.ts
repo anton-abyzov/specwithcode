@@ -5758,4 +5758,11 @@ export const pt: PhraseCatalog = {
     "Você pode pular isto. Também está em Configurações › Máquinas, e os agentes perguntam quando uma tarefa precisa.",
   "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
     "Use claude, codex e specweave no Terminal também. Adiciona um bloco marcado ao arquivo de inicialização do seu shell; desative quando quiser em Configurações > Geral.",
+  "first": "primeiro",
+  "None of the ready agents runs a model on this list.": "Nenhum dos agentes prontos usa um modelo desta lista.",
+  "No reviewer yet.": "Ainda não há revisor.",
+  "A review needs a model from a second family, such as {first} or {second}.": "Uma revisão precisa de um modelo de outra família, como {first} ou {second}.",
+  "Add one": "Adicionar um",
+  "+{n} more": "+{n} mais",
+  "Ready once an agent is signed in.": "Pronto assim que um agente entrar.",
 };

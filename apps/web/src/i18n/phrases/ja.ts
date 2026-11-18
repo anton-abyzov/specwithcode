@@ -5762,4 +5762,11 @@ export const ja: PhraseCatalog = {
     "スキップしてもかまいません。設定 › マシン にもあり、作業で必要になるとエージェントが確認します。",
   "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
     "ターミナルでも claude、codex、specweave を使えます。シェルの起動ファイルに目印付きのブロックを 1 つ追加します。設定 > 一般 でいつでもオフにできます。",
+  "first": "最初",
+  "None of the ready agents runs a model on this list.": "準備できたエージェントのどれも、このリストのモデルを使っていません。",
+  "No reviewer yet.": "レビュー担当はまだいません。",
+  "A review needs a model from a second family, such as {first} or {second}.": "レビューには、{first} や {second} など別系統のモデルが必要です。",
+  "Add one": "追加する",
+  "+{n} more": "ほか {n} 件",
+  "Ready once an agent is signed in.": "エージェントがサインインすると使えます。",
 };

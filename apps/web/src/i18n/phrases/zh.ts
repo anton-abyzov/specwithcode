@@ -5518,4 +5518,11 @@ export const zh: PhraseCatalog = {
     "可以跳过。它也在 设置 › 机器 中，任务需要时智能体会询问。",
   "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
     "在终端中也可以使用 claude、codex 和 specweave。会在你的 shell 启动文件中添加一个带标记的块；随时可在 设置 > 通用 中关闭。",
+  "first": "优先",
+  "None of the ready agents runs a model on this list.": "已就绪的智能体都没有使用此列表中的模型。",
+  "No reviewer yet.": "还没有审查者。",
+  "A review needs a model from a second family, such as {first} or {second}.": "审查需要另一系列的模型，例如 {first} 或 {second}。",
+  "Add one": "添加一个",
+  "+{n} more": "另外 {n} 个",
+  "Ready once an agent is signed in.": "智能体登录后即可使用。",
 };

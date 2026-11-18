@@ -5756,4 +5756,11 @@ export const ru: PhraseCatalog = {
     "Это можно пропустить. Это есть и в Настройки › Машины, а агенты спросят, когда задаче это понадобится.",
   "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
     "Используйте claude, codex и specweave и в Терминале. Добавляет один помеченный блок в файл запуска оболочки; выключить можно в любой момент в Настройки > Общие.",
+  "first": "первая",
+  "None of the ready agents runs a model on this list.": "Ни один из готовых агентов не использует модель из этого списка.",
+  "No reviewer yet.": "Проверяющего пока нет.",
+  "A review needs a model from a second family, such as {first} or {second}.": "Для проверки нужна модель другого семейства, например {first} или {second}.",
+  "Add one": "Добавить",
+  "+{n} more": "ещё {n}",
+  "Ready once an agent is signed in.": "Будет готово, когда агент войдёт в систему.",
 };

@@ -5690,4 +5690,11 @@ export const ko: PhraseCatalog = {
     "건너뛰어도 됩니다. 설정 › 머신에도 있으며, 작업에 필요하면 에이전트가 묻습니다.",
   "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
     "터미널에서도 claude, codex, specweave를 사용하세요. 셸 시작 파일에 표시된 블록 하나를 추가하며, 설정 > 일반에서 언제든 끌 수 있습니다.",
+  "first": "먼저",
+  "None of the ready agents runs a model on this list.": "준비된 에이전트 중 이 목록의 모델을 쓰는 에이전트가 없습니다.",
+  "No reviewer yet.": "아직 리뷰어가 없습니다.",
+  "A review needs a model from a second family, such as {first} or {second}.": "리뷰에는 {first} 또는 {second} 같은 다른 계열의 모델이 필요합니다.",
+  "Add one": "추가하기",
+  "+{n} more": "+{n}개 더",
+  "Ready once an agent is signed in.": "에이전트가 로그인하면 준비됩니다.",
 };
