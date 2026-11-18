@@ -1033,9 +1033,15 @@ it.effect("a model change that cannot apply shows no card", () => {
     expect(
       yield* refused({ modelRole: "threads", modelSelection: opusHigh, providers: [] }),
     ).toContain("model list is not loaded yet");
-    expect(
-      yield* refused({ modelRole: "threads", modelSelection: opusHigh, providers: undefined }),
-    ).toContain("model list is not loaded yet");
+    // A caller that passes no model list at all is checked the same way.
+    const unlisted = yield* request({
+      projectId,
+      action: "change_model",
+      modelRole: "threads",
+      modelSelection: opusHigh,
+      reason: "Why.",
+    }).pipe(Effect.flip);
+    expect(unlisted.message).toContain("model list is not loaded yet");
     expect(world.dispatched).toEqual([]);
     expect(world.updates).toEqual([]);
   }).pipe(Effect.provide(layerFor(world)));
