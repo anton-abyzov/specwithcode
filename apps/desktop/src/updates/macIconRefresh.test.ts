@@ -95,9 +95,9 @@ describe("refreshMacIconAfterUpdate", () => {
     NodeFS.mkdirSync(NodePath.join(bundle, "Contents", "Resources"), { recursive: true });
     NodeFS.mkdirSync(NodePath.join(bundle, "Contents", "MacOS"), { recursive: true });
     NodeFS.writeFileSync(NodePath.join(bundle, "Contents", "Resources", "Assets.car"), "icon");
-    const workDir = NodePath.join(root, "userdata");
-    NodeFS.mkdirSync(workDir);
-    if (options.prior) NodeFS.writeFileSync(NodePath.join(workDir, "environment-id"), "env");
+    const stateDir = NodePath.join(root, "userdata");
+    NodeFS.mkdirSync(stateDir);
+    if (options.prior) NodeFS.writeFileSync(NodePath.join(stateDir, "environment-id"), "env");
     const calls: string[] = [];
     const tools: IconRefreshTools = {
       touch: async (path) => {
@@ -114,7 +114,7 @@ describe("refreshMacIconAfterUpdate", () => {
     };
     return {
       bundle,
-      workDir,
+      stateDir,
       calls,
       tools,
       execPath: NodePath.join(bundle, "Contents", "MacOS", "SpecWithCode"),
@@ -129,7 +129,11 @@ describe("refreshMacIconAfterUpdate", () => {
       isPackaged: true,
       execPath: f.execPath,
       appVersion: "1.0.345",
-      workDir: f.workDir,
+      stateDir: f.stateDir,
+      canAsk: true,
+      whenWindowShown: async () => {
+        f.calls.push("window shown");
+      },
       log: () => undefined,
       tools: f.tools,
     };
@@ -141,9 +145,9 @@ describe("refreshMacIconAfterUpdate", () => {
       },
     });
     expect(asked).toEqual([DOCK_RESTART_PROMPT.title]);
-    expect(f.calls).toEqual([`touch ${f.bundle}`, `lsregister -f ${f.bundle}`]);
+    expect(f.calls).toEqual([`touch ${f.bundle}`, `lsregister -f ${f.bundle}`, "window shown"]);
     const record = parseIconRefreshRecord(
-      NodeFS.readFileSync(NodePath.join(f.workDir, ICON_REFRESH_FILE), "utf8"),
+      NodeFS.readFileSync(NodePath.join(f.stateDir, ICON_REFRESH_FILE), "utf8"),
     );
     expect(record?.version).toBe("1.0.345");
     expect(record?.iconStamp).toMatch(/^Assets\.car:/);
@@ -159,6 +163,7 @@ describe("refreshMacIconAfterUpdate", () => {
     expect(f.calls).toEqual([
       `touch ${f.bundle}`,
       `lsregister -f ${f.bundle}`,
+      "window shown",
       "clear dock icon cache",
       "kill 4242",
     ]);
@@ -172,7 +177,9 @@ describe("refreshMacIconAfterUpdate", () => {
       isPackaged: true,
       execPath: f.execPath,
       appVersion: "1.0.345",
-      workDir: f.workDir,
+      stateDir: f.stateDir,
+      canAsk: true,
+      whenWindowShown: async () => undefined,
       log: () => undefined,
       tools: f.tools,
       ask: async () => {
@@ -182,5 +189,60 @@ describe("refreshMacIconAfterUpdate", () => {
     });
     expect(asked).toBe(false);
     expect(f.calls).toEqual([`touch ${f.bundle}`, `lsregister -f ${f.bundle}`]);
+  });
+
+  it("never asks in automated runs, and retries a failed registration next launch", async () => {
+    const f = fixture({ prior: true });
+    let asked = false;
+    const host = {
+      platform: "darwin" as NodeJS.Platform,
+      isPackaged: true,
+      execPath: f.execPath,
+      appVersion: "1.0.345",
+      stateDir: f.stateDir,
+      canAsk: false,
+      whenWindowShown: async () => undefined,
+      log: () => undefined,
+      ask: async () => {
+        asked = true;
+        return 0;
+      },
+    };
+    await refreshMacIconAfterUpdate({
+      ...host,
+      tools: {
+        ...f.tools,
+        lsregister: async () => {
+          throw new Error("lsregister failed");
+        },
+      },
+    });
+    expect(asked).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(f.stateDir, ICON_REFRESH_FILE))).toBe(false);
+    await refreshMacIconAfterUpdate({ ...host, tools: f.tools });
+    expect(asked).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(f.stateDir, ICON_REFRESH_FILE))).toBe(true);
+  });
+
+  it("asks again next launch when the app quits before the prompt", async () => {
+    const f = fixture({ prior: true });
+    const host = {
+      platform: "darwin" as NodeJS.Platform,
+      isPackaged: true,
+      execPath: f.execPath,
+      appVersion: "1.0.345",
+      stateDir: f.stateDir,
+      canAsk: true,
+      log: () => undefined,
+      tools: f.tools,
+      ask: async () => 1,
+    };
+    // The window never shows: the prompt waits and nothing is recorded.
+    void refreshMacIconAfterUpdate({
+      ...host,
+      whenWindowShown: () => new Promise(() => undefined),
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(NodeFS.existsSync(NodePath.join(f.stateDir, ICON_REFRESH_FILE))).toBe(false);
   });
 });

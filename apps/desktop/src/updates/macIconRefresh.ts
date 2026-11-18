@@ -24,8 +24,8 @@ import { LSREGISTER_PATH, resolveRunningAppBundle } from "./macSwapInstall.ts";
 export const ICON_REFRESH_FILE = "mac-icon-refresh.json";
 
 /**
- * A file every earlier version leaves in the user data folder once it has
- * run, so a first launch after an update is told apart from a new install.
+ * The service writes this to the app's state folder on its first run, so a
+ * first launch after an update is told apart from a new install.
  */
 const PRIOR_LAUNCH_MARKER = "environment-id";
 
@@ -114,7 +114,12 @@ export interface IconRefreshHost {
   readonly isPackaged: boolean;
   readonly execPath: string;
   readonly appVersion: string;
-  readonly workDir: string;
+  /** The app's state folder, where the service writes `environment-id`. */
+  readonly stateDir: string;
+  /** False in automated runs, where a native dialog must never open. */
+  readonly canAsk: boolean;
+  /** Resolves once the app's first window is on screen. */
+  readonly whenWindowShown: () => Promise<void>;
   /** Shows the prompt and resolves to the chosen button's index. */
   readonly ask: (prompt: IconRefreshPrompt) => Promise<number>;
   readonly log: (message: string, data?: Record<string, unknown>) => void;
@@ -179,10 +184,35 @@ function readText(path: string): string | null {
   }
 }
 
+function saveRecord(host: IconRefreshHost, recordPath: string, record: IconRefreshRecord): void {
+  try {
+    NodeFS.writeFileSync(recordPath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+  } catch (error) {
+    host.log("icon refresh: record not saved", { error: String(error) });
+  }
+}
+
+async function reloadDock(host: IconRefreshHost, tools: IconRefreshTools): Promise<void> {
+  await tools
+    .clearDockIconCache()
+    .catch((error: unknown) =>
+      host.log("icon refresh: Dock icon cache not cleared", { error: String(error) }),
+    );
+  const pids = await tools.dockPids().catch((): number[] => []);
+  for (const pid of pids) {
+    try {
+      tools.kill(pid);
+    } catch (error) {
+      host.log("icon refresh: Dock restart failed", { pid, error: String(error) });
+    }
+  }
+  host.log("icon refresh: Dock restarted", { pids });
+}
+
 /** Runs once per version; never throws. */
 export async function refreshMacIconAfterUpdate(host: IconRefreshHost): Promise<IconRefreshPlan> {
   const tools = host.tools ?? nativeIconRefreshTools;
-  const recordPath = NodePath.join(host.workDir, ICON_REFRESH_FILE);
+  const recordPath = NodePath.join(host.stateDir, ICON_REFRESH_FILE);
   const bundle = resolveRunningAppBundle(host.execPath);
   const iconStamp =
     host.platform === "darwin" && host.isPackaged && bundle !== null ? readIconStamp(bundle) : null;
@@ -193,48 +223,36 @@ export async function refreshMacIconAfterUpdate(host: IconRefreshHost): Promise<
     appVersion: host.appVersion,
     previous: parseIconRefreshRecord(readText(recordPath)),
     iconStamp,
-    hadPriorLaunch: NodeFS.existsSync(NodePath.join(host.workDir, PRIOR_LAUNCH_MARKER)),
+    hadPriorLaunch: NodeFS.existsSync(NodePath.join(host.stateDir, PRIOR_LAUNCH_MARKER)),
   });
   if (plan.kind === "skip") return plan;
 
   await tools
     .touch(plan.bundle)
     .catch((error: unknown) => host.log("icon refresh: touch failed", { error: String(error) }));
-  await tools
-    .lsregister(["-f", plan.bundle])
-    .catch((error: unknown) =>
-      host.log("icon refresh: lsregister failed", { error: String(error) }),
-    );
-  // Recorded before asking, so a prompt the user closes is never shown again.
-  try {
-    const record: IconRefreshRecord = { version: host.appVersion, iconStamp };
-    NodeFS.writeFileSync(recordPath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
-  } catch (error) {
-    host.log("icon refresh: record not saved", { error: String(error) });
-  }
+  const registered = await tools.lsregister(["-f", plan.bundle]).then(
+    () => true,
+    (error: unknown) => {
+      host.log("icon refresh: lsregister failed", { error: String(error) });
+      return false;
+    },
+  );
   host.log("icon refresh: bundle registered", {
     bundle: plan.bundle,
+    registered,
     offerDockRestart: plan.offerDockRestart,
   });
-
-  if (plan.offerDockRestart) {
-    const choice = await host.ask(DOCK_RESTART_PROMPT).catch(() => 1);
-    if (choice === 0) {
-      await tools
-        .clearDockIconCache()
-        .catch((error: unknown) =>
-          host.log("icon refresh: Dock icon cache not cleared", { error: String(error) }),
-        );
-      const pids = await tools.dockPids();
-      for (const pid of pids) {
-        try {
-          tools.kill(pid);
-        } catch (error) {
-          host.log("icon refresh: Dock restart failed", { pid, error: String(error) });
-        }
-      }
-      host.log("icon refresh: Dock restarted", { pids });
-    }
+  const record: IconRefreshRecord = { version: host.appVersion, iconStamp };
+  if (!plan.offerDockRestart || !host.canAsk) {
+    // A failed registration is tried again on the next launch.
+    if (registered) saveRecord(host, recordPath, record);
+    return plan;
   }
+
+  // Asked over the app's window, not before it; quitting first asks again next launch.
+  await host.whenWindowShown();
+  const choice = await host.ask(DOCK_RESTART_PROMPT).catch(() => 1);
+  saveRecord(host, recordPath, record);
+  if (choice === 0) await reloadDock(host, tools);
   return plan;
 }

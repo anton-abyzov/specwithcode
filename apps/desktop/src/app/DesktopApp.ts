@@ -53,6 +53,7 @@ import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as MacBundleName from "../updates/macBundleName.ts";
 import { refreshMacIconAfterUpdate } from "../updates/macIconRefresh.ts";
+import { isDesktopOffscreenTest } from "../electron/DesktopOffscreen.ts";
 import { runElectronSelfInstall } from "../install/electronSelfInstall.ts";
 import type { SelfInstallOutcome } from "../install/macSelfInstall.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
@@ -218,6 +219,18 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
   }
   yield* shutdown.request;
   yield* electronApp.quit;
+});
+
+/** Waits until one of the app's windows is visible, plus a moment so a prompt lands over it. */
+const whenFirstWindowShown = Effect.gen(function* () {
+  while (
+    !Electron.BrowserWindow.getAllWindows().some(
+      (window) => !window.isDestroyed() && window.isVisible(),
+    )
+  ) {
+    yield* Effect.sleep("500 millis");
+  }
+  yield* Effect.sleep("2 seconds");
 });
 
 const fatalStartupCause = <E>(stage: string, cause: Cause.Cause<E>) =>
@@ -642,7 +655,9 @@ const startup = Effect.gen(function* () {
         isPackaged: environment.isPackaged,
         execPath: process.execPath,
         appVersion: environment.appVersion,
-        workDir: userDataPath,
+        stateDir: environment.stateDir,
+        canAsk: !isDesktopOffscreenTest(),
+        whenWindowShown: () => Effect.runPromiseWith(iconRefreshContext)(whenFirstWindowShown),
         ask: async (prompt) =>
           (
             await Electron.dialog.showMessageBox({
