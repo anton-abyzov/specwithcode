@@ -16,7 +16,7 @@ const state = vi.hoisted(() => ({
   lastSeen: new Map<string, number>(),
   takeover: vi.fn(),
   acceptStandby: vi.fn(),
-  startCoordinator: vi.fn(),
+  other: vi.fn(),
   toast: vi.fn(),
 }));
 
@@ -31,7 +31,7 @@ vi.mock("../../state/use-atom-command", () => ({
       ? state.takeover
       : /acceptStandby/i.test(tag)
         ? state.acceptStandby
-        : state.startCoordinator,
+        : state.other,
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
@@ -151,7 +151,7 @@ beforeEach(() => {
   state.deniedScopes = new Set();
   state.writable = new Set(["m4", "m5", "mini"]);
   state.lastSeen = new Map();
-  for (const mock of [state.takeover, state.acceptStandby, state.startCoordinator, state.toast])
+  for (const mock of [state.takeover, state.acceptStandby, state.other, state.toast])
     mock.mockReset();
   state.acceptStandby.mockResolvedValue({ _tag: "Success", value: {} });
   openMove.mockReset();
@@ -179,7 +179,7 @@ it("opens main's own confirmed move when main is the page in view", async () => 
   expect(onCheckout).not.toHaveBeenCalled();
   expect(dialog()).toBeNull();
   expect(state.takeover).not.toHaveBeenCalled();
-  expect(state.startCoordinator).not.toHaveBeenCalled();
+  expect(state.other).not.toHaveBeenCalled();
 });
 
 it("shows main's page from a copy's page, opens the move there and returns when it closes", async () => {
@@ -298,7 +298,7 @@ it("asks once, then takes over from the unreachable main and never starts a seco
     environmentId: "m5",
     input: { projectId: "p", knownEpoch: 3, predecessor: { environmentId: "m4", projectId: "p" } },
   });
-  expect(state.startCoordinator).not.toHaveBeenCalled();
+  expect(state.other).not.toHaveBeenCalled();
   expect(openMove).not.toHaveBeenCalled();
   // The other reachable copy's standby stands down; the unreachable old main is not asked.
   expect(state.acceptStandby.mock.calls.map((call) => call[0].environmentId)).toEqual(["mini"]);

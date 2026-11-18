@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import {
-  canRouteToMain,
-  composerMachines,
-  routeTarget,
-  routedCommand,
-  sendButtonText,
-} from "./routeToMain";
+import { canRouteToMain, routeTarget, routedCommand, sendButtonText } from "./routeToMain";
 
 describe("routeTarget", () => {
   it("splits main's checkout key, keeping a project id that holds a colon", () => {
@@ -98,33 +92,6 @@ describe("routedCommand", () => {
     // Edited text or another main is a new message.
     expect(routedCommand(first, "m4:p", "time now, please?", mint).commandId).toBe("id-2");
     expect(routedCommand(first, "m1:p", "time now?", mint).commandId).toBe("id-3");
-  });
-});
-
-describe("composerMachines", () => {
-  it("names the machine shown on the chip, whatever machine the coordinator is on", () => {
-    // The coordinator is elsewhere and reachable: the chip still names the page shown.
-    expect(composerMachines({ viewed: "m5", mainKey: "m4:p", routes: true })).toEqual({
-      chip: "m5",
-      send: "m4",
-    });
-    // The coordinator's machine cannot be reached: nothing is sent anywhere.
-    expect(composerMachines({ viewed: "m5", mainKey: "m4:p", routes: false })).toEqual({
-      chip: "m5",
-      send: null,
-    });
-    // The coordinator is on the machine shown.
-    expect(composerMachines({ viewed: "m4", mainKey: null, routes: false })).toEqual({
-      chip: "m4",
-      send: "m4",
-    });
-  });
-
-  it("names the machine shown after a row is picked, for every coordinator key", () => {
-    for (const viewed of ["m5", "m4"])
-      for (const mainKey of [null, "m4:p", "m1:mcp:d580ecec", "bad"])
-        for (const routes of [false, true])
-          expect(composerMachines({ viewed, mainKey, routes }).chip).toBe(viewed);
   });
 });
 

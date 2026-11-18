@@ -50,12 +50,7 @@ import {
   type OrchestratorCopy,
 } from "../../src/studio/projectCoordinatorMachine";
 import { getProjectCoordinatorComposer } from "../../src/studio/projectCoordinatorComposer";
-import {
-  canRouteToMain,
-  composerMachines,
-  routeTarget,
-  ROUTED_FILES_MESSAGE,
-} from "../../src/studio/routeToMain";
+import { canRouteToMain, routeTarget, ROUTED_FILES_MESSAGE } from "../../src/studio/routeToMain";
 import { workersOnlyProblem } from "../../src/studio/workersOnlyCopy";
 import { buildMachineRows } from "../../src/components/settings/machinesSettings.logic";
 import { applyThemePalette } from "../../src/themePalette";
@@ -471,7 +466,6 @@ function BoxPage() {
     setMoved(false);
     setCurrent(mainKey);
   };
-  const named = composerMachines({ viewed, mainKey, routes });
   return (
     <div
       className="fixture-page fixture-column"
@@ -542,7 +536,7 @@ function BoxPage() {
         notices={null}
         meta={
           <Switcher
-            label={named.chip}
+            label={viewed}
             connected
             current={current}
             onView={setCurrent}

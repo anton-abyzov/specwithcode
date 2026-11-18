@@ -92,11 +92,6 @@ export const projectLink = {
     label: "project-link:sync-status",
     tag: WS_METHODS.projectLinkSyncStatus,
   }),
-  /** Runs this copy's own coordinator next to the others; nothing gives way. */
-  startCoordinator: createEnvironmentRpcCommand(connectionAtomRuntime, {
-    label: "project-link:start-coordinator",
-    tag: WS_METHODS.projectStartCoordinator,
-  }),
   /** Names, changes or clears the member that takes over when this coordinator goes quiet. */
   setStandby: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "project-link:set-standby",

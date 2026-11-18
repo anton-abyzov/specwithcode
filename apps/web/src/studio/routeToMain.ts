@@ -17,26 +17,6 @@ export function routeTarget(
 }
 
 /**
- * The machines a project page's message box names, from one rule. The chip under the box
- * always names the machine whose page is shown. `send` is where a message goes: the
- * coordinator's machine while the box routes there, no machine while the coordinator is
- * elsewhere and cannot be reached, else the machine shown. It is wiring only: the Send
- * button itself never carries a machine name (`sendButtonText`).
- */
-export function composerMachines(input: {
-  /** The machine whose page is shown. */
-  readonly viewed: string;
-  /** The coordinator's checkout, `environmentId:projectId`; null when it is on the machine shown. */
-  readonly mainKey: string | null;
-  /** `canRouteToMain` holds: Send delivers to the coordinator on its machine. */
-  readonly routes: boolean;
-}): { readonly chip: string; readonly send: string | null } {
-  const main = routeTarget(input.mainKey)?.environmentId;
-  if (!main) return { chip: input.viewed, send: input.viewed };
-  return { chip: input.viewed, send: input.routes ? main : null };
-}
-
-/**
  * The words on the Send button. Never a machine name: where a message goes is said by the
  * line above the box and by the button's tooltip, so the button can never name a machine
  * the chip does not.
