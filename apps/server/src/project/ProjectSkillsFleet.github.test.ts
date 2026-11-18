@@ -155,6 +155,32 @@ describe("Also add on from a connected GitHub repo", () => {
     }),
   );
 
+  it.effect("keeps the reasons the panel disables a machine for, word for word", () =>
+    Effect.gen(function* () {
+      const asks: Array<{ targets: ReadonlyArray<string>; ask: FleetSkillAsk }> = [];
+      const result = yield* pushSkillToFleet(
+        deps({
+          asks,
+          answer: (target) =>
+            target.id === "m5"
+              ? { machine: "m5", error: "update it first", reason: "unsupported" }
+              : { machine: target.id, error: "token refused", reason: "unauthorized" },
+        }),
+        input({
+          preview: true,
+          targets: [
+            { machineId: "m5", scope: "user" },
+            { machineId: "linux", scope: "user" },
+          ],
+        }),
+      );
+      expect(result.results.map((entry) => [entry.machineId, entry.reason])).toEqual([
+        ["m5", "unsupported"],
+        ["linux", "unauthorized"],
+      ]);
+    }),
+  );
+
   it.effect("passes Undo of a new install on as a removal of that copy", () =>
     Effect.gen(function* () {
       const asks: Array<{ targets: ReadonlyArray<string>; ask: FleetSkillAsk }> = [];

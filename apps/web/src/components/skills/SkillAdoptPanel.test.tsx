@@ -23,7 +23,7 @@ vi.mock("../../state/query", () => ({
     data: {
       repos: [
         { repo: "anton-abyzov/vskill", visibility: "public", state: "ok" },
-        { repo: "anton-abyzov/anton-personal-skills", visibility: "private", state: "ok" },
+        { repo: "acme/team-skills", visibility: "private", state: "ok" },
       ],
     },
     error: null,
@@ -147,6 +147,18 @@ describe("Adopt and Add to a repo", () => {
     expect(row("gws")).toBeNull();
   });
 
+  it("keeps Adopt off without permission to change files here", async () => {
+    mocks.scopes.delete("filesystem:write");
+    mocks.adopt.mockResolvedValue(
+      success({
+        checkedAt: "2026-11-18T00:00:00.000Z",
+        candidates: [{ skill: "gws", tracker: "npx-skills", match: MATCH }],
+      }),
+    );
+    await render();
+    expect(button("Adopt", row("gws")).disabled).toBe(true);
+  });
+
   it("asks before each pull request and never merges", async () => {
     mocks.adopt.mockImplementation(async ({ input }: { input: { operation: string } }) =>
       input.operation === "check"
@@ -165,7 +177,7 @@ describe("Adopt and Add to a repo", () => {
           ? success({
               checkedAt: "2026-11-18T00:00:00.000Z",
               proposal: {
-                repo: "anton-abyzov/anton-personal-skills",
+                repo: "acme/team-skills",
                 skill: "notes",
                 files: ["skills/notes/SKILL.md"],
                 skipped: [".DS_Store"],
@@ -174,17 +186,15 @@ describe("Adopt and Add to a repo", () => {
             })
           : success({
               checkedAt: "2026-11-18T00:00:00.000Z",
-              pullRequestUrl: "https://github.com/anton-abyzov/anton-personal-skills/pull/7",
+              pullRequestUrl: "https://github.com/acme/team-skills/pull/7",
             }),
     );
     await render();
-    await act(async () => button("Add to anton-personal-skills", row("notes")).click());
+    await act(async () => button("Add to team-skills", row("notes")).click());
     await flush();
     // Nothing is written to GitHub until the confirmation.
     expect(inputs().map((input) => input.operation)).toEqual(["check", "propose-preview"]);
-    expect(document.body.textContent).toContain(
-      "Open a pull request on anton-abyzov/anton-personal-skills?",
-    );
+    expect(document.body.textContent).toContain("Open a pull request on acme/team-skills?");
     expect(document.body.textContent).toContain("skills/notes/SKILL.md");
     await act(async () => button("Open pull request").click());
     await flush();

@@ -162,7 +162,7 @@ export function withPreviewRefusals(
   });
 }
 
-/** "M5", "M5 and m4", "M5, m4 and linux-mini". */
+/** "studio", "studio and laptop", "studio, laptop and tower". */
 export function joinMachineNames(names: ReadonlyArray<string>): string {
   if (names.length <= 1) return names[0] ?? "";
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;

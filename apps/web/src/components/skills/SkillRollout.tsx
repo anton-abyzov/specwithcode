@@ -20,7 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTx } from "../../i18n";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useStudioFleet } from "../../studio/fleet";
+import { useFleetSkillGithubSupported, useStudioFleet } from "../../studio/fleet";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { projectWorkspace } from "../../studio/projectWorkspace";
 import { SkillControlReason } from "../settings/ProjectSkillReason";
@@ -94,6 +94,8 @@ export function SkillRollout({
   const self = useMachineNickname(environmentId) || tx("this machine");
   const nickname = useMachineNicknames();
   const fleet = useStudioFleet(environmentId);
+  // An older server would drop `github` and look the skill up in the registry instead.
+  const supported = useFleetSkillGithubSupported(environmentId);
   const canSend = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
   const canKeep = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const push = usePush(environmentId, projectId);
@@ -111,6 +113,8 @@ export function SkillRollout({
   /** Machines whose row was undone: no second Undo. */
   const [undone, setUndone] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  /** A failed Undo, per machine: the row it tried to undo stays as it was. */
+  const [undoErrors, setUndoErrors] = useState<ReadonlyMap<string, string>>(new Map());
 
   const base = useMemo(
     () => rolloutMachines(fleet.snapshot?.machines ?? [], environmentId, nickname),
@@ -128,15 +132,22 @@ export function SkillRollout({
   // stored "Keep updated" record ticks its machines again.
   const probed = useRef<string | null>(null);
   const mounted = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
       mounted.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
   const probeKey = source ? `${source.skillId}@${source.github.commit}:${base.length}` : null;
   useEffect(() => {
-    if (source === null || probeKey === null || probed.current === probeKey || !canSend) return;
+    if (
+      source === null ||
+      probeKey === null ||
+      probed.current === probeKey ||
+      !canSend ||
+      !supported
+    )
+      return;
     const open = base.filter((machine) => machine.disabled === null);
     if (open.length === 0) return;
     // Runs once per copy and machine list; the answers land even if the page re-renders meanwhile.
@@ -171,9 +182,15 @@ export function SkillRollout({
         }
       }
     })();
-  }, [base, canSend, environmentId, keepCommand, probeKey, projectId, push, source]);
+  }, [base, canSend, environmentId, keepCommand, probeKey, projectId, push, source, supported]);
 
-  if (source === null || base.length === 0) return null;
+  if (base.length === 0 || !supported) return null;
+  if (source === null)
+    return (
+      <p className="text-xs text-muted-foreground" data-testid="skill-rollout-unavailable">
+        {tx("Also add on")}: {say((resolved as { reason: Phrase }).reason)}
+      </p>
+    );
 
   const review = tickedMachines.map((machine) => ({
     machine,
@@ -311,8 +328,16 @@ export function SkillRollout({
           })
         : { machineId: row.machineId, ok: false, reason: "install-failed", message: answer.error };
     }
-    if (result.ok) setUndone((previous) => new Set(previous).add(row.machineId));
-    setRows((previous) => merged(previous, [result]));
+    setUndoErrors((previous) => {
+      const next = new Map(previous);
+      if (result.ok) next.delete(row.machineId);
+      else next.set(row.machineId, say(rolloutResultWords(result)));
+      return next;
+    });
+    if (result.ok) {
+      setUndone((previous) => new Set(previous).add(row.machineId));
+      setRows((previous) => merged(previous, [result]));
+    }
     setBusy(null);
   };
 
@@ -452,6 +477,15 @@ export function SkillRollout({
                   {say(rolloutResultWords(row))}
                 </span>
                 <span className="flex-1" />
+                {undoErrors.has(row.machineId) ? (
+                  <span
+                    role="alert"
+                    className="text-destructive-foreground"
+                    data-testid="skill-rollout-undo-error"
+                  >
+                    {tx("Undo failed: {error}", { error: undoErrors.get(row.machineId)! })}
+                  </span>
+                ) : null}
                 {plan && plan.kind !== "none" ? (
                   <Button
                     size="xs"

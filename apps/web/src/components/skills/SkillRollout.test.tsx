@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   keep: vi.fn(),
   scopes: new Set<string>(),
   machines: [] as unknown[],
+  supported: true,
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (atom: { fn: unknown }) => atom.fn,
@@ -25,6 +26,7 @@ vi.mock("../../state/session", () => ({
 vi.mock("../../state/server", () => ({ serverEnvironment: { refreshProviders: { fn: vi.fn() } } }));
 vi.mock("../../studio/fleet", () => ({
   useStudioFleet: () => ({ snapshot: { machines: mocks.machines }, loading: false }),
+  useFleetSkillGithubSupported: () => mocks.supported,
 }));
 vi.mock("../../studio/machineNickname", () => ({
   useMachineNickname: () => "M5",
@@ -79,6 +81,7 @@ beforeEach(() => {
     machine("old"),
   ];
   mocks.keep.mockResolvedValue(success({ records: [] }));
+  mocks.supported = true;
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -220,6 +223,67 @@ describe("Also add on", () => {
     expect(result("m1")!.textContent).toContain("Added via npx vskill");
   });
 
+  it("keeps the row and its Undo when Undo fails, and Retry failed leaves it alone", async () => {
+    mocks.push.mockImplementation(async ({ input }: { input: Input }) => {
+      const ids = input.targets.map((target) => target.machineId);
+      if (input.action === "remove")
+        return success({
+          results: ids.map((machineId) => ({
+            machineId,
+            ok: false,
+            reason: "install-failed",
+            message: "vskill remove exited 1",
+          })),
+        });
+      if (input.preview) return success({ results: previewRows(ids) });
+      return success({
+        results: ids.map((machineId) => ({
+          machineId,
+          ok: true,
+          installedVersion: "1.1.3",
+          via: "vskill",
+          previous: null,
+        })),
+      });
+    });
+    await render();
+    await tick("m4");
+    await click("Save on M5 and m4");
+    await act(async () =>
+      [...result("m4")!.querySelectorAll("button")]
+        .find((node) => node.textContent === "Undo")!
+        .click(),
+    );
+    await flush();
+    expect(result("m4")!.textContent).toContain("Added");
+    expect(result("m4")!.textContent).toContain("Undo failed: Failed: vskill remove exited 1");
+    expect(
+      [...result("m4")!.querySelectorAll("button")].some((node) => node.textContent === "Undo"),
+    ).toBe(true);
+    expect(
+      [...host.querySelectorAll("button")].some((node) =>
+        /Retry failed/.test(node.textContent ?? ""),
+      ),
+    ).toBe(false);
+  });
+
+  it("says why a skill cannot be added elsewhere instead of hiding it", async () => {
+    await act(async () =>
+      root.render(
+        <SkillRollout
+          environmentId={environmentId}
+          projectId={projectId}
+          status={{ ...STATUS, installed: { ...STATUS.installed, version: null } }}
+        />,
+      ),
+    );
+    await flush();
+    expect(host.querySelector('[data-testid="skill-rollout-unavailable"]')!.textContent).toMatch(
+      /no version/,
+    );
+    expect(mocks.push).not.toHaveBeenCalled();
+  });
+
   it("stores Keep updated on this machine only and ticks those machines next time", async () => {
     mocks.push.mockImplementation(async ({ input }: { input: Input }) =>
       input.preview
@@ -260,6 +324,13 @@ describe("Also add on", () => {
       .map(([arg]) => (arg as { input: { operation: string; machineIds?: string[] } }).input)
       .find((input) => input.operation === "set")!;
     expect(set.machineIds).toEqual(["m4"]);
+  });
+
+  it("stays out of the way on a server too old to send a GitHub source", async () => {
+    mocks.supported = false;
+    await render();
+    expect(host.querySelector('[data-testid="skill-rollout"]')).toBeNull();
+    expect(mocks.push).not.toHaveBeenCalled();
   });
 
   it("sends nothing when the sign-in cannot maintain machines from here", async () => {

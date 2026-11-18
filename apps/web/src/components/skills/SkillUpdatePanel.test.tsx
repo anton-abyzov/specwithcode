@@ -48,7 +48,10 @@ vi.mock("../../studio/machineNickname", () => ({
   useMachineNicknames: () => (_id: string, label: string) => label,
 }));
 // No other machine is paired here, so "Also add on" stays out of these tests.
-vi.mock("../../studio/fleet", () => ({ useStudioFleet: () => ({ snapshot: null }) }));
+vi.mock("../../studio/fleet", () => ({
+  useStudioFleet: () => ({ snapshot: null }),
+  useFleetSkillGithubSupported: () => true,
+}));
 import { SkillUpdatePanel } from "./SkillUpdatePanel";
 import { SkillUpdateRepos } from "./SkillUpdateRepos";
 

@@ -28,7 +28,8 @@ import {
   skillFolderInput,
   type SkillFolderScope,
 } from "./SkillUpdate.logic";
-import { SkillRolloutAfter } from "./SkillRollout";
+import { useStudioFleet } from "../../studio/fleet";
+import { SkillRollout, SkillRolloutAfter } from "./SkillRollout";
 import { SkillUpdateOutcomeLine, useSkillUpdateRun } from "./SkillUpdateOutcome";
 
 function Version({ label, value }: { label: string; value: string }) {
@@ -63,6 +64,12 @@ export function SkillUpdatePanel({
   );
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Skills whose "Also add on" was opened from their row, without a run first. */
+  const [rolling, setRolling] = useState<ReadonlySet<string>>(new Set());
+  const fleet = useStudioFleet(environmentId);
+  const otherMachines = (fleet.snapshot?.machines ?? []).some(
+    (machine) => machine.environmentId !== environmentId,
+  );
 
   const statuses: ReadonlyArray<ProjectSkillSourceStatus> =
     ran?.statuses ?? query.data?.statuses ?? [];
@@ -135,6 +142,20 @@ export function SkillUpdatePanel({
                     {tx(UPDATE_STATE_LABELS[status.state])}
                   </Badge>
                   <span className="flex-1" />
+                  {otherMachines &&
+                  status.repo !== null &&
+                  status.lockScope === "user" &&
+                  !outcome &&
+                  !rolling.has(status.skill) ? (
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      type="button"
+                      onClick={() => setRolling((previous) => new Set(previous).add(status.skill))}
+                    >
+                      {tx("Also add on…")}
+                    </Button>
+                  ) : null}
                   {isSkillUpdatable(status) ? (
                     <SkillControlReason reason={permission}>
                       <Button
@@ -176,6 +197,12 @@ export function SkillUpdatePanel({
                     projectId={scope.projectId}
                     outcome={outcome}
                     statuses={statuses}
+                  />
+                ) : rolling.has(status.skill) ? (
+                  <SkillRollout
+                    environmentId={environmentId}
+                    projectId={scope.projectId}
+                    status={status}
                   />
                 ) : null}
               </li>
