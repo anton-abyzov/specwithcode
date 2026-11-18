@@ -13,6 +13,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useAtomCommand } from "../state/use-atom-command";
+import { setConnectAccountState } from "./connectAccountState";
 import { ConnectRouteReconciler } from "./ConnectRouteReconciler";
 import { ConnectSessionGuard } from "./ConnectSessionGuard";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
@@ -107,11 +108,13 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
     };
 
     if (!isSignedIn || !userId) {
+      setConnectAccountState("signed-out");
       deactivateManagedRelayAuthentication();
       if (previousAccount !== null) {
         void queueAccountCleanup();
       }
     } else {
+      setConnectAccountState("signed-in");
       const tokenProvider = () => getToken(resolveRelayClerkTokenOptions());
       const activateSession = () => {
         if (!cancelled) {

@@ -28,6 +28,8 @@ export interface EnvironmentConnectionPresentation {
   readonly blockedReason?: ConnectionBlockedReason;
   /** The host no longer accepts this device's approval, such as after an update. */
   readonly reapprovalRequired?: boolean;
+  /** Stopped because this device has no SpecWithCode Connect sign-in; signing in restores it. */
+  readonly connectSignInRequired?: boolean;
   /**
    * Since when this device has had no session with the machine while wanting
    * one (epoch ms). Absent while connected, when nobody asked for a
@@ -114,6 +116,9 @@ function presentConnectionPhase(
               blockedReason: state.lastFailure.reason,
               ...(state.lastFailure.reapprovalRequired === true
                 ? { reapprovalRequired: true }
+                : {}),
+              ...(state.lastFailure.connectSignInRequired === true
+                ? { connectSignInRequired: true }
                 : {}),
             }
           : {}),

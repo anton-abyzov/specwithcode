@@ -5729,4 +5729,24 @@ export const fr: PhraseCatalog = {
   "Fix the extra coordinator on {machine}": "Corriger le coordinateur en trop sur {machine}",
   "Connect {machine}": "Connecter {machine}",
   "Project on another machine": "Projet sur une autre machine",
+  "Not reachable from here": "Inaccessible d'ici",
+  "Sign in to reach {machine}": "Connectez-vous pour accéder à {machine}",
+  "Can't reach {machine} from this window": "{machine} est inaccessible depuis cette fenêtre",
+  "Signed out of SpecWithCode Connect": "Déconnecté de SpecWithCode Connect",
+  "This machine is not affected.": "Cet ordinateur n'est pas concerné.",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "Connexion requise. Connectez-vous à SpecWithCode Connect pour y accéder depuis cette fenêtre",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "Connectez-vous à SpecWithCode Connect pour y accéder depuis cette fenêtre.",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.":
+    "Cette fenêtre y accède via SpecWithCode Connect et n'est pas connectée. Connectez-vous pour y accéder à nouveau.",
+  "{machines} can't be reached from this window until you sign in.":
+    "{machines} : inaccessible depuis cette fenêtre tant que vous n'êtes pas connecté.",
+  "Still connected: {machines}.": "Toujours connectés : {machines}.",
+  "Some of your machines can't be reached from this window until you sign in. This machine is not affected.":
+    "Certains de vos ordinateurs sont inaccessibles depuis cette fenêtre tant que vous n'êtes pas connecté. Cet ordinateur n'est pas concerné.",
+  "{machine} is running, but this window can't reach it until you sign in.":
+    "{machine} fonctionne, mais cette fenêtre ne peut pas y accéder tant que vous n'êtes pas connecté.",
+  "{machines} are running, but this window can't reach them until you sign in.":
+    "{machines} fonctionnent, mais cette fenêtre ne peut pas y accéder tant que vous n'êtes pas connecté.",
 };

@@ -9,6 +9,11 @@ import type { EnvironmentId } from "@specweave-studio/contracts";
 import * as Option from "effect/Option";
 import { useMemo } from "react";
 
+import {
+  type ConnectAccountState,
+  connectAccountStateAtom,
+  connectSignInShown,
+} from "../cloud/connectAccountState";
 import { environmentCatalog } from "../connection/catalog";
 import { txNow, useLocale } from "../i18n";
 import { translateDeviceRefusal } from "../studio/connectDevices.logic";
@@ -30,17 +35,28 @@ export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
 
 const deviceRefusalText = (message: string) => translateDeviceRefusal(message, txNow);
 
+/** The connection with its sign-in mark dropped unless Clerk says signed out (1417). */
+export function gateConnectSignIn<T extends { readonly connectSignInRequired?: boolean }>(
+  connection: T,
+  account: ConnectAccountState,
+): T {
+  if (connection.connectSignInRequired === undefined) return connection;
+  if (connectSignInShown(connection.connectSignInRequired, account)) return connection;
+  const { connectSignInRequired: _dropped, ...rest } = connection;
+  return rest as T;
+}
+
 function projectEnvironmentPresentation(
   environmentId: EnvironmentId,
   presentation: BaseEnvironmentPresentation,
+  account: ConnectAccountState,
 ): EnvironmentPresentation {
-  const error = presentation.connection.error;
+  const gated = gateConnectSignIn(presentation.connection, account);
+  const error = gated.error;
   return {
     ...presentation,
     // The device gate's refusal, in this window's language (1327).
-    ...(error
-      ? { connection: { ...presentation.connection, error: deviceRefusalText(error) } }
-      : {}),
+    connection: error ? { ...gated, error: deviceRefusalText(error) } : gated,
     environmentId,
     label: presentation.entry.target.label,
     displayUrl: connectionCatalogDisplayUrl(presentation.entry),
@@ -52,16 +68,17 @@ export function useEnvironments() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const networkStatus = useAtomValue(environmentCatalog.networkStatusValueAtom);
   const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
+  const account = useAtomValue(connectAccountStateAtom);
   // A refusal is said in the window's language, so a language change redraws it.
   const locale = useLocale();
 
   const environments = useMemo(
     () =>
       [...presentationById.entries()].map(([environmentId, presentation]) =>
-        projectEnvironmentPresentation(environmentId, presentation),
+        projectEnvironmentPresentation(environmentId, presentation, account),
       ),
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- locale changes the projected text
-    [presentationById, locale],
+    [presentationById, account, locale],
   );
 
   return {
@@ -80,12 +97,13 @@ export function useEnvironment(
   environmentId: EnvironmentId | null,
 ): EnvironmentPresentation | null {
   const { presentation } = useEnvironmentPresentation(environmentId);
+  const account = useAtomValue(connectAccountStateAtom);
   return useMemo(
     () =>
       environmentId === null || presentation === null
         ? null
-        : projectEnvironmentPresentation(environmentId, presentation),
-    [environmentId, presentation],
+        : projectEnvironmentPresentation(environmentId, presentation, account),
+    [environmentId, presentation, account],
   );
 }
 

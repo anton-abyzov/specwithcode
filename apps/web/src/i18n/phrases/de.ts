@@ -5722,4 +5722,24 @@ export const de: PhraseCatalog = {
   "Fix the extra coordinator on {machine}": "Zusätzlichen Koordinator auf {machine} beheben",
   "Connect {machine}": "{machine} verbinden",
   "Project on another machine": "Projekt auf einem anderen Rechner",
+  "Not reachable from here": "Von hier nicht erreichbar",
+  "Sign in to reach {machine}": "Anmelden, um {machine} zu erreichen",
+  "Can't reach {machine} from this window": "{machine} ist von diesem Fenster aus nicht erreichbar",
+  "Signed out of SpecWithCode Connect": "Von SpecWithCode Connect abgemeldet",
+  "This machine is not affected.": "Dieser Rechner ist nicht betroffen.",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "Anmeldung nötig. Melde dich bei SpecWithCode Connect an, um ihn von diesem Fenster aus zu erreichen",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "Melde dich bei SpecWithCode Connect an, um ihn von diesem Fenster aus zu erreichen.",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.":
+    "Dieses Fenster erreicht ihn über SpecWithCode Connect und ist abgemeldet. Melde dich an, um ihn wieder zu erreichen.",
+  "{machines} can't be reached from this window until you sign in.":
+    "{machines} ist von diesem Fenster aus erst nach der Anmeldung erreichbar.",
+  "Still connected: {machines}.": "Weiter verbunden: {machines}.",
+  "Some of your machines can't be reached from this window until you sign in. This machine is not affected.":
+    "Einige deiner Rechner sind von diesem Fenster aus erst nach der Anmeldung erreichbar. Dieser Rechner ist nicht betroffen.",
+  "{machine} is running, but this window can't reach it until you sign in.":
+    "{machine} läuft, aber dieses Fenster erreicht ihn erst nach der Anmeldung.",
+  "{machines} are running, but this window can't reach them until you sign in.":
+    "{machines} laufen, aber dieses Fenster erreicht sie erst nach der Anmeldung.",
 };

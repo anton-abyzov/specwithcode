@@ -5676,4 +5676,24 @@ export const ru: PhraseCatalog = {
   "Fix the extra coordinator on {machine}": "Исправить лишний координатор на {machine}",
   "Connect {machine}": "Подключить {machine}",
   "Project on another machine": "Проект на другой машине",
+  "Not reachable from here": "Недоступно отсюда",
+  "Sign in to reach {machine}": "Войдите, чтобы открыть {machine}",
+  "Can't reach {machine} from this window": "{machine} недоступен из этого окна",
+  "Signed out of SpecWithCode Connect": "Вы вышли из SpecWithCode Connect",
+  "This machine is not affected.": "Этот компьютер работает как обычно.",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "Нужен вход. Войдите в SpecWithCode Connect, чтобы открыть его из этого окна",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "Войдите в SpecWithCode Connect, чтобы открыть его из этого окна.",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.":
+    "Это окно подключается к нему через SpecWithCode Connect, а вход не выполнен. Войдите, чтобы снова подключиться.",
+  "{machines} can't be reached from this window until you sign in.":
+    "{machines}: недоступно из этого окна, пока вы не войдёте.",
+  "Still connected: {machines}.": "Подключены: {machines}.",
+  "Some of your machines can't be reached from this window until you sign in. This machine is not affected.":
+    "Некоторые ваши компьютеры недоступны из этого окна, пока вы не войдёте. Этот компьютер работает как обычно.",
+  "{machine} is running, but this window can't reach it until you sign in.":
+    "{machine} работает, но это окно не подключится к нему, пока вы не войдёте.",
+  "{machines} are running, but this window can't reach them until you sign in.":
+    "{machines} работают, но это окно не подключится к ним, пока вы не войдёте.",
 };

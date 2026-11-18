@@ -5446,4 +5446,24 @@ export const zh: PhraseCatalog = {
   "Fix the extra coordinator on {machine}": "修复 {machine} 上多余的协调者",
   "Connect {machine}": "连接 {machine}",
   "Project on another machine": "另一台电脑上的项目",
+  "Not reachable from here": "无法从此处访问",
+  "Sign in to reach {machine}": "登录以访问 {machine}",
+  "Can't reach {machine} from this window": "无法从此窗口访问 {machine}",
+  "Signed out of SpecWithCode Connect": "已退出 SpecWithCode Connect",
+  "This machine is not affected.": "此电脑不受影响。",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "需要登录。登录 SpecWithCode Connect 后即可从此窗口访问",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "登录 SpecWithCode Connect 后即可从此窗口访问。",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.":
+    "此窗口通过 SpecWithCode Connect 访问它，但尚未登录。登录后即可重新访问。",
+  "{machines} can't be reached from this window until you sign in.":
+    "登录前无法从此窗口访问 {machines}。",
+  "Still connected: {machines}.": "仍已连接：{machines}。",
+  "Some of your machines can't be reached from this window until you sign in. This machine is not affected.":
+    "登录前无法从此窗口访问你的部分电脑。此电脑不受影响。",
+  "{machine} is running, but this window can't reach it until you sign in.":
+    "{machine} 正在运行，但登录前此窗口无法访问它。",
+  "{machines} are running, but this window can't reach them until you sign in.":
+    "{machines} 正在运行，但登录前此窗口无法访问它们。",
 };
