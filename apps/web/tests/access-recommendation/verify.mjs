@@ -115,6 +115,11 @@ for (const theme of ["light", "dark"]) {
     if ((await page.locator("[data-wizard-neutral]").count()) !== 1)
       fail(`wizard ${at}`, "Continue is not the one neutral control");
     await shot("access");
+    // Everything set up: the picture draws a thread to each row that is done.
+    await ready("files=before-accepted&chrome=paired&mac=allowed");
+    await settled();
+    await shot("access-done");
+    await ready("");
     // Enter goes on and answers nothing.
     await page.keyboard.press("Enter");
     await page.locator('[data-fixture-done="none"]').waitFor();

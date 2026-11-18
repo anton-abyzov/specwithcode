@@ -24,6 +24,7 @@ import {
   type PairingCodeState,
 } from "../../src/components/settings/BrowserExtensionSetup";
 import { FirstRunFrame, shownStages } from "../../src/components/onboarding/WizardFrame";
+import { StepPicture } from "../../src/components/onboarding/StepPicture";
 import { AccessRecommendationAnchor } from "../../src/components/chat/AccessRecommendation";
 import { FullAccessGlyph, SupervisedAccessGlyph } from "../../src/components/chat/AccessGlyph";
 import { en } from "../../src/i18n/messages/en";
@@ -204,6 +205,17 @@ function Wizard() {
       onStageChange={(stage) => calls.push(["stage", stage.id])}
       canClose
       onLeave={() => calls.push(["leave"])}
+      picture={
+        <StepPicture
+          step={done ? "projects" : "access"}
+          lit={[
+            ...(answer === "accepted" || filesParam === "before-accepted" ? ["files"] : []),
+            ...(params.get("chrome")?.startsWith("paired") ? ["browser"] : []),
+            ...(params.get("mac") === "allowed" ? ["mac-apps"] : []),
+          ]}
+          rows={rows.map((row) => row.id)}
+        />
+      }
     >
       {done ? (
         <p data-fixture-done={answer ?? "none"}>Projects</p>
