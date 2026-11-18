@@ -28,6 +28,7 @@ import {
   skillFolderInput,
   type SkillFolderScope,
 } from "./SkillUpdate.logic";
+import { SkillRolloutAfter } from "./SkillRollout";
 import { SkillUpdateOutcomeLine, useSkillUpdateRun } from "./SkillUpdateOutcome";
 
 function Version({ label, value }: { label: string; value: string }) {
@@ -169,6 +170,14 @@ export function SkillUpdatePanel({
                   <p className="text-xs text-muted-foreground">{status.detail}</p>
                 ) : null}
                 {outcome ? <SkillUpdateOutcomeLine outcome={outcome} /> : null}
+                {outcome ? (
+                  <SkillRolloutAfter
+                    environmentId={environmentId}
+                    projectId={scope.projectId}
+                    outcome={outcome}
+                    statuses={statuses}
+                  />
+                ) : null}
               </li>
             );
           })}

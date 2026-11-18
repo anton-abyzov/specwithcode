@@ -286,7 +286,14 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
       if (lock === null) return null;
       const installed = installedOf(lock);
       const repo = lockRepo(lock);
-      const base = { skill: row.name, lockScope: lock.lockScope, installed };
+      const base = {
+        skill: row.name,
+        lockScope: lock.lockScope,
+        installed,
+        ...(lock.sourceSkillPath && lock.sourceBranch
+          ? { installedSource: { path: lock.sourceSkillPath, branch: lock.sourceBranch } }
+          : {}),
+      };
       if (repo === null)
         return {
           lock,
