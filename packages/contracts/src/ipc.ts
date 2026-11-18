@@ -1100,8 +1100,33 @@ import type {
  * A System Settings pane the app can deep-link to. The identifier crosses IPC
  * rather than a URL, so the renderer can only reach these known destinations.
  */
-export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
+export const SystemSettingsPaneSchema = Schema.Literals([
+  "full-disk-access",
+  "app-data",
+  "screen-recording",
+  "accessibility",
+  "automation",
+]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
+
+/**
+ * Opens a pane with the drag helper. `agentHost` names the item to drag when
+ * agents run under a launchd service rather than under SpecWithCode.app
+ * (from `machineHandoff.privacyAccess`); without it the helper offers the app.
+ */
+export const SystemSettingsRequestSchema = Schema.Union([
+  SystemSettingsPaneSchema,
+  Schema.Struct({
+    pane: SystemSettingsPaneSchema,
+    agentHost: Schema.optional(
+      Schema.Struct({
+        path: Schema.String.check(Schema.isMaxLength(4096)),
+        name: Schema.String.check(Schema.isMaxLength(255)),
+      }),
+    ),
+  }),
+]);
+export type SystemSettingsRequest = typeof SystemSettingsRequestSchema.Type;
 
 /**
  * A project to open in its own desktop window. `projectKey` is the logical
@@ -1388,8 +1413,10 @@ export interface DesktopBridge extends DesktopUpdateBridge {
    * Open a System Settings pane by identifier. Optional: older desktop builds
    * lack it, and callers no-op when it is missing.
    */
-  openSystemSettings?: (pane: SystemSettingsPane) => Promise<boolean>;
+  openSystemSettings?: (request: SystemSettingsRequest) => Promise<boolean>;
   checkSystemPermission?: (pane: SystemSettingsPane) => Promise<boolean>;
+  /** Closes the drag helper, for example once the agent host reports access. */
+  closeSystemSettingsHelper?: () => Promise<void>;
   /**
    * Probe this desktop machine for installed remote-capable editor CLIs
    * (used for remote open-in-editor deep links). Optional: older desktop
@@ -1546,7 +1573,7 @@ export interface LocalApi {
   shell: {
     openExternal: (url: string) => Promise<void>;
     /** Opens a known System Settings pane; no-ops outside the desktop app. */
-    openSystemSettings: (pane: SystemSettingsPane) => Promise<void>;
+    openSystemSettings: (request: SystemSettingsRequest) => Promise<void>;
   };
   contextMenu: {
     show: <T extends string>(
