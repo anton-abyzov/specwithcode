@@ -9,7 +9,7 @@ const stored = vi.hoisted(() => ({
 vi.mock("../../cloud/dpop", () => ({
   readStoredBrowserDpopKey: () => {
     stored.reads += 1;
-    return stored.fails ? Effect.fail(new Error("no database")) : Effect.succeed(stored.key);
+    return stored.fails ? Effect.fail({ _tag: "NoDatabase" } as const) : Effect.succeed(stored.key);
   },
 }));
 
