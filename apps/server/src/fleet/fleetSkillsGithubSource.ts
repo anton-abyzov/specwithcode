@@ -323,6 +323,13 @@ export const prepareGithubSkill = (deps: GithubSkillDeps, ask: FleetSkillAsk) =>
     } satisfies GithubSkillPlan;
   });
 
+/**
+ * The agents a GitHub-source install links: Claude through its skills folder,
+ * Codex through ~/.agents/skills. Named, because vskill's "every agent" default
+ * refuses the whole install when any one agent's skills folder is a link.
+ */
+export const GITHUB_SKILL_AGENTS = ["claude-code", "codex"] as const;
+
 /** Runs the checked install or removal and reads the lock back; never fails, only reports. */
 export const runGithubSkill = (
   deps: GithubSkillDeps,
@@ -339,6 +346,7 @@ export const runGithubSkill = (
           githubSkillLink(plan.repo, source),
           "-y",
           ...(ask.scope === "user" ? ["--global"] : []),
+          ...GITHUB_SKILL_AGENTS.flatMap((agent) => ["--agent", agent]),
         ];
     const run = yield* deps.run({
       command: plan.command,

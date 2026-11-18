@@ -155,6 +155,11 @@ describe("a GitHub-source skill install on a fleet machine", () => {
         `https://github.com/anton-abyzov/vskill/tree/${COMMIT}/skills/html-report`,
         "-y",
         "--global",
+        // Named agents: vskill's all-agents default refuses when one agent's skills folder is a link.
+        "--agent",
+        "claude-code",
+        "--agent",
+        "codex",
       ]);
       // vskill records the commit as the branch; the branch is put back so updates compare heads.
       const entry = JSON.parse(locks.get(USER_LOCK)!).skills["html-report"];
