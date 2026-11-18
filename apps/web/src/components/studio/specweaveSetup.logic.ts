@@ -161,6 +161,25 @@ export function specweaveCardState(input: {
   return { state: request.state, detail: request.detail };
 }
 
+/** What an older server said when it refused a folder outside Git. */
+export const SPECWEAVE_NOT_A_REPOSITORY_HINT = "Run git init here first";
+
+/**
+ * The press failed because the folder is not a Git repository, though this
+ * window took it for one (an older server, or `.git` removed since): offer
+ * "Set up Git and SpecWeave" instead of a Retry that fails the same way.
+ */
+export function specweaveNeedsGitFirst(
+  outcome: SpecweaveLocalOutcome | null,
+  gitRepository: boolean | undefined,
+): boolean {
+  return (
+    gitRepository !== false &&
+    outcome?.state === "failed" &&
+    outcome.detail.includes(SPECWEAVE_NOT_A_REPOSITORY_HINT)
+  );
+}
+
 /** The reason line under a card in Failed, Node.js missing or Not allowed. */
 export function specweaveStateReason(shown: SpecweaveShownState): string | null {
   switch (shown.state) {
@@ -309,12 +328,21 @@ export function lastUserMessageAt(
   entries: ReadonlyArray<{
     readonly kind: string;
     readonly createdAt: string;
-    readonly message?: { readonly role: string };
+    readonly message?: { readonly role: string; readonly createdBy?: string | undefined };
   }>,
 ): string | null {
   let latest: string | null = null;
   for (const row of entries)
-    if (row.kind === "message" && row.message?.role === "user")
+    if (row.kind === "message" && row.message?.role === "user" && writtenByPerson(row.message))
       if (latest === null || row.createdAt > latest) latest = row.createdAt;
   return latest;
+}
+
+/**
+ * A user-role message the person wrote. The server's wake after an answer
+ * (AC-07) and messages from other threads are user-role too, but written by
+ * an agent or the system: they must not clear a settled card.
+ */
+function writtenByPerson(message: { readonly createdBy?: string | undefined }): boolean {
+  return message.createdBy === undefined || message.createdBy === "user";
 }

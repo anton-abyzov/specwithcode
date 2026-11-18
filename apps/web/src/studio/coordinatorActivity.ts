@@ -185,11 +185,13 @@ const WORKER_LAUNCH_TOOL = /^(delegate_task|studio_thread_launch|studio_thread_c
 
 /**
  * The launch answered and named nothing it started: the compact wire result
- * keeps only ids, so an answer without one, or the full `launched: false`
- * result, is a launch that did not happen.
+ * keeps only ids, so a completed call with no output, an answer without an
+ * id, or the full `launched: false` result is a launch that did not happen.
  */
 function launchStartedNothing(item: ActivityItem): boolean {
-  if (typeof item.output !== "object" || item.output === null) return false;
+  // Compaction drops an answer with no ids, and the wire then sends no output.
+  if (item.output === undefined || item.output === null) return item.status === "completed";
+  if (typeof item.output !== "object") return false;
   const output = item.output as Record<string, unknown>;
   const nested = output.structuredContent;
   const fields = [output, typeof nested === "object" && nested !== null ? nested : {}] as const;

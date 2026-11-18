@@ -169,6 +169,16 @@ describe("SpecweaveOffer", () => {
     expect(button("Set up SpecWeave")).toBeDefined();
   });
 
+  it("brings the line back with the reason when a dismiss was not stored", async () => {
+    state.answer.mockResolvedValue({ _tag: "Failure", cause: Cause.fail(new Error("offline")) });
+    await render();
+    await act(async () => button("Dismiss")!.click());
+    expect(line()?.querySelector('[role="alert"]')?.textContent).toBe(
+      "The answer was not saved. Try again.",
+    );
+    expect(button("Dismiss")).toBeDefined();
+  });
+
   it("offers only the board and the dismiss in a window that cannot change files", async () => {
     state.canWrite = false;
     await render();

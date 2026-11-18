@@ -72,8 +72,9 @@ export function BoardSetupView(props: BoardSetupViewProps) {
         <p>{copy.text}</p>
         {copy.titles.length > 0 ? (
           <ul className="sws-board-setup-titles" aria-label="Plans found">
-            {copy.titles.map((title) => (
-              <li key={title}>{title}</li>
+            {copy.titles.map((title, index) => (
+              // Two plans may share a title.
+              <li key={`${index}:${title}`}>{title}</li>
             ))}
           </ul>
         ) : null}

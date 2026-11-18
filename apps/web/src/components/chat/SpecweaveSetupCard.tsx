@@ -48,6 +48,7 @@ import {
   SPECWEAVE_SETTING_UP_POLL_MS,
   specweaveCardShown,
   specweaveCardState,
+  specweaveNeedsGitFirst,
   specweavePollWhile,
   specweaveSetupFailureOutcome,
   specweaveSetupLabel,
@@ -97,12 +98,19 @@ export function useSpecweaveSetUp(input: {
   readonly clear: () => void;
 } {
   const setUp = useAtomCommand(projectWorkspace.specweaveSetUp, { reportFailure: false });
-  const [outcome, setOutcome] = useState<SpecweaveLocalOutcome | null>(null);
+  // The outcome belongs to the card it was pressed for: a new card (another
+  // `requestId`) starts clean instead of showing an old failure.
+  const [pressed, setPressed] = useState<{
+    readonly outcome: SpecweaveLocalOutcome | null;
+    readonly requestId: string | undefined;
+  }>({ outcome: null, requestId: undefined });
   const inFlight = useRef(false);
   const { environmentId, projectId, gitRepository, requestId, onSettled } = input;
   const run = useCallback(async () => {
     if (inFlight.current) return false;
     inFlight.current = true;
+    const setOutcome = (outcome: SpecweaveLocalOutcome | null) =>
+      setPressed({ outcome, requestId });
     setOutcome({ state: "setting_up" });
     try {
       const result = await setUp({
@@ -129,8 +137,8 @@ export function useSpecweaveSetUp(input: {
       onSettled();
     }
   }, [environmentId, gitRepository, onSettled, projectId, requestId, setUp]);
-  const clear = useCallback(() => setOutcome(null), []);
-  return { outcome, run, clear };
+  const clear = useCallback(() => setPressed({ outcome: null, requestId: undefined }), []);
+  return { outcome: pressed.requestId === requestId ? pressed.outcome : null, run, clear };
 }
 
 /** "Plan without it", "Not now" and the composer line; resolves with an error message or null. */
@@ -211,13 +219,24 @@ export function SpecweaveSetupCard({
   const request = snapshot?.specweaveSetupRequest;
   const canWrite = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const canAnswer = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  // The folder's Git state as read now, not when the card was raised; an older
+  // server that refused a folder outside Git turns the press into "Set up Git
+  // and SpecWeave" instead of a Retry that repeats the refusal.
+  const [offerGit, setOfferGit] = useState(false);
+  const gitRepository = offerGit
+    ? false
+    : (snapshot?.gitRepository ?? request?.gitRepository ?? true);
   const setUp = useSpecweaveSetUp({
     environmentId,
     projectId,
-    gitRepository: request?.gitRepository,
+    gitRepository,
     requestId: request?.requestId,
     onSettled: refresh,
   });
+  if (specweaveNeedsGitFirst(setUp.outcome, gitRepository)) {
+    setOfferGit(true);
+    setUp.clear();
+  }
   const answer = useSpecweaveAnswer({ environmentId, projectId, onSettled: refresh });
   const openBoard = useOpenProjectBoard(environmentId, projectId);
   const [answerError, setAnswerError] = useState<string | null>(null);
@@ -252,7 +271,7 @@ export function SpecweaveSetupCard({
   return (
     <SpecweaveSetupCardView
       shown={shown}
-      gitRepository={request.gitRepository}
+      gitRepository={gitRepository}
       canAnswer={canAnswer}
       answering={answering}
       answerError={answerError}
@@ -297,6 +316,12 @@ export function SpecweaveSetupCardView(props: {
       : state === "declined"
         ? tx("Planning without SpecWeave")
         : tx(SPECWEAVE_CARD_HEADING);
+  // Filled after mount, so screen readers announce the card when it appears
+  // and again when it settles.
+  const [announcement, setAnnouncement] = useState("");
+  useEffect(() => {
+    setAnnouncement(title);
+  }, [title]);
   const planWithout =
     props.canAnswer && !settled ? (
       <button
@@ -316,6 +341,9 @@ export function SpecweaveSetupCardView(props: {
       data-specweave-card=""
       data-state={state}
     >
+      <p className="sr-only" role="status" aria-live="polite" data-specweave-announcement="">
+        {announcement}
+      </p>
       <header className="flex min-w-0 items-start gap-2">
         <span aria-hidden className="flex h-5 shrink-0 items-center text-access-tile">
           <KanbanIcon className="size-4" strokeWidth={2.25} />

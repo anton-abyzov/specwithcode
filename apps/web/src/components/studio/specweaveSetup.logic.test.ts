@@ -228,6 +228,28 @@ describe("specweaveSnapshotToolKey", () => {
     ).toBe("2026-11-18T09:00:00Z");
     expect(lastUserMessageAt([])).toBeNull();
   });
+
+  it("skips the wake the server sends after an answer, and other agents' messages", () => {
+    expect(
+      lastUserMessageAt([
+        {
+          kind: "message",
+          createdAt: "2026-11-18T09:00:00Z",
+          message: { role: "user", createdBy: "user" },
+        },
+        {
+          kind: "message",
+          createdAt: "2026-11-18T10:00:00Z",
+          message: { role: "user", createdBy: "agent" },
+        },
+        {
+          kind: "message",
+          createdAt: "2026-11-18T11:00:00Z",
+          message: { role: "user", createdBy: "system" },
+        },
+      ]),
+    ).toBe("2026-11-18T09:00:00Z");
+  });
 });
 
 describe("boardSetupCopy", () => {

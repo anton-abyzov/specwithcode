@@ -63,12 +63,25 @@ export function SpecweaveOffer({
   // advice is already marked seen, so the reason and Retry are not lost.
   const [held, setHeld] = useState(false);
   const [gone, setGone] = useState(false);
+  // An answer the server did not store: the line comes back with the reason,
+  // so a dismiss that failed is not taken for one that held.
+  const [answerError, setAnswerError] = useState<string | null>(null);
+  const answerAndHide = (choice: "advice_seen" | "advice_dismissed") => {
+    setGone(true);
+    setAnswerError(null);
+    void answer(choice).then((error) => {
+      if (error === null) return;
+      setAnswerError(error);
+      setGone(false);
+    });
+  };
   const applies = specweaveOfferApplies({ snapshot, coordinator: true, canAnswer });
-  if (gone || !(applies || (held && setUp.outcome !== null))) return null;
+  if (gone || !(applies || answerError !== null || (held && setUp.outcome !== null))) return null;
   return (
     <SpecweaveOfferView
       gitRepository={snapshot?.gitRepository}
       outcome={setUp.outcome}
+      answerError={answerError}
       canSetUp={canWrite}
       onSetUp={() => {
         setHeld(true);
@@ -80,8 +93,7 @@ export function SpecweaveOffer({
       onSeeBoard={
         openBoard
           ? () => {
-              setGone(true);
-              void answer("advice_seen");
+              answerAndHide("advice_seen");
               openBoard();
             }
           : null
@@ -89,10 +101,7 @@ export function SpecweaveOffer({
       onInstallNode={() =>
         requestMachineToolInstall({ environmentId, tool: "node", machineLabel: null })
       }
-      onDismiss={() => {
-        setGone(true);
-        void answer("advice_dismissed");
-      }}
+      onDismiss={() => answerAndHide("advice_dismissed")}
     />
   );
 }
@@ -101,6 +110,8 @@ export function SpecweaveOffer({
 export function SpecweaveOfferView(props: {
   readonly gitRepository: boolean | undefined;
   readonly outcome: SpecweaveLocalOutcome | null;
+  /** The last answer was not stored. */
+  readonly answerError?: string | null | undefined;
   /** The window may change files on the machine; without it only the board and dismiss show. */
   readonly canSetUp: boolean;
   readonly onSetUp: () => void;
@@ -134,6 +145,11 @@ export function SpecweaveOfferView(props: {
         {reason ? (
           <span role="alert" className="ms-1 text-destructive-foreground wrap-break-word">
             {reason}
+          </span>
+        ) : null}
+        {props.answerError ? (
+          <span role="alert" className="ms-1 text-destructive-foreground wrap-break-word">
+            {tx(props.answerError)}
           </span>
         ) : null}
       </span>

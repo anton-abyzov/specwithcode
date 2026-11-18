@@ -15,8 +15,10 @@ import { SPECWEAVE_SETUP_DESCRIPTION } from "./ProjectCreation";
 import { BoardSetupView } from "./shell/BoardSetup";
 import {
   SPECWEAVE_NOT_ALLOWED_WRITE,
+  SPECWEAVE_NOT_A_REPOSITORY_HINT,
   boardOffersNotNow,
   boardStoredFailure,
+  specweaveNeedsGitFirst,
   specweaveStateOf,
   type SpecweaveShownState,
 } from "./specweaveSetup.logic";
@@ -24,9 +26,6 @@ import {
 /** What the Git half of "Set up Git and SpecWeave" does, before the SpecWeave list. */
 export const GIT_SETUP_DESCRIPTION =
   "This folder is not a Git repository yet, so this first runs git init here and makes an empty first commit; none of your files are added or committed.";
-
-/** Words of the server's refusal for a folder outside Git, sent when `initGit` was not asked for. */
-const NOT_A_REPOSITORY_HINT = "Run git init here first";
 
 const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
 
@@ -81,7 +80,7 @@ export function ProjectSpecweaveSetting({
       // Asked once without Git and refused for it: the button turns into
       // "Set up Git and SpecWeave". Asked with Git and still refused, an older
       // server cannot do it, so its words show.
-      if (!withGit && message.includes(NOT_A_REPOSITORY_HINT)) {
+      if (!withGit && message.includes(SPECWEAVE_NOT_A_REPOSITORY_HINT)) {
         setOfferGit(true);
         return;
       }
@@ -192,12 +191,7 @@ export function BoardSpecweaveSetup({
   });
   const [notNowError, setNotNowError] = useState<string | null>(null);
   const local = setUp.outcome;
-  if (
-    !offerGit &&
-    gitRepository !== false &&
-    local?.state === "failed" &&
-    local.detail.includes(NOT_A_REPOSITORY_HINT)
-  ) {
+  if (!offerGit && specweaveNeedsGitFirst(local, gitRepository)) {
     setOfferGit(true);
     setUp.clear();
   }

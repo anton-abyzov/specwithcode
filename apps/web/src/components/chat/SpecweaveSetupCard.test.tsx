@@ -253,6 +253,60 @@ describe("SpecweaveSetupCard", () => {
     await render({ lastUserMessageAt: "2026-11-18T10:06:00.000Z" });
     expect(container.textContent).toBe("");
   });
+
+  it("starts a new card clean, whatever this window's press on the last one showed", async () => {
+    state.setUp.mockResolvedValue({ _tag: "Failure", cause: Cause.fail(new Error("npx failed")) });
+    await render();
+    await act(async () => button("Set up SpecWeave")!.click());
+    expect(shownState()).toBe("failed");
+    state.snapshot = {
+      specweaveState: "off",
+      specweaveSetupRequest: card({ requestId: "req-2", updatedAt: "2026-11-18T10:10:00.000Z" }),
+    };
+    await render({ toolKey: "next" });
+    expect(shownState()).toBe("asking");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("reads Git from the snapshot now, and offers it after an older server's refusal", async () => {
+    // The folder lost its .git after the card was raised.
+    state.snapshot = {
+      specweaveState: "off",
+      gitRepository: false,
+      specweaveSetupRequest: card({ gitRepository: true }),
+    };
+    await render();
+    expect(button("Set up Git and SpecWeave")).toBeDefined();
+
+    state.snapshot = { specweaveState: "off", specweaveSetupRequest: card() };
+    state.setUp.mockResolvedValueOnce({
+      _tag: "Failure",
+      cause: Cause.fail(new Error("SpecWeave needs a Git repository: Run git init here first.")),
+    });
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await render();
+    await act(async () => button("Set up SpecWeave")!.click());
+    expect(button("Set up Git and SpecWeave")).toBeDefined();
+    await act(async () => button("Set up Git and SpecWeave")!.click());
+    expect(state.setUp).toHaveBeenLastCalledWith({
+      environmentId,
+      input: { projectId, initGit: true, requestId: "req-1" },
+    });
+  });
+
+  it("announces the card when it appears and when it settles", async () => {
+    await render();
+    const announcement = () =>
+      container.querySelector('[data-specweave-announcement][aria-live="polite"]')?.textContent;
+    expect(announcement()).toBe("Set up SpecWeave to plan this");
+    state.snapshot = {
+      specweaveState: "on",
+      specweaveSetupRequest: card({ state: "on", updatedAt: "2026-11-18T10:05:00.000Z" }),
+    };
+    await render({ toolKey: "settled" });
+    expect(announcement()).toBe("SpecWeave is set up");
+  });
 });
 
 describe("SpecweaveSetupCardView", () => {
