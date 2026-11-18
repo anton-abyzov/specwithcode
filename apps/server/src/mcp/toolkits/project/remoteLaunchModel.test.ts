@@ -171,7 +171,7 @@ it.effect("keeps the baseline when this machine's routing refuses", () =>
   }),
 );
 
-it.effect("leaves a per-use baseline to the other machine when its tracks refuse here", () =>
+it.effect("picks nothing when its tracks refuse here and the baseline is held back", () =>
   Effect.gen(function* () {
     // Here the only sign-in bills per use, so no track model may start unasked.
     const keyed = [{ ...providers[0]!, auth: { status: "authenticated", type: "apiKey" } }];
