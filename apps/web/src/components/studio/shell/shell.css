@@ -2311,13 +2311,13 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   height: 28px;
   margin-left: -6px;
 }
-/* One row while it fits; the model and effort drop to their own row when it does not. */
+/* One row while it fits, from the top: when the model's controls wrap, the machine stays on their first row. */
 .sws-composer .sws-composer-foot {
   margin: 0;
   padding: 6px 2px 0 8px;
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 2px 10px;
 }

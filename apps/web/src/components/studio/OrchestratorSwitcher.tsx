@@ -1,3 +1,4 @@
+import "./shell/composer-foot.css";
 import {
   machineColorProps,
   useMachineIdentity,
