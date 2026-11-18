@@ -520,4 +520,14 @@ describe("a machine waiting to approve this device (1416)", () => {
     expect(inlineCodeShown(newMachineId)).toBe(false);
     expect(paragraphs().join(" ")).toContain(refusal);
   });
+
+  it("shows no code when too many devices wait on the machine, and says so", async () => {
+    discovery.listEnvironments.mockResolvedValue(linkedMachines);
+    const full =
+      "Too many devices are waiting for approval on Work laptop. Try again in a few minutes.";
+    await mount(true, [waitingOn({ phase: "reconnecting", error: full, traceId: null })]);
+    expect(text()).not.toContain("Waiting for approval");
+    expect(inlineCodeShown(newMachineId)).toBe(false);
+    expect(paragraphs().join(" ")).toContain(full);
+  });
 });

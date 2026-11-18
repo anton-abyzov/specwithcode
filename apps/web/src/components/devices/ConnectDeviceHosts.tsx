@@ -225,17 +225,10 @@ export function DeviceApprovalPromptHost() {
   const environmentId = usePrimaryEnvironmentId();
   const supported = useDeviceApprovalSupported(environmentId);
   const { snapshot, refresh } = useConnectDevices(environmentId, supported);
-  // What Later put off on this machine, read from storage, so a restart keeps it.
-  const [laterRead, setLaterRead] = useState<{
-    readonly machine: EnvironmentId | null;
-    readonly keys: ReadonlySet<string>;
-  }>({ machine: null, keys: NO_LATER });
-  if (laterRead.machine !== environmentId)
-    setLaterRead({
-      machine: environmentId,
-      keys: environmentId === null ? NO_LATER : laterStore.keys(environmentId),
-    });
-  const later = laterRead.machine === environmentId ? laterRead.keys : NO_LATER;
+  // What Later put off on this machine, read from storage on each render, so a
+  // restart keeps it and an entry past its 30 days lets the pop-up back.
+  const [, setLaterVersion] = useState(0);
+  const later = environmentId === null ? NO_LATER : laterStore.keys(environmentId);
   // Devices allowed while this pop-up is open, so it can say which one a code let in.
   const [allowed, setAllowed] = useState<ReadonlyArray<ConnectDevice>>([]);
   const requests =
@@ -258,7 +251,7 @@ export function DeviceApprovalPromptHost() {
       }
       onLater={() => {
         laterStore.add(environmentId, requests.map(laterKey));
-        setLaterRead({ machine: environmentId, keys: laterStore.keys(environmentId) });
+        setLaterVersion((version) => version + 1);
       }}
     />
   );
