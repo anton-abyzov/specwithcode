@@ -5708,7 +5708,7 @@ export const es: PhraseCatalog = {
   "That did not go through. Try again.": "No se pudo completar. Inténtalo de nuevo.",
   "Screen Recording and Accessibility are allowed.":
     "Grabación de pantalla y Accesibilidad están permitidas.",
-  "Partly allowed: {missing} is still off.": "Permitido en parte: {missing} sigue desactivado.",
+  "Partly allowed: {missing} is still off.": "Permitido en parte: falta activar {missing}.",
   "Needs reopening: macOS applies Screen Recording after SpecWithCode reopens.":
     "Hay que reabrir: macOS aplica Grabación de pantalla cuando SpecWithCode se vuelve a abrir.",
   "Could not check the Mac's permissions.": "No se pudieron comprobar los permisos del Mac.",

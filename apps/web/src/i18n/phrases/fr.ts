@@ -5727,7 +5727,7 @@ export const fr: PhraseCatalog = {
   "Screen Recording and Accessibility are allowed.":
     "Enregistrement de l'écran et Accessibilité sont autorisés.",
   "Partly allowed: {missing} is still off.":
-    "Partiellement autorisé : {missing} est encore désactivé.",
+    "Partiellement autorisé : il reste {missing} à activer.",
   "Needs reopening: macOS applies Screen Recording after SpecWithCode reopens.":
     "Réouverture nécessaire : macOS applique Enregistrement de l'écran après la réouverture de SpecWithCode.",
   "Could not check the Mac's permissions.": "Impossible de vérifier les autorisations du Mac.",

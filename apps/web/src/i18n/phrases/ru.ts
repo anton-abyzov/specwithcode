@@ -5677,7 +5677,7 @@ export const ru: PhraseCatalog = {
   "That did not go through. Try again.": "Не получилось. Попробуйте ещё раз.",
   "Screen Recording and Accessibility are allowed.":
     "Запись экрана и Универсальный доступ разрешены.",
-  "Partly allowed: {missing} is still off.": "Разрешено частично: {missing} ещё выключено.",
+  "Partly allowed: {missing} is still off.": "Разрешено частично. Осталось включить: {missing}.",
   "Needs reopening: macOS applies Screen Recording after SpecWithCode reopens.":
     "Нужно перезапустить: macOS применяет «Запись экрана» после повторного запуска SpecWithCode.",
   "Could not check the Mac's permissions.": "Не удалось проверить разрешения Mac.",

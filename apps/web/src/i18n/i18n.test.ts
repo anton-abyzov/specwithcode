@@ -14,6 +14,7 @@ import {
 } from "../components/access/FullDiskAccess";
 import { COMPUTER_USE_PERMISSION_COPY } from "../components/computerUse/ComputerUsePermissions";
 import { DRIVER_OPTIONS } from "../components/settings/providerDriverMeta";
+import { onboardingAgentUses } from "../onboarding/providerReadiness.logic";
 import { CHAT_OPTION_LABELS, DATE_BUCKETS, THREAD_TONE_LABELS } from "../studio/shellModel";
 import { matchLocale, resolveLocale, resolveSystemLocale, SUPPORTED_LOCALES, translate } from ".";
 import { de } from "./messages/de";
@@ -292,6 +293,28 @@ const FIRST_RUN_PHRASES = [
         ),
       ].map((match) => JSON.parse(match[1]!) as string),
     ),
+    // Both arms of `tx(condition ? "..." : "...")`.
+    ...FIRST_RUN_PHRASE_FILES.flatMap((file) =>
+      [
+        ...NodeFS.readFileSync(NodePath.join(SRC_DIR, file), "utf8").matchAll(
+          /\btx\(\s*[^"'`()]*?\?\s*("(?:[^"\\]|\\.)*")\s*:\s*("(?:[^"\\]|\\.)*")/g,
+        ),
+      ].flatMap((match) => [JSON.parse(match[1]!) as string, JSON.parse(match[2]!) as string]),
+    ),
+    // The Agents step's "uses" line for every agent it knows, and the fallback.
+    ...[
+      "codex",
+      "claudeAgent",
+      "cursor",
+      "grok",
+      "muse",
+      "opencode",
+      "pi",
+      "antigravity",
+      "gemini",
+      "github-copilot-cli",
+      "an-agent-it-does-not-know",
+    ].map(onboardingAgentUses),
     // Shown through a variable, so the scan above cannot see them.
     ...Object.values(FULL_DISK_ACCESS_UNLOCK_PHRASES),
     FULL_DISK_ACCESS_RISK_PHRASE,
