@@ -11,7 +11,7 @@
      fix       the Fix dialog for m1 (`&guard=1`: linux-mini still follows m1's coordinator;
                `&alone=1`: m1 is alone in its list; `&problem=permission`: m1 cannot be
                changed from this window)
-     box       m5's message box, `&state=` routes | this-offline | unloaded | not-ready |
+     box       m5's message box, `&state=` routes | unloaded | not-ready |
                waiting | read-only | files | refused | moved | silent | silent-files
      switched  m5 after it continued the coordinator while m4 was offline
      settings  Settings > Machines label of a separate project
@@ -171,7 +171,6 @@ const reachOf = (key: string): MachineRowReach =>
 /** What the window knows of the machines, for one box state. */
 interface BoxConditions {
   /** m5, the machine shown, is connected in this window. */
-  readonly copyOnline: boolean;
   /** This window has opened Atlas on m4, the coordinator's machine. */
   readonly mainLoaded: boolean;
   /** Minutes m4 has been silent; null while it answers. */
@@ -185,7 +184,6 @@ interface BoxConditions {
   readonly refused: string | null;
 }
 const ANSWERS: BoxConditions = {
-  copyOnline: true,
   mainLoaded: true,
   silentMinutes: null,
   takeoverReady: true,
@@ -198,7 +196,6 @@ const SILENT = ["waiting", "silent", "silent-files", "not-ready"];
 /** Each box state of the page as conditions; files, moves and refusals come from the page. */
 const conditionsFor = (state: string): BoxConditions => ({
   ...ANSWERS,
-  copyOnline: state !== "this-offline",
   mainLoaded: state !== "unloaded",
   silentMinutes: SILENT.includes(state) ? (state === "waiting" ? 3 : 12) : null,
   takeoverReady: state !== "not-ready",
@@ -207,8 +204,7 @@ const conditionsFor = (state: string): BoxConditions => ({
 
 /** The machines as `useMakeMain` sees them. */
 const machinesOf = (input: BoxConditions): MakeMainMachines => ({
-  connected: (id) =>
-    id === "m5" ? input.copyOnline : !(id === "m4" && input.silentMinutes !== null),
+  connected: (id) => !(id === "m4" && input.silentMinutes !== null),
   unreachableSince: (id) =>
     id === "m4" && input.silentMinutes !== null ? NOW - input.silentMinutes * MINUTE : null,
   now: NOW,
@@ -547,8 +543,7 @@ function BoxPage() {
         meta={
           <Switcher
             label={named.chip}
-            // `this-offline`: the machine shown is not connected in this window.
-            connected={conditions.copyOnline}
+            connected
             current={current}
             onView={setCurrent}
             offers={offer ? [offer] : []}

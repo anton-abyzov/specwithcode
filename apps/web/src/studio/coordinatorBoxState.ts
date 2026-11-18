@@ -11,8 +11,6 @@ import { sendButtonText } from "./routeToMain";
 export type CoordinatorBoxKind =
   /** The coordinator's machine answers and this window may operate it. */
   | "routes"
-  /** The machine shown is not connected in this window, so nothing can continue on it. */
-  | "this-offline"
   /** This window has not opened the project on the coordinator's machine. */
   | "unloaded"
   /** Silent for 10 minutes or more, but the machine shown cannot take the coordinator. */
@@ -111,13 +109,10 @@ export function coordinatorBoxState(input: CoordinatorBoxInput): CoordinatorBoxS
   });
 
   // The rules that keep "Continue here" off come first, as `makeMainPath` orders them.
-  if (offer?.block === "copy-offline" || offer?.block === "unloaded")
-    return state(
-      offer.block === "unloaded" ? "unloaded" : "this-offline",
-      offer.reason ?? placeholder,
-      {},
-      { enabled: false, note: offer.note },
-    );
+  // A machine shown that is not connected never gets here: the page keeps its own
+  // disconnected line and blocked box, decided before the coordinator line.
+  if (offer?.block === "unloaded")
+    return state("unloaded", offer.reason ?? placeholder, {}, { enabled: false, note: offer.note });
   if (offer?.kind === "takeover")
     return state(
       "silent",

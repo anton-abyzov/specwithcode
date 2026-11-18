@@ -29,11 +29,6 @@ const offers = {
     { kind: "blocked", main, reason: "waiting", waitMs: 3.5 * 60_000 },
     names,
   )!,
-  thisOffline: mainOffer(
-    "m5:p",
-    { kind: "blocked", main, reason: "copy-offline", waitMs: 0 },
-    names,
-  )!,
   unloaded: mainOffer("m5:p", { kind: "unloaded", mainEnvironmentId: "m4" as never }, names)!,
   notReady: mainOffer(
     "m5:p",
@@ -69,12 +64,7 @@ describe("coordinatorBoxState: which state applies (AC-08 order)", () => {
     movedTo: "linux-mini",
     refused: "The coordinator is paused",
   };
-  it("first says this page's machine is not connected", () => {
-    expect(coordinatorBoxState(input({ ...all, offer: offers.thisOffline })).kind).toBe(
-      "this-offline",
-    );
-  });
-  it("then that this window has not opened the project on the coordinator's machine", () => {
+  it("first says that this window has not opened the project on the coordinator's machine", () => {
     expect(coordinatorBoxState(input({ ...all, offer: offers.unloaded })).kind).toBe("unloaded");
   });
   it("then lets a coordinator silent for 10 minutes or more continue here", () => {
@@ -185,14 +175,6 @@ describe("coordinatorBoxState: what each state says and offers", () => {
     expect(box.continueHere?.enabled).toBe(true);
   });
 
-  it("this machine offline: both greyed, the line says to connect it", () => {
-    const box = coordinatorBoxState(input({ offer: offers.thisOffline, routes: false }));
-    expect(read(box.line)).toBe("Connect M5 first to continue the coordinator there.");
-    expect(box.send).toEqual({ text: "Send", enabled: false, continues: false });
-    expect(box.continueHere?.enabled).toBe(false);
-    expect(read(box.continueHere?.note ?? null)).toBe("M5 offline");
-  });
-
   it("unloaded: both greyed, the line says to connect the coordinator's machine", () => {
     const box = coordinatorBoxState(input({ offer: offers.unloaded, routes: false }));
     expect(read(box.line)).toBe(
@@ -278,7 +260,6 @@ describe("coordinatorBoxState: Send never names a machine (AC-02)", () => {
     { offer: offers.readOnly, mayOperate: false, routes: false },
     { hasFiles: true },
     { refused: "No" },
-    { offer: offers.thisOffline, routes: false },
     { offer: offers.unloaded, routes: false },
     { offer: offers.notReady, machineConnected: false, routes: false },
     { machine: "linux-mini", movedTo: "linux-mini" },

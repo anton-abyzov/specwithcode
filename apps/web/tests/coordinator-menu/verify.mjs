@@ -534,12 +534,6 @@ try {
       // AC-08, row by row.
       const blocked = [
         {
-          state: "this-offline",
-          line: "Connect m5 first to continue the coordinator there.",
-          continueEnabled: false,
-          note: "m5 offline",
-        },
-        {
           state: "unloaded",
           line: "Connect m4 first. This window has not opened Atlas on m4, so it cannot hand the coordinator off yet.",
           continueEnabled: false,
@@ -686,9 +680,6 @@ try {
         page = await open("case=box&state=routes", width, 720);
         await page.locator("[data-workers-only]").waitFor();
         const order = [
-          [{ copyOnline: false, mainLoaded: false }, "this-offline"],
-          [{ copyOnline: false, silentMinutes: 12 }, "this-offline"],
-          [{ copyOnline: false, mayOperate: false, hasFiles: true }, "this-offline"],
           [{ mainLoaded: false, hasFiles: true }, "unloaded"],
           [{ mainLoaded: false, silentMinutes: 12 }, "unloaded"],
           [{ silentMinutes: 12, hasFiles: true }, "silent"],
