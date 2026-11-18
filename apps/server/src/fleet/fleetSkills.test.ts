@@ -1172,6 +1172,77 @@ describe("the primary asking fleet machines to install a skill", () => {
     expect(String(get[0])).toContain(`coordinatorEnvironmentId=${PRIMARY}`);
   });
 
+  const githubAsk: FleetSkillAsk = {
+    ...userAsk,
+    pin: false,
+    contentHash: "a".repeat(64),
+    source: {
+      kind: "github",
+      path: "skills/sw-do/SKILL.md",
+      branch: "main",
+      commit: "b".repeat(40),
+    },
+  };
+
+  it("sends a GitHub source only to a machine that says it takes one", async () => {
+    const { fetcher, link, targets } = await primary([
+      {
+        id: "m1",
+        up: [CONNECT],
+        capabilities: { fleetSkillUpdate: true },
+        answer: installing({ phase: "installed", installedVersion: "1.2.3" }),
+      },
+    ]);
+    const refused = await runFleetSkillInstall({
+      link,
+      target: targets[0]!,
+      coordinatorEnvironmentId: PRIMARY,
+      ask: githubAsk,
+      ...fast,
+    }).catch((error: unknown) => error);
+    expect(refused).toMatchObject({ reason: "unsupported" });
+    expect(String((refused as Error).message)).toMatch(/update it first/);
+    expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
+  it("carries the GitHub source and reports how vskill ran and what it replaced", async () => {
+    const previous = {
+      version: "1.2.2",
+      commit: "c".repeat(40),
+      contentHash: "d".repeat(64),
+      branch: "main",
+      path: "skills/sw-do/SKILL.md",
+    };
+    const { fetcher, link, targets } = await primary([
+      {
+        id: "m1",
+        up: [CONNECT],
+        capabilities: { fleetSkillUpdate: true, fleetSkillGithubSource: true },
+        answer: installing({
+          phase: "installed",
+          installedVersion: "1.2.3",
+          via: "npx",
+          previous,
+          action: "install",
+        }),
+      },
+    ]);
+    const outcome = await runFleetSkillInstall({
+      link,
+      target: targets[0]!,
+      coordinatorEnvironmentId: PRIMARY,
+      ask: { ...githubAsk, expectedHash: "f".repeat(64) },
+      ...fast,
+    });
+    expect(outcome).toMatchObject({ result: "installed", via: "npx", previous, removed: false });
+    const post = fetcher.mock.calls.find(([, init]) => init?.method === "POST")!;
+    expect(JSON.parse(String(post[1]!.body))).toMatchObject({
+      source: githubAsk.source,
+      contentHash: githubAsk.contentHash,
+      expectedHash: "f".repeat(64),
+    });
+  });
+
   it("names each refusal: unsupported, unauthorized, the machine's own, a failed install", async () => {
     const { link, targets } = await primary([
       { id: "m1", up: [CONNECT], capabilities: {}, answer: () => Response.json({}) },

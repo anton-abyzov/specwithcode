@@ -367,6 +367,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       ? props.triggerAriaLabel.replace(/\.? Change model$/, `, ${selectedUsageLabel}. Change model`)
       : props.triggerAriaLabel;
 
+  // The chip's tooltip and the usage ring's both say whose account it is.
+  const accountTipLine = accountLine ? (
+    <span className="break-words text-muted-foreground" data-model-chip-account="">
+      {accountLine}
+    </span>
+  ) : null;
   const tooltip = state ? (
     <ModelStateTip
       current={currentLabel}
@@ -380,11 +386,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       {selectedUsageText ? (
         <span className="text-muted-foreground">{selectedUsageText}</span>
       ) : null}
-      {accountLine ? (
-        <span className="break-words text-muted-foreground" data-model-chip-account="">
-          {accountLine}
-        </span>
-      ) : null}
+      {accountTipLine}
     </span>
   ) : (
     triggerTooltipContent
@@ -637,6 +639,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               <TooltipPopup side="top">
                 <span className="flex max-w-72 flex-col gap-0.5">
                   <span>{selectedUsageText ?? selectedUsageLabel}</span>
+                  {accountTipLine}
                   <span className="text-muted-foreground">{tx("Click for usage and resets")}</span>
                 </span>
               </TooltipPopup>

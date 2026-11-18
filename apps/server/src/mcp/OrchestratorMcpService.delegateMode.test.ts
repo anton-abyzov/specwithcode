@@ -27,6 +27,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import { launchedOrThrow } from "./toolkits/orchestrator/requestSpecweaveSetup.ts";
 
 // A worker sent to a provider that lacks the asked mode runs Supervised
 // (RuntimePolicy.ts providerRuntimeMode); delegate_task must say so.
@@ -214,14 +215,16 @@ describe("delegate_task on a provider without the asked mode", () => {
       );
       return yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const result = yield* service.delegateTask(scope, {
-          task: "Review the diff.",
-          target: { providerInstanceId: input.instanceId, model: input.model },
-          ...(input.runtimeMode === undefined ? {} : { runtimeMode: input.runtimeMode }),
-          increment: "none",
-          mode: "async",
-          clientRequestId: `delegate-mode-${input.parentMode}-${input.runtimeMode ?? "inherit"}`,
-        });
+        const result = launchedOrThrow(
+          yield* service.delegateTask(scope, {
+            task: "Review the diff.",
+            target: { providerInstanceId: input.instanceId, model: input.model },
+            ...(input.runtimeMode === undefined ? {} : { runtimeMode: input.runtimeMode }),
+            increment: "none",
+            mode: "async",
+            clientRequestId: `delegate-mode-${input.parentMode}-${input.runtimeMode ?? "inherit"}`,
+          }),
+        );
         const [request] = (yield* Ref.get(dispatched)) as ReadonlyArray<{
           readonly runtimeMode: RuntimeMode;
         }>;

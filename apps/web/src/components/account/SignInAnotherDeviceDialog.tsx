@@ -226,7 +226,7 @@ export function SignInAnotherDeviceDialog({
                   className="font-mono uppercase tracking-[0.2em]"
                   maxLength={9}
                   onChange={(event) => {
-                    setCode(event.target.value);
+                    setCode(event.target.value.toUpperCase());
                     if (!busy) setApproval({ kind: "idle" });
                   }}
                   placeholder="ABC-DEF"

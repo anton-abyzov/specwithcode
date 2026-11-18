@@ -1,0 +1,30 @@
+@import "../../src/index.css";
+@source "../../src";
+@source ".";
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+}
+.fixture-grid {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+}
+.fixture-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.fixture-row > b {
+  flex: none;
+  width: 7.5rem;
+  font: 500 11px/1.2 system-ui;
+  color: var(--muted-foreground);
+}
+/* The coordinator's message box foot (CoordinatorComposer), so the chip gets its real rules. */
+.fixture-row > .sws-composer {
+  flex: 1;
+  min-width: 0;
+}

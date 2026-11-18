@@ -389,3 +389,13 @@ describe("the waiting device with several machines (1406)", () => {
     ).not.toContain("ID is");
   });
 });
+
+describe("a typed code reads in capitals (1416)", () => {
+  it("shows lowercase typing in capitals and still allows the device", async () => {
+    const log = await open([first, second]);
+    await type("p4r-t9w");
+    expect(codeBox().value).toBe("P4R-T9W");
+    await allow();
+    expect(log).toEqual(["approve request-b"]);
+  });
+});

@@ -45,7 +45,10 @@ import {
   OrchestratorMcpThreadsStopAllInput,
   ThreadMetadataMcpUpdateInput,
   ThreadMetadataMcpUpdateResult,
+  SPECWEAVE_SETUP_INSTRUCTION,
+  SpecweaveNeededLaunchResult,
 } from "@specweave-studio/contracts";
+import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as HandoffMode from "../../../handoff/HandoffMode.ts";
@@ -89,9 +92,13 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 export const DelegateTaskTool = Tool.make("delegate_task", {
   description:
     "Needs an agent running inside a SpecWithCode thread. Delegate one task to a SpecWithCode-owned child of THIS thread (a coordinator's child is a worker; any other thread's child is its subagent) and run it with only the supplied task prompt, without copying parent conversation history. A model change is not a delegation: to carry this thread's work on another model use studio_thread_configure with continueWith, unless the user asks for a separate thread. Choose providers and models from orchestrator_capabilities, which uses the same live catalog as the composer. Prefer native subagent tools for same-provider work only when they support the chosen model. Use this for any model missing from the native tool, including same-provider work, for cross-provider work, or for explicitly SpecWithCode-owned child tasks. For a code review pass taskClass 'review' and no model: the app picks the reviewer from the project's reviewer order (Settings > Adversarial review), another model family than this thread's, narrowed by the increment's spec.md `## Review` policy, and refuses with each reason instead of substituting a same-family model; the result's review field names the reviewer and anything skipped, so tell the user. Name a model only when the user asks for that one. For every SpecWithCode delegated review round, call delegate_task again with the original brief, prior findings, responses, and unresolved objections in the task prompt. Pass title; it becomes the child thread's name and stays, so name the task's subject, not this round, its deadline or a PR number. End the task prompt by asking for a final result in your response style (a plain short message when that is enough). Track each round by its own taskId (internal; when talking to the user, refer to the child with the result's threadLink copied verbatim, and never build a thread link by hand) and use a distinct clientRequestId per round, stable across retries of that round. The childThreadId is backing storage, not the target for starting another delegated review round through studio_thread_send. Provider, model, model options (see orchestrator_capabilities), runtime mode, and interaction mode inherit unless target overrides them. When the user names a reasoning effort, pass it as target.effort (e.g. 'xhigh' for extra high); it maps to the model's nearest supported level, and unknown target keys are rejected. Prefer mode='async' for long work; mode='wait' blocks until completion or timeout. timeoutMs on mode=wait is only the parent's wait budget and does not cancel the child. waitTimedOut on that wait call means the timeout fired; keep that taskId and read status on later task_status. An async child's completion wakes this thread through a notification, steered into active turns where supported or queued otherwise, so end the turn instead of polling or spawning watchers; use task_status only when the result is needed mid-turn. " +
-    INCREMENT_LAUNCH_INSTRUCTION,
+    INCREMENT_LAUNCH_INSTRUCTION +
+    " " +
+    SPECWEAVE_SETUP_INSTRUCTION +
+    ' With increment "new" there it starts nothing and returns launched false, needs "specweave".',
   parameters: OrchestratorMcpDelegateTaskInput,
-  success: OrchestratorMcpDelegateTaskResult,
+  // increment "new" without SpecWeave starts nothing (1396 AC-06).
+  success: Schema.Union([OrchestratorMcpDelegateTaskResult, SpecweaveNeededLaunchResult]),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies,
@@ -241,9 +248,12 @@ const AskUserTool = Tool.make("ask_user", {
 export const CreateThreadsTool = Tool.make("create_threads", {
   description:
     "Needs an agent running inside a SpecWithCode thread. Create one or more ORDINARY TOP-LEVEL SpecWithCode conversations. This is not delegation and does not create child agents/subagents. For delegated work, choose models from orchestrator_capabilities. Prefer native subagents only when they support the chosen model; otherwise call delegate_task, including for same-provider work. Use create_threads for a batch of separate top-level threads sharing this checkout. Prefer studio_thread_launch for a single thread. Both require the user to request separate/new/top-level threads or conversations. Give each thread a title that names the lasting goal it owns. Each entry may override provider, model, options, effort (target.effort, e.g. 'xhigh'), runtime mode, and interaction mode; omitted settings inherit. Project, branch, and worktree always inherit and cannot be overridden here. For independent implementation, use studio_thread_launch and let the project's Use worktrees setting decide the workspace; never ask the agent to create a worktree or clone in its prompt. Each run of a new thread that completes or fails wakes this thread, so end the turn instead of polling. " +
-    INCREMENT_LAUNCH_INSTRUCTION,
+    INCREMENT_LAUNCH_INSTRUCTION +
+    " " +
+    SPECWEAVE_SETUP_INSTRUCTION +
+    ' With increment "new" there it starts nothing and returns launched false, needs "specweave".',
   parameters: OrchestratorMcpCreateThreadsInput,
-  success: OrchestratorMcpCreateThreadsResult,
+  success: Schema.Union([OrchestratorMcpCreateThreadsResult, SpecweaveNeededLaunchResult]),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies,

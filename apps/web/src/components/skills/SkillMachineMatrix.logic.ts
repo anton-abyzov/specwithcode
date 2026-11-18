@@ -79,8 +79,9 @@ function columnState(machine: SkillMatrixMachine): SkillMatrixColumnState {
   if (!machine.linked) return "unlinked";
   if (machine.error) return SIGN_IN.test(machine.error) ? "needs-sign-in" : "failed";
   if (machine.pending || !machine.successful || !machine.snapshot) return "checking";
-  return machine.snapshot.providers.every((provider) =>
-    ["ok", "unsupported"].includes(provider.state),
+  // A scan that could not open some skill folders reads like an unfinished one.
+  return machine.snapshot.providers.every(
+    (provider) => ["ok", "unsupported"].includes(provider.state) && provider.incomplete !== true,
   )
     ? "read"
     : "partial";

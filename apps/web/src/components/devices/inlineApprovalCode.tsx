@@ -4,7 +4,7 @@
  */
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useTx } from "../../i18n";
 import { Button } from "../ui/button";
@@ -82,6 +82,13 @@ export function DeviceApprovalCode({
   );
 }
 
+/**
+ * The floating card's layer: above dialogs and their backdrop (z-50) and media
+ * (z-[60]), below toasts, so the code stays readable while a dialog is open (1416).
+ */
+export const FLOATING_CODE_LAYER_CLASS =
+  "pointer-events-none fixed inset-x-0 top-3 z-[70] flex flex-col items-center gap-2";
+
 /** Machines whose code a join or first-run card already shows, so the floating card stays away. */
 const inlineCodes = new Map<string, number>();
 const inlineListeners = new Set<() => void>();
@@ -101,8 +108,33 @@ const changeInline = (environmentId: string, by: 1 | -1) => {
 };
 
 /**
+ * Whether this code is on screen. Only then does it stand in for the floating
+ * card: a collapsed panel that keeps its rows mounted, or a row scrolled out of
+ * view, leaves the floating card up (1416). Counts as on screen until the
+ * browser says otherwise, and always where there is no IntersectionObserver.
+ */
+function useCodeOnScreen(ref: { readonly current: HTMLElement | null }) {
+  const [onScreen, setOnScreen] = useState(true);
+  useEffect(() => {
+    const code = ref.current?.querySelector("[data-device-waiting-code]") ?? ref.current;
+    if (!code || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries.at(-1);
+        if (entry) setOnScreen(entry.isIntersecting && entry.intersectionRatio > 0.9);
+      },
+      { threshold: [0, 0.9, 1] },
+    );
+    observer.observe(code);
+    return () => observer.disconnect();
+  }, [ref]);
+  return onScreen;
+}
+
+/**
  * The code to type on a machine, inside a card that is waiting on it (1327):
- * the join card and first run. The floating card hides that machine meanwhile.
+ * the join card and first run. The floating card hides that machine while
+ * this code is on screen.
  */
 export function InlineDeviceApprovalCode({
   environmentId,
@@ -113,13 +145,17 @@ export function InlineDeviceApprovalCode({
   machine: string;
   code: string;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const onScreen = useCodeOnScreen(ref);
   useEffect(() => {
+    if (!onScreen) return;
     changeInline(environmentId, 1);
     return () => changeInline(environmentId, -1);
-  }, [environmentId]);
+  }, [environmentId, onScreen]);
   const deviceId = useOwnDeviceShortId();
   return (
     <div
+      ref={ref}
       role="status"
       className="rounded-lg border border-border bg-muted/40 p-3"
       data-inline-device-approval={environmentId}

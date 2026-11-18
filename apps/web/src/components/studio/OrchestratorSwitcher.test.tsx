@@ -563,9 +563,12 @@ it("shows a nickname as typed, never trimming its owner", async () => {
       />,
     ),
   );
-  const name = container.querySelector<HTMLElement>(".sws-host-name");
-  expect(name?.textContent).toBe("On Anna's Air");
-  expect(name?.title).toBe("On Anna's Air (Anna's MacBook Air)");
+  expect(container.querySelector(".sws-host-name")?.textContent).toBe("On Anna's Air");
+  // No native tooltip floats over the message box; the computer's name is read out instead.
+  expect(container.querySelector(".sws-host-name")?.hasAttribute("title")).toBe(false);
+  expect(container.querySelector("[data-orchestrator-host]")?.textContent).toBe(
+    " (Anna's MacBook Air)",
+  );
 });
 
 it("offers one Send to another machine and Leave, even with one machine", async () => {
