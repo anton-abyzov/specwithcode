@@ -20,6 +20,7 @@ import {
 import type { MachineReachState } from "@specweave-studio/client-runtime/connection";
 import { hostDownWord } from "../lib/machineStatus";
 import { approvalWaitLabel } from "./accessWait";
+import { blockerAsk } from "@specweave-studio/shared/attentionAsk";
 
 /** The slice of a provider instance that names it; `ProviderInstanceEntry` satisfies it. */
 export type ProviderNameSource = {
@@ -630,6 +631,10 @@ export function threadTone(thread: EnvironmentThreadShell, hostOffline = false):
   return group === "Working" ? "working" : "idle";
 }
 
+/** "Reply needed · Do you accept this plan?": what the person must do, then what about. */
+const withAsk = (word: string, ask: string | null | undefined): string =>
+  ask ? `${word} · ${ask}` : word;
+
 /**
  * The word a row leads its second line with when the thread wants something
  * or is busy; a quiet thread says nothing and lets its model speak.
@@ -648,7 +653,8 @@ export function threadStatusWord(
   const status = resolveSidebarThreadStatus(thread);
   if (status === "approval" && thread.source?.pendingRuntimeRequest !== null)
     return approvalWaitLabel(thread);
-  if (status === "input" && thread.source?.pendingRuntimeRequest !== null) return "Answer needed";
+  if (status === "input" && thread.source?.pendingRuntimeRequest !== null)
+    return withAsk("Answer needed", thread.source?.pendingRuntimeRequest?.prompt);
   const dependency = threadDependencyWait(thread);
   if (dependency) return dependency;
   if (status === "limited") return "Usage limit reached";
@@ -656,7 +662,10 @@ export function threadStatusWord(
   // ask the reader to act, so the word agrees with the Idle group it sits in.
   if (status === "failed") return "Run failed";
   if (threadHeldQueue(thread) !== null) return "Queue held";
-  if (threadBlocker(thread) !== null) return "Blocked";
+  // A report's Blockers part is a decision only the person can make: say so,
+  // and what it is, rather than "Blocked", which reads as broken work.
+  const blocker = threadBlocker(thread);
+  if (blocker !== null) return withAsk("Reply needed", blockerAsk(blocker));
   const tone = threadTone(thread);
   if (tone === "waiting") return thread.hasActionableProposedPlan ? "Plan ready" : "Needs you";
   return tone === "working" ? "Working" : null;

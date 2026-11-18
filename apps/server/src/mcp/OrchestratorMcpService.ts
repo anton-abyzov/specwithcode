@@ -966,6 +966,23 @@ function launchIncrementFor(
   );
 }
 
+/**
+ * Whether a delegated child's open question cards are its lead's to settle,
+ * read the way the app's attention does (`subagentQuestionWait` in
+ * client-runtime): a worker's own subagents report to it, but a project
+ * coordinator's workers report to the person, so their cards stay the person's.
+ * The coordinator is known by its default id or the project's own setting.
+ */
+export function childQuestionsGoToLead(
+  leadThreadId: string,
+  project: Parameters<typeof isProjectCoordinatorThreadId>[1],
+): boolean {
+  return (
+    !leadThreadId.startsWith("project-coordinator:") &&
+    !isProjectCoordinatorThreadId(leadThreadId, project)
+  );
+}
+
 /** `heldQueuedMessages` for a thread whose queue holds messages; nothing otherwise. */
 export function heldQueuedMessagesField(
   runs: ReadonlyArray<Pick<OrchestrationV2Run, "status" | "queueHeld">>,
@@ -2456,6 +2473,25 @@ const make = Effect.gen(function* () {
             null);
       const resultTransfer = resultTransfers.at(-1) ?? null;
       const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
+      // The child's own open question cards: its result may not name them,
+      // and the app leaves them to this lead (see subagentQuestionWait). A
+      // coordinator's worker asks the person, so the coordinator is not told.
+      const childQuestions = scope.thread.threadId.startsWith("project-coordinator:")
+        ? []
+        : yield* openMessageQuestions(task.childThreadId).pipe(
+            Effect.orElseSucceed(() => [] as const),
+          );
+      // The project is read only for open cards; an unreadable one tells the
+      // lead nothing, so the person keeps the cards.
+      const leadProject =
+        childQuestions.length === 0
+          ? Option.none()
+          : yield* requireProject(parentProjection.thread.projectId).pipe(Effect.option);
+      const openQuestions =
+        Option.isSome(leadProject) &&
+        childQuestionsGoToLead(scope.thread.threadId, leadProject.value)
+          ? childQuestions
+          : [];
       const response = {
         taskId: task.id,
         childThreadId: task.childThreadId,
@@ -2484,6 +2520,7 @@ const make = Effect.gen(function* () {
             : subagentResultForRun(childProjection, terminalRun).text
           : null,
         latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
+        ...(openQuestions.length > 0 ? { openQuestions } : {}),
         waitTimedOut,
       } satisfies OrchestratorMcpDelegateTaskResult;
       if (

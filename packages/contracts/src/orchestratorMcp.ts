@@ -455,6 +455,18 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   ),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
+  openQuestions: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        requestId: RuntimeRequestId,
+        header: Schema.String,
+        question: Schema.String,
+      }),
+    ).annotate({
+      description:
+        "Questions your subagent asked with ask_user that are still open. They are yours to settle, not the user's: the app stops showing them as waiting on the user once you finish a turn after the child ended. Answer one with studio_pending_request_respond (or studio_thread_send with answersRequestIds), or put a decision only the user can make in your own report's Blockers. Omitted when none are open, and always for a project coordinator: its workers' questions are the user's.",
+    }),
+  ),
   waitTimedOut: Schema.Boolean.annotate({
     description:
       "True only on that mode=wait call when timeoutMs elapsed. The timeout does not cancel the child. Later task_status reads return false and use status for liveness.",
@@ -1418,7 +1430,13 @@ export const OrchestratorMcpRequestAccessInput = Schema.Struct({
 export type OrchestratorMcpRequestAccessInput = typeof OrchestratorMcpRequestAccessInput.Type;
 
 export const OrchestratorMcpRequestAccessResult = Schema.Struct({
-  status: Schema.Literals(["allowed", "denied", "cancelled", "timed_out", "not_applicable"]).annotate({
+  status: Schema.Literals([
+    "allowed",
+    "denied",
+    "cancelled",
+    "timed_out",
+    "not_applicable",
+  ]).annotate({
     description:
       "allowed: use what you asked for. denied: the user said no; do not ask again for the same thing in this turn. cancelled: the request ended with the run. timed_out: the user did not answer in time. not_applicable: nothing to grant on this machine (a permission off macOS); the failure has another cause.",
   }),
