@@ -24,6 +24,7 @@ vi.mock("../ui/tooltip", async () => {
 
 const state = vi.hoisted(() => ({
   permitted: true,
+  mayWrite: true,
   connected: true,
   query: {
     data: null as unknown,
@@ -41,10 +42,19 @@ const state = vi.hoisted(() => ({
 vi.mock("../../studio/projectWorkspace", () => ({
   projectWorkspace: { nativeConnections: state.request, nativeConnectionApply: {} },
 }));
+vi.mock("./BuiltInToolsBlock", () => ({
+  BuiltInToolsBlock: () => <section data-testid="built-in-tools" />,
+}));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.apply }));
-vi.mock("../../state/session", () => ({ useEnvironmentScope: () => state.permitted }));
+vi.mock("../../state/session", () => ({
+  useEnvironmentScope: (_id: string, scope: string) =>
+    state.permitted && (scope === "filesystem:read" || state.mayWrite),
+}));
 vi.mock("../../state/environments", () => ({
-  useEnvironment: () => ({ connection: { phase: state.connected ? "connected" : "available" } }),
+  useEnvironment: () => ({
+    label: "Mac",
+    connection: { phase: state.connected ? "connected" : "available" },
+  }),
   useEnvironments: () => ({ environments: [] }),
 }));
 vi.mock("../../state/query", () => ({
@@ -84,6 +94,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.clearAllMocks();
   state.permitted = true;
+  state.mayWrite = true;
   state.connected = true;
   state.query = { data: snapshot, error: null, isPending: false, refresh: vi.fn() };
   state.scope = { kind: "all" };
@@ -102,6 +113,30 @@ const renderPanel = () =>
   act(() => {
     renderer = create(<NativeConnectionsPanel environmentId={mac} projectId={projectId} />);
   });
+const renderTab = () =>
+  act(() => {
+    renderer = create(<NativeConnectionsPanel environmentId={mac} />);
+  });
+const labelled = (label: string) =>
+  renderer.root.findAll((n) => n.type === "button" && n.props["aria-label"] === label)[0]!;
+const named = (label: string) =>
+  renderer.root
+    .findAllByType("button")
+    .find((b) => JSON.stringify(b.props.children) === JSON.stringify(label))!;
+const byTestId = (id: string) => renderer.root.findAll((n) => n.props["data-testid"] === id);
+/** The matrix sits behind "Compare by AI tool"; the plain list is the default view. */
+const compare = () => act(() => named("Compare by AI tool").props.onClick());
+const entry = (provider: "codex" | "claude", name: string, more: Record<string, unknown> = {}) => ({
+  id: `${provider}:${provider}-user:${name}`,
+  name,
+  provider,
+  sourceId: `${provider}-user`,
+  scope: "user",
+  transport: "http",
+  state: "configured",
+  shadowed: false,
+  ...more,
+});
 
 it.each(["offline", "denied"])(
   "does not issue discovery or expose cached data when %s",
@@ -145,7 +180,10 @@ it("edits directly without preview on a machine that predates managing servers",
     ],
   };
   await renderPanel();
-  expect(text()).not.toContain("Add server");
+  expect(text()).not.toContain("Enter details by hand");
+  // An older machine cannot preview, so the list offers no edits of its own.
+  expect(labelled("Turn on: docs")).toBeUndefined();
+  await compare();
   // Without the manage set, the details carry the quick enable.
   await act(() =>
     renderer.root
@@ -185,6 +223,7 @@ it("previews a change, saves it after review, and offers Undo", async () => {
     ],
   };
   await renderPanel();
+  await compare();
   const byLabel = (label: string) =>
     renderer.root.findAll((n) => n.type === "button" && n.props["aria-label"] === label)[0]!;
   await act(() => byLabel("docs Cursor details").props.onClick());
@@ -245,4 +284,160 @@ it("asks for a machine when none is connected", async () => {
   });
   expect(text()).toContain("Connect a machine to see its MCP servers.");
   expect(state.request).not.toHaveBeenCalled();
+});
+
+it("shows the plain list first and keeps the matrix one click away, empty or not", async () => {
+  await renderTab();
+  expect(text()).toContain("Your servers on Mac");
+  expect(text()).toContain("No MCP servers on Mac yet");
+  expect(byTestId("connection-matrix")).toEqual([]);
+  expect(byTestId("built-in-tools")).toHaveLength(1);
+  expect(named("Compare by AI tool").props["aria-pressed"]).toBe(false);
+  await compare();
+  expect(byTestId("connection-matrix")).toHaveLength(1);
+  expect(named("Compare by AI tool").props["aria-pressed"]).toBe(true);
+  await compare();
+  expect(byTestId("server-list-empty")).toHaveLength(1);
+});
+it("keeps the sentence about declarations under About this list", async () => {
+  await renderTab();
+  const about = byTestId("server-list-about")[0]!;
+  const sentence = "No MCP declarations found in the inspected configuration files.";
+  expect(JSON.stringify(renderer.toJSON()).split(sentence)).toHaveLength(2);
+  expect(about.findAll((n) => n.type === "p" && n.children.includes(sentence))).toHaveLength(1);
+  expect(text()).toContain("It cannot tell whether a server is signed in or running.");
+});
+it("lists a server once with its kind, its tools and where other entries come from", async () => {
+  state.query.data = {
+    ...snapshot,
+    plugins: [],
+    connections: [
+      entry("codex", "linear"),
+      entry("claude", "linear", { state: "disabled", parked: true }),
+      entry("codex", "figma", { plugin: "Figma", transport: "stdio" }),
+      entry("claude", "notes", { state: "disabled", parked: true }),
+    ],
+  };
+  await renderTab();
+  const rows = byTestId("server-row");
+  expect(rows).toHaveLength(3);
+  const shown = (index: number) =>
+    rows[index]!.findAll((n) => typeof n.type === "string")
+      .flatMap((n) => n.children.filter((child) => typeof child === "string"))
+      .join(" ");
+  expect(shown(0)).toContain("figma");
+  expect(shown(0)).toContain("Program on this machine");
+  // A plugin's entry says where it comes from and is not edited from the list.
+  expect(text()).toContain("Codex: from the Figma plugin");
+  expect(labelled("Remove: figma")).toBeUndefined();
+  expect(text()).toContain("Web address");
+  // Off in one of two tools names the tool; off everywhere marks the row.
+  expect(text()).toContain("Claude Code, off");
+  expect(rows[2]!.findAll((n) => n.children.includes("Off"))).not.toEqual([]);
+  expect(labelled("Turn on: notes")).toBeDefined();
+  expect(labelled("Turn off: notes")).toBeUndefined();
+});
+it("marks what the project's own folder declares on the Project page", async () => {
+  state.query.data = {
+    ...snapshot,
+    plugins: [],
+    connections: [
+      entry("claude", "docs", { sourceId: "claude-project", scope: "project" }),
+      entry("codex", "linear"),
+    ],
+  };
+  await renderPanel();
+  expect(byTestId("built-in-tools")).toEqual([]);
+  const rows = byTestId("server-row");
+  expect(rows[0]!.findAll((n) => n.children.includes("This project"))).not.toEqual([]);
+  expect(rows[1]!.findAll((n) => n.children.includes("This project"))).toEqual([]);
+  expect(text()).toContain("Claude Code: from this project's folder");
+  expect(labelled("Remove: docs")).toBeUndefined();
+});
+it("turns a server off in two tools with one review and an Undo per tool", async () => {
+  const file = (tool: string, path: string) => ({ tool, path, lines: ["Turn off linear"] });
+  const preview = (tool: string, path: string) => ({
+    _tag: "Success",
+    value: { ...snapshot, change: { preview: true, files: [file(tool, path)] } },
+  });
+  const saved = (tool: string, path: string, id: string) => ({
+    _tag: "Success",
+    value: { ...snapshot, change: { preview: false, id, files: [file(tool, path)] } },
+  });
+  state.apply
+    .mockResolvedValueOnce(preview("Codex", "~/.codex/config.toml"))
+    .mockResolvedValueOnce(preview("Claude Code", "~/.claude.json"))
+    .mockResolvedValueOnce(saved("Codex", "~/.codex/config.toml", "change-codex"))
+    .mockResolvedValueOnce(saved("Claude Code", "~/.claude.json", "change-claude"))
+    .mockResolvedValueOnce({ _tag: "Success", value: snapshot });
+  state.query.data = {
+    ...snapshot,
+    plugins: [],
+    connections: [entry("codex", "linear"), entry("claude", "linear")],
+  };
+  await renderTab();
+  await act(() => labelled("Turn off: linear").props.onClick());
+  expect(state.apply.mock.calls.map((call) => call[0].input)).toEqual([
+    { action: "disable", connectionId: "codex:codex-user:linear", preview: true },
+    { action: "disable", connectionId: "claude:claude-user:linear", preview: true },
+  ]);
+  // One review names each tool's own file.
+  expect(byTestId("change-preview")).toHaveLength(1);
+  expect(text()).toContain("~/.codex/config.toml");
+  expect(text()).toContain("~/.claude.json");
+  await act(() => named("Save").props.onClick());
+  expect(state.apply.mock.calls.slice(2).map((call) => call[0].input)).toEqual([
+    { action: "disable", connectionId: "codex:codex-user:linear" },
+    { action: "disable", connectionId: "claude:claude-user:linear" },
+  ]);
+  expect(byTestId("change-preview")).toEqual([]);
+  expect(labelled("Undo: Codex")).toBeDefined();
+  expect(labelled("Undo: Claude Code")).toBeDefined();
+  await act(() => labelled("Undo: Claude Code").props.onClick());
+  expect(state.apply).toHaveBeenLastCalledWith({
+    environmentId: mac,
+    input: { action: "undo", changeId: "change-claude" },
+  });
+  // The row keeps what the last apply did: Codex still offers its own Undo.
+  expect(labelled("Undo: Claude Code")).toBeUndefined();
+  expect(text()).toContain("Undone");
+  expect(labelled("Undo: Codex")).toBeDefined();
+});
+it("writes nothing when one tool's preview is refused", async () => {
+  state.apply
+    .mockResolvedValueOnce({
+      _tag: "Success",
+      value: { ...snapshot, change: { preview: true, files: [] } },
+    })
+    .mockRejectedValueOnce(new Error("offline"));
+  state.query.data = {
+    ...snapshot,
+    plugins: [],
+    connections: [entry("codex", "linear"), entry("claude", "linear")],
+  };
+  await renderTab();
+  await act(() => labelled("Remove: linear").props.onClick());
+  expect(state.apply).toHaveBeenCalledTimes(2);
+  expect(byTestId("change-preview")).toEqual([]);
+  expect(text()).toContain("did not confirm the change");
+});
+it("offers a search once the list is longer than eight servers", async () => {
+  const many = (count: number) =>
+    Array.from({ length: count }, (_, index) => entry("codex", `server-${index}`));
+  state.query.data = { ...snapshot, plugins: [], connections: many(8) };
+  await renderTab();
+  expect(renderer.root.findAll((n) => n.type === "input")).toEqual([]);
+  state.query = { ...state.query, data: { ...snapshot, plugins: [], connections: many(9) } };
+  await act(() => renderer.update(<NativeConnectionsPanel environmentId={mac} />));
+  const search = renderer.root.find((n) => n.type === "input");
+  await act(() => search.props.onChange({ target: { value: "server-7" } }));
+  expect(byTestId("server-row")).toHaveLength(1);
+});
+it("offers no list edits to a sign-in that cannot change the machine's files", async () => {
+  state.query.data = { ...snapshot, plugins: [], connections: [entry("codex", "linear")] };
+  state.mayWrite = false;
+  await renderTab();
+  expect(byTestId("server-row")).toHaveLength(1);
+  expect(labelled("Remove: linear")).toBeUndefined();
+  expect(named("Enter details by hand")).toBeUndefined();
 });

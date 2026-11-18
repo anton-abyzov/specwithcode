@@ -864,8 +864,6 @@ export const pt: PhraseCatalog = {
     "{value}Conecte esta máquina para inspecionar as configurações MCP dela.",
   "Filesystem read access is required to inspect configurations on this machine.":
     "É preciso acesso de leitura ao sistema de arquivos para inspecionar as configurações desta máquina.",
-  "Connections library": "Biblioteca de conexões",
-  "Add server": "Adicionar servidor",
   "Scanning…": "Verificando…",
   "Refresh configurations": "Atualizar configurações",
   "Could not inspect connections. {error}": "Não foi possível inspecionar as conexões. {error}",
@@ -5621,4 +5619,52 @@ export const pt: PhraseCatalog = {
   "Manage profiles": "Gerenciar perfis",
   "Profiles: {count}": "Perfis: {count}",
   "Device hosts: {count}": "Hosts de dispositivos: {count}",
+  "Computer use": "Uso do computador",
+  "In-app browser": "Navegador integrado",
+  Simulators: "Simuladores",
+  "Agents use your signed-in Chrome, through the extension.":
+    "Os agentes usam seu Chrome conectado, por meio da extensão.",
+  "Agents see the screen, click and type in Mac apps. Mac only.":
+    "Os agentes veem a tela, clicam e digitam em apps do Mac. Somente Mac.",
+  "A browser inside the app for testing sites and screenshots.":
+    "Um navegador dentro do app para testar sites e fazer capturas de tela.",
+  "iOS Simulator and Android Emulator. They need Xcode or Android Studio.":
+    "Simulador do iOS e emulador do Android. Precisam do Xcode ou do Android Studio.",
+  "Chrome settings": "Configurações do Chrome",
+  Paired: "Pareado",
+  "Needs setup": "Precisa configurar",
+  "Mac only": "Somente Mac",
+  "Built into SpecWithCode": "Integrado ao SpecWithCode",
+  "These are part of the app. You never add them as MCP servers, so they are not in the list below.":
+    "Fazem parte do app. Você nunca os adiciona como servidores MCP, por isso não estão na lista abaixo.",
+  "Web address": "Endereço web",
+  "Program on this machine": "Programa neste computador",
+  "Web address (SSE)": "Endereço web (SSE)",
+  "Unknown kind": "Tipo desconhecido",
+  "{tool}: from the {plugin} plugin": "{tool}: do plugin {plugin}",
+  "{tool}: only in the folder {folder}": "{tool}: somente na pasta {folder}",
+  "{tool}: from this project's folder": "{tool}: da pasta deste projeto",
+  "No MCP servers on {machine} yet": "Ainda não há servidores MCP em {machine}",
+  "Add one with “Enter details by hand”.": "Adicione um com “Inserir detalhes manualmente”.",
+  "Search servers": "Buscar servidores",
+  "No server matches the search.": "Nenhum servidor corresponde à busca.",
+  "AI tools that have it": "Ferramentas de IA que o têm",
+  "{tool}, off": "{tool}, desativado",
+  "{tool}, broken entry": "{tool}, entrada com defeito",
+  "MCP servers give your agents extra tools, like Higgsfield for video or Linear for issues.":
+    "Servidores MCP dão aos seus agentes ferramentas extras, como o Higgsfield para vídeo ou o Linear para tarefas.",
+  "Your servers on {machine}": "Seus servidores em {machine}",
+  "Compare by AI tool": "Comparar por ferramenta de IA",
+  "Enter details by hand": "Inserir detalhes manualmente",
+  "Not changed": "Sem alteração",
+  Undone: "Desfeito",
+  "Turned off": "Desativado",
+  "Turned on": "Ativado",
+  Removed: "Removido",
+  "Some configuration files could not be read, so this list may be incomplete. “Compare by AI tool” shows which.":
+    "Alguns arquivos de configuração não puderam ser lidos, então a lista pode estar incompleta. “Comparar por ferramenta de IA” mostra quais.",
+  "SpecWithCode reads each tool's own configuration files on {machine}. It cannot tell whether a server is signed in or running.":
+    "O SpecWithCode lê os arquivos de configuração de cada ferramenta em {machine}. Ele não consegue saber se um servidor está conectado ou em execução.",
+  "Scanned {when}.": "Verificado: {when}.",
+  "No MCP servers yet.": "Ainda não há servidores MCP.",
 };

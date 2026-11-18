@@ -11,6 +11,7 @@ const stubs = new Set(
     "state/environments",
     "state/session",
     "state/query",
+    "state/device",
     "studio/projectWorkspace",
     "state/use-atom-command",
     "components/settings/SettingsScopeContext",
