@@ -18,10 +18,28 @@ import { LSREGISTER_PATH, resolveRunningAppBundle } from "./macSwapInstall.ts";
  * `com.apple.dock.iconcache` in the user cache folder, which survives a Dock
  * restart (seen on macOS 27). Reloading clears that file and the user's icon
  * services cache, both rebuilt by macOS, then restarts the Dock. The app
- * offers that once and never does it unasked.
+ * offers that once per icon change and never does it unasked.
+ *
+ * The icon is told apart by a digest of `icon.icns`, which is byte for byte
+ * the same in every build of one icon. `Assets.car` is not: actool writes a
+ * new file on every build, so a digest of it changed with each release and
+ * the reload was offered after every update (1.0.347 to 1.0.349).
  */
 
 export const ICON_REFRESH_FILE = "mac-icon-refresh.json";
+
+const ICON_STAMP_FILE = "icon.icns";
+const ICON_STAMP_PREFIX = `${ICON_STAMP_FILE}:`;
+
+/**
+ * Only an `icon.icns` digest says whether the icon changed. A stamp saved by
+ * 1.0.347 to 1.0.349 is an `Assets.car` digest: that machine was already
+ * offered the reload, and the digest matches no later build.
+ */
+function iconChanged(previousStamp: string | null, iconStamp: string): boolean {
+  if (previousStamp === null || !previousStamp.startsWith(ICON_STAMP_PREFIX)) return false;
+  return previousStamp !== iconStamp;
+}
 
 /**
  * The service writes this to the app's state folder on its first run, so a
@@ -78,22 +96,25 @@ export function planIconRefresh(input: {
   if (input.previous?.version === input.appVersion) return { kind: "skip", reason: "same-version" };
   const offerDockRestart =
     input.iconStamp !== null &&
-    (input.previous === null ? input.hadPriorLaunch : input.previous.iconStamp !== input.iconStamp);
+    (input.previous === null
+      ? input.hadPriorLaunch
+      : iconChanged(input.previous.iconStamp, input.iconStamp));
   return { kind: "refresh", bundle, offerDockRestart };
 }
 
-/** A digest of the compiled icon (Assets.car), or of the legacy icns when there is none. */
+/**
+ * A digest of the bundle's `icon.icns`, or null when it has none. Never of
+ * `Assets.car`, which differs between builds of the same icon.
+ */
 export function readIconStamp(bundle: string): string | null {
-  const resources = BundlePath.join(bundle, "Contents", "Resources");
-  for (const name of ["Assets.car", "icon.icns"]) {
-    try {
-      const data = NodeFS.readFileSync(BundlePath.join(resources, name));
-      return `${name}:${NodeCrypto.createHash("sha256").update(data).digest("hex").slice(0, 32)}`;
-    } catch {
-      // Try the next file.
-    }
+  try {
+    const data = NodeFS.readFileSync(
+      BundlePath.join(bundle, "Contents", "Resources", ICON_STAMP_FILE),
+    );
+    return `${ICON_STAMP_PREFIX}${NodeCrypto.createHash("sha256").update(data).digest("hex").slice(0, 32)}`;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 export interface IconRefreshPrompt {

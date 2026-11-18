@@ -11,6 +11,7 @@ import {
   ICON_REFRESH_FILE,
   parseIconRefreshRecord,
   planIconRefresh,
+  readIconStamp,
   refreshMacIconAfterUpdate,
   type IconRefreshTools,
 } from "./macIconRefresh.ts";
@@ -21,7 +22,7 @@ const base = {
   isPackaged: true,
   execPath: EXEC,
   appVersion: "1.0.345",
-  iconStamp: "Assets.car:new",
+  iconStamp: "icon.icns:new",
   hadPriorLaunch: true,
 };
 
@@ -40,13 +41,13 @@ describe("planIconRefresh", () => {
 
   it("runs once per version", () => {
     expect(
-      planIconRefresh({ ...base, previous: { version: "1.0.345", iconStamp: "Assets.car:new" } }),
+      planIconRefresh({ ...base, previous: { version: "1.0.345", iconStamp: "icon.icns:new" } }),
     ).toEqual({ kind: "skip", reason: "same-version" });
   });
 
   it("re-registers after an update and offers a Dock reload only when the icon changed", () => {
     expect(
-      planIconRefresh({ ...base, previous: { version: "1.0.344", iconStamp: "Assets.car:new" } }),
+      planIconRefresh({ ...base, previous: { version: "1.0.344", iconStamp: "icon.icns:new" } }),
     ).toEqual({
       kind: "refresh",
       bundle: "/Applications/SpecWithCode.app",
@@ -55,6 +56,32 @@ describe("planIconRefresh", () => {
     expect(
       planIconRefresh({ ...base, previous: { version: "1.0.341", iconStamp: "icon.icns:old" } }),
     ).toMatchObject({ kind: "refresh", offerDockRestart: true });
+  });
+
+  it("does not offer the reload over a stamp it cannot compare", () => {
+    // 1.0.347 to 1.0.349 saved an Assets.car digest, which changes with every build.
+    expect(
+      planIconRefresh({
+        ...base,
+        appVersion: "1.0.350",
+        previous: { version: "1.0.349", iconStamp: "Assets.car:47d8255b8474ae75173ac03a83ff2bef" },
+      }),
+    ).toEqual({
+      kind: "refresh",
+      bundle: "/Applications/SpecWithCode.app",
+      offerDockRestart: false,
+    });
+    expect(
+      planIconRefresh({ ...base, previous: { version: "1.0.344", iconStamp: null } }),
+    ).toMatchObject({ kind: "refresh", offerDockRestart: false });
+    // No readable icon in this build: nothing to compare either.
+    expect(
+      planIconRefresh({
+        ...base,
+        iconStamp: null,
+        previous: { version: "1.0.344", iconStamp: "icon.icns:old" },
+      }),
+    ).toMatchObject({ kind: "refresh", offerDockRestart: false });
   });
 
   it("offers the reload on the first launch after updating from a version without the record", () => {
@@ -94,7 +121,8 @@ describe("refreshMacIconAfterUpdate", () => {
     const bundle = NodePath.join(root, "SpecWithCode.app");
     NodeFS.mkdirSync(NodePath.join(bundle, "Contents", "Resources"), { recursive: true });
     NodeFS.mkdirSync(NodePath.join(bundle, "Contents", "MacOS"), { recursive: true });
-    NodeFS.writeFileSync(NodePath.join(bundle, "Contents", "Resources", "Assets.car"), "icon");
+    NodeFS.writeFileSync(NodePath.join(bundle, "Contents", "Resources", "Assets.car"), "build 1");
+    NodeFS.writeFileSync(NodePath.join(bundle, "Contents", "Resources", "icon.icns"), "icon");
     const stateDir = NodePath.join(root, "userdata");
     NodeFS.mkdirSync(stateDir);
     if (options.prior) NodeFS.writeFileSync(NodePath.join(stateDir, "environment-id"), "env");
@@ -150,7 +178,7 @@ describe("refreshMacIconAfterUpdate", () => {
       NodeFS.readFileSync(NodePath.join(f.stateDir, ICON_REFRESH_FILE), "utf8"),
     );
     expect(record?.version).toBe("1.0.345");
-    expect(record?.iconStamp).toMatch(/^Assets\.car:/);
+    expect(record?.iconStamp).toMatch(/^icon\.icns:[0-9a-f]{32}$/);
 
     // Same version again: nothing runs, nothing is asked.
     f.calls.length = 0;
@@ -158,7 +186,7 @@ describe("refreshMacIconAfterUpdate", () => {
     expect(f.calls).toEqual([]);
 
     // Next version with a new icon, and the user agrees.
-    NodeFS.writeFileSync(NodePath.join(f.bundle, "Contents", "Resources", "Assets.car"), "icon2");
+    NodeFS.writeFileSync(NodePath.join(f.bundle, "Contents", "Resources", "icon.icns"), "icon2");
     await refreshMacIconAfterUpdate({ ...host, appVersion: "1.0.346", ask: async () => 0 });
     expect(f.calls).toEqual([
       `touch ${f.bundle}`,
@@ -167,6 +195,65 @@ describe("refreshMacIconAfterUpdate", () => {
       "clear dock icon cache",
       "kill 4242",
     ]);
+  });
+
+  it("stamps the icon the same across builds that only recompiled Assets.car", () => {
+    const f = fixture({ prior: true });
+    const resources = NodePath.join(f.bundle, "Contents", "Resources");
+    const first = readIconStamp(f.bundle);
+    NodeFS.writeFileSync(NodePath.join(resources, "Assets.car"), "build 2");
+    expect(readIconStamp(f.bundle)).toBe(first);
+    NodeFS.writeFileSync(NodePath.join(resources, "icon.icns"), "another icon");
+    expect(readIconStamp(f.bundle)).not.toBe(first);
+    NodeFS.rmSync(NodePath.join(resources, "icon.icns"));
+    expect(readIconStamp(f.bundle)).toBeNull();
+  });
+
+  it("does not ask again on later updates that keep the icon", async () => {
+    const f = fixture({ prior: true });
+    const recordPath = NodePath.join(f.stateDir, ICON_REFRESH_FILE);
+    // What 1.0.349 left behind after its own prompt.
+    NodeFS.writeFileSync(
+      recordPath,
+      JSON.stringify({
+        version: "1.0.349",
+        iconStamp: "Assets.car:47d8255b8474ae75173ac03a83ff2bef",
+      }),
+    );
+    let asked = 0;
+    const host = {
+      platform: "darwin" as NodeJS.Platform,
+      isPackaged: true,
+      execPath: f.execPath,
+      stateDir: f.stateDir,
+      canAsk: true,
+      whenWindowShown: async () => undefined,
+      log: () => undefined,
+      tools: f.tools,
+      ask: async () => {
+        asked += 1;
+        return 0;
+      },
+    };
+    await refreshMacIconAfterUpdate({ ...host, appVersion: "1.0.350" });
+    expect(asked).toBe(0);
+    expect(f.calls).toEqual([`touch ${f.bundle}`, `lsregister -f ${f.bundle}`]);
+    expect(parseIconRefreshRecord(NodeFS.readFileSync(recordPath, "utf8"))).toEqual({
+      version: "1.0.350",
+      iconStamp: readIconStamp(f.bundle),
+    });
+
+    // The next build compiles a different Assets.car for the same icon.
+    f.calls.length = 0;
+    NodeFS.writeFileSync(NodePath.join(f.bundle, "Contents", "Resources", "Assets.car"), "build 2");
+    await refreshMacIconAfterUpdate({ ...host, appVersion: "1.0.351" });
+    expect(asked).toBe(0);
+    expect(f.calls).toEqual([`touch ${f.bundle}`, `lsregister -f ${f.bundle}`]);
+
+    // A real icon change is still offered.
+    NodeFS.writeFileSync(NodePath.join(f.bundle, "Contents", "Resources", "icon.icns"), "icon2");
+    await refreshMacIconAfterUpdate({ ...host, appVersion: "1.0.352" });
+    expect(asked).toBe(1);
   });
 
   it("never asks on a new install", async () => {
