@@ -554,3 +554,86 @@ describe("readProjectBoard", () => {
     expect(await readBoardCard(root, "0002-elsewhere", NOW)).toBeNull();
   });
 });
+
+describe("recorded reviews on a card", () => {
+  const record = async (folder: string, name: string, fields: string, verdict: string) => {
+    const dir = NodePath.join(folder, "reports", "reviews");
+    await NodeFSP.mkdir(dir, { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(dir, name),
+      `<!-- specweave review: ${fields} -->\n# Review\nVerdict: ${verdict}\n`,
+    );
+  };
+
+  it("lists the increment's reviews newest first, with the ledger's author for records without one", async () => {
+    const root = await project();
+    const folder = await increment(root, "0001-feature", {
+      status: "completed",
+      tasks: 1,
+      ledger: [
+        JSON.stringify({ t: "T-01", e: "done", by: "claude@m4", at: "2026-11-14T10:00:00.000Z" }),
+      ],
+    });
+    await increment(root, "0002-unreviewed", { status: "completed", tasks: 1 });
+    await record(
+      folder,
+      "review-claude-opus-5-5-1.md",
+      "reviewer=claude-opus-5-5 model=claude-opus-5-5 family=claude at=2026-11-14T10:30:00Z",
+      "fix first",
+    );
+    await record(
+      folder,
+      "review-muse-wonder-full-1.0-1.md",
+      "reviewer=muse-wonder-full-1.0 model=muse-wonder-full-1.0 family=meta author=claude at=2026-11-14T11:00:00Z",
+      "ship",
+    );
+
+    const board = await readProjectBoard(root, { now: NOW });
+    const card = (id: string) => board.cards.find((entry) => entry.incrementId === id);
+    expect(card("0001-feature")?.reviews).toEqual([
+      {
+        model: "muse-wonder-full-1.0",
+        family: "meta",
+        author: "claude",
+        verdict: "ship",
+        at: "2026-11-14T11:00:00Z",
+      },
+      {
+        model: "claude-opus-5-5",
+        family: "claude",
+        author: "claude",
+        verdict: "fix first",
+        at: "2026-11-14T10:30:00Z",
+      },
+    ]);
+    // No reviews: the field is left out, as older servers do.
+    expect(card("0002-unreviewed")).not.toHaveProperty("reviews");
+    expect(await readBoardCard(root, "0001-feature", NOW)).toEqual(card("0001-feature"));
+  });
+
+  it("shows a review recorded after the board was first read", async () => {
+    const root = await project();
+    const folder = await increment(root, "0001-feature", { tasks: 1 });
+    expect((await readProjectBoard(root, { now: NOW })).cards[0]).not.toHaveProperty("reviews");
+    // A reports folder with no review in it, read twice: still none.
+    await NodeFSP.mkdir(NodePath.join(folder, "reports"));
+    await NodeFSP.writeFile(NodePath.join(folder, "reports", "notes.md"), "Notes\n");
+    expect((await readProjectBoard(root, { now: NOW })).cards[0]).not.toHaveProperty("reviews");
+    expect((await readProjectBoard(root, { now: NOW })).cards[0]).not.toHaveProperty("reviews");
+    await record(
+      folder,
+      "review-gpt-6.1-sol-1.md",
+      "reviewer=gpt-6.1-sol family=openai author=claude at=2026-11-14T11:00:00Z",
+      "ship",
+    );
+    expect((await readProjectBoard(root, { now: NOW })).cards[0]?.reviews).toEqual([
+      {
+        model: "gpt-6.1-sol",
+        family: "openai",
+        author: "claude",
+        verdict: "ship",
+        at: "2026-11-14T11:00:00Z",
+      },
+    ]);
+  });
+});

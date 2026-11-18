@@ -24,7 +24,9 @@ import {
   ProjectFolderCheckError,
   ProjectId,
   type Project,
+  type FirstFeatureGuide,
   type ProjectCreatePayload,
+  type ProjectFirstFeatureGuideMark,
   type ProjectOrigin,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
@@ -65,6 +67,7 @@ import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as FirstFeatureSample from "./firstFeatureSample.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { machineAssistantOf } from "@specweave-studio/shared/personalAssistant";
 
@@ -107,6 +110,8 @@ export interface ProjectCreateInput extends ProjectCreatePayload {
   readonly initialWorkerModelSelection?: ModelSelection | null;
   /** Internal: set by the server for temporary agent sessions, never by a client payload. */
   readonly temporarySessionId?: string;
+  /** Internal: the sample the project is made as, with its guide's first facts (1398). */
+  readonly sample?: { readonly kind: string; readonly firstFeatureGuide: FirstFeatureGuide };
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
 }
@@ -124,6 +129,11 @@ export interface ProjectUpdateInput extends ProjectUpdatePayload {
   readonly expectedDefaultModelSelection?: ModelSelection | null;
   /** Internal coordinator binding, never accepted from a client settings patch. */
   readonly coordinatorThreadId?: ThreadId;
+  /** Internal: a mark on the sample's guide (1398), never accepted from a client settings patch. */
+  readonly firstFeatureGuideMark?: {
+    readonly mark: ProjectFirstFeatureGuideMark;
+    readonly at: string;
+  };
   /**
    * Internal: the approval card that asked for this change. Its own pending
    * request does not count as active work in the thread that asked.
@@ -733,6 +743,9 @@ export const make = Effect.gen(function* () {
           ? {}
           : { temporarySessionId: input.temporarySessionId }),
         ...createdOrigin(input),
+        ...(input.sample === undefined
+          ? {}
+          : { sample: input.sample.kind, firstFeatureGuide: input.sample.firstFeatureGuide }),
       });
       yield* projectEnrichment.invalidate([workspaceRoot]);
       yield* seedNewProjectSettings(
@@ -912,6 +925,9 @@ export const make = Effect.gen(function* () {
         ...(input.coordinatorThreadId === undefined
           ? {}
           : { coordinatorThreadId: input.coordinatorThreadId }),
+        ...(input.firstFeatureGuideMark === undefined
+          ? {}
+          : { firstFeatureGuideMark: input.firstFeatureGuideMark }),
         ...(input.title === undefined ? {} : { title: input.title }),
         ...(workspaceRoot === previousRoot ? {} : { workspaceRoot }),
         ...(input.defaultModelSelection === undefined
@@ -1190,6 +1206,10 @@ export const make = Effect.gen(function* () {
       yield* slot === undefined
         ? remove
         : remove.pipe(Effect.onError(() => releaseClientDelete(slot)));
+      // The sample's own review switch goes with it (1398 AC-21).
+      if (FirstFeatureSample.isFirstFeatureSample(project)) {
+        yield* FirstFeatureSample.dropSampleAutoReview(projectId);
+      }
       // Deletion cannot be undone; this line is how the next incident shows who and what.
       yield* Effect.logInfo("project.deleted", {
         projectId,

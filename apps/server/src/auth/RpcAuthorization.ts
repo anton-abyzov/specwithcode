@@ -94,6 +94,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsSpecweaveSetUp]: AuthFilesystemWriteScope,
   // Answers that write no file, so a window without file access can give them (1396).
   [WS_METHODS.projectsSpecweaveAnswer]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsFirstFeatureGuide]: AuthOrchestrationOperateScope,
   // Search results quote Library files, so reading knowledge is a file read.
   [WS_METHODS.projectsKnowledgeRead]: AuthFilesystemReadScope,
   [WS_METHODS.designExport]: AuthFilesystemReadScope,
