@@ -10,9 +10,24 @@ const state = vi.hoisted(() => ({
   singleEnvironment: true,
 }));
 
+const primaryAt = (httpBaseUrl: string) => ({
+  target: { _tag: "PrimaryConnectionTarget", httpBaseUrl },
+});
 const environments = [
-  { environmentId: "env-a", label: "Desk", connection: { phase: "connected" }, serverConfig: null },
-  { environmentId: "env-b", label: "Mini", connection: { phase: "idle" }, serverConfig: null },
+  {
+    environmentId: "env-a",
+    label: "Desk",
+    connection: { phase: "connected" },
+    serverConfig: null,
+    entry: primaryAt("http://127.0.0.1:3773"),
+  },
+  {
+    environmentId: "env-b",
+    label: "Mini",
+    connection: { phase: "idle" },
+    serverConfig: null,
+    entry: { target: { _tag: "RemoteConnectionTarget" } },
+  },
 ];
 const groups = [{ projectKey: "p1", displayName: "notes-app", memberProjects: [] }];
 
@@ -31,7 +46,6 @@ vi.mock("./SettingsScopeContext", () => ({
 }));
 vi.mock("./useNamedEnvironments", () => ({ useNamedEnvironments: () => ({ environments }) }));
 vi.mock("../../state/entities", () => ({ useServerConfigs: () => new Map() }));
-vi.mock("../../state/environments", () => ({ usePrimaryEnvironmentId: () => "env-a" }));
 vi.mock("../EnvironmentMachineIcon", () => ({ EnvironmentMachineIcon: () => null }));
 vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 // Render every menu open, so its choices are in the document.
@@ -112,6 +126,22 @@ describe("SettingsScopeSentence", () => {
       "You are on Desk",
     );
     expect(other.textContent).toContain("Changes here only affect Mini.");
+  });
+
+  it("makes no claim about your device when this page came from another machine", () => {
+    const local = environments[0]!.entry;
+    environments[0]!.entry = primaryAt("https://desk.example.ts.net");
+    try {
+      const view = render({
+        pathname: "/settings/skills",
+        search: { machine: "env-b" },
+        singleEnvironment: true,
+      });
+      expect(view.querySelector('[data-testid="settings-scope-seat"]')).toBeNull();
+      expect(view.textContent).toContain("Changes here only affect Mini.");
+    } finally {
+      environments[0]!.entry = local;
+    }
   });
 
   it("names the picked project on Skills", () => {

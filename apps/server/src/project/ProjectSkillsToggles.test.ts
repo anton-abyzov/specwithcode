@@ -304,6 +304,27 @@ describe("Claude switches", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("refuses the whole-plugin switch for a claude.ai-synced skill", () =>
+    Effect.gen(function* () {
+      const h = yield* harness({
+        row: () =>
+          rowOf("anthropic-skills:pdf", [
+            presence("claudeAgent", { scope: "claude.ai", name: "anthropic-skills:pdf" }),
+          ]),
+      });
+      const action = pluginToggle("claudeAgent", "anthropic-skills@example", false);
+      for (const preview of [true, false]) {
+        const error = yield* h.toggles
+          .togglePlugin(h.ctx, input(action, { preview }), action, serialized)
+          .pipe(Effect.flip);
+        expect(error.reason).toBe("scope_unsupported");
+        expect(error.message).toContain("claude.ai");
+      }
+      expect(h.runs).toEqual([]);
+      expect(h.writes).toEqual([]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("refuses to switch a Codex system skill", () =>
     Effect.gen(function* () {
       const h = yield* harness({

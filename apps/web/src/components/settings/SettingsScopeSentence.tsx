@@ -11,7 +11,8 @@ import type { ReactNode } from "react";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useServerConfigs } from "../../state/entities";
 import { ineligibleProjectLabel, isAssistantGroup } from "../../studio/projectListVisibility";
-import { type EnvironmentPresentation, usePrimaryEnvironmentId } from "../../state/environments";
+import { type EnvironmentPresentation } from "../../state/environments";
+import { isThisMachineTarget } from "../../connection/desktopLocal";
 import { useNamedEnvironments } from "./useNamedEnvironments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -69,7 +70,6 @@ export function SettingsScopeSentence() {
   const scope = useOptionalSettingsScope();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useNamedEnvironments();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
   if (scope === null || SETTINGS_DEVICE_ONLY_PATHS.has(pathname)) return null;
   const pageScope = settingsPageScope(pathname);
   if (pageScope === "global") return null;
@@ -86,9 +86,9 @@ export function SettingsScopeSentence() {
       scope.search.machine ?? (scope.scope.kind === "checkout" ? scope.scope.environmentId : null);
     const machine = environments.find((environment) => environment.environmentId === machineId);
     // Setting up another machine than the one in front of you is easy to miss.
-    const here = environments.find(
-      (environment) => environment.environmentId === primaryEnvironmentId,
-    );
+    // The primary server can be another computer (a page opened over the
+    // tailnet), so only a server reached on this device names your seat.
+    const here = environments.find((environment) => isThisMachineTarget(environment.entry));
     return (
       <div className="space-y-1 px-3 sm:px-4">
         <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-base text-muted-foreground">

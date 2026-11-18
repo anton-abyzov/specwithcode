@@ -441,6 +441,18 @@ export const makeSkillsToggles = (deps: ProjectSkillsActionsDeps, run: RunCli) =
         );
       });
 
+    const builtInRefusal = (
+      ctx: SkillsActionContext,
+      presence: Parameters<typeof isBuiltInAgentSkill>[0] & { readonly label: string },
+    ) =>
+      actionError(
+        ctx.projectId,
+        "scope_unsupported",
+        presence.scope === CLAUDE_AI_SKILL_SCOPE
+          ? `${ctx.row.name} is synced from claude.ai. Manage it on claude.ai.`
+          : `${ctx.row.name} is built into ${presence.label}. It cannot be switched from here.`,
+      );
+
     const toggleSkill = (
       ctx: SkillsActionContext,
       input: ProjectSkillsActionInput,
@@ -449,14 +461,7 @@ export const makeSkillsToggles = (deps: ProjectSkillsActionsDeps, run: RunCli) =
     ) =>
       Effect.gen(function* () {
         const presence = yield* presenceOf(ctx, action);
-        if (isBuiltInAgentSkill(presence))
-          return yield* actionError(
-            ctx.projectId,
-            "scope_unsupported",
-            presence.scope === CLAUDE_AI_SKILL_SCOPE
-              ? `${ctx.row.name} is synced from claude.ai. Manage it on claude.ai.`
-              : `${ctx.row.name} is built into ${presence.label}. It cannot be switched from here.`,
-          );
+        if (isBuiltInAgentSkill(presence)) return yield* builtInRefusal(ctx, presence);
         switch (presence.driver) {
           case "claudeAgent":
             if (presence.scope === "plugin")
@@ -700,6 +705,8 @@ export const makeSkillsToggles = (deps: ProjectSkillsActionsDeps, run: RunCli) =
     ) =>
       Effect.gen(function* () {
         const presence = yield* presenceOf(ctx, action);
+        // A synced or system skill's namespace is not a plugin anyone installed.
+        if (isBuiltInAgentSkill(presence)) return yield* builtInRefusal(ctx, presence);
         switch (presence.driver) {
           case "claudeAgent":
           case "grok":
