@@ -5398,6 +5398,16 @@ export const zh: PhraseCatalog = {
     "{machines} 正在运行，但登录前此窗口无法访问它们。",
   "Sign in to reach this machine": "登录以访问此电脑",
   // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Chrome 和 Safari 的配置文件与历史记录",
+  Mail: "邮件",
+  Messages: "信息",
+  "Photos library": "照片图库",
+  "Time Machine backups": "时间机器备份",
+  "Other apps' data": "其他应用的数据",
+  "Screen Recording": "屏幕录制",
+  Accessibility: "辅助功能",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "{machine} 上的每个智能体，在每个项目中、使用每个提供方，都会获得此权限，直到你在系统设置中关闭它。",
   "Setup works without Connect, and you can add it later in Settings > Machines.":
     "设置无需 Connect 也能完成，之后可以在 设置 > 机器 中添加。",
   "Each row has its own button. Change any of it later in Settings.":

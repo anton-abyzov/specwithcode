@@ -5628,6 +5628,16 @@ export const ru: PhraseCatalog = {
     "{machines} работают, но это окно не подключится к ним, пока вы не войдёте.",
   "Sign in to reach this machine": "Войдите, чтобы подключиться к этому компьютеру",
   // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Профили и история Chrome и Safari",
+  Mail: "Почта",
+  Messages: "Сообщения",
+  "Photos library": "Медиатека Фото",
+  "Time Machine backups": "Резервные копии Time Machine",
+  "Other apps' data": "Данные других приложений",
+  "Screen Recording": "Запись экрана",
+  Accessibility: "Универсальный доступ",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "Каждый агент на {machine}, в любом проекте и с любым провайдером, получает это, пока вы не выключите его в Системных настройках.",
   "Setup works without Connect, and you can add it later in Settings > Machines.":
     "Настройка работает и без Connect, его можно добавить позже в Настройки > Машины.",
   "Each row has its own button. Change any of it later in Settings.":
@@ -5712,17 +5722,17 @@ export const ru: PhraseCatalog = {
   "A prompt hidden in a web page or file could ask an agent to read your mail. Turn it on only if you need it.":
     "Инструкция, спрятанная на веб-странице или в файле, может попросить агента прочитать вашу почту. Включайте, только если это нужно.",
   "In System Settings › Privacy & Security › Full Disk Access, turn on":
-    "В Системные настройки › Конфиденциальность и безопасность › Доступ ко всему диску включите",
+    "В Системные настройки › Конфиденциальность и безопасность › Полный доступ к диску включите",
   "Agents here run under a background service, so macOS asks about it, not the app. In System Settings › Privacy & Security › Full Disk Access, add":
-    "Здесь агенты работают под фоновой службой, поэтому macOS спрашивает о ней, а не о приложении. В Системные настройки › Конфиденциальность и безопасность › Доступ ко всему диску добавьте",
+    "Здесь агенты работают под фоновой службой, поэтому macOS спрашивает о ней, а не о приложении. В Системные настройки › Конфиденциальность и безопасность › Полный доступ к диску добавьте",
   "How Full Disk Access works and how to turn it off":
-    "Как работает доступ ко всему диску и как его выключить",
+    "Как работает полный доступ к диску и как его выключить",
   "Full Disk Access for agents: allowed, restart running threads":
-    "Доступ ко всему диску для агентов: разрешён, перезапустите работающие треды",
-  "Full Disk Access for agents: allowed": "Доступ ко всему диску для агентов: разрешён",
+    "Полный доступ к диску для агентов: разрешён, перезапустите работающие треды",
+  "Full Disk Access for agents: allowed": "Полный доступ к диску для агентов: разрешён",
   "Full Disk Access for agents: could not be checked":
-    "Доступ ко всему диску для агентов: не удалось проверить",
-  "Full Disk Access for agents: off": "Доступ ко всему диску для агентов: выключен",
+    "Полный доступ к диску для агентов: не удалось проверить",
+  "Full Disk Access for agents: off": "Полный доступ к диску для агентов: выключен",
   "Privacy access": "Доступ к конфиденциальным данным",
   "Restart needed": "Нужен перезапуск",
   Optional: "Необязательно",
@@ -5735,7 +5745,7 @@ export const ru: PhraseCatalog = {
   "Open System Settings": "Открыть Системные настройки",
   "Open SpecWithCode on": "Откройте SpecWithCode на",
   "to allow it there.": "и разрешите там.",
-  "Full Disk Access for agents (optional)": "Доступ ко всему диску для агентов (необязательно)",
+  "Full Disk Access for agents (optional)": "Полный доступ к диску для агентов (необязательно)",
   "Already allowed on this Mac.": "На этом Mac уже разрешено.",
   "You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.":
     "Это можно пропустить. Это есть и в Настройки › Машины, а агенты спросят, когда задаче это понадобится.",

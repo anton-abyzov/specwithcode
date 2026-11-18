@@ -5633,6 +5633,16 @@ export const ja: PhraseCatalog = {
     "{machines} は動作中ですが、サインインするまでこのウィンドウから接続できません。",
   "Sign in to reach this machine": "サインインしてこのマシンに接続",
   // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Chrome と Safari のプロファイルと履歴",
+  Mail: "メール",
+  Messages: "メッセージ",
+  "Photos library": "写真ライブラリ",
+  "Time Machine backups": "Time Machine のバックアップ",
+  "Other apps' data": "ほかのアプリのデータ",
+  "Screen Recording": "画面収録",
+  Accessibility: "アクセシビリティ",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "{machine} 上のすべてのエージェントが、どのプロジェクトでもどのプロバイダーでも、システム設定でオフにするまでこの権限を持ちます。",
   "Setup works without Connect, and you can add it later in Settings > Machines.":
     "セットアップは Connect なしでも動作します。あとで 設定 > マシン から追加できます。",
   "Each row has its own button. Change any of it later in Settings.":
@@ -5718,9 +5728,9 @@ export const ja: PhraseCatalog = {
   "A prompt hidden in a web page or file could ask an agent to read your mail. Turn it on only if you need it.":
     "Web ページやファイルに隠れた指示が、エージェントにメールを読むよう求めるおそれがあります。必要なときだけオンにしてください。",
   "In System Settings › Privacy & Security › Full Disk Access, turn on":
-    "システム設定 › プライバシーとセキュリティ › フルディスクアクセス で、次をオンにします:",
+    "システム設定 › プライバシーとセキュリティ › フルディスクアクセス で、次をオンにしてください:",
   "Agents here run under a background service, so macOS asks about it, not the app. In System Settings › Privacy & Security › Full Disk Access, add":
-    "ここではエージェントがバックグラウンドサービスの下で動くため、macOS はアプリではなくそのサービスについて確認します。システム設定 › プライバシーとセキュリティ › フルディスクアクセス に次を追加します:",
+    "ここではエージェントがバックグラウンドサービスの下で動くため、macOS はアプリではなくそのサービスについて確認します。システム設定 › プライバシーとセキュリティ › フルディスクアクセス に次を追加してください:",
   "How Full Disk Access works and how to turn it off":
     "フルディスクアクセスの仕組みとオフにする方法",
   "Full Disk Access for agents: allowed, restart running threads":

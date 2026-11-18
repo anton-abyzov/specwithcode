@@ -5659,6 +5659,16 @@ export const es: PhraseCatalog = {
     "{machines} están en marcha, pero esta ventana no puede acceder hasta que inicies sesión.",
   "Sign in to reach this machine": "Inicia sesión para acceder a este equipo",
   // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Perfiles e historial de Chrome y Safari",
+  Mail: "Mail",
+  Messages: "Mensajes",
+  "Photos library": "Fototeca de Fotos",
+  "Time Machine backups": "Copias de seguridad de Time Machine",
+  "Other apps' data": "Datos de otras apps",
+  "Screen Recording": "Grabación de pantalla",
+  Accessibility: "Accesibilidad",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "Todos los agentes en {machine}, en cada proyecto y con cada proveedor, lo tienen hasta que lo desactives en Ajustes del Sistema.",
   "Setup works without Connect, and you can add it later in Settings > Machines.":
     "La configuración funciona sin Connect, y puedes añadirlo más tarde en Ajustes > Máquinas.",
   "Each row has its own button. Change any of it later in Settings.":
@@ -5689,7 +5699,7 @@ export const es: PhraseCatalog = {
     "Vinculado, no responde. Abre Chrome o vuelve a conectar.",
   "{profiles}: an older extension.": "{profiles}: una extensión antigua.",
   "Update the extension": "Actualizar la extensión",
-  "{profiles}: not from the Chrome Web Store.": "{profiles}: no es de la Chrome Web Store.",
+  "{profiles}: not from the Chrome Web Store.": "{profiles}: fuera de la Chrome Web Store.",
   "{profiles}: give it a name agents can tell apart.":
     "{profiles}: dale un nombre que los agentes puedan distinguir.",
   "Paired: {names}": "Vinculado: {names}",

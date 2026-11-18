@@ -5562,6 +5562,16 @@ export const ko: PhraseCatalog = {
     "{machines}은(는) 실행 중이지만 로그인할 때까지 이 창에서 연결할 수 없습니다.",
   "Sign in to reach this machine": "이 컴퓨터에 연결하려면 로그인",
   // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Chrome 및 Safari 프로필과 방문 기록",
+  Mail: "Mail",
+  Messages: "메시지",
+  "Photos library": "사진 보관함",
+  "Time Machine backups": "Time Machine 백업",
+  "Other apps' data": "다른 앱의 데이터",
+  "Screen Recording": "화면 기록",
+  Accessibility: "손쉬운 사용",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "{machine}의 모든 에이전트가 모든 프로젝트와 모든 제공업체에서, 시스템 설정에서 끌 때까지 이 권한을 갖습니다.",
   "Setup works without Connect, and you can add it later in Settings > Machines.":
     "설정은 Connect 없이도 됩니다. 나중에 설정 > 머신에서 추가할 수 있습니다.",
   "Each row has its own button. Change any of it later in Settings.":

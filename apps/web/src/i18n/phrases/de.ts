@@ -5669,6 +5669,16 @@ export const de: PhraseCatalog = {
     "{machines} laufen, aber dieses Fenster erreicht sie erst nach der Anmeldung.",
   "Sign in to reach this machine": "Anmelden, um diesen Rechner zu erreichen",
   // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Chrome- und Safari-Profile und -Verlauf",
+  Mail: "Mail",
+  Messages: "Nachrichten",
+  "Photos library": "Fotos-Mediathek",
+  "Time Machine backups": "Time Machine-Backups",
+  "Other apps' data": "Daten anderer Apps",
+  "Screen Recording": "Bildschirmaufnahme",
+  Accessibility: "Bedienungshilfen",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "Jeder Agent auf {machine} bekommt das, in jedem Projekt und mit jedem Anbieter, bis du es in den Systemeinstellungen ausschaltest.",
   "Setup works without Connect, and you can add it later in Settings > Machines.":
     "Die Einrichtung funktioniert ohne Connect, und du kannst es später unter Einstellungen > Rechner hinzufügen.",
   "Each row has its own button. Change any of it later in Settings.":
@@ -5740,7 +5750,7 @@ export const de: PhraseCatalog = {
   "The pairing code could not be read. Try again.":
     "Der Kopplungscode konnte nicht gelesen werden. Versuch es noch einmal.",
   "The code could not be copied. Press Show instead.":
-    "Der Code konnte nicht kopiert werden. Drücke stattdessen auf Anzeigen.",
+    "Der Code konnte nicht kopiert werden. Drücke stattdessen auf Zeigen.",
   "Developer: allow copies not from the Chrome Web Store":
     "Entwickler: Kopien zulassen, die nicht aus dem Chrome Web Store stammen",
   "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, any other extension id can connect too, such as a copy loaded by hand in chrome://extensions, but still only with the pairing code, and it is marked not from the Chrome Web Store. Turning it off disconnects those copies.":

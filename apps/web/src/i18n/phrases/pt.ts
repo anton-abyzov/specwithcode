@@ -5630,6 +5630,16 @@ export const pt: PhraseCatalog = {
     "{machines} estão ligados, mas esta janela não consegue acessá-los até você entrar.",
   "Sign in to reach this machine": "Entre para acessar este computador",
   // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Perfis e histórico do Chrome e do Safari",
+  Mail: "Mail",
+  Messages: "Mensagens",
+  "Photos library": "Fototeca do Fotos",
+  "Time Machine backups": "Backups do Time Machine",
+  "Other apps' data": "Dados de outros apps",
+  "Screen Recording": "Gravação de Tela",
+  Accessibility: "Acessibilidade",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "Todos os agentes em {machine}, em todo projeto e com todo provedor, recebem isso até você desativar nos Ajustes do Sistema.",
   "Setup works without Connect, and you can add it later in Settings > Machines.":
     "A configuração funciona sem o Connect, e você pode adicioná-lo depois em Configurações > Máquinas.",
   "Each row has its own button. Change any of it later in Settings.":
@@ -5660,7 +5670,7 @@ export const pt: PhraseCatalog = {
     "Pareado, sem resposta. Abra o Chrome ou reconecte.",
   "{profiles}: an older extension.": "{profiles}: uma extensão mais antiga.",
   "Update the extension": "Atualizar a extensão",
-  "{profiles}: not from the Chrome Web Store.": "{profiles}: não é da Chrome Web Store.",
+  "{profiles}: not from the Chrome Web Store.": "{profiles}: fora da Chrome Web Store.",
   "{profiles}: give it a name agents can tell apart.":
     "{profiles}: dê um nome que os agentes consigam distinguir.",
   "Paired: {names}": "Pareado: {names}",

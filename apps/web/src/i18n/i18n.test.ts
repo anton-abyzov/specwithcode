@@ -6,6 +6,13 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 
+import { FULL_DISK_ACCESS_UNLOCKS, fullDiskAccessRiskLine } from "@specweave-studio/contracts";
+
+import {
+  FULL_DISK_ACCESS_RISK_PHRASE,
+  FULL_DISK_ACCESS_UNLOCK_PHRASES,
+} from "../components/access/FullDiskAccess";
+import { COMPUTER_USE_PERMISSION_COPY } from "../components/computerUse/ComputerUsePermissions";
 import { DRIVER_OPTIONS } from "../components/settings/providerDriverMeta";
 import { CHAT_OPTION_LABELS, DATE_BUCKETS, THREAD_TONE_LABELS } from "../studio/shellModel";
 import { matchLocale, resolveLocale, resolveSystemLocale, SUPPORTED_LOCALES, translate } from ".";
@@ -271,19 +278,35 @@ const FIRST_RUN_PHRASE_FILES = [
     .filter((file) => /\.tsx?$/.test(file) && !file.includes(".test."))
     .map((file) => NodePath.join("components", "onboarding", file)),
   NodePath.join("components", "settings", "BrowserExtensionSetup.tsx"),
+  NodePath.join("components", "settings", "BrowserExtensionSettings.tsx"),
+  NodePath.join("components", "settings", "ChromeSettings.tsx"),
+  NodePath.join("components", "chat", "ChromeConnectCard.tsx"),
   NodePath.join("components", "access", "FullDiskAccess.tsx"),
 ];
 const FIRST_RUN_PHRASES = [
-  ...new Set(
-    FIRST_RUN_PHRASE_FILES.flatMap((file) =>
+  ...new Set([
+    ...FIRST_RUN_PHRASE_FILES.flatMap((file) =>
       [
         ...NodeFS.readFileSync(NodePath.join(SRC_DIR, file), "utf8").matchAll(
           /\btx\(\s*("(?:[^"\\]|\\.)*")/g,
         ),
       ].map((match) => JSON.parse(match[1]!) as string),
     ),
-  ),
+    // Shown through a variable, so the scan above cannot see them.
+    ...Object.values(FULL_DISK_ACCESS_UNLOCK_PHRASES),
+    FULL_DISK_ACCESS_RISK_PHRASE,
+    ...Object.values(COMPUTER_USE_PERMISSION_COPY).map((copy) => copy.title),
+  ]),
 ];
+
+it("first run's Full Disk Access words match the contracts", () => {
+  expect(Object.keys(FULL_DISK_ACCESS_UNLOCK_PHRASES)).toEqual([...FULL_DISK_ACCESS_UNLOCKS]);
+  for (const [item, phrase] of Object.entries(FULL_DISK_ACCESS_UNLOCK_PHRASES))
+    expect(phrase).toBe(item);
+  expect(FULL_DISK_ACCESS_RISK_PHRASE.replace("{machine}", "M4")).toBe(
+    fullDiskAccessRiskLine("M4"),
+  );
+});
 
 describe.each(Object.entries(PHRASE_CATALOGS))("%s first-run phrases", (_locale, catalog) => {
   it("finds the first-run phrases", () => {

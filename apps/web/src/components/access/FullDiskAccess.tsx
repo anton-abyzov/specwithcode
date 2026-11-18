@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckIcon, CircleAlertIcon, RotateCwIcon, ShieldAlertIcon } from "lucide-react";
 import {
   FULL_DISK_ACCESS_UNLOCKS,
-  fullDiskAccessRiskLine,
   type EnvironmentId,
   type PrivacyAccess,
 } from "@specweave-studio/contracts";
@@ -106,6 +105,26 @@ export function useFullDiskAccess(environmentId: EnvironmentId, enabled = true) 
   return { access, error, refresh, openSettings };
 }
 
+/**
+ * The unlock list and the risk line in words the phrase catalogs translate.
+ * They match the contracts' `FULL_DISK_ACCESS_UNLOCKS` and risk line, and
+ * `i18n.test.ts` checks that they stay the same.
+ */
+export const FULL_DISK_ACCESS_UNLOCK_PHRASES: Record<
+  (typeof FULL_DISK_ACCESS_UNLOCKS)[number],
+  string
+> = {
+  "Chrome and Safari profiles and history": "Chrome and Safari profiles and history",
+  Mail: "Mail",
+  Messages: "Messages",
+  Notes: "Notes",
+  "Photos library": "Photos library",
+  "Time Machine backups": "Time Machine backups",
+  "Other apps' data": "Other apps' data",
+};
+export const FULL_DISK_ACCESS_RISK_PHRASE =
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.";
+
 /** What it unlocks, the risk, and why some tasks need it. Shared by Settings, first run and the card. */
 export function FullDiskAccessExplanation({
   machine,
@@ -126,7 +145,7 @@ export function FullDiskAccessExplanation({
       <ul className="flex flex-wrap gap-1.5" aria-label={tx("What it unlocks")}>
         {FULL_DISK_ACCESS_UNLOCKS.map((item) => (
           <li key={item} className="rounded-full border border-border bg-secondary px-2 py-0.5">
-            {tx(item)}
+            {tx(FULL_DISK_ACCESS_UNLOCK_PHRASES[item])}
           </li>
         ))}
       </ul>
@@ -136,7 +155,7 @@ export function FullDiskAccessExplanation({
       >
         <ShieldAlertIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-warning-foreground" />
         <span>
-          {fullDiskAccessRiskLine(machine)}{" "}
+          {tx(FULL_DISK_ACCESS_RISK_PHRASE, { machine })}{" "}
           {tx(
             "A prompt hidden in a web page or file could ask an agent to read your mail. Turn it on only if you need it.",
           )}
@@ -220,7 +239,7 @@ export function FullDiskAccessRow({
                 ? tx(
                     "New agent runs have it. Threads that were already running get it after they restart.",
                   )
-                : `${fullDiskAccessRiskLine(environmentLabel)}`}
+                : tx(FULL_DISK_ACCESS_RISK_PHRASE, { machine: environmentLabel })}
             </p>
           ) : (
             <p className="text-xs text-muted-foreground">

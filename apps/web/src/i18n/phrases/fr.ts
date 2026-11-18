@@ -5677,6 +5677,16 @@ export const fr: PhraseCatalog = {
     "{machines} fonctionnent, mais cette fenêtre ne peut pas y accéder tant que vous n'êtes pas connecté.",
   "Sign in to reach this machine": "Connectez-vous pour accéder à cet ordinateur",
   // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Profils et historique de Chrome et Safari",
+  Mail: "Mail",
+  Messages: "Messages",
+  "Photos library": "Photothèque de Photos",
+  "Time Machine backups": "Sauvegardes Time Machine",
+  "Other apps' data": "Données d'autres apps",
+  "Screen Recording": "Enregistrement de l'écran",
+  Accessibility: "Accessibilité",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "Chaque agent sur {machine}, dans chaque projet et avec chaque fournisseur, l'obtient jusqu'à ce que vous le désactiviez dans Réglages Système.",
   "Setup works without Connect, and you can add it later in Settings > Machines.":
     "La configuration fonctionne sans Connect, et vous pourrez l'ajouter plus tard dans Réglages > Machines.",
   "Each row has its own button. Change any of it later in Settings.":
@@ -5707,7 +5717,7 @@ export const fr: PhraseCatalog = {
     "Associé, ne répond pas. Ouvrez Chrome ou reconnectez-le.",
   "{profiles}: an older extension.": "{profiles} : une extension plus ancienne.",
   "Update the extension": "Mettre à jour l'extension",
-  "{profiles}: not from the Chrome Web Store.": "{profiles} : ne vient pas du Chrome Web Store.",
+  "{profiles}: not from the Chrome Web Store.": "{profiles} : hors Chrome Web Store.",
   "{profiles}: give it a name agents can tell apart.":
     "{profiles} : donnez-lui un nom que les agents peuvent distinguer.",
   "Paired: {names}": "Associé : {names}",

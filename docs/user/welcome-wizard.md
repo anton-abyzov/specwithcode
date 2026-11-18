@@ -92,7 +92,9 @@ row as it is. The stage appears only when at least one row applies.
   commands without asking each time. **Keep Supervised** (or **Keep current
   access**) leaves new chats as they are. **What it allows** explains it.
   Answering stays on this stage; the row then shows your answer with
-  **Change**. With several machines, the row names them. See
+  **Change**. After SpecWithCode reopens during setup, the row shows the
+  answer without **Change** and points to Settings > General, where the
+  setting lives. With several machines, the row names them. See
   [Permission modes](./permission-modes.md).
 - **Your browser.** Pairs a Chrome profile so agents can work in your
   signed-in browser. Press **Set up**, add the extension, press **Copy code**
