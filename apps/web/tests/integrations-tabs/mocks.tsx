@@ -1,13 +1,126 @@
 import { EnvironmentId } from "@specweave-studio/contracts";
 import { useSyncExternalStore } from "react";
 
-export {
-  projectWorkspace,
-  deviceEnvironment,
-  useAtomCommand,
-  useDeviceState,
-  useEnvironmentQuery,
+import {
+  useAtomCommand as readOnlyCommand,
+  useEnvironmentQuery as scan,
 } from "../connections-library/mocks";
+
+export { projectWorkspace, deviceEnvironment, useDeviceState } from "../connections-library/mocks";
+
+/**
+ * What the guided add wrote in this page load, per machine. The fixture's
+ * machines answer an add and its undo; every other edit stays read-only.
+ */
+const TOOL_FILES: Record<string, readonly [string, string]> = {
+  codex: ["Codex", "~/.codex/config.toml"],
+  claude: ["Claude Code", "~/.claude.json"],
+};
+const added = new Map<string, Map<string, ReadonlyArray<string>>>();
+const changes = new Map<string, { environmentId: string; name: string }>();
+const addListeners = new Set<() => void>();
+let addVersion = 0;
+/** Every add and undo a machine was sent, in order, for the verifier to read. */
+const applyCalls: Array<{ environmentId: string; action: string; preview: boolean }> = [];
+(window as unknown as { fixtureApplyCalls: typeof applyCalls }).fixtureApplyCalls = applyCalls;
+const emptySnapshot = {
+  observedAt: "2026-10-14T12:00:00Z",
+  runtime: "unverified",
+  truncated: false,
+  sources: [],
+  connections: [],
+  plugins: [],
+};
+function changed() {
+  addVersion += 1;
+  for (const notify of addListeners) notify();
+}
+
+export function useAtomCommand() {
+  const readOnly = readOnlyCommand();
+  return async (request: {
+    environmentId: string;
+    input: {
+      action: string;
+      preview?: boolean;
+      name?: string;
+      tools?: ReadonlyArray<string>;
+      changeId?: string;
+    };
+  }) => {
+    const { environmentId, input } = request;
+    if (input.action !== "add" && input.action !== "undo") return readOnly();
+    applyCalls.push({ environmentId, action: input.action, preview: input.preview === true });
+    if (input.action === "undo") {
+      const change = changes.get(input.changeId ?? "");
+      if (!change) return readOnly();
+      added.get(change.environmentId)?.delete(change.name);
+      changed();
+      return { _tag: "Success" as const, value: emptySnapshot };
+    }
+    const name = input.name ?? "";
+    const files = (input.tools ?? []).map((tool) => ({
+      tool: TOOL_FILES[tool]?.[0] ?? tool,
+      path: TOOL_FILES[tool]?.[1] ?? `~/.${tool}/mcp.json`,
+      lines: [`Add ${name}: {"url":"••••"}`],
+    }));
+    if (input.preview)
+      return {
+        _tag: "Success" as const,
+        value: { ...emptySnapshot, change: { preview: true, files } },
+      };
+    const id = `fixture-change-${changes.size + 1}`;
+    changes.set(id, { environmentId, name });
+    const servers = added.get(environmentId) ?? new Map<string, ReadonlyArray<string>>();
+    servers.set(name, input.tools ?? []);
+    added.set(environmentId, servers);
+    changed();
+    return {
+      _tag: "Success" as const,
+      value: { ...emptySnapshot, change: { id, preview: false, files } },
+    };
+  };
+}
+
+/** One object per machine and scan, as the app's own store hands out. */
+const scans = new Map<string, unknown>();
+export function useEnvironmentQuery(atom: Parameters<typeof scan>[0]) {
+  useSyncExternalStore(
+    (notify) => {
+      addListeners.add(notify);
+      return () => {
+        addListeners.delete(notify);
+      };
+    },
+    () => addVersion,
+  );
+  const result = scan(atom);
+  if (!atom || "chrome" in atom || !result.data) return result;
+  const key = `${atom.environmentId}:${atom.input.projectId ?? "user"}:${addVersion}`;
+  if (!scans.has(key)) {
+    const servers = [...(added.get(atom.environmentId) ?? [])];
+    scans.set(key, {
+      ...result.data,
+      observedAt: new Date(Date.UTC(2026, 9, 14, 12, 0, addVersion)).toISOString(),
+      connections: [
+        ...result.data.connections,
+        ...servers.flatMap(([name, tools]) =>
+          tools.map((tool) => ({
+            id: `${tool}:${tool}-user:${name}`,
+            name,
+            provider: tool,
+            sourceId: `${tool}-user`,
+            scope: "user",
+            transport: "http",
+            state: "configured",
+            shadowed: false,
+          })),
+        ),
+      ],
+    });
+  }
+  return { ...result, data: scans.get(key) as typeof result.data };
+}
 
 /** Only what the built-in tools block reads: the operating system and three switches. */
 const machineConfig = (os: "darwin" | "linux") => ({

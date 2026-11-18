@@ -441,3 +441,84 @@ it("offers no list edits to a sign-in that cannot change the machine's files", a
   expect(labelled("Remove: linear")).toBeUndefined();
   expect(named("Enter details by hand")).toBeUndefined();
 });
+it("tells a machine on an older version to update instead of offering the add", async () => {
+  // No plugin list: the machine predates the review step.
+  await renderTab();
+  expect(text()).toContain("Update SpecWithCode on Mac to add servers from here.");
+  expect(text()).toContain("cannot show you a change before it is written");
+  expect(byTestId("add-server-paste")).toEqual([]);
+  expect(byTestId("add-server-catalog")).toEqual([]);
+  expect(text()).not.toContain("Pick one below");
+  expect(state.apply).not.toHaveBeenCalled();
+});
+it("points an empty list at the add box and opens the by-hand form from there", async () => {
+  state.query.data = { ...snapshot, plugins: [] };
+  await renderTab();
+  expect(text()).toContain("No MCP servers on Mac yet");
+  expect(text()).toContain("Pick one below, or paste what the server's setup page gives you.");
+  expect(byTestId("add-server-paste")).not.toEqual([]);
+  await act(() => named("Enter details by hand").props.onClick());
+  expect(byTestId("connection-editor")).not.toEqual([]);
+  expect(byTestId("add-server-paste")).toEqual([]);
+});
+it("offers no add to a sign-in that cannot change the machine's files", async () => {
+  state.query.data = { ...snapshot, plugins: [] };
+  state.mayWrite = false;
+  await renderTab();
+  expect(byTestId("add-server-section")).toEqual([]);
+  expect(text()).toContain("No MCP servers on Mac yet");
+  expect(text()).not.toContain("Pick one below");
+});
+it("says Added, and nothing about sign-in state, on the row the guided add saved", async () => {
+  const files = [{ tool: "Codex", path: "~/.codex/config.toml", lines: ["Add linear"] }];
+  state.apply
+    .mockResolvedValueOnce({
+      _tag: "Success",
+      value: { ...snapshot, change: { preview: true, files } },
+    })
+    .mockResolvedValueOnce({
+      _tag: "Success",
+      value: { ...snapshot, change: { preview: false, id: "change-1", files } },
+    });
+  state.query.data = { ...snapshot, plugins: [] };
+  await renderTab();
+  const submit = (id: string) =>
+    act(async () => void (await byTestId(id)[0]!.props.onSubmit({ preventDefault() {} })));
+  await act(() =>
+    byTestId("add-server-paste")[0]!.props.onChange({
+      target: { value: "https://mcp.linear.app/mcp" },
+    }),
+  );
+  await submit("add-server-pick-form");
+  await submit("add-server-summary");
+  expect(state.apply).toHaveBeenLastCalledWith({
+    environmentId: mac,
+    input: {
+      action: "add",
+      name: "linear",
+      tools: ["codex", "claude"],
+      server: { url: "https://mcp.linear.app/mcp" },
+      preview: true,
+    },
+  });
+  await act(async () => void (await named("Save on Mac").props.onClick()));
+  expect(state.query.refresh).toHaveBeenCalled();
+  state.query = {
+    ...state.query,
+    data: {
+      ...snapshot,
+      plugins: [],
+      connections: [entry("codex", "linear"), entry("claude", "linear")],
+    },
+  };
+  await act(() => renderer.update(<NativeConnectionsPanel environmentId={mac} />));
+  expect(byTestId("server-row")).toHaveLength(1);
+  const row = byTestId("server-row")[0]!
+    .findAll((node) => typeof node.type === "string")
+    .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+    .join(" ");
+  expect(row).toContain("linear");
+  expect(row).toContain("Added");
+  expect(text()).not.toContain("Connected");
+  expect(text()).not.toContain("Needs sign-in");
+});

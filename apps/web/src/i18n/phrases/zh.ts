@@ -5411,7 +5411,6 @@ export const zh: PhraseCatalog = {
   "{tool}: only in the folder {folder}": "{tool}：仅在文件夹 {folder} 中",
   "{tool}: from this project's folder": "{tool}：来自此项目的文件夹",
   "No MCP servers on {machine} yet": "{machine} 上还没有 MCP 服务器",
-  "Add one with “Enter details by hand”.": "通过“手动输入详细信息”添加一个。",
   "Search servers": "搜索服务器",
   "No server matches the search.": "没有符合搜索的服务器。",
   "AI tools that have it": "拥有它的 AI 工具",
@@ -5433,4 +5432,128 @@ export const zh: PhraseCatalog = {
     "SpecWithCode 会读取 {machine} 上各工具自己的配置文件。它无法判断服务器是否已登录或正在运行。",
   "Scanned {when}.": "扫描时间：{when}。",
   "No MCP servers yet.": "还没有 MCP 服务器。",
+  "SpecWithCode could not read this as a web address, a command or a settings block.":
+    "SpecWithCode 无法将其识别为网址、命令或设置块。",
+  "This is an SSE server, which SpecWithCode cannot add. Look for a Streamable HTTP address on the server's setup page.":
+    "这是 SSE 服务器，SpecWithCode 无法添加。请在服务器的设置页面上查找 Streamable HTTP 地址。",
+  "Only http and https addresses can be added.": "只能添加 http 和 https 地址。",
+  "SpecWithCode cannot carry over the {tool} option “{flag}”.":
+    "SpecWithCode 无法沿用 {tool} 的选项“{flag}”。",
+  "SpecWithCode cannot carry over the setting “{key}”: it only works in one tool.":
+    "SpecWithCode 无法沿用设置“{key}”：它只在一个工具中有效。",
+  "This block has {count} servers. Paste one at a time.":
+    "此块包含 {count} 个服务器。请一次粘贴一个。",
+  "Agents here already browse and click in your signed-in Chrome.":
+    "这里的智能体已经可以在你已登录的 Chrome 中浏览和点击。",
+  "This server adds Chrome's developer tools, such as performance traces and network logs.":
+    "此服务器添加 Chrome 的开发者工具，例如性能跟踪和网络日志。",
+  "Agents here already have a browser inside the app for testing sites and screenshots.":
+    "这里的智能体已经有应用内浏览器，可用于测试网站和截图。",
+  "This server adds a separate browser that it starts and drives itself.":
+    "此服务器添加一个独立的浏览器，由它自己启动和操控。",
+  "Open Agent access": "打开智能体访问",
+  "Agents here can already see the screen, click and type in Mac apps.":
+    "这里的智能体已经可以查看屏幕，并在 Mac 应用中点击和输入。",
+  "This server adds its own way to control the desktop.": "此服务器添加了自己的桌面控制方式。",
+  "Agents here already run the iOS Simulator and Android Emulator.":
+    "这里的智能体已经可以运行 iOS Simulator 和 Android Emulator。",
+  "This server adds its own commands for simulators and devices.":
+    "此服务器添加了自己的模拟器和设备命令。",
+  "Open Devices": "打开设备",
+  "In the browser, after you add it. No key to paste.": "添加后在浏览器中完成。无需粘贴密钥。",
+  "Images and video. Browser sign-in.": "图片和视频。浏览器登录。",
+  "Images and video from your agents.": "供你的智能体使用的图片和视频。",
+  "Issues, pull requests, code search. Needs an access token.":
+    "Issue、拉取请求、代码搜索。需要访问令牌。",
+  "Issues, pull requests and code search on GitHub.": "GitHub 上的 Issue、拉取请求和代码搜索。",
+  "With a GitHub personal access token, which you paste here.":
+    "使用 GitHub 个人访问令牌，在此处粘贴。",
+  "Personal access token": "个人访问令牌",
+  "Works with every GitHub plan. A few of its tools need a paid Copilot plan.":
+    "适用于所有 GitHub 套餐。部分工具需要付费的 Copilot 套餐。",
+  "Issues and projects. Browser sign-in.": "事务和项目。浏览器登录。",
+  "Issues, projects and comments in Linear.": "Linear 中的事务、项目和评论。",
+  "Pages and databases. Browser sign-in.": "页面和数据库。浏览器登录。",
+  "Pages, databases and comments in Notion.": "Notion 中的页面、数据库和评论。",
+  "Works on every Notion plan. Workspace guests cannot connect.":
+    "适用于所有 Notion 套餐。工作区访客无法连接。",
+  "Errors and traces. Browser sign-in.": "错误和跟踪。浏览器登录。",
+  "Errors, traces and releases in Sentry.": "Sentry 中的错误、跟踪和版本。",
+  "Current library docs. No sign-in.": "最新的库文档。无需登录。",
+  "Up-to-date documentation for the libraries your code uses.": "你的代码所用库的最新文档。",
+  "None needed.": "不需要。",
+  "Designs and components. Browser sign-in.": "设计和组件。浏览器登录。",
+  "Designs, components and variables from your Figma files.":
+    "你的 Figma 文件中的设计、组件和变量。",
+  "Figma lets only the AI tools on its own list connect, and limits calls by seat: View and Collab seats get up to 20 a month.":
+    "Figma 只允许其列表中的 AI 工具连接，并按席位限制调用次数：View 和 Collab 席位每月最多 20 次。",
+  "This sign-in cannot change files on {machine}": "此登录无法更改 {machine} 上的文件",
+  "Checking {machine}…": "正在检查 {machine}…",
+  "{machine} could not be checked": "无法检查 {machine}",
+  "Update SpecWithCode on {machine} to add servers from here.":
+    "请更新 {machine} 上的 SpecWithCode，以便从这里添加服务器。",
+  "Paste what the server's setup page gives you: a web address, a command, or a settings block.":
+    "粘贴服务器设置页面提供的内容：网址、命令或设置块。",
+  "Popular servers": "常用服务器",
+  "Add to more tools": "添加到更多工具",
+  "The machine did not confirm the change.": "该电脑未确认此更改。",
+  "Use a name that starts with a letter: letters, digits, - and _.":
+    "请使用以字母开头的名称：可包含字母、数字、- 和 _。",
+  "Fill in {name}.": "请填写 {name}。",
+  "Tick at least one tool.": "请至少勾选一个工具。",
+  "{machine} can no longer be changed from here.": "已无法从这里更改 {machine}。",
+  "None of the ticked tools can take it there.": "勾选的工具都无法在那台电脑上添加它。",
+  "{tool} already has a server named {name}": "{tool} 已有名为 {name} 的服务器",
+  "SpecWithCode cannot add web addresses to {tool}": "SpecWithCode 无法向 {tool} 添加网址",
+  "SpecWithCode cannot add programs to {tool}": "SpecWithCode 无法向 {tool} 添加程序",
+  "Add {name}": "添加 {name}",
+  "What will be added": "将添加的内容",
+  Kind: "类型",
+  Address: "地址",
+  "Sign-in": "登录",
+  "If it needs one, you sign in after you add it.": "如果需要，添加后再登录。",
+  "Secret value": "密钥值",
+  "Good to know": "须知",
+  "This is a program. It will run on each machine you tick, with your account's rights.":
+    "这是一个程序。它会以你账户的权限在每台勾选的电脑上运行。",
+  "Checked on {date} against": "{date} 核对，依据",
+  "Which AI tools get it": "哪些 AI 工具获得它",
+  "Each tool keeps its own list. A thread sees this server when the tool it runs on is ticked. Grok threads read Claude Code's list.":
+    "每个工具都有自己的列表。线程所运行的工具被勾选时，该线程才能看到此服务器。Grok 线程读取 Claude Code 的列表。",
+  "Other AI tools, such as Cursor or Gemini CLI, appear here once they are installed on {machine}.":
+    "其他 AI 工具（如 Cursor 或 Gemini CLI）安装到 {machine} 后会显示在这里。",
+  Where: "位置",
+  "On {machine} only.": "仅在 {machine} 上。",
+  "On {machines}.": "在 {machines} 上。",
+  "Added for every project on {machines}.": "已为 {machines} 上的所有项目添加。",
+  "Also add on": "同时添加到",
+  "{tool} is not installed on {machine}, so it is left out there.":
+    "{machine} 上未安装 {tool}，因此在那里跳过。",
+  "{tool} on {machine} already has a server named {name}, so it is left out there.":
+    "{machine} 上的 {tool} 已有名为 {name} 的服务器，因此在那里跳过。",
+  "SpecWithCode cannot add this kind of server to {tool}, so it is left out there.":
+    "SpecWithCode 无法向 {tool} 添加此类服务器，因此在那里跳过。",
+  "This overlaps with something built in": "这与内置功能重叠",
+  "Add anyway": "仍然添加",
+  "Nothing is written until you save. A backup is kept, so you can undo.":
+    "保存前不会写入任何内容。会保留备份，以便撤销。",
+  "Cannot be added on {machine}": "无法在 {machine} 上添加",
+  "{machine} will be skipped.": "将跳过 {machine}。",
+  "Save on {machines}": "保存到 {machines}",
+  "Where it was added": "添加位置",
+  "Not added": "未添加",
+  "One step left: sign in once in each tool": "还差一步：在每个工具中登录一次",
+  "If this server asks you to sign in, do it once in each tool":
+    "如果此服务器要求登录，请在每个工具中登录一次",
+  "{server} opens a browser window to sign in. SpecWithCode cannot see whether you are signed in, so it does not guess.":
+    "{server} 会打开浏览器窗口进行登录。SpecWithCode 无法看到你是否已登录，因此不会猜测。",
+  "Some servers open a browser window to sign in. SpecWithCode cannot see whether you are signed in, so it does not guess.":
+    "有些服务器会打开浏览器窗口进行登录。SpecWithCode 无法看到你是否已登录，因此不会猜测。",
+  "Run it in a terminal on {machines}.": "在 {machines} 的终端中运行它。",
+  "Tools pick the change up when they next start.": "工具会在下次启动时应用此更改。",
+  "Pick one below, or paste what the server's setup page gives you.":
+    "从下方选择一个，或粘贴服务器设置页面提供的内容。",
+  "Add a server": "添加服务器",
+  "{machine} runs a version that cannot show you a change before it is written. After the update, this page shows the add box.":
+    "{machine} 运行的版本无法在写入前显示更改。更新后，此页面会显示添加框。",
 };

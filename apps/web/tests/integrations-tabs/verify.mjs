@@ -220,6 +220,111 @@ try {
   await page.close();
   checks.push("One machine, offline, connecting, view only and a machine that left the list");
 
+  // Guided add: one catalog server to two machines, each with its own files, result and Undo.
+  page = await open({ state: "ready", open: "/settings/integrations/mcp" });
+  const calls = () => page.evaluate(() => window.fixtureApplyCalls);
+  const add = page.getByTestId("add-server");
+  await page.getByTestId("add-server-paste").waitFor();
+  NodeAssert.equal(await page.getByTestId("add-server-catalog").locator("li").count(), 6);
+  await page.getByRole("button", { name: "Show all" }).click();
+  NodeAssert.equal(await page.getByTestId("add-server-catalog").locator("li").count(), 7);
+  await shot(page, "add-pick-1100-light");
+  // A paste the app cannot use says why and offers the form.
+  await page.getByTestId("add-server-paste").fill("claude mcp add -t sse x https://x.test/sse");
+  await add.getByRole("button", { name: "Add", exact: true }).click();
+  NodeAssert.match(await add.getByRole("alert").innerText(), /SSE server/);
+  await page.getByTestId("add-server-paste").fill("");
+  await page.getByRole("button", { name: "Add: Linear" }).click();
+  await page.getByTestId("add-server-summary").waitFor();
+  NodeAssert.equal(await page.getByTestId("add-server-name").innerText(), "linear");
+  NodeAssert.equal(await add.getByRole("checkbox", { name: "Codex" }).isChecked(), true);
+  NodeAssert.equal(await add.getByRole("checkbox", { name: "Claude Code" }).isChecked(), true);
+  NodeAssert.match(
+    await add.innerText(),
+    /A thread sees this server when the tool it runs on is ticked\. Grok threads read Claude Code's list\./,
+  );
+  NodeAssert.equal(await page.getByTestId("add-server-where").innerText(), "On Desk only.");
+  const loft = add.getByRole("checkbox", { name: "Loft Mini" });
+  NodeAssert.equal(await loft.isChecked(), false, "another machine starts ticked");
+  await loft.click();
+  NodeAssert.equal(
+    await page.getByTestId("add-server-where").innerText(),
+    "On Desk and Loft Mini.",
+  );
+  await shot(page, "add-summary-1100-light");
+  NodeAssert.deepEqual(await calls(), [], "a machine was asked before Review");
+  await add.getByRole("button", { name: "Review" }).click();
+  await page.getByTestId("add-server-review").waitFor();
+  NodeAssert.deepEqual(
+    await page
+      .getByTestId("review-machine")
+      .evaluateAll((machines) => machines.map((machine) => machine.dataset.machine)),
+    ["Desk", "Loft Mini"],
+  );
+  for (const machine of await page.getByTestId("review-machine").all())
+    NodeAssert.match(await machine.innerText(), /~\/\.codex\/config\.toml[\s\S]*~\/\.claude\.json/);
+  NodeAssert.deepEqual(await calls(), [
+    { environmentId: "mac", action: "add", preview: true },
+    { environmentId: "remote", action: "add", preview: true },
+  ]);
+  await shot(page, "add-review-1100-light");
+  await add.getByRole("button", { name: "Save on Desk and Loft Mini" }).click();
+  await page.getByTestId("add-server-done").waitFor();
+  const states = () =>
+    page
+      .getByTestId("add-server-result")
+      .evaluateAll((rows) => rows.map((row) => row.dataset.state));
+  NodeAssert.deepEqual(await states(), ["added", "added"]);
+  await add.getByRole("button", { name: "Undo: Desk" }).waitFor();
+  await add.getByRole("button", { name: "Undo: Loft Mini" }).waitFor();
+  NodeAssert.deepEqual(
+    await page.getByTestId("add-server-sign-in").locator("code").allInnerTexts(),
+    ["codex mcp login linear", "claude mcp login linear"],
+  );
+  NodeAssert.match(
+    await page.getByTestId("add-server-sign-in").innerText(),
+    /Run it in a terminal on Desk and Loft Mini\./,
+  );
+  const row = page.getByTestId("server-row").filter({ hasText: "linear" });
+  NodeAssert.match(await row.innerText(), /Added/);
+  // The app cannot see sign-in state, so neither the row nor the result claims one.
+  for (const part of [row, add])
+    NodeAssert.doesNotMatch(await part.innerText(), /Needs sign-in|Connected|Signed in\b/);
+  await shot(page, "add-done-1100-light");
+  await add.getByRole("button", { name: "Undo: Loft Mini" }).click();
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('[data-testid="add-server-result"]')].map(
+        (row) => row.dataset.state,
+      )[1] === "undone",
+  );
+  NodeAssert.deepEqual(await states(), ["added", "undone"]);
+  NodeAssert.deepEqual((await calls()).slice(2), [
+    { environmentId: "mac", action: "add", preview: false },
+    { environmentId: "remote", action: "add", preview: false },
+    { environmentId: "remote", action: "undo", preview: false },
+  ]);
+  NodeAssert.equal(await row.count(), 1, "the selected machine lost its server to another's Undo");
+  // The next add starts with no other machine ticked.
+  await add.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Add: Notion" }).click();
+  NodeAssert.equal(await add.getByRole("checkbox", { name: "Loft Mini" }).isChecked(), false);
+  await page.close();
+  // A sign-in that cannot change files on the other machine sees it listed, never ticked.
+  page = await open({ state: "ready", open: "/settings/integrations/mcp", width: 560 });
+  await page.getByTestId("add-server-paste").waitFor();
+  const tall = await page.getByRole("tabpanel").evaluate((panel) => panel.scrollHeight);
+  NodeAssert.ok(tall <= 1800, `the MCP tab is ${tall} px tall at 560 x 800, over the 1,800 budget`);
+  await noOverflow(page, "add 560");
+  await page.getByRole("button", { name: "Add: Linear" }).click();
+  await page.getByTestId("add-server-summary").waitFor();
+  await noOverflow(page, "add summary 560");
+  await shot(page, "add-summary-560-light");
+  await page.close();
+  checks.push(
+    `Guided add reaches two machines with a review, a result and an Undo each; MCP tab is ${tall} px tall at 560 x 800`,
+  );
+
   // Layout at the settings window's widths, in both themes and three languages.
   for (const width of [360, 390, 560, 728, 1100, 1600])
     for (const theme of ["light", "dark"])

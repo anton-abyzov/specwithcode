@@ -1,3 +1,4 @@
+import { NATIVE_TOOL_SERVER_KINDS, nativeToolRunsKind } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   disableCodexServer,
@@ -85,6 +86,23 @@ describe("per-tool declaration edits", () => {
     });
     expect(toolEntry("claude-desktop", http)).toBeNull();
     expect(toolDeclaration("gemini", { url: "https://x.test/sse" })).toBeNull();
+  });
+  it("writes exactly the kinds the shared table lists for each tool", () => {
+    const launches = {
+      stdio: { transport: "stdio", command: "npx", args: ["-y", "pkg"], env: {} },
+      http: { transport: "http", url: "https://x.test/mcp", headers: {} },
+    } as const;
+    const tools = Object.keys(NATIVE_TOOL_SERVER_KINDS) as Array<
+      keyof typeof NATIVE_TOOL_SERVER_KINDS
+    >;
+    expect(tools).toHaveLength(8);
+    for (const tool of tools)
+      for (const kind of ["stdio", "http"] as const)
+        expect([tool, kind, toolEntry(tool, launches[kind]) !== null]).toEqual([
+          tool,
+          kind,
+          nativeToolRunsKind(tool, kind),
+        ]);
   });
   it("adds, refuses a taken name, and deletes JSON servers keeping other keys", () => {
     const added = setJsonServer("opencode", '{"theme":"x"}', "a", { type: "remote", url: "u" })!;

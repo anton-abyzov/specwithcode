@@ -5643,7 +5643,6 @@ export const ru: PhraseCatalog = {
   "{tool}: only in the folder {folder}": "{tool}: только в папке {folder}",
   "{tool}: from this project's folder": "{tool}: из папки этого проекта",
   "No MCP servers on {machine} yet": "На {machine} пока нет MCP-серверов",
-  "Add one with “Enter details by hand”.": "Добавьте сервер через «Ввести данные вручную».",
   "Search servers": "Поиск серверов",
   "No server matches the search.": "Ни один сервер не подходит под запрос.",
   "AI tools that have it": "ИИ-инструменты, где он есть",
@@ -5665,4 +5664,137 @@ export const ru: PhraseCatalog = {
     "SpecWithCode читает файлы конфигурации каждого инструмента на {machine}. Он не может определить, выполнен ли вход на сервере и работает ли он.",
   "Scanned {when}.": "Проверено: {when}.",
   "No MCP servers yet.": "MCP-серверов пока нет.",
+  "SpecWithCode could not read this as a web address, a command or a settings block.":
+    "SpecWithCode не смог распознать это как веб-адрес, команду или блок настроек.",
+  "This is an SSE server, which SpecWithCode cannot add. Look for a Streamable HTTP address on the server's setup page.":
+    "Это SSE-сервер, его SpecWithCode добавить не может. Найдите адрес Streamable HTTP на странице настройки сервера.",
+  "Only http and https addresses can be added.": "Добавлять можно только адреса http и https.",
+  "SpecWithCode cannot carry over the {tool} option “{flag}”.":
+    "SpecWithCode не может перенести параметр {tool} «{flag}».",
+  "SpecWithCode cannot carry over the setting “{key}”: it only works in one tool.":
+    "SpecWithCode не может перенести настройку «{key}»: она работает только в одном инструменте.",
+  "This block has {count} servers. Paste one at a time.":
+    "Серверов в этом блоке: {count}. Вставляйте по одному.",
+  "Agents here already browse and click in your signed-in Chrome.":
+    "Агенты здесь уже открывают страницы и нажимают в вашем Chrome с выполненным входом.",
+  "This server adds Chrome's developer tools, such as performance traces and network logs.":
+    "Этот сервер добавляет инструменты разработчика Chrome, например трассировки производительности и сетевые журналы.",
+  "Agents here already have a browser inside the app for testing sites and screenshots.":
+    "У агентов здесь уже есть браузер внутри приложения для проверки сайтов и снимков экрана.",
+  "This server adds a separate browser that it starts and drives itself.":
+    "Этот сервер добавляет отдельный браузер, который сам запускает и которым сам управляет.",
+  "Open Agent access": "Открыть «Доступ агентов»",
+  "Agents here can already see the screen, click and type in Mac apps.":
+    "Агенты здесь уже видят экран, нажимают и печатают в приложениях Mac.",
+  "This server adds its own way to control the desktop.":
+    "Этот сервер добавляет собственный способ управлять рабочим столом.",
+  "Agents here already run the iOS Simulator and Android Emulator.":
+    "Агенты здесь уже запускают iOS Simulator и Android Emulator.",
+  "This server adds its own commands for simulators and devices.":
+    "Этот сервер добавляет свои команды для симуляторов и устройств.",
+  "Open Devices": "Открыть «Устройства»",
+  "In the browser, after you add it. No key to paste.":
+    "В браузере, после добавления. Ключ вставлять не нужно.",
+  "Images and video. Browser sign-in.": "Изображения и видео. Вход через браузер.",
+  "Images and video from your agents.": "Изображения и видео для ваших агентов.",
+  "Issues, pull requests, code search. Needs an access token.":
+    "Issues, pull requests, поиск по коду. Нужен токен доступа.",
+  "Issues, pull requests and code search on GitHub.":
+    "Issues, pull requests и поиск по коду на GitHub.",
+  "With a GitHub personal access token, which you paste here.":
+    "С персональным токеном доступа GitHub, который вы вставляете сюда.",
+  "Personal access token": "Персональный токен доступа",
+  "Works with every GitHub plan. A few of its tools need a paid Copilot plan.":
+    "Работает с любым тарифом GitHub. Некоторым его инструментам нужен платный тариф Copilot.",
+  "Issues and projects. Browser sign-in.": "Задачи и проекты. Вход через браузер.",
+  "Issues, projects and comments in Linear.": "Задачи, проекты и комментарии в Linear.",
+  "Pages and databases. Browser sign-in.": "Страницы и базы данных. Вход через браузер.",
+  "Pages, databases and comments in Notion.": "Страницы, базы данных и комментарии в Notion.",
+  "Works on every Notion plan. Workspace guests cannot connect.":
+    "Работает с любым тарифом Notion. Гости рабочего пространства подключиться не могут.",
+  "Errors and traces. Browser sign-in.": "Ошибки и трассировки. Вход через браузер.",
+  "Errors, traces and releases in Sentry.": "Ошибки, трассировки и релизы в Sentry.",
+  "Current library docs. No sign-in.": "Актуальная документация библиотек. Без входа.",
+  "Up-to-date documentation for the libraries your code uses.":
+    "Свежая документация по библиотекам, которые использует ваш код.",
+  "None needed.": "Не нужен.",
+  "Designs and components. Browser sign-in.": "Макеты и компоненты. Вход через браузер.",
+  "Designs, components and variables from your Figma files.":
+    "Макеты, компоненты и переменные из ваших файлов Figma.",
+  "Figma lets only the AI tools on its own list connect, and limits calls by seat: View and Collab seats get up to 20 a month.":
+    "Figma разрешает подключаться только ИИ-инструментам из своего списка и ограничивает вызовы по типу места: для мест View и Collab это до 20 в месяц.",
+  "This sign-in cannot change files on {machine}": "С этим входом нельзя менять файлы на {machine}",
+  "Checking {machine}…": "Проверяем {machine}…",
+  "{machine} could not be checked": "Не удалось проверить {machine}",
+  "Update SpecWithCode on {machine} to add servers from here.":
+    "Обновите SpecWithCode на {machine}, чтобы добавлять серверы отсюда.",
+  "Paste what the server's setup page gives you: a web address, a command, or a settings block.":
+    "Вставьте то, что даёт страница настройки сервера: веб-адрес, команду или блок настроек.",
+  "Popular servers": "Популярные серверы",
+  "Add to more tools": "Добавить в другие инструменты",
+  "The machine did not confirm the change.": "Компьютер не подтвердил изменение.",
+  "Use a name that starts with a letter: letters, digits, - and _.":
+    "Имя должно начинаться с буквы: буквы, цифры, - и _.",
+  "Fill in {name}.": "Заполните поле {name}.",
+  "Tick at least one tool.": "Отметьте хотя бы один инструмент.",
+  "{machine} can no longer be changed from here.": "{machine} больше нельзя менять отсюда.",
+  "None of the ticked tools can take it there.":
+    "Ни один из отмеченных инструментов не может принять его на этом компьютере.",
+  "{tool} already has a server named {name}": "В {tool} уже есть сервер с именем {name}",
+  "SpecWithCode cannot add web addresses to {tool}":
+    "SpecWithCode не может добавлять веб-адреса в {tool}",
+  "SpecWithCode cannot add programs to {tool}":
+    "SpecWithCode не может добавлять программы в {tool}",
+  "Add {name}": "Добавить {name}",
+  "What will be added": "Что будет добавлено",
+  Kind: "Тип",
+  Address: "Адрес",
+  "Sign-in": "Вход",
+  "If it needs one, you sign in after you add it.": "Если вход нужен, вы войдёте после добавления.",
+  "Secret value": "Секретное значение",
+  "Good to know": "Полезно знать",
+  "This is a program. It will run on each machine you tick, with your account's rights.":
+    "Это программа. Она будет запускаться на каждом отмеченном компьютере с правами вашего аккаунта.",
+  "Checked on {date} against": "Проверено {date} по",
+  "Which AI tools get it": "Каким ИИ-инструментам добавить",
+  "Each tool keeps its own list. A thread sees this server when the tool it runs on is ticked. Grok threads read Claude Code's list.":
+    "У каждого инструмента свой список. Тред видит этот сервер, если отмечен инструмент, в котором он работает. Треды Grok читают список Claude Code.",
+  "Other AI tools, such as Cursor or Gemini CLI, appear here once they are installed on {machine}.":
+    "Другие ИИ-инструменты, например Cursor или Gemini CLI, появятся здесь, когда их установят на {machine}.",
+  Where: "Где",
+  "On {machine} only.": "Только на {machine}.",
+  "On {machines}.": "На {machines}.",
+  "Added for every project on {machines}.": "Добавлен для всех проектов на {machines}.",
+  "Also add on": "Добавить также на",
+  "{tool} is not installed on {machine}, so it is left out there.":
+    "{tool} не установлен на {machine}, поэтому там он пропускается.",
+  "{tool} on {machine} already has a server named {name}, so it is left out there.":
+    "В {tool} на {machine} уже есть сервер с именем {name}, поэтому там он пропускается.",
+  "SpecWithCode cannot add this kind of server to {tool}, so it is left out there.":
+    "SpecWithCode не может добавить такой сервер в {tool}, поэтому там он пропускается.",
+  "This overlaps with something built in": "Это пересекается со встроенной функцией",
+  "Add anyway": "Всё равно добавить",
+  "Nothing is written until you save. A backup is kept, so you can undo.":
+    "Ничего не записывается, пока вы не сохраните. Сохраняется резервная копия, так что изменение можно отменить.",
+  "Cannot be added on {machine}": "Нельзя добавить на {machine}",
+  "{machine} will be skipped.": "{machine} пропускается.",
+  "Save on {machines}": "Сохранить на {machines}",
+  "Where it was added": "Где добавлен",
+  "Not added": "Не добавлен",
+  "One step left: sign in once in each tool":
+    "Остался один шаг: войдите один раз в каждом инструменте",
+  "If this server asks you to sign in, do it once in each tool":
+    "Если этот сервер попросит войти, сделайте это один раз в каждом инструменте",
+  "{server} opens a browser window to sign in. SpecWithCode cannot see whether you are signed in, so it does not guess.":
+    "{server} открывает окно браузера для входа. SpecWithCode не видит, выполнен ли вход, поэтому не гадает.",
+  "Some servers open a browser window to sign in. SpecWithCode cannot see whether you are signed in, so it does not guess.":
+    "Некоторые серверы открывают окно браузера для входа. SpecWithCode не видит, выполнен ли вход, поэтому не гадает.",
+  "Run it in a terminal on {machines}.": "Выполните это в терминале на {machines}.",
+  "Tools pick the change up when they next start.":
+    "Инструменты подхватят изменение при следующем запуске.",
+  "Pick one below, or paste what the server's setup page gives you.":
+    "Выберите сервер ниже или вставьте то, что даёт страница настройки сервера.",
+  "Add a server": "Добавить сервер",
+  "{machine} runs a version that cannot show you a change before it is written. After the update, this page shows the add box.":
+    "На {machine} установлена версия, которая не может показать изменение до записи. После обновления на этой странице появится поле добавления.",
 };

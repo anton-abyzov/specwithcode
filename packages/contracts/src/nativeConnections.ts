@@ -66,6 +66,27 @@ export const NativeTool = Schema.Literals([
   "windsurf",
 ]);
 export type NativeTool = typeof NativeTool.Type;
+/** How a server is reached: a program started on the machine, or a web address. */
+export type NativeServerKind = "stdio" | "http";
+/**
+ * The kinds of server SpecWithCode writes for each tool. The add form reads it
+ * to tick and disable tools; a server test holds the writer (`toolEntry`) to it,
+ * so the form never offers a tool the machine would refuse.
+ */
+export const NATIVE_TOOL_SERVER_KINDS: Readonly<
+  Record<NativeTool, ReadonlyArray<NativeServerKind>>
+> = {
+  codex: ["stdio", "http"],
+  claude: ["stdio", "http"],
+  "claude-desktop": ["stdio"],
+  gemini: ["stdio", "http"],
+  copilot: ["stdio", "http"],
+  cursor: ["stdio", "http"],
+  opencode: ["stdio", "http"],
+  windsurf: ["stdio", "http"],
+};
+export const nativeToolRunsKind = (tool: NativeTool, kind: NativeServerKind): boolean =>
+  NATIVE_TOOL_SERVER_KINDS[tool].includes(kind);
 /** An installed Codex or Claude Code plugin, on or off. */
 export const NativePlugin = Schema.Struct({
   provider: NativeConnectionProvider,

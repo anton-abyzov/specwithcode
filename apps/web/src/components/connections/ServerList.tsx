@@ -63,11 +63,17 @@ export function ServerList({
   rows,
   machine,
   busy,
+  added,
+  emptyHint,
   onAct,
 }: {
   readonly rows: ReadonlyArray<ServerListRow>;
   readonly machine: string;
   readonly busy: boolean;
+  /** The server just added from this page. It says "Added": sign-in state is never known. */
+  readonly added?: string | null | undefined;
+  /** Where to add one from, when this sign-in may. */
+  readonly emptyHint?: string | null | undefined;
   /** Absent when this sign-in may not change the machine's files. */
   readonly onAct?: ((row: ServerListRow, action: ServerRowAction) => void) | undefined;
 }) {
@@ -80,9 +86,7 @@ export function ServerList({
         data-testid="server-list-empty"
       >
         <p className="text-sm font-medium">{tx("No MCP servers on {machine} yet", { machine })}</p>
-        <p className="text-xs text-muted-foreground">
-          {tx("Add one with “Enter details by hand”.")}
-        </p>
+        {emptyHint ? <p className="text-xs text-muted-foreground">{emptyHint}</p> : null}
       </div>
     );
   const shown = filterServerRows(rows, query, toolLabel);
@@ -120,6 +124,7 @@ export function ServerList({
                 <div className="min-w-44 flex-1 space-y-1">
                   <p className="flex flex-wrap items-center gap-2 text-sm">
                     <span className="font-medium [overflow-wrap:anywhere]">{row.name}</span>
+                    {row.name === added ? <Badge variant="success">{tx("Added")}</Badge> : null}
                     {row.off ? <Badge variant="outline">{tx("Off")}</Badge> : null}
                     {row.thisProject ? <Badge variant="info">{tx("This project")}</Badge> : null}
                   </p>

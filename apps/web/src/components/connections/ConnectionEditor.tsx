@@ -216,6 +216,26 @@ export function ConnectionEditor({
   );
 }
 
+/** The files a change writes and the entries it adds or removes, values masked by the machine. */
+export function ChangeFiles({ files }: { files: NativeConnectionChange["files"] }) {
+  return (
+    <ul className="space-y-2 text-sm">
+      {files.map((file) => (
+        <li key={file.path}>
+          <div className="font-medium">
+            {file.tool} <span className="text-xs text-muted-foreground">{file.path}</span>
+          </div>
+          {file.lines.map((line) => (
+            <code key={line} className="block break-all text-xs text-muted-foreground">
+              {line}
+            </code>
+          ))}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** What a change writes, file by file, with values masked by the machine. */
 export function ChangePreview({
   change,
@@ -237,20 +257,7 @@ export function ChangePreview({
       data-testid="change-preview"
     >
       <h4 className="text-sm font-medium">{tx("Review the change")}</h4>
-      <ul className="space-y-2 text-sm">
-        {change.files.map((file) => (
-          <li key={file.path}>
-            <div className="font-medium">
-              {file.tool} <span className="text-xs text-muted-foreground">{file.path}</span>
-            </div>
-            {file.lines.map((line) => (
-              <code key={line} className="block break-all text-xs text-muted-foreground">
-                {line}
-              </code>
-            ))}
-          </li>
-        ))}
-      </ul>
+      <ChangeFiles files={change.files} />
       <p className="text-xs text-muted-foreground">
         {tx(
           "A backup is kept, so you can undo this. Tools pick the change up when they next start.",

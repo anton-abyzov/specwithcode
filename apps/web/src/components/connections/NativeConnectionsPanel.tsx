@@ -23,6 +23,7 @@ import { Button } from "../ui/button";
 import { ConnectionMatrix, toolLabels } from "./ConnectionMatrix";
 import { ChangePreview, ConnectionEditor } from "./ConnectionEditor";
 import { ComputerUseConnectionNote } from "../computerUse/ComputerUsePermissions";
+import { AddServerFlow } from "./AddServerFlow";
 import { BuiltInToolsBlock } from "./BuiltInToolsBlock";
 import { ServerList } from "./ServerList";
 import {
@@ -76,7 +77,10 @@ export function NativeConnectionsPanel({
     readonly change: NativeConnectionChange;
   } | null>(null);
   const [saved, setSaved] = useState<{ readonly id: string; readonly text: string } | null>(null);
+  /** The by-hand form is open in place of the paste box and the catalog. */
   const [adding, setAdding] = useState(false);
+  /** The server the guided add last put on this machine: its row says "Added". */
+  const [addedName, setAddedName] = useState<string | null>(null);
   /** The plain list is the default; the matrix compares the same servers tool by tool. */
   const [view, setView] = useState<"list" | "compare">("list");
   /** A list action on a server several tools have: one review for all of its files. */
@@ -253,11 +257,6 @@ export function NativeConnectionsPanel({
                 {tx("Compare by AI tool")}
               </Button>
             ) : null}
-            {canEdit && query.data && !legacy && !adding ? (
-              <Button variant="outline" size="xs" onClick={() => setAdding(true)}>
-                {tx("Enter details by hand")}
-              </Button>
-            ) : null}
             <Button variant="outline" size="xs" disabled={query.isPending} onClick={query.refresh}>
               {query.isPending ? tx("Scanning…") : tx("Refresh configurations")}
             </Button>
@@ -323,19 +322,12 @@ export function NativeConnectionsPanel({
                 onConfirm={() => void confirmBatch()}
                 onCancel={() => setBatch(null)}
               />
-            ) : proposal ? (
+            ) : proposal && !adding ? (
               <ChangePreview
                 change={proposal.change}
                 pending={pendingId === "confirm"}
                 onConfirm={() => void confirm()}
                 onCancel={() => setProposal(null)}
-              />
-            ) : adding && canEdit ? (
-              <ConnectionEditor
-                tools={addTools(query.data)}
-                pending={pendingId !== null}
-                onSubmit={(input) => void propose(input)}
-                onCancel={() => setAdding(false)}
               />
             ) : null}
             {view === "compare" ? (
@@ -360,10 +352,68 @@ export function NativeConnectionsPanel({
                   rows={rows}
                   machine={machine}
                   busy={pendingId !== null}
+                  added={addedName}
+                  emptyHint={
+                    canEdit && !legacy
+                      ? tx("Pick one below, or paste what the server's setup page gives you.")
+                      : null
+                  }
                   onAct={canEdit && !legacy ? (row, action) => void act(row, action) : undefined}
                 />
               </>
             )}
+            {canEdit ? (
+              <section
+                aria-labelledby="add-server-title"
+                className="space-y-3"
+                data-testid="add-server-section"
+              >
+                <h3 id="add-server-title" className="text-sm font-medium">
+                  {tx("Add a server")}
+                </h3>
+                {legacy ? (
+                  <div className="rounded-lg border border-border/60 px-3 py-2.5 text-sm">
+                    <p className="font-medium">
+                      {tx("Update SpecWithCode on {machine} to add servers from here.", {
+                        machine,
+                      })}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {tx(
+                        "{machine} runs a version that cannot show you a change before it is written. After the update, this page shows the add box.",
+                        { machine },
+                      )}
+                    </p>
+                  </div>
+                ) : adding && proposal ? (
+                  <ChangePreview
+                    change={proposal.change}
+                    pending={pendingId === "confirm"}
+                    onConfirm={() => void confirm()}
+                    onCancel={() => setProposal(null)}
+                  />
+                ) : adding ? (
+                  <ConnectionEditor
+                    tools={addTools(query.data)}
+                    pending={pendingId !== null}
+                    onSubmit={(input) => void propose(input)}
+                    onCancel={() => setAdding(false)}
+                  />
+                ) : (
+                  <AddServerFlow
+                    // A new machine starts a new add: nothing ticked carries over.
+                    key={environmentId}
+                    environmentId={environmentId}
+                    machine={machine}
+                    snapshot={query.data}
+                    project={Boolean(projectId)}
+                    onByHand={() => setAdding(true)}
+                    onChanged={query.refresh}
+                    onAdded={setAddedName}
+                  />
+                )}
+              </section>
+            ) : null}
             <details className="text-xs text-muted-foreground" data-testid="server-list-about">
               <summary className="cursor-pointer text-sm text-foreground">
                 {tx("About this list: sources and limits")}

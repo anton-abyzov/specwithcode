@@ -5576,7 +5576,6 @@ export const ko: PhraseCatalog = {
   "{tool}: only in the folder {folder}": "{tool}: {folder} 폴더에서만",
   "{tool}: from this project's folder": "{tool}: 이 프로젝트의 폴더에서",
   "No MCP servers on {machine} yet": "{machine}에 아직 MCP 서버가 없습니다",
-  "Add one with “Enter details by hand”.": "“세부 정보 직접 입력”으로 추가하세요.",
   "Search servers": "서버 검색",
   "No server matches the search.": "검색과 일치하는 서버가 없습니다.",
   "AI tools that have it": "이 서버가 있는 AI 도구",
@@ -5598,4 +5597,137 @@ export const ko: PhraseCatalog = {
     "SpecWithCode는 {machine}에서 각 도구의 구성 파일을 읽습니다. 서버가 로그인되어 있는지, 실행 중인지는 알 수 없습니다.",
   "Scanned {when}.": "스캔: {when}.",
   "No MCP servers yet.": "아직 MCP 서버가 없습니다.",
+  "SpecWithCode could not read this as a web address, a command or a settings block.":
+    "SpecWithCode가 이 내용을 웹 주소, 명령 또는 설정 블록으로 읽지 못했습니다.",
+  "This is an SSE server, which SpecWithCode cannot add. Look for a Streamable HTTP address on the server's setup page.":
+    "SSE 서버라서 SpecWithCode가 추가할 수 없습니다. 서버 설정 페이지에서 Streamable HTTP 주소를 찾아보세요.",
+  "Only http and https addresses can be added.": "http와 https 주소만 추가할 수 있습니다.",
+  "SpecWithCode cannot carry over the {tool} option “{flag}”.":
+    "SpecWithCode는 {tool}의 옵션 “{flag}”을(를) 옮길 수 없습니다.",
+  "SpecWithCode cannot carry over the setting “{key}”: it only works in one tool.":
+    "SpecWithCode는 설정 “{key}”을(를) 옮길 수 없습니다. 한 도구에서만 작동합니다.",
+  "This block has {count} servers. Paste one at a time.":
+    "이 블록에는 서버가 {count}개 있습니다. 한 번에 하나씩 붙여 넣으세요.",
+  "Agents here already browse and click in your signed-in Chrome.":
+    "여기의 에이전트는 이미 로그인된 Chrome에서 탐색하고 클릭합니다.",
+  "This server adds Chrome's developer tools, such as performance traces and network logs.":
+    "이 서버는 성능 추적과 네트워크 로그 같은 Chrome 개발자 도구를 추가합니다.",
+  "Agents here already have a browser inside the app for testing sites and screenshots.":
+    "여기의 에이전트에는 이미 사이트 테스트와 스크린샷을 위한 앱 내 브라우저가 있습니다.",
+  "This server adds a separate browser that it starts and drives itself.":
+    "이 서버는 직접 실행하고 조작하는 별도의 브라우저를 추가합니다.",
+  "Open Agent access": "에이전트 접근 열기",
+  "Agents here can already see the screen, click and type in Mac apps.":
+    "여기의 에이전트는 이미 화면을 보고 Mac 앱에서 클릭하고 입력할 수 있습니다.",
+  "This server adds its own way to control the desktop.":
+    "이 서버는 데스크톱을 제어하는 자체 방식을 추가합니다.",
+  "Agents here already run the iOS Simulator and Android Emulator.":
+    "여기의 에이전트는 이미 iOS Simulator와 Android Emulator를 실행합니다.",
+  "This server adds its own commands for simulators and devices.":
+    "이 서버는 시뮬레이터와 기기용 자체 명령을 추가합니다.",
+  "Open Devices": "기기 열기",
+  "In the browser, after you add it. No key to paste.":
+    "추가한 뒤 브라우저에서 합니다. 붙여 넣을 키는 없습니다.",
+  "Images and video. Browser sign-in.": "이미지와 동영상. 브라우저 로그인.",
+  "Images and video from your agents.": "에이전트가 쓰는 이미지와 동영상.",
+  "Issues, pull requests, code search. Needs an access token.":
+    "이슈, 풀 리퀘스트, 코드 검색. 액세스 토큰이 필요합니다.",
+  "Issues, pull requests and code search on GitHub.": "GitHub의 이슈, 풀 리퀘스트, 코드 검색.",
+  "With a GitHub personal access token, which you paste here.":
+    "여기에 붙여 넣는 GitHub 개인 액세스 토큰을 사용합니다.",
+  "Personal access token": "개인 액세스 토큰",
+  "Works with every GitHub plan. A few of its tools need a paid Copilot plan.":
+    "모든 GitHub 플랜에서 작동합니다. 일부 도구는 유료 Copilot 플랜이 필요합니다.",
+  "Issues and projects. Browser sign-in.": "이슈와 프로젝트. 브라우저 로그인.",
+  "Issues, projects and comments in Linear.": "Linear의 이슈, 프로젝트, 댓글.",
+  "Pages and databases. Browser sign-in.": "페이지와 데이터베이스. 브라우저 로그인.",
+  "Pages, databases and comments in Notion.": "Notion의 페이지, 데이터베이스, 댓글.",
+  "Works on every Notion plan. Workspace guests cannot connect.":
+    "모든 Notion 플랜에서 작동합니다. 워크스페이스 게스트는 연결할 수 없습니다.",
+  "Errors and traces. Browser sign-in.": "오류와 트레이스. 브라우저 로그인.",
+  "Errors, traces and releases in Sentry.": "Sentry의 오류, 트레이스, 릴리스.",
+  "Current library docs. No sign-in.": "최신 라이브러리 문서. 로그인 없음.",
+  "Up-to-date documentation for the libraries your code uses.":
+    "코드에서 쓰는 라이브러리의 최신 문서.",
+  "None needed.": "필요 없습니다.",
+  "Designs and components. Browser sign-in.": "디자인과 컴포넌트. 브라우저 로그인.",
+  "Designs, components and variables from your Figma files.":
+    "Figma 파일의 디자인, 컴포넌트, 변수.",
+  "Figma lets only the AI tools on its own list connect, and limits calls by seat: View and Collab seats get up to 20 a month.":
+    "Figma는 자체 목록에 있는 AI 도구만 연결을 허용하고, 시트별로 호출 수를 제한합니다. View와 Collab 시트는 한 달에 최대 20회입니다.",
+  "This sign-in cannot change files on {machine}":
+    "이 로그인으로는 {machine}의 파일을 변경할 수 없습니다",
+  "Checking {machine}…": "{machine} 확인 중…",
+  "{machine} could not be checked": "{machine}을(를) 확인할 수 없습니다",
+  "Update SpecWithCode on {machine} to add servers from here.":
+    "여기서 서버를 추가하려면 {machine}의 SpecWithCode를 업데이트하세요.",
+  "Paste what the server's setup page gives you: a web address, a command, or a settings block.":
+    "서버 설정 페이지에 나온 웹 주소, 명령 또는 설정 블록을 붙여 넣으세요.",
+  "Popular servers": "인기 서버",
+  "Add to more tools": "다른 도구에도 추가",
+  "The machine did not confirm the change.": "컴퓨터가 변경을 확인하지 않았습니다.",
+  "Use a name that starts with a letter: letters, digits, - and _.":
+    "문자로 시작하는 이름을 쓰세요. 문자, 숫자, -, _를 쓸 수 있습니다.",
+  "Fill in {name}.": "{name}을(를) 입력하세요.",
+  "Tick at least one tool.": "도구를 하나 이상 선택하세요.",
+  "{machine} can no longer be changed from here.":
+    "{machine}은(는) 이제 여기서 변경할 수 없습니다.",
+  "None of the ticked tools can take it there.":
+    "선택한 도구 중 그 컴퓨터에 추가할 수 있는 도구가 없습니다.",
+  "{tool} already has a server named {name}": "{tool}에 이미 {name} 서버가 있습니다",
+  "SpecWithCode cannot add web addresses to {tool}":
+    "SpecWithCode는 {tool}에 웹 주소를 추가할 수 없습니다",
+  "SpecWithCode cannot add programs to {tool}":
+    "SpecWithCode는 {tool}에 프로그램을 추가할 수 없습니다",
+  "Add {name}": "{name} 추가",
+  "What will be added": "추가될 내용",
+  Kind: "종류",
+  Address: "주소",
+  "Sign-in": "로그인",
+  "If it needs one, you sign in after you add it.": "필요하면 추가한 뒤 로그인합니다.",
+  "Secret value": "비밀 값",
+  "Good to know": "알아 두세요",
+  "This is a program. It will run on each machine you tick, with your account's rights.":
+    "프로그램입니다. 선택한 각 컴퓨터에서 계정 권한으로 실행됩니다.",
+  "Checked on {date} against": "{date}에 다음 기준으로 확인",
+  "Which AI tools get it": "받을 AI 도구",
+  "Each tool keeps its own list. A thread sees this server when the tool it runs on is ticked. Grok threads read Claude Code's list.":
+    "도구마다 목록이 따로 있습니다. 스레드는 실행 중인 도구가 선택되어 있을 때 이 서버를 봅니다. Grok 스레드는 Claude Code의 목록을 읽습니다.",
+  "Other AI tools, such as Cursor or Gemini CLI, appear here once they are installed on {machine}.":
+    "Cursor나 Gemini CLI 같은 다른 AI 도구는 {machine}에 설치되면 여기에 나타납니다.",
+  Where: "위치",
+  "On {machine} only.": "{machine}에만.",
+  "On {machines}.": "{machines}에.",
+  "Added for every project on {machines}.": "{machines}의 모든 프로젝트에 추가됩니다.",
+  "Also add on": "다음 컴퓨터에도 추가",
+  "{tool} is not installed on {machine}, so it is left out there.":
+    "{tool}이(가) {machine}에 설치되어 있지 않아 그곳에서는 제외됩니다.",
+  "{tool} on {machine} already has a server named {name}, so it is left out there.":
+    "{machine}의 {tool}에 이미 {name} 서버가 있어 그곳에서는 제외됩니다.",
+  "SpecWithCode cannot add this kind of server to {tool}, so it is left out there.":
+    "SpecWithCode는 이 종류의 서버를 {tool}에 추가할 수 없어 그곳에서는 제외됩니다.",
+  "This overlaps with something built in": "내장 기능과 겹칩니다",
+  "Add anyway": "그래도 추가",
+  "Nothing is written until you save. A backup is kept, so you can undo.":
+    "저장하기 전에는 아무것도 기록되지 않습니다. 백업이 남아 있어 실행 취소할 수 있습니다.",
+  "Cannot be added on {machine}": "{machine}에 추가할 수 없음",
+  "{machine} will be skipped.": "{machine}은(는) 건너뜁니다.",
+  "Save on {machines}": "{machines}에 저장",
+  "Where it was added": "추가된 위치",
+  "Not added": "추가 안 됨",
+  "One step left: sign in once in each tool": "한 단계 남음: 각 도구에서 한 번씩 로그인",
+  "If this server asks you to sign in, do it once in each tool":
+    "이 서버가 로그인을 요청하면 각 도구에서 한 번씩 로그인하세요",
+  "{server} opens a browser window to sign in. SpecWithCode cannot see whether you are signed in, so it does not guess.":
+    "{server}은(는) 로그인을 위해 브라우저 창을 엽니다. SpecWithCode는 로그인 여부를 볼 수 없으므로 추측하지 않습니다.",
+  "Some servers open a browser window to sign in. SpecWithCode cannot see whether you are signed in, so it does not guess.":
+    "일부 서버는 로그인을 위해 브라우저 창을 엽니다. SpecWithCode는 로그인 여부를 볼 수 없으므로 추측하지 않습니다.",
+  "Run it in a terminal on {machines}.": "{machines}의 터미널에서 실행하세요.",
+  "Tools pick the change up when they next start.":
+    "도구는 다음에 시작할 때 변경 사항을 반영합니다.",
+  "Pick one below, or paste what the server's setup page gives you.":
+    "아래에서 하나를 고르거나, 서버 설정 페이지에 나온 내용을 붙여 넣으세요.",
+  "Add a server": "서버 추가",
+  "{machine} runs a version that cannot show you a change before it is written. After the update, this page shows the add box.":
+    "{machine}의 버전은 기록하기 전에 변경 사항을 보여 줄 수 없습니다. 업데이트하면 이 페이지에 추가 상자가 표시됩니다.",
 };

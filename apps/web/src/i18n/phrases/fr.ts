@@ -5692,7 +5692,6 @@ export const fr: PhraseCatalog = {
   "{tool}: only in the folder {folder}": "{tool} : seulement dans le dossier {folder}",
   "{tool}: from this project's folder": "{tool} : du dossier de ce projet",
   "No MCP servers on {machine} yet": "Aucun serveur MCP sur {machine} pour l’instant",
-  "Add one with “Enter details by hand”.": "Ajoutez-en un avec « Saisir les détails à la main ».",
   "Search servers": "Rechercher des serveurs",
   "No server matches the search.": "Aucun serveur ne correspond à la recherche.",
   "AI tools that have it": "Outils d’IA qui l’ont",
@@ -5714,4 +5713,144 @@ export const fr: PhraseCatalog = {
     "SpecWithCode lit les fichiers de configuration de chaque outil sur {machine}. Il ne peut pas savoir si un serveur est connecté ou en cours d’exécution.",
   "Scanned {when}.": "Analysé : {when}.",
   "No MCP servers yet.": "Aucun serveur MCP pour l’instant.",
+  "SpecWithCode could not read this as a web address, a command or a settings block.":
+    "SpecWithCode n’a pas pu lire ceci comme une adresse web, une commande ou un bloc de configuration.",
+  "This is an SSE server, which SpecWithCode cannot add. Look for a Streamable HTTP address on the server's setup page.":
+    "C’est un serveur SSE, que SpecWithCode ne peut pas ajouter. Cherchez une adresse Streamable HTTP sur la page de configuration du serveur.",
+  "Only http and https addresses can be added.":
+    "Seules les adresses http et https peuvent être ajoutées.",
+  "SpecWithCode cannot carry over the {tool} option “{flag}”.":
+    "SpecWithCode ne peut pas reprendre l’option « {flag} » de {tool}.",
+  "SpecWithCode cannot carry over the setting “{key}”: it only works in one tool.":
+    "SpecWithCode ne peut pas reprendre le réglage « {key} » : il ne fonctionne que dans un seul outil.",
+  "This block has {count} servers. Paste one at a time.":
+    "Ce bloc contient {count} serveurs. Collez-les un par un.",
+  "Agents here already browse and click in your signed-in Chrome.":
+    "Ici, les agents naviguent et cliquent déjà dans votre Chrome connecté.",
+  "This server adds Chrome's developer tools, such as performance traces and network logs.":
+    "Ce serveur ajoute les outils de développement de Chrome, comme les traces de performances et les journaux réseau.",
+  "Agents here already have a browser inside the app for testing sites and screenshots.":
+    "Ici, les agents ont déjà un navigateur dans l’app pour tester des sites et faire des captures.",
+  "This server adds a separate browser that it starts and drives itself.":
+    "Ce serveur ajoute un navigateur distinct qu’il lance et pilote lui-même.",
+  "Open Agent access": "Ouvrir Accès des agents",
+  "Agents here can already see the screen, click and type in Mac apps.":
+    "Ici, les agents peuvent déjà voir l’écran, cliquer et saisir dans les apps Mac.",
+  "This server adds its own way to control the desktop.":
+    "Ce serveur ajoute sa propre façon de contrôler le bureau.",
+  "Agents here already run the iOS Simulator and Android Emulator.":
+    "Ici, les agents utilisent déjà iOS Simulator et Android Emulator.",
+  "This server adds its own commands for simulators and devices.":
+    "Ce serveur ajoute ses propres commandes pour les simulateurs et les appareils.",
+  "Open Devices": "Ouvrir Appareils",
+  "In the browser, after you add it. No key to paste.":
+    "Dans le navigateur, après l’ajout. Aucune clé à coller.",
+  "Images and video. Browser sign-in.": "Images et vidéo. Connexion dans le navigateur.",
+  "Images and video from your agents.": "Images et vidéo pour vos agents.",
+  "Issues, pull requests, code search. Needs an access token.":
+    "Issues, pull requests, recherche de code. Nécessite un jeton d’accès.",
+  "Issues, pull requests and code search on GitHub.":
+    "Issues, pull requests et recherche de code sur GitHub.",
+  "With a GitHub personal access token, which you paste here.":
+    "Avec un jeton d’accès personnel GitHub, que vous collez ici.",
+  "Personal access token": "Jeton d’accès personnel",
+  "Works with every GitHub plan. A few of its tools need a paid Copilot plan.":
+    "Fonctionne avec toutes les offres GitHub. Quelques-uns de ses outils exigent une offre Copilot payante.",
+  "Issues and projects. Browser sign-in.": "Tickets et projets. Connexion dans le navigateur.",
+  "Issues, projects and comments in Linear.": "Tickets, projets et commentaires dans Linear.",
+  "Pages and databases. Browser sign-in.":
+    "Pages et bases de données. Connexion dans le navigateur.",
+  "Pages, databases and comments in Notion.":
+    "Pages, bases de données et commentaires dans Notion.",
+  "Works on every Notion plan. Workspace guests cannot connect.":
+    "Fonctionne avec toutes les offres Notion. Les invités d’un espace de travail ne peuvent pas se connecter.",
+  "Errors and traces. Browser sign-in.": "Erreurs et traces. Connexion dans le navigateur.",
+  "Errors, traces and releases in Sentry.": "Erreurs, traces et versions dans Sentry.",
+  "Current library docs. No sign-in.": "Documentation à jour des bibliothèques. Sans connexion.",
+  "Up-to-date documentation for the libraries your code uses.":
+    "Documentation à jour des bibliothèques utilisées par votre code.",
+  "None needed.": "Aucune requise.",
+  "Designs and components. Browser sign-in.":
+    "Designs et composants. Connexion dans le navigateur.",
+  "Designs, components and variables from your Figma files.":
+    "Designs, composants et variables de vos fichiers Figma.",
+  "Figma lets only the AI tools on its own list connect, and limits calls by seat: View and Collab seats get up to 20 a month.":
+    "Figma ne laisse se connecter que les outils d’IA de sa propre liste et limite les appels selon le siège : les sièges View et Collab ont droit à 20 appels par mois au maximum.",
+  "This sign-in cannot change files on {machine}":
+    "Cette connexion ne peut pas modifier de fichiers sur {machine}",
+  "Checking {machine}…": "Vérification de {machine}…",
+  "{machine} could not be checked": "Impossible de vérifier {machine}",
+  "Update SpecWithCode on {machine} to add servers from here.":
+    "Mettez à jour SpecWithCode sur {machine} pour ajouter des serveurs depuis ici.",
+  "Paste what the server's setup page gives you: a web address, a command, or a settings block.":
+    "Collez ce que la page de configuration du serveur vous donne : une adresse web, une commande ou un bloc de configuration.",
+  "Popular servers": "Serveurs populaires",
+  "Add to more tools": "Ajouter à d’autres outils",
+  "The machine did not confirm the change.": "La machine n’a pas confirmé la modification.",
+  "Use a name that starts with a letter: letters, digits, - and _.":
+    "Utilisez un nom qui commence par une lettre : lettres, chiffres, - et _.",
+  "Fill in {name}.": "Renseignez {name}.",
+  "Tick at least one tool.": "Cochez au moins un outil.",
+  "{machine} can no longer be changed from here.":
+    "La machine {machine} ne peut plus être modifiée d’ici.",
+  "None of the ticked tools can take it there.":
+    "Aucun des outils cochés ne peut l’accueillir sur cette machine.",
+  "{tool} already has a server named {name}": "{tool} a déjà un serveur nommé {name}",
+  "SpecWithCode cannot add web addresses to {tool}":
+    "SpecWithCode ne peut pas ajouter d’adresses web à {tool}",
+  "SpecWithCode cannot add programs to {tool}":
+    "SpecWithCode ne peut pas ajouter de programmes à {tool}",
+  "Add {name}": "Ajouter {name}",
+  "What will be added": "Ce qui sera ajouté",
+  Kind: "Type",
+  Address: "Adresse",
+  "Sign-in": "Connexion",
+  "If it needs one, you sign in after you add it.":
+    "Si nécessaire, vous vous connectez après l’ajout.",
+  "Secret value": "Valeur secrète",
+  "Good to know": "Bon à savoir",
+  "This is a program. It will run on each machine you tick, with your account's rights.":
+    "C’est un programme. Il s’exécutera sur chaque machine cochée, avec les droits de votre compte.",
+  "Checked on {date} against": "Vérifié le {date} par rapport à",
+  "Which AI tools get it": "Outils d’IA qui le reçoivent",
+  "Each tool keeps its own list. A thread sees this server when the tool it runs on is ticked. Grok threads read Claude Code's list.":
+    "Chaque outil a sa propre liste. Un fil voit ce serveur quand l’outil sur lequel il tourne est coché. Les fils Grok lisent la liste de Claude Code.",
+  "Other AI tools, such as Cursor or Gemini CLI, appear here once they are installed on {machine}.":
+    "D’autres outils d’IA, comme Cursor ou Gemini CLI, apparaissent ici une fois installés sur {machine}.",
+  Where: "Où",
+  "On {machine} only.": "Sur {machine} uniquement.",
+  "On {machines}.": "Sur {machines}.",
+  "Added for every project on {machines}.": "Ajouté pour tous les projets sur {machines}.",
+  "Also add on": "Ajouter aussi sur",
+  "{tool} is not installed on {machine}, so it is left out there.":
+    "{tool} n’est pas installé sur {machine}, il est donc ignoré là-bas.",
+  "{tool} on {machine} already has a server named {name}, so it is left out there.":
+    "{tool} sur {machine} a déjà un serveur nommé {name}, il est donc ignoré là-bas.",
+  "SpecWithCode cannot add this kind of server to {tool}, so it is left out there.":
+    "SpecWithCode ne peut pas ajouter ce type de serveur à {tool}, il est donc ignoré là-bas.",
+  "This overlaps with something built in": "Cela recoupe une fonction intégrée",
+  "Add anyway": "Ajouter quand même",
+  "Nothing is written until you save. A backup is kept, so you can undo.":
+    "Rien n’est écrit avant l’enregistrement. Une sauvegarde est conservée pour pouvoir annuler.",
+  "Cannot be added on {machine}": "Ajout impossible sur {machine}",
+  "{machine} will be skipped.": "La machine {machine} sera ignorée.",
+  "Save on {machines}": "Enregistrer sur {machines}",
+  "Where it was added": "Où il a été ajouté",
+  "Not added": "Non ajouté",
+  "One step left: sign in once in each tool":
+    "Plus qu’une étape : connectez-vous une fois dans chaque outil",
+  "If this server asks you to sign in, do it once in each tool":
+    "Si ce serveur vous demande de vous connecter, faites-le une fois dans chaque outil",
+  "{server} opens a browser window to sign in. SpecWithCode cannot see whether you are signed in, so it does not guess.":
+    "{server} ouvre une fenêtre de navigateur pour la connexion. SpecWithCode ne peut pas voir si vous êtes connecté, il ne fait donc pas de supposition.",
+  "Some servers open a browser window to sign in. SpecWithCode cannot see whether you are signed in, so it does not guess.":
+    "Certains serveurs ouvrent une fenêtre de navigateur pour la connexion. SpecWithCode ne peut pas voir si vous êtes connecté, il ne fait donc pas de supposition.",
+  "Run it in a terminal on {machines}.": "Exécutez-le dans un terminal sur {machines}.",
+  "Tools pick the change up when they next start.":
+    "Les outils prennent en compte la modification à leur prochain démarrage.",
+  "Pick one below, or paste what the server's setup page gives you.":
+    "Choisissez-en un ci-dessous, ou collez ce que la page de configuration du serveur vous donne.",
+  "Add a server": "Ajouter un serveur",
+  "{machine} runs a version that cannot show you a change before it is written. After the update, this page shows the add box.":
+    "{machine} utilise une version qui ne peut pas montrer une modification avant de l’écrire. Après la mise à jour, cette page affiche la zone d’ajout.",
 };

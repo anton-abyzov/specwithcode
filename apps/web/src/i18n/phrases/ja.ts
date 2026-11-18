@@ -5648,7 +5648,6 @@ export const ja: PhraseCatalog = {
   "{tool}: only in the folder {folder}": "{tool}: フォルダ {folder} のみ",
   "{tool}: from this project's folder": "{tool}: このプロジェクトのフォルダから",
   "No MCP servers on {machine} yet": "{machine} にはまだ MCP サーバーがありません",
-  "Add one with “Enter details by hand”.": "「詳細を手入力」で追加できます。",
   "Search servers": "サーバーを検索",
   "No server matches the search.": "検索に一致するサーバーはありません。",
   "AI tools that have it": "これを持つ AI ツール",
@@ -5670,4 +5669,138 @@ export const ja: PhraseCatalog = {
     "SpecWithCode は {machine} 上の各ツール自身の設定ファイルを読み取ります。サーバーがサインイン済みか、実行中かは判別できません。",
   "Scanned {when}.": "スキャン日時: {when}。",
   "No MCP servers yet.": "まだ MCP サーバーがありません。",
+  "SpecWithCode could not read this as a web address, a command or a settings block.":
+    "SpecWithCode はこれをウェブアドレス、コマンド、設定ブロックのいずれとしても読み取れませんでした。",
+  "This is an SSE server, which SpecWithCode cannot add. Look for a Streamable HTTP address on the server's setup page.":
+    "これは SSE サーバーのため、SpecWithCode では追加できません。サーバーのセットアップページで Streamable HTTP のアドレスを探してください。",
+  "Only http and https addresses can be added.":
+    "追加できるのは http と https のアドレスだけです。",
+  "SpecWithCode cannot carry over the {tool} option “{flag}”.":
+    "SpecWithCode は {tool} のオプション「{flag}」を引き継げません。",
+  "SpecWithCode cannot carry over the setting “{key}”: it only works in one tool.":
+    "SpecWithCode は設定「{key}」を引き継げません。1 つのツールでしか使えない設定です。",
+  "This block has {count} servers. Paste one at a time.":
+    "このブロックには {count} 個のサーバーがあります。1 つずつ貼り付けてください。",
+  "Agents here already browse and click in your signed-in Chrome.":
+    "ここのエージェントは、サインイン済みの Chrome ですでに閲覧やクリックができます。",
+  "This server adds Chrome's developer tools, such as performance traces and network logs.":
+    "このサーバーは、パフォーマンストレースやネットワークログなど、Chrome の開発者ツールを追加します。",
+  "Agents here already have a browser inside the app for testing sites and screenshots.":
+    "ここのエージェントには、サイトのテストやスクリーンショットに使うアプリ内ブラウザがすでにあります。",
+  "This server adds a separate browser that it starts and drives itself.":
+    "このサーバーは、自分で起動して操作する別のブラウザを追加します。",
+  "Open Agent access": "エージェントのアクセスを開く",
+  "Agents here can already see the screen, click and type in Mac apps.":
+    "ここのエージェントは、すでに画面を見て、Mac アプリでクリックや入力ができます。",
+  "This server adds its own way to control the desktop.":
+    "このサーバーは、独自の方法でデスクトップを操作します。",
+  "Agents here already run the iOS Simulator and Android Emulator.":
+    "ここのエージェントは、すでに iOS Simulator と Android Emulator を実行できます。",
+  "This server adds its own commands for simulators and devices.":
+    "このサーバーは、シミュレータとデバイス用の独自コマンドを追加します。",
+  "Open Devices": "デバイスを開く",
+  "In the browser, after you add it. No key to paste.":
+    "追加後にブラウザで行います。貼り付けるキーはありません。",
+  "Images and video. Browser sign-in.": "画像と動画。ブラウザでサインイン。",
+  "Images and video from your agents.": "エージェントから使える画像と動画。",
+  "Issues, pull requests, code search. Needs an access token.":
+    "Issue、プルリクエスト、コード検索。アクセストークンが必要です。",
+  "Issues, pull requests and code search on GitHub.":
+    "GitHub の Issue、プルリクエスト、コード検索。",
+  "With a GitHub personal access token, which you paste here.":
+    "GitHub の個人用アクセストークンを使います。ここに貼り付けてください。",
+  "Personal access token": "個人用アクセストークン",
+  "Works with every GitHub plan. A few of its tools need a paid Copilot plan.":
+    "どの GitHub プランでも使えます。一部のツールには有料の Copilot プランが必要です。",
+  "Issues and projects. Browser sign-in.": "課題とプロジェクト。ブラウザでサインイン。",
+  "Issues, projects and comments in Linear.": "Linear の課題、プロジェクト、コメント。",
+  "Pages and databases. Browser sign-in.": "ページとデータベース。ブラウザでサインイン。",
+  "Pages, databases and comments in Notion.": "Notion のページ、データベース、コメント。",
+  "Works on every Notion plan. Workspace guests cannot connect.":
+    "どの Notion プランでも使えます。ワークスペースのゲストは接続できません。",
+  "Errors and traces. Browser sign-in.": "エラーとトレース。ブラウザでサインイン。",
+  "Errors, traces and releases in Sentry.": "Sentry のエラー、トレース、リリース。",
+  "Current library docs. No sign-in.": "最新のライブラリドキュメント。サインイン不要。",
+  "Up-to-date documentation for the libraries your code uses.":
+    "コードが使うライブラリの最新ドキュメント。",
+  "None needed.": "不要です。",
+  "Designs and components. Browser sign-in.": "デザインとコンポーネント。ブラウザでサインイン。",
+  "Designs, components and variables from your Figma files.":
+    "Figma ファイルのデザイン、コンポーネント、変数。",
+  "Figma lets only the AI tools on its own list connect, and limits calls by seat: View and Collab seats get up to 20 a month.":
+    "Figma は自社のリストにある AI ツールだけに接続を許可し、シートごとに呼び出し回数を制限しています。View シートと Collab シートは月 20 回までです。",
+  "This sign-in cannot change files on {machine}":
+    "このサインインでは {machine} のファイルを変更できません",
+  "Checking {machine}…": "{machine} を確認中…",
+  "{machine} could not be checked": "{machine} を確認できませんでした",
+  "Update SpecWithCode on {machine} to add servers from here.":
+    "ここからサーバーを追加するには、{machine} の SpecWithCode を更新してください。",
+  "Paste what the server's setup page gives you: a web address, a command, or a settings block.":
+    "サーバーのセットアップページに表示されるもの (ウェブアドレス、コマンド、設定ブロック) を貼り付けてください。",
+  "Popular servers": "人気のサーバー",
+  "Add to more tools": "ほかのツールにも追加",
+  "The machine did not confirm the change.": "マシンが変更を確認しませんでした。",
+  "Use a name that starts with a letter: letters, digits, - and _.":
+    "英字で始まる名前を使ってください。使える文字は英字、数字、- と _ です。",
+  "Fill in {name}.": "{name} を入力してください。",
+  "Tick at least one tool.": "ツールを 1 つ以上選んでください。",
+  "{machine} can no longer be changed from here.": "{machine} はここから変更できなくなりました。",
+  "None of the ticked tools can take it there.":
+    "選んだツールはどれも、そのマシンには追加できません。",
+  "{tool} already has a server named {name}":
+    "{tool} にはすでに {name} という名前のサーバーがあります",
+  "SpecWithCode cannot add web addresses to {tool}":
+    "SpecWithCode は {tool} にウェブアドレスを追加できません",
+  "SpecWithCode cannot add programs to {tool}":
+    "SpecWithCode は {tool} にプログラムを追加できません",
+  "Add {name}": "{name} を追加",
+  "What will be added": "追加される内容",
+  Kind: "種類",
+  Address: "アドレス",
+  "Sign-in": "サインイン",
+  "If it needs one, you sign in after you add it.": "必要な場合は、追加後にサインインします。",
+  "Secret value": "シークレット値",
+  "Good to know": "知っておくこと",
+  "This is a program. It will run on each machine you tick, with your account's rights.":
+    "これはプログラムです。選んだ各マシンで、あなたのアカウントの権限で実行されます。",
+  "Checked on {date} against": "{date} に確認。参照先",
+  "Which AI tools get it": "追加する AI ツール",
+  "Each tool keeps its own list. A thread sees this server when the tool it runs on is ticked. Grok threads read Claude Code's list.":
+    "一覧はツールごとに別です。スレッドは、実行中のツールが選ばれているとこのサーバーを使えます。Grok のスレッドは Claude Code の一覧を読みます。",
+  "Other AI tools, such as Cursor or Gemini CLI, appear here once they are installed on {machine}.":
+    "Cursor や Gemini CLI など、ほかの AI ツールは {machine} にインストールされるとここに表示されます。",
+  Where: "場所",
+  "On {machine} only.": "{machine} のみに追加します。",
+  "On {machines}.": "{machines} に追加します。",
+  "Added for every project on {machines}.": "{machines} のすべてのプロジェクトに追加されます。",
+  "Also add on": "次のマシンにも追加",
+  "{tool} is not installed on {machine}, so it is left out there.":
+    "{tool} は {machine} にインストールされていないため、そこでは除外されます。",
+  "{tool} on {machine} already has a server named {name}, so it is left out there.":
+    "{machine} の {tool} にはすでに {name} という名前のサーバーがあるため、そこでは除外されます。",
+  "SpecWithCode cannot add this kind of server to {tool}, so it is left out there.":
+    "SpecWithCode はこの種類のサーバーを {tool} に追加できないため、そこでは除外されます。",
+  "This overlaps with something built in": "内蔵の機能と重複しています",
+  "Add anyway": "このまま追加",
+  "Nothing is written until you save. A backup is kept, so you can undo.":
+    "保存するまで何も書き込まれません。バックアップが残るので、元に戻せます。",
+  "Cannot be added on {machine}": "{machine} には追加できません",
+  "{machine} will be skipped.": "{machine} はスキップされます。",
+  "Save on {machines}": "{machines} に保存",
+  "Where it was added": "追加された場所",
+  "Not added": "追加されませんでした",
+  "One step left: sign in once in each tool": "残り 1 ステップ: 各ツールで一度サインイン",
+  "If this server asks you to sign in, do it once in each tool":
+    "このサーバーでサインインを求められたら、各ツールで一度サインインしてください",
+  "{server} opens a browser window to sign in. SpecWithCode cannot see whether you are signed in, so it does not guess.":
+    "{server} はサインイン用にブラウザウィンドウを開きます。SpecWithCode はサインイン済みかどうかを確認できないため、推測はしません。",
+  "Some servers open a browser window to sign in. SpecWithCode cannot see whether you are signed in, so it does not guess.":
+    "一部のサーバーはサインイン用にブラウザウィンドウを開きます。SpecWithCode はサインイン済みかどうかを確認できないため、推測はしません。",
+  "Run it in a terminal on {machines}.": "{machines} のターミナルで実行してください。",
+  "Tools pick the change up when they next start.": "ツールは次回の起動時に変更を読み込みます。",
+  "Pick one below, or paste what the server's setup page gives you.":
+    "下から選ぶか、サーバーのセットアップページに表示されるものを貼り付けてください。",
+  "Add a server": "サーバーを追加",
+  "{machine} runs a version that cannot show you a change before it is written. After the update, this page shows the add box.":
+    "{machine} のバージョンでは、書き込む前に変更を表示できません。更新すると、このページに追加ボックスが表示されます。",
 };
