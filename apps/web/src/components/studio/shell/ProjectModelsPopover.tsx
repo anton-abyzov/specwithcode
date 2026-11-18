@@ -30,6 +30,8 @@ import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
 import type { ModelEsque } from "../../chat/providerIconUtils";
 import { useTraitsEffortControl } from "../../chat/TraitsPicker";
 import { MachineChip } from "../../MachineChip";
+import { toastManager } from "../../ui/toast";
+import { carriedProjectModelSelection } from "../projectModelCarry";
 
 /** The model new threads start on, as the project saves it. */
 export interface ProjectThreadModel {
@@ -137,6 +139,20 @@ export function ProjectModelsPopover(props: {
         }
       : null,
   );
+  // Another model keeps the effort, Ultracode and context window it can run; the rest are named.
+  const pickThreadModel = (instanceId: ProviderInstanceId, model: string) => {
+    if (locked) return;
+    const carried = carriedProjectModelSelection({
+      previous: thread,
+      instanceId,
+      model,
+      entries: props.entries,
+      planModeEnabled: props.planModeEnabled,
+    });
+    threads.onChange(carried.selection);
+    if (carried.note)
+      toastManager.add({ type: "info", title: "Model options", description: carried.note });
+  };
   const offersUltracode = hasBoolean(threadEntry, thread?.model, "ultracode");
   const ultracodeOn =
     thread?.options?.some((option) => option.id === "ultracode" && option.value === true) === true;
@@ -211,7 +227,7 @@ export function ProjectModelsPopover(props: {
             title="Model for new threads"
             triggerAriaLabel={`Model for new threads: ${modelLabel(threadEntry, thread.instanceId, thread.model).full}. Change model`}
             disabled={locked}
-            onInstanceModelChange={(id, model) => saveThread(createModelSelection(id, model))}
+            onInstanceModelChange={pickThreadModel}
           />
         ) : firstReady ? (
           <ProviderModelPicker
@@ -225,7 +241,7 @@ export function ProjectModelsPopover(props: {
             triggerLabel="Choose model"
             triggerAriaLabel="Model for new threads: choose model"
             disabled={locked}
-            onInstanceModelChange={(id, model) => saveThread(createModelSelection(id, model))}
+            onInstanceModelChange={pickThreadModel}
           />
         ) : (
           <span className="text-xs text-muted-foreground">No provider is ready here.</span>

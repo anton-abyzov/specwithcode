@@ -16,7 +16,6 @@ import {
   type ModelSelection,
   type ProviderInstanceId,
 } from "@specweave-studio/contracts";
-import { createModelSelection } from "@specweave-studio/shared/model";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useEnvironmentSettings } from "../../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../../modelSelection";
@@ -38,6 +37,8 @@ import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
 import { MachineLimitsButton, MachineLimitsPanel } from "./ProjectUsageIndicator";
 import { ProjectModelsPopover, type ProjectThreadModel } from "./ProjectModelsPopover";
 import { ModelBadge } from "./ModelBadge";
+import { toastManager } from "../../ui/toast";
+import { carriedProjectModelSelection } from "../projectModelCarry";
 import { useCoordinatorModelsLoading } from "./useCoordinatorModelsLoading";
 
 function CoordinatorProviderRecovery(props: {
@@ -285,8 +286,18 @@ export function CoordinatorModelPicker(props: {
       if (running?.offPick) running.onSwitchBack?.();
       return;
     }
-    // Effort and other traits belong to the model they were chosen for.
-    props.onChange(createModelSelection(id, model));
+    // The saved effort, context window and other options move to the new model where it
+    // offers them; the ones it does not are named, never dropped without a word.
+    const carried = carriedProjectModelSelection({
+      previous: value,
+      instanceId: id,
+      model,
+      entries,
+      planModeEnabled: settings.planModeEnabled,
+    });
+    props.onChange(carried.selection);
+    if (carried.note)
+      toastManager.add({ type: "info", title: "Model options", description: carried.note });
   };
 
   const content = () => {

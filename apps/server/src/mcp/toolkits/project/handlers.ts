@@ -12,6 +12,7 @@ import {
   type ProjectRepository,
   type ProviderInstanceId,
   type ProviderModelTier,
+  type ServerProvider,
   type ThreadEnvMode,
 } from "@specweave-studio/contracts";
 import { launchTier, launchTierModel } from "../../launchTier.ts";
@@ -42,6 +43,11 @@ import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
+import {
+  describeModelSelection,
+  type ProjectModelRole,
+  sameModelSelection,
+} from "../../../project/projectModelChange.ts";
 import * as ProjectLink from "../../../project/ProjectLink.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -131,6 +137,8 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
   readonly projectId?: ProjectId | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly folder?: string | undefined;
+  readonly role?: ProjectModelRole | undefined;
+  readonly modelSelection?: ModelSelection | undefined;
   readonly reason?: string | undefined;
 }) {
   const context = yield* readCaller();
@@ -142,6 +150,16 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
         "Only an agent in a SpecWithCode thread can ask for this. Ask the user to do it in the project's settings.",
     });
   const projectId = yield* resolveProjectId(context, input.projectId);
+  // The card names models the way this machine lists them, and a model it does
+  // not list is refused before the user is asked. Another machine's work asks
+  // only for a sign-in its grant allows, as when it sets a thread's model.
+  let providers: ReadonlyArray<ServerProvider> = [];
+  if (input.action === "change_model") {
+    if (input.modelSelection !== undefined)
+      yield* assertAccountInGrant(yield* workGrantOf(context), input.modelSelection.instanceId);
+    const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+    if (Option.isSome(registry)) providers = yield* registry.value.getProviders;
+  }
   const requests = yield* ProjectActionRequests.ProjectActionRequests;
   const { requestId } = yield* requests
     .request({
@@ -151,6 +169,9 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
       reason: input.reason ?? "No reason given.",
       ...(input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot }),
       ...(input.folder === undefined ? {} : { folder: input.folder }),
+      ...(input.role === undefined ? {} : { modelRole: input.role }),
+      ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...(input.action === "change_model" ? { providers } : {}),
     })
     .pipe(
       Effect.mapError(
@@ -985,7 +1006,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
               message:
-                "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with studio_project_update.",
+                "A project started from its title takes only a title; set scripts or its first defaultModelSelection afterwards with studio_project_update.",
             });
           // A title-only project is a new repository for the person; a check brings its own folder.
           if (input.origin === "automated")
@@ -1155,6 +1176,34 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ? "A project's kind is fixed when it is created; make a new project of the kind you need."
                 : "Agents cannot change approved folders or repositories themselves; the user decides what agents here can reach. To add a folder, call studio_project_request with action add_folder and folder: the user approves it in a card. Repositories and removing a folder are the user's to change in project settings.",
           });
+      }
+      // The model new threads start on and the coordinator's model, with their effort,
+      // Ultracode and context window, are what the person saved. An agent sets one only
+      // where none is saved; replacing or clearing a saved one is theirs to approve.
+      const coordinatorModel = lifecycle?.coordinatorModelSelection;
+      if (input.defaultModelSelection !== undefined || coordinatorModel !== undefined) {
+        const saved = Option.getOrUndefined(
+          yield* projects.getById(input.projectId).pipe(Effect.mapError(unavailable)),
+        );
+        const replaced = (
+          [
+            ["threads", input.defaultModelSelection],
+            ["coordinator", coordinatorModel],
+          ] as const
+        ).find(([role, next]) => {
+          if (next === undefined || saved === undefined) return false;
+          const current = ProjectActionRequests.savedProjectModel(saved, role);
+          return current !== null && !sameModelSelection(current, next);
+        });
+        if (replaced !== undefined && saved !== undefined) {
+          const [role] = replaced;
+          const what =
+            role === "coordinator" ? "The coordinator model" : "The model new threads start on";
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: `${what} of "${saved.title}" is the user's saved choice (${describeModelSelection(ProjectActionRequests.savedProjectModel(saved, role), [])}), so an agent cannot replace or clear it. To change it, call studio_project_request with action change_model, role "${role}" and modelSelection, naming every option to keep (effort, Ultracode, context window): the user approves it in a card. Clearing it is the user's to do in project settings.`,
+          });
+        }
       }
       return yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
