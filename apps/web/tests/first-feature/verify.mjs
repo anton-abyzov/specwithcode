@@ -134,7 +134,18 @@ try {
         page.on("pageerror", (error) => errors.push(error.message));
         await page.goto(`${origin}/?state=${state}&theme=${theme}`);
         await page.locator("[data-fixture-ready]").waitFor();
-        if (want.text) await page.getByText(want.text, { exact: false }).first().waitFor();
+        if (want.text) {
+          // A missing text is a failed check, not an abort, so one run reports every state.
+          const shown = await page
+            .getByText(want.text, { exact: false })
+            .first()
+            .waitFor({ timeout: 10_000 })
+            .then(
+              () => true,
+              () => false,
+            );
+          check(`${label}: says "${want.text}"`, shown);
+        }
         const seen = await page.evaluate(() => {
           const all = (selector) => [...document.querySelectorAll(selector)];
           const guide = document.querySelector('[data-slot="first-feature-guide"]');

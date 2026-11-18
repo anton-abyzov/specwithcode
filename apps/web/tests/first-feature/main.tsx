@@ -195,16 +195,21 @@ const handlers = {
 };
 
 function Toast() {
+  // After the commit: Toast.Provider subscribes to the manager in its own effect, which runs after
+  // this child's, so a toast added at once would be dropped.
   useEffect(() => {
-    toastManager.add(
-      stackedThreadToast({
-        type: "warning",
-        timeout: 0,
-        title: txNow(SAMPLE_REVIEW_WARNING_TITLE),
-        description:
-          "Automatic review could not be turned off for this project: the settings file is read-only.",
-      }),
+    const timer = window.setTimeout(() =>
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          timeout: 0,
+          title: txNow(SAMPLE_REVIEW_WARNING_TITLE),
+          description:
+            "Automatic review could not be turned off for this project: the settings file is read-only.",
+        }),
+      ),
     );
+    return () => window.clearTimeout(timer);
   }, []);
   return null;
 }
