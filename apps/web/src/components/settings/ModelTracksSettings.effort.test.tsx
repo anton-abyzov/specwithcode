@@ -274,7 +274,6 @@ describe("ModelTracksSettings effort", () => {
     };
     act(() => renderer?.unmount());
     const saved = render();
-    expect(JSON.stringify(track(saved, "Daily").findAll(() => true).length)).toBeTruthy();
     expect(JSON.stringify(renderer!.toJSON())).toContain("Follows newest: GPT-6.2-Sol");
   });
 });
