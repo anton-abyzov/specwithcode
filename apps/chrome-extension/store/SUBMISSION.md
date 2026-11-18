@@ -8,9 +8,9 @@ Upload the new package on the existing item; the listing, privacy tab and permis
 2. Sign in to <https://chrome.google.com/webstore/devconsole> as the publisher account and open **SpecWithCode Browser**.
 3. **Package** tab → **Upload new package** → pick `specwithcode-browser-1.0.7.zip`. The dashboard should show version 1.0.7.
 4. **Privacy practices** tab: nothing changes. The permissions are the same five (`debugger`, `tabs`, `tabGroups`, `storage`, `alarms`), no host permissions, no new data handled. The new pairing page is a page of the extension itself.
-5. **Test instructions**: replace them with the text in section 4 below (the steps now start from the page the extension opens on install).
+5. **Test instructions**: replace them with the text in section 4 below (the steps now start from the page the extension opens on install). The field takes at most 500 characters; that text is 486.
 6. Optional: replace `screenshot-2-pair.png` once it is regenerated from the new popup.
-7. **Submit for review.** Review of an item with `debugger` usually takes several days. The app keeps working with 1.0.6 meanwhile.
+7. **Submit for review.** Review of an item with `debugger` usually takes several days. The app keeps working with the published 1.0.5 meanwhile.
 
 ### What changed in 1.0.7
 
@@ -167,13 +167,12 @@ Tick these categories:
 ## 4. Test instructions (for the reviewer)
 
 ```
-SpecWithCode Browser needs the SpecWithCode desktop app on the same computer (download: https://spec-weave.com). It has no account or server.
-1. Install the extension. It opens its own pairing page with the code field focused.
-2. Install and open SpecWithCode. In first-run setup (or Settings › Chrome) press Copy code.
-3. Paste the code in the pairing page, type the name "Review" and press Enter. The page shows "Paired" and the toolbar badge shows ON.
-4. In SpecWithCode, ask any agent to open https://example.com and take a screenshot. A tab opens inside a blue "SpecWithCode · Review" tab group.
-5. Drag that tab out of the group: the agent lets go of it. Click Pause or Unpair in the popup to stop all access.
-Without the desktop app the extension stays "Not paired" and does nothing.
+Needs the SpecWithCode desktop app on the same computer (https://spec-weave.com/code/). No account or server.
+1. Install the extension. Its pairing page opens.
+2. Open SpecWithCode. In first-run setup or Settings › Chrome press Copy code.
+3. Paste the code there, type the name "Review", press Enter. It shows "Paired"; the badge shows ON.
+4. Ask any agent to open https://example.com. The tab opens in a blue "SpecWithCode · Review" group.
+5. Pause or Unpair in the popup stops access.
 ```
 
 ## 5. Distribution
