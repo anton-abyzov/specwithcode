@@ -211,6 +211,100 @@ it.effect("a waiting request expires after 10 minutes and survives a restart wit
   ),
 );
 
+it.effect("a device that keeps asking keeps its request and its code, for 30 minutes at most", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const code = refusedCode(yield* trust.check(connect("k1")));
+      const [asked] = (yield* trust.snapshot).pending;
+
+      // It asks every few minutes, well past the ten a request lives on its own.
+      for (const minutes of [4, 4, 4, 4, 4, 4, 4]) {
+        yield* TestClock.adjust(`${minutes} minutes`);
+        expect(refusedCode(yield* trust.check(connect("k1")))).toBe(code);
+      }
+      const [kept] = (yield* trust.snapshot).pending;
+      expect(kept!.id).toBe(asked!.id);
+      expect(kept!.askedAt).toBe(asked!.askedAt);
+      // 28 minutes in: never past 30 minutes from the first ask.
+      expect(Date.parse(kept!.expiresAt) - Date.parse(asked!.askedAt)).toBe(
+        ConnectDeviceTrust.DEVICE_APPROVAL_PENDING_MAX_MS,
+      );
+      // The code still allows exactly this device.
+      yield* TestClock.adjust("1 minute");
+      expect(refusedCode(yield* trust.check(connect("k1")))).toBe(code);
+
+      // Past the ceiling the request is gone, and the next ask starts a new one.
+      yield* TestClock.adjust("2 minutes");
+      expect((yield* trust.snapshot).pending).toHaveLength(0);
+      expect(yield* trust.approve({ code, approvedBy: "x", approverKey: null })).toEqual({
+        status: "not-found",
+      });
+      const renewed = refusedCode(yield* trust.check(connect("k1")));
+      expect(renewed).not.toBe(code);
+      const [again] = (yield* trust.snapshot).pending;
+      expect(again!.id).not.toBe(asked!.id);
+      const approved = yield* trust.approve({ code: renewed, approvedBy: "x", approverKey: null });
+      expect(approved.status).toBe("approved");
+    }),
+  ),
+);
+
+it.effect("a device that stops asking still runs out, and its old code allows nothing", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const code = refusedCode(yield* trust.check(connect("k1")));
+      const first = yield* fileSystem.readFileString(yield* storePath);
+
+      // Asking again early changes nothing on disk: more than half its time is left.
+      yield* TestClock.adjust("4 minutes");
+      expect(refusedCode(yield* trust.check(connect("k1")))).toBe(code);
+      expect(yield* fileSystem.readFileString(yield* storePath)).toBe(first);
+
+      // Its last ask was at 8 minutes, so it lives until 18 and no longer.
+      yield* TestClock.adjust("4 minutes");
+      expect(refusedCode(yield* trust.check(connect("k1")))).toBe(code);
+      yield* TestClock.adjust("9 minutes");
+      expect((yield* trust.snapshot).pending).toHaveLength(1);
+      yield* TestClock.adjust("2 minutes");
+      expect((yield* trust.snapshot).pending).toHaveLength(0);
+      expect(yield* trust.approve({ code, approvedBy: "x", approverKey: null })).toEqual({
+        status: "not-found",
+      });
+      expect(refusedCode(yield* trust.check(connect("k1")))).not.toBe(code);
+    }),
+  ),
+);
+
+it.effect("keeping one device waiting never extends another, a denial or the caps", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const quiet = refusedCode(yield* trust.check(connect("quiet")));
+      const busy = refusedCode(yield* trust.check(connect("busy")));
+      for (const minutes of [4, 4, 4]) {
+        yield* TestClock.adjust(`${minutes} minutes`);
+        expect(refusedCode(yield* trust.check(connect("busy")))).toBe(busy);
+      }
+      // Twelve minutes in: the one that kept asking waits, the other ran out.
+      const waiting = (yield* trust.snapshot).pending;
+      expect(waiting).toHaveLength(1);
+      expect(yield* trust.approve({ code: quiet, approvedBy: "x", approverKey: null })).toEqual({
+        status: "not-found",
+      });
+      // Deny still ends it at once, whatever its expiry says.
+      yield* trust.deny(waiting[0]!.id);
+      expect((yield* trust.snapshot).pending).toHaveLength(0);
+      expect(yield* trust.isTurnedAway("jkt:busy")).toBe(true);
+      expect(yield* trust.approve({ code: busy, approvedBy: "x", approverKey: null })).toEqual({
+        status: "not-found",
+      });
+    }),
+  ),
+);
+
 it.effect("Deny turns a key away for 24 hours, at mint and on every route", () =>
   withMachine(
     Effect.gen(function* () {

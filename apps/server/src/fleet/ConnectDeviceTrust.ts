@@ -66,6 +66,12 @@ const FILE_NAME = "connect-devices.json";
 /** Written once, after the first start kept its devices; never removed. */
 const MARKER_NAME = "connect-devices.migrated";
 export const DEVICE_APPROVAL_PENDING_TTL_MS = 10 * 60_000;
+/**
+ * A device that keeps asking keeps its request and its code this long at most
+ * (1406), so the code on the phone does not change while the owner walks to
+ * the machine. After it, the next ask starts a new request with a new code.
+ */
+export const DEVICE_APPROVAL_PENDING_MAX_MS = 30 * 60_000;
 export const DEVICE_APPROVAL_DENY_MS = 24 * 60 * 60_000;
 export const DEVICE_APPROVAL_MAX_PENDING = 20;
 /** Per account (Connect) or per hub (linked phones), so one source cannot fill the list. */
@@ -690,6 +696,9 @@ export const makeWith = (options: MakeOptions = {}) =>
           const base = pruned(loaded.file, now);
           const [result, next] = change(base, now);
           const toWrite = next ?? (changed(loaded.file, base) ? base : undefined);
+          // A plain code goes when its request does (ran out, allowed or turned away).
+          const waiting = new Set((next ?? base).pending.map((entry) => entry.key));
+          for (const key of codes.keys()) if (!waiting.has(key)) codes.delete(key);
           if (toWrite !== undefined) yield* write(toWrite);
           return result;
         }),
@@ -711,7 +720,26 @@ export const makeWith = (options: MakeOptions = {}) =>
       | { readonly _tag: "full" }
       | { readonly _tag: "approved" };
 
-    /** Records `device` as waiting (once per key), refreshing its code after a restart. */
+    /**
+     * When a request that was just asked for again should run out (1406): ten
+     * minutes from this ask, never past the ceiling counted from its first ask.
+     * Undefined while more than half of its time is left, so a device that
+     * polls every few seconds makes the file change once in five minutes.
+     */
+    const renewedExpiry = (entry: PendingRecord, now: number): string | undefined => {
+      const current = millisOf(entry.expiresAt);
+      if (current - now > DEVICE_APPROVAL_PENDING_TTL_MS / 2) return undefined;
+      const wanted = Math.min(
+        now + DEVICE_APPROVAL_PENDING_TTL_MS,
+        millisOf(entry.createdAt) + DEVICE_APPROVAL_PENDING_MAX_MS,
+      );
+      return wanted > current ? isoOf(wanted) : undefined;
+    };
+
+    /**
+     * Records `device` as waiting (once per key), refreshing its code after a
+     * restart. A device that asks again keeps its request and code alive.
+     */
     const ensureWaiting = (device: GatedDevice & { readonly key: string }) =>
       modify((file, now): readonly [Waiting, StoreFile | undefined] => {
         if (file.devices.some((entry) => entry.key === device.key))
@@ -720,6 +748,9 @@ export const makeWith = (options: MakeOptions = {}) =>
           return [{ _tag: "denied" }, undefined];
         const existing = file.pending.find((entry) => entry.key === device.key);
         if (existing !== undefined) {
+          const expiresAt = renewedExpiry(existing, now);
+          const kept: PendingRecord =
+            expiresAt === undefined ? existing : { ...existing, expiresAt };
           const known = codes.get(device.key);
           if (known !== undefined && codeMatches(known, existing.codeHash)) {
             // At mint time no session said what the device is; its session does.
@@ -730,13 +761,15 @@ export const makeWith = (options: MakeOptions = {}) =>
               existing.app !== device.app;
             return [
               { _tag: "waiting", code: known },
-              relabel
+              relabel || kept !== existing
                 ? {
                     ...file,
                     pending: file.pending.map((entry) =>
-                      entry.key === device.key
-                        ? { ...withoutDescription(entry), ...describedFields(device) }
-                        : entry,
+                      entry.key !== device.key
+                        ? entry
+                        : relabel
+                          ? { ...withoutDescription(kept), ...describedFields(device) }
+                          : kept,
                     ),
                   }
                 : undefined,
@@ -749,7 +782,7 @@ export const makeWith = (options: MakeOptions = {}) =>
             {
               ...file,
               pending: file.pending.map((entry) =>
-                entry.key === device.key ? { ...entry, codeHash: hashCode(code) } : entry,
+                entry.key === device.key ? { ...kept, codeHash: hashCode(code) } : entry,
               ),
             },
           ];
