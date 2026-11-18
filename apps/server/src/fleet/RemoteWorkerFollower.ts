@@ -60,6 +60,8 @@ export interface RemoteWorkerFollowerTimingsShape {
    * run there is more likely someone's own message than a fallback.
    */
   readonly recheckFailedWithinMs: number;
+  /** How often a start never confirmed is looked for again on its machine. */
+  readonly recheckUnconfirmedMs: number;
 }
 
 export const RemoteWorkerFollowerTimings = Context.Reference<RemoteWorkerFollowerTimingsShape>(
@@ -78,6 +80,7 @@ export const RemoteWorkerFollowerTimings = Context.Reference<RemoteWorkerFollowe
       // The other machine's fallback sweep runs every 30s and is woken by the failure.
       fallbackGraceMs: 90_000,
       recheckFailedWithinMs: 2 * 24 * 60 * 60_000,
+      recheckUnconfirmedMs: 5 * 60_000,
     }),
   },
 );
@@ -671,7 +674,11 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const reconcile: RemoteWorkerFollower["Service"]["reconcile"] = (row) =>
+  /**
+   * The threads on the row's machine that carry its launch's fingerprint, created after it
+   * started (and before `until`, when given). Undefined when there is no project to look in.
+   */
+  const launchMatches = (row: RemoteWorkerStore.RemoteWorkerRecord, until?: number) =>
     Effect.gen(function* () {
       if (row.remoteProjectId === null) return undefined;
       const listed = yield* client.call({
@@ -696,19 +703,75 @@ const make = Effect.gen(function* () {
             thread.creationSource === "mcp" &&
             typeof thread.createdAt === "string" &&
             Date.parse(thread.createdAt) >= since &&
+            (until === undefined || Date.parse(thread.createdAt) <= until) &&
             typeof thread.threadId === "string",
         );
-      if (found.length !== 1) return undefined;
-      const thread = found[0]!;
-      return {
+      return found.map((thread): ReconciledLaunch => ({
         threadId: thread.threadId as string,
         runId: typeof thread.latestRunId === "string" ? thread.latestRunId : null,
         status: typeof thread.status === "string" ? thread.status : "idle",
         providerInstanceId:
           typeof thread.providerInstanceId === "string" ? thread.providerInstanceId : null,
         model: typeof thread.model === "string" ? thread.model : null,
-      };
+      }));
     });
+
+  const reconcile: RemoteWorkerFollower["Service"]["reconcile"] = (row) =>
+    launchMatches(row).pipe(Effect.map((found) => (found?.length === 1 ? found[0] : undefined)));
+
+  const lastUnconfirmedCheck = new Map<string, number>();
+
+  /**
+   * Looks again for the thread of a start never confirmed, once its machine answers: it is
+   * followed when found, and closed when that machine has no such thread. Without this the
+   * row read "didn't confirm the start" in the Threads pane until it was pruned a month later.
+   */
+  const recheckUnconfirmed = (rowId: string) =>
+    exclusive(
+      `reconcile:${rowId}`,
+      Effect.gen(function* () {
+        const row = yield* findRow(rowId);
+        if (!row || row.state !== "launch_unknown") return;
+        // The thread a launch made exists before this server gave up on it; 5s for clock skew.
+        const matches = yield* launchMatches(row, Date.parse(row.updatedAt) + 5_000).pipe(
+          Effect.orElseSucceed(() => undefined),
+        );
+        // Unreachable still, or nowhere to look; two matches are for a person to tell apart.
+        if (matches === undefined || matches.length > 1) return;
+        const rows = yield* store.list.pipe(Effect.orElseSucceed(() => []));
+        const current = rows.find((candidate) => candidate.id === rowId);
+        if (!current || current.state !== "launch_unknown") return;
+        const found = matches[0];
+        if (found === undefined) {
+          const label = yield* machineLabel(row.machineId);
+          yield* update(rowId, () => ({
+            state: "disposed",
+            lastError: `${label} has no thread from this start, so it never began.`,
+          }));
+          return;
+        }
+        // The coordinator found it and adopted or relaunched it: another row follows it.
+        if (
+          rows.some(
+            (other) =>
+              other.id !== rowId &&
+              other.machineId === row.machineId &&
+              other.remoteThreadId === found.threadId,
+          )
+        ) {
+          yield* update(rowId, () => ({ state: "disposed" }));
+          return;
+        }
+        yield* update(rowId, () => ({
+          state: "following",
+          remoteThreadId: found.threadId,
+          followedRunId: found.runId,
+          lastStatus: found.status,
+          lastError: null,
+        }));
+        yield* follow(rowId);
+      }),
+    );
 
   /** Settles a launch this server stopped hearing about mid-way. */
   const reconcileStale = (rowId: string) =>
@@ -768,6 +831,14 @@ const make = Effect.gen(function* () {
         current - Date.parse(row.launchStartedAt) >= timings.launchStaleMs
       )
         yield* reconcileStale(row.id);
+      if (
+        row.state === "launch_unknown" &&
+        current - (lastUnconfirmedCheck.get(row.id) ?? Date.parse(row.updatedAt)) >=
+          timings.recheckUnconfirmedMs
+      ) {
+        lastUnconfirmedCheck.set(row.id, current);
+        yield* recheckUnconfirmed(row.id);
+      }
     }
     for (const row of rows.filter((candidate) => candidate.state === "paused_auth")) {
       const workers = yield* grants.status(row.machineId);
