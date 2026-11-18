@@ -3,8 +3,8 @@ import { useTx } from "../../i18n";
 import { WorkflowCapabilities } from "./WorkflowCapabilities";
 import {
   EnvironmentId,
+  isProviderDriverKind,
   PROVIDER_DISPLAY_NAMES,
-  ProviderDriverKind,
   ThreadId,
   summarizeProjectSkills,
   type ProjectId,
@@ -859,7 +859,7 @@ function ScopedProjectSkillsView({
         (value) =>
           entries.get(value)?.displayName ??
           presenceByLabel.get(value)?.label ??
-          PROVIDER_DISPLAY_NAMES[ProviderDriverKind.make(value)] ??
+          (isProviderDriverKind(value) ? PROVIDER_DISPLAY_NAMES[value] : undefined) ??
           value,
       ),
     [facets.providers, providers, entries, presenceByLabel],

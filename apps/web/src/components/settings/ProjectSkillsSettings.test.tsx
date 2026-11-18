@@ -743,7 +743,10 @@ describe("ProjectSkillsView", () => {
           },
         ],
       });
-    async function renderSeeded(overrides: Partial<ProjectSkillsSnapshot> = {}) {
+    async function renderSeeded(
+      overrides: Partial<ProjectSkillsSnapshot> = {},
+      agent = "claudeAgent",
+    ) {
       state.data = {
         ...snapshot,
         rows: [codexRow("imagegen"), codexRow("openai-docs")],
@@ -754,7 +757,7 @@ describe("ProjectSkillsView", () => {
         locks: [],
         ...overrides,
       } satisfies ProjectSkillsSnapshot;
-      state.search = { agent: "claudeAgent" };
+      state.search = { agent };
       await render();
     }
     const agentChip = (value: string) =>
@@ -778,6 +781,13 @@ describe("ProjectSkillsView", () => {
       await renderSeeded({ providers: [{ ...codex, state: "ok", skills: 2 }] });
       expect(agentChip("claudeAgent")?.getAttribute("aria-pressed")).toBe("true");
       expect(agentChip("claudeAgent")?.textContent).toBe("Claude0");
+    });
+
+    it("shows an agent id from the link that is not a driver kind as a removable chip", async () => {
+      await renderSeeded({}, "claude.work");
+      expect(agentChip("claude.work")?.getAttribute("aria-pressed")).toBe("true");
+      await act(async () => agentChip("claude.work")!.click());
+      expect(bodyRows()).toEqual(["imagegen", "openai-docs"]);
     });
 
     it("keeps the filter row when the machine has no skills at all", async () => {
