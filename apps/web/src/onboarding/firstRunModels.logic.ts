@@ -211,7 +211,7 @@ export function firstRunModels(input: {
   const firstFamily = firstNames === null ? null : modelFamily(firstNames);
   // The runtime's family rule (`resolveReviewer`): a known family matches by family; a model
   // of no known family matches only itself.
-  const sameAsFirst = (names: { readonly slug: string; readonly name?: string | undefined }) =>
+  const sameAsFirst = (names: Parameters<typeof isSameModel>[1]) =>
     firstNames === null
       ? false
       : firstFamily === "other"
