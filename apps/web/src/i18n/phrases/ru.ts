@@ -5771,4 +5771,7 @@ export const ru: PhraseCatalog = {
   "Add one": "Добавить",
   "+{n} more": "ещё {n}",
   "Ready once an agent is signed in.": "Будет готово, когда агент войдёт в систему.",
+  "How much longer work takes with {setting}": "Насколько дольше идёт работа с настройкой «{setting}»",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "Работа может занять намного больше времени: в замерах проверенная работа шла по медиане в 2,6 раза дольше, чем та же работа до проверки (у половины запусков в 1,6–3,6 раза), потому что каждый раунд проверки и его исправления добавляют время.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "Работа может занять больше времени: каждая консультация добавляет около 2 минут. В замерах треды с консультациями шли примерно в 1,1 раза дольше, а каждый десятый — в 1,4 раза дольше или больше.",
 };

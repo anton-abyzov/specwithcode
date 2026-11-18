@@ -5533,4 +5533,7 @@ export const zh: PhraseCatalog = {
   "Add one": "添加一个",
   "+{n} more": "另外 {n} 个",
   "Ready once an agent is signed in.": "智能体登录后即可使用。",
+  "How much longer work takes with {setting}": "开启“{setting}”后工作会多花多少时间",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "可能让工作耗时大幅增加：实测中，经过审查的工作耗时中位数是审查前同样工作的 2.6 倍（一半的运行在 1.6 到 3.6 倍之间），因为每轮审查及其修复都会增加时间。",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "可能让工作耗时增加：每次咨询约增加 2 分钟。实测中，咨询过的会话耗时约为 1.1 倍，每 10 个中有 1 个达到 1.4 倍或更多。",
 };
