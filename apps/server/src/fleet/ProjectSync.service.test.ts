@@ -36,10 +36,7 @@ import { HandoffMode } from "../handoff/HandoffMode.ts";
 import { HandoffPeerError, HandoffPeers } from "../handoff/handoffPeers.ts";
 import { ExtrasNegotiateRequest, ExtrasReplicateMeta } from "../handoff/handoffWire.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import * as ProcessRunner from "../processRunner.ts";
-import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import * as HandoffGit from "./handoffGit.ts";
 import * as ProjectSync from "./ProjectSync.ts";
 import * as ProjectSyncExtras from "./ProjectSyncExtras.ts";
 import { unscopedGrant } from "./workGrantPolicy.ts";
@@ -75,8 +72,6 @@ const machineLayer = (environmentId: EnvironmentId, machineLabel: string) =>
 const syncLayer = (projects: ReadonlyArray<Project>) =>
   ProjectSync.layer.pipe(
     Layer.provide(projectsLayer(projects)),
-    Layer.provide(ProjectAdmission.layer),
-    Layer.provide(HandoffGit.layer.pipe(Layer.provide(ProcessRunner.layer))),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(NodeServices.layer),
   );

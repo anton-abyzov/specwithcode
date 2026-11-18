@@ -538,6 +538,11 @@ describe("project sync: clone (1390 AC-11)", () => {
       [".", f.remote],
       ["../outside", f.remote],
       ["nested/.git/x", f.remote],
+      // Names a file system may read as `.git`.
+      ["nested/.GIT", f.remote],
+      ["nested/.git.", f.remote],
+      ["nested/.g\u200cit", f.remote],
+      ["nested/GIT~1", f.remote],
       ["fine", "https://user:secret@example.com/acme/app.git"],
       ["fine", "ext::sh -c touch%20/tmp/x"],
       ["fine", "--upload-pack=touch /tmp/x"],
@@ -548,6 +553,7 @@ describe("project sync: clone (1390 AC-11)", () => {
     expect(NodeFS.readFileSync(NodePath.join(f.a, "taken", "keep.txt"), "utf8")).toBe("mine\n");
     expect(NodeFS.existsSync(NodePath.join(f.a, "fine"))).toBe(false);
     expect(NodeFS.existsSync(NodePath.join(f.base, "outside"))).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(f.a, "nested"))).toBe(false);
   });
 
   it("refuses to clone through a link that leaves the project folder", async () => {
@@ -558,6 +564,13 @@ describe("project sync: clone (1390 AC-11)", () => {
     const result = await ask(f, "linked/repo", f.remote);
     expect(result).toMatchObject({ action: "none", reason: "refused" });
     expect(NodeFS.readdirSync(outside)).toEqual([]);
+    // Nor does it create a folder behind the link on the way to the refusal.
+    const deeper = await ask(f, "linked/sub/repo", f.remote);
+    expect(deeper).toMatchObject({ action: "none", reason: "refused" });
+    expect(NodeFS.readdirSync(outside)).toEqual([]);
+    // A file on the way is no folder to clone into either.
+    write(f.a, "plain.txt", "text\n");
+    expect(await ask(f, "plain.txt/repo", f.remote)).toMatchObject({ reason: "refused" });
   });
 
   it("leaves no folder behind when the clone fails", async () => {

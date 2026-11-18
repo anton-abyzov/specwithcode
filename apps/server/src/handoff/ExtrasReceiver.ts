@@ -56,13 +56,37 @@ export function extraBranchName(sourceLabel: string, leaf: string): string {
   return `swc/from-${refComponent(sourceLabel)}/${leaf}`;
 }
 
-/** Branches checked out here, in the project folder or in any worktree of the repository. */
+/**
+ * Branches checked out here, in the project folder or in any worktree of the
+ * repository. A branch under a rebase or a bisect counts: Git shows its
+ * worktree as detached while it still owns the branch.
+ */
 export async function checkedOutBranches(root: string): Promise<Set<string>> {
   const listed = await runGit(root, ["worktree", "list", "--porcelain"]);
   const out = new Set<string>();
+  const worktrees: Array<string> = [];
   for (const line of listed.stdout.split("\n")) {
+    if (line.startsWith("worktree ")) worktrees.push(line.slice("worktree ".length));
     if (line.startsWith("branch refs/heads/")) out.add(line.slice("branch refs/heads/".length));
   }
+  const head = "refs/heads/";
+  await Promise.all(
+    worktrees.map(async (worktree) => {
+      const gitDir = await runGit(worktree, ["rev-parse", "--absolute-git-dir"], {
+        allowFailure: true,
+      });
+      if (gitDir.code !== 0) return;
+      for (const file of ["rebase-merge/head-name", "rebase-apply/head-name", "BISECT_START"]) {
+        const name = await NodeFSP.readFile(NodePath.join(gitDir.stdout.trim(), file), "utf8")
+          .then((text) => text.trim())
+          .catch(() => "");
+        if (name === "") continue;
+        if (name.startsWith(head)) out.add(name.slice(head.length));
+        // A bisect records the bare branch name (or a commit, which names no branch).
+        else if (file === "BISECT_START") out.add(name);
+      }
+    }),
+  );
   return out;
 }
 

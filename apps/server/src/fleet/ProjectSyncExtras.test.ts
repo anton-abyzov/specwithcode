@@ -327,6 +327,41 @@ describe("limits, measured on what would travel (1390 AC-34)", () => {
   });
 });
 
+describe("limits on uncommitted work (1390 AC-34)", () => {
+  it("measures the commits that travel under the uncommitted work", async () => {
+    const f = twoMachines();
+    write(f.a, "logs/big.log", NodeCrypto.randomBytes(300 * 1024));
+    git(f.a, "add", "--", "logs/big.log");
+    git(f.a, "commit", "-q", "-m", "big");
+    commit(f.a, "two.ts", "// two\n");
+    write(f.a, "app.ts", "export const a = 'edited';\n");
+    const { peer, sent } = peerOn(f.b);
+    const item = { kind: "uncommitted", path: ".", sendAnyway: [] } as const;
+    const large = await send(f.a, item, peer, { maxFileBytes: 200 * 1024 });
+    expect(large).toMatchObject({ status: "stays", stays: "file-too-large" });
+    expect(large.detail).toContain("logs/big.log");
+    const many = await send(f.a, item, peer, { maxFiles: 2 });
+    expect(many).toMatchObject({ status: "stays", stays: "too-many-files" });
+    expect(many.detail).toMatch(/^3 files/);
+    expect(sent).toEqual([]);
+    expect(allRefs(f.a)).not.toContain("refs/specwithcode/extras/");
+    expect(await send(f.a, item, peer, { maxFiles: 3 })).toMatchObject({ status: "sent" });
+  });
+
+  it("keeps uncommitted work over a limit however many nested checkouts come before it", async () => {
+    const f = twoMachines();
+    // More nested checkouts than the list of skipped folders holds.
+    for (let index = 0; index < 205; index += 1)
+      git(f.base, "init", "-q", NodePath.join(f.a, "deps", `d${String(index).padStart(3, "0")}`));
+    write(f.a, "zz-model.bin", Buffer.alloc(10 * 1024 * 1024 + 1, 97));
+    const { peer, sent } = peerOn(f.b);
+    const result = await send(f.a, { kind: "uncommitted", path: ".", sendAnyway: [] }, peer);
+    expect(result).toMatchObject({ status: "stays", stays: "file-too-large" });
+    expect(result.detail).toContain("zz-model.bin");
+    expect(sent).toEqual([]);
+  });
+});
+
 describe("when the other machine does not take an extra", () => {
   const failing = (failure: ExtrasPeerFailure): ExtrasPeer => ({
     negotiate: async () => {

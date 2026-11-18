@@ -49,6 +49,8 @@ export interface CheckpointCommit {
   readonly changed: boolean;
   /** Changed and untracked files left out as secrets by their name. Never sent to another machine. */
   readonly excludedSecretPaths: ReadonlyArray<string>;
+  /** Local only: the first file left out for its size or the file count, also past the capped list. */
+  readonly overLimit: HandoffSkippedFile | null;
   /** Untracked files the content check left out; empty unless `contentCheck` was asked for. */
   readonly leftOutByContent: ReadonlyArray<SnapshotContentFinding>;
   /** Files in the snapshot, after everything left out. */
@@ -162,7 +164,10 @@ export async function writeCheckpoint(input: {
     for (const entry of untracked.stdout.split("\0")) if (entry) candidates.add(entry);
 
     const skipped: Array<HandoffSkippedFile> = [];
+    let overLimit: HandoffSkippedFile | null = null;
     const skip = (file: HandoffSkippedFile) => {
+      // The list is capped for display; the first file over a limit is kept apart from it.
+      if (file.reason !== "submodule" && overLimit === null) overLimit = file;
       if (skipped.length < SKIPPED_LIST_MAX) skipped.push(file);
     };
     let excludedSecretCount = 0;
@@ -212,7 +217,12 @@ export async function writeCheckpoint(input: {
       const out = new Set(leftOutByContent.map((file) => file.path));
       included = included.filter((path) => !out.has(path));
     }
-    const local = { excludedSecretPaths, leftOutByContent, includedFileCount: included.length };
+    const local = {
+      excludedSecretPaths,
+      leftOutByContent,
+      includedFileCount: included.length,
+      overLimit,
+    };
 
     if (included.length > 0) {
       const pathspec = NodePath.join(scratch, "pathspec");

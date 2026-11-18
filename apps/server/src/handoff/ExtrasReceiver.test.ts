@@ -154,6 +154,29 @@ describe("landing a Sync extra (1390 AC-13)", () => {
     expect(again.landed).toEqual({ branch: "swc/from-M4/feature-ffeedd", landed: "checked-out" });
   });
 
+  it("arrives beside a branch that is under a rebase or a bisect", async () => {
+    const f = twoMachines();
+    git(f.a, "checkout", "-q", "-b", "feature");
+    commit(f.a, "feature.ts", "export const feature = 1;\n");
+    commit(f.a, "more.ts", "export const more = 1;\n");
+    await send(f, "feature");
+    // The destination rebases the arrived branch and stops on a conflict.
+    commit(f.b, "feature.ts", "export const feature = 'theirs';\n");
+    git(f.b, "checkout", "-q", "swc/from-M4/feature");
+    expect(() => git(f.b, "rebase", "-q", "main")).toThrow();
+    expect(git(f.b, "worktree", "list", "--porcelain")).toContain("detached");
+    expect(await checkedOutBranches(f.b)).toEqual(new Set(["swc/from-M4/feature"]));
+    const held = git(f.b, "rev-parse", "refs/heads/swc/from-M4/feature");
+    commit(f.a, "feature.ts", "export const feature = 2;\n");
+    const { landed } = await send(f, "feature");
+    expect(landed).toEqual({ branch: "swc/from-M4/feature-0a1b2c", landed: "checked-out" });
+    expect(git(f.b, "rev-parse", "refs/heads/swc/from-M4/feature")).toBe(held);
+    git(f.b, "rebase", "--abort");
+    // A bisect holds its branch the same way.
+    git(f.b, "bisect", "start");
+    expect(await checkedOutBranches(f.b)).toContain("swc/from-M4/feature");
+  });
+
   it("arrives beside a name Git cannot create, such as a branch that is a folder there", async () => {
     const f = twoMachines();
     git(f.a, "checkout", "-q", "-b", "topic");

@@ -304,8 +304,8 @@ export async function sendExtra(input: {
       );
       const leftOut = capped(leftOutAll);
       more = { leftOut: leftOut.listed, leftOutNotListed: leftOut.notListed };
-      const over = snapshot.skipped.find((file) => file.reason !== "submodule");
-      if (over !== undefined) {
+      const over = snapshot.overLimit;
+      if (over !== null) {
         return over.reason === "too-large"
           ? stays(
               "file-too-large",
@@ -327,7 +327,26 @@ export async function sendExtra(input: {
       leaf = snapshotLeaf(input.now, input.operationId);
       exclude = await peer.negotiate(await negotiationCandidates(root, snapshot.baseCommit));
       if (!exclude.includes(snapshot.baseCommit)) {
-        // The checked-out commit is not there yet: its commits travel in the same bundle.
+        // The checked-out commit is not there yet: its commits travel in the same bundle,
+        // under the same limits as a branch.
+        const measured = await measureCommitRange({
+          root,
+          commit: snapshot.baseCommit,
+          exclude,
+          maxFileBytes,
+        });
+        if (measured.oversizedFile !== null)
+          return stays(
+            "file-too-large",
+            `${measured.oversizedFile} is over ${megabytes(maxFileBytes)}.`,
+            more,
+          );
+        if (measured.files + snapshot.includedFileCount > maxFiles)
+          return stays(
+            "too-many-files",
+            `${(measured.files + snapshot.includedFileCount).toLocaleString("en-US")} files, over the limit of ${maxFiles.toLocaleString("en-US")}.`,
+            more,
+          );
         more = {
           ...more,
           includedCommits: await count(root, [snapshot.baseCommit, "--not", "--remotes=origin"]),

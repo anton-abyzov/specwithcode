@@ -31,6 +31,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { type GitResult, runGit } from "./folderTransfer/git.ts";
@@ -300,7 +301,11 @@ export async function cloneRepository(
   });
   const refuse = (detail: string) =>
     step({ action: "none", reason: "refused", detail, downgraded: true });
-  if (input.path === "." || !safeRelativePath(input.path))
+  if (
+    input.path === "." ||
+    !safeRelativePath(input.path) ||
+    input.path.split("/").some(isGitFolderName)
+  )
     return refuse("The repository's folder is not a path inside the project.");
   if (input.remote.startsWith("-") || canonicalOrigin(input.remote) === null)
     return refuse("The remote is not an address Sync clones from.");
@@ -309,12 +314,19 @@ export async function cloneRepository(
   const target = NodePath.join(realRoot, ...input.path.split("/"));
   if ((await NodeFSP.lstat(target).catch(() => null)) !== null)
     return refuse('A folder is already there. Use "Compare all files…".');
-  const parent = NodePath.dirname(target);
   try {
-    await NodeFSP.mkdir(parent, { recursive: true });
-    const realParent = await NodeFSP.realpath(parent);
-    // A link on the way would put the clone outside the project folder.
-    if (realParent !== parent) return refuse("The folder's path leaves the project folder.");
+    // One folder at a time, creating nothing past a link: a link on the way would
+    // put the clone, or an empty folder, outside the project folder.
+    let folder = realRoot;
+    for (const part of input.path.split("/").slice(0, -1)) {
+      folder = NodePath.join(folder, part);
+      let entry = await NodeFSP.lstat(folder).catch(() => null);
+      if (entry === null) {
+        await NodeFSP.mkdir(folder);
+        entry = await NodeFSP.lstat(folder);
+      }
+      if (!entry.isDirectory()) return refuse("The folder's path leaves the project folder.");
+    }
     await NodeFSP.mkdir(target);
   } catch {
     return refuse("The folder could not be created.");
@@ -336,6 +348,20 @@ export async function cloneRepository(
   }
   const { branch } = await branchAndHead(context.git, target);
   return step({ branch });
+}
+
+/**
+ * A folder name a file system may read as `.git`: another case, a trailing dot
+ * or space, a character it ignores, or a short name. A clone into such a folder
+ * would put a remote's files where Git reads its own settings.
+ */
+export function isGitFolderName(name: string): boolean {
+  const plain = name
+    .normalize("NFKC")
+    .replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u206a-\u206f\ufeff]/g, "")
+    .replace(/[. ]+$/, "")
+    .toLowerCase();
+  return plain === ".git" || /^git~\d+$/.test(plain);
 }
 
 /**
@@ -463,7 +489,9 @@ const make = Effect.gen(function* () {
       try: run,
       catch: (cause) =>
         failed(cause instanceof Error ? cause.message.slice(0, 1900) : "Git did not finish."),
-    });
+      // A cancelled call must not release the project's lock while Git still writes:
+      // the Git commands end by themselves, each under its own time limit.
+    }).pipe(Effect.uninterruptible);
 
   const repositories = Effect.fn("ProjectSync.repositories")(function* (projectId: ProjectId) {
     const snapshot = yield* projects.snapshot.pipe(
@@ -604,4 +632,7 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ProjectSync, make);
+export const layer = Layer.effect(ProjectSync, make).pipe(
+  Layer.provide(ProjectAdmission.layer),
+  Layer.provide(HandoffGit.layer.pipe(Layer.provide(ProcessRunner.layer))),
+);
