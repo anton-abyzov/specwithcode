@@ -5,6 +5,17 @@ import {
   applicationAtPoint,
   applicationName,
   ComputerUseInputError,
+  frontMirroringWindow,
+  type InputStep,
+  IPHONE_MIRRORING_BUNDLE_ID,
+  JXA_INPUT_SCRIPT,
+  JXA_MIRRORING_SCRIPT,
+  latinKeystroke,
+  type MirroringScene,
+  mirroringActionSteps,
+  mirroringPointerTarget,
+  mirroringTypeSteps,
+  mirroringWindowAt,
   parseChord,
   PASTE_STEPS,
   screenshotSize,
@@ -211,5 +222,192 @@ describe("applicationName", () => {
 
   it("keeps the requested name when nothing else is known", () => {
     expect(applicationName({ requested: " Notes " })).toBe("Notes");
+  });
+});
+
+describe("iPhone Mirroring", () => {
+  const mirroringWindow = { x: 600, y: 100, width: 360, height: 760 };
+  const sceneWindow = (
+    owner: string | null,
+    area: { x: number; y: number; width: number; height: number },
+    mirroring = false,
+    layer = 0,
+  ) => ({ owner, layer, alpha: 1, mirroring, ...area });
+  const scene = (frontmostBundleId: string | null): MirroringScene => ({
+    frontmostBundleId,
+    windows: [
+      sceneWindow("Window Server", { x: 700, y: 400, width: 32, height: 32 }, false, 2147483630),
+      sceneWindow("iPhone Mirroring", mirroringWindow, true),
+      sceneWindow("SpecWithCode", { x: 0, y: 0, width: 1512, height: 982 }),
+    ],
+  });
+  const behind = scene("com.example.studio");
+  const front = scene(IPHONE_MIRRORING_BUNDLE_ID);
+  const keyOf = (step: InputStep) => (step.type === "key" ? step : undefined);
+
+  it("finds the window only where it is the topmost one", () => {
+    expect(mirroringWindowAt(behind, { x: 700, y: 410 })).toEqual(mirroringWindow);
+    expect(mirroringWindowAt(behind, { x: 100, y: 100 })).toBeUndefined();
+    const covered: MirroringScene = {
+      frontmostBundleId: null,
+      windows: [
+        sceneWindow("Notes", { x: 650, y: 150, width: 100, height: 100 }),
+        ...behind.windows,
+      ],
+    };
+    expect(mirroringWindowAt(covered, { x: 700, y: 200 })).toBeUndefined();
+    expect(mirroringWindowAt(covered, { x: 700, y: 600 })).toEqual(mirroringWindow);
+  });
+
+  it("knows the front window only while iPhone Mirroring is frontmost", () => {
+    expect(frontMirroringWindow(front)).toEqual(mirroringWindow);
+    expect(frontMirroringWindow(behind)).toBeUndefined();
+    expect(
+      frontMirroringWindow({ frontmostBundleId: IPHONE_MIRRORING_BUNDLE_ID, windows: [] }),
+    ).toBeUndefined();
+  });
+
+  it("leaves every other action to its usual steps", () => {
+    const outside = { scene: behind };
+    expect(mirroringActionSteps({ kind: "click", x: 10, y: 10 }, laptop, outside)).toBeUndefined();
+    expect(
+      mirroringActionSteps({ kind: "scroll", x: 10, y: 10, direction: "down" }, laptop, outside),
+    ).toBeUndefined();
+    expect(mirroringActionSteps({ kind: "key", keys: "return" }, laptop, outside)).toBeUndefined();
+    expect(mirroringActionSteps({ kind: "type", text: "hi" }, laptop, outside)).toBeUndefined();
+    expect(mirroringActionSteps({ kind: "move", x: 700, y: 410 }, laptop, outside)).toBeUndefined();
+  });
+
+  it("keeps the usual steps unchanged", () => {
+    const click = actionSteps({ kind: "click", x: 10, y: 20 }, laptop);
+    expect(click).toEqual([
+      { type: "mouse", event: 5, button: 0, x: 10, y: 20, clickState: 0, flags: 0 },
+      { type: "sleep", ms: 40 },
+      { type: "mouse", event: 1, button: 0, x: 10, y: 20, clickState: 1, flags: 0 },
+      { type: "mouse", event: 2, button: 0, x: 10, y: 20, clickState: 1, flags: 0 },
+    ]);
+    const keys = actionSteps({ kind: "key", keys: "a" }, laptop);
+    expect(keys.every((step) => !("source" in step))).toBe(true);
+    expect(PASTE_STEPS.every((step) => !("source" in step))).toBe(true);
+  });
+
+  it("brings the window forward, then taps with the button held", () => {
+    const plan = mirroringActionSteps({ kind: "click", x: 700, y: 410 }, laptop, {
+      scene: behind,
+    });
+    expect(plan?.activate).toBe(true);
+    expect(plan?.point).toEqual({ x: 700, y: 410 });
+    expect(plan?.steps[0]).toEqual({
+      type: "awaitFront",
+      bundleId: IPHONE_MIRRORING_BUNDLE_ID,
+      ms: 1_500,
+    });
+    const rest = plan!.steps
+      .slice(1)
+      .map((step) =>
+        step.type === "mouse" ? step.event : step.type === "sleep" ? `sleep ${step.ms}` : step.type,
+      );
+    expect(rest).toEqual([5, "sleep 40", 1, "sleep 50", 2]);
+    const again = mirroringActionSteps({ kind: "click", x: 700, y: 410 }, laptop, {
+      scene: front,
+    });
+    expect(again?.activate).toBe(false);
+  });
+
+  it("scrolls and drags on the window after it comes forward", () => {
+    const scroll = { kind: "scroll", x: 700, y: 600, direction: "down", amount: 2 } as const;
+    const plan = mirroringActionSteps(scroll, laptop, { scene: behind });
+    expect(plan?.steps[0]?.type).toBe("awaitFront");
+    expect(plan?.steps.slice(1)).toEqual(actionSteps(scroll, laptop));
+    const drag = { kind: "drag", fromX: 700, fromY: 700, toX: 700, toY: 300 } as const;
+    expect(mirroringActionSteps(drag, laptop, { scene: behind })?.steps.slice(1)).toEqual(
+      actionSteps(drag, laptop),
+    );
+  });
+
+  it("maps Latin text onto US keys, with shift held for capitals and symbols", () => {
+    expect(latinKeystroke("a")).toEqual({ keyCode: 0, shift: false });
+    expect(latinKeystroke("A")).toEqual({ keyCode: 0, shift: true });
+    expect(latinKeystroke("4")).toEqual({ keyCode: 21, shift: false });
+    expect(latinKeystroke("!")).toEqual({ keyCode: 18, shift: true });
+    expect(latinKeystroke("@")).toEqual({ keyCode: 19, shift: true });
+    expect(latinKeystroke("?")).toEqual({ keyCode: 44, shift: true });
+    expect(latinKeystroke("\\")).toEqual({ keyCode: 42, shift: false });
+    expect(latinKeystroke("|")).toEqual({ keyCode: 42, shift: true });
+    // Every printable ASCII character has a key, and each key with or without shift types one.
+    const printable = Array.from({ length: 0x7f - 0x20 }, (_, index) =>
+      String.fromCharCode(0x20 + index),
+    );
+    const strokes = printable.map((char) => latinKeystroke(char));
+    expect(strokes.every((stroke) => stroke !== undefined)).toBe(true);
+    const distinct = new Set(strokes.map((stroke) => `${stroke?.keyCode}:${stroke?.shift}`));
+    expect(distinct.size).toBe(printable.length);
+    expect(latinKeystroke(" ")).toEqual({ keyCode: 49, shift: false });
+    expect(latinKeystroke("\n")).toEqual({ keyCode: 36, shift: false });
+    expect(latinKeystroke("ж")).toBeUndefined();
+    expect(latinKeystroke("é")).toBeUndefined();
+    expect(latinKeystroke("😀")).toBeUndefined();
+  });
+
+  it("types key by key from the HID state, holding shift around a capital", () => {
+    const steps = mirroringTypeSteps("aB", { x: 700, y: 410 });
+    expect(steps[0]?.type).toBe("awaitFront");
+    expect(steps[1]).toMatchObject({ type: "mouse", event: 5, x: 700, y: 410 });
+    const keys = steps.map(keyOf).filter((step) => step !== undefined);
+    expect(keys.map((step) => [step.keyCode, step.down, step.flags])).toEqual([
+      [0, true, 0],
+      [0, false, 0],
+      [56, true, 0x20000],
+      [11, true, 0x20000],
+      [11, false, 0x20000],
+      [56, false, 0],
+    ]);
+    expect(keys.every((step) => step.source === "hid")).toBe(true);
+  });
+
+  it("refuses text the phone cannot take before pressing any key", () => {
+    expect(() => mirroringTypeSteps("Привет", undefined)).toThrow(ComputerUseInputError);
+    expect(() => mirroringTypeSteps("ok é", undefined)).toThrow(/"é".*nothing was typed/);
+    expect(() =>
+      mirroringActionSteps({ kind: "type", text: "日本" }, laptop, { scene: front }),
+    ).toThrow(/US keyboard/);
+  });
+
+  it("puts the pointer inside the window before keys reach the phone", () => {
+    expect(mirroringPointerTarget(mirroringWindow, { x: 700, y: 400 }, undefined)).toBeUndefined();
+    expect(mirroringPointerTarget(mirroringWindow, { x: 5, y: 5 }, { x: 650, y: 300 })).toEqual({
+      x: 650,
+      y: 300,
+    });
+    expect(mirroringPointerTarget(mirroringWindow, { x: 5, y: 5 }, { x: 5, y: 5 })).toEqual({
+      x: 780,
+      y: 480,
+    });
+    const plan = mirroringActionSteps({ kind: "key", keys: "cmd+1", repeat: 2 }, laptop, {
+      scene: front,
+      cursor: { x: 5, y: 5 },
+    });
+    expect(plan?.activate).toBe(false);
+    expect(plan?.steps[1]).toMatchObject({ type: "mouse", event: 5, x: 780, y: 480 });
+    const keys = plan!.steps.map(keyOf).filter((step) => step !== undefined);
+    expect(keys).toHaveLength(8);
+    expect(keys.every((step) => step.source === "hid")).toBe(true);
+  });
+
+  it("types into the phone only while iPhone Mirroring is frontmost", () => {
+    const plan = mirroringActionSteps({ kind: "type", text: "Hi" }, laptop, {
+      scene: front,
+      cursor: { x: 700, y: 400 },
+    });
+    expect(plan?.steps[0]?.type).toBe("awaitFront");
+    expect(plan?.steps.some((step) => step.type === "mouse")).toBe(false);
+  });
+
+  it("handles the new steps in the input script and reads windows by bundle id", () => {
+    expect(JXA_INPUT_SCRIPT).toContain('step.type === "awaitFront"');
+    expect(JXA_INPUT_SCRIPT).toContain("not-frontmost");
+    expect(JXA_INPUT_SCRIPT).toContain("CGEventSourceCreate(1)");
+    expect(JXA_MIRRORING_SCRIPT).toContain("runningApplicationsWithBundleIdentifier");
+    expect(JXA_MIRRORING_SCRIPT).toContain("kCGWindowOwnerPID");
   });
 });

@@ -24,10 +24,15 @@ import {
   applicationName,
   ComputerUseInputError,
   type DisplayGeometry,
+  type DisplayPoint,
   type InputStep,
+  IPHONE_MIRRORING_BUNDLE_ID,
   JXA_INPUT_SCRIPT,
+  JXA_MIRRORING_SCRIPT,
   JXA_RUNNING_APP_NAME_SCRIPT,
   JXA_WINDOWS_SCRIPT,
+  type MirroringScene,
+  mirroringActionSteps,
   PASTE_STEPS,
   type ScreenScene,
   screenshotSize,
@@ -254,6 +259,66 @@ async function applicationAt(
   }
 }
 
+/**
+ * The windows and frontmost app as iPhone Mirroring needs them; undefined when
+ * they cannot be read, and the action then takes its usual steps.
+ */
+async function readMirroringScene(): Promise<MirroringScene | undefined> {
+  try {
+    const output = await execFile(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", JXA_MIRRORING_SCRIPT, IPHONE_MIRRORING_BUNDLE_ID],
+      5_000,
+    );
+    const scene = JSON.parse(output.trim()) as MirroringScene;
+    return Array.isArray(scene.windows) ? scene : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The last display point an action used on the iPhone Mirroring window. */
+let lastMirroringPoint: DisplayPoint | undefined;
+
+/**
+ * Runs an action on the iPhone Mirroring window when it lands there, and
+ * reports the frontmost app afterwards; undefined when it does not land there.
+ * The app comes forward through Launch Services, as `computer_open` does.
+ */
+async function runOnMirroring(
+  action: ComputerUseAction,
+  display: DisplayGeometry,
+): Promise<{ frontmost: string | undefined } | undefined> {
+  const scene = await readMirroringScene();
+  if (scene === undefined || scene.windows.length === 0) return undefined;
+  const plan = mirroringActionSteps(action, display, {
+    scene,
+    cursor: Electron.screen.getCursorScreenPoint(),
+    lastPoint: lastMirroringPoint,
+  });
+  if (plan === undefined) return undefined;
+  if (plan.activate) {
+    await execFile("/usr/bin/open", ["-b", IPHONE_MIRRORING_BUNDLE_ID], 10_000).catch(
+      (error: Error) => {
+        throw new ComputerUseInputError(
+          `Could not bring iPhone Mirroring forward: ${error.message || "it did not open"}.`,
+        );
+      },
+    );
+  }
+  if (plan.point !== undefined) lastMirroringPoint = plan.point;
+  try {
+    return { frontmost: await replay(plan.steps) };
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("not-frontmost")) {
+      throw new ComputerUseInputError(
+        "iPhone Mirroring did not come to the front, so nothing was sent to the phone. Open it with computer_open, check that the phone is connected, then try again.",
+      );
+    }
+    throw error;
+  }
+}
+
 /** Puts text on the clipboard, pastes it, then gives the user's clipboard back. */
 async function typeText(text: string): Promise<string | undefined> {
   const saved = await Electron.clipboard.read().catch(() => []);
@@ -427,9 +492,12 @@ export async function runComputerUseAction(
     case "screenshot":
       [screenshot, frontmost] = await Promise.all([captureScreen(display), frontmostApplication()]);
       break;
-    case "type":
-      frontmost = await typeText(action.text);
+    case "type": {
+      // Paste does not reach the phone, so iPhone Mirroring gets typed keys.
+      const mirrored = await runOnMirroring(action, display);
+      frontmost = mirrored === undefined ? await typeText(action.text) : mirrored.frontmost;
       break;
+    }
     case "open":
       await open(action);
       frontmost = await frontmostApplication();
@@ -442,8 +510,14 @@ export async function runComputerUseAction(
       if (owner !== undefined) application = { name: owner };
       break;
     }
-    default:
+    case "move":
       frontmost = await replay(actionSteps(action, display));
+      break;
+    default: {
+      const mirrored = await runOnMirroring(action, display);
+      frontmost =
+        mirrored === undefined ? await replay(actionSteps(action, display)) : mirrored.frontmost;
+    }
   }
 
   const cursor = Electron.screen.getCursorScreenPoint();

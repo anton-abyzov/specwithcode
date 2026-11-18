@@ -1,0 +1,260 @@
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+import {
+  CLICK_TARGET,
+  findTab,
+  jaccard,
+  main,
+  mcpClient,
+  pageSignature,
+  parseArgs,
+  regionToScreenshot,
+  runCheck,
+  scrolled,
+  simulatedPhone,
+  TYPE_SAMPLES,
+  windowInScreenshot,
+} from "./iphone-mirroring-check.mjs";
+
+const window = { x: 600, y: 100, width: 360, height: 760 };
+const line = (text, x, y, width = 100, height = 20) => ({ text, x, y, width, height });
+const outDirs = [];
+const tempOut = () => {
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mirroring-check-test-"));
+  outDirs.push(dir);
+  return dir;
+};
+
+afterEach(() => {
+  for (const dir of outDirs.splice(0)) NodeFS.rmSync(dir, { recursive: true, force: true });
+  vi.restoreAllMocks();
+});
+
+describe("dry run", () => {
+  it("passes every step on a phone that does what it is told", async () => {
+    const phone = simulatedPhone();
+    const result = await runCheck(phone.deps);
+    expect(result.pass).toBe(true);
+    expect(result.landed).toBe(CLICK_TARGET);
+    expect(result.lines).toContain("Clicks landed: 20 of 20");
+    expect(result.lines.filter((entry) => entry.startsWith("PASS click "))).toHaveLength(20);
+    for (const sample of TYPE_SAMPLES) {
+      expect(result.lines.some((entry) => entry.startsWith(`PASS type "${sample}"`))).toBe(true);
+    }
+    expect(result.lines.some((entry) => entry.startsWith("PASS scroll down"))).toBe(true);
+    expect(result.lines.some((entry) => entry.startsWith("PASS scroll up"))).toBe(true);
+    // The product's tools only, access asked first.
+    expect(phone.state.calls[0]).toBe("request_access");
+    expect(
+      phone.state.calls.every((tool) => tool === "request_access" || tool.startsWith("computer_")),
+    ).toBe(true);
+  });
+
+  it("says 20 of 20 only on the total line", async () => {
+    const result = await runCheck(simulatedPhone().deps);
+    expect(result.lines.filter((entry) => entry.includes("20 of 20"))).toEqual([
+      "Clicks landed: 20 of 20",
+    ]);
+  });
+
+  it("fails and counts the miss when one tap does not land", async () => {
+    const result = await runCheck(simulatedPhone({ missClick: 7 }).deps);
+    expect(result.pass).toBe(false);
+    expect(result.lines).toContain("Clicks landed: 19 of 20");
+    expect(result.lines.find((entry) => entry.startsWith("FAIL click 7/20"))).toBeDefined();
+    expect(result.lines.at(-1)).toMatch(/^Result: FAIL .*first failure: click 7\/20/);
+  });
+
+  it("stops at once when access is denied", async () => {
+    const phone = simulatedPhone();
+    const call = phone.deps.call;
+    phone.deps.call = (tool, args) =>
+      tool === "request_access"
+        ? Promise.resolve({ data: { status: "denied" } })
+        : call(tool, args);
+    const result = await runCheck(phone.deps);
+    expect(result.pass).toBe(false);
+    expect(phone.state.calls).toEqual([]);
+    expect(result.lines).toContain("Clicks landed: 0 of 20");
+  });
+
+  it("stops when the window shows a connection prompt instead of the phone", async () => {
+    const phone = simulatedPhone();
+    phone.deps.ocr = async () => [line("Lock your iPhone to connect", 620, 400)];
+    const result = await runCheck(phone.deps);
+    expect(
+      result.lines.some((entry) => entry.startsWith('FAIL connected: shows "Lock your iPhone')),
+    ).toBe(true);
+    expect(phone.state.calls.includes("computer_click")).toBe(false);
+  });
+
+  it("asks for the window on the main display", async () => {
+    const phone = simulatedPhone();
+    phone.deps.window = async () => ({ window, onMainDisplay: false });
+    const result = await runCheck(phone.deps);
+    expect(
+      result.lines.some(
+        (entry) => entry.startsWith("FAIL open: ") && entry.includes("main display"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reopens iPhone Mirroring once when the gate says the app in front changed", async () => {
+    const phone = simulatedPhone();
+    const call = phone.deps.call;
+    let refused = false;
+    phone.deps.call = (tool, args) => {
+      if (tool === "computer_type" && !refused) {
+        refused = true;
+        return Promise.reject(new Error("The app in front changed while the user was answering"));
+      }
+      return call(tool, args);
+    };
+    const result = await runCheck(phone.deps);
+    expect(result.pass).toBe(true);
+    expect(result.lines.some((entry) => entry.startsWith("NOTE computer_type refused"))).toBe(true);
+  });
+
+  it("writes dry-run.log and never check.log", async () => {
+    const out = tempOut();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(await main(["--dry-run", "--out", out])).toBe(0);
+    expect(NodeFS.existsSync(NodePath.join(out, "check.log"))).toBe(false);
+    const log = NodeFS.readFileSync(NodePath.join(out, "dry-run.log"), "utf8");
+    expect(log).toContain("Mode: dry run, simulated phone");
+    expect(log).toContain("Clicks landed: 20 of 20");
+    expect(await main(["--dry-run", "--out", out, "--miss", "3"])).toBe(1);
+    expect(NodeFS.readFileSync(NodePath.join(out, "dry-run.log"), "utf8")).toContain(
+      "Clicks landed: 19 of 20",
+    );
+  });
+});
+
+describe("options", () => {
+  it("needs --out for a live run and keeps --miss to dry runs", () => {
+    expect(() => parseArgs([])).toThrow(/--out/);
+    expect(() => parseArgs(["--out", "x", "--miss", "2"])).toThrow(/dry-run/);
+    expect(() => parseArgs(["--dry-run", "--tabs", "One"])).toThrow(/two tab names/);
+    expect(() => parseArgs(["--bogus"])).toThrow(/unknown option/);
+    expect(parseArgs(["--out", "x", "--ios", "26.1"])).toMatchObject({ out: "x", ios: "26.1" });
+  });
+
+  it("refuses a live run outside a thread's shell", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = await main(["--out", tempOut()], {});
+    expect(code).toBe(2);
+  });
+});
+
+describe("judging the screen", () => {
+  it("finds a tab label in the bottom of the window, not a title above", () => {
+    const lines = [
+      line("Stopwatch", 620, 150),
+      line("Stopwatch", 840, 820),
+      line("Alarms", 700, 820),
+    ];
+    expect(findTab(lines, window, "stopwatch")).toEqual(lines[1]);
+    expect(findTab(lines, window, "Timers")).toBeUndefined();
+  });
+
+  it("tells pages apart by their words, leaving clock readings out", () => {
+    const page = pageSignature(
+      [
+        line("World Clock", 620, 150),
+        line("10:42", 620, 200),
+        line("Edit", 620, 120),
+        line("Alarms", 700, 820),
+      ],
+      window,
+    );
+    expect(page).toEqual(["world clock", "edit"]);
+    expect(jaccard(["a", "b"], ["a", "b"])).toBe(1);
+    expect(jaccard(["a", "b"], ["c"])).toBe(0);
+    expect(jaccard([], [])).toBe(1);
+  });
+
+  it("counts a scroll by how far shared text moved", () => {
+    const before = ["General", "Camera", "Siri", "Search"].map((text, index) =>
+      line(text, 620, 300 + index * 50),
+    );
+    const after = before.map((entry) => ({ ...entry, y: entry.y - 80 }));
+    expect(scrolled(before, after, window, "down", 20)).toMatchObject({
+      ok: true,
+      median: -80,
+      common: 4,
+    });
+    expect(scrolled(before, after, window, "up", 20).ok).toBe(false);
+    expect(scrolled(before, before, window, "down", 20).ok).toBe(false);
+  });
+
+  it("maps the window into screenshot pixels and spots one off the main display", () => {
+    const main = { width: 3024, height: 1964 };
+    const size = { width: 1512, height: 982 };
+    expect(windowInScreenshot({ x: 1200, y: 200, width: 720, height: 1520 }, main, size)).toEqual({
+      onMainDisplay: true,
+      window: { x: 600, y: 100, width: 360, height: 760 },
+    });
+    expect(
+      windowInScreenshot({ x: 3100, y: 0, width: 720, height: 1520 }, main, size)?.onMainDisplay,
+    ).toBe(false);
+    expect(windowInScreenshot(null, main, size)).toBeUndefined();
+  });
+
+  it("turns text boxes from the bottom-left of a region into screenshot pixels", () => {
+    const region = { x: 600, y: 100, width: 400, height: 800 };
+    expect(
+      regionToScreenshot([{ text: "Lap", x: 0.25, y: 0.5, width: 0.1, height: 0.05 }], region),
+    ).toEqual([{ text: "Lap", x: 700, y: 460, width: 40, height: 40 }]);
+  });
+});
+
+describe("mcpClient", () => {
+  it("calls tools with the thread's authorization and reads text, structured data and images", async () => {
+    const seen = [];
+    const fetchImpl = async (url, init) => {
+      const body = JSON.parse(init.body);
+      seen.push({
+        url,
+        method: body.method,
+        authorization: init.headers.authorization,
+        session: init.headers["mcp-session-id"],
+      });
+      const headers = new Headers({ "content-type": "application/json", "mcp-session-id": "s1" });
+      const result =
+        body.method === "initialize"
+          ? { serverInfo: { name: "x", version: "1.2.3" } }
+          : body.params?.name === "computer_screenshot"
+            ? {
+                content: [
+                  { type: "text", text: '{"display":{"width":10,"height":5}}' },
+                  { type: "image", data: "aW1n", mimeType: "image/jpeg" },
+                ],
+              }
+            : { isError: true, content: [{ type: "text", text: "Computer use is turned off" }] };
+      return new Response(
+        body.id === undefined ? "" : JSON.stringify({ jsonrpc: "2.0", id: body.id, result }),
+        {
+          status: body.id === undefined ? 202 : 200,
+          headers,
+        },
+      );
+    };
+    const client = mcpClient({
+      url: "http://127.0.0.1:1/mcp",
+      authorization: "Bearer t",
+      fetchImpl,
+    });
+    expect(await client.initialize()).toEqual({ name: "x", version: "1.2.3" });
+    expect(await client.call("computer_screenshot", {})).toEqual({
+      data: { display: { width: 10, height: 5 } },
+      image: "aW1n",
+    });
+    await expect(client.call("computer_click", { x: 1, y: 1 })).rejects.toThrow(/turned off/);
+    expect(seen.every((entry) => entry.authorization === "Bearer t")).toBe(true);
+    expect(seen.slice(1).every((entry) => entry.session === "s1")).toBe(true);
+  });
+});
