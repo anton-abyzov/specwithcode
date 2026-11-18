@@ -38,7 +38,7 @@ import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt"
 import { AccountJoinCard } from "../settings/AccountJoinCard";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
-import { WizardStepFooter } from "./WizardFrame";
+import { WIZARD_NEUTRAL, WizardStepFooter } from "./WizardFrame";
 import {
   canTurnOnFromSignInFirst,
   machinesStillToAllow,
@@ -247,6 +247,8 @@ export function SignInFirstStep({
 
   const mainActionPending =
     account === null || canTurnOnFromSignInFirst(link) || link.kind === "linking";
+  // Reading or making the link: the step is busy, so it offers no neutral action.
+  const linkBusy = link.kind === "checking" || link.kind === "linking";
 
   return (
     <>
@@ -287,6 +289,7 @@ export function SignInFirstStep({
           size="sm"
           className="mt-3 px-0 font-normal text-muted-foreground underline"
           data-testid="sign-in-first-no-account"
+          {...WIZARD_NEUTRAL}
           onClick={onContinue}
         >
           {tx("Use without an account")}
@@ -321,12 +324,13 @@ export function SignInFirstStep({
         }
         skip={
           !choosing && mainActionPending && account !== null
-            ? { label: tx("Continue"), onClick: onContinue }
+            ? // While this machine links, going on is not the walker's to press.
+              { label: tx("Continue"), onClick: onContinue, neutral: !linkBusy }
             : undefined
         }
         primary={
           !choosing && !mainActionPending
-            ? { label: tx("Continue"), onClick: onContinue }
+            ? { label: tx("Continue"), onClick: onContinue, neutral: !linkBusy }
             : undefined
         }
       />

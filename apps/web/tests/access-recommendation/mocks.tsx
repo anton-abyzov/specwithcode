@@ -8,3 +8,4 @@ export const useFullAccessRecommendation = () => {
 };
 export const useEnvironment = () => null;
 export const usePrimaryEnvironmentId = () => null;
+export const usePrimaryEnvironment = () => null;
