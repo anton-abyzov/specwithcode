@@ -51,9 +51,8 @@ vi.mock("../machineTools/machineToolInstallRequest", () => ({
   requestMachineToolInstall: state.install,
 }));
 
-const { CoordinatorSpecweaveCard, SpecweaveSetupCard, SpecweaveSetupCardView } = await import(
-  "./SpecweaveSetupCard"
-);
+const { SpecweaveSetupCard, SpecweaveSetupCardView } = await import("./SpecweaveSetupCard");
+const { CoordinatorSpecweaveCard } = await import("./CoordinatorSpecweaveCard");
 
 const environmentId = EnvironmentId.make("env-m4");
 const projectId = ProjectId.make("project-atlas");

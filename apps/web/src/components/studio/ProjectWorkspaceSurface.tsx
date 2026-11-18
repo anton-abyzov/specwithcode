@@ -37,7 +37,7 @@ import { FolderCopyBanner } from "./FolderCopyBanner";
 import { OtherMachineAssistantNotice } from "./OtherMachineAssistantNotice";
 import { ProjectPlan } from "./ProjectPlan";
 import { TimelineDetailMenu } from "../chat/TimelineDetailMenu";
-import { CoordinatorSpecweaveCard } from "../chat/SpecweaveSetupCard";
+import { CoordinatorSpecweaveCard } from "../chat/CoordinatorSpecweaveCard";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
