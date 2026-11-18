@@ -234,19 +234,24 @@ export interface SpecweaveWake {
   readonly outcome: "set_up" | "declined";
 }
 
-/** The card a press answers: the named one, else the project's open one. */
+/** The card a press answers: the project's open one, and the named one when an id is given. */
 function answeredRequest(
   facts: ProjectSpecweaveFacts,
   requestId: string | undefined,
 ): SpecweaveSetupRequest | undefined {
   const request = facts.request;
-  if (request === undefined) return undefined;
-  if (requestId !== undefined) return request.requestId === requestId ? request : undefined;
-  return isOpenRequest(request) ? request : undefined;
+  if (request === undefined || !isOpenRequest(request)) return undefined;
+  if (requestId !== undefined && request.requestId !== requestId) return undefined;
+  return request;
 }
 
-/** A press on the card starts setup: the card reads Setting up on every device. */
+/**
+ * A press on the card starts setup: the card reads Setting up on every device.
+ * A press on a card that is already settled (a stale window) changes nothing.
+ */
 export async function markSettingUp(file: string, projectId: string, requestId: string) {
+  const open = answeredRequest(await readProjectFacts(file, projectId), requestId);
+  if (open === undefined) return null;
   return setRequestState(file, { projectId, requestId, state: "setting_up" });
 }
 

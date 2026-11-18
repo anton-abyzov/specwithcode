@@ -3746,7 +3746,7 @@ const make = Effect.gen(function* () {
         // "new" without SpecWeave: a card for the user instead of a worker (1396).
         const setupTarget =
           stateDir === undefined ? null : setupTargetOf(project, parent.thread, stateDir);
-        if (increment.needsSpecweave === true && setupTarget !== null)
+        if (increment.needsSpecweave === true)
           return yield* Effect.promise(() => specweaveNeededLaunch(setupTarget));
         if (increment.raiseSetupCard === true && setupTarget !== null)
           yield* Effect.promise(() => raiseSetupCardBeside(setupTarget));
@@ -4076,9 +4076,11 @@ const make = Effect.gen(function* () {
           launchIncrementFor(project, parent.thread, { ref: request.increment }, stateDir),
         );
         // Any entry with "new" in a project without SpecWeave: none is created (1396).
-        if (stateDir !== undefined && increments.some((entry) => entry.needsSpecweave === true))
+        if (increments.some((entry) => entry.needsSpecweave === true))
           return yield* Effect.promise(() =>
-            specweaveNeededLaunch(setupTargetOf(project, parent.thread, stateDir)),
+            specweaveNeededLaunch(
+              stateDir === undefined ? null : setupTargetOf(project, parent.thread, stateDir),
+            ),
           );
         if (stateDir !== undefined && increments.some((entry) => entry.raiseSetupCard === true))
           yield* Effect.promise(() =>

@@ -222,4 +222,26 @@ describe("SpecweaveSetupRequests (1396 AC-05, AC-07)", () => {
     expect(answered.wake).toBeUndefined();
     expect(answered.facts.request?.state).toBe("asking");
   });
+
+  it("a stale press on a settled card changes nothing", async () => {
+    const file = await stateFile();
+    const { request } = await openSetupRequest(file, {
+      projectId: "p1",
+      threadId: "thread-a",
+      gitRepository: true,
+    });
+    await settleAfterSetup(file, {
+      projectId: "p1",
+      requestId: request.requestId,
+      result: { ok: true },
+    });
+    expect(await markSettingUp(file, "p1", request.requestId)).toBeNull();
+    const failed = await settleAfterSetup(file, {
+      projectId: "p1",
+      requestId: request.requestId,
+      result: { ok: false, detail: "npm failed", needsNode: false },
+    });
+    expect(failed).toEqual({});
+    expect((await readProjectFacts(file, "p1")).request?.state).toBe("on");
+  });
 });

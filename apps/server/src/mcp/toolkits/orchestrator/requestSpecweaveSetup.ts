@@ -84,8 +84,10 @@ export async function specweaveDeclinedFor(stateDir: string, projectId: string):
 }
 
 /** Opens the project's card in the target thread, or returns the one already open. */
-async function openCard(target: SpecweaveSetupTarget): Promise<SpecweaveSetupRequest | undefined> {
-  if (target.threadId === null) return undefined;
+async function openCard(
+  target: SpecweaveSetupTarget | null,
+): Promise<SpecweaveSetupRequest | undefined> {
+  if (target === null || target.threadId === null) return undefined;
   const gitRepository = await insideGitWorkTree(target.workspaceRoot).catch(() => true);
   const { request } = await openSetupRequest(specweaveSetupFile(target.stateDir), {
     projectId: target.projectId,
@@ -133,7 +135,8 @@ export async function requestSpecweaveSetup(
  * the card instead. A card that cannot be stored still stops the launch.
  */
 export async function specweaveNeededLaunch(
-  target: SpecweaveSetupTarget,
+  /** Null when no state folder is known: the launch still stops, with no card. */
+  target: SpecweaveSetupTarget | null,
 ): Promise<SpecweaveNeededLaunchResult> {
   const request = await openCard(target).catch(() => undefined);
   return {

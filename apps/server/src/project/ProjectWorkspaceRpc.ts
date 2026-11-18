@@ -151,9 +151,10 @@ export const handlers = Effect.gen(function* () {
       Effect.gen(function* () {
         if (input.requestId !== undefined) {
           const requestId = input.requestId;
-          yield* Effect.promise(() =>
+          // The card's state is a convenience: a state file that cannot be written never stops setup.
+          yield* Effect.tryPromise(() =>
             SpecweaveSetupRequests.markSettingUp(specweaveFile, input.projectId, requestId),
-          );
+          ).pipe(Effect.ignore);
         }
         const exit = yield* Effect.exit(workspace.setUpSpecweave(input));
         const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();

@@ -455,6 +455,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           code: "invalid_request",
           message: "The project was not found.",
         });
+      yield* assertProjectInGrant(yield* workGrantOf(context), project);
       const { stateDir } = yield* ServerConfig.ServerConfig;
       return yield* Effect.promise(() =>
         requestSpecweaveSetup(setupTargetOf(project, context.caller, stateDir), input),
