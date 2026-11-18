@@ -39,7 +39,14 @@ import {
   usageResetAt,
 } from "./providerFallback.ts";
 
-export type SourceState = "ready" | "limited" | "sign-in" | "not-installed" | "not-ready";
+export type SourceState =
+  | "ready"
+  | "limited"
+  | "sign-in"
+  | "not-installed"
+  | "not-ready"
+  /** Turned off on this machine; a saved Sources order can still name it. */
+  | "off";
 
 export interface SourceStatus {
   readonly state: SourceState;
@@ -53,6 +60,7 @@ export function sourceStatus(
   nowMs: number,
   model?: string | undefined,
 ): SourceStatus {
+  if (!provider.enabled || provider.status === "disabled") return { state: "off", until: null };
   if (!provider.installed) return { state: "not-installed", until: null };
   if (provider.auth.status === "unauthenticated") return { state: "sign-in", until: null };
   const used = providerUsedPercent(provider, nowMs, model);

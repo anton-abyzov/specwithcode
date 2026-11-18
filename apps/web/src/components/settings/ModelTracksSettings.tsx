@@ -1,21 +1,5 @@
 import {
-  DndContext,
-  type DragEndEvent,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
-import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import {
+  type EnvironmentId,
   MAX_LANE_MODELS,
   MODEL_TRACK_LABELS,
   type ModelLanes,
@@ -24,6 +8,7 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
 } from "@specweave-studio/contracts";
+import { listedSources } from "@specweave-studio/shared/modelSources";
 import { createModelSelection } from "@specweave-studio/shared/model";
 import {
   effortLabel,
@@ -34,25 +19,19 @@ import {
 import { describeModel } from "@specweave-studio/shared/modelIdentity";
 import {
   addTrackEntry,
-  describeSources,
   describeTrack,
-  moveSource,
   moveTrackEntry,
   singleReviewFamily,
-  type SourceMoveRefusal,
-  type SourceRow,
-  type SourceStatus,
   type TrackEntryRefusal,
   trackEntryRefusal,
   type TrackRow,
   type TrackSource,
 } from "@specweave-studio/shared/modelTrackRules";
 import { TRACK_LANES, trackEntryEffort } from "@specweave-studio/shared/modelTracks";
-import { GripVerticalIcon, XIcon } from "lucide-react";
+import { XIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { useTx } from "../../i18n";
-import { cn } from "../../lib/utils";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -67,7 +46,8 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { clock } from "./FallbackOrderList";
+import { Card, Note, SortableList, SortableRow, statusChip } from "./ModelListParts";
+import { MissingTrackSource, SourcesCard } from "./ModelSourcesCard";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, useRelativeTimeTick } from "./settingsLayout";
 import {
@@ -104,35 +84,6 @@ function holdNote(source: TrackSource, track: ModelTrack, tx: Tx): string | null
   return track === "review"
     ? `${billing}, ${tx("never reviews")}`
     : `${billing}, ${tx("never automatic")}`;
-}
-
-const SOURCE_REFUSALS: Record<SourceMoveRefusal, string> = {
-  "held-source": "Billed per use or with unknown billing, so it is never picked on its own.",
-  "into-held": "Sources picked automatically stay above the ones that are not.",
-};
-
-function statusChip(
-  status: SourceStatus,
-  tx: Tx,
-): { readonly label: string; readonly variant: "success" | "warning" | "outline" } {
-  switch (status.state) {
-    case "ready":
-      return { label: tx("Ready"), variant: "success" };
-    case "limited":
-      return {
-        label:
-          status.until === null
-            ? tx("Limit reached")
-            : `${tx("Limit until")} ${clock(status.until)}`,
-        variant: "warning",
-      };
-    case "sign-in":
-      return { label: tx("Sign in"), variant: "warning" };
-    case "not-installed":
-      return { label: tx("Not installed"), variant: "outline" };
-    case "not-ready":
-      return { label: tx("Not ready"), variant: "outline" };
-  }
 }
 
 /** What the top entry of each track is for; the entries under it are its fallbacks. */
@@ -248,114 +199,10 @@ function followsName(row: TrackRow, providers: ReadonlyArray<ServerProvider>): s
   return describeModel(source, slug).name ?? slug;
 }
 
-/** A grip, a position and the row's content; the grip also reorders by keyboard. */
-function SortableRow(props: {
-  readonly id: string;
-  readonly position: number;
-  readonly label: string;
-  readonly locked?: boolean;
-  readonly children: ReactNode;
-}) {
-  const tx = useTx();
-  const sortable = useSortable({ id: props.id, disabled: props.locked === true });
-  return (
-    <li
-      ref={sortable.setNodeRef}
-      style={{
-        transform: CSS.Translate.toString(sortable.transform),
-        transition: sortable.transition,
-      }}
-      className={cn(
-        "flex items-center gap-2 border-b border-border/70 px-3 py-2 last:border-b-0",
-        sortable.isDragging && "relative z-10 rounded-md bg-background shadow-md",
-      )}
-    >
-      <button
-        type="button"
-        ref={sortable.setActivatorNodeRef}
-        {...sortable.attributes}
-        {...sortable.listeners}
-        disabled={props.locked === true}
-        aria-label={`${tx("Reorder")} ${props.label}, ${tx("position")} ${props.position}`}
-        className="flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing disabled:cursor-default disabled:opacity-40"
-      >
-        <GripVerticalIcon className="size-3.5" />
-      </button>
-      <span className="w-4 shrink-0 text-xs text-muted-foreground tabular-nums">
-        {props.position}
-      </span>
-      {props.children}
-    </li>
-  );
-}
-
-function SortableList(props: {
-  readonly label: string;
-  readonly ids: ReadonlyArray<string>;
-  readonly onMove: (from: number, to: number) => void;
-  readonly children: ReactNode;
-}) {
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-  const onDragEnd = (event: DragEndEvent) => {
-    const from = props.ids.indexOf(String(event.active.id));
-    const to = event.over === null ? -1 : props.ids.indexOf(String(event.over.id));
-    if (from !== -1 && to !== -1 && from !== to) props.onMove(from, to);
-  };
-  return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      modifiers={[restrictToVerticalAxis, restrictToParentElement]}
-      onDragEnd={onDragEnd}
-    >
-      <SortableContext items={[...props.ids]} strategy={verticalListSortingStrategy}>
-        <ol aria-label={props.label} className="flex flex-col">
-          {props.children}
-        </ol>
-      </SortableContext>
-    </DndContext>
-  );
-}
-
-function Card(props: {
-  readonly id: string;
-  readonly title: string;
-  readonly hint: string;
-  readonly control?: ReactNode;
-  readonly children: ReactNode;
-}) {
-  return (
-    <section
-      id={props.id}
-      aria-label={props.title}
-      className="overflow-hidden rounded-xl border border-border bg-card"
-    >
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/70 px-3 py-2.5">
-        <h3 className="text-sm font-semibold">{props.title}</h3>
-        <p className="min-w-0 flex-1 text-xs text-muted-foreground">{props.hint}</p>
-        {props.control}
-      </header>
-      {props.children}
-    </section>
-  );
-}
-
-const Note = (props: { readonly tone?: "warning"; readonly children: ReactNode }) => (
-  <p
-    role={props.tone === "warning" ? "alert" : undefined}
-    className={cn(
-      "border-t border-border/70 px-3 py-2 text-xs",
-      props.tone === "warning" ? "text-warning-foreground" : "text-muted-foreground",
-    )}
-  >
-    {props.children}
-  </p>
-);
-
 function TrackCard(props: {
+  readonly environmentId: EnvironmentId | null;
+  /** Registry agents with an entry on this machine, by registry id. */
+  readonly configuredAgents: ReadonlySet<string>;
   readonly track: ModelTrack;
   readonly saved: ReadonlyArray<ModelSelection>;
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -453,12 +300,24 @@ function TrackCard(props: {
                 className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
               >
                 {row.sources.length === 0 ? (
-                  <li>
-                    <Badge variant="outline" size="sm">
-                      {tx("Not installed")}
-                    </Badge>{" "}
-                    {tx("No source on this machine lists it.")}
-                  </li>
+                  props.environmentId === null ? (
+                    <li>
+                      <Badge variant="outline" size="sm">
+                        {tx("Not installed")}
+                      </Badge>{" "}
+                      {tx("No source on this machine lists it.")}
+                    </li>
+                  ) : (
+                    <MissingTrackSource
+                      environmentId={props.environmentId}
+                      providers={providers}
+                      model={row.model}
+                      pinned={row.selection?.instanceId ?? null}
+                      nowMs={props.nowMs}
+                      sourceName={props.sourceName}
+                      configuredAgents={props.configuredAgents}
+                    />
+                  )
                 ) : (
                   row.sources.map((source, at) => {
                     const chip = statusChip(source.status, tx);
@@ -544,74 +403,6 @@ function TrackCard(props: {
   );
 }
 
-function sourceKind(row: SourceRow, tx: Tx): string {
-  if (row.hold === "per-token") return tx("Billed per use, never automatic");
-  if (row.hold === "unknown-billing") return tx("Billing unknown, never automatic");
-  if (row.free) return tx("Free plan");
-  return row.home === null ? tx("Subscription") : tx("Harness");
-}
-
-function SourcesCard(props: {
-  readonly rows: ReadonlyArray<SourceRow>;
-  readonly order: ReadonlyArray<ProviderInstanceId>;
-  readonly saved: boolean;
-  readonly sourceName: (provider: ServerProvider) => string;
-  readonly onSave: (order: ReadonlyArray<ProviderInstanceId>) => void;
-}) {
-  const tx = useTx();
-  const [refusal, setRefusal] = useState<SourceMoveRefusal | null>(null);
-  const { rows } = props;
-  const move = (from: number, to: number) => {
-    const result = moveSource(rows, from, to, props.order);
-    if ("refused" in result) return setRefusal(result.refused);
-    setRefusal(null);
-    props.onSave(result.order);
-  };
-  return (
-    <Card
-      id="model-sources"
-      title={tx("Sources")}
-      hint={tx("Where a model runs, first to last. A model's own harness comes first.")}
-    >
-      <SortableList
-        label={tx("Sources order")}
-        ids={rows.map((row) => row.provider.instanceId)}
-        onMove={move}
-      >
-        {rows.map((row, index) => {
-          const chip = statusChip(row.status, tx);
-          const name = props.sourceName(row.provider);
-          return (
-            <SortableRow
-              key={row.provider.instanceId}
-              id={row.provider.instanceId}
-              position={index + 1}
-              label={name}
-              locked={row.hold !== null}
-            >
-              <div className="min-w-0 flex-1">
-                <span className="truncate text-sm font-medium">{name}</span>
-                <p className="text-xs text-muted-foreground">{sourceKind(row, tx)}</p>
-              </div>
-              <Badge variant={chip.variant} size="sm">
-                {chip.label}
-              </Badge>
-            </SortableRow>
-          );
-        })}
-      </SortableList>
-      {props.saved ? (
-        <div className="border-t border-border/70 px-3 py-2">
-          <Button type="button" size="xs" variant="outline" onClick={() => props.onSave([])}>
-            {tx("Use the built-in order")}
-          </Button>
-        </div>
-      ) : null}
-      {refusal !== null ? <Note tone="warning">{tx(SOURCE_REFUSALS[refusal])}</Note> : null}
-    </Card>
-  );
-}
-
 /**
  * The three model tracks and the Sources order: which model does routine
  * work, hard work and reviews, and which harness or subscription each model
@@ -652,6 +443,13 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
           modelLanes: { [TRACK_LANES[track]]: [...models] } as unknown as ModelLanes,
         });
 
+  const configuredAgents = new Set(
+    entries.flatMap((entry) =>
+      entry.driverKind === "acpRegistry" && entry.acpRegistryAgentId !== undefined
+        ? [entry.acpRegistryAgentId]
+        : [],
+    ),
+  );
   const sourceName = (provider: ServerProvider) =>
     entries.find((entry) => entry.instanceId === provider.instanceId)?.displayName ??
     provider.displayName ??
@@ -686,6 +484,8 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
       {(["daily", "complex", "review"] as const).map((track) => (
         <TrackCard
           key={track}
+          environmentId={target?.environmentId ?? null}
+          configuredAgents={configuredAgents}
           track={track}
           saved={saved[track]}
           providers={providers}
@@ -727,12 +527,15 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
           }
         />
       ))}
-      {sources ? (
+      {sources && target?.environmentId ? (
         <SourcesCard
-          rows={describeSources({ providers, order: sourceOrder, nowMs })}
+          environmentId={target.environmentId}
+          rows={listedSources({ providers, order: sourceOrder, nowMs })}
+          providers={providers}
           order={sourceOrder}
-          saved={sourceOrder.length > 0}
+          nowMs={nowMs}
           sourceName={sourceName}
+          configuredAgents={configuredAgents}
           onSave={(order) => updateSettings({ defaultModelProviders: [...order] })}
         />
       ) : null}

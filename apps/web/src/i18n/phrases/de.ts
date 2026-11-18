@@ -5533,4 +5533,20 @@ export const de: PhraseCatalog = {
     "Erledigter Verlauf von {machines} konnte nicht geladen werden.",
   "Resolved history from another machine could not be loaded.":
     "Erledigter Verlauf von einem anderen Rechner konnte nicht geladen werden.",
+  "not installed": "nicht installiert",
+  "does not list it": "listet es nicht",
+  "Needs {source}, {state}.": "Braucht {source}, {state}.",
+  "Needs {source}, not set up on this machine.":
+    "Braucht {source}, auf diesem Rechner nicht eingerichtet.",
+  "Billing unknown. Listing it lets a thread continue on it.":
+    "Abrechnung unbekannt. Steht es hier, kann ein Thread darauf weiterlaufen.",
+  "Keep at least one source. To list every source again, use the built-in order.":
+    "Behalte mindestens eine Quelle. Um wieder alle Quellen zu listen, nimm die eingebaute Reihenfolge.",
+  "Every source on this machine is already listed.":
+    "Jede Quelle auf diesem Rechner steht schon in der Liste.",
+  "Needs setup": "Einrichtung nötig",
+  "Add source": "Quelle hinzufügen",
+  "Not set up on this machine": "Auf diesem Rechner nicht eingerichtet",
+  "Where a model runs, first to last. A source not listed is tried after these.":
+    "Wo ein Modell läuft, von der ersten bis zur letzten. Eine nicht gelistete Quelle kommt nach diesen.",
 };

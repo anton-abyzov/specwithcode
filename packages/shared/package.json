@@ -296,6 +296,10 @@
       "types": "./src/modelTrackRules.ts",
       "import": "./src/modelTrackRules.ts"
     },
+    "./modelSources": {
+      "types": "./src/modelSources.ts",
+      "import": "./src/modelSources.ts"
+    },
     "./modelTracks": {
       "types": "./src/modelTracks.ts",
       "import": "./src/modelTracks.ts"

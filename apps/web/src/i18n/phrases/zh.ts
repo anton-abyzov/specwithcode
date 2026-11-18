@@ -5270,4 +5270,18 @@ export const zh: PhraseCatalog = {
   "Open Settings > Machines to fix it.": "打开“设置 > 电脑”来修复。",
   "Resolved history from {machines} could not be loaded.": "无法加载 {machines} 的已解决历史。",
   "Resolved history from another machine could not be loaded.": "无法加载另一台机器的已解决历史。",
+  "not installed": "未安装",
+  "does not list it": "未提供此模型",
+  "Needs {source}, {state}.": "需要 {source}，{state}。",
+  "Needs {source}, not set up on this machine.": "需要 {source}，此机器上未设置。",
+  "Billing unknown. Listing it lets a thread continue on it.":
+    "计费方式未知。列入后，线程可以在其上继续。",
+  "Keep at least one source. To list every source again, use the built-in order.":
+    "请至少保留一个来源。要重新列出所有来源，请使用内置顺序。",
+  "Every source on this machine is already listed.": "此机器上的所有来源都已在列表中。",
+  "Needs setup": "需要设置",
+  "Add source": "添加来源",
+  "Not set up on this machine": "此机器上未设置",
+  "Where a model runs, first to last. A source not listed is tried after these.":
+    "模型运行的位置，从第一个到最后一个。未列出的来源会在这些之后尝试。",
 };

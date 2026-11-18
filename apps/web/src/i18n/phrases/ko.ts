@@ -5428,4 +5428,18 @@ export const ko: PhraseCatalog = {
     "{machines}의 해결된 기록을 불러올 수 없습니다.",
   "Resolved history from another machine could not be loaded.":
     "다른 기기의 해결된 기록을 불러올 수 없습니다.",
+  "not installed": "설치되지 않음",
+  "does not list it": "이 모델을 제공하지 않음",
+  "Needs {source}, {state}.": "{source} 필요, {state}.",
+  "Needs {source}, not set up on this machine.": "{source} 필요, 이 기기에 설정되지 않음.",
+  "Billing unknown. Listing it lets a thread continue on it.":
+    "청구 방식을 알 수 없습니다. 목록에 넣으면 스레드가 여기서 이어서 실행할 수 있습니다.",
+  "Keep at least one source. To list every source again, use the built-in order.":
+    "소스를 하나 이상 남겨 두세요. 모든 소스를 다시 표시하려면 기본 순서를 사용하세요.",
+  "Every source on this machine is already listed.": "이 기기의 모든 소스가 이미 목록에 있습니다.",
+  "Needs setup": "설정 필요",
+  "Add source": "소스 추가",
+  "Not set up on this machine": "이 기기에 설정되지 않음",
+  "Where a model runs, first to last. A source not listed is tried after these.":
+    "모델이 실행되는 곳을 위에서부터 차례로 시도합니다. 목록에 없는 소스는 이후에 시도합니다.",
 };

@@ -5496,4 +5496,18 @@ export const ja: PhraseCatalog = {
     "{machines} の解決済み履歴を読み込めませんでした。",
   "Resolved history from another machine could not be loaded.":
     "別のマシンの解決済み履歴を読み込めませんでした。",
+  "not installed": "未インストール",
+  "does not list it": "このモデルを提供していません",
+  "Needs {source}, {state}.": "{source} が必要です（{state}）。",
+  "Needs {source}, not set up on this machine.": "{source} が必要です。このマシンでは未設定です。",
+  "Billing unknown. Listing it lets a thread continue on it.":
+    "課金方法が不明です。リストに入れると、スレッドがそこで続行できます。",
+  "Keep at least one source. To list every source again, use the built-in order.":
+    "ソースを少なくとも 1 つ残してください。すべてのソースを再び並べるには、組み込みの順序を使います。",
+  "Every source on this machine is already listed.": "このマシンのソースはすべてリストにあります。",
+  "Needs setup": "設定が必要",
+  "Add source": "ソースを追加",
+  "Not set up on this machine": "このマシンでは未設定",
+  "Where a model runs, first to last. A source not listed is tried after these.":
+    "モデルを実行する場所を上から順に試します。リストにないソースはこれらの後に試します。",
 };

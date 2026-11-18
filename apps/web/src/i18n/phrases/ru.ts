@@ -5493,4 +5493,18 @@ export const ru: PhraseCatalog = {
     "Не удалось загрузить завершённую историю с {machines}.",
   "Resolved history from another machine could not be loaded.":
     "Не удалось загрузить завершённую историю с другого компьютера.",
+  "not installed": "не установлен",
+  "does not list it": "не предлагает её",
+  "Needs {source}, {state}.": "Нужен {source}: {state}.",
+  "Needs {source}, not set up on this machine.": "Нужен {source}: на этом компьютере не настроен.",
+  "Billing unknown. Listing it lets a thread continue on it.":
+    "Оплата неизвестна. Если источник в списке, тред может продолжить работу на нём.",
+  "Keep at least one source. To list every source again, use the built-in order.":
+    "Оставьте хотя бы один источник. Чтобы снова показать все источники, верните встроенный порядок.",
+  "Every source on this machine is already listed.": "Все источники этого компьютера уже в списке.",
+  "Needs setup": "Нужна настройка",
+  "Add source": "Добавить источник",
+  "Not set up on this machine": "На этом компьютере не настроен",
+  "Where a model runs, first to last. A source not listed is tried after these.":
+    "Где работает модель, от первого к последнему. Источники не из списка пробуются после них.",
 };

@@ -5526,4 +5526,20 @@ export const es: PhraseCatalog = {
     "No se pudo cargar el historial resuelto de {machines}.",
   "Resolved history from another machine could not be loaded.":
     "No se pudo cargar el historial resuelto de otra máquina.",
+  "not installed": "no instalado",
+  "does not list it": "no lo incluye",
+  "Needs {source}, {state}.": "Necesita {source}, {state}.",
+  "Needs {source}, not set up on this machine.":
+    "Necesita {source}, no configurado en esta máquina.",
+  "Billing unknown. Listing it lets a thread continue on it.":
+    "Facturación desconocida. Si está en la lista, un hilo puede continuar en ella.",
+  "Keep at least one source. To list every source again, use the built-in order.":
+    "Deja al menos una fuente. Para volver a listar todas, usa el orden integrado.",
+  "Every source on this machine is already listed.":
+    "Todas las fuentes de esta máquina ya están en la lista.",
+  "Needs setup": "Necesita configuración",
+  "Add source": "Añadir fuente",
+  "Not set up on this machine": "No configurado en esta máquina",
+  "Where a model runs, first to last. A source not listed is tried after these.":
+    "Dónde se ejecuta un modelo, de la primera a la última. Una fuente que no está en la lista se prueba después.",
 };

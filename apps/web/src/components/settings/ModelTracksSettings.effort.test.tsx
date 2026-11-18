@@ -21,6 +21,11 @@ vi.mock("../../state/environments", () => ({
   }),
 }));
 vi.mock("../../state/server", () => ({ EMPTY_SERVER_PROVIDERS: [] }));
+// Sources and the missing-source note have their own tests (ModelSourcesCard.test.tsx).
+vi.mock("./ModelSourcesCard", () => ({
+  MissingTrackSource: () => <li>No source on this machine lists it.</li>,
+  SourcesCard: () => null,
+}));
 vi.mock("./SettingsScopeContext", () => ({
   useSettingsScope: () => ({ target: { environmentId: "mac" } }),
 }));
