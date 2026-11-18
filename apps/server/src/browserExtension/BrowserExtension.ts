@@ -263,6 +263,8 @@ export function makeBrowserExtension(options: {
   readonly stateDir: string;
   readonly port: number;
   readonly machineName?: string;
+  /** The developer switch, read live; when given, hand-loaded ids are refused at hello while it is off. */
+  readonly allowHandLoaded?: () => boolean;
 }): BrowserExtensionShape {
   const dir = NodePath.join(options.stateDir, BROWSER_EXTENSION_DIR);
   const store = filePairingStore(dir);
@@ -285,6 +287,12 @@ export function makeBrowserExtension(options: {
     },
     machineName: () => machine,
     onUnpaired: () => store.markUnpaired(),
+    ...(options.allowHandLoaded === undefined
+      ? {}
+      : {
+          extensionAllowed: (extensionId: string) =>
+            extensionId === BROWSER_EXTENSION_STORE_ID || options.allowHandLoaded!(),
+        }),
   });
 
   const check = async (): Promise<BrowserExtensionCheck> => {
@@ -385,17 +393,25 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     // The popup names this computer as the app does (its computer name), not by its host name.
     const { label } = yield* (yield* ServerEnvironment.ServerEnvironment).getDescriptor;
+    // The developer switch, kept live for the hub's check at hello. Unreadable settings keep it off.
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const changes = yield* serverSettings.subscribeChanges;
+    let allowHandLoaded = yield* serverSettings.getSettings.pipe(
+      Effect.map((settings) => settings.allowHandLoadedBrowserExtension),
+      Effect.orElseSucceed(() => false),
+    );
     const extension = makeBrowserExtension({
       stateDir: config.stateDir,
       port: config.port,
       machineName: label,
+      allowHandLoaded: () => allowHandLoaded,
     });
-    // Turning the developer switch off closes hand-loaded copies at once; the relay refuses their return.
-    const serverSettings = yield* ServerSettings.ServerSettingsService;
-    yield* serverSettings.streamChanges.pipe(
+    // Turning the switch off closes hand-loaded copies at once; the relay refuses their return.
+    yield* changes.pipe(
       Stream.runForEach((settings) =>
         Effect.sync(() => {
-          if (!settings.allowHandLoadedBrowserExtension)
+          allowHandLoaded = settings.allowHandLoadedBrowserExtension;
+          if (!allowHandLoaded)
             extension.hub.disconnectExtensions(
               (extensionId) => extensionId === BROWSER_EXTENSION_STORE_ID,
               "hand-loaded extension not allowed",

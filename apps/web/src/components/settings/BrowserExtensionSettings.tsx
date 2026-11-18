@@ -686,7 +686,7 @@ function AllowHandLoadedExtension({
         <p className="text-xs text-muted-foreground">
           {renderRich(
             tx(
-              "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, a copy loaded by hand in chrome://extensions connects too, with the pairing code, and is marked not from the Chrome Web Store. Turning it off disconnects those copies.",
+              "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, any other extension id can connect too, such as a copy loaded by hand in chrome://extensions, but still only with the pairing code, and it is marked not from the Chrome Web Store. Turning it off disconnects those copies.",
             ),
             { machine: machine },
           )}

@@ -2,17 +2,33 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { BROWSER_EXTENSION_STORE_ID } from "@specweave-studio/contracts";
+import {
+  BROWSER_EXTENSION_STORE_ID,
+  DEFAULT_SERVER_SETTINGS,
+  type ServerSettings,
+  ServerSettingsError,
+} from "@specweave-studio/contracts";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerSettingsModule from "../serverSettings.ts";
+
 import {
+  BrowserExtension,
   BROWSER_EXTENSION_STORE_ORIGIN,
+  layer as browserExtensionLayer,
   makeBrowserExtension,
   relayOriginExtensionId,
   relayRequestAllowed,
 } from "./BrowserExtension.ts";
 import { BROWSER_EXTENSION_DIR, isPaired, PAIRING_FILE } from "./pairingState.ts";
-import { CLOSE_REJECTED } from "./relayHub.ts";
+import { CLOSE_NOT_ALLOWED, CLOSE_REJECTED } from "./relayHub.ts";
 
 const HAND_LOADED_ID = "abcdefghijklmnopabcdefghijklmnop";
 const HAND_LOADED_ORIGIN = `chrome-extension://${HAND_LOADED_ID}`;
@@ -22,10 +38,25 @@ afterAll(() => {
   for (const dir of dirs) NodeFS.rmSync(dir, { recursive: true, force: true });
 });
 
-function setup() {
+function tempStateDir() {
   const stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-relay-origin-"));
   dirs.push(stateDir);
-  const extension = makeBrowserExtension({ stateDir, port: 8319, machineName: "mac" });
+  return stateDir;
+}
+
+function readToken(extension: ReturnType<typeof makeBrowserExtension>): string {
+  const code = extension.pairing(false).pairingCode;
+  return JSON.parse(Buffer.from(code.split(":")[2]!, "base64url").toString("utf8")).t;
+}
+
+function setup(allowHandLoaded?: () => boolean) {
+  const stateDir = tempStateDir();
+  const extension = makeBrowserExtension({
+    stateDir,
+    port: 8319,
+    machineName: "mac",
+    ...(allowHandLoaded === undefined ? {} : { allowHandLoaded }),
+  });
   const code = extension.pairing(false).pairingCode;
   const json = JSON.parse(Buffer.from(code.split(":")[2]!, "base64url").toString("utf8"));
   const paired = () =>
@@ -192,9 +223,129 @@ describe("from the Chrome Web Store", () => {
       "hand-loaded extension not allowed",
     );
     expect(hand.closed).toEqual([
-      { code: CLOSE_REJECTED, reason: "hand-loaded extension not allowed" },
+      { code: CLOSE_NOT_ALLOWED, reason: "hand-loaded extension not allowed" },
     ]);
     expect(store.closed).toEqual([]);
     expect(extension.status().profiles.map((profile) => profile.label)).toEqual(["Store"]);
+  });
+});
+
+describe("the developer switch at hello", () => {
+  it("refuses a hand-loaded id while off, before the token, even after the socket opened", () => {
+    let allow = true;
+    const { extension, token, paired } = setup(() => allow);
+    // The route admitted it while the switch was on; the switch went off before its hello.
+    const closed: Array<{ code: number; reason: string }> = [];
+    const session = extension.hub.open(
+      { send: () => {}, close: (code, reason) => closed.push({ code, reason }) },
+      { extensionId: HAND_LOADED_ID },
+    );
+    allow = false;
+    session.receive(
+      JSON.stringify({
+        method: "hello",
+        params: { protocol: 1, token, label: "Hand", extensionId: BROWSER_EXTENSION_STORE_ID },
+      }),
+    );
+    expect(closed).toEqual([{ code: CLOSE_NOT_ALLOWED, reason: "extension not allowed" }]);
+    expect(paired()).toBe(false);
+    // The store copy is never affected by the switch.
+    expect(connect(extension, { origin: BROWSER_EXTENSION_STORE_ORIGIN, token }).closed).toEqual(
+      [],
+    );
+    allow = true;
+    expect(connect(extension, { origin: HAND_LOADED_ORIGIN, token, label: "Hand" }).closed).toEqual(
+      [],
+    );
+  });
+});
+
+/** The real layer with a settings double whose reads can fail and whose changes the test publishes. */
+async function withLayer(
+  initial: boolean | "unreadable",
+  body: (input: {
+    extension: ReturnType<typeof makeBrowserExtension>;
+    publish: (allow: boolean) => Promise<void>;
+  }) => Promise<void>,
+) {
+  const stateDir = tempStateDir();
+  const settingsOf = (allow: boolean): ServerSettings => ({
+    ...DEFAULT_SERVER_SETTINGS,
+    allowHandLoadedBrowserExtension: allow,
+  });
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const changes = yield* Queue.unbounded<ServerSettings>();
+        const settingsDouble = {
+          getSettings:
+            initial === "unreadable"
+              ? Effect.fail(
+                  new ServerSettingsError({ settingsPath: "test", operation: "normalize" }),
+                )
+              : Effect.succeed(settingsOf(initial)),
+          subscribeChanges: Effect.succeed(Stream.fromQueue(changes)),
+        } as unknown as ServerSettingsModule.ServerSettingsService["Service"];
+        const deps = Layer.mergeAll(
+          Layer.succeed(ServerConfig.ServerConfig, {
+            stateDir,
+            port: 8319,
+          } as unknown as ServerConfig.ServerConfig["Service"]),
+          Layer.succeed(ServerEnvironment.ServerEnvironment, {
+            getDescriptor: Effect.succeed({ label: "mac" }),
+          } as unknown as ServerEnvironment.ServerEnvironment["Service"]),
+          Layer.succeed(ServerSettingsModule.ServerSettingsService, settingsDouble),
+        );
+        const context = yield* Layer.build(browserExtensionLayer.pipe(Layer.provide(deps)));
+        const extension = Context.get(context, BrowserExtension) as ReturnType<
+          typeof makeBrowserExtension
+        >;
+        const publish = async (allow: boolean) => {
+          Queue.offerUnsafe(changes, settingsOf(allow));
+          // Let the layer's change fiber take the update.
+          for (let i = 0; i < 50; i++) await new Promise((resolve) => setImmediate(resolve));
+        };
+        yield* Effect.promise(() => body({ extension, publish }));
+      }),
+    ),
+  );
+}
+
+describe("the layer wires the switch from settings", () => {
+  it("keeps hand-loaded copies out when settings cannot be read", async () => {
+    await withLayer("unreadable", async ({ extension }) => {
+      const token = readToken(extension);
+      expect(connect(extension, { origin: HAND_LOADED_ORIGIN, token }).closed).toEqual([
+        { code: CLOSE_NOT_ALLOWED, reason: "extension not allowed" },
+      ]);
+      expect(connect(extension, { origin: BROWSER_EXTENSION_STORE_ORIGIN, token }).closed).toEqual(
+        [],
+      );
+    });
+  });
+
+  it("admits a hand-loaded copy while on and closes it when the switch goes off", async () => {
+    await withLayer(true, async ({ extension, publish }) => {
+      const token = readToken(extension);
+      const hand = connect(extension, { origin: HAND_LOADED_ORIGIN, token, label: "Hand" });
+      const store = connect(extension, {
+        origin: BROWSER_EXTENSION_STORE_ORIGIN,
+        token,
+        label: "Store",
+      });
+      expect(hand.closed).toEqual([]);
+      await publish(false);
+      expect(hand.closed).toEqual([
+        { code: CLOSE_NOT_ALLOWED, reason: "hand-loaded extension not allowed" },
+      ]);
+      expect(store.closed).toEqual([]);
+      expect(connect(extension, { origin: HAND_LOADED_ORIGIN, token }).closed).toEqual([
+        { code: CLOSE_NOT_ALLOWED, reason: "extension not allowed" },
+      ]);
+      await publish(true);
+      expect(
+        connect(extension, { origin: HAND_LOADED_ORIGIN, token, label: "Again" }).closed,
+      ).toEqual([]);
+    });
   });
 });
