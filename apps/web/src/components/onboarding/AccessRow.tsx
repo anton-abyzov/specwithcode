@@ -49,7 +49,7 @@ export function AccessRow({
         data-slot="access-row-glyph"
         className={cn(
           "grid size-9 place-items-center rounded-lg bg-muted text-muted-foreground transition-colors duration-300",
-          done && "bg-accent text-accent-foreground",
+          done && "bg-primary/10 text-primary",
         )}
       >
         {glyph}
