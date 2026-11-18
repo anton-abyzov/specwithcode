@@ -99,6 +99,20 @@ import SWCWire
     #expect(machine.canRetryConnection)
   }
 
+  /// The chat's waiting view, composer and banner all say the same thing (1408).
+  @Test func theApprovalWaitSaysOneThingEverywhere() {
+    var machine = MachineSummary(id: "e", label: "m1", status: .offline)
+    machine.deviceApprovalCode = "6X9SF6"
+    #expect(machine.approvalTitle == "Allow this phone on m1")
+    #expect(machine.approvalInstruction == "Open SpecWithCode on m1 and type this code:")
+    #expect(machine.approvalProgress == "Connects on its own once m1 allows it.")
+    #expect(machine.approvalComposerLine == "Waiting for m1 to allow this phone. Your draft is kept.")
+    #expect(machine.approvalBanner(code: "6X9SF6") == "Waiting for approval. Type 6X9SF6 on m1.")
+    for line in [machine.approvalTitle, machine.approvalProgress, machine.approvalComposerLine] {
+      #expect(!line.contains("unavailable") && !line.contains("offline"))
+    }
+  }
+
   @Test func aRefusalReadsAsRulesNotAnExpiredPairing() {
     var machine = MachineSummary(id: "e", label: "Mac", status: .reconnecting)
     machine.teamRulesRefusal = "Acme's rules turn off phones on this machine."

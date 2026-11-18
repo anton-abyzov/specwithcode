@@ -5,6 +5,13 @@ extension MachineSummary {
     !isDisconnected && status != .needsRepair && status != .unsupported
   }
 
+  /// The chat's waiting view for a phone the machine has not allowed yet (1408).
+  public var approvalTitle: String { "Allow this phone on \(displayName)" }
+  public var approvalInstruction: String { "Open SpecWithCode on \(displayName) and type this code:" }
+  public var approvalProgress: String { "Connects on its own once \(displayName) allows it." }
+  public var approvalComposerLine: String { "Waiting for \(displayName) to allow this phone. Your draft is kept." }
+  public func approvalBanner(code: String) -> String { "Waiting for approval. Type \(code) on \(displayName)." }
+
   public var recoveryTitle: String {
     if isDisconnected { return "Disconnected on this phone" }
     if deviceApprovalCode != nil { return "Waiting for approval on \(displayName)" }
