@@ -537,6 +537,53 @@ describe("BoardPane increment view", () => {
       expect(viewTitle()?.textContent).toBe("Title 0001-plan");
     });
 
+    it("leaves a fold of Active made by hand alone when the threads promote the card", async () => {
+      const key = "studio:project-board-folded:v1";
+      localStorage.setItem(key, JSON.stringify({ "host:atlas": ["planned"] }));
+      runtime.reply = board(fourCards());
+      runtime.working = {
+        byIncrement: new Map(),
+        multiMachine: false,
+        answered: false,
+        cut: false,
+        loaders: null,
+      };
+      await render({ initial: "0001-plan" });
+      // The person folds Active before the threads have answered.
+      await act(async () => groupBar("active").click());
+      runtime.working = {
+        byIncrement: new Map([
+          [
+            "0001-plan",
+            [
+              {
+                thread: { id: "t1", environmentId: "host", title: "Thread t1" },
+                tone: "working",
+                status: "Working",
+                updatedAt: "2026-11-14T09:00:00.000Z",
+                machine: {
+                  label: "Desk",
+                  moved: false,
+                  executionMachineId: "host",
+                  state: "live",
+                  description: "Runs on Desk",
+                },
+                color: "violet",
+              },
+            ],
+          ],
+        ]),
+        multiMachine: false,
+        answered: true,
+        cut: false,
+        loaders: null,
+      };
+      await render({ initial: "0001-plan" });
+      expect(groupBar("active").getAttribute("aria-expanded")).toBe("false");
+      expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ "host:atlas": ["active"] });
+      expect(viewTitle()?.textContent).toBe("Title 0001-plan");
+    });
+
     it("does not follow a card the board moves, only one the threads promote", async () => {
       const key = "studio:project-board-folded:v1";
       localStorage.setItem(key, JSON.stringify({ "host:atlas": ["planned", "blocked"] }));
