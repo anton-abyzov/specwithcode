@@ -13,13 +13,13 @@ export type StepPictureStep = "connect" | "agents" | "access" | "projects";
 
 /**
  * What each picture reacts to. A key in `lit` draws its thread once.
- * - connect: `machine` (another machine joined), `phone` (the phone joined)
- * - agents: `review` (a reviewer is ready: work passes to review and back)
+ * - connect: `machine` (another machine joined)
+ * - agents: `review` (an agent is ready: work passes to review and back)
  * - access: the Access row ids that are allowed or set up
  * - projects: `picked` (folders were picked and become projects)
  */
 export const STEP_PICTURE_KEYS = {
-  connect: ["machine", "phone"],
+  connect: ["machine"],
   agents: ["review"],
   access: ["files", "browser", "mac-apps", "iphone", "full-disk-access"],
   projects: ["picked"],
@@ -139,7 +139,7 @@ function Lights({
   );
 }
 
-/** Sign in: this machine, and the machines and the phone that join it. */
+/** Sign in: this machine, and the machines that join it. */
 function ConnectPicture({ on }: { readonly on: Lit }) {
   return (
     <Picture step="connect" viewBox="0 0 200 200">
@@ -151,13 +151,8 @@ function ConnectPicture({ on }: { readonly on: Lit }) {
         <rect x="112" y="22" width="70" height="46" rx="6" />
         <path d="M147 68v11M133 81h28" />
       </Lights>
-      <Lights id="phone" lit={on("phone")}>
-        <rect x="140" y="112" width="30" height="56" rx="7" />
-      </Lights>
       <Slack id="machine" lit={on("machine")} d="M55 112C60 92 96 70 112 46" />
       <Thread id="machine" lit={on("machine")} d="M55 112C55 70 96 52 112 46" />
-      <Slack id="phone" lit={on("phone")} d="M92 138C108 150 124 156 140 140" />
-      <Thread id="phone" lit={on("phone")} d="M92 138C108 132 124 146 140 140" />
     </Picture>
   );
 }

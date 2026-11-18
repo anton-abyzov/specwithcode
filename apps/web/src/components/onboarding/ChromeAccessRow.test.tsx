@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   connected: true,
   read: true,
   operate: true,
+  grant: true,
   locked: false,
   query: { data: null as unknown, error: null, isPending: false, refresh: vi.fn() },
   useQuery: vi.fn(),
@@ -33,7 +34,11 @@ vi.mock("../../state/use-atom-command", () => ({
 }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: (_id: unknown, scope: unknown) =>
-    String(scope).includes("terminal") ? state.operate : state.read,
+    String(scope).includes("terminal")
+      ? state.operate
+      : String(scope).includes("access")
+        ? state.grant
+        : state.read,
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironment: () => ({ connection: { phase: state.connected ? "connected" : "disconnected" } }),
@@ -104,6 +109,7 @@ beforeEach(() => {
   state.connected = true;
   state.read = true;
   state.operate = true;
+  state.grant = true;
   state.locked = false;
   state.query = { data: status(), error: null, isPending: false, refresh: vi.fn() };
   state.command.mockResolvedValue({
@@ -155,11 +161,12 @@ describe("ChromeAccessRowView", () => {
     codeHandedOut: false,
     ...overrides,
   });
-  const view = async (given: ChromeRowInput, open = false) => {
+  const view = async (given: ChromeRowInput, open = false, canAnswer = true) => {
     const onAnswer = vi.fn();
     const onReconnect = vi.fn();
     await render(
       <ChromeAccessRowView
+        canAnswer={canAnswer}
         state={chromeRowState(given)}
         machine="M4 Max"
         open={open}
@@ -259,6 +266,23 @@ describe("ChromeAccessRowView", () => {
     await act(() => button("Decline").props.onClick());
     expect(onAnswer).toHaveBeenCalledWith(false);
   });
+
+  it("a window that cannot change access says where to answer instead", async () => {
+    await view(
+      input({
+        status: {
+          bundledVersion: "0.1.0",
+          profiles: [],
+          peers: [{ id: "g1", machine: "Studio", state: "pending" }],
+        },
+      }),
+      false,
+      false,
+    );
+    expect(kind()).toBe("approval");
+    expect(text()).toContain("This window cannot answer it");
+    expect(buttons()).toHaveLength(0);
+  });
 });
 
 describe("ChromeAccessRow", () => {
@@ -293,6 +317,18 @@ describe("ChromeAccessRow", () => {
     expect(state.clearClipboard).toHaveBeenCalledWith("SECRET-1");
   });
 
+  it("a second copy restarts the two minutes", async () => {
+    vi.useFakeTimers();
+    await render(<Harness initiallyOpen />);
+    await act(() => button("Copy code").props.onClick());
+    await act(() => vi.advanceTimersByTime(90_000));
+    await act(() => button("Copied").props.onClick());
+    await act(() => vi.advanceTimersByTime(60_000));
+    expect(state.clearClipboard).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTime(60_000));
+    expect(state.clearClipboard).toHaveBeenCalledTimes(1);
+  });
+
   it("polls every 3 s only while open", async () => {
     vi.useFakeTimers();
     await render();
@@ -325,6 +361,48 @@ describe("ChromeAccessRow", () => {
       ...state.query,
       data: status({ profiles: [profile("p1", "Work"), profile("p2", "Brand")] }),
     };
+    await rerender();
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    expect(state.clearClipboard).toHaveBeenCalledWith("SECRET-1");
+  });
+
+  it("an answer the machine refuses says so", async () => {
+    state.query = {
+      ...state.query,
+      data: status({ peers: [{ id: "g1", machine: "Studio", state: "pending" }] }),
+    };
+    state.command.mockResolvedValue({ _tag: "Failure", cause: "refused" });
+    await render();
+    await act(() => button("Allow").props.onClick());
+    expect(state.command).toHaveBeenCalledWith("peer", {
+      environmentId: m4,
+      input: { id: "g1", allow: true },
+    });
+    expect(text()).toContain("That did not go through. Try again.");
+  });
+
+  it("a paired profile reconnecting is not a new pairing", async () => {
+    state.query = { ...state.query, data: status({ profiles: [profile("p1", "Work")] }) };
+    await render();
+    await act(() => button("Pair another profile").props.onClick());
+    await act(() => button("Copy code").props.onClick());
+    onOpenChange.mockClear();
+    state.query = { ...state.query, data: status({ profiles: [] }) };
+    await rerender();
+    // The relay gives the reconnect a new id; the name stays.
+    state.query = { ...state.query, data: status({ profiles: [profile("p3", "Work")] }) };
+    await rerender();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(state.clearClipboard).not.toHaveBeenCalled();
+    expect(text()).toContain("Waiting for Chrome…");
+  });
+
+  it("a new profile that connects as another leaves is a pairing", async () => {
+    state.query = { ...state.query, data: status({ profiles: [profile("p1", "Work")] }) };
+    await render();
+    await act(() => button("Pair another profile").props.onClick());
+    await act(() => button("Copy code").props.onClick());
+    state.query = { ...state.query, data: status({ profiles: [profile("p2", "Brand")] }) };
     await rerender();
     expect(onOpenChange).toHaveBeenLastCalledWith(false);
     expect(state.clearClipboard).toHaveBeenCalledWith("SECRET-1");

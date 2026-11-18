@@ -5,6 +5,7 @@
  * Settings › Chrome RPCs, and the hub the `chrome_*` MCP tools drive.
  */
 import { teamRulesToolOff, teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { currentTeamRules, watchTeamRules } from "../teamRules/TeamRules.ts";
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import {
@@ -161,9 +162,12 @@ function filePairingStore(dir: string): PairingStore {
         // The relay keeps working; Claude threads just keep Claude in Chrome.
       }
     },
+    // A read: no file, or no code in it, means not paired, and no code is made.
     paired: () => {
+      if (cached?.token) return cached.connectedAt !== null;
       try {
-        return load().connectedAt !== null;
+        const state = parsePairingState(NodeFS.readFileSync(file, "utf8"));
+        return state.token !== null && state.connectedAt !== null;
       } catch {
         return false;
       }
@@ -280,12 +284,10 @@ export function makeBrowserExtension(options: {
   readonly machineName?: string;
   /** The developer switch, read live; when given, hand-loaded ids are refused at hello while it is off. */
   readonly allowHandLoaded?: () => boolean;
-  /** Whether Google Chrome is installed; undefined where it is not checked. Defaults to a look on macOS. */
+  /** Whether Google Chrome is installed; undefined where it is not checked, the default. */
   readonly chromeInstalled?: () => boolean | undefined;
 }): BrowserExtensionShape {
-  const readChromeInstalled =
-    options.chromeInstalled ??
-    (() => (process.platform === "darwin" ? chromeInstalled(NodeOS.homedir()) : undefined));
+  const readChromeInstalled = options.chromeInstalled ?? (() => undefined);
   const dir = NodePath.join(options.stateDir, BROWSER_EXTENSION_DIR);
   const store = filePairingStore(dir);
   // A forgotten machine loses access like a declined one: let go of its tabs.
@@ -422,11 +424,15 @@ export const layer = Layer.effect(
       Effect.map((settings) => settings.allowHandLoadedBrowserExtension),
       Effect.orElseSucceed(() => false),
     );
+    // Chrome is looked for on macOS only; elsewhere the row does not claim it is missing.
+    const platform = yield* HostProcessPlatform;
     const extension = makeBrowserExtension({
       stateDir: config.stateDir,
       port: config.port,
       machineName: label,
       allowHandLoaded: () => allowHandLoaded,
+      chromeInstalled: () =>
+        platform === "darwin" ? chromeInstalled(NodeOS.homedir()) : undefined,
     });
     // Turning the switch off closes hand-loaded copies at once; the relay refuses their return.
     yield* changes.pipe(

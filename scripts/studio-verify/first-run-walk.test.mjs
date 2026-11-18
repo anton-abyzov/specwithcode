@@ -32,7 +32,12 @@ const SETUP_LABELS = [
   "Continue without an agent",
 ];
 /** Pieces of the old regex forms of those labels. */
-const SETUP_FRAGMENTS = ["without an account", "import projects", "Keep (Supervised", "without an agent"];
+const SETUP_FRAGMENTS = [
+  "without an account",
+  "import projects",
+  "Keep (Supervised",
+  "without an agent",
+];
 
 /**
  * A page whose setup is a list of steps. Each step: `{ id, neutral, waits, moves }`:
@@ -168,7 +173,10 @@ test("a press that misses because the step moved on reads the step again", async
 test("a press that fails on the same step fails naming the step", async () => {
   const { page } = fakePage([{ id: "access" }], { clickFails: 1 });
   await assert.rejects(walkFirstRun(page, quick), (error) => {
-    assert.match(error.message, /could not press the neutral control of step "access": locator.click/);
+    assert.match(
+      error.message,
+      /could not press the neutral control of step "access": locator.click/,
+    );
     assert.deepEqual(error.firstRunSteps, ["access"]);
     return true;
   });

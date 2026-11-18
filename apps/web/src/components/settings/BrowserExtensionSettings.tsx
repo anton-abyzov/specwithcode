@@ -48,9 +48,11 @@ import {
   usePairingCode,
 } from "./BrowserExtensionSetup";
 import { SettingsSection, useRelativeTimeTick } from "./settingsLayout";
+import { isDefaultProfileName } from "../../onboarding/chromeRowState.logic";
 
 /** Anchor for settings search. */
 export const BROWSER_EXTENSION_SECTION_ID = "chrome-browser-extension";
+const NO_PROFILES: readonly string[] = [];
 export { BROWSER_EXTENSION_POLL_MS };
 
 const CHECK_LABELS: Record<
@@ -121,7 +123,7 @@ export function BrowserExtensionCard({
   const answerPeer = useAtomCommand(projectWorkspace.browserExtensionPeer);
   const why = useChromeWhy();
   const pairingCode = usePairingCode(environmentId, {
-    profiles: query.data?.profiles.length ?? 0,
+    profiles: query.data?.profiles.map((profile) => profile.label) ?? NO_PROFILES,
   });
 
   const [busy, setBusy] = useState<string | null>(null);
@@ -540,10 +542,8 @@ function CheckResult({ check }: { check: BrowserExtensionCheck }) {
   );
 }
 
-/** A profile still called by a default name ("Chrome", numbered by the relay when repeated). */
-export function profileNeedsName(label: string): boolean {
-  return /^(Chrome|Unnamed profile)( \(\d+\))?$/.test(label.trim());
-}
+/** A profile still called by a default name; the rule first run's Chrome row uses too. */
+export const profileNeedsName = isDefaultProfileName;
 
 /** Threads acting in a profile; servers before per-tab ownership report one lease. */
 function threadsOf(profile: BrowserExtensionProfile): ReadonlyArray<BrowserExtensionThreadUse> {

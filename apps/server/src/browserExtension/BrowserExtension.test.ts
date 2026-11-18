@@ -361,6 +361,15 @@ describe("status for first-run's browser row", () => {
     expect(extension.status().paired).toBe(false);
   });
 
+  it("reading the status makes no pairing code", () => {
+    const stateDir = tempStateDir();
+    const extension = makeBrowserExtension({ stateDir, port: 8319 });
+    expect(extension.status().paired).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(stateDir, BROWSER_EXTENSION_DIR, PAIRING_FILE))).toBe(
+      false,
+    );
+  });
+
   it("sends chromeInstalled only where it was checked", () => {
     const stateDir = tempStateDir();
     const missing = makeBrowserExtension({ stateDir, port: 8319, chromeInstalled: () => false });

@@ -26,7 +26,12 @@ describe("accessRows", () => {
     {
       name: "one Mac in the desktop app, Full access recommended",
       input: { desktopApp: true, machines: [mac()] },
-      rows: ["files:this-mac", "browser:this-mac", "mac-apps:this-mac", "full-disk-access:this-mac"],
+      rows: [
+        "files:this-mac",
+        "browser:this-mac",
+        "mac-apps:this-mac",
+        "full-disk-access:this-mac",
+      ],
     },
     {
       name: "one Mac in the desktop app, nothing to recommend",
@@ -94,7 +99,10 @@ describe("accessRows", () => {
     },
     {
       name: "the desktop app setting up only other machines",
-      input: { desktopApp: true, machines: [other("studio"), other("mini", { recommended: false })] },
+      input: {
+        desktopApp: true,
+        machines: [other("studio"), other("mini", { recommended: false })],
+      },
       rows: ["files:studio"],
     },
   ])("$name", ({ input, rows }) => {

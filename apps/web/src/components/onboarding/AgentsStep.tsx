@@ -88,10 +88,13 @@ export function AgentsStep({
   environmentIds,
   onBack,
   onContinue,
+  onReadyChange,
 }: {
   readonly environmentIds: readonly EnvironmentId[];
   readonly onBack?: (() => void) | undefined;
   readonly onContinue: () => void;
+  /** Whether an agent is ready, for the step's picture. */
+  readonly onReadyChange?: ((ready: boolean) => void) | undefined;
 }) {
   const t = useT();
   const tx = useTx();
@@ -139,6 +142,8 @@ export function AgentsStep({
   );
   const checkStalled = useHeldFor(reported.kind === "checking", AGENT_CHECK_TIMEOUT_MS);
   const readiness = checkStalled ? ({ kind: "none" } as const) : reported;
+  const ready = readiness.kind === "ready";
+  useEffect(() => onReadyChange?.(ready), [ready, onReadyChange]);
   return (
     <StepShell title={t("wizard.agents.title")} description={t("wizard.agents.description")}>
       <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">

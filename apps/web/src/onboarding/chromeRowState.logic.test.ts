@@ -29,7 +29,12 @@ describe("chromeRowState", () => {
     ["team rules", input({ teamRulesLocked: true }), "team-rules", false],
     ["not allowed", input({ allowed: false, status: null }), "not-allowed", false],
     ["loading", input({ status: null }), "loading", false],
-    ["Chrome not found", input({ status: status({ chromeInstalled: false }) }), "chrome-missing", false],
+    [
+      "Chrome not found",
+      input({ status: status({ chromeInstalled: false }) }),
+      "chrome-missing",
+      false,
+    ],
     ["not set up", input(), "not-set-up", true],
     ["a server that does not say counts Chrome as installed", input(), "not-set-up", true],
     ["waiting for Chrome", input({ codeHandedOut: true }), "waiting", true],
@@ -65,9 +70,9 @@ describe("chromeRowState", () => {
   });
 
   it("goes back to waiting once a new code is handed out after a paired profile went quiet", () => {
-    expect(chromeRowState(input({ status: status({ paired: true }), codeHandedOut: true })).kind).toBe(
-      "waiting",
-    );
+    expect(
+      chromeRowState(input({ status: status({ paired: true }), codeHandedOut: true })).kind,
+    ).toBe("waiting");
   });
 
   it("names paired profiles and flags old, hand-loaded and unnamed ones", () => {
@@ -121,6 +126,8 @@ describe("versionOlder", () => {
 it.each([
   ["Chrome", true],
   ["Chrome (2)", true],
+  ["Unnamed profile", true],
+  ["Unnamed profile (3)", true],
   ["Chrome work", false],
   ["Work", false],
 ] as const)("isDefaultProfileName(%s) is %s", (name, result) => {

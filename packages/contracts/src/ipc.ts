@@ -1191,6 +1191,12 @@ export interface FirstRunResumeMarker {
   readonly step: string;
   readonly environmentId: string;
   readonly setupIds: readonly string[];
+  /**
+   * The machines Files and commands acted on when it was answered on that run;
+   * after the reopen the row shows the saved answer for them. Absent when the
+   * row had no answer.
+   */
+  readonly filesIds?: readonly string[];
   /** When it was written, in milliseconds since the epoch. */
   readonly at: number;
 }

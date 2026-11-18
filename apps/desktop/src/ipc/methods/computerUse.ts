@@ -61,6 +61,9 @@ export const FirstRunResumeMarker = Schema.Struct({
   setupIds: Schema.Array(Schema.String.check(Schema.isMaxLength(256))).check(
     Schema.isMaxLength(64),
   ),
+  filesIds: Schema.optionalKey(
+    Schema.Array(Schema.String.check(Schema.isMaxLength(256))).check(Schema.isMaxLength(64)),
+  ),
   at: Schema.Number,
 });
 export type FirstRunResumeMarker = typeof FirstRunResumeMarker.Type;

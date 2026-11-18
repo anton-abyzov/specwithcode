@@ -77,10 +77,13 @@ for (const theme of ["light", "dark"]) {
     const at = `${theme} ${width}`;
 
     // The Access step: a list of rows, and Continue grants nothing.
-    const shot = (name) => page.screenshot({ path: NodePath.join(output, `${name}-${theme}-${width}.png`) });
+    const shot = (name) =>
+      page.screenshot({ path: NodePath.join(output, `${name}-${theme}-${width}.png`) });
     // Shots wait for an opening body to finish moving.
     const settled = () =>
-      page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
+      page.waitForFunction(() =>
+        document.getAnimations().every((animation) => animation.playState !== "running"),
+      );
     const rowShot = async (row, name) => {
       await settled();
       await page.waitForTimeout(100);
@@ -108,7 +111,9 @@ for (const theme of ["light", "dark"]) {
       if (!(await page.getByText(text, { exact: false }).first().isVisible()))
         fail(`wizard ${at}`, `missing "${text}"`);
     const rowOrder = await page.evaluate(() =>
-      [...document.querySelectorAll("[data-access-row]")].map((row) => row.getAttribute("data-access-row")),
+      [...document.querySelectorAll("[data-access-row]")].map((row) =>
+        row.getAttribute("data-access-row"),
+      ),
     );
     if (rowOrder.join() !== "files,browser,mac-apps,full-disk-access")
       fail(`wizard ${at}`, `rows ${rowOrder.join()}`);
@@ -123,14 +128,17 @@ for (const theme of ["light", "dark"]) {
     // Enter goes on and answers nothing.
     await page.keyboard.press("Enter");
     await page.locator('[data-fixture-done="none"]').waitFor();
-    if ((await calls(page)).join() !== "continue") fail(`wizard ${at}`, `Enter called ${await calls(page)}`);
+    if ((await calls(page)).join() !== "continue")
+      fail(`wizard ${at}`, `Enter called ${await calls(page)}`);
 
     // Files and commands: an answer stays on the step, and focus goes to Change.
     await ready("");
     await page.getByRole("button", { name: "Use Full access" }).click();
     await page.locator('[data-access-row="files"] [data-slot="access-row-chip"]').waitFor();
-    if (await page.locator("[data-fixture-done]").count()) fail(`wizard ${at}`, "an answer left the step");
-    if ((await focused(page)) !== "Change") fail(`wizard ${at}`, `focus after an answer is on "${await focused(page)}"`);
+    if (await page.locator("[data-fixture-done]").count())
+      fail(`wizard ${at}`, "an answer left the step");
+    if ((await focused(page)) !== "Change")
+      fail(`wizard ${at}`, `focus after an answer is on "${await focused(page)}"`);
     await rowShot("files", "files-accepted");
     await ready("");
     await page.getByRole("button", { name: /^Keep/ }).click();
@@ -163,8 +171,11 @@ for (const theme of ["light", "dark"]) {
       "approval",
     ]) {
       await ready(`chrome=${kind}`);
-      const shown = await page.locator('[data-access-row="browser"] [data-chrome-state]').getAttribute("data-chrome-state");
-      if (shown !== (kind === "paired-many" ? "paired" : kind)) fail(`chrome ${kind} ${at}`, `drew ${shown}`);
+      const shown = await page
+        .locator('[data-access-row="browser"] [data-chrome-state]')
+        .getAttribute("data-chrome-state");
+      if (shown !== (kind === "paired-many" ? "paired" : kind))
+        fail(`chrome ${kind} ${at}`, `drew ${shown}`);
       await rowShot("browser", `chrome-${kind}`);
     }
     // Set up: the copy path, where the code is copied without being shown.
@@ -172,20 +183,29 @@ for (const theme of ["light", "dark"]) {
     await page.getByRole("button", { name: "Set up", exact: true }).click();
     await page.getByRole("button", { name: "Copy code" }).click();
     await page.getByText("Waiting for Chrome…").waitFor();
-    if (await page.getByText("K7QX-2MZD-94HF").count()) fail(`chrome copy ${at}`, "Copy showed the code");
-    if (!(await page.getByText("It opens in the Chrome profile you used last.", { exact: false }).isVisible()))
+    if (await page.getByText("K7QX-2MZD-94HF").count())
+      fail(`chrome copy ${at}`, "Copy showed the code");
+    if (
+      !(await page
+        .getByText("It opens in the Chrome profile you used last.", { exact: false })
+        .isVisible())
+    )
       fail(`chrome copy ${at}`, "no sentence on which profile the store link opens in");
-    for (const problem of await layout(page, '[data-access-row="browser"]')) fail(`chrome copy ${at}`, problem);
+    for (const problem of await layout(page, '[data-access-row="browser"]'))
+      fail(`chrome copy ${at}`, problem);
     await rowShot("browser", "chrome-setup-copied");
     await page.getByRole("button", { name: "Show", exact: true }).click();
-    if (!(await page.getByLabel("Pairing code").isVisible())) fail(`chrome show ${at}`, "Show did not reveal the code");
+    if (!(await page.getByLabel("Pairing code").isVisible()))
+      fail(`chrome show ${at}`, "Show did not reveal the code");
     await rowShot("browser", "chrome-setup-shown");
     // Where the desktop app lists Chrome's profiles, the store opens in the one picked.
     await ready("chrome=not-set-up&profiles=3");
     await page.getByRole("button", { name: "Set up", exact: true }).click();
     await page.getByRole("radio", { name: "Work" }).click();
     await page.getByRole("button", { name: "Add to Chrome" }).click();
-    const added = await page.evaluate(() => window.fixtureCalls.find((call) => call[0] === "add-to-chrome"));
+    const added = await page.evaluate(() =>
+      window.fixtureCalls.find((call) => call[0] === "add-to-chrome"),
+    );
     if (added?.[1] !== "Profile 1") fail(`chrome profiles ${at}`, `opened in ${added?.[1]}`);
     await rowShot("browser", "chrome-setup-profiles");
 
@@ -257,4 +277,6 @@ if (problems.length > 0) {
   console.error(problems.join("\n"));
   process.exit(1);
 }
-console.log(`Access step and recommendation: ${report.length} layouts checked, no problems. ${output}`);
+console.log(
+  `Access step and recommendation: ${report.length} layouts checked, no problems. ${output}`,
+);

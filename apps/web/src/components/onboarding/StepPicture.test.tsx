@@ -102,7 +102,7 @@ it("draws all five Access rows when none are named", async () => {
 });
 
 it.each([
-  ["connect", ["machine", "phone"], ["machine", "phone"]],
+  ["connect", ["machine"], ["machine"]],
   ["agents", ["review"], ["review", "back"]],
   ["projects", ["picked"], ["picked", "picked-2"]],
 ] as const)("%s draws its threads for its keys", async (step, lit, threads) => {

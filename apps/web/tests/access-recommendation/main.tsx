@@ -59,7 +59,10 @@ const CHROME: Record<string, ChromeRowInput> = (() => {
     offline: { ...base, online: false, status: null },
     "team-rules": { ...base, teamRulesLocked: true },
     "not-allowed": { ...base, allowed: false },
-    "chrome-missing": { ...base, status: { bundledVersion: "1.4.0", profiles: [], chromeInstalled: false } },
+    "chrome-missing": {
+      ...base,
+      status: { bundledVersion: "1.4.0", profiles: [], chromeInstalled: false },
+    },
     waiting: { ...base, codeHandedOut: true },
     paired: { ...base, status: { bundledVersion: "1.4.0", profiles: [work] } },
     "paired-many": {
@@ -87,8 +90,16 @@ const MAC: Record<
   MacAppsRowStateKind,
   { status: ComputerUsePermissions; error: string | null; requested: boolean }
 > = {
-  allowed: { status: { screenRecording: true, accessibility: true }, error: null, requested: false },
-  partly: { status: { screenRecording: true, accessibility: false }, error: null, requested: false },
+  allowed: {
+    status: { screenRecording: true, accessibility: true },
+    error: null,
+    requested: false,
+  },
+  partly: {
+    status: { screenRecording: true, accessibility: false },
+    error: null,
+    requested: false,
+  },
   "not-allowed": {
     status: { screenRecording: false, accessibility: false },
     error: null,
@@ -193,9 +204,7 @@ function Wizard() {
     { id: "files", machineIds: ["m4"] },
     { id: "browser", machineIds: ["m4"] },
     { id: "mac-apps", machineIds: ["m4"] },
-    ...(params.get("fda") === "0"
-      ? []
-      : [{ id: "full-disk-access" as const, machineIds: ["m4"] }]),
+    ...(params.get("fda") === "0" ? [] : [{ id: "full-disk-access" as const, machineIds: ["m4"] }]),
   ];
   return (
     <FirstRunFrame

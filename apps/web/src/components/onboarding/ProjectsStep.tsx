@@ -64,8 +64,11 @@ export function ImportStep({
   setIsImporting,
   onBack,
   onDone,
+  onPickedChange,
 }: {
   readonly scans: ReturnType<typeof useProjectScans>;
+  /** Whether any folder is picked to become a project, for the step's picture. */
+  readonly onPickedChange?: ((picked: boolean) => void) | undefined;
   readonly isImporting: boolean;
   readonly setIsImporting: (value: boolean) => void;
   readonly onBack?: (() => void) | undefined;
@@ -174,6 +177,8 @@ export function ImportStep({
     } satisfies (typeof candidates)[number];
   }, [candidates, folder, folderEnvironmentId]);
   const selected = folderCandidate === null ? found : [...found, folderCandidate];
+  const picked = selected.length > 0;
+  useEffect(() => onPickedChange?.(picked), [picked, onPickedChange]);
   const knownProjects = useMemo(
     () =>
       projects

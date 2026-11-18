@@ -1,4 +1,5 @@
 import {
+  AuthAccessWriteScope,
   AuthFilesystemReadScope,
   AuthTerminalOperateScope,
   BROWSER_EXTENSION_STORE_URL,
@@ -39,6 +40,8 @@ import { AccessRow, AccessRowAction, AccessRowChip, BrowserRowGlyph } from "./Ac
  */
 export const CHROME_PROFILE_LIST_ON_MAC = true;
 
+const NO_PROFILES: readonly string[] = [];
+
 function profileListAllowed(): boolean {
   if (!canUseExternalBrowsers()) return false;
   const platform = window.desktopBridge?.getClientPlatform?.();
@@ -57,6 +60,8 @@ export function ChromeAccessRowView({
   steps,
   storeUrl,
   busy = false,
+  canAnswer = true,
+  failed = null,
   onReconnect,
   onAnswer,
 }: AccessRowOpen & {
@@ -66,6 +71,10 @@ export function ChromeAccessRowView({
   readonly steps: ReactNode;
   readonly storeUrl: string;
   readonly busy?: boolean;
+  /** This window may answer another machine's request (`AuthAccessWriteScope`). */
+  readonly canAnswer?: boolean;
+  /** Why the last answer or reconnect did not go through. */
+  readonly failed?: string | null;
   readonly onReconnect: () => void;
   readonly onAnswer: (allow: boolean) => void;
 }) {
@@ -92,9 +101,14 @@ export function ChromeAccessRowView({
             : state.kind === "chrome-missing"
               ? tx("Chrome is not installed on {machine}.", { machine })
               : state.kind === "approval"
-                ? tx("{asking} asks to use this Chrome for its threads.", {
-                    asking: state.asking?.machine ?? "",
-                  })
+                ? canAnswer
+                  ? tx("{asking} asks to use this Chrome for its threads.", {
+                      asking: state.asking?.machine ?? "",
+                    })
+                  : tx(
+                      "{asking} asks to use this Chrome for its threads. This window cannot answer it: answer in Settings > Chrome where you can change access.",
+                      { asking: state.asking?.machine ?? "" },
+                    )
                 : state.kind === "not-answering"
                   ? tx("Paired, not answering. Open Chrome, or reconnect.")
                   : state.kind === "paired"
@@ -107,7 +121,12 @@ export function ChromeAccessRowView({
       {state.outdated.length > 0 ? (
         <span className="block text-warning-foreground">
           {tx("{profiles}: an older extension.", { profiles: state.outdated.join(", ") })}{" "}
-          <a className="underline underline-offset-2" href={storeUrl} target="_blank" rel="noreferrer">
+          <a
+            className="underline underline-offset-2"
+            href={storeUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
             {tx("Update the extension")}
           </a>
         </span>
@@ -131,7 +150,7 @@ export function ChromeAccessRowView({
   const actions: ReactNode =
     state.kind === "not-set-up" || state.kind === "waiting" ? (
       toggle(tx("Set up"))
-    ) : state.kind === "approval" ? (
+    ) : state.kind === "approval" && canAnswer ? (
       <>
         <AccessRowAction disabled={busy} onClick={() => onAnswer(true)}>
           {tx("Allow")}
@@ -142,7 +161,9 @@ export function ChromeAccessRowView({
       </>
     ) : state.kind === "paired" ? (
       <>
-        <AccessRowChip on>{tx("Paired: {names}", { names: state.paired.join(", ") })}</AccessRowChip>
+        <AccessRowChip on>
+          {tx("Paired: {names}", { names: state.paired.join(", ") })}
+        </AccessRowChip>
         {toggle(tx("Pair another profile"))}
       </>
     ) : state.kind === "not-answering" ? (
@@ -170,6 +191,11 @@ export function ChromeAccessRowView({
             <span hidden data-chrome-state={state.kind} />
           )}
           {notes}
+          {failed ? (
+            <span role="alert" className="block text-destructive-foreground">
+              {failed}
+            </span>
+          ) : null}
         </>
       }
       actions={actions}
@@ -198,6 +224,7 @@ export function ChromeAccessRow({
   const online = environment?.connection.phase === "connected";
   const canRead = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canPair = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const canAnswer = useEnvironmentScope(environmentId, AuthAccessWriteScope);
   const teamRules = useTeamRules(environmentId);
   const locked = teamRulesToolLock(teamRules.summary, "chrome") !== null;
   const reading = online && canRead && !locked;
@@ -207,9 +234,11 @@ export function ChromeAccessRow({
   const reconnect = useAtomCommand(projectWorkspace.browserExtensionReconnect);
   const answerPeer = useAtomCommand(projectWorkspace.browserExtensionPeer);
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
   const status = query.data ?? null;
-  const pairedCount = status?.profiles.length ?? 0;
-  const pairing = usePairingCode(environmentId, { profiles: pairedCount });
+  // Profiles by name: the relay keeps each unique and a reconnect keeps it.
+  const paired = status?.profiles.map((profile) => profile.label) ?? NO_PROFILES;
+  const pairing = usePairingCode(environmentId, { profiles: paired });
   const state = chromeRowState({
     online,
     teamRulesLocked: locked,
@@ -229,12 +258,17 @@ export function ChromeAccessRow({
     const timer = setInterval(refresh, BROWSER_EXTENSION_POLL_MS);
     return () => clearInterval(timer);
   }, [open, reading, refresh]);
-  // A profile pairs while the steps are open: they close.
-  const wasPaired = useRef(pairedCount);
+  // A profile pairs while the steps are open: they close. A profile is new
+  // when its name was not seen since the first read, so a reconnect is not.
+  const seen = useRef<Set<string> | null>(null);
+  const pairedKey = status === null ? null : paired.join("\n");
   useEffect(() => {
-    if (pairedCount > wasPaired.current && open) onOpenChange(false);
-    wasPaired.current = pairedCount;
-  }, [pairedCount, open, onOpenChange]);
+    if (pairedKey === null) return;
+    const names = pairedKey === "" ? [] : pairedKey.split("\n");
+    const known = seen.current;
+    seen.current = new Set([...(known ?? []), ...names]);
+    if (known !== null && open && names.some((name) => !known.has(name))) onOpenChange(false);
+  }, [pairedKey, open, onOpenChange]);
 
   // Chrome's profiles are read once Set up is pressed, never when the step opens.
   const [profiles, setProfiles] = useState<readonly ChromeProfileChoice[] | null>(null);
@@ -250,11 +284,16 @@ export function ChromeAccessRow({
   }, [open]);
   const storeUrl = status?.storeUrl ?? BROWSER_EXTENSION_STORE_URL;
   const canOpenInProfile = profileListAllowed() && profiles !== null && profiles.length > 0;
-  const run = async (action: () => Promise<unknown>) => {
+  const tx = useTx();
+  const run = async (action: () => Promise<{ readonly _tag: string }>) => {
     if (busy) return;
     setBusy(true);
+    setFailed(null);
     try {
-      await action();
+      const result = await action();
+      if (result._tag === "Failure") setFailed(tx("That did not go through. Try again."));
+    } catch {
+      setFailed(tx("That did not go through. Try again."));
     } finally {
       setBusy(false);
       refresh();
@@ -268,6 +307,8 @@ export function ChromeAccessRow({
       onOpenChange={onOpenChange}
       storeUrl={storeUrl}
       busy={busy}
+      canAnswer={canAnswer}
+      failed={failed}
       onReconnect={() => void run(() => reconnect({ environmentId, input: {} }))}
       onAnswer={(allow) => {
         const id = state.asking?.id;

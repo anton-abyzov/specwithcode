@@ -33,7 +33,11 @@ export interface ChromeRowStatus {
   /** A profile has paired with the current code, connected or not. */
   readonly paired?: boolean;
   /** Other machines asking to use this Chrome. */
-  readonly peers?: readonly { readonly id: string; readonly machine: string; readonly state: string }[];
+  readonly peers?: readonly {
+    readonly id: string;
+    readonly machine: string;
+    readonly state: string;
+  }[];
 }
 
 export interface ChromeRowInput {
@@ -75,7 +79,11 @@ const ACTIONLESS: ReadonlySet<ChromeRowStateKind> = new Set([
 
 /** Numeric dotted versions, compared part by part; anything unreadable counts as current. */
 export function versionOlder(version: string, than: string): boolean {
-  const parse = (value: string) => value.trim().split(".").map((part) => Number.parseInt(part, 10));
+  const parse = (value: string) =>
+    value
+      .trim()
+      .split(".")
+      .map((part) => Number.parseInt(part, 10));
   const a = parse(version);
   const b = parse(than);
   if (a.some(Number.isNaN) || b.some(Number.isNaN)) return false;
@@ -87,9 +95,13 @@ export function versionOlder(version: string, than: string): boolean {
   return false;
 }
 
-/** "Chrome" and "Chrome (2)" are the extension's old default names. */
+/**
+ * A profile still called by a default name: "Chrome", the extension's old
+ * default, or "Unnamed profile", the relay's label for a nameless one, numbered
+ * by the relay when repeated. Settings > Chrome and the first-run row share it.
+ */
 export function isDefaultProfileName(label: string): boolean {
-  return /^Chrome(?: \(\d+\))?$/.test(label.trim());
+  return /^(?:Chrome|Unnamed profile)(?: \(\d+\))?$/.test(label.trim());
 }
 
 export function chromeRowState(input: ChromeRowInput): ChromeRowState {

@@ -11,7 +11,12 @@ export const usePrimaryEnvironmentId = () => null;
 export const usePrimaryEnvironment = () => null;
 // The Access rows' live readers. The rows' views take their state as props, so
 // only module imports reach these.
-export const useEnvironmentQuery = () => ({ data: null, error: null, isPending: false, refresh() {} });
+export const useEnvironmentQuery = () => ({
+  data: null,
+  error: null,
+  isPending: false,
+  refresh() {},
+});
 export const useAtomCommand = () => async () => ({ _tag: "Success", value: {} });
 export const projectWorkspace = new Proxy({}, { get: () => () => null });
 export const canUseExternalBrowsers = () => false;
@@ -22,7 +27,10 @@ export const FullDiskAccessRow = () => null;
 /** 1386's first-run item as it draws on a Mac that has not allowed it yet. */
 export function FirstRunFullDiskAccess() {
   return (
-    <details data-slot="first-run-fda" className="mt-3 rounded-xl border border-border bg-card p-4 text-sm">
+    <details
+      data-slot="first-run-fda"
+      className="mt-3 rounded-xl border border-border bg-card p-4 text-sm"
+    >
       <summary className="cursor-pointer font-semibold text-foreground">
         Full Disk Access for agents (optional)
       </summary>

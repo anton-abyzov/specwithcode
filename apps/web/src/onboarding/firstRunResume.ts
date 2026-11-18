@@ -12,11 +12,13 @@ export async function saveFirstRunResume(
   environmentId: string,
   setupIds: readonly string[],
   now = Date.now(),
+  filesIds: readonly string[] = [],
 ): Promise<void> {
   await window.desktopBridge?.saveFirstRunResume?.({
     step: "access",
     environmentId,
     setupIds: [...setupIds],
+    ...(filesIds.length > 0 ? { filesIds: [...filesIds] } : {}),
     at: now,
   });
 }

@@ -199,3 +199,20 @@ it("a browser tab never asks", async () => {
   await render();
   expect(mocks.take).not.toHaveBeenCalled();
 });
+
+it("after reopening, Files and commands shows the saved answer without Change", async () => {
+  mocks.take.mockResolvedValue(marker({ filesIds: ["this-mac", "studio"] }));
+  await render();
+  expect(step()).toBe("access");
+  const files = document.querySelector("[data-access-row='files']");
+  expect(files?.textContent).toContain("Settings > General");
+  const buttons = [...(files?.querySelectorAll("button") ?? [])].map((b) => b.textContent?.trim());
+  expect(buttons).not.toContain("Change");
+});
+
+it("after reopening, Files and commands stays away when it had no answer", async () => {
+  mocks.take.mockResolvedValue(marker());
+  await render();
+  expect(step()).toBe("access");
+  expect(document.querySelector("[data-access-row='files']")).toBeNull();
+});

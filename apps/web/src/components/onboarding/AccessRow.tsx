@@ -47,9 +47,10 @@ export function AccessRow({
       <span
         aria-hidden
         data-slot="access-row-glyph"
+        data-motion="setup"
         className={cn(
-          "grid size-9 place-items-center rounded-lg bg-muted text-muted-foreground transition-colors duration-300",
-          done && "bg-primary/10 text-primary",
+          "grid size-9 place-items-center rounded-lg bg-muted text-muted-foreground",
+          done && "text-primary",
         )}
       >
         {glyph}

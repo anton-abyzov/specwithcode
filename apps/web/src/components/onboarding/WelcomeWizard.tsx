@@ -157,6 +157,9 @@ export function WelcomeWizard({
   // Once recommended on this run, a machine keeps its place in the row, even
   // after an answer turns the recommendation off.
   const [recommendedIds, setRecommendedIds] = useState<ReadonlySet<EnvironmentId>>(new Set());
+  // After Quit & Reopen, the machines Files and commands was answered for on
+  // the run before: the row comes back with the saved answer and no Change.
+  const [resumedFilesIds, setResumedFilesIds] = useState<readonly EnvironmentId[]>([]);
   if (recommendedNow.some((id) => !recommendedIds.has(id))) {
     setRecommendedIds(new Set([...recommendedIds, ...recommendedNow]));
   }
@@ -182,7 +185,8 @@ export function WelcomeWizard({
         id,
         own,
         platform: accessEnvironments[index]?.serverConfig?.environment?.platform?.os ?? null,
-        recommended: recommendedIds.has(id) || recommendedNow.includes(id),
+        recommended:
+          recommendedIds.has(id) || recommendedNow.includes(id) || resumedFilesIds.includes(id),
         computerUseLocal: own && computerUseLocal,
         fullDiskAccessLocal: own && fullDiskAccessLocal,
       };
@@ -190,8 +194,11 @@ export function WelcomeWizard({
   });
   const filesMachineIds = rows.find((row) => row.id === "files")?.machineIds ?? [];
   // The rows allowed or set up, which the Access picture draws a thread to.
-  const [rowsDone, setRowsDone] = useState<ReadonlySet<"browser" | "mac-apps">>(new Set());
-  const rowDone = useCallback((id: "browser" | "mac-apps", done: boolean) => {
+  // What each step's picture reacts to: the Access rows allowed or set up, an
+  // agent ready on Agents, folders picked on Projects.
+  type PictureKey = "browser" | "mac-apps" | "full-disk-access" | "review" | "picked";
+  const [rowsDone, setRowsDone] = useState<ReadonlySet<PictureKey>>(new Set());
+  const rowDone = useCallback((id: PictureKey, done: boolean) => {
     setRowsDone((current) => {
       if (current.has(id) === done) return current;
       const next = new Set(current);
@@ -202,6 +209,28 @@ export function WelcomeWizard({
   }, []);
   const browserDone = useCallback((done: boolean) => rowDone("browser", done), [rowDone]);
   const macAppsDone = useCallback((done: boolean) => rowDone("mac-apps", done), [rowDone]);
+  const fullDiskAccessDone = useCallback(
+    (done: boolean) => rowDone("full-disk-access", done),
+    [rowDone],
+  );
+  const agentReady = useCallback((done: boolean) => rowDone("review", done), [rowDone]);
+  const foldersPicked = useCallback((done: boolean) => rowDone("picked", done), [rowDone]);
+  const filesAccepted =
+    accessAnswer === null
+      ? resumedFilesIds.length > 0 && fullAccess.answer === "accepted"
+      : accessAnswer.accepted !== null;
+  const pictureStage = STAGE_OF_STEP[step];
+  const pictureLit: readonly string[] =
+    pictureStage === "access"
+      ? [
+          ...(filesAccepted ? ["files"] : []),
+          ...[...rowsDone].filter((key) => key !== "review" && key !== "picked"),
+        ]
+      : pictureStage === "connect"
+        ? environments.length > 1
+          ? ["machine"]
+          : []
+        : [...rowsDone].filter((key) => key === (pictureStage === "agents" ? "review" : "picked"));
   // Once in the bar, the stage stays for the rest of this run, whatever loads later.
   const [accessStageShown, setAccessStageShown] = useState(false);
   if (rows.length > 0 && !accessStageShown) setAccessStageShown(true);
@@ -272,6 +301,7 @@ export function WelcomeWizard({
     // The person moved on meanwhile: their step wins.
     if (chosenStep !== null) return;
     setSetupIds(resumeMarker.setupIds as readonly EnvironmentId[]);
+    setResumedFilesIds((resumeMarker.filesIds ?? []) as readonly EnvironmentId[]);
     setLeftConnectFrom(entryStep);
     setStep("access");
   }, [resumeMarker, primaryEnvironmentId, listedIds, firstRun, chosenStep, entryStep]);
@@ -364,17 +394,7 @@ export function WelcomeWizard({
       onLeave={leaveSetup}
       holdHeight={isLoadingProjects}
       picture={
-        <StepPicture
-          step={STAGE_OF_STEP[step]}
-          lit={
-            step === "access"
-              ? [...(accessAnswer?.accepted != null ? ["files"] : []), ...rowsDone]
-              : STAGE_OF_STEP[step] === "connect" && environments.length > 1
-                ? ["machine"]
-                : []
-          }
-          rows={rows.map((row) => row.id)}
-        />
+        <StepPicture step={STAGE_OF_STEP[step]} lit={pictureLit} rows={rows.map((row) => row.id)} />
       }
       after={<ChatGptWelcomeCoordinator />}
     >
@@ -422,6 +442,7 @@ export function WelcomeWizard({
           environmentIds={setupIds}
           onBack={() => goToStage(stageBefore(stages, "agents"))}
           onContinue={() => goToStage(stageAfter(stages, "agents"))}
+          onReadyChange={agentReady}
         />
       ) : step === "access" ? (
         <AccessStep
@@ -447,6 +468,8 @@ export function WelcomeWizard({
                   saveFirstRunResume(
                     primaryEnvironmentId,
                     setupIds.length > 0 ? setupIds : [primaryEnvironmentId],
+                    Date.now(),
+                    accessAnswer !== null || resumedFilesIds.length > 0 ? filesMachineIds : [],
                   )
                 }
               />
@@ -467,6 +490,8 @@ export function WelcomeWizard({
                 : accessAnswer.accepted !== null
                   ? "accepted"
                   : "declined",
+            answeredBefore:
+              accessAnswer === null && resumedFilesIds.length > 0 ? fullAccess.answer : null,
             onAccept: async () => {
               const accepted = await fullAccess.accept(filesMachineIds);
               if (accepted === null) return t("wizard.access.saveFailed");
@@ -486,6 +511,7 @@ export function WelcomeWizard({
               return null;
             },
           }}
+          onFullDiskAccessAllowed={fullDiskAccessDone}
           onBack={() => goToStage(stageBefore(stages, "access"))}
           onContinue={() => goToStage(stageAfter(stages, "access"))}
         />
@@ -496,6 +522,7 @@ export function WelcomeWizard({
           setIsImporting={setIsImporting}
           onBack={() => goToStage(stageBefore(stages, "projects"))}
           onDone={finish}
+          onPickedChange={foldersPicked}
         />
       )}
     </FirstRunFrame>

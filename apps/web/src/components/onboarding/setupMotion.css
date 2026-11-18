@@ -6,13 +6,67 @@
    plays once and never loops. With reduced motion nothing moves. */
 :root {
   --motion-soft: linear(
-    0, 0.033, 0.115, 0.224, 0.346, 0.468, 0.583, 0.687, 0.776, 0.849, 0.908, 0.954, 0.987, 1.011,
-    1.026, 1.034, 1.038, 1.038, 1.036, 1.032, 1.028, 1.023, 1.018, 1.014, 1.01, 1.007, 1.005, 1.003, 1
+    0,
+    0.033,
+    0.115,
+    0.224,
+    0.346,
+    0.468,
+    0.583,
+    0.687,
+    0.776,
+    0.849,
+    0.908,
+    0.954,
+    0.987,
+    1.011,
+    1.026,
+    1.034,
+    1.038,
+    1.038,
+    1.036,
+    1.032,
+    1.028,
+    1.023,
+    1.018,
+    1.014,
+    1.01,
+    1.007,
+    1.005,
+    1.003,
+    1
   );
   --motion-soft-duration: 560ms;
   --motion-firm: linear(
-    0, 0.044, 0.153, 0.297, 0.452, 0.602, 0.736, 0.848, 0.937, 1.001, 1.045, 1.071, 1.082, 1.083,
-    1.077, 1.066, 1.053, 1.041, 1.028, 1.018, 1.009, 1.003, 0.998, 0.995, 0.994, 0.993, 0.993, 0.994, 1
+    0,
+    0.044,
+    0.153,
+    0.297,
+    0.452,
+    0.602,
+    0.736,
+    0.848,
+    0.937,
+    1.001,
+    1.045,
+    1.071,
+    1.082,
+    1.083,
+    1.077,
+    1.066,
+    1.053,
+    1.041,
+    1.028,
+    1.018,
+    1.009,
+    1.003,
+    0.998,
+    0.995,
+    0.994,
+    0.993,
+    0.993,
+    0.994,
+    1
   );
   --motion-firm-duration: 480ms;
   --motion-leave: cubic-bezier(0.4, 0, 1, 0.6);
@@ -220,6 +274,31 @@
   transform: scale(1.28);
 }
 [data-state="now"] > [data-slot="setup-knot"]::after {
+  opacity: 1;
+}
+
+/* An Access row's glyph: the done tint fades in over the muted tile, on the
+   firm token, instead of a colour transition. */
+[data-slot="access-row-glyph"] {
+  position: relative;
+  isolation: isolate;
+}
+[data-slot="access-row-glyph"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background:
+    linear-gradient(
+      color-mix(in oklab, var(--primary) 10%, transparent),
+      color-mix(in oklab, var(--primary) 10%, transparent)
+    ),
+    var(--card);
+  opacity: 0;
+  transition: opacity var(--motion-firm-duration) var(--motion-firm);
+}
+[data-done] > [data-slot="access-row-glyph"]::before {
   opacity: 1;
 }
 

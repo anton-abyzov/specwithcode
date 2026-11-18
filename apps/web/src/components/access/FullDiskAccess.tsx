@@ -44,7 +44,8 @@ export function useCanOpenSettingsFor(environmentId: EnvironmentId | null): bool
 export function settingsRequestFor(access: PrivacyAccess | null) {
   const host = access?.agentHost;
   if (host === undefined || host === null) return "full-disk-access" as const;
-  if (host.kind === "app" && host.name.startsWith("SpecWithCode")) return "full-disk-access" as const;
+  if (host.kind === "app" && host.name.startsWith("SpecWithCode"))
+    return "full-disk-access" as const;
   return { pane: "full-disk-access" as const, agentHost: { path: host.path, name: host.name } };
 }
 
@@ -190,20 +191,35 @@ export function FullDiskAccessRow({
   return (
     <div data-slot="machine-readiness-privacy" className="space-y-1">
       <h4 className="text-xs font-medium text-muted-foreground">{tx("Privacy access")}</h4>
-      <div className="flex min-w-0 items-start gap-2" data-slot="fda-row" data-state={access.fullDiskAccess}>
+      <div
+        className="flex min-w-0 items-start gap-2"
+        data-slot="fda-row"
+        data-state={access.fullDiskAccess}
+      >
         {allowed && !access.runningAgentsNeedRestart ? (
-          <CheckIcon aria-label={tx("Ready")} className="mt-0.5 size-3.5 shrink-0 text-success-foreground" />
+          <CheckIcon
+            aria-label={tx("Ready")}
+            className="mt-0.5 size-3.5 shrink-0 text-success-foreground"
+          />
         ) : access.runningAgentsNeedRestart ? (
-          <RotateCwIcon aria-label={tx("Restart needed")} className="mt-0.5 size-3.5 shrink-0 text-warning-foreground" />
+          <RotateCwIcon
+            aria-label={tx("Restart needed")}
+            className="mt-0.5 size-3.5 shrink-0 text-warning-foreground"
+          />
         ) : (
-          <CircleAlertIcon aria-label={tx("Optional")} className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+          <CircleAlertIcon
+            aria-label={tx("Optional")}
+            className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+          />
         )}
         <div className="min-w-0 flex-1 space-y-1">
           <p className="wrap-anywhere">{title}</p>
           {allowed ? (
             <p className="text-xs text-muted-foreground">
               {access.runningAgentsNeedRestart
-                ? tx("New agent runs have it. Threads that were already running get it after they restart.")
+                ? tx(
+                    "New agent runs have it. Threads that were already running get it after they restart.",
+                  )
                 : `${fullDiskAccessRiskLine(environmentLabel)}`}
             </p>
           ) : (
@@ -213,7 +229,9 @@ export function FullDiskAccessRow({
           )}
           {!allowed ? (
             <details className="text-xs">
-              <summary className="cursor-pointer text-muted-foreground">{tx("What this allows")}</summary>
+              <summary className="cursor-pointer text-muted-foreground">
+                {tx("What this allows")}
+              </summary>
               <div className="mt-2">
                 <FullDiskAccessExplanation machine={environmentLabel} access={access} />
               </div>
@@ -253,25 +271,41 @@ export function FullDiskAccessRow({
  * never part of what Continue needs, so people learn the option exists without
  * being pushed into it. Shown only in the desktop app on a Mac.
  */
-export function FirstRunFullDiskAccess() {
+export function FirstRunFullDiskAccess({
+  onAllowedChange,
+}: {
+  /** Whether Full Disk Access is allowed, as last read; for first run's picture. */
+  readonly onAllowedChange?: ((allowed: boolean) => void) | undefined;
+} = {}) {
   const tx = useTx();
   const primary = usePrimaryEnvironment();
   const local = useCanOpenSettingsFor(primary?.environmentId ?? null);
   if (!local || primary === null) return null;
-  return <FirstRunFullDiskAccessBody environmentId={primary.environmentId} machine={primary.label} tx={tx} />;
+  return (
+    <FirstRunFullDiskAccessBody
+      environmentId={primary.environmentId}
+      machine={primary.label}
+      tx={tx}
+      onAllowedChange={onAllowedChange}
+    />
+  );
 }
 
 function FirstRunFullDiskAccessBody({
   environmentId,
   machine,
   tx,
+  onAllowedChange,
 }: {
   readonly environmentId: EnvironmentId;
   readonly machine: string;
   readonly tx: ReturnType<typeof useTx>;
+  readonly onAllowedChange?: ((allowed: boolean) => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const { access, openSettings } = useFullDiskAccess(environmentId, open);
+  const allowed = access?.fullDiskAccess === "allowed";
+  useEffect(() => onAllowedChange?.(allowed), [allowed, onAllowedChange]);
   if (access?.fullDiskAccess === "not-applicable") return null;
   return (
     <details
@@ -292,7 +326,9 @@ function FirstRunFullDiskAccessBody({
           </Button>
         )}
         <p className="text-xs text-muted-foreground">
-          {tx("You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.")}
+          {tx(
+            "You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.",
+          )}
         </p>
       </div>
     </details>

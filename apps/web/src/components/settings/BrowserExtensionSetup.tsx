@@ -225,16 +225,23 @@ export function BrowserExtensionSteps({
  * The pairing code, requested only on a press: Copy puts it on the clipboard
  * without showing it, Show reveals it for typing by hand. Once a profile
  * pairs, or after two minutes, the desktop app clears the clipboard if it
- * still holds the code. `profiles` is how many profiles are paired now; one
- * more than at the hand-out means the code did its job.
+ * still holds the code. `profiles` names the profiles connected now (the
+ * relay keeps each label unique, and a reconnect keeps it, unlike the
+ * per-connection id); a name not connected at the hand-out means the code did
+ * its job, so a reconnect or a profile leaving is not a pairing.
  */
-export function usePairingCode(environmentId: EnvironmentId, { profiles }: { profiles: number }) {
+export function usePairingCode(
+  environmentId: EnvironmentId,
+  { profiles }: { profiles: readonly string[] },
+) {
   const tx = useTx();
   const pairing = useAtomCommand(projectWorkspace.browserExtensionPairing);
   const [code, setCode] = useState<PairingCodeState>({ kind: "idle" });
   const [handedOut, setHandedOut] = useState(false);
   const copied = useRef<string | null>(null);
-  const [pairedAtHandOut, setPairedAtHandOut] = useState(profiles);
+  // One clear per code on the clipboard: a second Copy restarts the two minutes.
+  const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [pairedAtHandOut, setPairedAtHandOut] = useState<ReadonlySet<string>>(new Set());
   const clear = useCallback(() => {
     const value = copied.current;
     copied.current = null;
@@ -261,29 +268,31 @@ export function usePairingCode(environmentId: EnvironmentId, { profiles }: { pro
       return;
     }
     copied.current = value;
-    setPairedAtHandOut(profiles);
-    // Two minutes after a copy, whatever happens meanwhile, even after the screen closes.
-    setTimeout(() => void clearClipboardIfText(value), PAIRING_CODE_CLIPBOARD_MS);
+    setPairedAtHandOut(new Set(profiles));
+    // Two minutes after the last copy, whatever happens meanwhile, even after the screen closes.
+    if (clearTimer.current !== null) clearTimeout(clearTimer.current);
+    clearTimer.current = setTimeout(() => {
+      clearTimer.current = null;
+      void clearClipboardIfText(value);
+    }, PAIRING_CODE_CLIPBOARD_MS);
     setHandedOut(true);
     setCode({ kind: "copied" });
   }, [profiles, request, tx]);
   const show = useCallback(async () => {
     const value = await request();
     if (value === null) return;
-    setPairedAtHandOut(profiles);
+    setPairedAtHandOut(new Set(profiles));
     setHandedOut(true);
     setCode({ kind: "shown", code: value });
   }, [profiles, request]);
   const hide = useCallback(() => setCode({ kind: "idle" }), []);
   // A new profile paired: the code has done its job.
-  const newlyPaired = handedOut && profiles > pairedAtHandOut;
+  const newlyPaired = handedOut && profiles.some((profile) => !pairedAtHandOut.has(profile));
   useEffect(() => {
     if (!newlyPaired) return;
     clear();
     setHandedOut(false);
     setCode({ kind: "idle" });
   }, [newlyPaired, clear]);
-  // A profile that leaves lowers the bar, so the next one still counts as new.
-  if (profiles < pairedAtHandOut) setPairedAtHandOut(profiles);
   return { code, handedOut, copy, show, hide } as const;
 }

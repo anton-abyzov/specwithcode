@@ -52,6 +52,7 @@ export function AccessStep({
   rows,
   files,
   renderRow,
+  onFullDiskAccessAllowed,
   onBack,
   onContinue,
 }: {
@@ -61,6 +62,8 @@ export function AccessStep({
   readonly files?: FilesRowProps | undefined;
   /** The rows other tasks own (Your browser, Mac apps, Your iPhone); null leaves one out. */
   readonly renderRow?: (id: AccessRowId, open: AccessRowOpen) => ReactNode;
+  /** Whether Full Disk Access is allowed, as 1386's item last read it. */
+  readonly onFullDiskAccessAllowed?: ((allowed: boolean) => void) | undefined;
   readonly onBack: () => void;
   readonly onContinue: () => void;
 }) {
@@ -79,9 +82,11 @@ export function AccessStep({
       <AccessRowList>
         {rows.map((row) =>
           row.id === "files" ? (
-            files ? <FilesRow key="files" {...files} {...openFor("files")} /> : null
+            files ? (
+              <FilesRow key="files" {...files} {...openFor("files")} />
+            ) : null
           ) : row.id === "full-disk-access" ? (
-            <FullDiskAccessListRow key={row.id} />
+            <FullDiskAccessListRow key={row.id} onAllowedChange={onFullDiskAccessAllowed} />
           ) : (
             <RowSlot key={row.id}>{renderRow?.(row.id, openFor(row.id)) ?? null}</RowSlot>
           ),
@@ -108,7 +113,11 @@ function RowSlot({ children }: { readonly children: ReactNode }) {
  * 1386's first-run Full Disk Access item, unchanged, as the list's last row:
  * its own text, states and actions; only its frame is the row's.
  */
-function FullDiskAccessListRow() {
+function FullDiskAccessListRow({
+  onAllowedChange,
+}: {
+  readonly onAllowedChange?: ((allowed: boolean) => void) | undefined;
+}) {
   return (
     <li
       data-access-row="full-disk-access"
@@ -121,7 +130,7 @@ function FullDiskAccessListRow() {
         <FolderRowGlyph />
       </span>
       <div className="min-w-0">
-        <FirstRunFullDiskAccess />
+        <FirstRunFullDiskAccess onAllowedChange={onAllowedChange} />
       </div>
     </li>
   );
@@ -171,7 +180,9 @@ function FilesRow({
       setSaving(null);
     }
   };
-  const keepLabel = t(keepsSupervised ? "wizard.access.keepSupervised" : "wizard.access.keepCurrent");
+  const keepLabel = t(
+    keepsSupervised ? "wizard.access.keepSupervised" : "wizard.access.keepCurrent",
+  );
   const where =
     machineNames.length > 1 ? tx("On {machines}.", { machines: machineNames.join(", ") }) : null;
   const state = asking ? (

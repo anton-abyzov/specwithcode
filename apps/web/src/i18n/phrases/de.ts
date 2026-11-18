@@ -1066,24 +1066,16 @@ export const de: PhraseCatalog = {
   Copy: "Kopieren",
   "This device cannot read that machine's settings.":
     "Dieses Gerät kann die Einstellungen dieses Rechners nicht lesen.",
-  "1. Install the SpecWithCode Browser extension":
-    "1. SpecWithCode Browser-Erweiterung installieren",
   "Add to Chrome": "Zu Chrome hinzufügen",
   "(opens the Chrome Web Store)": "(öffnet den Chrome Web Store)",
   "Chrome Web Store link": "Link zum Chrome Web Store",
   "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.":
     "Installiere sie in Chrome auf {machine}: Kopiere den Link und öffne ihn dort, im Profil, das Agents nutzen sollen.",
-  "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.":
-    "Öffne den Link im Chrome-Profil, das Agents nutzen sollen. Chrome hält die Erweiterung aktuell.",
-  "2. Pair it with {machine}": "2. Mit {machine} koppeln",
   "This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.":
     "Dieser Code funktioniert nur in Chrome auf {machine}, nicht in Chrome auf {thisComputer}.",
-  "Show pairing code": "Kopplungscode anzeigen",
   "Pairing code": "Kopplungscode",
   "pairing code": "Kopplungscode",
   "Reset code": "Code zurücksetzen",
-  "The code lets a Chrome profile act for agents on {machine}. Keep it private.":
-    "Mit dem Code kann ein Chrome-Profil für Agents auf {machine} handeln. Halte ihn geheim.",
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "Du bist auf {b}. Hier wird Chrome auf {b2} eingerichtet, einem anderen Computer; sein Kopplungscode funktioniert hier in Chrome nicht.",
   "Set up Chrome on {thisComputer}": "Chrome auf {thisComputer} einrichten",
@@ -3647,12 +3639,6 @@ export const de: PhraseCatalog = {
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
     "Deine eigenen Regeln, gesendet mit jeder Anfrage von Koordinator und Workern, bei jedem Anbieter, in jedem Projekt in jeder ausgewählten Umgebung. Standardmäßig leer.",
   "Effective instructions for {label}": "Wirksame Anweisungen für {label}",
-  "Click the SpecWithCode icon in Chrome's toolbar.":
-    "Klicke in der Chrome-Symbolleiste auf das SpecWithCode-Symbol.",
-  "Paste the pairing code.": "Füge den Kopplungscode ein.",
-  "Name the profile, for example Work or Marketing.":
-    "Benenne das Profil, zum Beispiel Arbeit oder Marketing.",
-  "Click Pair.": "Klicke auf Koppeln.",
   "Ask Google for {service}": "Google nach {service} fragen",
   "Edit shortcut for {command}: {shortcut}": "Tastenkürzel für {command} bearbeiten: {shortcut}",
   "Edit when clause for {command}": "Bedingung für {command} bearbeiten",

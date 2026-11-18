@@ -83,9 +83,6 @@ export function MotionFixture() {
             <AccessRowAction data-fixture-light="machine" onClick={() => light("machine")}>
               Link another machine
             </AccessRowAction>
-            <AccessRowAction data-fixture-light="phone" onClick={() => light("phone")}>
-              Link the phone
-            </AccessRowAction>
           </div>
           <WizardStepFooter
             primary={{ label: t("wizard.continue"), onClick: next, neutral: true }}

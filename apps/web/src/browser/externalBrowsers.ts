@@ -122,7 +122,8 @@ export async function readChromeProfiles(): Promise<ReadonlyArray<{
  * Resolves false where this window cannot, or when the clipboard changed.
  */
 export async function clearClipboardIfText(text: string): Promise<boolean> {
-  const clear = typeof window === "undefined" ? undefined : window.desktopBridge?.clearClipboardIfText;
+  const clear =
+    typeof window === "undefined" ? undefined : window.desktopBridge?.clearClipboardIfText;
   if (!clear) return false;
   return clear(text).catch(() => false);
 }
