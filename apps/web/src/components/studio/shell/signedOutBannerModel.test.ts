@@ -8,6 +8,7 @@ const machine = (
 ): SignedOutBannerMachine => ({
   name,
   needsSignIn: false,
+  reachableFromMachine: false,
   connected: false,
   isThisMachine: false,
   ...facts,
@@ -15,19 +16,45 @@ const machine = (
 
 const FLEET = [
   machine("m4", { connected: true, isThisMachine: true }),
-  machine("M5", { needsSignIn: true }),
-  machine("m1", { connected: true }),
+  machine("M5", { needsSignIn: true, reachableFromMachine: true }),
+  machine("m1", { connected: true, reachableFromMachine: true }),
   machine("m3", { connected: true }),
   machine("linux-mini", { connected: true }),
 ];
 
 describe("signedOutBanner", () => {
-  it("names the machines a sign-out cuts off and those still working", () => {
+  it("says a machine this machine's server reaches is running, and what is still connected", () => {
     expect(signedOutBanner({ signedOut: true, machines: FLEET })).toEqual({
       title: "Signed out of SpecWithCode Connect",
-      body: "M5 can't be opened from this window until you sign in. This machine and m1, m3 and linux-mini are not affected.",
+      body: "M5 is running, but this window can't reach it until you sign in. This machine is not affected. Still connected: m1, m3 and linux-mini.",
       cutOff: ["M5"],
     });
+  });
+
+  it("never says running for a machine nothing here has reached", () => {
+    expect(
+      signedOutBanner({
+        signedOut: true,
+        machines: [machine("M5", { needsSignIn: true }), machine("m3", { needsSignIn: true })],
+      })?.body,
+    ).toBe(
+      "M5 and m3 can't be reached from this window until you sign in. This machine is not affected.",
+    );
+  });
+
+  it("names several running machines in one sentence", () => {
+    expect(
+      signedOutBanner({
+        signedOut: true,
+        machines: [
+          machine("M5", { needsSignIn: true, reachableFromMachine: true }),
+          machine("m3", { needsSignIn: true, reachableFromMachine: true }),
+          machine("m2", { needsSignIn: true }),
+        ],
+      })?.body,
+    ).toBe(
+      "M5 and m3 are running, but this window can't reach them until you sign in. m2 can't be reached from this window until you sign in. This machine is not affected.",
+    );
   });
 
   it("shows nothing while signed in, or while no machine needs the sign-in", () => {
@@ -49,15 +76,18 @@ describe("signedOutBanner", () => {
     ).toBeNull();
   });
 
-  it("says only this machine is unaffected when no other machine is connected", () => {
+  it("joins names in the window's language when given a joiner", () => {
+    const list = new Intl.ListFormat("de", { style: "long", type: "conjunction" });
     expect(
-      signedOutBanner({
-        signedOut: true,
-        machines: [machine("M5", { needsSignIn: true }), machine("m3", { needsSignIn: true })],
-      })?.body,
-    ).toBe(
-      "M5 and m3 can't be opened from this window until you sign in. This machine is not affected.",
-    );
+      signedOutBanner(
+        {
+          signedOut: true,
+          machines: [machine("M5", { needsSignIn: true }), machine("m3", { needsSignIn: true })],
+        },
+        undefined,
+        (names) => list.format(names),
+      )?.body,
+    ).toContain("M5 und m3");
   });
 });
 

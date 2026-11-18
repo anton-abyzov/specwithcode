@@ -5627,17 +5627,21 @@ export const ja: PhraseCatalog = {
   "Not reachable from here": "ここからは接続できません",
   "Sign in to reach {machine}": "サインインして {machine} に接続",
   "Can't reach {machine} from this window": "このウィンドウから {machine} に接続できません",
-  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to open it here.":
-    "このウィンドウは SpecWithCode Connect 経由で接続しますが、サインインしていません。サインインするとここで開けます。",
   "Signed out of SpecWithCode Connect": "SpecWithCode Connect からサインアウトしました",
-  "{machines} can't be opened from this window until you sign in.":
-    "{machines} はサインインするまでこのウィンドウから開けません。",
   "This machine is not affected.": "このマシンには影響ありません。",
-  "This machine and {machines} are not affected.": "このマシンと {machines} には影響ありません。",
   "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
     "サインインが必要です。SpecWithCode Connect にサインインすると、このウィンドウから接続できます",
   "Sign in to SpecWithCode Connect to reach it from this window.":
     "SpecWithCode Connect にサインインすると、このウィンドウから接続できます。",
-  "Some of your machines can't be opened from this window until you sign in. Work on this machine is not affected.":
-    "一部のマシンはサインインするまでこのウィンドウから開けません。このマシンには影響ありません。",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.":
+    "このウィンドウは SpecWithCode Connect 経由で接続しますが、サインインしていません。サインインすると再び接続できます。",
+  "{machines} can't be reached from this window until you sign in.":
+    "{machines} はサインインするまでこのウィンドウから接続できません。",
+  "Still connected: {machines}.": "接続中: {machines}。",
+  "Some of your machines can't be reached from this window until you sign in. This machine is not affected.":
+    "一部のマシンはサインインするまでこのウィンドウから接続できません。このマシンには影響ありません。",
+  "{machine} is running, but this window can't reach it until you sign in.":
+    "{machine} は動作中ですが、サインインするまでこのウィンドウから接続できません。",
+  "{machines} are running, but this window can't reach them until you sign in.":
+    "{machines} は動作中ですが、サインインするまでこのウィンドウから接続できません。",
 };

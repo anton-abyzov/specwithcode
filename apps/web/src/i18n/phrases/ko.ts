@@ -5555,18 +5555,21 @@ export const ko: PhraseCatalog = {
   "Not reachable from here": "여기서 연결할 수 없음",
   "Sign in to reach {machine}": "{machine}에 연결하려면 로그인",
   "Can't reach {machine} from this window": "이 창에서 {machine}에 연결할 수 없습니다",
-  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to open it here.":
-    "이 창은 SpecWithCode Connect를 통해 연결되며 로그아웃 상태입니다. 로그인하면 여기서 열 수 있습니다.",
   "Signed out of SpecWithCode Connect": "SpecWithCode Connect에서 로그아웃됨",
-  "{machines} can't be opened from this window until you sign in.":
-    "{machines}은(는) 로그인할 때까지 이 창에서 열 수 없습니다.",
   "This machine is not affected.": "이 컴퓨터는 영향을 받지 않습니다.",
-  "This machine and {machines} are not affected.":
-    "이 컴퓨터와 {machines}은(는) 영향을 받지 않습니다.",
   "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
     "로그인 필요. 이 창에서 연결하려면 SpecWithCode Connect에 로그인하세요",
   "Sign in to SpecWithCode Connect to reach it from this window.":
     "이 창에서 연결하려면 SpecWithCode Connect에 로그인하세요.",
-  "Some of your machines can't be opened from this window until you sign in. Work on this machine is not affected.":
-    "일부 컴퓨터는 로그인할 때까지 이 창에서 열 수 없습니다. 이 컴퓨터는 영향을 받지 않습니다.",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.":
+    "이 창은 SpecWithCode Connect를 통해 연결되며 로그아웃 상태입니다. 로그인하면 다시 연결할 수 있습니다.",
+  "{machines} can't be reached from this window until you sign in.":
+    "{machines}은(는) 로그인할 때까지 이 창에서 연결할 수 없습니다.",
+  "Still connected: {machines}.": "연결됨: {machines}.",
+  "Some of your machines can't be reached from this window until you sign in. This machine is not affected.":
+    "일부 컴퓨터는 로그인할 때까지 이 창에서 연결할 수 없습니다. 이 컴퓨터는 영향을 받지 않습니다.",
+  "{machine} is running, but this window can't reach it until you sign in.":
+    "{machine}은(는) 실행 중이지만 로그인할 때까지 이 창에서 연결할 수 없습니다.",
+  "{machines} are running, but this window can't reach them until you sign in.":
+    "{machines}은(는) 실행 중이지만 로그인할 때까지 이 창에서 연결할 수 없습니다.",
 };

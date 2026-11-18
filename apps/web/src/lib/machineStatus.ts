@@ -135,7 +135,7 @@ const HOST_DOWN_NOTE_WORDS: Record<HostDownNote, Partial<MachineReachWords>> = {
     next: null,
     hint: null,
     action:
-      "This window reaches it through SpecWithCode Connect and is signed out. Sign in to open it here.",
+      "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.",
   },
   "reachable-from-machine": {
     headline: "Can't reach {machine} from this window",
@@ -145,8 +145,10 @@ const HOST_DOWN_NOTE_WORDS: Record<HostDownNote, Partial<MachineReachWords>> = {
 
 /**
  * Whether a note names why a machine is down. Only a machine that is down says
- * it, a device with no network keeps its own words, and a machine nobody asked
- * to connect stays "Not connected" whatever the fleet says.
+ * it, and a device with no network keeps its own words. "Not reachable from
+ * here" is for a machine this window is still retrying: a stopped connection
+ * already knows its reason (needs an update, pair again, a refused
+ * credential), and a machine nobody asked to connect stays "Not connected".
  */
 export function hostDownNoteShown(
   state: MachineReachState | undefined,
@@ -154,7 +156,8 @@ export function hostDownNoteShown(
 ): note is HostDownNote {
   if (note === null || note === undefined || state === undefined) return false;
   if (state === "no-network" || !isMachineReachDown(state)) return false;
-  return note === "needs-sign-in" || state !== "not-connected";
+  if (note === "needs-sign-in") return true;
+  return state !== "stopped" && state !== "not-connected";
 }
 
 /**

@@ -3,9 +3,8 @@ import type { StudioFleetSnapshot } from "@specweave-studio/contracts/studioFlee
 import { describe, expect, it } from "vite-plus/test";
 
 import { environmentUnavailableBanner } from "../components/chat/environmentUnavailableBanner";
-import { threadGroupHeading } from "../components/studio/shell/ThreadsPane";
 import { threadCardStatus } from "../studio/projectThreadCards";
-import { threadStatusWord } from "../studio/shellModel";
+import { threadGroupHeading, threadStatusWord } from "../studio/shellModel";
 import {
   fleetReachableEnvironmentIds,
   hostDownNote,
@@ -19,7 +18,8 @@ import {
   savedMachineStatus,
 } from "./machineStatus";
 
-const DOWN = ["not-answering", "offline", "cant-reach", "stopped"] as const;
+const RETRYING = ["not-answering", "offline", "cant-reach"] as const;
+const DOWN = [...RETRYING, "stopped"] as const;
 const NOT_DOWN = ["connected", "catching-up", "connecting", "reconnecting"] as const;
 
 function shell(): EnvironmentThreadShell {
@@ -86,8 +86,8 @@ describe("the note for a saved machine", () => {
   });
 
   it("names a down machine only, never over this device's own lost network", () => {
-    for (const state of DOWN) {
-      expect(hostDownNoteShown(state, "needs-sign-in")).toBe(true);
+    for (const state of DOWN) expect(hostDownNoteShown(state, "needs-sign-in")).toBe(true);
+    for (const state of RETRYING) {
       expect(hostDownNoteShown(state, "reachable-from-machine")).toBe(true);
     }
     for (const state of NOT_DOWN) expect(hostDownNoteShown(state, "needs-sign-in")).toBe(false);
@@ -99,6 +99,14 @@ describe("the note for a saved machine", () => {
   it("leaves a machine nobody asked to connect as not connected", () => {
     expect(hostDownNoteShown("not-connected", "reachable-from-machine")).toBe(false);
     expect(hostDownWord("not-connected", false, "reachable-from-machine")).toBe("Not connected");
+  });
+
+  it("keeps a stopped connection's own reason over the fleet's word", () => {
+    // Needs an update, pair again or a refused credential: the window knows why.
+    expect(hostDownNoteShown("stopped", "reachable-from-machine")).toBe(false);
+    expect(hostDownWord("stopped", false, "reachable-from-machine")).toBe("Not connected");
+    const update = machineReachWords("stopped", "unsupported", false, "reachable-from-machine");
+    expect(update).toEqual(machineReachWords("stopped", "unsupported"));
   });
 });
 
@@ -178,11 +186,11 @@ describe("the machine picker, Settings > Machines and the chat banner", () => {
     expect(banner.title).toBe("Sign in to reach M5");
     expect(banner.status).toBe(NEEDS_SIGN_IN_STATUS);
     expect(banner.describe(null, 0)).toBe(
-      "This window reaches it through SpecWithCode Connect and is signed out. Sign in to open it here",
+      "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again",
     );
     expect(
       machineReachDetail(machineReachWords("stopped", "error", false, "needs-sign-in"), null, 0),
-    ).toContain("Sign in to open it here");
+    ).toContain("Sign in to reach it again");
   });
 });
 

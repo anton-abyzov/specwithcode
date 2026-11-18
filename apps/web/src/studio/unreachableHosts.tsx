@@ -36,6 +36,8 @@ export const MachineReachContext = createContext<MachineReachStates>(NO_STATES);
  * it), so every word stays as the reach state alone says.
  */
 export const IdentityMismatchContext = createContext<ReadonlySet<string>>(NONE);
+/** Saved machines this machine's server reaches now, from the same fleet snapshot. */
+export const FleetReachableContext = createContext<ReadonlySet<string>>(NONE);
 /**
  * Why each saved machine would be out of reach beyond its reach state: this
  * window needs a SpecWithCode Connect sign-in for it, or this machine's server
@@ -46,29 +48,32 @@ export const HostDownNoteContext = createContext<ReadonlyMap<string, HostDownNot
 export function UnreachableHostsProvider({ children }: { children: ReactNode }) {
   const unreachable = useUnreachableEnvironmentIds();
   const states = useMachineReachStates();
-  const { environments, presentationById } = useEnvironments();
+  const { environments } = useEnvironments();
   // The same list the shell already reads for automatic connects; kept stable between reads.
   const fleet = usePrimaryFleetSnapshot(usePrimaryEnvironmentId());
   const mismatched = useMemo(() => identityMismatchedEnvironmentIds(fleet), [fleet]);
+  const reachable = useMemo(() => fleetReachableEnvironmentIds(fleet), [fleet]);
   const notes = useMemo(() => {
-    const reachable = fleetReachableEnvironmentIds(fleet);
     const next = new Map<string, HostDownNote>();
-    for (const [environmentId, presentation] of presentationById) {
+    // The projected list: its sign-in mark already waits for Clerk to say signed out.
+    for (const environment of environments) {
       const note = hostDownNote({
-        connectSignInRequired: presentation.connection.connectSignInRequired,
-        reachableFromMachine: reachable.has(environmentId),
+        connectSignInRequired: environment.connection.connectSignInRequired,
+        reachableFromMachine: reachable.has(environment.environmentId),
       });
-      if (note !== null) next.set(environmentId, note);
+      if (note !== null) next.set(environment.environmentId, note);
     }
     return next.size === 0 ? NO_NOTES : next;
-  }, [fleet, presentationById]);
+  }, [reachable, environments]);
   // Mounted for the whole shell, so it sees every machine leave "connected".
   useEffect(() => recordMachinePhases(environments), [environments]);
   return (
     <UnreachableHostsContext.Provider value={unreachable}>
       <MachineReachContext.Provider value={states}>
         <IdentityMismatchContext.Provider value={mismatched}>
-          <HostDownNoteContext.Provider value={notes}>{children}</HostDownNoteContext.Provider>
+          <FleetReachableContext.Provider value={reachable}>
+            <HostDownNoteContext.Provider value={notes}>{children}</HostDownNoteContext.Provider>
+          </FleetReachableContext.Provider>
         </IdentityMismatchContext.Provider>
       </MachineReachContext.Provider>
     </UnreachableHostsContext.Provider>
@@ -94,6 +99,11 @@ export function useHostReach(
 ): MachineReachState | undefined {
   const states = useContext(MachineReachContext);
   return environmentId ? states.get(environmentId) : undefined;
+}
+
+/** Saved machines this machine's server reaches now; empty without the fleet. */
+export function useFleetReachableHosts(): ReadonlySet<string> {
+  return useContext(FleetReachableContext);
 }
 
 /** Saved machines whose address now answers as a different SpecWithCode. */

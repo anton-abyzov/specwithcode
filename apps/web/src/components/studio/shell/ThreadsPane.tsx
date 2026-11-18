@@ -72,6 +72,7 @@ import {
   threadStatusWord,
   threadTone,
   type ThreadSort,
+  threadGroupHeading,
 } from "../../../studio/shellModel";
 import {
   Menu,
@@ -107,15 +108,6 @@ import {
   useIdentityMismatchedHosts,
   useUnreachableHosts,
 } from "../../../studio/unreachableHosts";
-
-/**
- * A group's heading. The "Offline" group holds threads of every machine this
- * window cannot reach, a running one included (signed out of Connect, or only
- * this window cut off), so its heading says that; each row says why.
- */
-export function threadGroupHeading(group: string): string {
-  return group === "Offline" ? "Not reachable from here" : group;
-}
 
 const SORT_STORAGE_KEY = "studio:project-threads-sort:v1";
 const SortSchema = Schema.Literals(THREAD_SORTS);

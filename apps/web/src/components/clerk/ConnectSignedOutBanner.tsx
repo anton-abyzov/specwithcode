@@ -3,10 +3,10 @@ import { LogInIcon } from "lucide-react";
 import { useMemo } from "react";
 
 import { isThisMachineTarget } from "../../connection/desktopLocal";
-import { useTx } from "../../i18n";
+import { useLocale, useTx } from "../../i18n";
 import { useEnvironments } from "../../state/environments";
 import { useMachineNicknames } from "../../studio/machineNickname";
-import { useHostDownNotes } from "../../studio/unreachableHosts";
+import { useFleetReachableHosts, useHostDownNotes } from "../../studio/unreachableHosts";
 import { signedOutBanner } from "../studio/shell/signedOutBannerModel";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -22,24 +22,27 @@ export default function ConnectSignedOutBanner() {
   const { openAuthPrompt } = useStudioConnectAuthPrompt();
   const { environments } = useEnvironments();
   const notes = useHostDownNotes();
+  const reachable = useFleetReachableHosts();
   const nameOf = useMachineNicknames();
   const tx = useTx();
-  const content = useMemo(
-    () =>
-      signedOutBanner(
-        {
-          signedOut: isLoaded && !isSignedIn,
-          machines: environments.map((environment) => ({
-            name: nameOf(environment.environmentId, environment.label),
-            needsSignIn: notes.get(environment.environmentId) === "needs-sign-in",
-            connected: environment.connection.phase === "connected",
-            isThisMachine: isThisMachineTarget(environment.entry),
-          })),
-        },
-        tx,
-      ),
-    [environments, isLoaded, isSignedIn, nameOf, notes, tx],
-  );
+  const locale = useLocale();
+  const content = useMemo(() => {
+    const list = new Intl.ListFormat(locale, { style: "long", type: "conjunction" });
+    return signedOutBanner(
+      {
+        signedOut: isLoaded && !isSignedIn,
+        machines: environments.map((environment) => ({
+          name: nameOf(environment.environmentId, environment.label),
+          needsSignIn: notes.get(environment.environmentId) === "needs-sign-in",
+          reachableFromMachine: reachable.has(environment.environmentId),
+          connected: environment.connection.phase === "connected",
+          isThisMachine: isThisMachineTarget(environment.entry),
+        })),
+      },
+      tx,
+      (names) => list.format(names),
+    );
+  }, [environments, isLoaded, isSignedIn, locale, nameOf, notes, reachable, tx]);
   if (content === null) return null;
   return (
     <Alert variant="warning" role="status" data-connect-signed-out="" className="mx-2 mb-2">

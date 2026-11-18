@@ -15,7 +15,7 @@ export type ConnectAccount =
   | {
       readonly status: "signedOut";
       readonly linked: boolean;
-      /** A saved machine can't be opened from this window until it signs in (1417). */
+      /** A saved machine can't be reached from this window until it signs in (1417). */
       readonly cutsOff?: boolean;
     }
   | {
@@ -64,7 +64,7 @@ export function accountMenuPresentation(
           tone: "warning",
           signIn: {
             label: "Sign in",
-            hint: "Some of your machines can't be opened from this window until you sign in. Work on this machine is not affected.",
+            hint: "Some of your machines can't be reached from this window until you sign in. This machine is not affected.",
           },
         };
       return account.linked
