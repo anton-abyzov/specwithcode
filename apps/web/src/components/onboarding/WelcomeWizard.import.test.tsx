@@ -533,7 +533,7 @@ it("leaves setup for Add project when starting from nothing", async () => {
 describe("an empty folder's SpecWeave box", () => {
   type BoxProps = {
     specweaveSetUp?: boolean;
-    onStartWithSpecweave?: (startWith: boolean | undefined) => void;
+    onStartWithSpecweave?: (startWith: boolean | null | undefined) => void;
   };
   const box = () => folderChoice.props as unknown as BoxProps;
   const createNewWith = (startWith: boolean | undefined) => {
@@ -574,6 +574,17 @@ describe("an empty folder's SpecWeave box", () => {
   it("sends nothing about SpecWeave for a folder that has files", async () => {
     const input = await createNewWith(undefined)();
     expect(input).not.toHaveProperty("specweave");
+  });
+
+  it("waits for the empty check before Add can be pressed", async () => {
+    state.candidates = [];
+    state.specweaveSetUp = true;
+    await mountImport();
+    await act(async () => folderChoice.props!.onFolderChange("/work/site"));
+    await act(async () => box().onStartWithSpecweave!(null));
+    expect(button("Add site").props.disabled).toBe(true);
+    await act(async () => box().onStartWithSpecweave!(true));
+    expect(button("Add site").props.disabled).not.toBe(true);
   });
 
   it("offers no box where the server cannot set SpecWeave up", async () => {

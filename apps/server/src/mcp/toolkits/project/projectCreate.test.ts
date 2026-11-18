@@ -168,7 +168,12 @@ describe("studio_project_create in a parent folder", () => {
       const { create, named } = setup();
       return Effect.gen(function* () {
         const result = yield* create({ title: "Pinball Stats" });
-        expect(named[0]).toEqual({ name: "Pinball Stats", parentPath: "/home/example/Projects" });
+        expect(named[0]).toEqual({
+          name: "Pinball Stats",
+          parentPath: "/home/example/Projects",
+          specweave: true,
+          specweaveOnlyIfNew: true,
+        });
         expect(result).toMatchObject({
           id: createdId,
           workspaceRoot: "/home/example/Projects/pinball-stats-2",

@@ -3441,8 +3441,10 @@ function OpenCommandPaletteDialog(props: {
           folderChoice.outcome?.kind !== "use"
             ? newProjectGitHubTarget
             : null,
-        specweave:
-          newProjectFlow.kind === "code" && newProjectSupportsSpecweave && newProjectUsesSpecweave,
+        // Unoffered (a personal assistant, an older server) it is left out.
+        ...(newProjectFlow.kind === "code" && newProjectSupportsSpecweave
+          ? { specweave: newProjectUsesSpecweave }
+          : {}),
       });
       if (created) {
         if (newProjectFlow.kind === "code" && folderChoice.path) {

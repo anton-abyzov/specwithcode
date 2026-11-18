@@ -62,27 +62,6 @@ export const olderMachineSpecweaveNote = (label: string) =>
   `SpecWeave not set up: ${label} runs an older SpecWithCode that cannot set it up when it creates a project. Update SpecWithCode on ${label}; then the user can press Set up SpecWeave on the project's Board tab there.`;
 
 /**
- * Whether a create from a title sets up SpecWeave: only in a folder it makes,
- * or an empty one it takes, never in a folder that already has files (D-02).
- * `preview` is the create's own decision for `parent`, by the same rules; with
- * no parent the create always makes a new folder. The app's own projects
- * folder is never previewed (the preview skips the existing-folder check
- * there), so it counts as unknown.
- */
-export function createMakesNewFolder(input: {
-  readonly parent: string | undefined;
-  readonly namedProjectsRoot: string;
-  readonly preview: Option.Option<{ readonly kind: "creates" | "uses"; readonly because?: string }>;
-}): boolean {
-  if (input.parent === undefined) return true;
-  if (input.parent === input.namedProjectsRoot || Option.isNone(input.preview)) return false;
-  return (
-    input.preview.value.kind === "creates" ||
-    input.preview.value.because === "empty_named_like_project"
-  );
-}
-
-/**
  * What studio_project_create says about SpecWeave: "SpecWeave set up." or why
  * not, with the press that sets it up. Undefined for a personal assistant that
  * was not asked for it.
@@ -92,7 +71,7 @@ export function specweaveCreateNote(input: {
   /** The `specweave` argument as given. */
   readonly asked: boolean | undefined;
   /** Why setup was not run although wanted. */
-  readonly skipped?: "registered" | "existing_folder" | "unknown_folder" | undefined;
+  readonly skipped?: "registered" | "existing_folder" | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly error?: string | undefined;
   readonly needsNode?: boolean | undefined;
@@ -106,8 +85,6 @@ export function specweaveCreateNote(input: {
     return `SpecWeave not set up: an existing folder is registered as it is, and SpecWeave is never added to one without the user's press. ${BOARD_PRESS}`;
   if (input.skipped === "existing_folder")
     return `SpecWeave not set up: ${input.workspaceRoot ?? "the folder"} already existed, so it is used as it is, and SpecWeave is never added to an existing folder without the user's press. ${BOARD_PRESS}`;
-  if (input.skipped === "unknown_folder")
-    return `SpecWeave not set up: it could not be told whether the project's folder is new. ${BOARD_PRESS}`;
   if (input.needsNode === true)
     return "SpecWeave not set up: this machine has no Node.js. The project's Board tab offers to install it and then sets SpecWeave up.";
   if (input.error !== undefined)
@@ -191,10 +168,13 @@ export const createProjectOnMachine = Effect.fn("mcp.createProjectOnMachine")(fu
         }),
     ),
   );
+  // Only where that machine would have set it up: a code project from a title, not declined.
+  const wantedThere =
+    input.arguments.kind !== "personal" &&
+    input.arguments.specweave !== false &&
+    input.arguments.workspaceRoot === undefined;
   const olderNote =
-    knowsSpecweave || input.arguments.kind === "personal"
-      ? {}
-      : { specweave: olderMachineSpecweaveNote(machine.label) };
+    knowsSpecweave || !wantedThere ? {} : { specweave: olderMachineSpecweaveNote(machine.label) };
   return {
     ...created,
     ...olderNote,

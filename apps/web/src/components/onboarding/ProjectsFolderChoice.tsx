@@ -57,15 +57,19 @@ export function ProjectsFolderChoice({
   readonly onOtherWays: () => void;
   /** This machine's server can set SpecWeave up when it makes a project (1396 AC-22). */
   readonly specweaveSetUp?: boolean;
-  /** The empty folder's box as it stands, or undefined while no box shows. */
-  readonly onStartWithSpecweave?: (startWith: boolean | undefined) => void;
+  /**
+   * The empty folder's box as it stands, undefined while no box shows, or
+   * null while the server has not yet said whether the folder is empty.
+   */
+  readonly onStartWithSpecweave?: (startWith: boolean | null | undefined) => void;
 }) {
   const tx = useTx();
   const [open, setOpen] = useState(defaultOpen);
   // An empty folder becomes a new project, so it gets one box: start with
   // SpecWeave. The server says whether it is empty, by the create's own rules
   // (the folder's own name as the project's); a folder with files gets none.
-  const [startWithSpecweave, setStartWithSpecweave] = useState(true);
+  // Unticking holds for that folder only; another folder starts ticked again.
+  const [untickedFor, setUntickedFor] = useState<string | null>(null);
   const folderName =
     folder
       ?.replace(/[\\/]+$/, "")
@@ -85,7 +89,16 @@ export function ProjectsFolderChoice({
     folderCheck.data?.outcome?.kind === "uses" &&
     folderCheck.data.outcome.because === "empty_named_like_project" &&
     sameFolder(folderCheck.data.parentPath, folder);
-  const boxState = emptyFolder ? startWithSpecweave : undefined;
+  const startWithSpecweave =
+    folder === null || untickedFor === null || !sameFolder(untickedFor, folder);
+  // A press before the answer lands would drop the default, so the step waits.
+  const checking =
+    specweaveSetUp &&
+    folder !== null &&
+    folderName !== null &&
+    folderCheck.error === null &&
+    !(folderCheck.data !== null && sameFolder(folderCheck.data.parentPath, folder));
+  const boxState = checking ? null : emptyFolder ? startWithSpecweave : undefined;
   useEffect(() => {
     onStartWithSpecweave?.(boxState);
   }, [boxState, onStartWithSpecweave]);
@@ -216,7 +229,7 @@ export function ProjectsFolderChoice({
         <StartWithSpecweaveBox
           checked={startWithSpecweave}
           disabled={disabled}
-          onCheckedChange={setStartWithSpecweave}
+          onCheckedChange={(checked) => setUntickedFor(checked ? null : folder)}
         />
       ) : null}
       {dropNote ? (

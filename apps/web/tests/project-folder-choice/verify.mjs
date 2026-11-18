@@ -154,7 +154,7 @@ try {
     assert.equal(await page.getByText("Options", { exact: true }).count(), 0);
     assert.match(
       await specweaveRow.innerText(),
-      /Plans each piece of work as a short spec with tasks in your repository, and gives the project a board/,
+      /Plans each piece of work as a short spec with tasks in your repository, and gives the project a board\./,
     );
     assert.equal(await specweaveRow.getAttribute("aria-disabled"), null);
     await specweaveRow.scrollIntoViewIfNeeded();
@@ -275,6 +275,12 @@ try {
     await box.getByRole("checkbox").click();
     assert.equal(await page.evaluate(() => window.startWithSpecweave), false);
     assert.equal(await box.getByRole("checkbox").getAttribute("aria-checked"), "false");
+    // Unticking holds for that folder only: another empty folder starts ticked.
+    await page.getByRole("button", { name: "Projects", exact: true }).first().click();
+    await page.getByRole("option", { name: "playground", exact: true }).click();
+    await box.waitFor();
+    assert.equal(await box.getByRole("checkbox").getAttribute("aria-checked"), "true");
+    assert.equal(await page.evaluate(() => window.startWithSpecweave), true);
     // A folder with files is bound as it is: no box.
     await page.goto(`${base}/?theme=${theme}&mode=setup&found=0`);
     await page.getByRole("option", { name: "Projects", exact: true }).click();

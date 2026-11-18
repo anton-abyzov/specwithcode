@@ -175,8 +175,9 @@ export function ImportStep({
   }, [candidates, folder, folderEnvironmentId]);
   const selected = folderCandidate === null ? found : [...found, folderCandidate];
   // 1396 AC-22: an empty folder picked here starts with SpecWeave as its box
-  // stands; undefined while there is no box (a folder with files, not checked yet).
-  const [folderSpecweave, setFolderSpecweave] = useState<boolean | undefined>(undefined);
+  // stands; undefined while there is no box (a folder with files), null while
+  // the server is still saying whether the folder is empty.
+  const [folderSpecweave, setFolderSpecweave] = useState<boolean | null | undefined>(undefined);
   const folderSetsUpSpecweave =
     environments.find((environment) => environment.environmentId === folderEnvironmentId)
       ?.serverConfig?.specweaveSetUp === true;
@@ -278,7 +279,7 @@ export function ImportStep({
             name: candidate.title,
             kind: "code",
             parentPath: candidate.path,
-            ...(folderSpecweave === undefined ? {} : { specweave: folderSpecweave }),
+            ...(typeof folderSpecweave === "boolean" ? { specweave: folderSpecweave } : {}),
           },
         });
         if (
@@ -548,7 +549,10 @@ export function ImportStep({
               ? tx("Add {folder}", { folder: folderCandidate.title })
               : t("wizard.import.importButton", { count: selected.length }),
           onClick: () => void runImport(selected),
-          disabled: !canImport || selected.length === 0,
+          disabled:
+            !canImport ||
+            selected.length === 0 ||
+            (folderCandidate !== null && folderSpecweave === null),
           busy: isImporting,
         }}
       />

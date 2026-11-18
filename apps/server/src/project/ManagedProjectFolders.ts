@@ -233,6 +233,12 @@ export class ManagedProjectFolders extends Context.Service<
       readonly parentPath?: string | undefined;
       readonly kind?: "code" | "personal" | undefined;
       readonly specweave?: boolean | undefined;
+      /**
+       * `specweave` only for a folder this create makes or an empty one it
+       * takes, decided under the create's lock; a folder it binds as it is
+       * gets none (studio_project_create, 1396 D-02).
+       */
+      readonly specweaveOnlyIfNew?: boolean | undefined;
     }) => Effect.Effect<
       {
         readonly projectId: ProjectId;
@@ -931,7 +937,11 @@ const make = Effect.gen(function* () {
           });
         if (yield* isUnclaimedEmptyFolder(existing.value)) emptyFolder = existing.value;
         else {
-          return yield* bindExistingFolder(input.name, existing.value, input.specweave === true);
+          return yield* bindExistingFolder(
+            input.name,
+            existing.value,
+            input.specweave === true && input.specweaveOnlyIfNew !== true,
+          );
         }
       }
     }

@@ -23,7 +23,7 @@ export const SPECWEAVE_GIT_NOTE =
 
 /** What "Use SpecWeave" gives, in the Board's sentence (1396 AC-11); the files sit behind a disclosure. */
 export const SPECWEAVE_SETUP_SUMMARY =
-  "Plans each piece of work as a short spec with tasks in your repository, and gives the project a board";
+  "Plans each piece of work as a short spec with tasks in your repository, and gives the project a board.";
 
 /** The row where the server cannot set SpecWeave up: shown off, never hidden (1396 AC-16). */
 export const SPECWEAVE_TOO_OLD = "This machine's SpecWithCode is too old to set it up.";

@@ -79,7 +79,6 @@ import { receiveAgentCopy } from "../../../fleet/folderTransfer/agentCopy.ts";
 import { agentClone } from "./agentClone.ts";
 import { addProjectToMachine } from "./addToMachine.ts";
 import {
-  createMakesNewFolder,
   createProjectOnMachine,
   GRANT_GITHUB_MESSAGE,
   resolveCreateMachine,
@@ -1059,23 +1058,17 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ? undefined
                 : folders.suggestedProjectsRoot;
           // SpecWeave by default, as in the dialog, but only in a folder the
-          // create makes or an empty one it takes (1396 AC-17, D-02).
+          // create makes or an empty one it takes: the create decides that
+          // under its own lock, so a folder with files never gets it (1396 AC-17, D-02).
           const wantsSpecweave = input.kind !== "personal" && specweave !== false;
-          const outcome =
-            parent !== undefined && (work !== undefined || wantsSpecweave)
-              ? yield* folders.previewNamedProject({ name: input.title, parentPath: parent })
-              : Option.none();
-          const setsUpSpecweave =
-            wantsSpecweave &&
-            createMakesNewFolder({
-              parent,
-              namedProjectsRoot: folders.namedProjectsRoot,
-              preview: outcome,
-            });
           // Another machine's work starts new folders only: a parentPath that is,
           // or holds, a project here would hand that project over, so it goes
           // through workspaceRoot and its grant check instead.
           if (work !== undefined && parent !== undefined) {
+            const outcome = yield* folders.previewNamedProject({
+              name: input.title,
+              parentPath: parent,
+            });
             if (Option.isSome(outcome) && outcome.value.kind === "uses")
               return yield* new OrchestratorMcpFailure({
                 code: "outside_grant_scope",
@@ -1088,7 +1081,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               ...(parent === undefined ? {} : { parentPath: parent }),
               // A personal one comes back as this machine's assistant when one exists.
               ...(input.kind === undefined ? {} : { kind: input.kind }),
-              ...(setsUpSpecweave ? { specweave: true } : {}),
+              ...(wantsSpecweave ? { specweave: true, specweaveOnlyIfNew: true } : {}),
             })
             .pipe(Effect.mapError(createFailure));
           const project = yield* projects
@@ -1107,11 +1100,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           const specweaveNote = specweaveCreateNote({
             kind: input.kind,
             asked: specweave,
-            ...(wantsSpecweave && !setsUpSpecweave
-              ? {
-                  skipped: created.existing === true ? "existing_folder" : "unknown_folder",
-                  workspaceRoot: created.workspaceRoot,
-                }
+            ...(wantsSpecweave && created.existing === true
+              ? { skipped: "existing_folder" as const, workspaceRoot: created.workspaceRoot }
               : {}),
             error: created.specweaveError,
             needsNode: created.specweaveNeedsNode,
