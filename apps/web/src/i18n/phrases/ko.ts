@@ -5699,4 +5699,11 @@ export const ko: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "SpecWithCode Connect를 통해 머신에 접근하려면 다시 로그인하세요.",
   "Sign in again": "다시 로그인",
+  "first": "먼저",
+  "None of the ready agents runs a model on this list.": "준비된 에이전트 중 이 목록의 모델을 쓰는 에이전트가 없습니다.",
+  "No reviewer yet.": "아직 리뷰어가 없습니다.",
+  "A review needs a model from a second family, such as {first} or {second}.": "리뷰에는 {first} 또는 {second} 같은 다른 계열의 모델이 필요합니다.",
+  "Add one": "추가하기",
+  "+{n} more": "+{n}개 더",
+  "Ready once an agent is signed in.": "에이전트가 로그인하면 준비됩니다.",
 };

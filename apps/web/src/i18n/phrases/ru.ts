@@ -5764,4 +5764,11 @@ export const ru: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "Войдите снова, чтобы открывать свои машины через SpecWithCode Connect.",
   "Sign in again": "Войти снова",
+  "first": "первая",
+  "None of the ready agents runs a model on this list.": "Ни один из готовых агентов не использует модель из этого списка.",
+  "No reviewer yet.": "Проверяющего пока нет.",
+  "A review needs a model from a second family, such as {first} or {second}.": "Для проверки нужна модель другого семейства, например {first} или {second}.",
+  "Add one": "Добавить",
+  "+{n} more": "ещё {n}",
+  "Ready once an agent is signed in.": "Будет готово, когда агент войдёт в систему.",
 };

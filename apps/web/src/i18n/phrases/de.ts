@@ -5807,4 +5807,11 @@ export const de: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "Melde dich erneut an, um deine Rechner über SpecWithCode Connect zu erreichen.",
   "Sign in again": "Erneut anmelden",
+  "first": "zuerst",
+  "None of the ready agents runs a model on this list.": "Keiner der bereiten Agenten nutzt ein Modell auf dieser Liste.",
+  "No reviewer yet.": "Noch kein Prüfer.",
+  "A review needs a model from a second family, such as {first} or {second}.": "Eine Prüfung braucht ein Modell aus einer zweiten Familie, etwa {first} oder {second}.",
+  "Add one": "Eines hinzufügen",
+  "+{n} more": "+{n} weitere",
+  "Ready once an agent is signed in.": "Bereit, sobald ein Agent angemeldet ist.",
 };
