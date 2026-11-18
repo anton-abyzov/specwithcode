@@ -474,7 +474,7 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
                   <button
                     type="button"
                     className="sws-board-view-button"
-                    onClick={() => onAsk(actions.ask.prompt)}
+                    onClick={() => onAsk(actions.ask.prompt + boardOutOfReachNote(threads))}
                   >
                     {actions.ask.label}
                   </button>

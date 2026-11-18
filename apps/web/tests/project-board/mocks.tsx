@@ -3,7 +3,8 @@
 // does. Variants, picked by URL parameter the way the page reads them:
 // `?server=old` is a server without the detail read (no reasons, no counts),
 // `?removed=<folder>` is an increment deleted while its view is open,
-// `?threads=reading` is a machine whose threads have not answered yet.
+// `?threads=reading` is a machine whose threads have not answered yet,
+// `?threads=many` is a machine with more unresolved threads than the board reads.
 import type {
   ProjectBoardBlocker,
   ProjectBoardCard,
@@ -675,6 +676,13 @@ export const FIXTURE_THREADS: EnvironmentThreadShell[] = [
   }),
   thread(IDS.done, "Passkey sign-in", "desk", 3000, resolved),
 ];
+// Old threads of no increment, past what one machine's pages hold: the list is cut.
+if (params.get("threads") === "many")
+  for (let index = 0; index < 801; index += 1) {
+    const extra = thread(IDS.idle, `Side note ${index + 1}`, "desk", 5000 + index);
+    LINKS.delete(`desk:${extra.id}`);
+    FIXTURE_THREADS.push(extra);
+  }
 export const FIXTURE_MACHINE_LABELS = new Map<string, string>(
   MACHINES.map((machine) => [machine.environmentId, machine.label]),
 );

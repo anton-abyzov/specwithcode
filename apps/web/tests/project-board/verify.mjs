@@ -1006,6 +1006,28 @@ try {
       await closePage(page, label);
     }
 
+    /* More unresolved threads than the board reads: it says so and no machine can be chosen. */
+    {
+      const label = `threads cut ${theme}`;
+      const page = await openPage(theme, { width: 900, height: 1000 }, "&threads=many");
+      await cardOf(page, ID.blocked).waitFor();
+      await page.locator(".sws-board-legend-note").waitFor();
+      check(
+        (await page.locator(".sws-board-legend-note").textContent()) ===
+          "This project has more threads than the board reads, so it cannot be narrowed by machine.",
+        `${label}: legend note`,
+      );
+      check(
+        (await page.locator(".sws-board-legend-count").count()) === 0 &&
+          (await page.locator(".sws-board-legend-entry[data-machine]:not([disabled])").count()) ===
+            0,
+        `${label}: a machine can be chosen from a cut list`,
+      );
+      await noOverflow(page, label);
+      await shot(page, `threads-cut-${theme}`);
+      await closePage(page, label);
+    }
+
     /* A 400 character reason with no spaces wraps inside its box at 360 px. */
     {
       const label = `long reason ${theme}`;

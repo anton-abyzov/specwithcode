@@ -484,7 +484,7 @@ describe("BoardIncrementView", () => {
         [thread("t1", "unknown", { binding: "claim", boundTaskId: "T-02", boundAt: BLOCKED_AT })],
         {},
       ],
-    ] as const)("asks the coordinator when %s", async (_case, threads, taskExtra) => {
+    ] as const)("asks the coordinator when %s", async (name, threads, taskExtra) => {
       runtime.reply = detail(blockedCard, {
         tasks: [blockedTask(taskExtra)],
         blockers: [blocker("T-02", { title: "Wire the form" })],
@@ -492,7 +492,13 @@ describe("BoardIncrementView", () => {
       await render({ card: blockedCard, threads: [...threads] });
       expect(byText("Open that thread")).toBeNull();
       await click(byText("Ask the coordinator why T-02 is blocked"));
-      expect(asked).toEqual([`${facts} Find out why it is still blocked and what it needs.`]);
+      // A thread that cannot be reached may hold the task: the question names it.
+      const note = name.includes("unreachable")
+        ? ' Check first: the thread "Thread t1" on Laptop cannot be reached now and may still hold this work. Do not start another worker beside it.'
+        : "";
+      expect(asked).toEqual([
+        `${facts} Find out why it is still blocked and what it needs.${note}`,
+      ]);
     });
 
     it("says when no reason was given, and shows no coordinator buttons to someone who cannot send", async () => {
