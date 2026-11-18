@@ -295,32 +295,43 @@ describe("the project sync service (1390 AC-10, AC-11)", () => {
 });
 
 describe("a cancelled call and the project's lock (P2-09)", () => {
-  /** Resolves once `events` holds `count` entries: the test waits on what happened, not on time. */
-  const reached = (events: ReadonlyArray<string>, count: number) =>
-    Effect.promise(async () => {
-      while (events.length < count) await new Promise((resolve) => setImmediate(resolve));
-    });
+  /** A promise the work under test resolves itself: the test waits on what happened, not on time. */
+  const signal = () => {
+    let fire = () => {};
+    const fired = new Promise<void>((resolve) => (fire = resolve));
+    return { fire, wait: Effect.promise(() => fired) };
+  };
+  /** Lets every fiber that can run do so, many times over: a cancel that could go through would have. */
+  const settle = Effect.forEach(Array.from({ length: 200 }), () => Effect.yieldNow, {
+    discard: true,
+  });
 
   it.effect("keeps the lock until stopped Git work has ended and cleaned up", () =>
     Effect.gen(function* () {
       const admission = yield* ProjectAdmission.ProjectAdmission;
       const events: Array<string> = [];
+      const started = signal();
       // Git work that ends some time after it is told to stop, as a killed clone does.
       const work = ProjectSync.stoppedWhenCancelled(
-        (signal) =>
+        (cancel) =>
           new Promise<string>((resolve) => {
             events.push("started");
-            signal.addEventListener("abort", () => {
+            started.fire();
+            cancel.addEventListener("abort", () => {
               events.push("told to stop");
-              setTimeout(() => {
-                events.push("ended and cleaned up");
-                resolve("stopped");
-              }, 50);
+              // Not at once: the process ends and the folder is removed a few turns later.
+              void Promise.resolve()
+                .then(() => undefined)
+                .then(() => undefined)
+                .then(() => {
+                  events.push("ended and cleaned up");
+                  resolve("stopped");
+                });
             });
           }),
       );
       const first = yield* Effect.forkChild(admission.withLock(projectA, work));
-      yield* reached(events, 1);
+      yield* started.wait;
       const second = yield* Effect.forkChild(
         admission.withLock(
           projectA,
@@ -337,7 +348,7 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
       ]);
       // Work that ends by itself is not told to stop, and gives its result.
       expect(
-        yield* ProjectSync.stoppedWhenCancelled(async (signal) => (signal.aborted ? "no" : "yes")),
+        yield* ProjectSync.stoppedWhenCancelled(async (cancel) => (cancel.aborted ? "no" : "yes")),
       ).toBe("yes");
     }).pipe(Effect.provide(ProjectAdmission.layer)),
   );
@@ -346,11 +357,13 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
     Effect.gen(function* () {
       const admission = yield* ProjectAdmission.ProjectAdmission;
       const events: Array<string> = [];
+      const started = signal();
       let finish = () => {};
       const work = ProjectSync.untilGitEnds(
         () =>
           new Promise<void>((resolve) => {
             events.push("merge started");
+            started.fire();
             finish = () => {
               events.push("merge ended");
               resolve();
@@ -358,7 +371,7 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
           }),
       );
       const first = yield* Effect.forkChild(admission.withLock(projectA, work));
-      yield* reached(events, 1);
+      yield* started.wait;
       const second = yield* Effect.forkChild(
         admission.withLock(
           projectA,
@@ -367,7 +380,7 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
       );
       const cancelled = yield* Effect.forkChild(Fiber.interrupt(first));
       // The cancel is asked for; the merge still runs and the lock is still held.
-      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)));
+      yield* settle;
       expect(events).toEqual(["merge started"]);
       finish();
       yield* Fiber.join(cancelled);
@@ -572,7 +585,9 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
           yield* Effect.promise(() => arrival);
           expect(git(f.a, "for-each-ref", "refs/specwithcode/extras")).not.toBe("");
           const cancelled = yield* Effect.forkChild(Fiber.interrupt(send));
-          yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)));
+          yield* Effect.forEach(Array.from({ length: 200 }), () => Effect.yieldNow, {
+            discard: true,
+          });
           // Cancelled, and still under way: the bundle is with the other machine.
           expect(git(f.b, "for-each-ref", "refs/heads/swc")).toBe("");
           release();

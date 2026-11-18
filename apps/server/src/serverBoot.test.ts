@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - starts the real server as a child process.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalFetch:off - starts the real server as a child process and calls it.
 /**
  * Starts the server from source in a new private home and waits until it is
  * ready. Every service a layer asks for is looked up while the runtime is
