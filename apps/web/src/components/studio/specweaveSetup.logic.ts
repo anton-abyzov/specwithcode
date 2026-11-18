@@ -10,6 +10,7 @@ import type {
   SpecweaveSetupRequestState,
   SpecweaveState,
 } from "@specweave-studio/contracts";
+import { resolveStudioMcpToolId } from "@specweave-studio/shared/studioMcpToolPresentation";
 
 // ── Words ───────────────────────────────────────────────────────────────
 
@@ -224,8 +225,13 @@ const SNAPSHOT_TOOLS =
   /^(delegate_task|create_threads|studio_thread_launch|request_specweave_setup)$/;
 const SETTLED_ITEM = new Set(["completed", "failed", "cancelled", "interrupted"]);
 
+/**
+ * The bare tool name of a studio-code tool, whatever spelling the provider uses
+ * (`mcp__studio-code__x` for Claude, `studio-code.x` for Codex and ACP agents,
+ * and the others the shared resolver knows); empty for any other tool.
+ */
 function bareToolName(name: string): string {
-  return name.replace(/^mcp__.+?__/, "");
+  return resolveStudioMcpToolId(name) ?? "";
 }
 
 /**
@@ -336,6 +342,54 @@ export function lastUserMessageAt(
     if (row.kind === "message" && row.message?.role === "user" && writtenByPerson(row.message))
       if (latest === null || row.createdAt > latest) latest = row.createdAt;
   return latest;
+}
+
+/**
+ * The card's tool key and newest person message, read from a coordinator's
+ * projection. The project page draws its coordinator without timeline rows,
+ * so the card there reads the projection directly.
+ */
+export function specweaveCoordinatorKeys(input: {
+  readonly turnItems: ReadonlyArray<{
+    readonly id: string;
+    readonly type: string;
+    readonly toolName?: string | null | undefined;
+    readonly status?: string | undefined;
+  }>;
+  readonly messages: ReadonlyArray<{
+    readonly role: string;
+    readonly createdAt: string | null;
+    readonly createdBy?: string | undefined;
+  }>;
+}): { readonly toolKey: string; readonly lastUserMessageAt: string | null } {
+  return {
+    toolKey: specweaveSnapshotToolKey(
+      input.turnItems.map((item) => ({
+        kind: "work",
+        id: item.id,
+        entry: {
+          structuredPayload: {
+            type: item.type,
+            toolName: item.toolName ?? null,
+            ...(item.status === undefined ? {} : { status: item.status }),
+          },
+        },
+      })),
+    ),
+    lastUserMessageAt: lastUserMessageAt(
+      input.messages.flatMap((message) =>
+        message.createdAt === null
+          ? []
+          : [
+              {
+                kind: "message",
+                createdAt: message.createdAt,
+                message: { role: message.role, createdBy: message.createdBy },
+              },
+            ],
+      ),
+    ),
+  };
 }
 
 /**
