@@ -32,7 +32,7 @@ export function useConnectRenew(): () => void {
       });
       return;
     }
-    markConnectRenewOpen();
+    markConnectRenewOpen(userId);
     void clerk
       .signOut({ redirectUrl: resolveClerkSignOutRedirectUrl(window.location.href, isElectron) })
       .catch((cause: unknown) => {

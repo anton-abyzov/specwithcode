@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  CONNECT_RENEW_MARK_MAX_AGE_MS,
   CONNECT_SESSION_EXPIRY_SKEW_MS,
   CONNECT_SESSION_RECORD_KEY,
   clearConnectRenewStarted,
@@ -37,6 +38,22 @@ describe("which sign-outs keep the machines reached through Connect (1417, AC-16
   it("keeps them while the person renews, whenever that happens", () => {
     const record = { accountId: "user-1", expireAt: NOW + 3 * HOUR, renewStartedAt: NOW };
     expect(keepsConnectMachinesAtSignOut(record, NOW)).toBe(true);
+    expect(keepsConnectMachinesAtSignOut(record, NOW + 5_000, true)).toBe(true);
+  });
+
+  it("removes them at a sign-out the window saw, when the renew mark is left over", () => {
+    const record = {
+      accountId: "user-1",
+      expireAt: NOW + 3 * HOUR,
+      renewStartedAt: NOW - CONNECT_RENEW_MARK_MAX_AGE_MS - 1,
+    };
+    expect(keepsConnectMachinesAtSignOut(record, NOW, true)).toBe(false);
+    // A load that starts signed out cannot tell when the renew's sign-out was.
+    expect(keepsConnectMachinesAtSignOut(record, NOW, false)).toBe(true);
+    // A clock that went backwards says nothing about how old the mark is.
+    expect(keepsConnectMachinesAtSignOut({ ...record, renewStartedAt: NOW + 1 }, NOW, true)).toBe(
+      false,
+    );
   });
 
   it("removes them when the window has no record", () => {

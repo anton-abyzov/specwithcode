@@ -51,6 +51,8 @@ export function ConnectSessionGuard() {
     reportFailure: false,
   });
   const checking = useRef(false);
+  // A check still running when this account's guard goes away says nothing for the next one.
+  const mounted = useRef(true);
   // The listing error the last check ended on. Each check's own listing makes
   // a new error, so without this a refusal that lasts would check again at once.
   const answered = useRef<ConnectionAttemptError | null>(null);
@@ -60,7 +62,13 @@ export function ConnectSessionGuard() {
   useEffect(() => {
     if (!rejected) setConnectSessionRejected(false);
   }, [rejected]);
-  useEffect(() => () => setConnectSessionRejected(false), []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      setConnectSessionRejected(false);
+    };
+  }, []);
 
   useEffect(() => {
     const trigger = Option.getOrNull(discovery.error);
@@ -79,6 +87,7 @@ export function ConnectSessionGuard() {
         // Only a refusal from the listing this guard just asked for counts: an
         // offline or unfinished refresh leaves the old error in place.
         if (
+          mounted.current &&
           !after.offline &&
           !after.refreshing &&
           relaySessionRejected(after.error) &&
@@ -90,6 +99,7 @@ export function ConnectSessionGuard() {
           setConnectSessionRejected(true);
         }
       } finally {
+        // Offline, this keeps the old error; coming back online lists again, with a new one.
         answered.current = Option.getOrNull(
           appAtomRegistry.get(relayEnvironmentDiscovery.stateValueAtom).error,
         );

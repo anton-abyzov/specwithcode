@@ -12,7 +12,8 @@ import { takeConnectRenewOpen } from "./connectSignInStarted";
 export function ConnectRenewResume() {
   const { openRenewAuthPrompt } = useStudioConnectAuthPrompt();
   useEffect(() => {
-    if (takeConnectRenewOpen()) openRenewAuthPrompt();
+    const renewing = takeConnectRenewOpen();
+    if (renewing !== null) openRenewAuthPrompt(renewing);
   }, [openRenewAuthPrompt]);
   return null;
 }

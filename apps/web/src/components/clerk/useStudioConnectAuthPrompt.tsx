@@ -9,9 +9,9 @@ import { resolveClerkSignInProps } from "./authRedirect";
 
 export function useStudioConnectAuthPrompt() {
   const clerk = useClerk();
-  const open = (origin: ConnectSignInOrigin) => {
+  const open = (origin: ConnectSignInOrigin, renewing?: string) => {
     // Signing in through another site reloads this window; the note says a sign-in was under way.
-    markConnectSignInStarted(origin);
+    markConnectSignInStarted(origin, Date.now(), renewing);
     clerk.openSignIn(resolveClerkSignInProps(window.location.href, isElectron));
   };
   return {
@@ -20,7 +20,7 @@ export function useStudioConnectAuthPrompt() {
     openAuthPrompt: () => open("app"),
     /** For the first-run setup, which links this machine in its own step. */
     openSetupAuthPrompt: () => open("setup"),
-    /** For Sign in again now, after its sign-out (1417). */
-    openRenewAuthPrompt: () => open("renew"),
+    /** For Sign in again now, after its sign-out (1417): the account being renewed. */
+    openRenewAuthPrompt: (accountId: string) => open("renew", accountId),
   };
 }

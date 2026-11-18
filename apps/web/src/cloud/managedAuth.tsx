@@ -128,7 +128,11 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
       deactivateManagedRelayAuthentication();
       if (previousAccount !== null) {
         void queueAccountCleanup({
-          keepMachines: keepsConnectMachinesAtSignOut(readConnectSessionRecord()),
+          keepMachines: keepsConnectMachinesAtSignOut(
+            readConnectSessionRecord(),
+            Date.now(),
+            previousAccount !== undefined,
+          ),
         });
       }
     } else {

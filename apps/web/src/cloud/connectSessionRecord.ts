@@ -93,15 +93,30 @@ export function clearConnectRenewStarted(accountId: string): void {
 }
 
 /**
+ * A renew's own sign-out follows its mark within seconds. A sign-out this
+ * window sees happen with an older mark is not that one: the mark was left
+ * over (the window closed before its sign-out), and the person signed out.
+ */
+export const CONNECT_RENEW_MARK_MAX_AGE_MS = 10 * 60_000;
+
+/**
  * Whether a settled sign-out keeps the machines reached through Connect: only
  * when the record says the sign-in ran out or the person is renewing it.
+ * `seen` is true when this window saw the account signed in before the
+ * sign-out; a load that starts signed out cannot tell when the sign-out was.
  */
 export function keepsConnectMachinesAtSignOut(
   record: ConnectSessionRecord | null,
   now = Date.now(),
+  seen = false,
 ): boolean {
   if (record === null) return false;
-  if (record.renewStartedAt !== undefined) return true;
+  const renew = record.renewStartedAt;
+  if (
+    renew !== undefined &&
+    (!seen || (renew <= now && now - renew <= CONNECT_RENEW_MARK_MAX_AGE_MS))
+  )
+    return true;
   return now >= record.expireAt - CONNECT_SESSION_EXPIRY_SKEW_MS;
 }
 

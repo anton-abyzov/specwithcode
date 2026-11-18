@@ -98,7 +98,7 @@ export default function ConnectSignedOutBanner() {
           <Button size="xs" onClick={renew}>
             {tx("Sign in again now")}
           </Button>
-          <Button size="xs" variant="ghost" onClick={() => setLaterFor(sessionEnd.expireAt)}>
+          <Button size="xs" variant="outline" onClick={() => setLaterFor(sessionEnd.expireAt)}>
             {tx("Later")}
           </Button>
         </AlertAction>

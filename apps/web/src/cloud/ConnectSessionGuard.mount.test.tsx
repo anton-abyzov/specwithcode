@@ -98,6 +98,48 @@ describe("ConnectSessionGuard while the relay keeps refusing the sign-in (1417, 
     expect(refresh).toHaveBeenCalledTimes(2);
   });
 
+  it("says nothing from a check that ends after its account's guard went away", async () => {
+    store.set({ error: refused() });
+    let finish = () => {};
+    refresh.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = () => {
+            store.set({ error: refused() });
+            resolve();
+          };
+        }),
+    );
+    await act(async () => {
+      renderer = create(<ConnectSessionGuard />);
+    });
+    await settle();
+    await act(async () => renderer?.unmount());
+    renderer = null;
+    await act(async () => finish());
+    await settle();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(store.rejected).toBe(false);
+  });
+
+  it("checks a refusal again once it is back online, never while offline", async () => {
+    store.set({ error: refused() });
+    // Offline, the refresh leaves the refusal it started from.
+    refresh.mockImplementationOnce(async () => store.set({ error: store.state.error, offline: true }));
+    await act(async () => {
+      renderer = create(<ConnectSessionGuard />);
+    });
+    await settle();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(store.rejected).toBe(false);
+    // Back online: the listing comes back refused, and this time the check answers.
+    refresh.mockImplementation(async () => store.set({ error: refused() }));
+    await act(async () => store.set({ error: refused() }));
+    await settle();
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(store.rejected).toBe(true);
+  });
+
   it("clears the report once a listing is accepted", async () => {
     store.set({ error: refused() });
     refresh.mockImplementation(async () => store.set({ error: refused() }));
