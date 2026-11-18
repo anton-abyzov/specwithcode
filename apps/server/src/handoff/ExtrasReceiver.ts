@@ -90,6 +90,49 @@ export async function checkedOutBranches(root: string): Promise<Set<string>> {
   return out;
 }
 
+/**
+ * Moves an arrival branch forward from the head it was read at. Git itself
+ * does the move (`git branch -f`), because Git refuses it for a branch that
+ * any worktree has checked out, also one checked out after the worktrees were
+ * listed; a plain ref update would move the branch under that worktree. The
+ * head is read again first, so a branch that changed meanwhile stays.
+ */
+export async function moveBranchForward(input: {
+  readonly root: string;
+  readonly branch: string;
+  readonly commit: string;
+  readonly from: string;
+}): Promise<boolean> {
+  const { root, branch, commit } = input;
+  if ((await refCommit(root, `refs/heads/${branch}`)) !== input.from) return false;
+  const continues = await runGit(root, ["merge-base", "--is-ancestor", input.from, commit], {
+    allowFailure: true,
+  });
+  if (continues.code !== 0) return false;
+  const moved = await runGit(root, ["branch", "--no-track", "-f", "--", branch, commit], {
+    allowFailure: true,
+  });
+  return moved.code === 0 && (await refCommit(root, `refs/heads/${branch}`)) === commit;
+}
+
+/**
+ * Removes the hidden refs an arrival that never finished left behind (the
+ * server stopped mid-way). Arrivals in one repository run one at a time, so
+ * every such ref but the current one's belongs to a dead operation.
+ */
+export async function sweepStaleIncomingRefs(root: string, keep: string): Promise<void> {
+  const listed = await runGit(
+    root,
+    ["for-each-ref", "--format=%(refname)", EXTRAS_INCOMING_REF_PREFIX],
+    { allowFailure: true },
+  );
+  if (listed.code !== 0) return;
+  for (const ref of listed.stdout.split("\n")) {
+    if (!ref.startsWith(EXTRAS_INCOMING_REF_PREFIX) || ref === keep) continue;
+    await runGit(root, ["update-ref", "-d", ref], { allowFailure: true });
+  }
+}
+
 export interface LandedExtra {
   readonly branch: string;
   readonly landed: ExtrasReplicateResponse["landed"];
@@ -97,8 +140,8 @@ export interface LandedExtra {
 
 /**
  * Lands one extra as a branch. The bundle is fetched into a hidden ref first;
- * the branch is then created, or moved forward when the new head continues it,
- * by a compare-and-swap that never forces. When the plain name is checked out
+ * the branch is then created only where no ref of that name exists, or moved
+ * forward when the new head continues it (`moveBranchForward`). When the plain name is checked out
  * here, holds other work, or cannot be created, the extra arrives beside it as
  * `{name}-{id}`. A repeated send of the same extra changes nothing.
  */
@@ -125,6 +168,7 @@ export async function landExtra(input: {
     .digest("hex")
     .slice(0, 16)}`;
   try {
+    await sweepStaleIncomingRefs(root, incoming);
     if (input.bundle === null || input.bundle.byteLength === 0) {
       await pinCommit({ root, commit, targetRef: incoming });
     } else {
@@ -155,16 +199,9 @@ export async function landExtra(input: {
       if (existing === null) {
         if (await create(base)) return { branch: base, landed: "created" };
       } else {
-        const continues = await runGit(root, ["merge-base", "--is-ancestor", existing, commit], {
-          allowFailure: true,
-        });
-        if (continues.code === 0) {
-          // Moves only from the head just read: a branch that changed meanwhile stays.
-          const moved = await runGit(root, ["update-ref", `refs/heads/${base}`, commit, existing], {
-            allowFailure: true,
-          });
-          if (moved.code === 0) return { branch: base, landed: "moved-forward" };
-        }
+        // Moves only from the head just read, and never under a worktree that has it checked out.
+        if (await moveBranchForward({ root, branch: base, commit, from: existing }))
+          return { branch: base, landed: "moved-forward" };
       }
     }
     const stem = `${base}-${extraId(input.operationId)}`;
@@ -360,7 +397,9 @@ const make = Effect.gen(function* () {
                 operationId: meta.operationId,
               }),
             catch: fromGit,
-          }),
+            // A caller that goes away mid-way does not free the repository while Git still
+            // works in it: the next arrival would take this one's hidden ref for a dead one.
+          }).pipe(Effect.uninterruptible),
         );
         return { machineLabel: label.slice(0, 120), branch: landed.branch, landed: landed.landed };
       }),

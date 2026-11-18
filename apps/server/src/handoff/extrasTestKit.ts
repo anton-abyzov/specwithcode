@@ -5,6 +5,108 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+/** One Git command the code under test ran: where, its arguments, and whether on a private index. */
+export interface RecordedGit {
+  readonly cwd: string;
+  readonly args: ReadonlyArray<string>;
+  readonly privateIndex: boolean;
+}
+const recorded: Array<RecordedGit> = [];
+export const recordedGit = (): ReadonlyArray<RecordedGit> => recorded;
+
+type GitModule = typeof import("../fleet/folderTransfer/git.ts");
+/**
+ * `folderTransfer/git.ts` with every command noted before it runs. A test file
+ * passes this to `vi.mock` for that module, so all the code under test (the
+ * sender, the receiver, the bundle and checkpoint helpers) is recorded.
+ */
+export function recordingGit(actual: GitModule): GitModule {
+  const runGit: GitModule["runGit"] = (cwd, args, options) => {
+    recorded.push({
+      cwd,
+      args: [...args],
+      privateIndex: options?.env?.GIT_INDEX_FILE !== undefined,
+    });
+    return actual.runGit(cwd, args, options);
+  };
+  return {
+    ...actual,
+    runGit,
+    gitText: async (cwd, args) => (await runGit(cwd, args)).stdout.trim(),
+    gitList: async (cwd, args) => (await runGit(cwd, args)).stdout.split("\0").filter(Boolean),
+  };
+}
+
+const READS = new Set([
+  "rev-parse",
+  "rev-list",
+  "for-each-ref",
+  "status",
+  "symbolic-ref",
+  "ls-files",
+  "diff",
+  "diff-tree",
+  "ls-tree",
+  "cat-file",
+  "log",
+  "merge-base",
+  "check-ref-format",
+]);
+/** These only ever run on a private index, never the repository's own. */
+const PRIVATE_INDEX_ONLY = new Set(["add", "read-tree", "write-tree", "update-index"]);
+const HIDDEN = /^refs\/specwithcode\/extras(-incoming)?\//;
+const ARRIVAL = /^refs\/heads\/swc\/from-/;
+
+/**
+ * Every recorded command that is not one the extras code may run, as text.
+ * Allowed: reads; a snapshot built on a private index; hidden refs under
+ * `refs/specwithcode/extras/` and `extras-incoming/` written and removed; a
+ * bundle created, verified and fetched into a hidden ref; and an arrival
+ * branch `swc/from-…` created only where none exists, or moved by
+ * `git branch -f`. Nothing else: no reset, rebase, stash, checkout, switch,
+ * merge, push, commit, pull, clean, restore or tag.
+ */
+export function gitCommandsNotAllowed(): Array<string> {
+  const out: Array<string> = [];
+  for (const { args, privateIndex } of recorded) {
+    const [verb, ...rest] = args;
+    const ok =
+      verb === undefined
+        ? false
+        : READS.has(verb)
+          ? true
+          : PRIVATE_INDEX_ONLY.has(verb)
+            ? privateIndex
+            : verb === "commit-tree"
+              ? true
+              : verb === "stash"
+                ? rest.join(" ") === "list"
+                : verb === "worktree"
+                  ? rest.join(" ") === "list --porcelain"
+                  : verb === "bundle"
+                    ? ["create", "verify", "list-heads"].includes(rest[0] ?? "")
+                    : verb === "update-ref"
+                      ? rest[0] === "-d"
+                        ? rest.length === 2 && HIDDEN.test(rest[1] ?? "")
+                        : HIDDEN.test(rest[0] ?? "") ||
+                          // An arrival branch is created only where no ref of that name exists.
+                          (ARRIVAL.test(rest[0] ?? "") && rest.length === 3 && rest[2] === "")
+                      : verb === "branch"
+                        ? rest.length === 5 &&
+                          rest.slice(0, 3).join(" ") === "--no-track -f --" &&
+                          (rest[3] ?? "").startsWith("swc/from-")
+                        : verb === "fetch"
+                          ? rest.length === 5 &&
+                            rest.slice(0, 3).join(" ") ===
+                              "--quiet --no-tags --no-write-fetch-head" &&
+                            /^(\/|[A-Za-z]:[\\/])/.test(rest[3] ?? "") &&
+                            /:refs\/specwithcode\/extras-incoming\//.test(rest[4] ?? "")
+                          : false;
+    if (!ok) out.push(args.join(" ").slice(0, 300));
+  }
+  return out;
+}
+
 const ISOLATED = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const saved: Record<string, string | undefined> = {};
 

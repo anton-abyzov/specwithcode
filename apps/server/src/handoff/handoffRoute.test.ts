@@ -7,6 +7,7 @@ import {
   AuthSessionId,
   type AuthMcpClientAccess,
   EnvironmentId,
+  HANDOFF_MAX_BUNDLE_BYTES,
   ProjectId,
   ThreadId,
 } from "@specweave-studio/contracts";
@@ -27,7 +28,12 @@ import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
 import { ExtrasReceiver } from "./ExtrasReceiver.ts";
 import { HandoffReceiver, type ReceiverCaller } from "./HandoffReceiver.ts";
 import * as HandoffRoute from "./handoffRoute.ts";
-import { HANDOFF_PEER_PREFIX, LINKED_SYNC_PEER_MAX_BYTES } from "./handoffWire.ts";
+import {
+  encodeFrame,
+  HANDOFF_FRAME_META_MAX_BYTES,
+  HANDOFF_PEER_PREFIX,
+  LINKED_SYNC_PEER_MAX_BYTES,
+} from "./handoffWire.ts";
 import { LINKED_SYNC_PROTOCOL_VERSION } from "./linkedSyncWire.ts";
 
 const m4 = EnvironmentId.make("env-m4");
@@ -46,6 +52,7 @@ const credentials: Record<
 
 function api() {
   const callers: Array<ReceiverCaller> = [];
+  const extras: Array<{ readonly meta: unknown; readonly bundle: Uint8Array | null }> = [];
   const token = (headers: Record<string, string | undefined>) =>
     (headers.authorization ?? "").replace(/^Bearer /, "");
   // Route handlers read their services per request, so they stay in the output.
@@ -97,6 +104,16 @@ function api() {
               callers.push(caller);
               return { known: [] };
             }),
+          replicate: (caller, meta, bundle) =>
+            Effect.sync(() => {
+              callers.push(caller);
+              extras.push({ meta, bundle: bundle === null ? null : new Uint8Array(bundle) });
+              return {
+                machineLabel: "Mini",
+                branch: `swc/from-M4/${meta.leaf}`,
+                landed: "created",
+              };
+            }),
         }),
         Layer.mock(HandoffReceiver)({
           negotiate: (caller) =>
@@ -142,7 +159,20 @@ function api() {
         body,
       }),
     );
-  return { negotiate, post, callers, dispose };
+  /** A framed body (metadata, then the bundle's bytes), as `extras-replicate` takes it. */
+  const frame = (path: string, bearer: string, body: Uint8Array, length = body.byteLength) =>
+    handler(
+      new Request(`http://minis.local${HANDOFF_PEER_PREFIX}/${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(length),
+          authorization: `Bearer ${bearer}`,
+        },
+        body: body as never,
+      }),
+    );
+  return { negotiate, post, frame, callers, extras, dispose };
 }
 
 describe("handoff route", () => {
@@ -249,6 +279,76 @@ describe("handoff route", () => {
       const expired = await app.negotiate("expired");
       expect(expired.status).toBe(401);
       expect(await expired.json()).toMatchObject({ code: "needs_grant" });
+      expect(app.callers).toEqual([]);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  const extraMeta = {
+    sourceEnvironmentId: m4,
+    sourceLabel: "M4",
+    sourceProjectId: ProjectId.make("project-m4"),
+    repositoryPath: "repositories/lib",
+    operationId: "0a1b2c3d-1111-4222-8333-444455556666",
+    leaf: "feature",
+    commit: "a".repeat(40),
+  };
+
+  it("hands a framed extra to its receiver: the metadata, and the bundle's bytes untouched", async () => {
+    const app = api();
+    try {
+      const bundle = Uint8Array.from({ length: 70_000 }, (_, index) => index % 251);
+      const answer = await app.frame("extras-replicate", "limited", encodeFrame(extraMeta, bundle));
+      expect(answer.status).toBe(200);
+      expect(await answer.json()).toEqual({
+        machineLabel: "Mini",
+        branch: "swc/from-M4/feature",
+        landed: "created",
+      });
+      expect(app.callers[0]).toMatchObject({ sourceEnvironmentId: m4 });
+      expect(app.extras[0]!.meta).toEqual(extraMeta);
+      expect(Buffer.from(app.extras[0]!.bundle!).equals(Buffer.from(bundle))).toBe(true);
+      // A commit the other machine already holds comes with no bundle at all.
+      expect(
+        (await app.frame("extras-replicate", "limited", encodeFrame(extraMeta, null))).status,
+      ).toBe(200);
+      expect(app.extras[1]!.bundle?.byteLength ?? 0).toBe(0);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it("refuses an extra over the body limit before reading it, and a frame it cannot read", async () => {
+    const app = api();
+    try {
+      const small = encodeFrame(extraMeta, new Uint8Array([1, 2, 3]));
+      const oversize = await app.frame(
+        "extras-replicate",
+        "limited",
+        small,
+        HANDOFF_MAX_BUNDLE_BYTES + HANDOFF_FRAME_META_MAX_BYTES + 5,
+      );
+      expect(oversize.status).toBe(413);
+      expect(await oversize.json()).toMatchObject({ code: "too_large" });
+      const invalid = async (body: Uint8Array) => {
+        const answer = await app.frame("extras-replicate", "limited", body);
+        expect(answer.status).toBe(400);
+        expect(await answer.json()).toMatchObject({ code: "invalid" });
+      };
+      // Shorter than its own length field, a length past its end, and metadata that is not JSON.
+      await invalid(new Uint8Array([0, 0, 1]));
+      await invalid(Uint8Array.from([0, 0, 1, 0, ...small.subarray(4, 40)]));
+      await invalid(Uint8Array.from([0, 0, 0, 3, 110, 111, 33]));
+      // Metadata that is not this message: no commit, a commit that is no object name,
+      // a field too long. (Where the path leads is the receiver's check, as for a hand off.)
+      const { commit: _commit, ...withoutCommit } = extraMeta;
+      await invalid(encodeFrame(withoutCommit, null));
+      await invalid(encodeFrame({ ...extraMeta, commit: "main" }, null));
+      await invalid(encodeFrame({ ...extraMeta, leaf: "x".repeat(256) }, null));
+      expect(app.extras).toEqual([]);
+      // A revoked grant never reaches the receiver either.
+      expect((await app.frame("extras-replicate", "revoked", small)).status).toBe(403);
       expect(app.callers).toEqual([]);
     } finally {
       await app.dispose();

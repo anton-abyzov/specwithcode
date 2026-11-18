@@ -5,6 +5,7 @@
  * wire messages to the real receiver of another "machine".
  */
 import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
@@ -15,6 +16,7 @@ import {
   ProjectId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -36,6 +38,7 @@ import { HandoffMode } from "../handoff/HandoffMode.ts";
 import { HandoffPeerError, HandoffPeers } from "../handoff/handoffPeers.ts";
 import { ExtrasNegotiateRequest, ExtrasReplicateMeta } from "../handoff/handoffWire.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSync from "./ProjectSync.ts";
 import * as ProjectSyncExtras from "./ProjectSyncExtras.ts";
@@ -291,6 +294,142 @@ describe("the project sync service (1390 AC-10, AC-11)", () => {
   );
 });
 
+describe("a cancelled call and the project's lock (P2-09)", () => {
+  /** Resolves once `events` holds `count` entries: the test waits on what happened, not on time. */
+  const reached = (events: ReadonlyArray<string>, count: number) =>
+    Effect.promise(async () => {
+      while (events.length < count) await new Promise((resolve) => setImmediate(resolve));
+    });
+
+  it.effect("keeps the lock until stopped Git work has ended and cleaned up", () =>
+    Effect.gen(function* () {
+      const admission = yield* ProjectAdmission.ProjectAdmission;
+      const events: Array<string> = [];
+      // Git work that ends some time after it is told to stop, as a killed clone does.
+      const work = ProjectSync.stoppedWhenCancelled(
+        (signal) =>
+          new Promise<string>((resolve) => {
+            events.push("started");
+            signal.addEventListener("abort", () => {
+              events.push("told to stop");
+              setTimeout(() => {
+                events.push("ended and cleaned up");
+                resolve("stopped");
+              }, 50);
+            });
+          }),
+      );
+      const first = yield* Effect.forkChild(admission.withLock(projectA, work));
+      yield* reached(events, 1);
+      const second = yield* Effect.forkChild(
+        admission.withLock(
+          projectA,
+          Effect.sync(() => events.push("next call has the lock")),
+        ),
+      );
+      yield* Fiber.interrupt(first);
+      yield* Fiber.join(second);
+      expect(events).toEqual([
+        "started",
+        "told to stop",
+        "ended and cleaned up",
+        "next call has the lock",
+      ]);
+      // Work that ends by itself is not told to stop, and gives its result.
+      expect(
+        yield* ProjectSync.stoppedWhenCancelled(async (signal) => (signal.aborted ? "no" : "yes")),
+      ).toBe("yes");
+    }).pipe(Effect.provide(ProjectAdmission.layer)),
+  );
+
+  it.effect("never cuts a merge short: a cancelled call waits for it under the lock", () =>
+    Effect.gen(function* () {
+      const admission = yield* ProjectAdmission.ProjectAdmission;
+      const events: Array<string> = [];
+      let finish = () => {};
+      const work = ProjectSync.untilGitEnds(
+        () =>
+          new Promise<void>((resolve) => {
+            events.push("merge started");
+            finish = () => {
+              events.push("merge ended");
+              resolve();
+            };
+          }),
+      );
+      const first = yield* Effect.forkChild(admission.withLock(projectA, work));
+      yield* reached(events, 1);
+      const second = yield* Effect.forkChild(
+        admission.withLock(
+          projectA,
+          Effect.sync(() => events.push("next call has the lock")),
+        ),
+      );
+      const cancelled = yield* Effect.forkChild(Fiber.interrupt(first));
+      // The cancel is asked for; the merge still runs and the lock is still held.
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)));
+      expect(events).toEqual(["merge started"]);
+      finish();
+      yield* Fiber.join(cancelled);
+      yield* Fiber.join(second);
+      expect(events).toEqual(["merge started", "merge ended", "next call has the lock"]);
+    }).pipe(Effect.provide(ProjectAdmission.layer)),
+  );
+
+  it.effect(
+    "stops a cancelled clone, removes its folder, and only then lets the next call in",
+    () => {
+      const f = twoMachines();
+      // A server that accepts and never answers: the clone waits until it is stopped.
+      const sockets: Array<NodeNet.Socket> = [];
+      let connected = () => {};
+      const connection = new Promise<void>((resolve) => (connected = resolve));
+      const server = NodeNet.createServer((socket) => {
+        sockets.push(socket);
+        connected();
+      });
+      return Effect.gen(function* () {
+        const sync = yield* ProjectSync.ProjectSync;
+        yield* Effect.promise(
+          () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
+        );
+        const port = (server.address() as NodeNet.AddressInfo).port;
+        const target = NodePath.join(f.a, "repositories", "slow");
+        const run = yield* Effect.forkChild(
+          sync.run({
+            ...input,
+            fastForward: [],
+            clone: [{ path: "repositories/slow", remote: `git://127.0.0.1:${port}/acme/slow.git` }],
+          }),
+        );
+        yield* Effect.promise(() => connection);
+        expect(NodeFS.existsSync(target)).toBe(true);
+        // A second call waits for the lock the clone holds.
+        const seen: Array<boolean> = [];
+        const next = yield* Effect.forkChild(
+          sync
+            .fetch(input)
+            .pipe(Effect.tap(() => Effect.sync(() => seen.push(NodeFS.existsSync(target))))),
+        );
+        yield* Fiber.interrupt(run);
+        // The cancel returned: Git has ended and the folder it was filling is gone.
+        expect(NodeFS.existsSync(target)).toBe(false);
+        yield* Fiber.join(next);
+        // The next call got the lock only after the folder was removed.
+        expect(seen).toEqual([false]);
+      }).pipe(
+        Effect.ensuring(
+          Effect.promise(async () => {
+            for (const socket of sockets) socket.destroy();
+            await new Promise((resolve) => server.close(resolve));
+          }),
+        ),
+        Effect.provide(syncLayer([project(projectA, f.a)])),
+      );
+    },
+  );
+});
+
 describe("extras through the peer messages to the real receiver (1390 AC-13)", () => {
   const OPERATION = "0a1b2c3d-1111-4222-8333-444455556666";
 
@@ -299,6 +438,8 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
     f: { readonly a: string; readonly b: string },
     grant: ReturnType<typeof unscopedGrant> | null,
     body: (extras: ProjectSyncExtras.ProjectSyncExtras["Service"]) => Effect.Effect<A, E>,
+    /** Runs as a bundle reaches the other machine, before it lands; a test holds it there. */
+    onArrival: () => Promise<void> = async () => {},
   ) =>
     Effect.gen(function* () {
       const receiver = yield* Effect.service(ExtrasReceiver).pipe(
@@ -327,9 +468,10 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
             .negotiate(caller, overWire(ExtrasNegotiateRequest, request))
             .pipe(Effect.mapError(refused)),
         extrasReplicate: (_, meta, bundle) =>
-          receiver
-            .replicate(caller, overWire(ExtrasReplicateMeta, meta), bundle)
-            .pipe(Effect.mapError(refused)),
+          Effect.promise(onArrival).pipe(
+            Effect.andThen(receiver.replicate(caller, overWire(ExtrasReplicateMeta, meta), bundle)),
+            Effect.mapError(refused),
+          ),
       });
       return yield* Effect.service(ProjectSyncExtras.ProjectSyncExtras).pipe(
         Effect.flatMap(body),
@@ -352,6 +494,14 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
       const nestedB = NodePath.join(f.b, "repositories", "lib");
       const libTip = commit(f.nested, "lib.ts", "export const lib = 'not pushed';\n");
       write(f.a, "app.ts", "export const a = 'uncommitted';\n");
+      // Hidden refs a send and an arrival left behind when a server stopped mid-way (P2-08).
+      git(f.nested, "update-ref", "refs/specwithcode/extras/dead-op/0", libTip);
+      git(
+        nestedB,
+        "update-ref",
+        "refs/specwithcode/extras-incoming/dead-op/0123456789abcdef",
+        "HEAD",
+      );
       const before = { root: snapshot(f.b), nested: snapshot(nestedB), source: snapshot(f.a) };
       return withMachines(f, unscopedGrant(m4), (extras) =>
         Effect.gen(function* () {
@@ -388,6 +538,8 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
             "export const a = 'uncommitted';",
           );
           expect(filesOf(f.b, sent.items[1]!.arrivedAs!)).toContain("app.ts");
+          for (const repository of [f.a, f.nested, f.b, nestedB])
+            expect(git(repository, "for-each-ref", "refs/specwithcode")).toBe("");
           // Nothing arrived in a working folder, and the source is as it was.
           expect(snapshot(f.b)).toEqual(before.root);
           expect(snapshot(nestedB)).toEqual(before.nested);
@@ -396,6 +548,45 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
       );
     },
   );
+
+  it.effect("finishes a send that was cancelled mid-way and leaves no hidden ref (P2-08)", () => {
+    const f = twoMachines();
+    const tip = commit(f.a, "app.ts", "export const a = 2;\n");
+    let arrived = () => {};
+    const arrival = new Promise<void>((resolve) => (arrived = resolve));
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    return withMachines(
+      f,
+      unscopedGrant(m4),
+      (extras) =>
+        Effect.gen(function* () {
+          const send = yield* Effect.forkChild(
+            extras.sendExtras({
+              projectId: projectA,
+              targetEnvironmentId: m5,
+              operationId: OPERATION,
+              items: [{ kind: "branch", path: ".", branch: "main" }],
+            }),
+          );
+          yield* Effect.promise(() => arrival);
+          expect(git(f.a, "for-each-ref", "refs/specwithcode/extras")).not.toBe("");
+          const cancelled = yield* Effect.forkChild(Fiber.interrupt(send));
+          yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)));
+          // Cancelled, and still under way: the bundle is with the other machine.
+          expect(git(f.b, "for-each-ref", "refs/heads/swc")).toBe("");
+          release();
+          yield* Fiber.join(cancelled);
+          expect(git(f.b, "rev-parse", "refs/heads/swc/from-M4/main")).toBe(tip);
+          for (const repository of [f.a, f.b])
+            expect(git(repository, "for-each-ref", "refs/specwithcode")).toBe("");
+        }),
+      async () => {
+        arrived();
+        await held;
+      },
+    );
+  });
 
   it.effect("keeps an extra when the other machine's grant does not cover the project", () => {
     const f = twoMachines();

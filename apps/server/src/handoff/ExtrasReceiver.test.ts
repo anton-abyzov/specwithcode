@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import { type EffectiveWorkGrant, unscopedGrant } from "../fleet/workGrantPolicy.ts";
 import { createBundle } from "./bundleGit.ts";
@@ -12,6 +13,7 @@ import {
   extraId,
   extrasProject,
   landExtra,
+  moveBranchForward,
 } from "./ExtrasReceiver.ts";
 import {
   allRefs,
@@ -19,11 +21,18 @@ import {
   cleanUp,
   commit,
   git,
+  gitCommandsNotAllowed,
   isolateGit,
+  recordedGit,
   restoreGit,
   snapshot,
   twoMachines,
 } from "./extrasTestKit.ts";
+
+vi.mock("../fleet/folderTransfer/git.ts", async (importOriginal) => {
+  const kit = await import("./extrasTestKit.ts");
+  return kit.recordingGit(await importOriginal<typeof import("../fleet/folderTransfer/git.ts")>());
+});
 
 beforeAll(isolateGit);
 afterAll(restoreGit);
@@ -157,6 +166,64 @@ describe("landing a Sync extra (1390 AC-13)", () => {
       operationId: "ffeedd00-1111-4222-8333-444455556666",
     });
     expect(again.landed).toEqual({ branch: "swc/from-M4/feature-ffeedd", landed: "checked-out" });
+  });
+
+  it("never moves a branch that a worktree checked out after the worktrees were listed (P2-03)", async () => {
+    const f = twoMachines();
+    git(f.a, "checkout", "-q", "-b", "feature");
+    commit(f.a, "feature.ts", "export const feature = 1;\n");
+    const first = await send(f, "feature");
+    const next = commit(f.a, "feature.ts", "export const feature = 2;\n");
+    const { bytes } = await bundleOf(f.a, "feature", [first.tip]);
+    const bundle = NodePath.join(f.base, "next.bundle");
+    NodeFS.writeFileSync(bundle, bytes);
+    git(f.b, "fetch", "-q", bundle, "refs/heads/feature:refs/test/next");
+    // The gap: the worktrees were listed, then the branch is checked out in a linked worktree.
+    const worktree = NodePath.join(f.base, "b-late");
+    git(f.b, "worktree", "add", "-q", worktree, "swc/from-M4/feature");
+    const before = { worktree: snapshot(worktree), branches: branches(f.b) };
+    expect(
+      await moveBranchForward({
+        root: f.b,
+        branch: "swc/from-M4/feature",
+        commit: next,
+        from: first.tip,
+      }),
+    ).toBe(false);
+    expect(git(f.b, "rev-parse", "refs/heads/swc/from-M4/feature")).toBe(first.tip);
+    expect({ worktree: snapshot(worktree), branches: branches(f.b) }).toEqual(before);
+    // Free again, the same move goes through, and only from the head it was read at.
+    git(worktree, "checkout", "-q", "--detach");
+    expect(
+      await moveBranchForward({
+        root: f.b,
+        branch: "swc/from-M4/feature",
+        commit: next,
+        from: next,
+      }),
+    ).toBe(false);
+    expect(
+      await moveBranchForward({
+        root: f.b,
+        branch: "swc/from-M4/feature",
+        commit: next,
+        from: first.tip,
+      }),
+    ).toBe(true);
+    expect(git(f.b, "rev-parse", "refs/heads/swc/from-M4/feature")).toBe(next);
+  });
+
+  it("removes the hidden refs an earlier, dead arrival left behind (P2-08)", async () => {
+    const f = twoMachines();
+    const head = git(f.b, "rev-parse", "HEAD");
+    git(f.b, "update-ref", "refs/specwithcode/extras-incoming/deadbeef/0123456789abcdef", head);
+    git(f.b, "update-ref", "refs/specwithcode/handoff/keep", head);
+    git(f.a, "checkout", "-q", "-b", "feature");
+    commit(f.a, "feature.ts", "export const feature = 1;\n");
+    await send(f, "feature");
+    expect(allRefs(f.b)).not.toContain("refs/specwithcode/extras-incoming/");
+    // Refs of other features are not this one's to remove.
+    expect(allRefs(f.b)).toContain("refs/specwithcode/handoff/keep");
   });
 
   it("arrives beside a branch that is under a rebase or a bisect", async () => {
@@ -354,5 +421,16 @@ describe("who may send extras here (1390 AC-13)", () => {
         ],
       }),
     ).toMatchObject({ kind: "refused" });
+  });
+});
+
+describe("the Git commands the extras code runs", () => {
+  // Runs last: every test above recorded what the code under test ran.
+  it("runs only reads, private-index snapshots, hidden refs, bundles and arrival branches", () => {
+    const commands = recordedGit();
+    expect(commands.length).toBeGreaterThan(100);
+    expect(gitCommandsNotAllowed()).toEqual([]);
+    const verbs = new Set(commands.map((command) => command.args[0]));
+    for (const verb of ["bundle", "update-ref", "fetch"]) expect(verbs.has(verb), verb).toBe(true);
   });
 });

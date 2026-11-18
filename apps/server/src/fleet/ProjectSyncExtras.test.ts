@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import { knownCommits } from "../handoff/bundleGit.ts";
 import { landExtra } from "../handoff/ExtrasReceiver.ts";
@@ -14,7 +15,9 @@ import {
   fakeToken,
   filesOf,
   git,
+  gitCommandsNotAllowed,
   isolateGit,
+  recordedGit,
   restoreGit,
   snapshot,
   twoMachines,
@@ -26,7 +29,13 @@ import {
   inventoryRepository,
   sendExtra,
   snapshotLeaf,
+  sweepStaleExtraRefs,
 } from "./ProjectSyncExtras.ts";
+
+vi.mock("./folderTransfer/git.ts", async (importOriginal) => {
+  const kit = await import("../handoff/extrasTestKit.ts");
+  return kit.recordingGit(await importOriginal<typeof import("./folderTransfer/git.ts")>());
+});
 
 beforeAll(isolateGit);
 afterAll(restoreGit);
@@ -362,6 +371,24 @@ describe("limits on uncommitted work (1390 AC-34)", () => {
   });
 });
 
+describe("hidden refs of dead operations (P2-08)", () => {
+  it("sweeps the refs a dead send left behind, and keeps those of a send under way", async () => {
+    const f = twoMachines();
+    const head = git(f.a, "rev-parse", "HEAD");
+    git(f.a, "update-ref", "refs/specwithcode/extras/dead-op/0", head);
+    git(f.a, "update-ref", "refs/specwithcode/extras/dead-op/1", head);
+    git(f.a, "update-ref", "refs/specwithcode/extras/live-op/0", head);
+    git(f.a, "update-ref", "refs/specwithcode/handoff/keep", head);
+    const before = snapshot(f.a);
+    await sweepStaleExtraRefs(f.a, new Set(["live-op"]));
+    const refs = allRefs(f.a);
+    expect(refs).not.toContain("refs/specwithcode/extras/dead-op/");
+    expect(refs).toContain("refs/specwithcode/extras/live-op/0");
+    expect(refs).toContain("refs/specwithcode/handoff/keep");
+    expect(snapshot(f.a)).toEqual(before);
+  });
+});
+
 describe("when the other machine does not take an extra", () => {
   const failing = (failure: ExtrasPeerFailure): ExtrasPeer => ({
     negotiate: async () => {
@@ -389,5 +416,16 @@ describe("when the other machine does not take an extra", () => {
       expect(result).toMatchObject({ status: "stays", stays, detail: message, arrivedAs: null });
     }
     expect(allRefs(f.a)).toBe(refs);
+  });
+});
+
+describe("the Git commands the extras code runs", () => {
+  // Runs last: every test above recorded what the code under test ran.
+  it("runs only reads, private-index snapshots, hidden refs, bundles and arrival branches", () => {
+    const commands = recordedGit();
+    expect(commands.length).toBeGreaterThan(100);
+    expect(gitCommandsNotAllowed()).toEqual([]);
+    const verbs = new Set(commands.map((command) => command.args[0]));
+    for (const verb of ["bundle", "update-ref", "fetch"]) expect(verbs.has(verb), verb).toBe(true);
   });
 });

@@ -118,6 +118,27 @@ export async function snapshotLeftOut(root: string): Promise<Array<ProjectSyncLe
   );
 }
 
+/**
+ * Removes the hidden refs of sends that never finished (the server stopped
+ * mid-way): every ref under `refs/specwithcode/extras/` whose operation is not
+ * in `active`, the sends under way in this server.
+ */
+export async function sweepStaleExtraRefs(
+  root: string,
+  active: ReadonlySet<string>,
+): Promise<void> {
+  const listed = await runGit(root, ["for-each-ref", "--format=%(refname)", EXTRAS_REF_PREFIX], {
+    allowFailure: true,
+  });
+  if (listed.code !== 0) return;
+  for (const ref of listed.stdout.split("\n")) {
+    if (!ref.startsWith(EXTRAS_REF_PREFIX)) continue;
+    const operation = ref.slice(EXTRAS_REF_PREFIX.length).split("/")[0] ?? "";
+    if (active.has(operation)) continue;
+    await runGit(root, ["update-ref", "-d", ref], { allowFailure: true });
+  }
+}
+
 /** The work in one repository that Git does not carry. Reads only. */
 export async function inventoryRepository(
   repository: ProjectSync.SyncRepository,
@@ -415,6 +436,24 @@ const make = Effect.gen(function* () {
       catch: (cause) =>
         failed(cause instanceof Error ? cause.message.slice(0, 1900) : "Git did not finish."),
     });
+  /** The sends under way in this server, by the name their hidden refs carry. */
+  const activeOperations = new Map<string, number>();
+  const withActiveOperation = <A, E>(
+    effect: Effect.Effect<A, E>,
+    input: ProjectSyncSendExtrasInput,
+  ) => {
+    const key = refComponent(input.operationId);
+    return Effect.acquireUseRelease(
+      Effect.sync(() => activeOperations.set(key, (activeOperations.get(key) ?? 0) + 1)),
+      () => effect,
+      () =>
+        Effect.sync(() => {
+          const left = (activeOperations.get(key) ?? 1) - 1;
+          if (left <= 0) activeOperations.delete(key);
+          else activeOperations.set(key, left);
+        }),
+    );
+  };
 
   /** A refusal or a silence from the other machine, as the reason an extra stays. */
   const peerFailure = (error: HandoffPeers.HandoffPeerError) =>
@@ -497,6 +536,7 @@ const make = Effect.gen(function* () {
       const now = DateTime.toDate(yield* DateTime.now);
       const context = yield* Effect.context<never>();
       const items: Array<ProjectSyncExtraResult> = [];
+      const swept = new Set<string>();
       for (const [index, item] of input.items.entries()) {
         const repository = known.get(item.path);
         if (repository === undefined) {
@@ -517,28 +557,37 @@ const make = Effect.gen(function* () {
           });
           continue;
         }
-        items.push(
+        if (!swept.has(repository.cwd)) {
+          swept.add(repository.cwd);
           yield* attempt(() =>
-            sendExtra({
-              repository,
-              item,
-              operationId: input.operationId,
-              index,
-              sourceLabel: handoff.machineLabel,
-              now,
-              peer: peerFor(
-                context,
-                input.targetEnvironmentId,
-                input.projectId,
-                repository.path,
-                input.operationId,
-              ),
-            }),
-          ),
+            sweepStaleExtraRefs(repository.cwd, new Set(activeOperations.keys())),
+          ).pipe(Effect.uninterruptible);
+        }
+        items.push(
+          yield* attempt(
+            () =>
+              sendExtra({
+                repository,
+                item,
+                operationId: input.operationId,
+                index,
+                sourceLabel: handoff.machineLabel,
+                now,
+                peer: peerFor(
+                  context,
+                  input.targetEnvironmentId,
+                  input.projectId,
+                  repository.path,
+                  input.operationId,
+                ),
+              }),
+            // Never cut short: a cancelled call waits, so the hidden ref is removed and a
+            // bundle the other machine is taking is not left half sent.
+          ).pipe(Effect.uninterruptible),
         );
       }
       return { items };
-    }),
+    }, withActiveOperation),
   });
 });
 
