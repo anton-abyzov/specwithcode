@@ -35,23 +35,32 @@ const menuPopupWidthClassName = {
 const POPUP_COLLISION_PADDING = 8;
 
 /**
- * Escape returns focus to whatever opened the menu. Base UI 1.5 skips its own return when a
- * row the pointer is resting on holds focus at close, leaving focus on the page body; this
- * puts it back only in that case, and only for Escape, so a click elsewhere keeps its focus.
+ * Escape returns focus to whatever opened the menu or submenu. Base UI 1.5 skips its own return
+ * when a row the pointer is resting on holds focus at close, leaving focus on the page body;
+ * this puts it back only in that case, and only when Escape was the last thing pressed, so a
+ * click elsewhere keeps its focus. It runs when the popup unmounts, so a `keepMounted` menu
+ * does not get it.
  */
 function EscapeFocusReturn() {
   const ref = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
     const active = document.activeElement;
     const opener = active instanceof HTMLElement && active !== document.body ? active : null;
-    const popup = ref.current?.closest<HTMLElement>('[data-slot="menu-popup"]');
+    const popup = ref.current?.closest<HTMLElement>(
+      '[data-slot="menu-popup"], [data-slot="menu-sub-content"]',
+    );
     let escaped = false;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") escaped = true;
+      escaped = event.key === "Escape";
+    };
+    const onPointerDown = () => {
+      escaped = false;
     };
     popup?.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("pointerdown", onPointerDown, true);
     return () => {
       popup?.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("pointerdown", onPointerDown, true);
       if (!escaped || !opener) return;
       setTimeout(() => {
         const now = document.activeElement;

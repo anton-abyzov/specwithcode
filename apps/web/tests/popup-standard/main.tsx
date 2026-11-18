@@ -1,6 +1,6 @@
 /* Synthetic data only. One page per popup, opened by its trigger, so verify.mjs can measure
    and shoot it at any window size.
-   `?case=` machine | machine-linked | menu | popover | dialog | alert | select | toast
+   `?case=` machine | machine-linked | menu | submenu | popover | dialog | alert | select | toast
    `?theme=dark`, `?palette=none` for the unthemed tokens. The machine cases render the real OrchestratorSwitcher (the "Runs on"
    menu) at the coordinator's foot: `machine` is two checkouts that were never linked, as on
    the M5 screenshot of November 18, 2026; `machine-linked` a main and two copies. The other
@@ -27,6 +27,9 @@ import {
   MenuItem,
   MenuPopup,
   MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
   MenuTrigger,
 } from "../../src/components/ui/menu";
 import {
@@ -165,6 +168,34 @@ function GalleryMenu() {
   );
 }
 
+function GallerySubmenu() {
+  return (
+    <div className="fixture-page">
+      <Menu>
+        <MenuTrigger render={<Button variant="outline" size="sm" data-popup-trigger="" />}>
+          Open in
+        </MenuTrigger>
+        <MenuPopup align="start">
+          <MenuItem>
+            <FolderIcon aria-hidden />
+            Finder
+          </MenuItem>
+          <MenuSub>
+            <MenuSubTrigger data-submenu-trigger="">
+              <CopyPlusIcon aria-hidden />
+              Another machine
+            </MenuSubTrigger>
+            <MenuSubPopup>
+              <MenuItem>m4</MenuItem>
+              <MenuItem>linux-mini</MenuItem>
+            </MenuSubPopup>
+          </MenuSub>
+        </MenuPopup>
+      </Menu>
+    </div>
+  );
+}
+
 function GalleryPopover() {
   return (
     <div className="fixture-page">
@@ -280,6 +311,7 @@ const CASES: Record<string, () => React.ReactElement> = {
   machine: () => <MachineMenu linked={false} />,
   "machine-linked": () => <MachineMenu linked />,
   menu: GalleryMenu,
+  submenu: GallerySubmenu,
   popover: GalleryPopover,
   dialog: GalleryDialog,
   alert: GalleryAlert,

@@ -195,7 +195,8 @@ export function classRem(cls) {
 // A menu's width token (menu.tsx menuPopupWidthClassName); md is the default.
 const MENU_TOKEN_REM = { sm: 16, md: 20, lg: 24, xl: 32 };
 // Width classes that do not set a size of their own.
-const NEUTRAL = /^(?:min-w|max-w|w)-(?:0|auto|full|fit|max|min|none)$/;
+// `max-w-none` is not here: it removes a cap outright.
+const NEUTRAL = /^(?:min-w|max-w|w)-(?:0|auto|full|fit|max|min)$/;
 /**
  * The width a call site may reach without a decision: a menu its own token (a `max-w-` in
  * className replaces the token's cap), popovers and dialogs their kind's largest width.

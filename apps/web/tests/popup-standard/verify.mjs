@@ -80,6 +80,14 @@ const CASES = [
     keys: true,
   },
   {
+    name: "submenu",
+    trigger: "[data-popup-trigger]",
+    popup: '[data-slot="menu-popup"]',
+    cap: 20 * REM,
+    keys: true,
+    submenu: true,
+  },
+  {
     name: "popover",
     trigger: "[data-popup-trigger]",
     popup: '[data-slot="popover-popup"]',
@@ -282,13 +290,40 @@ try {
           await page.waitForTimeout(250);
           row.keys = { first, firstSlot, last, home, keyboardFirst, back };
           check(/^menuitem/.test(first ?? ""), `${id}: ArrowDown focused ${first}`);
+          // Each step lands on a real row: never the info button, never the page body.
+          const ROW = /^menu-(?:radio-|checkbox-)?item$|^menu-sub-trigger$/;
           for (const [step, slot] of [
+            ["ArrowDown", firstSlot],
             ["Home", home],
             ["keyboard open", keyboardFirst],
           ]) {
-            check(slot !== "menu-info-button", `${id}: ${step} focused the info button`);
+            check(ROW.test(slot ?? ""), `${id}: ${step} focused ${slot ?? "nothing"}, not a row`);
           }
           check(back, `${id}: Escape did not return focus to the trigger`);
+        }
+        if (!before && item.submenu) {
+          // Escape from a submenu with the pointer on one of its rows goes back to the row that
+          // opened it, and the parent menu stays open.
+          await trigger.click();
+          await popup.waitFor({ timeout: 4000 });
+          await page.locator("[data-submenu-trigger]").hover();
+          const sub = page.locator('[data-slot="menu-sub-content"]').first();
+          await sub.waitFor({ timeout: 4000 });
+          await page.waitForTimeout(250);
+          await sub.locator('[role^="menuitem"]').first().hover();
+          await page.keyboard.press("Escape");
+          await page.waitForTimeout(300);
+          const subBack = await page.evaluate(() => ({
+            slot: document.activeElement?.getAttribute("data-slot") ?? null,
+            subOpen: !!document.querySelector('[data-slot="menu-sub-content"]'),
+            parentOpen: !!document.querySelector('[data-slot="menu-popup"]'),
+          }));
+          row.submenu = subBack;
+          check(
+            subBack.slot === "menu-sub-trigger" && !subBack.subOpen && subBack.parentOpen,
+            `${id}: submenu Escape left focus on ${subBack.slot ?? "the body"}`,
+          );
+          await page.keyboard.press("Escape");
         }
         if (!before && item.trap) {
           // Focus may rest on the body or a focus guard for one step while it wraps; it must
