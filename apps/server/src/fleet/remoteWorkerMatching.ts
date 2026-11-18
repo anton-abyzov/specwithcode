@@ -260,22 +260,31 @@ export type ModelTranslation =
  * The same model on another machine. Provider instance ids are local names,
  * so an id that also exists there must offer the model, and otherwise exactly
  * one instance of the same provider kind must.
+ *
+ * `unnamed` is a model nobody asked for by name (inherited, or picked by the
+ * project's models): it never lands on a sign-in the grant there excludes, or
+ * on a model that machine bills per use. That machine's default runs instead.
  */
 export function translateModel(input: {
   readonly selection: ModelSelection;
   readonly driverKind: string | undefined;
   readonly remote: ReadonlyArray<OrchestratorMcpMachineProvider>;
+  readonly unnamed?: boolean | undefined;
 }): ModelTranslation {
   const { selection } = input;
+  const offers = (provider: OrchestratorMcpMachineProvider) =>
+    provider.models.includes(selection.model) &&
+    (input.unnamed !== true ||
+      (provider.allowedByGrant !== false &&
+        provider.paidModels?.includes(selection.model) !== true));
   const sameInstance = input.remote.find(
     (provider) => provider.providerInstanceId === selection.instanceId,
   );
-  if (sameInstance?.models.includes(selection.model))
+  if (sameInstance !== undefined && offers(sameInstance))
     return { type: "same", modelSelection: selection };
   if (input.driverKind === undefined) return { type: "unavailable" };
   const sameKind = input.remote.filter(
-    (provider) =>
-      provider.driverKind === input.driverKind && provider.models.includes(selection.model),
+    (provider) => provider.driverKind === input.driverKind && offers(provider),
   );
   if (sameKind.length !== 1) return { type: "unavailable" };
   return {

@@ -68,6 +68,7 @@ const pick = (
     readonly taskLane?: "complex" | "routine";
     readonly taskClass?: "code" | "research";
     readonly scratch?: boolean;
+    readonly grant?: Parameters<typeof remoteInheritedModel>[0]["grantAccounts"];
   },
   overrides: Record<string, unknown> | null = {},
   listed: ReadonlyArray<ServerProvider> = providers,
@@ -82,6 +83,7 @@ const pick = (
     message: "Read the build log and report.",
     taskClass: input.taskClass,
     taskLane: input.taskLane,
+    grantAccounts: input.grant,
   }).pipe(
     Effect.provide(
       overrides === null
@@ -105,7 +107,10 @@ it.effect("starts on the project's own model, not the model of the thread that a
     assert.deepStrictEqual(yield* pick({ projectModel: fable, caller: opus }), fable);
     // The project's own model is a pin: a lane hint does not move it.
     assert.deepStrictEqual(
-      yield* pick({ projectModel: fable, caller: opus, taskLane: "routine" }, { modelLanes: lanes }),
+      yield* pick(
+        { projectModel: fable, caller: opus, taskLane: "routine" },
+        { modelLanes: lanes },
+      ),
       fable,
     );
   }),
@@ -120,7 +125,10 @@ it.effect("follows the project's tracks with the caller's lane hint", () =>
     const routine = yield* pick({ projectModel: fable, caller: opus, taskLane: "routine" }, tracks);
     assert.strictEqual(routine?.model, "claude-sonnet-5-5");
     // The routed model runs at the effort the baseline ran at, as a launch here does.
-    const low = yield* pick({ caller: select("claude-opus-5-5", "low"), taskLane: "complex" }, tracks);
+    const low = yield* pick(
+      { caller: select("claude-opus-5-5", "low"), taskLane: "complex" },
+      tracks,
+    );
     assert.strictEqual(low?.model, "claude-fable-5-2");
     assert.deepStrictEqual(
       low?.options?.find((option) => option.id === "effort"),
@@ -160,6 +168,61 @@ it.effect("keeps the baseline when this machine's routing refuses", () =>
       [],
     );
     assert.deepStrictEqual(picked, caller);
+  }),
+);
+
+it.effect("leaves a per-use baseline to the other machine when its tracks refuse here", () =>
+  Effect.gen(function* () {
+    // Here the only sign-in bills per use, so no track model may start unasked.
+    const keyed = [{ ...providers[0]!, auth: { status: "authenticated", type: "apiKey" } }];
+    const astra = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-astra" };
+    const tracks = { threadModelMode: "tracks", modelLanes: { complex: [astra], routine: [] } };
+    assert.isUndefined(yield* pick({ caller: opus, taskLane: "complex" }, tracks, keyed as never));
+    // The same refusal with the caller on a plan keeps the caller's model.
+    assert.deepStrictEqual(yield* pick({ caller: opus, taskLane: "complex" }, tracks), opus);
+    // Off tracks nothing refuses, and the caller's own model is inherited as before.
+    assert.deepStrictEqual(yield* pick({ caller: opus }, {}, keyed as never), opus);
+  }),
+);
+
+it.effect("follows the caller's work grant as a launch here does", () =>
+  Effect.gen(function* () {
+    const withLanes = { modelLanes: lanes };
+    const elsewhere = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-astra" };
+    const caller = elsewhere as ModelSelection;
+    const listed = (...instanceIds: ReadonlyArray<ProviderInstanceId>) =>
+      ({ kind: "listed", instanceIds }) as never;
+    // The grant excludes the project model's sign-in: the worker keeps its own model.
+    assert.deepStrictEqual(
+      yield* pick({ projectModel: fable, caller, grant: listed(elsewhere.instanceId) }),
+      caller,
+    );
+    assert.deepStrictEqual(
+      yield* pick({ projectModel: fable, caller, grant: listed(claude) }),
+      fable,
+    );
+    // A grant that lists accounts is never routed, lane hint or not.
+    assert.deepStrictEqual(
+      yield* pick({ caller: opus, taskLane: "routine", grant: listed(claude) }, withLanes),
+      opus,
+    );
+    const open = { kind: "all" } as never;
+    assert.strictEqual(
+      (yield* pick({ caller: opus, taskLane: "routine", grant: open }, withLanes))?.model,
+      "claude-sonnet-5-5",
+    );
+  }),
+);
+
+it.effect("routes on a task class alone, and gives a coordinator this host's default", () =>
+  Effect.gen(function* () {
+    // A task class with no lane hint still reaches the lanes.
+    const classed = yield* pick({ caller: opus, taskClass: "research" }, { modelLanes: lanes });
+    assert.include(["claude-fable-5-2", "claude-sonnet-5-5"], classed?.model);
+    // A coordinator whose project names no model starts on the host's worker default.
+    const hostDefault = yield* pick({ isCoordinator: true });
+    assert.strictEqual(hostDefault?.instanceId, claude);
+    assert.isString(hostDefault?.model);
   }),
 );
 

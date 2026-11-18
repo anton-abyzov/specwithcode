@@ -567,6 +567,18 @@ describe("a linked copy whose coordinator runs on another machine", () => {
         memberProjects: [stranger, copy({ coordinatorBinding: undefined })],
       }),
     ).toBe(false);
+    // Nor is one whose shared project has no readable id, on either side.
+    const unnamed = <M extends { workspaceSettings: object }>(member: M) => ({
+      ...member,
+      workspaceSettings: { ...member.workspaceSettings, logicalProject: {} },
+    });
+    const pendingCopy = copy({ coordinatorBinding: undefined });
+    for (const memberProjects of [
+      [unnamed(main), pendingCopy],
+      [main, unnamed(pendingCopy)],
+      [unnamed(main), unnamed(pendingCopy)],
+    ])
+      expect(owns(onCopy("mcp:probe", "agent"), { ...group, memberProjects })).toBe(false);
   });
   it("leaves the person's own chat there a chat, and its fork too", () => {
     const mine = onCopy("mine", "user");
@@ -586,7 +598,11 @@ describe("a linked copy whose coordinator runs on another machine", () => {
   it("owns forks and subagents of such a thread", () => {
     const probe = onCopy("mcp:probe", "agent");
     const fork = onCopy("fork", "user", {
-      lineage: { parentThreadId: "mcp:probe", relationshipToParent: "fork", rootThreadId: "mcp:probe" },
+      lineage: {
+        parentThreadId: "mcp:probe",
+        relationshipToParent: "fork",
+        rootThreadId: "mcp:probe",
+      },
     });
     expect(owns(fork, group, [probe])).toBe(true);
   });

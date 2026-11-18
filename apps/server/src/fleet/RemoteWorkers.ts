@@ -929,9 +929,10 @@ const make = Effect.gen(function* () {
     machine: OrchestratorMcpMachineRef,
     selection: ModelSelection,
     remote: ReadonlyArray<OrchestratorMcpMachineProvider>,
+    unnamed = false,
   ) =>
     Effect.map(driverKindOf(selection.instanceId), (driverKind) =>
-      translateModel({ selection, driverKind, remote }),
+      translateModel({ selection, driverKind, remote, unnamed }),
     ).pipe(Effect.map((translation) => ({ machine, translation })));
 
   const modelUnavailable = (machine: OrchestratorMcpMachineRef, selection: ModelSelection) =>
@@ -1017,6 +1018,7 @@ const make = Effect.gen(function* () {
           : yield* remoteProjectId(machine, input.localProject, input.machineProjectId);
 
       let modelSelection: ModelSelection | undefined;
+      const unnamed = input.inheritedModelSelection;
       if (input.explicitModelSelection !== undefined) {
         const { translation } = yield* translate(
           machine,
@@ -1026,12 +1028,8 @@ const make = Effect.gen(function* () {
         if (translation.type === "unavailable")
           return yield* modelUnavailable(machine, input.explicitModelSelection);
         modelSelection = translation.modelSelection;
-      } else if (input.inheritedModelSelection !== undefined) {
-        const { translation } = yield* translate(
-          machine,
-          input.inheritedModelSelection,
-          target.providers,
-        );
+      } else if (unnamed !== undefined) {
+        const { translation } = yield* translate(machine, unnamed, target.providers, true);
         modelSelection =
           translation.type === "unavailable" ? undefined : translation.modelSelection;
       }
@@ -1154,7 +1152,7 @@ const make = Effect.gen(function* () {
         const translated =
           fallback === null
             ? undefined
-            : (yield* translate(machine, fallback, target.providers)).translation;
+            : (yield* translate(machine, fallback, target.providers, true)).translation;
         if (translated === undefined || translated.type === "unavailable") {
           yield* dispose("No model available there.");
           return yield* modelUnavailable(

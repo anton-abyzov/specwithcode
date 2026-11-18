@@ -344,13 +344,15 @@ function coordinatedElsewhere(group: ChatProjectGroup, member: ChatProjectMember
   const settings = member.workspaceSettings;
   if (!settings?.logicalProject || settings.coordinatorThreadId != null) return false;
   if (settings.coordinatorBinding?.state === "transferred") return true;
+  // Without a readable id nothing says the two copies are one project.
   const logicalId = logicalIdOf(member);
-  return group.memberProjects.some((other) => {
-    if (other === member || !other.workspaceSettings?.logicalProject) return false;
-    if (other.workspaceSettings.coordinatorThreadId == null) return false;
-    const otherId = logicalIdOf(other);
-    return logicalId === null || otherId === null || logicalId === otherId;
-  });
+  if (logicalId === null) return false;
+  return group.memberProjects.some(
+    (other) =>
+      other !== member &&
+      other.workspaceSettings?.coordinatorThreadId != null &&
+      logicalIdOf(other) === logicalId,
+  );
 }
 
 /** The sidebar's decision for one chat row, given the project group the chat sits in. */

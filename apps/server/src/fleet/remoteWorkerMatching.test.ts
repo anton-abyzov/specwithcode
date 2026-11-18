@@ -290,6 +290,35 @@ describe("translateModel", () => {
       }).type,
     ).toBe("unavailable");
   });
+
+  it("never lands an unnamed model on per-use billing or a sign-in the grant excludes", () => {
+    const paid = { ...provider("codex", "codex", ["gpt-5.5"]), paidModels: ["gpt-5.5"] };
+    const excluded = { ...provider("codex", "codex", ["gpt-5.5"]), allowedByGrant: false };
+    for (const there of [paid, excluded]) {
+      const input = { selection, driverKind: "codex", remote: [there] };
+      expect(translateModel({ ...input, unnamed: true }).type).toBe("unavailable");
+      // A model the caller named is the caller's choice: that machine answers for it.
+      expect(translateModel(input).type).toBe("same");
+    }
+    // It moves to the one sign-in of that kind that may run it on a plan.
+    expect(
+      translateModel({
+        selection,
+        driverKind: "codex",
+        remote: [paid, provider("codex-plan", "codex", ["gpt-5.5"])],
+        unnamed: true,
+      }),
+    ).toEqual({ type: "translated", modelSelection: { ...selection, instanceId: "codex-plan" } });
+    // Another model the same sign-in bills per use does not hold this one back.
+    expect(
+      translateModel({
+        selection,
+        driverKind: "codex",
+        remote: [{ ...provider("codex", "codex", ["gpt-5.5", "o-pro"]), paidModels: ["o-pro"] }],
+        unnamed: true,
+      }).type,
+    ).toBe("same");
+  });
 });
 
 describe("clampRuntimeMode", () => {

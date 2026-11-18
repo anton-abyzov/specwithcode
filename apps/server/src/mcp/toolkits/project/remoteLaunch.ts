@@ -267,6 +267,16 @@ export const noWorkerMachineFailure = (skipped: ReadonlyArray<SkippedMachine>, b
 };
 
 /**
+ * The unnamed model already picked for a launch request. Placement calls
+ * `launchRemote` once per candidate machine with the same params, and the pick
+ * (which may ask the decision model) does not depend on the machine.
+ */
+const pickedModels = new WeakMap<
+  LaunchTargetInput,
+  { readonly selection: ModelSelection | undefined }
+>();
+
+/**
  * Starts the thread on another machine. A thread caller's worker is followed
  * and reports back to it; an outside MCP client's is not (it reads and waits
  * on the thread instead), and runs within the lower of the client's approved
@@ -356,19 +366,25 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
         new Map([...(yield* remote.machineLabels), [context.scope.environmentId, "this machine"]]),
       ),
     });
-  // Picked once: a retry in a copy linked a moment ago is the same project and task.
+  // Picked once per request: a retry in a copy linked a moment ago, and each
+  // machine placement tries, is the same project and task.
+  const picked = pickedModels.get(params);
   const inheritedModelSelection =
     params.modelSelection !== undefined
       ? undefined
-      : yield* remoteInheritedModel({
-          project,
-          callerModel: caller?.modelSelection ?? undefined,
-          isCoordinator,
-          title: params.title,
-          message: params.message,
-          taskClass: params.taskClass,
-          taskLane: params.taskLane,
-        });
+      : picked !== undefined
+        ? picked.selection
+        : yield* remoteInheritedModel({
+            project,
+            callerModel: caller?.modelSelection ?? undefined,
+            isCoordinator,
+            title: params.title,
+            message: params.message,
+            taskClass: params.taskClass,
+            taskLane: params.taskLane,
+            grantAccounts: (yield* workGrantOf(context))?.grant.accounts,
+          });
+  pickedModels.set(params, { selection: inheritedModelSelection });
   const launch = (localProject: Project | undefined = project) =>
     remote.launch({
       machine: input.machine.machine,

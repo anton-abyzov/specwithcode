@@ -10,6 +10,10 @@
  * Two things a launch here does are left out on purpose, because they read
  * this machine's sign-ins and say nothing about the other machine's: a quota
  * boost, and moving off a provider that has no room left.
+ *
+ * Billing and the other machine's grant are judged there: RemoteWorkers drops
+ * an unnamed model that machine bills per use or whose sign-in its grant
+ * excludes (see `translateModel`), and that machine's default runs instead.
  */
 import type {
   ModelLane,
@@ -19,6 +23,7 @@ import type {
   TaskClass,
 } from "@specweave-studio/contracts";
 import { defaultWorkerModelSelection } from "@specweave-studio/shared/coordinatorDefault";
+import { isHeldSource } from "@specweave-studio/shared/modelTracks";
 import {
   modelSelectionEffortValue,
   resolveEffort,
@@ -27,7 +32,11 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { projectUsesTracks, projectWorkerModel } from "../../../project/ProjectDelegation.ts";
+import {
+  projectUsesTracks,
+  projectWorkerModel,
+  workerModelUnderGrant,
+} from "../../../project/ProjectDelegation.ts";
 import {
   autoRoutingApplies,
   routedSelection,
@@ -63,6 +72,8 @@ export const remoteInheritedModel = Effect.fn("mcp.remoteInheritedModel")(functi
   readonly message: string | undefined;
   readonly taskClass: TaskClass | undefined;
   readonly taskLane: ModelLane | undefined;
+  /** The accounts the caller's work grant allows here; undefined without a grant. */
+  readonly grantAccounts?: Parameters<typeof workerModelUnderGrant>[2];
 }) {
   const { project } = input;
   // What a remote launch inherited before it followed the project's models.
@@ -77,17 +88,25 @@ export const remoteInheritedModel = Effect.fn("mcp.remoteInheritedModel")(functi
   const settings = yield* settingsService.value.getSettings.pipe(Effect.orElseSucceed(() => null));
   if (settings === null) return inherited;
   const providers = yield* registry.value.getProviders;
-  const projectModel = projectWorkerModel(settings, project);
+  // Under a grant that excludes its sign-in, a non-coordinator keeps its own model.
+  const projectModel = workerModelUnderGrant(
+    projectWorkerModel(settings, project),
+    input.isCoordinator,
+    input.grantAccounts,
+  );
+  const tracks = projectUsesTracks(settings, project);
   const baseline =
     projectModel ??
     inherited ??
     (input.isCoordinator ? (defaultWorkerModelSelection(providers) ?? undefined) : undefined);
   if (baseline === undefined) return undefined;
   if (
+    // As here: work under a grant that lists accounts is never routed.
+    (input.grantAccounts !== undefined && input.grantAccounts.kind !== "all") ||
     !autoRoutingApplies({
       // A project's own model is not moved by lanes or Auto.
       pinned: projectModel !== null,
-      tracks: projectUsesTracks(settings, project),
+      tracks,
       isCoordinator: input.isCoordinator,
       taskClass: input.taskClass,
       taskLane: input.taskLane,
@@ -95,7 +114,16 @@ export const remoteInheritedModel = Effect.fn("mcp.remoteInheritedModel")(functi
   )
     return baseline;
   // Routing judges this machine's sign-ins. One with no room here says nothing
-  // about the other machine, so a refusal keeps the baseline and never stops the launch.
+  // about the other machine, so a refusal keeps the baseline and never stops the
+  // launch. The one exception: on tracks, a baseline billed per use here is never
+  // started unasked, so the other machine picks its own default.
+  const baselineProvider = providers.find(
+    (provider) => provider.instanceId === baseline.instanceId,
+  );
+  const refused =
+    tracks && baselineProvider !== undefined && isHeldSource(baselineProvider, baseline.model)
+      ? undefined
+      : baseline;
   const decision = yield* routeWorkerTask({
     project,
     baseline,
@@ -109,13 +137,14 @@ export const remoteInheritedModel = Effect.fn("mcp.remoteInheritedModel")(functi
     laneHint: input.taskLane,
   }).pipe(
     Effect.tapError((error) =>
-      Effect.logWarning("Remote launch keeps its baseline model: routing refused here", {
+      Effect.logWarning("Remote launch is not routed: routing refused here", {
         projectId: project.id,
         reason: error.message,
       }),
     ),
-    Effect.orElseSucceed(() => null),
+    Effect.orElseSucceed(() => "refused" as const),
   );
+  if (decision === "refused") return refused;
   if (decision?.moved !== true) return baseline;
   return withCarriedEffort(
     routedSelection(decision, decision.selection, providers),
