@@ -39,6 +39,7 @@ import {
   RequestSpecweaveSetupInput,
   RequestSpecweaveSetupResult,
   SPECWEAVE_SETUP_INSTRUCTION,
+  SpecweaveNeededLaunchResult,
   SpecweaveState,
 } from "@specweave-studio/contracts";
 import {
@@ -319,7 +320,7 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     INCREMENT_LAUNCH_INSTRUCTION +
     " " +
     SPECWEAVE_SETUP_INSTRUCTION +
-    ' With increment "new" there it starts no thread and fails with that instruction.',
+    ' With increment "new" there it starts no thread and returns launched false, needs "specweave".',
   parameters: Schema.Struct({
     machine: Schema.optional(
       OrchestratorMcpMachineTarget.annotate({
@@ -404,79 +405,83 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     delegation: Schema.optional(OrchestratorMcpDelegation),
     originHint: Schema.optional(OrchestratorMcpOriginHint),
   }),
-  success: Schema.Struct({
-    threadId: ThreadId,
-    threadLink: Schema.String.annotate({
-      description:
-        "Ready-made Markdown link to the new thread. Copy it verbatim when naming the thread to the user; never build a thread link by hand.",
+  success: Schema.Union([
+    Schema.Struct({
+      threadId: ThreadId,
+      threadLink: Schema.String.annotate({
+        description:
+          "Ready-made Markdown link to the new thread. Copy it verbatim when naming the thread to the user; never build a thread link by hand.",
+      }),
+      projectId: ProjectId,
+      /** Always set for a thread here; unknown only for a remote launch found again after a lost answer. */
+      modelSelection: Schema.optional(ModelSelection),
+      effort: Schema.optional(
+        Schema.String.annotate({
+          description: "Reasoning effort option the thread was started with, when one was set.",
+        }),
+      ),
+      routing: Schema.optional(
+        TaskRoutingDecision.annotate({
+          description:
+            "Set when Auto model routing chose the model: task class, reason and the baseline it left.",
+        }),
+      ),
+      increment: Schema.optional(OrchestratorMcpLaunchIncrement),
+      warning: Schema.optional(
+        Schema.String.annotate({
+          description: "Something to fix next time, such as a missing increment.",
+        }),
+      ),
+      runId: Schema.NullOr(RunId),
+      status: Schema.NullOr(OrchestrationV2RunStatus),
+      /** Set when the thread runs on another machine; projectId is then that machine's project. */
+      machine: Schema.optional(OrchestratorMcpMachineRef),
+      threadRef: Schema.optional(Schema.String),
+      reportsBack: Schema.optional(Schema.Boolean),
+      runtimeMode: Schema.optional(
+        RuntimeMode.annotate({
+          description: "For a thread on another machine: the mode it was started with there.",
+        }),
+      ),
+      runtimeModeLoweredFrom: Schema.optional(
+        RuntimeMode.annotate({
+          description:
+            "Set when that machine's grant lowered the requested mode: the mode asked for. Tell the user the worker runs on runtimeMode instead.",
+        }),
+      ),
+      machineNotice: Schema.optional(
+        Schema.String.annotate({
+          description:
+            "For a thread on another machine: something the user should know about that machine. Tell the user.",
+        }),
+      ),
+      workspaceNotice: Schema.optional(
+        Schema.String.annotate({
+          description:
+            "Set when the project's Use worktrees setting is on but the thread still started in the project folder, and why. Tell the user.",
+        }),
+      ),
+      delegationChecked: Schema.optional(
+        Schema.Boolean.annotate({
+          description: "Set by SpecWithCode between machines; ignore it.",
+        }),
+      ),
+      placement: Schema.optional(
+        Schema.Struct({
+          machine: Schema.String,
+          reason: Schema.Literals(["explicit", "project_worker_machine", "this_machine", "needs"]),
+          /** Set when the launch stated needs: why this machine. */
+          note: Schema.optional(Schema.String),
+          skipped: Schema.Array(Schema.Struct({ machine: Schema.String, reason: Schema.String })),
+        }).annotate({
+          description:
+            "Where the thread runs and why: the machine you named (explicit), the project's worker machine, this machine, or a machine chosen for the work's needs (note says why). skipped lists machines that could not take it and why; tell the user when it is not empty.",
+        }),
+      ),
     }),
-    projectId: ProjectId,
-    /** Always set for a thread here; unknown only for a remote launch found again after a lost answer. */
-    modelSelection: Schema.optional(ModelSelection),
-    effort: Schema.optional(
-      Schema.String.annotate({
-        description: "Reasoning effort option the thread was started with, when one was set.",
-      }),
-    ),
-    routing: Schema.optional(
-      TaskRoutingDecision.annotate({
-        description:
-          "Set when Auto model routing chose the model: task class, reason and the baseline it left.",
-      }),
-    ),
-    increment: Schema.optional(OrchestratorMcpLaunchIncrement),
-    warning: Schema.optional(
-      Schema.String.annotate({
-        description: "Something to fix next time, such as a missing increment.",
-      }),
-    ),
-    runId: Schema.NullOr(RunId),
-    status: Schema.NullOr(OrchestrationV2RunStatus),
-    /** Set when the thread runs on another machine; projectId is then that machine's project. */
-    machine: Schema.optional(OrchestratorMcpMachineRef),
-    threadRef: Schema.optional(Schema.String),
-    reportsBack: Schema.optional(Schema.Boolean),
-    runtimeMode: Schema.optional(
-      RuntimeMode.annotate({
-        description: "For a thread on another machine: the mode it was started with there.",
-      }),
-    ),
-    runtimeModeLoweredFrom: Schema.optional(
-      RuntimeMode.annotate({
-        description:
-          "Set when that machine's grant lowered the requested mode: the mode asked for. Tell the user the worker runs on runtimeMode instead.",
-      }),
-    ),
-    machineNotice: Schema.optional(
-      Schema.String.annotate({
-        description:
-          "For a thread on another machine: something the user should know about that machine. Tell the user.",
-      }),
-    ),
-    workspaceNotice: Schema.optional(
-      Schema.String.annotate({
-        description:
-          "Set when the project's Use worktrees setting is on but the thread still started in the project folder, and why. Tell the user.",
-      }),
-    ),
-    delegationChecked: Schema.optional(
-      Schema.Boolean.annotate({
-        description: "Set by SpecWithCode between machines; ignore it.",
-      }),
-    ),
-    placement: Schema.optional(
-      Schema.Struct({
-        machine: Schema.String,
-        reason: Schema.Literals(["explicit", "project_worker_machine", "this_machine", "needs"]),
-        /** Set when the launch stated needs: why this machine. */
-        note: Schema.optional(Schema.String),
-        skipped: Schema.Array(Schema.Struct({ machine: Schema.String, reason: Schema.String })),
-      }).annotate({
-        description:
-          "Where the thread runs and why: the machine you named (explicit), the project's worker machine, this machine, or a machine chosen for the work's needs (note says why). skipped lists machines that could not take it and why; tell the user when it is not empty.",
-      }),
-    ),
-  }),
+    // increment "new" in a project without SpecWeave starts no thread (1396 AC-06).
+    SpecweaveNeededLaunchResult,
+  ]),
   dependencies: [
     ...shared.dependencies,
     ThreadLaunchService.ThreadLaunchService,

@@ -149,3 +149,16 @@ export async function raiseSetupCardBeside(target: SpecweaveSetupTarget): Promis
   if (await launchPlansWithoutSpecweave(target)) return;
   await openCard(target).catch(() => undefined);
 }
+
+/** Whether a launch tool's result is the "needs SpecWeave" answer instead of a launch. */
+export function isSpecweaveNeeded(result: object): result is SpecweaveNeededLaunchResult {
+  return "needs" in result && result.needs === "specweave" && "launched" in result;
+}
+
+/** A launch tool's result that did launch; throws on the "needs SpecWeave" answer (tests). */
+export function launchedOrThrow<T extends object>(
+  result: T,
+): Exclude<T, SpecweaveNeededLaunchResult> {
+  if (isSpecweaveNeeded(result)) throw new Error(result.message);
+  return result as Exclude<T, SpecweaveNeededLaunchResult>;
+}

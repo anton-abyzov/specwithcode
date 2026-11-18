@@ -102,6 +102,7 @@ import {
   ThreadId,
   threadExecutionSummary,
   runInterruptResultDetail,
+  type SpecweaveNeededLaunchResult,
 } from "@specweave-studio/contracts";
 import {
   heldQueuedRunCount,
@@ -280,7 +281,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDelegateTaskInput,
     options?: WorkerRoutingOptions,
-  ) => Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure>;
+  ) => Effect.Effect<
+    OrchestratorMcpDelegateTaskResult | SpecweaveNeededLaunchResult,
+    OrchestratorMcpFailure
+  >;
   /**
    * A stronger model reviews the calling thread's work (AdvisorConsult.ts).
    * Refusals come back as results with status `refused`; only faults fail.
@@ -301,7 +305,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpCreateThreadsInput,
     options?: WorkerRoutingOptions,
-  ) => Effect.Effect<OrchestratorMcpCreateThreadsResult, OrchestratorMcpFailure>;
+  ) => Effect.Effect<
+    OrchestratorMcpCreateThreadsResult | SpecweaveNeededLaunchResult,
+    OrchestratorMcpFailure
+  >;
   readonly scheduleTask: (
     scope: McpInvocationScope,
     input: OrchestratorMcpScheduleTaskInput,
@@ -3740,10 +3747,7 @@ const make = Effect.gen(function* () {
         const setupTarget =
           stateDir === undefined ? null : setupTargetOf(project, parent.thread, stateDir);
         if (increment.needsSpecweave === true && setupTarget !== null)
-          return yield* failure(
-            "invalid_request",
-            (yield* Effect.promise(() => specweaveNeededLaunch(setupTarget))).message,
-          );
+          return yield* Effect.promise(() => specweaveNeededLaunch(setupTarget));
         if (increment.raiseSetupCard === true && setupTarget !== null)
           yield* Effect.promise(() => raiseSetupCardBeside(setupTarget));
         if (increment.increment !== undefined) {
@@ -4073,11 +4077,8 @@ const make = Effect.gen(function* () {
         );
         // Any entry with "new" in a project without SpecWeave: none is created (1396).
         if (stateDir !== undefined && increments.some((entry) => entry.needsSpecweave === true))
-          return yield* failure(
-            "invalid_request",
-            (yield* Effect.promise(() =>
-              specweaveNeededLaunch(setupTargetOf(project, parent.thread, stateDir)),
-            )).message,
+          return yield* Effect.promise(() =>
+            specweaveNeededLaunch(setupTargetOf(project, parent.thread, stateDir)),
           );
         if (stateDir !== undefined && increments.some((entry) => entry.raiseSetupCard === true))
           yield* Effect.promise(() =>

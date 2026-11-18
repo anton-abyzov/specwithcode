@@ -696,12 +696,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const increment = incrementResolution.value;
         // "new" without SpecWeave: a card for the user instead of a thread (1396).
         if (project !== undefined && increment.needsSpecweave === true)
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message: (yield* Effect.promise(() =>
-              specweaveNeededLaunch(setupTargetOf(project, caller, stateDir)),
-            )).message,
-          });
+          return yield* Effect.promise(() =>
+            specweaveNeededLaunch(setupTargetOf(project, caller, stateDir)),
+          );
         if (project !== undefined && increment.raiseSetupCard === true)
           yield* Effect.promise(() =>
             raiseSetupCardBeside(setupTargetOf(project, caller, stateDir)),

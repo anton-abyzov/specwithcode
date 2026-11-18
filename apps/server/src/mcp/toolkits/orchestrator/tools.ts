@@ -46,7 +46,9 @@ import {
   ThreadMetadataMcpUpdateInput,
   ThreadMetadataMcpUpdateResult,
   SPECWEAVE_SETUP_INSTRUCTION,
+  SpecweaveNeededLaunchResult,
 } from "@specweave-studio/contracts";
+import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as HandoffMode from "../../../handoff/HandoffMode.ts";
@@ -93,9 +95,10 @@ export const DelegateTaskTool = Tool.make("delegate_task", {
     INCREMENT_LAUNCH_INSTRUCTION +
     " " +
     SPECWEAVE_SETUP_INSTRUCTION +
-    ' With increment "new" there it starts nothing and fails with that instruction.',
+    ' With increment "new" there it starts nothing and returns launched false, needs "specweave".',
   parameters: OrchestratorMcpDelegateTaskInput,
-  success: OrchestratorMcpDelegateTaskResult,
+  // increment "new" without SpecWeave starts nothing (1396 AC-06).
+  success: Schema.Union([OrchestratorMcpDelegateTaskResult, SpecweaveNeededLaunchResult]),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies,
@@ -248,9 +251,9 @@ export const CreateThreadsTool = Tool.make("create_threads", {
     INCREMENT_LAUNCH_INSTRUCTION +
     " " +
     SPECWEAVE_SETUP_INSTRUCTION +
-    ' With increment "new" there it starts nothing and fails with that instruction.',
+    ' With increment "new" there it starts nothing and returns launched false, needs "specweave".',
   parameters: OrchestratorMcpCreateThreadsInput,
-  success: OrchestratorMcpCreateThreadsResult,
+  success: Schema.Union([OrchestratorMcpCreateThreadsResult, SpecweaveNeededLaunchResult]),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies,
