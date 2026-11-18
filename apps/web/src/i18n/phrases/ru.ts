@@ -5548,4 +5548,60 @@ export const ru: PhraseCatalog = {
     "{machine} не в сети. Настройки появятся, когда он снова подключится.",
   "You can look at {machine}'s settings from this sign-in, but not change them.":
     "С этим входом можно смотреть настройки {machine}, но нельзя их менять.",
+  "Needs permission to change files and run vskill here.":
+    "Нужно разрешение менять файлы и запускать vskill здесь.",
+  "Needs permission to change settings on this machine.":
+    "Нужно разрешение менять настройки на этой машине.",
+  "Loaded now": "Уже загружен",
+  "Next message": "Со следующего сообщения",
+  "Next session": "Со следующей сессии",
+  "Update available": "Есть обновление",
+  "Changed at source": "Изменён в источнике",
+  "Not updated from here": "Отсюда не обновляется",
+  "Needs GitHub sign-in": "Нужен вход в GitHub",
+  "Name the repo as owner/repo or paste its GitHub link.":
+    "Укажите репозиторий как owner/repo или вставьте ссылку на GitHub.",
+  "Sign in to GitHub on {machine} to read {repo}":
+    "Войдите в GitHub на {machine}, чтобы прочитать {repo}",
+  "GitHub has no {repo} for the account signed in on {machine}.":
+    "Для аккаунта, вошедшего на {machine}, на GitHub нет {repo}.",
+  "GitHub is limiting reads from {machine}. Sign in to GitHub there or try again later.":
+    "GitHub ограничивает запросы с {machine}. Войдите там в GitHub или повторите позже.",
+  "GitHub could not be reached from {machine}.": "Не удалось связаться с GitHub с {machine}.",
+  "Installed {skill} {version}": "Установлен {skill} {version}",
+  "Updated {skill} to {version}": "{skill} обновлён до {version}",
+  "{skill} is already up to date": "{skill} уже актуален",
+  "Skipped {skill}": "{skill} пропущен",
+  "{skill} was not changed": "{skill} не изменён",
+  "Search skills and notes": "Поиск навыков и заметок",
+  "Search installed skills, connected repos and notes":
+    "Искать в установленных навыках, подключённых репозиториях и заметках",
+  "Installed on {machine}": "Установлено на {machine}",
+  "No installed skill matches.": "Среди установленных навыков совпадений нет.",
+  "Available in a connected repo": "Доступно в подключённом репозитории",
+  "No skill in a connected repo matches.": "В подключённых репозиториях совпадений нет.",
+  Private: "Приватный",
+  Notes: "Заметки",
+  "No Obsidian vault on {machine}.": "На {machine} нет хранилища Obsidian.",
+  "No note matches.": "Совпадений в заметках нет.",
+  "Open in Obsidian": "Открыть в Obsidian",
+  "More notes may match. Narrow the search.": "Могут быть и другие заметки. Уточните запрос.",
+  "Obsidian on {machine} did not open the note.": "Obsidian на {machine} не открыл заметку.",
+  "When each agent has it": "Когда навык появится у каждого агента",
+  "Versions and updates": "Версии и обновления",
+  "Update all ({count})": "Обновить все ({count})",
+  "No skill on {machine} records a source yet.":
+    "На {machine} пока нет навыков с записанным источником.",
+  "Skill repos": "Репозитории навыков",
+  "Connected on {machine} only. A private repo is read with the GitHub sign-in on {machine} and is never sent to a registry.":
+    "Подключены только на {machine}. Приватный репозиторий читается через вход в GitHub на {machine} и никогда не отправляется в реестр.",
+  "Skill repo": "Репозиторий навыков",
+  "owner/repo or a GitHub link": "owner/repo или ссылка на GitHub",
+  Suggested: "Рекомендуем",
+  "Connect {repo}": "Подключить {repo}",
+  Public: "Публичный",
+  "Skills: {count}": "Навыков: {count}",
+  "No skills found in this repo.": "В этом репозитории навыков не найдено.",
+  "This repo holds more skills than are listed here.":
+    "В этом репозитории больше навыков, чем показано здесь.",
 };

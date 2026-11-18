@@ -5481,4 +5481,60 @@ export const ko: PhraseCatalog = {
     "{machine}이(가) 오프라인입니다. 다시 연결되면 설정이 표시됩니다.",
   "You can look at {machine}'s settings from this sign-in, but not change them.":
     "이 로그인으로는 {machine}의 설정을 볼 수만 있고 바꿀 수는 없습니다.",
+  "Needs permission to change files and run vskill here.":
+    "여기에서 파일을 변경하고 vskill을 실행할 권한이 필요합니다.",
+  "Needs permission to change settings on this machine.":
+    "이 기기의 설정을 변경할 권한이 필요합니다.",
+  "Loaded now": "지금 로드됨",
+  "Next message": "다음 메시지부터",
+  "Next session": "다음 세션부터",
+  "Update available": "업데이트 있음",
+  "Changed at source": "소스에서 변경됨",
+  "Not updated from here": "여기서 업데이트하지 않음",
+  "Needs GitHub sign-in": "GitHub 로그인이 필요함",
+  "Name the repo as owner/repo or paste its GitHub link.":
+    "저장소를 owner/repo 형식으로 입력하거나 GitHub 링크를 붙여넣으세요.",
+  "Sign in to GitHub on {machine} to read {repo}":
+    "{repo}을(를) 읽으려면 {machine}에서 GitHub에 로그인하세요",
+  "GitHub has no {repo} for the account signed in on {machine}.":
+    "{machine}에 로그인된 계정으로는 GitHub에서 {repo}을(를) 찾을 수 없습니다.",
+  "GitHub is limiting reads from {machine}. Sign in to GitHub there or try again later.":
+    "GitHub가 {machine}의 읽기를 제한하고 있습니다. 그 기기에서 GitHub에 로그인하거나 나중에 다시 시도하세요.",
+  "GitHub could not be reached from {machine}.": "{machine}에서 GitHub에 연결할 수 없습니다.",
+  "Installed {skill} {version}": "{skill} {version} 설치됨",
+  "Updated {skill} to {version}": "{skill}을(를) {version}(으)로 업데이트함",
+  "{skill} is already up to date": "{skill}은(는) 이미 최신입니다",
+  "Skipped {skill}": "{skill} 건너뜀",
+  "{skill} was not changed": "{skill}은(는) 변경되지 않았습니다",
+  "Search skills and notes": "스킬과 노트 검색",
+  "Search installed skills, connected repos and notes": "설치된 스킬, 연결된 저장소, 노트 검색",
+  "Installed on {machine}": "{machine}에 설치됨",
+  "No installed skill matches.": "일치하는 설치된 스킬이 없습니다.",
+  "Available in a connected repo": "연결된 저장소에서 사용 가능",
+  "No skill in a connected repo matches.": "연결된 저장소에 일치하는 스킬이 없습니다.",
+  Private: "비공개",
+  Notes: "노트",
+  "No Obsidian vault on {machine}.": "{machine}에 Obsidian 보관소가 없습니다.",
+  "No note matches.": "일치하는 노트가 없습니다.",
+  "Open in Obsidian": "Obsidian에서 열기",
+  "More notes may match. Narrow the search.":
+    "일치하는 노트가 더 있을 수 있습니다. 검색을 좁혀 보세요.",
+  "Obsidian on {machine} did not open the note.": "{machine}의 Obsidian이 노트를 열지 못했습니다.",
+  "When each agent has it": "에이전트별 사용 가능 시점",
+  "Versions and updates": "버전 및 업데이트",
+  "Update all ({count})": "모두 업데이트 ({count})",
+  "No skill on {machine} records a source yet.":
+    "{machine}에는 소스가 기록된 스킬이 아직 없습니다.",
+  "Skill repos": "스킬 저장소",
+  "Connected on {machine} only. A private repo is read with the GitHub sign-in on {machine} and is never sent to a registry.":
+    "{machine}에서만 연결됩니다. 비공개 저장소는 {machine}의 GitHub 로그인으로 읽으며 레지스트리로 전송되지 않습니다.",
+  "Skill repo": "스킬 저장소",
+  "owner/repo or a GitHub link": "owner/repo 또는 GitHub 링크",
+  Suggested: "추천",
+  "Connect {repo}": "{repo} 연결",
+  Public: "공개",
+  "Skills: {count}": "스킬: {count}",
+  "No skills found in this repo.": "이 저장소에서 스킬을 찾지 못했습니다.",
+  "This repo holds more skills than are listed here.":
+    "이 저장소에는 여기에 표시된 것보다 더 많은 스킬이 있습니다.",
 };
