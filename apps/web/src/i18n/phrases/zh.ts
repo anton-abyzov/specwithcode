@@ -475,8 +475,7 @@ export const zh: PhraseCatalog = {
   Query: "查询",
   "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
     "读取这台机器上的 Cursor 登录，以显示 Cursor 套餐限制和历史。Cursor 没有公开的用量 API，因此在你开启之前保持关闭。",
-  "Turn on Cursor account usage?":
-    "开启 Cursor 账户用量？",
+  "Turn on Cursor account usage?": "开启 Cursor 账户用量？",
   "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
     "Cursor 没有公开的用量 API。应用会读取你的 Cursor 登录并调用 Cursor 的私有接口，Cursor 表示这违反其条款，可能导致你的账户被封禁。",
   "Reconnect this device to set up its provider, or select another device.":

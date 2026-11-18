@@ -361,9 +361,7 @@ describe("SQLite usage readers", () => {
       { totalUsageEventsCount: 0 },
       { totalUsageEventsCount: 0, usageEventsDisplay: [] },
     ]) {
-      const result = await readAccount(authPath, 0, 1781000000000, async () =>
-        Response.json(body),
-      );
+      const result = await readAccount(authPath, 0, 1781000000000, async () => Response.json(body));
       assert.isNull(result.error);
       assert.deepStrictEqual(result.records, []);
       assert.isFalse(result.missing);
@@ -377,9 +375,7 @@ describe("SQLite usage readers", () => {
       "invalid",
       0,
     ]) {
-      const result = await readAccount(authPath, 0, 1781000000000, async () =>
-        Response.json(body),
-      );
+      const result = await readAccount(authPath, 0, 1781000000000, async () => Response.json(body));
       assert.isNotNull(result.error);
       assert.deepStrictEqual(result.records, []);
     }

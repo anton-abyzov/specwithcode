@@ -493,8 +493,7 @@ export const pt: PhraseCatalog = {
   Query: "Consulta",
   "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
     "Mostra os limites do plano e o histórico do Cursor lendo o login do Cursor desta máquina. O Cursor não tem uma API pública de uso, então isso fica desligado até você ligar.",
-  "Turn on Cursor account usage?":
-    "Ligar o uso da conta do Cursor?",
+  "Turn on Cursor account usage?": "Ligar o uso da conta do Cursor?",
   "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
     "O Cursor não tem uma API pública de uso. O app lê seu login do Cursor e chama endpoints privados do Cursor, o que, segundo o Cursor, viola os termos e pode fazer sua conta ser banida.",
   "Reconnect this device to set up its provider, or select another device.":

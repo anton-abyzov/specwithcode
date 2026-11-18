@@ -491,8 +491,7 @@ export const ru: PhraseCatalog = {
   Query: "Запрос",
   "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
     "Показывает лимиты плана и историю Cursor, читая вход в Cursor на этой машине. У Cursor нет публичного API использования, поэтому это выключено, пока вы не включите.",
-  "Turn on Cursor account usage?":
-    "Включить использование аккаунта Cursor?",
+  "Turn on Cursor account usage?": "Включить использование аккаунта Cursor?",
   "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
     "У Cursor нет публичного API использования. Приложение читает ваш вход в Cursor и вызывает закрытые эндпоинты Cursor. По словам Cursor, это нарушает его условия и может привести к блокировке аккаунта.",
   "Reconnect this device to set up its provider, or select another device.":

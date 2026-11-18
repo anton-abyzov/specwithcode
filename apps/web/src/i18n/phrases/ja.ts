@@ -489,8 +489,7 @@ export const ja: PhraseCatalog = {
   Query: "クエリ",
   "Show Cursor plan limits and history by reading this machine's Cursor sign-in. Cursor has no public usage API, so this stays off until you turn it on.":
     "このマシンの Cursor のサインイン情報を読み取り、Cursor のプランの上限と履歴を表示します。Cursor には公開の使用量 API がないため、オンにするまではオフのままです。",
-  "Turn on Cursor account usage?":
-    "Cursor アカウントの使用量をオンにしますか？",
+  "Turn on Cursor account usage?": "Cursor アカウントの使用量をオンにしますか？",
   "Cursor has no public usage API. The app reads your Cursor sign-in and calls Cursor's private endpoints, which Cursor says breaks its terms and can get your account banned.":
     "Cursor には公開の使用量 API がありません。アプリはあなたの Cursor のサインイン情報を読み取り、Cursor の非公開エンドポイントを呼び出します。Cursor はこれが利用規約違反であり、アカウント停止につながる可能性があるとしています。",
   "Reconnect this device to set up its provider, or select another device.":

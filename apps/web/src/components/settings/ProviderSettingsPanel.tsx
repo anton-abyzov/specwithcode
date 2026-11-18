@@ -329,7 +329,12 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
     ) {
       setSelectedEnvironmentId(searchableEnvironmentId);
     }
-  }, [searchTargetId, searchableEnvironmentId, selectedEnvironmentCanRenderSettings, target.scoped]);
+  }, [
+    searchTargetId,
+    searchableEnvironmentId,
+    selectedEnvironmentCanRenderSettings,
+    target.scoped,
+  ]);
   const onlyPrimaryDevice =
     options.length === 1 && options[0]?.entry.target._tag === "PrimaryConnectionTarget";
   const deviceTabs =

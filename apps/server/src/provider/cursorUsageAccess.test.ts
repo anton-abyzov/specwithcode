@@ -234,32 +234,30 @@ describe("Cursor account usage switch", () => {
       }),
   );
 
-  it.effect(
-    "keeps the desktop sign-in away from another account and from a custom endpoint",
-    () =>
-      Effect.gen(function* () {
-        writeDesktopState("linux");
-        for (const [apiEndpoint, email] of [
-          ["", "bob@example.com"],
-          ["https://cursor-proxy.example", "alice@example.com"],
-        ] as const) {
-          const calls: Calls = { keychain: 0, desktop: [], fetch: [] };
-          const limits = yield* readCursorUsageLimits({ apiEndpoint }, environmentFor(), {
-            enabled: true,
-            account: { email },
-          }).pipe(
-            Effect.provideService(HostProcessPlatform, "linux"),
-            Effect.provideService(CursorAccess, recordingAccess(calls)),
-            Effect.provideService(
-              HttpClient.HttpClient,
-              HttpClient.make(() => Effect.die("must not send the desktop sign-in")),
-            ),
-            Effect.provide(NodeServices.layer),
-          );
-          expect(limits.unavailable?.reason).toBe("unsupported");
-          expect(calls.desktop.length).toBe(apiEndpoint ? 0 : 1);
-        }
-      }),
+  it.effect("keeps the desktop sign-in away from another account and from a custom endpoint", () =>
+    Effect.gen(function* () {
+      writeDesktopState("linux");
+      for (const [apiEndpoint, email] of [
+        ["", "bob@example.com"],
+        ["https://cursor-proxy.example", "alice@example.com"],
+      ] as const) {
+        const calls: Calls = { keychain: 0, desktop: [], fetch: [] };
+        const limits = yield* readCursorUsageLimits({ apiEndpoint }, environmentFor(), {
+          enabled: true,
+          account: { email },
+        }).pipe(
+          Effect.provideService(HostProcessPlatform, "linux"),
+          Effect.provideService(CursorAccess, recordingAccess(calls)),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("must not send the desktop sign-in")),
+          ),
+          Effect.provide(NodeServices.layer),
+        );
+        expect(limits.unavailable?.reason).toBe("unsupported");
+        expect(calls.desktop.length).toBe(apiEndpoint ? 0 : 1);
+      }
+    }),
   );
 
   it("reads only the access token and email from state.vscdb, never writing it", () => {

@@ -5,10 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import type { UsageRecord } from "./usageTranscripts.ts";
-import {
-  type CursorDesktopSignIn,
-  isExpiredCursorToken,
-} from "../provider/cursorDesktopToken.ts";
+import { type CursorDesktopSignIn, isExpiredCursorToken } from "../provider/cursorDesktopToken.ts";
 import {
   CursorKeychainTimeoutError,
   readMacCursorAccessToken,
