@@ -474,6 +474,13 @@ describe("a reason as the board shows it", () => {
     expect(boardNoteText("step 1) first,second")).toBe("step 1) first, second");
   });
 
+  it("does not take a bracket that never closes for a list", () => {
+    expect(boardNoteText("waiting (since Monday,still blocked,needs review")).toBe(
+      "waiting (since Monday, still blocked, needs review",
+    );
+    expect(boardNoteText("failed :( retry,now")).toBe("failed :( retry, now");
+  });
+
   it("reads a slash between numbers as a ratio, not a path", () => {
     expect(boardNoteText("ready;12/40 rows copied,7pending. Next")).toBe(
       "ready; 12/40 rows copied, 7pending. Next",

@@ -116,9 +116,10 @@ export function boardThreadPages(threads: ReadonlyArray<EnvironmentThreadShell>)
               Number(left.resolved) - Number(right.resolved) ||
               right.thread.updatedAt.localeCompare(left.thread.updatedAt),
           );
-        // Leaving out resolved threads loses nothing the board decides by: they
-        // hold no work, color no edge and never make a card busy. Only a thread
-        // that is not resolved and goes unread leaves the board not knowing.
+        // Leaving out resolved threads loses no decision: they hold no work,
+        // color no edge and never make a card busy. It does lose their lines on
+        // the cards and in the view's finished list. Only a thread that is not
+        // resolved and goes unread leaves the board not knowing.
         if (ranked.slice(THREAD_INCREMENT_PROGRESS_MAX_THREADS).some((entry) => !entry.resolved))
           cut = true;
         page = ranked.slice(0, THREAD_INCREMENT_PROGRESS_MAX_THREADS).map((entry) => entry.thread);
@@ -171,8 +172,10 @@ export function useBoardThreads(input: {
 }): {
   readonly byIncrement: ReadonlyMap<string, ReadonlyArray<BoardThread>>;
   /**
-   * False until every thread has said which increment it works on: an empty
-   * card then means "not known yet", not "nobody is on it".
+   * False until every thread that is read has said which increment it works
+   * on: an empty card then means "not known yet", not "nobody is on it". In a
+   * project past the read limit, resolved threads may be left unread; their
+   * lines are then missing from the cards, which is not said anywhere.
    */
   readonly answered: boolean;
   /**

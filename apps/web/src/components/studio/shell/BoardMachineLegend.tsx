@@ -27,8 +27,9 @@ export function BoardMachineLegend(props: {
   onPick: (id: string | null) => void;
 }) {
   const { options, pick, answered, cut } = props;
-  if (options.length === 0) return null;
-  // One entry is only a legend, unless it is the choice: that can always be let go.
+  // A choice can always be let go, also when its machine has no entry for now.
+  if (options.length === 0 && pick === null) return null;
+  // One entry is only a legend, unless it is the choice.
   const narrows = options.length > 1 || pick !== null;
   const entry = (option: BoardMachineOption) => (
     <>

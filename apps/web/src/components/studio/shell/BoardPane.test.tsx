@@ -1189,6 +1189,22 @@ describe("BoardPane", () => {
       expect(shown()).toHaveLength(5);
     });
 
+    it("can let a kept choice go when no machine has an entry for now", async () => {
+      runtime.reply = cards();
+      runtime.working = fleet();
+      await render();
+      await act(async () => entry("laptop").click());
+      // A machine went off: the list never answers, and no open card has a thread left.
+      runtime.working = { ...threadsOn([], false), multiMachine: true };
+      await render();
+      expect(shown()).toEqual([]);
+      const all = [...legend()!.querySelectorAll("button")].find(
+        (node) => node.textContent === "All",
+      )!;
+      await act(async () => all.click());
+      expect(shown()).toHaveLength(5);
+    });
+
     it("says so when the project has more threads than it reads", async () => {
       runtime.reply = cards();
       runtime.working = { ...fleet(false), cut: true };

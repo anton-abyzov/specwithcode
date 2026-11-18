@@ -380,10 +380,11 @@ function BoardCards({
 
   // An increment opened by a link or by going back, in a folded group: the
   // group opens at once, so it never waits on a machine that does not answer.
-  // Only a planned card can still move as the threads answer (into Active);
-  // when it does, the fold it opened is given back and the group it ends in
-  // opens instead. After that a card that changes group, while its view is
-  // open, unfolds nothing.
+  // One later move is followed, the threads' own: a planned card they find at
+  // work goes to Active, so the fold it opened is given back and Active opens
+  // instead. Any other change of group, while its view is open, unfolds
+  // nothing; and once the person folds or unfolds the card's group by hand it
+  // is theirs, so nothing is followed or given back after that.
   const revealed = useRef<{
     id: string;
     group: BoardGroupId | null;
@@ -392,10 +393,11 @@ function BoardCards({
   } | null>(null);
   const openedColumn =
     openId === null ? null : data?.cards.find((card) => card.incrementId === openId)?.column;
+  const openedPromoted = openId !== null && promotions.ids.has(openId);
   const groupSettled =
     openId !== null &&
     (openedColumn !== "planned" ||
-      promotions.ids.has(openId) ||
+      openedPromoted ||
       ((working.answered || working.cut) && !evidence.includes(openId)));
   useEffect(() => {
     if (openId === null) {
@@ -406,14 +408,25 @@ function BoardCards({
       revealed.current = { id: openId, group: null, opened: false, settled: false };
     const state = revealed.current;
     if (state.settled || openedGroup === null) return;
-    if (state.group !== openedGroup) {
-      if (state.group !== null && state.opened) setGroupFolded(state.group, true);
+    if (state.group === null) {
       state.opened = folds.includes(openedGroup);
       if (state.opened) setGroupFolded(openedGroup, false);
       state.group = openedGroup;
+    } else if (state.group !== openedGroup) {
+      // The board moved the card. Only the threads' promotion is followed.
+      if (openedPromoted && openedColumn === "planned") {
+        if (state.opened) setGroupFolded(state.group, true);
+        if (folds.includes(openedGroup)) setGroupFolded(openedGroup, false);
+      }
+      state.settled = true;
+      return;
     }
     if (groupSettled) state.settled = true;
-  }, [folds, groupSettled, openId, openedGroup, setGroupFolded]);
+  }, [folds, groupSettled, openId, openedColumn, openedGroup, openedPromoted, setGroupFolded]);
+  const toggleGroup = (group: BoardGroupId, folded: boolean) => {
+    if (revealed.current?.group === group) revealed.current.settled = true;
+    setGroupFolded(group, folded);
+  };
 
   // The cards on screen in reading order; with the view open that is the stacked list.
   const walk = useMemo(
@@ -587,7 +600,7 @@ function BoardCards({
                     count={machine === null || unsorted ? total : held[group].length}
                     folded={folded}
                     locked={searching}
-                    onToggle={() => setGroupFolded(group, !folded)}
+                    onToggle={() => toggleGroup(group, !folded)}
                   >
                     <div className="sws-board-cards">
                       {listed[group].map((card) => (

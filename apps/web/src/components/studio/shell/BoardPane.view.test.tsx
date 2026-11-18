@@ -502,6 +502,63 @@ describe("BoardPane increment view", () => {
       });
     });
 
+    it("follows no other move, and leaves a fold made by hand alone", async () => {
+      const key = "studio:project-board-folded:v1";
+      const stored = () =>
+        (JSON.parse(localStorage.getItem(key)!) as Record<string, string[]>)[
+          "host:atlas"
+        ]!.toSorted();
+      localStorage.setItem(key, JSON.stringify({ "host:atlas": ["planned", "blocked"] }));
+      const others = () => [...fourCards().slice(1), stuck()];
+      runtime.reply = board([card("0001-plan", "planned"), ...others()]);
+      // A machine that is off never answers, so the planned card never settles by itself.
+      runtime.working = {
+        byIncrement: new Map(),
+        multiMachine: false,
+        answered: false,
+        cut: false,
+        loaders: null,
+      };
+      await render({ initial: "0001-plan" });
+      expect(stored()).toEqual(["blocked"]);
+      // The person folds Planned again, by hand.
+      await act(async () => groupBar("planned").click());
+      expect(stored()).toEqual(["blocked", "planned"]);
+      // A refresh finds the open card blocked, and a later one finds it planned again.
+      runtime.reply = board([
+        card("0001-plan", "planned", { blocked: true, blockedTasks: 1 }),
+        ...others(),
+      ]);
+      await render({ initial: "0001-plan" });
+      expect(stored()).toEqual(["blocked", "planned"]);
+      runtime.reply = board([card("0001-plan", "planned"), ...others()]);
+      await render({ initial: "0001-plan" });
+      expect(stored()).toEqual(["blocked", "planned"]);
+      expect(viewTitle()?.textContent).toBe("Title 0001-plan");
+    });
+
+    it("does not follow a card the board moves, only one the threads promote", async () => {
+      const key = "studio:project-board-folded:v1";
+      localStorage.setItem(key, JSON.stringify({ "host:atlas": ["planned", "blocked"] }));
+      const others = () => [...fourCards().slice(1), stuck()];
+      runtime.reply = board([card("0001-plan", "planned"), ...others()]);
+      runtime.working = {
+        byIncrement: new Map(),
+        multiMachine: false,
+        answered: false,
+        cut: false,
+        loaders: null,
+      };
+      await render({ initial: "0001-plan" });
+      runtime.reply = board([
+        card("0001-plan", "planned", { blocked: true, blockedTasks: 1 }),
+        ...others(),
+      ]);
+      await render({ initial: "0001-plan" });
+      // Blocked stays folded and Planned keeps the fold the link opened: nothing is given back.
+      expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ "host:atlas": ["blocked"] });
+    });
+
     it("never waits on the threads for a card that cannot move", async () => {
       localStorage.setItem(
         "studio:project-board-folded:v1",

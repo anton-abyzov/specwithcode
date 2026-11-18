@@ -549,24 +549,33 @@ function spaceAfterMarks(token: string, depth: number): { text: string; depth: n
  * to the coordinator quote the note unrepaired.
  */
 export function boardNoteText(note: string): string {
-  let depth = 0;
-  return note
-    .split(/(`[^`]*`)/)
-    .map((part, index) =>
-      index % 2 === 1
-        ? part
-        : part
-            .split(/(\s+)/)
-            .map((token, at) => {
-              if (at % 2 === 1) return " ";
-              const spaced = spaceAfterMarks(token, depth);
-              depth = spaced.depth;
-              return spaced.text;
-            })
-            .join(""),
-    )
-    .join("")
-    .trim();
+  // A list in brackets may run across spaces, so the depth is carried from
+  // word to word. A bracket that never closes is not a list (":(" or a
+  // sentence cut short): the note is then read word by word instead, or
+  // everything after it would be left unrepaired.
+  const read = (carry: boolean) => {
+    let depth = 0;
+    const text = note
+      .split(/(`[^`]*`)/)
+      .map((part, index) =>
+        index % 2 === 1
+          ? part
+          : part
+              .split(/(\s+)/)
+              .map((token, at) => {
+                if (at % 2 === 1) return " ";
+                const spaced = spaceAfterMarks(token, carry ? depth : 0);
+                depth = spaced.depth;
+                return spaced.text;
+              })
+              .join(""),
+      )
+      .join("")
+      .trim();
+    return { text, open: depth > 0 };
+  };
+  const carried = read(true);
+  return carried.open ? read(false).text : carried.text;
 }
 
 /** What a pull request's state reads as beside its number. */
