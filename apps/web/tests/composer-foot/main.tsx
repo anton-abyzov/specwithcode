@@ -152,6 +152,7 @@ function CoordinatorPane() {
             <OrchestratorSwitcher
               identity={{ color: "rose", icon: "laptop" } as never}
               label="m4"
+              projectTitle="specweave"
               connected
               statusDetail=""
               current="env-m4:specweave"
@@ -161,6 +162,9 @@ function CoordinatorPane() {
                   machine: "m4",
                   folder: "/Users/fixture/specweave",
                   role: "coordinator",
+                  main: true,
+                  rowRole: "main",
+                  label: { text: "Coordinator" },
                   canStart: false,
                 },
                 {
@@ -168,6 +172,9 @@ function CoordinatorPane() {
                   machine: "linux-mini",
                   folder: "/home/fixture/specweave",
                   role: "workers",
+                  main: false,
+                  rowRole: "copy",
+                  label: { text: "" },
                   canStart: true,
                 },
               ]}

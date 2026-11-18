@@ -1,5 +1,5 @@
 // Headless screenshots of the one Copy to another machine flow (increments 1325, 1326, 1372):
-// setup in light and dark, a move asked for with "Make X main", the review with secrets
+// setup in light and dark, a move asked for with "Continue the coordinator here", the review with secrets
 // listed, and the Git only screen.
 // Build first: node node_modules/vite-plus/bin/vp build --config apps/web/tests/folder-copy/vite.config.ts
 // Run from the repository root: node apps/web/tests/folder-copy/screens.mjs /absolute/report-dir
@@ -69,11 +69,13 @@ try {
     await page.goto(`${base}?short=1&secrets=1&uncommitted=18&theme=${theme}`);
     await page.getByRole("heading", { name: "Copy specweave to m5", exact: true }).waitFor();
     const text = await page.locator('[data-slot="dialog-popup"]').textContent();
-    NodeAssert.match(text, /From m4\. Main stays where it is\./);
+    // With no coordinator named, the header says only where the copy comes from.
+    NodeAssert.match(text, /From m4\./);
+    NodeAssert.doesNotMatch(text, /Main (stays|moves)/);
     NodeAssert.match(text, /What comes along/);
     NodeAssert.match(text, /including 18 uncommitted files/);
     NodeAssert.match(text, /Secrets \(\.env, keys\): included/);
-    // A folder copy asks nothing about Main: no Copy or move.
+    // A folder copy asks nothing about the coordinator: no Copy or move.
     NodeAssert.doesNotMatch(text, /Copy or move|Move to m5/);
     NodeAssert.equal(await page.locator('[data-slot="handoff-coordinator"]').count(), 0);
     NodeAssert.doesNotMatch(text, /Hand off and continue there|Copy local files/);
@@ -84,7 +86,7 @@ try {
     );
     await shot(page, `after-setup-${theme}`);
   }
-  // A move asked for with "Make X main" opens the same flow, set to move.
+  // A move asked for with "Continue the coordinator here" opens the same flow, set to move.
   await page.goto(`${base}?short=1&secrets=1&uncommitted=18&theme=light&move=1`);
   await page.getByRole("button", { name: "Copy and move to m5", exact: true }).waitFor();
   await page.getByRole("heading", { name: "Move specweave to m5", exact: true }).waitFor();

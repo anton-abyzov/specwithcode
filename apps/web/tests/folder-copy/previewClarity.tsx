@@ -13,7 +13,7 @@ const rows: FolderCopyRow[] = [
     kind: "repository",
     path: ".",
     status: "dirty",
-    detail: "Behind the source, with uncommitted changes here.",
+    detail: "Behind m4, with uncommitted changes here.",
     filesToMove: 16941,
     bytesToMove: 295000000,
     bytesPresent: 2200000000,
