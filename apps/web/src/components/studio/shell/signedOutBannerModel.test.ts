@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { joinNames, signedOutBanner, type SignedOutBannerMachine } from "./signedOutBannerModel";
+import {
+  joinNames,
+  sessionEndingBanner,
+  signedOutBanner,
+  type SignedOutBannerMachine,
+} from "./signedOutBannerModel";
 
 const machine = (
   name: string,
@@ -97,5 +102,18 @@ describe("joinNames", () => {
     expect(joinNames(["M5"])).toBe("M5");
     expect(joinNames(["M5", "m3"])).toBe("M5 and m3");
     expect(joinNames(["M5", "m3", "m1"])).toBe("M5, m3 and m1");
+  });
+});
+
+describe("sessionEndingBanner (1417, AC-11)", () => {
+  it("says when the sign-in ends and which machines it keeps reaching", () => {
+    expect(sessionEndingBanner({ endsAt: "2:43 PM", machines: ["Office Mac", "Mac mini"] })).toEqual({
+      title: "Your Connect sign-in ends at 2:43 PM",
+      body: "Sign in again to keep reaching Office Mac and Mac mini from this window.",
+    });
+  });
+
+  it("shows nothing when no saved machine depends on the sign-in", () => {
+    expect(sessionEndingBanner({ endsAt: "2:43 PM", machines: [] })).toBeNull();
   });
 });

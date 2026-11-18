@@ -22,13 +22,18 @@ export type ConnectAccount =
       readonly status: "signedIn";
       readonly name: string | null;
       readonly email: string | null;
+      /**
+       * Time left before Clerk ends this sign-in ("1h 40m"), from 24 hours
+       * before and only when a saved machine depends on it (1417, AC-11).
+       */
+      readonly sessionEndsIn?: string;
     };
 
 export interface AccountMenuPresentation {
   /** Shown on the button and read out as "Account: ...". */
   readonly name: string;
   readonly header: string;
-  /** Null when this window cannot sign in, or already has. */
+  /** Null when this window cannot sign in, or already has and its sign-in is not ending. */
   readonly signIn: { readonly label: string; readonly hint: string } | null;
   /** "warning" while being signed out cuts this window off from a machine. */
   readonly tone?: "warning";
@@ -86,9 +91,20 @@ export function accountMenuPresentation(
           };
     case "signedIn": {
       const label = account.email ?? account.name;
+      const header = label ? `${label} · ${machine}` : machine;
+      if (account.sessionEndsIn !== undefined)
+        return {
+          name: `Sign-in ends in ${account.sessionEndsIn}`,
+          header,
+          tone: "warning",
+          signIn: {
+            label: "Sign in again now",
+            hint: "SpecWithCode Connect ends every sign-in after 7 days. Signing in again now starts a new one, and this window keeps your machines.",
+          },
+        };
       return {
         name: account.name ?? account.email ?? "SpecWithCode account",
-        header: label ? `${label} · ${machine}` : machine,
+        header,
         signIn: null,
       };
     }

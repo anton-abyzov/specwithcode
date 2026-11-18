@@ -5761,4 +5761,7 @@ export const ja: PhraseCatalog = {
     "スキップしてもかまいません。設定 › マシン にもあり、作業で必要になるとエージェントが確認します。",
   "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
     "ターミナルでも claude、codex、specweave を使えます。シェルの起動ファイルに目印付きのブロックを 1 つ追加します。設定 > 一般 でいつでもオフにできます。",
+  "Your Connect sign-in ends at {time}": "Connect のサインインは {time} に終了します",
+  "Sign in again to keep reaching {machines} from this window.": "このウィンドウから {machines} に引き続きアクセスするには、もう一度サインインしてください。",
+  "Sign in again now": "今すぐ再サインイン",
 };

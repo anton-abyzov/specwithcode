@@ -5805,4 +5805,7 @@ export const fr: PhraseCatalog = {
     "Vous pouvez passer cette étape. C'est aussi dans Réglages › Machines, et les agents demandent quand une tâche en a besoin.",
   "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
     "Utilisez aussi claude, codex et specweave dans Terminal. Ajoute un bloc balisé à votre fichier de démarrage du shell ; désactivez-le quand vous voulez dans Réglages > Général.",
+  "Your Connect sign-in ends at {time}": "Votre connexion Connect se termine à {time}",
+  "Sign in again to keep reaching {machines} from this window.": "Reconnectez-vous pour continuer à accéder à {machines} depuis cette fenêtre.",
+  "Sign in again now": "Se reconnecter maintenant",
 };

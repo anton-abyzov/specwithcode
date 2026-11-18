@@ -82,3 +82,26 @@ export function signedOutBanner(
     cutOff: cut.map(({ name }) => name),
   };
 }
+
+/**
+ * The banner from 2 hours before Clerk ends this window's sign-in (1417,
+ * AC-11), naming the machines that depend on it. Null with none of them.
+ */
+export function sessionEndingBanner(
+  input: {
+    /** The end, as the window's clock writes it ("2:43 PM"). */
+    readonly endsAt: string;
+    /** Saved machines reached from this window only with the Connect sign-in. */
+    readonly machines: ReadonlyArray<string>;
+  },
+  tx: TranslatePhrase = englishPhrase,
+  join: JoinNames = joinNames,
+): Omit<SignedOutBannerContent, "cutOff"> | null {
+  if (input.machines.length === 0) return null;
+  return {
+    title: tx("Your Connect sign-in ends at {time}", { time: input.endsAt }),
+    body: tx("Sign in again to keep reaching {machines} from this window.", {
+      machines: join(input.machines),
+    }),
+  };
+}

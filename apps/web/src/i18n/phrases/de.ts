@@ -5797,4 +5797,7 @@ export const de: PhraseCatalog = {
     "Du kannst das überspringen. Es ist auch unter Einstellungen › Rechner, und Agenten fragen, wenn eine Aufgabe es braucht.",
   "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
     "Nutze claude, codex und specweave auch im Terminal. Fügt deiner Shell-Startdatei einen markierten Block hinzu; du kannst das jederzeit unter Einstellungen > Allgemein ausschalten.",
+  "Your Connect sign-in ends at {time}": "Deine Connect-Anmeldung endet um {time}",
+  "Sign in again to keep reaching {machines} from this window.": "Melde dich erneut an, um {machines} weiter von diesem Fenster aus zu erreichen.",
+  "Sign in again now": "Jetzt erneut anmelden",
 };

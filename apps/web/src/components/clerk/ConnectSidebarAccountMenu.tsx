@@ -1,7 +1,13 @@
 import { useAuth, useClerk, useUser } from "@clerk/react";
 import { useEffect, useState } from "react";
 
+import {
+  machinesDependingOnConnectSignIn,
+  sessionTimeLeft,
+} from "../../cloud/connectSessionEnd";
 import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
+import { useEnvironments } from "../../state/environments";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { useHostDownNotes } from "../../studio/unreachableHosts";
 import { isElectron } from "../../env";
 import { AccountMenu } from "../account/AccountMenu";
@@ -9,6 +15,8 @@ import type { ConnectAccount } from "../account/accountMenuModel";
 import { toastManager } from "../ui/toast";
 import { resolveClerkSignOutRedirectUrl } from "./authRedirect";
 import { useStudioConnectAccountPage } from "./StudioConnectAccountPages";
+import { useConnectRenew } from "./useConnectRenew";
+import { useConnectSessionEnd } from "./useConnectSessionEnd";
 import { useStudioConnectAuthPrompt } from "./useStudioConnectAuthPrompt";
 
 /** Clerk needs the network to start; past this, the window stops saying it is checking. */
@@ -25,6 +33,17 @@ export default function ConnectSidebarAccountMenu({ compact }: { readonly compac
   const { openAuthPrompt } = useStudioConnectAuthPrompt();
   const { open: openAccountPage, portals } = useStudioConnectAccountPage();
   const link = usePrimaryCloudLinkState();
+  const renew = useConnectRenew();
+  const sessionEnd = useConnectSessionEnd();
+  const { environments } = useEnvironments();
+  const nameOf = useMachineNicknames();
+  // The end matters only while a saved machine is reached through the sign-in (AC-11).
+  const sessionEndsIn =
+    sessionEnd.stage !== "none" &&
+    sessionEnd.expireAt !== null &&
+    machinesDependingOnConnectSignIn(environments, nameOf).length > 0
+      ? sessionTimeLeft(sessionEnd.expireAt - sessionEnd.now)
+      : undefined;
 
   const [loadStalled, setLoadStalled] = useState(false);
   useEffect(() => {
@@ -46,6 +65,7 @@ export default function ConnectSidebarAccountMenu({ compact }: { readonly compac
           status: "signedIn",
           name: user?.fullName ?? null,
           email: user?.primaryEmailAddress?.emailAddress ?? null,
+          ...(sessionEndsIn === undefined ? {} : { sessionEndsIn }),
         }
       : { status: "signedOut", linked, ...(cutsOff ? { cutsOff: true } : {}) };
 
@@ -67,8 +87,14 @@ export default function ConnectSidebarAccountMenu({ compact }: { readonly compac
         compact={compact}
         connect={{
           account,
+          // Signed in, the sign-in item is Sign in again now: Clerk shows no
+          // sign-in while one is active, so it signs out first (AC-12).
           onSignIn:
-            account.status === "notLoaded" ? () => window.location.reload() : openAuthPrompt,
+            account.status === "notLoaded"
+              ? () => window.location.reload()
+              : account.status === "signedIn"
+                ? renew
+                : openAuthPrompt,
           onManage: openAccountPage,
           onSignOut: signOut,
         }}
