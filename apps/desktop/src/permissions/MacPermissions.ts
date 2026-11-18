@@ -6,6 +6,7 @@ import * as Electron from "electron";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { MacPermissionHelper } from "./MacPermissionHelper.ts";
 import type { MacPermission } from "./MacPermission.ts";
+import type { MacPermissionDragItem } from "./MacPermissionHelper.ts";
 
 export class MacPermissions extends Context.Service<
   MacPermissions,
@@ -14,7 +15,9 @@ export class MacPermissions extends Context.Service<
       permission: MacPermission,
       owner: Electron.BrowserWindow | null,
       isGranted?: () => boolean | Promise<boolean>,
+      dragItem?: MacPermissionDragItem,
     ) => Effect.Effect<void>;
+    readonly closeHelper: Effect.Effect<void>;
   }
 >()("@specweave-studio/desktop/permissions/MacPermissions") {}
 
@@ -26,7 +29,13 @@ export const layer = Layer.effect(
     const helper = new MacPermissionHelper();
     yield* Effect.addFinalizer(() => Effect.sync(() => helper.close()));
     return MacPermissions.of({
-      showHelper: Effect.fn("MacPermissions.showHelper")(function* (permission, owner, isGranted) {
+      closeHelper: Effect.sync(() => helper.close()),
+      showHelper: Effect.fn("MacPermissions.showHelper")(function* (
+        permission,
+        owner,
+        isGranted,
+        dragItem,
+      ) {
         if (environment.platform !== "darwin" || !environment.isPackaged) return;
         yield* Effect.tryPromise(() =>
           helper.show(
@@ -35,6 +44,7 @@ export const layer = Layer.effect(
             owner,
             environment.resolveResourcePathCandidates("icon.png"),
             isGranted,
+            dragItem,
           ),
         ).pipe(
           Effect.catch((cause) => Effect.logWarning("Could not show permission helper", cause)),

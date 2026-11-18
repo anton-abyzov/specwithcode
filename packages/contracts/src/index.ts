@@ -119,6 +119,7 @@ export * from "./awayRpc.ts";
 export * from "./threadExecution.ts";
 export * from "./folderCopy.ts";
 export * from "./machineReadiness.ts";
+export * from "./privacyAccess.ts";
 
 export * from "./logicalProject.ts";
 export * from "./projectLink.ts";

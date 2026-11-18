@@ -87,6 +87,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.machineHandoffCopySealedSecrets]: "projects",
   [WS_METHODS.machineHandoffSentSecrets]: "projects",
   [WS_METHODS.machineHandoffReadiness]: "projects",
+  [WS_METHODS.machineHandoffPrivacyAccess]: "projects",
   [PROVISION_RPC_METHODS.provisionPreview]: "server",
   [PROVISION_RPC_METHODS.provisionRun]: "server",
   [MACHINE_TOOLS_RPC_METHODS.machineToolsCheck]: "server",

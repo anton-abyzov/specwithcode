@@ -10,7 +10,9 @@ import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   REMOTE_CAPABLE_EDITOR_IDS,
   SystemSettingsPaneSchema,
+  SystemSettingsRequestSchema,
   type DesktopEnvironmentBootstrap,
+  type SystemSettingsPane,
   type PickedThemeFile,
 } from "@specweave-studio/contracts";
 import { WORKSPACE_IMAGE_PREVIEW_EXTENSIONS } from "@specweave-studio/shared/filePreview";
@@ -358,21 +360,67 @@ export const openExternal = DesktopIpc.makeIpcMethod({
 
 export const openSystemSettings = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL,
-  payload: SystemSettingsPaneSchema,
+  payload: SystemSettingsRequestSchema,
   result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.openSystemSettings")(function* (pane) {
+  handler: Effect.fn("desktop.ipc.window.openSystemSettings")(function* (request) {
     const shell = yield* ElectronShell.ElectronShell;
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     if (environment.platform !== "darwin") return false;
+    const { pane, agentHost } = typeof request === "string" ? { pane: request } : request;
     const owner = Electron.BrowserWindow.getFocusedWindow();
     const opened = yield* shell.openSystemSettings(pane);
     if (opened && environment.isPackaged) {
       const permissions = yield* MacPermissions.MacPermissions;
-      const isGranted = yield* safariPermissionCheck;
-      yield* permissions.showHelper(pane, owner, isGranted);
+      const dragItem =
+        agentHost !== undefined && (yield* isDraggableItem(agentHost.path)) ? agentHost : undefined;
+      // A launchd agent host is judged by macOS as itself; this window cannot
+      // probe for it, so the renderer closes the helper once the service reports access.
+      const isGranted =
+        dragItem !== undefined ? () => false : yield* systemPermissionCheck(pane);
+      yield* permissions.showHelper(pane, owner, isGranted, dragItem);
     }
     return opened;
   }),
+});
+
+export const closeSystemSettingsHelper = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.CLOSE_SYSTEM_SETTINGS_HELPER_CHANNEL,
+  payload: Schema.Undefined,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.closeSystemSettingsHelper")(function* () {
+    const permissions = yield* MacPermissions.MacPermissions;
+    yield* permissions.closeHelper;
+  }),
+});
+
+/** Only an absolute path to an existing file or .app may be dragged into System Settings. */
+const isDraggableItem = Effect.fn("desktop.ipc.window.isDraggableItem")(function* (
+  itemPath: string,
+) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  if (!path.isAbsolute(itemPath)) return false;
+  const info = yield* fs.stat(itemPath).pipe(Effect.option);
+  if (Option.isNone(info)) return false;
+  return (
+    info.value.type === "File" || (info.value.type === "Directory" && itemPath.endsWith(".app"))
+  );
+});
+
+/** This app's own grant for each pane; panes it cannot read report false. */
+const systemPermissionCheck = Effect.fn("desktop.ipc.window.systemPermissionCheck")(function* (
+  pane: SystemSettingsPane,
+) {
+  switch (pane) {
+    case "full-disk-access":
+      return yield* safariPermissionCheck;
+    case "screen-recording":
+      return () => Electron.systemPreferences.getMediaAccessStatus("screen") === "granted";
+    case "accessibility":
+      return () => Electron.systemPreferences.isTrustedAccessibilityClient(false);
+    default:
+      return () => false;
+  }
 });
 
 export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
@@ -468,10 +516,10 @@ export const checkSystemPermission = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.CHECK_SYSTEM_PERMISSION_CHANNEL,
   payload: SystemSettingsPaneSchema,
   result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.checkSystemPermission")(function* () {
+  handler: Effect.fn("desktop.ipc.window.checkSystemPermission")(function* (pane) {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     if (environment.platform !== "darwin") return false;
-    const check = yield* safariPermissionCheck;
-    return yield* Effect.promise(check);
+    const check = yield* systemPermissionCheck(pane);
+    return yield* Effect.promise(async () => check());
   }),
 });

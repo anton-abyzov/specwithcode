@@ -91,4 +91,8 @@ export const machineHandoff = {
     label: "machine-handoff:readiness",
     tag: WS_METHODS.machineHandoffReadiness,
   }),
+  privacyAccess: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "machine-handoff:privacy-access",
+    tag: WS_METHODS.machineHandoffPrivacyAccess,
+  }),
 };
