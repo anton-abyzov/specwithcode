@@ -968,11 +968,22 @@ describe("BoardIncrementView", () => {
       ],
     ] as const)("asks the coordinator to %s without a live thread", async (label, card, prompt) => {
       runtime.reply = detail(card);
-      await render({ card, threads: [thread("t1", "unknown"), thread("r1", "resolved")] });
+      await render({ card, threads: [thread("r1", "resolved")] });
       expect(primary()?.textContent).toBe(label);
       expect(byText("Open thread")).toBeNull();
       await click(primary());
       expect(asked).toEqual([prompt]);
+    });
+
+    it("names a thread that cannot be reached in the request, so no second worker starts", async () => {
+      const card = makeCard();
+      runtime.reply = detail(card);
+      await render({ card, threads: [thread("t1", "unknown"), thread("r1", "resolved")] });
+      expect(primary()?.textContent).toBe("Continue");
+      await click(primary());
+      expect(asked).toEqual([
+        `Continue increment ${ID}: pick up its next open task. Check first: the thread "Thread t1" on Laptop cannot be reached now and may still hold this work. Do not start another worker beside it.`,
+      ]);
     });
 
     it("offers none to someone who cannot send", async () => {

@@ -50,7 +50,9 @@ import {
   BOARD_COLUMN_LABELS,
   boardCardPaused,
   boardCardTitle,
+  boardNoteText,
   boardProgress,
+  boardOutOfReachNote,
   incrementNumber,
   pullRequestLabel,
   threadIsLive,
@@ -338,7 +340,8 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
               type="button"
               className="sws-board-view-button"
               data-primary=""
-              onClick={() => onAsk(primary.prompt)}
+              // A thread that cannot be reached may still hold the work: the request says so.
+              onClick={() => onAsk(primary.prompt + boardOutOfReachNote(threads))}
             >
               {primary.label}
             </button>
@@ -419,7 +422,7 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
               Paused
             </strong>
             <p className="sws-board-view-blocker-reason">
-              {card.pausedReason?.trim() ||
+              {boardNoteText(card.pausedReason ?? "") ||
                 (card.paused === undefined
                   ? "The reason shows after the machine that serves this project updates SpecWithCode."
                   : "No reason was given.")}
@@ -437,7 +440,7 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
                 {blocker.taskId} is blocked
               </strong>
               <p className="sws-board-view-blocker-reason">
-                {blocker.note?.trim() || "No reason was given."}
+                {boardNoteText(blocker.note ?? "") || "No reason was given."}
               </p>
               <p className="sws-board-view-blocker-meta">
                 {[

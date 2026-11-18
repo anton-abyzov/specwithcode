@@ -25,6 +25,7 @@ const runtime = vi.hoisted(() => ({
     byIncrement: new Map<string, unknown[]>(),
     multiMachine: false,
     answered: true,
+    cut: false,
     loaders: null,
   },
 }));
@@ -66,6 +67,18 @@ vi.mock("../../../state/query", () => ({
 vi.mock("../../../browser/useOpenLink", () => ({ useOpenLink: () => runtime.openLink }));
 vi.mock("../../../hooks/useNowMinute", () => ({ useNowMinute: () => "2026-11-14T12:00" }));
 vi.mock("./ProjectPaneBar", () => ({ ProjectPaneBar: () => null }));
+// The menu as plain markup: its trigger, then its items in place.
+vi.mock("../../ui/menu", () => ({
+  Menu: ({ children }: { children: ReactNode }) => <>{children}</>,
+  MenuTrigger: ({ render, children, ...props }: { render: ReactElement; children: ReactNode }) =>
+    cloneElement(render, props, children),
+  MenuPopup: ({ children }: { children: ReactNode }) => <div role="menu">{children}</div>,
+  MenuItem: ({ children, onClick }: { children: ReactNode; onClick?: () => void }) => (
+    <button type="button" role="menuitem" onClick={onClick}>
+      {children}
+    </button>
+  ),
+}));
 vi.mock("./LibraryFileViewer", () => ({
   LibraryFileViewer: ({ path }: { path: string }) => {
     runtime.viewed.push(path);
@@ -132,6 +145,7 @@ const threadsOn = (entries: Array<[string, unknown[]]>, answered = true) => ({
   byIncrement: new Map(entries),
   multiMachine: false,
   answered,
+  cut: false,
   loaders: null,
 });
 
@@ -167,6 +181,7 @@ describe("BoardPane", () => {
     opened.length = 0;
     asked.length = 0;
     calls.length = 0;
+    localStorage.clear();
   });
   afterEach(async () => {
     await act(async () => root.unmount());
@@ -176,14 +191,20 @@ describe("BoardPane", () => {
   });
 
   /** The page around the pane: it owns which increment is open, as navigation state would. */
-  function Page(props: { specweave?: boolean; canAsk?: boolean; layout?: "split" | "full" }) {
+  function Page(props: {
+    specweave?: boolean;
+    canAsk?: boolean;
+    layout?: "split" | "full";
+    columns?: boolean;
+    project?: string;
+  }) {
     // Each render hands the pane new props, so a re-render reads the mocks again.
     "use no memo";
     const [open, setOpen] = useState<string | null>(null);
     return (
       <BoardPane
         environmentId={EnvironmentId.make("host")}
-        projectId={projectId}
+        projectId={props.project ? ProjectId.make(props.project) : projectId}
         workspaceRoot="/work/atlas"
         bar={{} as ProjectPaneBarProps}
         specweave={props.specweave ?? true}
@@ -197,26 +218,41 @@ describe("BoardPane", () => {
           setOpen(id);
         }}
         layout={props.layout ?? "split"}
+        columns={props.columns ?? false}
       />
     );
   }
-  const render = (extra: { specweave?: boolean; canAsk?: boolean } = {}) =>
-    act(async () => root.render(<Page {...extra} />));
+  const render = (
+    extra: { specweave?: boolean; canAsk?: boolean; columns?: boolean; project?: string } = {},
+  ) => act(async () => root.render(<Page {...extra} />));
 
   const button = (label: string) =>
     container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
-  const column = (name: string) => container.querySelector<HTMLElement>(`[data-column="${name}"]`)!;
+  const group = (name: string) => container.querySelector<HTMLElement>(`[data-group="${name}"]`)!;
   const cardIds = (name: string) =>
-    [...column(name).querySelectorAll<HTMLElement>("[data-increment]")].map(
+    [...(group(name)?.querySelectorAll<HTMLElement>("[data-increment]") ?? [])].map(
       (entry) => entry.dataset.increment,
     );
   const headings = () =>
-    [...container.querySelectorAll(".sws-board-column h3")].map((heading) => heading.textContent);
+    [...container.querySelectorAll(".sws-board-group h3")].map((heading) => heading.textContent);
+  const heading = (name: string) => group(name).querySelector("h3")!.textContent;
+  const bar = (name: string) => group(name).querySelector<HTMLButtonElement>(".sws-group-bar")!;
+  const groupOrder = () =>
+    [...container.querySelectorAll<HTMLElement>("[data-group]")].map((node) => node.dataset.group);
+  const type = async (text: string) => {
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Find an increment"]')!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => vi.advanceTimersByTime(300));
+  };
   const article = (id: string) =>
     container.querySelector<HTMLElement>(`article[data-increment="${id}"]`)!;
   const view = () => container.querySelector<HTMLElement>("section.sws-board-view");
 
-  it("shows four columns with their counts and cards", async () => {
+  it("shows the groups with their counts and cards, Blocked first", async () => {
     runtime.reply = board(
       [
         card("0001-plan", "planned", { tasks: { total: 0, done: 0 } }),
@@ -230,22 +266,54 @@ describe("BoardPane", () => {
       { done: 558 },
     );
     await render();
+    // Stacked, the stuck work comes first, then the work in motion, then the backlog.
+    expect(groupOrder()).toEqual(["blocked", "active", "review", "planned", "done"]);
     expect(headings()).toEqual([
-      "Planned1 increments",
-      "Active1 increments",
-      "In review1 increments",
+      "Blocked1 increment",
+      "Active0 increments",
+      "In review1 increment",
+      "Planned1 increment",
       "Done558 increments",
     ]);
-    const active = column("active");
-    expect(active.textContent).toContain("0002");
-    expect(active.textContent).toContain("Title 0002-build");
-    expect(active.textContent).toContain("1/4 tasks");
-    expect(active.textContent).toContain("Blocked");
-    expect(active.textContent).toContain("#371");
-    expect(column("planned").textContent).not.toContain("tasks");
-    // Stacked in a narrow panel, work in motion comes before the backlog.
-    expect(["active", "review", "planned", "done"].map((name) => column(name).style.order)).toEqual(
-      ["0", "1", "2", "3"],
+    const blocked = group("blocked");
+    expect(blocked.textContent).toContain("0002");
+    expect(blocked.textContent).toContain("Title 0002-build");
+    expect(blocked.textContent).toContain("1/4 tasks done");
+    expect(blocked.textContent).toContain("Blocked");
+    expect(blocked.textContent).toContain("#371");
+    // Under Blocked the card still says where the work stands.
+    expect(article("0002-build").querySelector(".sws-board-card-state")?.textContent).toBe(
+      "Active",
+    );
+    expect(article("0003-check").querySelector(".sws-board-card-state")).toBeNull();
+    // No tasks yet: no meter and no count, only the offer to plan them.
+    expect(group("planned").textContent).not.toContain("tasks done");
+    expect(article("0001-plan").querySelector(".sws-board-meter")).toBeNull();
+    // The task count is read with the card.
+    const open = button("Open 0002 Title 0002-build")!;
+    expect(document.getElementById(open.getAttribute("aria-describedby")!)?.textContent).toBe(
+      "1/4 tasks done",
+    );
+    // A finished card shows no meter and no action.
+    expect(article("0004-shipped").querySelector(".sws-board-meter")).toBeNull();
+    expect(article("0004-shipped").querySelector(".sws-board-action")).toBeNull();
+  });
+
+  it("puts Blocked before the columns in the order work moves when side by side", async () => {
+    runtime.reply = board([
+      card("0001-plan", "planned"),
+      card("0002-build", "active", { blocked: true, blockedTasks: 1 }),
+    ]);
+    await render({ columns: true });
+    expect(groupOrder()).toEqual(["blocked", "planned", "active", "review", "done"]);
+    expect(container.querySelector(".sws-board-columns")!.getAttribute("data-layout")).toBe(
+      "columns",
+    );
+    // With the increment view open beside it the board is a stacked list again.
+    await act(async () => button("Open 0001 Title 0001-plan")!.click());
+    expect(groupOrder()).toEqual(["blocked", "active", "review", "planned", "done"]);
+    expect(container.querySelector(".sws-board-columns")!.getAttribute("data-layout")).toBe(
+      "stack",
     );
   });
 
@@ -300,7 +368,11 @@ describe("BoardPane", () => {
     expect(button("Open the thread working on 0002 Title 0002-build")).toBeNull();
     // One machine: no machine mark, no colored edge.
     expect(container.querySelector(".sws-board-machine")).toBeNull();
-    expect(article("0002-build").hasAttribute("data-machine-color")).toBe(false);
+    expect(article("0002-build").querySelector(".sws-board-card-edge")).toBeNull();
+    // The card's one action opens the same thread.
+    await act(async () => button("Open thread Thread t1 on 0002")!.click());
+    expect(opened).toEqual(["t1", "t1"]);
+    opened.length = 1;
     await act(async () => button("Open 0002 Title 0002-build")!.click());
     expect(opened).toEqual(["t1"]);
     expect(calls).toEqual([{ id: "0002-build" }]);
@@ -331,18 +403,22 @@ describe("BoardPane", () => {
     };
     await render();
     const cardNode = article("0002-build");
-    expect(cardNode.querySelectorAll(".sws-board-thread")).toHaveLength(3);
+    expect(cardNode.querySelectorAll(".sws-board-thread")).toHaveLength(2);
     await act(async () =>
       cardNode
         .querySelector<HTMLButtonElement>('button[aria-label="Open thread Thread t2, Working"]')!
         .click(),
     );
     expect(opened).toEqual(["t2"]);
-    // The card's edge and the line take the color of the machine the lead thread runs on,
-    // and a thread that moved shows the arrow.
-    expect(cardNode.dataset.machineColor).toBe("teal");
+    // The card's edge takes the color of every machine an unresolved thread runs on, in
+    // thread order; each line names its machine in that color, and a moved thread shows the arrow.
+    expect(
+      [...cardNode.querySelectorAll<HTMLElement>(".sws-board-card-edge > span")].map(
+        (segment) => segment.dataset.machineColor,
+      ),
+    ).toEqual(["teal", "violet"]);
     const marks = [...cardNode.querySelectorAll<HTMLElement>(".sws-board-machine")];
-    expect(marks.map((mark) => mark.dataset.machineColor)).toEqual(["teal", "violet", "violet"]);
+    expect(marks.map((mark) => mark.dataset.machineColor)).toEqual(["teal", "violet"]);
     expect(marks[0]!.dataset.moved).toBe("true");
     expect(marks[0]!.textContent).toContain("→ Laptop");
     expect(marks[1]!.textContent).not.toContain("→");
@@ -374,16 +450,76 @@ describe("BoardPane", () => {
       "Continue increment 0002-build: pick up its next open task.",
       "Verify, review and close increment 0003-check.",
     ]);
-    expect(column("done").querySelector(".sws-board-chip-ask")).toBeNull();
+    expect(group("done").querySelector(".sws-board-action")).toBeNull();
     expect(calls).toEqual([]);
     // Before the threads have said what they work on, a card is not offered as free.
     runtime.working = threadsOn([], false);
     await render();
-    expect(container.querySelector(".sws-board-chip-ask")).toBeNull();
+    expect(container.querySelector(".sws-board-action")).toBeNull();
     runtime.working = threadsOn([]);
     // Someone who cannot send gets no such button.
     await render({ canAsk: false });
-    expect(container.querySelector(".sws-board-chip-ask")).toBeNull();
+    expect(container.querySelector(".sws-board-action")).toBeNull();
+  });
+
+  it("gives every open card one action by what its threads can do", async () => {
+    runtime.reply = board([
+      card("0001-idle", "active"),
+      card("0002-resolved", "active"),
+      card("0003-offline", "active"),
+      card("0004-two", "active"),
+      card("0005-unplanned", "planned", { tasks: { total: 0, done: 0 } }),
+    ]);
+    runtime.working = threadsOn([
+      ["0001-idle", [working("t1", "idle")]],
+      ["0002-resolved", [working("t2", "resolved")]],
+      ["0003-offline", [working("t3", "unknown")]],
+      ["0004-two", [working("t4", "resolved"), working("t5", "waiting")]],
+    ]);
+    await render();
+    const action = (id: string) =>
+      [...article(id).querySelectorAll(".sws-board-action")].map((node) => node.textContent);
+    // A thread that can be opened: open it, never start a second worker beside it.
+    expect(action("0001-idle")).toEqual(["Open thread"]);
+    // Only a resolved thread: nobody holds the work, so ask the coordinator.
+    expect(action("0002-resolved")).toEqual(["Continue"]);
+    // A thread on a machine that cannot be reached may still hold it: the
+    // request names that thread, so the coordinator checks before starting anyone.
+    expect(action("0003-offline")).toEqual(["Continue"]);
+    await act(async () => button("Continue 0003 Title 0003-offline with the coordinator")!.click());
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toContain("0003-offline");
+    expect(asked[0]).toContain(
+      'Check first: the thread "Thread t3" on Desk cannot be reached now and may still hold this work.',
+    );
+    asked.length = 0;
+    await act(async () =>
+      button("Continue 0002 Title 0002-resolved with the coordinator")!.click(),
+    );
+    expect(asked[0]).not.toContain("Check first");
+    asked.length = 0;
+    expect(action("0005-unplanned")).toEqual(["Plan the tasks"]);
+    // The first thread that can be opened, not the first in the list.
+    expect(action("0004-two")).toEqual(["Open thread"]);
+    await act(async () => button("Open thread Thread t5 on 0004")!.click());
+    expect(opened).toEqual(["t5"]);
+    expect(asked).toEqual([]);
+  });
+
+  it("folds several pull requests into one chip with a menu", async () => {
+    const pull = (number: number) => `https://github.com/acme/app/pull/${number}`;
+    runtime.reply = board([
+      card("0002-build", "active", { pullRequests: [pull(524), pull(76), pull(75)] }),
+    ]);
+    await render();
+    const trigger = button("3 PRs on 0002: choose one to open")!;
+    expect(trigger.textContent).toBe("3 PRs");
+    const items = [...article("0002-build").querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    expect(items.map((item) => item.textContent)).toEqual(["#524", "#76", "#75"]);
+    await act(async () => items[1]!.click());
+    expect(runtime.openLink).toHaveBeenCalledWith(pull(76));
+    expect(calls).toEqual([]);
+    expect(view()).toBeNull();
   });
 
   it("pages a long column 40 at a time and asks the server for older Done cards", async () => {
@@ -396,13 +532,13 @@ describe("BoardPane", () => {
     runtime.reply = board([...active, ...done], { done: 558 });
     await render();
     expect(cardIds("active")).toHaveLength(40);
-    const moreActive = column("active").querySelector<HTMLButtonElement>(".sws-board-more")!;
+    const moreActive = group("active").querySelector<HTMLButtonElement>(".sws-board-more")!;
     expect(moreActive.textContent).toBe("Show 31 more");
     await act(async () => moreActive.click());
     expect(cardIds("active")).toHaveLength(71);
-    expect(column("active").querySelector(".sws-board-more")).toBeNull();
+    expect(group("active").querySelector(".sws-board-more")).toBeNull();
 
-    const older = column("done").querySelector<HTMLButtonElement>(".sws-board-more")!;
+    const older = group("done").querySelector<HTMLButtonElement>(".sws-board-more")!;
     expect(older.textContent).toBe("Show older");
     await act(async () => older.click());
     expect(runtime.inputs.at(-1)).toMatchObject({ doneLimit: 90 });
@@ -433,7 +569,7 @@ describe("BoardPane", () => {
     runtime.reply = board(done, { done: 558 });
     await render();
     await act(async () =>
-      column("done").querySelector<HTMLButtonElement>(".sws-board-more")!.click(),
+      group("done").querySelector<HTMLButtonElement>(".sws-board-more")!.click(),
     );
     expect(runtime.inputs.at(-1)).toMatchObject({ doneLimit: 90 });
     const input = container.querySelector<HTMLInputElement>('[aria-label="Find an increment"]')!;
@@ -490,7 +626,10 @@ describe("BoardPane", () => {
         "0004-d",
         "0006-f",
       ]);
-      expect(headings().slice(0, 2)).toEqual(["Planned1 increments", "Active5 increments"]);
+      expect([heading("planned"), heading("active")]).toEqual([
+        "Planned1 increment",
+        "Active5 increments",
+      ]);
     });
 
     it("never moves a card for an idle, resolved or unknown thread", async () => {
@@ -507,7 +646,10 @@ describe("BoardPane", () => {
       await render();
       expect(cardIds("planned")).toEqual(["0001-a", "0002-b", "0003-c"]);
       expect(cardIds("active")).toEqual([]);
-      expect(headings().slice(0, 2)).toEqual(["Planned3 increments", "Active0 increments"]);
+      expect([heading("planned"), heading("active")]).toEqual([
+        "Planned3 increments",
+        "Active0 increments",
+      ]);
     });
 
     it("keeps a moved card in Active until the next refresh after its thread goes idle", async () => {
@@ -521,12 +663,18 @@ describe("BoardPane", () => {
       expect(cardIds("active")).toEqual(["0001-a"]);
       await act(async () => vi.advanceTimersByTime(29_000));
       expect(cardIds("active")).toEqual(["0001-a"]);
-      expect(headings().slice(0, 2)).toEqual(["Planned1 increments", "Active1 increments"]);
+      expect([heading("planned"), heading("active")]).toEqual([
+        "Planned1 increment",
+        "Active1 increment",
+      ]);
 
       await act(async () => vi.advanceTimersByTime(1_000));
       expect(cardIds("active")).toEqual([]);
       expect(cardIds("planned")).toEqual(["0001-a", "0002-b"]);
-      expect(headings().slice(0, 2)).toEqual(["Planned2 increments", "Active0 increments"]);
+      expect([heading("planned"), heading("active")]).toEqual([
+        "Planned2 increments",
+        "Active0 increments",
+      ]);
     });
 
     it("moves nothing before the threads have answered", async () => {
@@ -534,7 +682,7 @@ describe("BoardPane", () => {
       runtime.working = threadsOn([], false);
       await render();
       expect(cardIds("planned")).toEqual(["0001-a"]);
-      expect(headings()[0]).toBe("Planned1 increments");
+      expect(heading("planned")).toBe("Planned1 increment");
       runtime.working = threadsOn([["0001-a", [working("t1", "working")]]]);
       await render();
       expect(cardIds("active")).toEqual(["0001-a"]);
@@ -552,7 +700,11 @@ describe("BoardPane", () => {
     const chip = (id: string) =>
       article(id).querySelector(".sws-board-chip-blocked")?.textContent ?? null;
     const reasons = (id: string) =>
-      [...article(id).querySelectorAll(".sws-board-reasons li")].map((entry) => entry.textContent);
+      [...article(id).querySelectorAll(".sws-board-reasons li:not(.sws-board-stuck)")].map(
+        (entry) => entry.textContent,
+      );
+    const stuck = (id: string) =>
+      article(id).querySelector(".sws-board-stuck")?.textContent ?? null;
     const rest = (id: string) => article(id).querySelector(".sws-board-rest") !== null;
 
     it("says what is stuck and why for each kind of block", async () => {
@@ -596,13 +748,16 @@ describe("BoardPane", () => {
       ]);
       expect(rest("0011-both")).toBe(false);
 
-      expect(chip("0012-paused")).toBe("Paused");
+      // Only paused: the reason line already starts "Paused:", so no line says it twice.
+      expect(chip("0012-paused")).toBeNull();
       expect(reasons("0012-paused")).toEqual(["Paused: no reason given"]);
 
       expect(chip("0013-one")).toBe("1 task blocked");
       expect(reasons("0013-one")).toEqual(["T-02 Needs a design decision"]);
       // Three tasks are open and one is stuck: the rest can go on.
       expect(rest("0013-one")).toBe(true);
+      expect(stuck("0013-one")).toBe("1 task blocked · rest can continue");
+      expect(stuck("0011-both")).toBe("Paused + 2 tasks blocked");
 
       expect(chip("0014-many")).toBe("3 tasks blocked");
       expect(reasons("0014-many")).toEqual([
@@ -645,7 +800,7 @@ describe("BoardPane", () => {
     });
   });
 
-  describe("Blocked only filter", () => {
+  describe("the Blocked group", () => {
     const blockedBoard = () =>
       board([
         card("0001-plan", "planned", { blocked: true, paused: true, pausedReason: "Later" }),
@@ -655,51 +810,38 @@ describe("BoardPane", () => {
         card("0005-check", "review", { tasks: { total: 2, done: 2 } }),
         card("0006-shipped", "done"),
       ]);
-    const filter = () => container.querySelector<HTMLButtonElement>(".sws-board-filter");
-    const note = () => container.querySelector<HTMLElement>(".sws-board-filter-note");
-    const allIds = () => ["planned", "active", "review", "done"].flatMap(cardIds);
+    const allIds = () => ["blocked", "active", "review", "planned", "done"].flatMap(cardIds);
 
-    it("narrows every column to its blocked cards and lets the note clear it", async () => {
+    it("takes every stuck card out of its column, and the counts still add up", async () => {
       runtime.reply = blockedBoard();
       await render();
-      expect(filter()!.textContent).toBe("Blocked only · 2 cards");
-      expect(filter()!.getAttribute("aria-pressed")).toBe("false");
-      expect(note()).toBeNull();
-      await act(async () => filter()!.click());
-      expect(filter()!.getAttribute("aria-pressed")).toBe("true");
-      expect(allIds()).toEqual(["0001-plan", "0003-build"]);
-      // The headings still count the whole column.
+      expect(cardIds("blocked")).toEqual(["0001-plan", "0003-build"]);
+      expect(cardIds("planned")).toEqual(["0002-plan"]);
+      expect(cardIds("active")).toEqual(["0004-build"]);
       expect(headings()).toEqual([
-        "Planned2 increments",
-        "Active2 increments",
-        "In review1 increments",
-        "Done1 increments",
+        "Blocked2 increments",
+        "Active1 increment",
+        "In review1 increment",
+        "Planned1 increment",
+        "Done1 increment",
       ]);
-      expect(note()!.textContent).toContain("Showing only the cards that are paused");
-      await act(async () =>
-        [...note()!.querySelectorAll("button")]
-          .find((entry) => entry.textContent === "Show all cards")!
-          .click(),
-      );
-      expect(filter()!.getAttribute("aria-pressed")).toBe("false");
-      expect(note()).toBeNull();
-      expect(allIds()).toHaveLength(6);
+      expect(
+        ["0001-plan", "0003-build"].map(
+          (id) => article(id).querySelector(".sws-board-card-state")?.textContent,
+        ),
+      ).toEqual(["Planned", "Active"]);
+      // Every card is on the board once.
+      expect(allIds().toSorted()).toHaveLength(6);
+      expect(new Set(allIds()).size).toBe(6);
     });
 
-    it("toggles the same filter from each column's blocked heading", async () => {
+    it("has no switch, note or heading button for blocked work any more", async () => {
       runtime.reply = blockedBoard();
       await render();
-      const plannedBlocked = button("1 blocked in Planned: show blocked cards only")!;
-      expect(plannedBlocked.textContent).toBe("1 blocked");
-      expect(button("1 blocked in Active: show blocked cards only")).not.toBeNull();
-      expect(column("review").querySelector(".sws-board-column-blocked")).toBeNull();
-      await act(async () => plannedBlocked.click());
-      expect(filter()!.getAttribute("aria-pressed")).toBe("true");
-      expect(plannedBlocked.getAttribute("aria-pressed")).toBe("true");
-      expect(allIds()).toEqual(["0001-plan", "0003-build"]);
-      await act(async () => button("1 blocked in Active: show blocked cards only")!.click());
-      expect(filter()!.getAttribute("aria-pressed")).toBe("false");
-      expect(allIds()).toHaveLength(6);
+      expect(container.querySelector(".sws-board-filter")).toBeNull();
+      expect(container.querySelector(".sws-board-filter-note")).toBeNull();
+      expect(container.querySelector(".sws-board-column-blocked")).toBeNull();
+      expect(container.textContent).not.toContain("Blocked only");
     });
 
     it("counts a card that is paused and has blocked tasks once", async () => {
@@ -707,33 +849,344 @@ describe("BoardPane", () => {
         card("0001-both", "active", { blocked: true, paused: true, blockedTasks: 2 }),
       ]);
       await render();
-      expect(filter()!.textContent).toBe("Blocked only · 1 card");
-      expect(button("1 blocked in Active: show blocked cards only")).not.toBeNull();
+      expect(heading("blocked")).toBe("Blocked1 increment");
+      expect(heading("active")).toBe("Active0 increments");
     });
 
-    it("is not offered when no card is blocked", async () => {
+    it("is not shown when no card is blocked, and goes when the last one clears", async () => {
       runtime.reply = board([card("0001-plan", "planned"), card("0002-build", "active")]);
       await render();
-      expect(filter()).toBeNull();
-      expect(container.querySelector(".sws-board-column-blocked")).toBeNull();
-      expect(container.querySelector(".sws-board-tools")!.textContent).not.toContain("Blocked");
-    });
-
-    it("drops itself when the last blocked card goes away", async () => {
+      expect(groupOrder()).toEqual(["active", "review", "planned", "done"]);
       runtime.reply = blockedBoard();
       await render();
-      await act(async () => filter()!.click());
-      expect(allIds()).toEqual(["0001-plan", "0003-build"]);
+      expect(groupOrder()[0]).toBe("blocked");
       runtime.reply = board([card("0002-plan", "planned"), card("0004-build", "active")]);
       await render();
-      expect(filter()).toBeNull();
-      expect(note()).toBeNull();
-      expect(allIds()).toEqual(["0002-plan", "0004-build"]);
-      // A card blocked later does not bring back a filter nobody turned on again.
-      runtime.reply = blockedBoard();
+      expect(groupOrder()).toEqual(["active", "review", "planned", "done"]);
+      expect(allIds()).toEqual(["0004-build", "0002-plan"]);
+    });
+  });
+
+  describe("folding a group", () => {
+    const some = () =>
+      board([
+        card("0001-plan", "planned"),
+        card("0002-build", "active"),
+        card("0003-stuck", "active", { blocked: true, blockedTasks: 1 }),
+        ...Array.from({ length: 45 }, (_, index) => card(`${String(100 + index)}-done`, "done")),
+      ]);
+
+    it("hides a group's cards and its Show more behind its heading, and keeps the count", async () => {
+      runtime.reply = some();
       await render();
-      expect(filter()!.getAttribute("aria-pressed")).toBe("false");
-      expect(allIds()).toHaveLength(6);
+      expect(bar("done").getAttribute("aria-expanded")).toBe("true");
+      expect(group("done").querySelector(".sws-board-more")!.textContent).toBe("Show 5 more");
+      await act(async () => bar("done").click());
+      expect(bar("done").getAttribute("aria-expanded")).toBe("false");
+      expect(bar("done").hasAttribute("aria-controls")).toBe(false);
+      expect(cardIds("done")).toEqual([]);
+      expect(group("done").querySelector(".sws-board-more")).toBeNull();
+      expect(heading("done")).toBe("Done45 increments");
+      expect(group("done").hasAttribute("data-folded")).toBe(true);
+      // The others are untouched.
+      expect(cardIds("active")).toEqual(["0002-build"]);
+      await act(async () => bar("done").click());
+      expect(cardIds("done")).toHaveLength(40);
+    });
+
+    it("remembers the folds of each project across a reload", async () => {
+      runtime.reply = some();
+      await render();
+      await act(async () => bar("blocked").click());
+      await act(async () => bar("done").click());
+      await act(async () => root.unmount());
+      root = createRoot(container);
+      await render();
+      expect(bar("blocked").getAttribute("aria-expanded")).toBe("false");
+      expect(bar("done").getAttribute("aria-expanded")).toBe("false");
+      expect(bar("active").getAttribute("aria-expanded")).toBe("true");
+      // Another project's board starts open.
+      await act(async () => root.unmount());
+      root = createRoot(container);
+      await render({ project: "other" });
+      expect(bar("blocked").getAttribute("aria-expanded")).toBe("true");
+      expect(bar("done").getAttribute("aria-expanded")).toBe("true");
+      // Unfolding everything leaves nothing stored for the project.
+      await act(async () => root.unmount());
+      root = createRoot(container);
+      await render();
+      await act(async () => bar("blocked").click());
+      await act(async () => bar("done").click());
+      expect(JSON.parse(localStorage.getItem("studio:project-board-folded:v1")!)).toEqual({});
+    });
+
+    it("opens every group while a search is typed and gives the folds back after", async () => {
+      runtime.reply = some();
+      await render();
+      await act(async () => bar("active").click());
+      expect(cardIds("active")).toEqual([]);
+      await type("build");
+      expect(bar("active").getAttribute("aria-expanded")).toBe("true");
+      expect(bar("active").getAttribute("aria-disabled")).toBe("true");
+      expect(cardIds("active")).toEqual(["0002-build"]);
+      // Locked while searching: a press changes nothing and stores nothing.
+      await act(async () => bar("active").click());
+      expect(cardIds("active")).toEqual(["0002-build"]);
+      await type("");
+      expect(bar("active").getAttribute("aria-expanded")).toBe("false");
+      expect(bar("active").hasAttribute("aria-disabled")).toBe(false);
+      expect(cardIds("active")).toEqual([]);
+    });
+
+    it("marks a folded group in the side by side layout, where it becomes a rail", async () => {
+      runtime.reply = some();
+      await render({ columns: true });
+      await act(async () => bar("done").click());
+      expect(group("done").hasAttribute("data-folded")).toBe(true);
+      expect(group("done").querySelector(".sws-board-group-body")).toBeNull();
+      expect(heading("done")).toBe("Done45 increments");
+    });
+  });
+
+  describe("machines", () => {
+    const fleet = (answered = true) => ({
+      ...threadsOn(
+        [
+          ["0001-a", [working("t1", "working", { id: "desk", label: "Desk", color: "violet" })]],
+          [
+            "0002-b",
+            [
+              working("t2", "idle", { id: "laptop", label: "Laptop", color: "teal" }),
+              working("t3", "working", { id: "desk", label: "Desk", color: "violet" }),
+            ],
+          ],
+          ["0003-c", [working("t4", "resolved", { id: "laptop", label: "Laptop", color: "teal" })]],
+          ["0005-e", [working("t5", "resolved", { id: "desk", label: "Desk", color: "violet" })]],
+        ],
+        answered,
+      ),
+      multiMachine: true,
+    });
+    const cards = () =>
+      board([
+        card("0001-a", "active"),
+        card("0002-b", "active"),
+        card("0003-c", "active", { blocked: true, blockedTasks: 1 }),
+        card("0004-d", "planned"),
+        card("0005-e", "done"),
+      ]);
+    const legend = () => container.querySelector<HTMLElement>(".sws-board-legend");
+    const entries = () =>
+      [...legend()!.querySelectorAll<HTMLElement>(".sws-board-legend-entry")].map(
+        (entry) => entry.textContent,
+      );
+    const entry = (id: string) =>
+      legend()!.querySelector<HTMLButtonElement>(`.sws-board-legend-entry[data-machine="${id}"]`)!;
+    const shown = () => ["blocked", "active", "review", "planned", "done"].flatMap(cardIds);
+
+    it("says what the edge colors mean, in the colors the cards carry", async () => {
+      runtime.reply = cards();
+      runtime.working = fleet();
+      await render();
+      expect(legend()!.textContent).toContain("Runs on");
+      expect(entries()).toEqual(["All", "Desk2 cards", "Laptop1 card", "No thread2 cards"]);
+      expect(entry("no-thread").disabled).toBe(false);
+      expect(
+        [...legend()!.querySelectorAll<HTMLElement>("[data-machine-dot]")].map(
+          (dot) => dot.dataset.machineColor,
+        ),
+      ).toEqual(["violet", "teal"]);
+      // A card with threads on two machines carries both, in its thread order.
+      expect(
+        [...article("0002-b").querySelectorAll<HTMLElement>(".sws-board-card-edge > span")].map(
+          (segment) => segment.dataset.machineColor,
+        ),
+      ).toEqual(["teal", "violet"]);
+      // The edge says the same in words, so color is never the only sign.
+      expect(
+        article("0002-b").querySelector(".sws-board-card-edge")!.getAttribute("aria-label"),
+      ).toBe("Runs on Laptop and Desk");
+      // A resolved thread colors nothing.
+      expect(article("0003-c").querySelector(".sws-board-card-edge")).toBeNull();
+      expect(article("0005-e").querySelector(".sws-board-card-edge")).toBeNull();
+    });
+
+    it("counts and colors open work only: finished work runs nowhere", async () => {
+      runtime.reply = board([card("0001-a", "active"), card("0005-e", "done")]);
+      runtime.working = {
+        ...threadsOn([
+          ["0001-a", [working("t1", "working", { id: "desk", label: "Desk" })]],
+          // Finished, with a thread nobody settled, on another machine.
+          ["0005-e", [working("t5", "idle", { id: "laptop", label: "Laptop", color: "teal" })]],
+        ]),
+        multiMachine: true,
+      };
+      await render();
+      expect(entries()).toEqual(["Desk1 card"]);
+      expect(article("0005-e").querySelector(".sws-board-card-edge")).toBeNull();
+      // Its thread line still names the machine.
+      expect(article("0005-e").querySelector(".sws-board-machine")!.textContent).toContain(
+        "Laptop",
+      );
+    });
+
+    it("narrows every group to one machine and counts what it shows", async () => {
+      runtime.reply = cards();
+      runtime.working = fleet();
+      await render();
+      expect(entry("desk").getAttribute("aria-pressed")).toBe("false");
+      await act(async () => entry("desk").click());
+      expect(entry("desk").getAttribute("aria-pressed")).toBe("true");
+      expect(shown()).toEqual(["0001-a", "0002-b"]);
+      expect(headings()).toEqual([
+        "Blocked0 increments",
+        "Active2 increments",
+        "In review0 increments",
+        "Planned0 increments",
+        "Done1 increment",
+      ]);
+      await act(async () => entry("laptop").click());
+      expect(shown()).toEqual(["0002-b"]);
+      // Open work nobody holds: a resolved thread does not count, finished work never does.
+      await act(async () => entry("no-thread").click());
+      expect(shown()).toEqual(["0003-c", "0004-d"]);
+      // Pressing the chosen entry again, or All, shows every card.
+      await act(async () => entry("no-thread").click());
+      expect(shown()).toHaveLength(5);
+      await act(async () => entry("desk").click());
+      await act(async () =>
+        [...legend()!.querySelectorAll("button")]
+          .find((node) => node.textContent === "All")!
+          .click(),
+      );
+      expect(shown()).toHaveLength(5);
+      expect(heading("blocked")).toBe("Blocked1 increment");
+    });
+
+    it("leaves finished work out while a machine is chosen, and says so", async () => {
+      runtime.reply = board(
+        [card("0001-a", "active"), card("0002-b", "active"), card("0005-e", "done")],
+        { done: 40 },
+      );
+      runtime.working = fleet();
+      await render();
+      expect(group("done").querySelector(".sws-board-group-note")).toBeNull();
+      expect(group("done").querySelector(".sws-board-more")!.textContent).toBe("Show older");
+      await act(async () => entry("desk").click());
+      expect(cardIds("done")).toEqual([]);
+      expect(group("done").querySelector(".sws-board-group-note")!.textContent).toBe(
+        "Finished work is not sorted by machine. Choose All to see it.",
+      );
+      // The heading keeps the whole count, and nothing offers to load more of nothing.
+      expect(heading("done")).toBe("Done40 increments");
+      expect(group("done").querySelector(".sws-board-more")).toBeNull();
+    });
+
+    it("lets a choice go when its machine has no card left", async () => {
+      runtime.reply = cards();
+      runtime.working = fleet();
+      await render();
+      await act(async () => entry("laptop").click());
+      expect(shown()).toEqual(["0002-b"]);
+      runtime.working = {
+        ...threadsOn([
+          ["0001-a", [working("t1", "working", { id: "desk", label: "Desk" })]],
+          ["0002-b", [working("t3", "working", { id: "desk", label: "Desk" })]],
+        ]),
+        multiMachine: true,
+      };
+      await render();
+      expect(shown()).toHaveLength(5);
+      // The machine comes back: the board is not narrowed again unasked.
+      runtime.working = fleet();
+      await render();
+      expect(entry("laptop").getAttribute("aria-pressed")).toBe("false");
+      expect(shown()).toHaveLength(5);
+    });
+
+    it("lets a choice go when a search leaves its machine no match", async () => {
+      runtime.reply = cards();
+      runtime.working = fleet();
+      await render();
+      await act(async () => entry("laptop").click());
+      expect(shown()).toEqual(["0002-b"]);
+      // The search finds a card on another machine: showing nothing would read as "not found".
+      await type("0001");
+      runtime.reply = board([card("0001-a", "active")]);
+      await render();
+      expect(shown()).toEqual(["0001-a"]);
+      await type("");
+      runtime.reply = cards();
+      await render();
+      expect(entry("laptop").getAttribute("aria-pressed")).toBe("false");
+      expect(shown()).toHaveLength(5);
+    });
+
+    it("waits for the threads before it counts, narrows or offers No thread", async () => {
+      runtime.reply = cards();
+      runtime.working = fleet(false);
+      await render();
+      expect(entries()).toEqual(["All", "Desk", "Laptop"]);
+      expect(legend()!.querySelector('[role="status"]')!.textContent).toBe("Reading threads…");
+      // Half the threads are joined: a machine cannot be chosen from that.
+      expect(entry("desk").disabled).toBe(true);
+      await act(async () => entry("desk").click());
+      expect(shown()).toHaveLength(5);
+    });
+
+    it("keeps a choice while the threads are read again, and lets it be let go", async () => {
+      runtime.reply = cards();
+      runtime.working = fleet();
+      await render();
+      await act(async () => entry("laptop").click());
+      // The list is being read again and the machine is not in it for a moment.
+      runtime.working = {
+        ...threadsOn(
+          [["0001-a", [working("t1", "working", { id: "desk", label: "Desk" })]]],
+          false,
+        ),
+        multiMachine: true,
+      };
+      await render();
+      runtime.working = fleet(false);
+      await render();
+      expect(entry("laptop").getAttribute("aria-pressed")).toBe("true");
+      expect(entry("laptop").disabled).toBe(false);
+      expect(shown()).toEqual(["0002-b"]);
+      await act(async () => entry("laptop").click());
+      expect(shown()).toHaveLength(5);
+    });
+
+    it("says so when the project has more threads than it reads", async () => {
+      runtime.reply = cards();
+      runtime.working = { ...fleet(false), cut: true };
+      await render();
+      expect(legend()!.querySelector('[role="status"]')!.textContent).toBe(
+        "This project has more threads than the board reads, so it cannot be narrowed by machine.",
+      );
+      expect(entry("desk").disabled).toBe(true);
+      // No card is offered as free either: its thread may be one that was not read.
+      expect(article("0004-d").querySelector(".sws-board-action")).toBeNull();
+      expect(article("0001-a").querySelector(".sws-board-action")!.textContent).toBe("Open thread");
+    });
+
+    it("is only a legend with one machine, and absent when nothing has a colored edge", async () => {
+      runtime.reply = cards();
+      runtime.working = {
+        ...threadsOn(
+          [["0001-a", [working("t1", "working", { id: "desk", label: "Desk" })]]],
+          false,
+        ),
+        multiMachine: true,
+      };
+      await render();
+      expect(legend()!.querySelector("button")).toBeNull();
+      expect(entries()).toEqual(["Desk"]);
+      // One machine and no moved thread: no edge anywhere, so nothing to explain.
+      runtime.working = threadsOn([["0001-a", [working("t1", "working")]]]);
+      await render();
+      expect(legend()).toBeNull();
+      expect(container.querySelector(".sws-board-card-edge")).toBeNull();
     });
   });
 });

@@ -4,20 +4,32 @@ import type { ProjectBoardCard } from "@specweave-studio/contracts";
 
 import {
   BOARD_CARD_REASONS,
+  BOARD_GROUPS,
+  BOARD_GROUPS_WIDE,
+  BOARD_NO_THREAD,
   NO_BOARD_PROMOTIONS,
   boardAsk,
   boardBlockedChip,
-  boardBlockedCounts,
   boardCardBlocked,
+  boardCardGroup,
+  boardCardMachines,
+  boardCardOnMachine,
   boardCardPaused,
   boardCardTitle,
   boardColumnMore,
-  boardColumns,
-  boardFilterLabel,
+  boardEdgeLabel,
+  boardGroupCounts,
+  boardGroups,
   boardIsEmpty,
+  boardMachineOptions,
+  boardNoteText,
+  boardOutOfReachNote,
   boardProgress,
+  boardPullRequestChip,
+  boardPullRequestStates,
   boardReasons,
   boardRestCanContinue,
+  boardStateLabel,
   boardThreadEvidence,
   boardThreadOrder,
   boardWithPromotions,
@@ -42,15 +54,16 @@ const card = (incrementId: string, column: ProjectBoardCard["column"]): ProjectB
 
 describe("projectBoardModel", () => {
   it("groups cards by column and keeps the server's order", () => {
-    const columns = boardColumns([
+    const groups = boardGroups([
       card("0003-c", "active"),
       card("0002-b", "done"),
       card("0001-a", "active"),
     ]);
-    expect(columns.active.map((entry) => entry.incrementId)).toEqual(["0003-c", "0001-a"]);
-    expect(columns.done).toHaveLength(1);
-    expect(columns.planned).toEqual([]);
-    expect(columns.review).toEqual([]);
+    expect(groups.active.map((entry) => entry.incrementId)).toEqual(["0003-c", "0001-a"]);
+    expect(groups.done).toHaveLength(1);
+    expect(groups.planned).toEqual([]);
+    expect(groups.review).toEqual([]);
+    expect(groups.blocked).toEqual([]);
   });
 
   it("names a card by number and title", () => {
@@ -252,28 +265,287 @@ describe("the blocked state of a card", () => {
     expect(boardReasons(blockedCard({ status: "paused" }))).toEqual([]);
   });
 
-  it("counts blocked cards per column and once each in all", () => {
-    const columns = boardColumns([
-      blockedCard({ incrementId: "0001-a", column: "planned", paused: true }),
-      blockedCard({ incrementId: "0002-b", blocked: true, paused: true, blockedTasks: 2 }),
-      blockedCard({ incrementId: "0003-c", blocked: true, blockedTasks: 1 }),
-      blockedCard({ incrementId: "0004-d" }),
-      blockedCard({ incrementId: "0005-e", column: "review", blocked: true, blockedTasks: 1 }),
-      blockedCard({ incrementId: "0006-f", column: "done", blocked: true, blockedTasks: 1 }),
-    ]);
-    expect(boardBlockedCounts(columns)).toEqual({
-      planned: 1,
-      active: 2,
-      review: 1,
-      done: 0,
-      all: 4,
-    });
+  it("cleans a squeezed reason before it is shown", () => {
+    expect(
+      boardReasons(
+        blockedCard({
+          paused: true,
+          pausedReason: "  waiting,then   retry ",
+          blockers: [{ taskId: "T-02", title: "", note: "copies kept;3lost", by: null, at: null }],
+        }),
+      ).map((reason) => reason.text),
+    ).toEqual(["waiting, then retry", "copies kept; 3lost"]);
+  });
+});
+
+describe("board groups", () => {
+  const cards = [
+    blockedCard({ incrementId: "0001-a", column: "planned", paused: true }),
+    blockedCard({ incrementId: "0002-b", blocked: true, paused: true, blockedTasks: 2 }),
+    blockedCard({ incrementId: "0003-c", blocked: true, blockedTasks: 1 }),
+    blockedCard({ incrementId: "0004-d" }),
+    blockedCard({ incrementId: "0005-e", column: "review", blocked: true, blockedTasks: 1 }),
+    blockedCard({ incrementId: "0006-f", column: "done", blocked: true, blockedTasks: 1 }),
+  ];
+
+  it("lists Blocked first when stacked, and before the columns side by side", () => {
+    expect(BOARD_GROUPS).toEqual(["blocked", "active", "review", "planned", "done"]);
+    expect(BOARD_GROUPS_WIDE).toEqual(["blocked", "planned", "active", "review", "done"]);
   });
 
-  it("words the Blocked only switch with its count", () => {
-    expect(boardFilterLabel(0)).toBe("Blocked only · 0 cards");
-    expect(boardFilterLabel(1)).toBe("Blocked only · 1 card");
-    expect(boardFilterLabel(7)).toBe("Blocked only · 7 cards");
+  it("lists a stuck card under Blocked only, and never a finished one", () => {
+    const groups = boardGroups(cards);
+    expect(groups.blocked.map((entry) => entry.incrementId)).toEqual([
+      "0001-a",
+      "0002-b",
+      "0003-c",
+      "0005-e",
+    ]);
+    expect(groups.active.map((entry) => entry.incrementId)).toEqual(["0004-d"]);
+    expect(groups.planned).toEqual([]);
+    expect(groups.review).toEqual([]);
+    expect(groups.done.map((entry) => entry.incrementId)).toEqual(["0006-f"]);
+    expect(boardCardGroup(cards[0]!)).toBe("blocked");
+    expect(boardCardGroup(cards[5]!)).toBe("done");
+  });
+
+  it("takes each blocked card off its column's count, so the five add up", () => {
+    const groups = boardGroups(cards);
+    // The server counts 40 Done and sent one of them.
+    const counts = boardGroupCounts({ planned: 1, active: 3, review: 1, done: 40 }, groups.blocked);
+    expect(counts).toEqual({ blocked: 4, planned: 0, active: 1, review: 0, done: 40 });
+    expect(Object.values(counts).reduce((sum, value) => sum + value, 0)).toBe(45);
+  });
+
+  it("labels a blocked card with the state it left, and no other card", () => {
+    expect(boardStateLabel(cards[0]!)).toBe("Planned");
+    expect(boardStateLabel(cards[1]!)).toBe("Active");
+    expect(boardStateLabel(cards[4]!)).toBe("In review");
+    expect(boardStateLabel(cards[3]!)).toBeUndefined();
+    expect(boardStateLabel(cards[5]!)).toBeUndefined();
+  });
+});
+
+describe("the machines of a card", () => {
+  const on = (id: string, tone: string, label = id, moved = false) => ({
+    tone,
+    color: `color-${id}`,
+    machine: { executionMachineId: id, label, moved },
+  });
+
+  it("names each machine once, in thread order, and skips resolved threads", () => {
+    expect(
+      boardCardMachines([
+        on("desk", "working"),
+        on("mini", "idle", "Desk → Mini", true),
+        on("desk", "waiting"),
+        on("spare", "unknown"),
+        on("lab", "resolved"),
+      ]),
+    ).toEqual([
+      { id: "desk", name: "desk", color: "color-desk" },
+      { id: "mini", name: "Mini", color: "color-mini" },
+      { id: "spare", name: "spare", color: "color-spare" },
+    ]);
+    expect(boardCardMachines([on("lab", "resolved")])).toEqual([]);
+  });
+
+  it("keeps a card for a machine by the rule its edge is drawn by", () => {
+    const open = card("0001-a", "active");
+    const threads = [on("desk", "working"), on("lab", "resolved")];
+    expect(boardCardOnMachine(open, threads, null)).toBe(true);
+    expect(boardCardOnMachine(open, threads, "desk")).toBe(true);
+    expect(boardCardOnMachine(open, threads, "lab")).toBe(false);
+    expect(boardCardOnMachine(open, threads, BOARD_NO_THREAD)).toBe(false);
+    expect(boardCardOnMachine(open, [on("lab", "resolved")], BOARD_NO_THREAD)).toBe(true);
+    // Finished work is never "open work nobody holds", and runs on no machine.
+    const done = card("0002-b", "done");
+    expect(boardCardOnMachine(done, [], BOARD_NO_THREAD)).toBe(false);
+    expect(boardCardOnMachine(done, [on("desk", "idle")], "desk")).toBe(false);
+    expect(boardCardOnMachine(done, [on("desk", "idle")], null)).toBe(true);
+  });
+
+  it("says the edge in words, every machine past the third counted", () => {
+    const names = (...list: string[]) => list.map((name) => ({ name }));
+    expect(boardEdgeLabel(names("desk"))).toBe("Runs on desk");
+    expect(boardEdgeLabel(names("desk", "mini"))).toBe("Runs on desk and mini");
+    expect(boardEdgeLabel(names("desk", "mini", "lab"))).toBe("Runs on desk, mini and lab");
+    expect(boardEdgeLabel(names("desk", "mini", "lab", "spare"))).toBe(
+      "Runs on desk, mini, lab and 1 more machine",
+    );
+    expect(boardEdgeLabel(names("a", "b", "c", "d", "e"))).toBe(
+      "Runs on a, b, c and 2 more machines",
+    );
+  });
+
+  it("names the threads out of reach for a request, and says nothing without one", () => {
+    const entry = (tone: string, title: string, label: string) => ({
+      tone,
+      thread: { title },
+      machine: { label },
+    });
+    expect(boardOutOfReachNote([])).toBe("");
+    expect(
+      boardOutOfReachNote([entry("resolved", "Old", "desk"), entry("idle", "Now", "desk")]),
+    ).toBe("");
+    expect(
+      boardOutOfReachNote([
+        entry("resolved", "Old", "desk"),
+        entry("unknown", "Sync", "desk → mini"),
+      ]),
+    ).toBe(
+      ' Check first: the thread "Sync" on mini cannot be reached now and may still hold this work. Do not start another worker beside it.',
+    );
+    expect(
+      boardOutOfReachNote([
+        entry("unknown", "", "lab"),
+        entry("unknown", "B", "lab"),
+        entry("unknown", "C", "lab"),
+      ]),
+    ).toContain('the thread "Untitled thread" on lab and 2 more threads cannot be reached now');
+  });
+
+  it("lists machines by their cards, then No thread once the threads have answered", () => {
+    const cards = [
+      card("0001-a", "active"),
+      card("0002-b", "active"),
+      card("0003-c", "planned"),
+      card("0004-d", "done"),
+    ];
+    // A finished card counts for no machine, even with a thread nobody settled.
+    const threads = new Map([
+      ["0001-a", [on("mini", "working"), on("desk", "idle")]],
+      ["0002-b", [on("desk", "working")]],
+      ["0004-d", [on("lab", "resolved"), on("spare", "idle")]],
+    ]);
+    expect(boardMachineOptions(cards, threads, true)).toEqual([
+      { id: "desk", name: "desk", color: "color-desk", cards: 2 },
+      { id: "mini", name: "mini", color: "color-mini", cards: 1 },
+      { id: BOARD_NO_THREAD, name: "No thread", color: null, cards: 1 },
+    ]);
+    expect(boardMachineOptions(cards, threads, false).map((option) => option.id)).toEqual([
+      "desk",
+      "mini",
+    ]);
+    // No machine at all: nothing to tell apart, so no "No thread" either.
+    expect(boardMachineOptions(cards, new Map(), true)).toEqual([]);
+  });
+});
+
+describe("a reason as the board shows it", () => {
+  it("adds the space left out after a comma or a semicolon", () => {
+    expect(boardNoteText("check passed;12/40 copies kept,7missing")).toBe(
+      "check passed; 12/40 copies kept, 7missing",
+    );
+    expect(boardNoteText("first,second;third")).toBe("first, second; third");
+  });
+
+  it("never splits a word, an id, a version or a number", () => {
+    for (const text of [
+      "T-64 waits on HTTPX",
+      "version 1.0.343 of sha256abc",
+      "offline37profileattestation",
+      "1,234 rows and 12,5 more",
+      "already fine, as written; nothing to do",
+      "ends with a comma,",
+    ])
+      expect(boardNoteText(text)).toBe(text);
+  });
+
+  it("leaves numbers, bracketed lists, paths and file names as written", () => {
+    for (const text of [
+      "grew 1,5x since",
+      "kept a,b.txt and c,d.json.",
+      "call f(a,b) then g[1,a]",
+      "open data:text/plain,hello",
+      "see src/a,b and ./x,y",
+      "mailto:a,b@example.test",
+      "C:\\work\\a,b",
+    ])
+      expect(boardNoteText(text)).toBe(text);
+  });
+
+  it("reads a slash between numbers as a ratio, not a path", () => {
+    expect(boardNoteText("valid;113/148 copies recovered,35unresolved. Next")).toBe(
+      "valid; 113/148 copies recovered, 35unresolved. Next",
+    );
+  });
+
+  it("knows the letters and digits of any script", () => {
+    expect(boardNoteText("готово,дальше;проверка")).toBe("готово, дальше; проверка");
+    expect(boardNoteText("完了,次へ")).toBe("完了, 次へ");
+  });
+
+  it("leaves text in backticks exactly as written, spaces included", () => {
+    expect(boardNoteText("run `a,b   c;d`  then,stop")).toBe("run `a,b   c;d` then, stop");
+  });
+
+  it("leaves links, backticks and character references as written", () => {
+    expect(boardNoteText("see https://example.test/a,b;c for more")).toBe(
+      "see https://example.test/a,b;c for more",
+    );
+    expect(boardNoteText("run `pick a,b;c` first,then stop")).toBe(
+      "run `pick a,b;c` first, then stop",
+    );
+    expect(boardNoteText("a &amp;b and &#38;c")).toBe("a &amp;b and &#38;c");
+  });
+
+  it("collapses runs of whitespace and trims", () => {
+    expect(boardNoteText("  two   spaces\n\nand a\tbreak ")).toBe("two spaces and a break");
+    expect(boardNoteText("")).toBe("");
+  });
+});
+
+describe("the pull request chip", () => {
+  const url = (number: number) => `https://github.com/acme/app/pull/${number}`;
+
+  it("gives a state only to a pull request a thread has read from the host", () => {
+    const link = (
+      number: number,
+      linkedAt: string,
+      snapshot?: { state: string; isDraft?: boolean } | null,
+      source?: string,
+    ) => ({ url: url(number), linkedAt, snapshot, source });
+    const states = boardPullRequestStates([
+      {
+        pullRequests: [
+          link(1, "2026-11-01T00:00:00.000Z", { state: "merged" }),
+          link(2, "2026-11-01T00:00:00.000Z", { state: "open", isDraft: true }),
+          // Linked, never read: no word, and never an assumed "Open".
+          link(3, "2026-11-01T00:00:00.000Z"),
+          link(4, "2026-11-01T00:00:00.000Z", null),
+          link(5, "2026-11-01T00:00:00.000Z", { state: "open" }, "stack-dismissed"),
+          link(6, "2026-11-01T00:00:00.000Z", { state: "queued" }),
+        ],
+      },
+      // The newest link of a pull request wins, whichever thread holds it.
+      { pullRequests: [link(1, "2026-10-01T00:00:00.000Z", { state: "open" })] },
+      { pullRequests: [link(2, "2026-11-02T00:00:00.000Z", { state: "closed" })] },
+      { deletedAt: "2026-11-03T00:00:00.000Z", pullRequests: [link(3, "x", { state: "open" })] },
+      {},
+    ]);
+    expect([...states]).toEqual([
+      [url(1), "Merged"],
+      [url(2), "Closed"],
+      [url(6), "queued"],
+    ]);
+  });
+
+  it("is absent with no pull request and the number of a single one", () => {
+    expect(boardPullRequestChip([])).toBeNull();
+    expect(boardPullRequestChip([url(193)])).toEqual({ kind: "one", url: url(193), label: "#193" });
+  });
+
+  it("folds several into one chip with a menu, newest first as the server sent them", () => {
+    expect(boardPullRequestChip([url(524), url(76), url(75)])).toEqual({
+      kind: "many",
+      label: "3 PRs",
+      items: [
+        { url: url(524), label: "#524" },
+        { url: url(76), label: "#76" },
+        { url: url(75), label: "#75" },
+      ],
+    });
   });
 });
 

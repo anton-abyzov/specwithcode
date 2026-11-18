@@ -17,6 +17,8 @@ import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/st
 
 const params = new URLSearchParams(location.search);
 const OLD_SERVER = params.get("server") === "old";
+// `?threads=reading`: the threads have not said yet which increment they work on.
+const THREADS_READING = params.get("threads") === "reading";
 const REMOVED = params.get("removed");
 
 const NOW = Date.parse("2026-11-14T18:00:00Z");
@@ -616,6 +618,32 @@ export const FIXTURE_THREADS: EnvironmentThreadShell[] = [
   thread(IDS.promoted, "Inline rename field", "laptop", 4, running),
   thread(IDS.idle, "Pick notification sounds", "desk", 600),
   thread(IDS.reviewTasks, "Review the retry rules", "laptop", 9, running),
+  // Only a thread that cannot be reached: it may still hold the work.
+  thread(IDS.planned, "Check contrast in the dark theme", "desk", 200, movedTo("spare")),
+  // Only a resolved thread: nobody holds the work. It read one pull request
+  // of the blocked increment from the host and only linked the other.
+  thread(IDS.longReason, "Export to the shared drive", "desk", 900, {
+    ...resolved,
+    pullRequests: [
+      {
+        host: "github.com",
+        repository: "acme/app",
+        number: 812,
+        url: pull(812),
+        source: "linked",
+        linkedAt: ago(400),
+        snapshot: { state: "open", isDraft: false, title: "Search index rewrite" },
+      },
+      {
+        host: "github.com",
+        repository: "acme/app",
+        number: 807,
+        url: pull(807),
+        source: "linked",
+        linkedAt: ago(500),
+      },
+    ],
+  }),
   thread(IDS.done, "Passkey sign-in", "desk", 3000, resolved),
 ];
 export const FIXTURE_MACHINE_LABELS = new Map<string, string>(
@@ -636,7 +664,10 @@ export function useThreadIncrementState(input: {
       const link = LINKS.get(`${input.environmentId}:${id}`);
       if (link) progress.set(id, link);
     }
-    pageStates.set(key, (state = { progress, unplanned: new Set<string>(), answered: true }));
+    pageStates.set(
+      key,
+      (state = { progress, unplanned: new Set<string>(), answered: !THREADS_READING }),
+    );
   }
   return state;
 }

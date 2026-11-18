@@ -172,6 +172,8 @@ export function useBoardThreads(input: {
    * card then means "not known yet", not "nobody is on it".
    */
   readonly answered: boolean;
+  /** The project has more threads than are read, so `answered` never becomes true. */
+  readonly cut: boolean;
   /** Threads run on more than one machine, so each line names its own. */
   readonly multiMachine: boolean;
   readonly loaders: ReactNode;
@@ -287,7 +289,7 @@ export function useBoardThreads(input: {
       multiMachine: machines.size > 1 || (machineLabels?.size ?? 0) > 1,
     };
   }, [environments, identity, links, machineLabels, nickname, threads, unreachable]);
-  return { ...joined, answered, loaders };
+  return { ...joined, answered, cut, loaders };
 }
 
 /** Where a thread runs, in its machine's color; "→ name" once it moved there. */

@@ -1,25 +1,25 @@
 /**
- * The project's Board tab: its SpecWeave increments as cards in Planned,
- * Active, In review and Done, read from the increment files by
- * `projects.board`. Side by side when the panel is wide, stacked with the
- * work in motion first when it is narrow. A card opens the increment view
- * (BoardIncrementView): beside the board in a wide panel, in its place in a
- * narrow one. Blocked is a state, not a column: a switch narrows every column
- * to its stuck cards. A project without SpecWeave gets the switch to turn the
- * board on instead of a hidden tab.
+ * The project's Board tab: its SpecWeave increments as cards in Blocked,
+ * Active, In review, Planned and Done, read from the increment files by
+ * `projects.board`. Blocked is every open card that is paused or has a
+ * blocked task, shown first. Each group folds, and the fold is remembered
+ * per project. Side by side when the panel is wide (Blocked as a band above
+ * the columns), stacked when it is narrow. A "Runs on" legend says what a
+ * card's colored edge means and narrows the board to one machine. A card
+ * opens the increment view (BoardIncrementView): beside the board in a wide
+ * panel, in its place in a narrow one. A project without SpecWeave gets the
+ * switch to turn the board on instead of a hidden tab.
  */
 import type { EnvironmentId, ProjectBoardCard, ProjectId } from "@specweave-studio/contracts";
-import {
-  PROJECT_BOARD_DONE_DEFAULT,
-  PROJECT_BOARD_DONE_MAX,
-  type ProjectBoardColumn,
-} from "@specweave-studio/contracts";
+import { PROJECT_BOARD_DONE_DEFAULT, PROJECT_BOARD_DONE_MAX } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
-import { CheckIcon, SearchIcon, TriangleAlertIcon } from "lucide-react";
+import * as Schema from "effect/Schema";
+import { SearchIcon } from "lucide-react";
 import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -28,30 +28,36 @@ import {
 } from "react";
 
 import { useOpenLink } from "../../../browser/useOpenLink";
+import { useLocalStorage } from "../../../hooks/useLocalStorage";
 import { useNowMinute } from "../../../hooks/useNowMinute";
 import { useEnvironmentQuery } from "../../../state/query";
 import {
-  BOARD_COLUMN_LABELS,
   BOARD_COLUMN_PAGE,
   BOARD_DONE_STEP,
-  BOARD_STACK_ORDER,
+  BOARD_GROUPS,
+  BOARD_GROUPS_WIDE,
+  BOARD_GROUP_LABELS,
   NO_BOARD_PROMOTIONS,
-  PROJECT_BOARD_COLUMNS,
-  boardBlockedCounts,
-  boardCardBlocked,
+  boardCardGroup,
+  boardCardOnMachine,
   boardColumnMore,
-  boardColumns,
-  boardFilterLabel,
+  boardGroupCounts,
+  boardGroups,
   boardIsEmpty,
+  boardMachineOptions,
+  boardPullRequestStates,
+  boardStateLabel,
   boardThreadEvidence,
   boardWithPromotions,
   nextBoardPromotions,
+  type BoardGroupId,
 } from "../../../studio/projectBoardModel";
-import { collectProjectPullRequests } from "../../../studio/projectPaneModel";
 import { projectWorkspace } from "../../../studio/projectWorkspace";
 import { nowFromMinute } from "../../../studio/shellModel";
 import { BoardCard } from "./BoardCard";
+import { BoardGroupSection } from "./BoardGroupSection";
 import { BoardIncrementView, type BoardViewFile } from "./BoardIncrementView";
+import { BoardMachineLegend } from "./BoardMachineLegend";
 import { useBoardThreads } from "./BoardThreads";
 import { LibraryFileViewer } from "./LibraryFileViewer";
 import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
@@ -64,33 +70,60 @@ const BOARD_REFRESH_MS = 30_000;
  * would fall under the 320 px a card needs. Keep in step with board-view.css.
  */
 export const BOARD_SPLIT_MIN_WIDTH = 1040;
+/** The board's own width from which its groups sit side by side. */
+export const BOARD_COLUMNS_MIN_WIDTH = 720;
 export type BoardViewLayout = "split" | "full";
 
-const PULL_REQUEST_STATE_WORDS: Record<string, string> = {
-  open: "Open",
-  draft: "Draft",
-  merged: "Merged",
-  closed: "Closed",
-};
+/** Folded groups by `environmentId:projectId`: boards differ in size from project to project. */
+const FOLDED_STORAGE_KEY = "studio:project-board-folded:v1";
+const FoldedSchema = Schema.Record(Schema.String, Schema.Array(Schema.String));
+const NO_FOLDS: ReadonlyArray<string> = [];
 
-/** Whether the panel is wide enough for the view beside the board; `named` skips measuring. */
-function useBoardViewLayout(
+interface BoardLayout {
+  /** Where the increment view goes; null until the panel has been measured. */
+  readonly view: BoardViewLayout | null;
+  /** The board is wide enough for its groups side by side. */
+  readonly columns: boolean;
+}
+
+/**
+ * What the panel's width allows. Measured before paint, so the groups are in
+ * the document in the order they are shown and never jump after the first
+ * frame; `named` skips measuring (tests, fixtures).
+ */
+function useBoardLayout(
   element: HTMLElement | null,
-  named: BoardViewLayout | undefined,
-): BoardViewLayout | null {
+  named: { view?: BoardViewLayout | undefined; columns?: boolean | undefined },
+): BoardLayout {
   // Null until the panel has been measured, so nothing acts on a guess.
-  const [measured, setMeasured] = useState<BoardViewLayout | null>(null);
-  useEffect(() => {
-    if (named !== undefined || element === null) return;
-    const measure = () =>
-      setMeasured(element.clientWidth >= BOARD_SPLIT_MIN_WIDTH ? "split" : "full");
+  const [measured, setMeasured] = useState<{ view: BoardViewLayout; columns: boolean } | null>(
+    null,
+  );
+  const known = named.view !== undefined && named.columns !== undefined;
+  useLayoutEffect(() => {
+    if (known || element === null) return;
+    const measure = () => {
+      const style = getComputedStyle(element);
+      const inner =
+        element.clientWidth -
+        (Number.parseFloat(style.paddingLeft) || 0) -
+        (Number.parseFloat(style.paddingRight) || 0);
+      const view = element.clientWidth >= BOARD_SPLIT_MIN_WIDTH ? "split" : "full";
+      const columns = inner >= BOARD_COLUMNS_MIN_WIDTH;
+      setMeasured((held) =>
+        held !== null && held.view === view && held.columns === columns ? held : { view, columns },
+      );
+    };
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [element, named]);
-  return named ?? measured;
+  }, [element, known]);
+  return {
+    view: named.view ?? measured?.view ?? null,
+    columns: named.columns ?? measured?.columns ?? false,
+  };
 }
 
 export interface BoardPaneProps {
@@ -120,6 +153,8 @@ export interface BoardPaneProps {
     | undefined;
   /** Names the view's layout instead of measuring the panel (tests, fixtures). */
   layout?: BoardViewLayout | undefined;
+  /** Names whether the groups sit side by side instead of measuring (tests, fixtures). */
+  columns?: boolean | undefined;
 }
 
 export function BoardPane(props: BoardPaneProps) {
@@ -159,12 +194,29 @@ function BoardCards({
   openIncrement,
   onOpenIncrement,
   layout: namedLayout,
+  columns: namedColumns,
 }: BoardPaneProps) {
   const [filter, setFilter] = useState("");
   const [searched, setSearched] = useState("");
   const [doneLimit, setDoneLimit] = useState(PROJECT_BOARD_DONE_DEFAULT);
-  const [shown, setShown] = useState<Partial<Record<ProjectBoardColumn, number>>>({});
-  const [blockedOnly, setBlockedOnly] = useState(false);
+  const [shown, setShown] = useState<Partial<Record<BoardGroupId, number>>>({});
+  const [machineChoice, setMachineChoice] = useState<string | null>(null);
+  const [foldedByProject, setFoldedByProject] = useLocalStorage<
+    Readonly<Record<string, ReadonlyArray<string>>>,
+    Readonly<Record<string, ReadonlyArray<string>>>
+  >(FOLDED_STORAGE_KEY, {}, FoldedSchema);
+  const foldKey = `${environmentId}:${projectId}`;
+  const folds = foldedByProject[foldKey] ?? NO_FOLDS;
+  const setGroupFolded = useCallback(
+    (group: BoardGroupId, fold: boolean) =>
+      setFoldedByProject((current) => {
+        const { [foldKey]: held = NO_FOLDS, ...rest } = current;
+        const next = held.filter((name) => name !== group);
+        if (fold) next.push(group);
+        return next.length === 0 ? rest : { ...rest, [foldKey]: next };
+      }),
+    [foldKey, setFoldedByProject],
+  );
   const [opened, setOpened] = useState<{
     files: ReadonlyArray<BoardViewFile>;
     path: string;
@@ -242,30 +294,66 @@ function BoardCards({
     () => (data ? boardWithPromotions(data, promotions.ids) : null),
     [data, promotions.ids],
   );
-  const columns = useMemo(() => boardColumns(board?.cards ?? []), [board]);
-  const blockedCounts = useMemo(() => boardBlockedCounts(columns), [columns]);
-  // A filter with nothing left to show would hide the whole board. It turns
-  // itself off, so a card blocked later does not bring it back unasked.
-  if (blockedOnly && board !== null && blockedCounts.all === 0) setBlockedOnly(false);
-  const filtering = blockedOnly && blockedCounts.all > 0;
-  const listed = useMemo(() => {
-    const result = {} as Record<ProjectBoardColumn, ProjectBoardCard[]>;
-    for (const column of PROJECT_BOARD_COLUMNS) {
-      const held = filtering ? columns[column].filter(boardCardBlocked) : columns[column];
-      result[column] = held.slice(0, shown[column] ?? BOARD_COLUMN_PAGE);
-    }
-    return result;
-  }, [columns, filtering, shown]);
-  const pullRequestStates = useMemo(
-    () =>
-      new Map(
-        collectProjectPullRequests(threads).map((entry) => [
-          entry.url,
-          PULL_REQUEST_STATE_WORDS[entry.state] ?? entry.state,
-        ]),
-      ),
-    [threads],
+  const groups = useMemo(() => boardGroups(board?.cards ?? []), [board]);
+  const counts = useMemo(
+    () => (board ? boardGroupCounts(board.counts, groups.blocked) : null),
+    [board, groups.blocked],
   );
+  // The legend: shown whenever a card can carry a machine's color on its edge.
+  const showMachines = useMemo(() => {
+    if (working.multiMachine) return true;
+    for (const threads of working.byIncrement.values())
+      if (threads.some((entry) => entry.machine.moved && entry.tone !== "resolved")) return true;
+    return false;
+  }, [working.byIncrement, working.multiMachine]);
+  const machineOptions = useMemo(
+    () =>
+      showMachines && board
+        ? boardMachineOptions(board.cards, working.byIncrement, working.answered)
+        : [],
+    [board, showMachines, working.answered, working.byIncrement],
+  );
+  // A choice whose machine has no card left would hide the whole board. It
+  // lets go, so a thread that starts there later does not narrow it unasked;
+  // but only once the threads have answered, never on a half-read list. A
+  // search that leaves the machine no match lets it go too: an empty board
+  // would read as "not found" while the match sits on another machine.
+  const machine =
+    machineOptions.length > 1 && machineOptions.some((option) => option.id === machineChoice)
+      ? machineChoice
+      : null;
+  if (machineChoice !== null && machine === null && board !== null && working.answered)
+    setMachineChoice(null);
+  // A search looks inside folded groups too; hiding a match would read as "not found".
+  const searching = filter.trim() !== "" || searched !== "";
+  const held = useMemo(() => {
+    const result = {} as Record<BoardGroupId, ProjectBoardCard[]>;
+    for (const group of BOARD_GROUPS)
+      result[group] =
+        machine === null
+          ? groups[group]
+          : groups[group].filter((card) =>
+              boardCardOnMachine(
+                card,
+                working.byIncrement.get(card.incrementId) ?? NO_THREADS,
+                machine,
+              ),
+            );
+    return result;
+  }, [groups, machine, working.byIncrement]);
+  const isFolded = useCallback(
+    (group: BoardGroupId) => !searching && folds.includes(group),
+    [folds, searching],
+  );
+  const listed = useMemo(() => {
+    const result = {} as Record<BoardGroupId, ProjectBoardCard[]>;
+    for (const group of BOARD_GROUPS)
+      result[group] = isFolded(group)
+        ? []
+        : held[group].slice(0, shown[group] ?? BOARD_COLUMN_PAGE);
+    return result;
+  }, [held, isFolded, shown]);
+  const pullRequestStates = useMemo(() => boardPullRequestStates(threads), [threads]);
 
   // The open increment: the page's navigation state when it gives one, else our own.
   const [ownOpen, setOwnOpen] = useState<string | null>(null);
@@ -278,20 +366,40 @@ function BoardCards({
     [onOpenIncrement],
   );
   const [body, setBody] = useState<HTMLDivElement | null>(null);
-  const knownLayout = useBoardViewLayout(body, namedLayout);
+  const measured = useBoardLayout(body, { view: namedLayout, columns: namedColumns });
+  const knownLayout = measured.view;
   const layout = knownLayout ?? "full";
   const viewOpen = openId !== null && board !== null;
+  // Beside the open view the board is a stacked list, whatever the panel's width.
+  const sideBySide = measured.columns && !viewOpen;
+  const order = sideBySide ? BOARD_GROUPS_WIDE : BOARD_GROUPS;
   const viewId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const openedCard = openId === null ? null : board?.cards.find((c) => c.incrementId === openId);
-  const openedColumn = openedCard?.column ?? null;
+  const openedGroup = openedCard ? boardCardGroup(openedCard) : null;
 
-  // With the view open the board is a stacked list: its cards in reading order.
+  // An increment opened by a link or by going back, in a folded group: the
+  // group opens, once, when the card's group is known. That is after the
+  // threads have answered and moved a planned card they work on into Active,
+  // or it would open the group the card is about to leave. A card that
+  // changes group later, while its view is open, unfolds nothing.
+  const revealed = useRef<string | null>(null);
+  const groupSettled =
+    (working.answered || working.cut) &&
+    (openId === null || !evidence.includes(openId) || promotions.ids.has(openId));
+  useEffect(() => {
+    if (openId === null) {
+      revealed.current = null;
+      return;
+    }
+    if (revealed.current === openId || openedGroup === null || !groupSettled) return;
+    revealed.current = openId;
+    if (folds.includes(openedGroup)) setGroupFolded(openedGroup, false);
+  }, [folds, groupSettled, openId, openedGroup, setGroupFolded]);
+
+  // The cards on screen in reading order; with the view open that is the stacked list.
   const walk = useMemo(
-    () =>
-      PROJECT_BOARD_COLUMNS.toSorted(
-        (left, right) => BOARD_STACK_ORDER[left] - BOARD_STACK_ORDER[right],
-      ).flatMap((column) => listed[column].map((card) => card.incrementId)),
+    () => BOARD_GROUPS.flatMap((group) => listed[group].map((card) => card.incrementId)),
     [listed],
   );
   const walkIndex = openId === null ? -1 : walk.indexOf(openId);
@@ -306,12 +414,12 @@ function BoardCards({
   useEffect(() => {
     if (viewOpen && knownLayout === "full") heading.current?.focus();
   }, [knownLayout, openId, viewOpen]);
-  // Closing hands the keyboard back to the card, or to its column's heading
-  // when a search, the filter or a refresh took the card away.
-  const closed = useRef<{ id: string; column: ProjectBoardColumn | null } | null>(null);
+  // Closing hands the keyboard back to the card, or to its group's heading
+  // when a search, a fold, the filter or a refresh took the card away.
+  const closed = useRef<{ id: string; group: BoardGroupId | null } | null>(null);
   useEffect(() => {
     if (openId !== null) {
-      closed.current = { id: openId, column: openedColumn ?? closed.current?.column ?? null };
+      closed.current = { id: openId, group: openedGroup ?? closed.current?.group ?? null };
       return;
     }
     const last = closed.current;
@@ -324,13 +432,34 @@ function BoardCards({
       [...body.querySelectorAll<HTMLElement>("[data-board-card]")].find(
         (node) => node.dataset.boardCard === last.id,
       ) ??
-      body.querySelector<HTMLElement>(`[data-column="${last.column ?? ""}"] h3`) ??
-      body.querySelector<HTMLElement>(".sws-board-column h3");
+      body.querySelector<HTMLElement>(`[data-group="${last.group ?? ""}"] .sws-group-bar`) ??
+      body.querySelector<HTMLElement>(".sws-board-group .sws-group-bar");
     target?.focus();
-  }, [body, openId, openedColumn]);
+  }, [body, openId, openedGroup]);
+
+  // A refresh can move or remove the card the keyboard is on. Focus then goes
+  // to the card in its new place, or to the heading of the group it was in,
+  // instead of falling to the page.
+  const focused = useRef<{ id: string; group: string } | null>(null);
+  useEffect(() => {
+    const last = focused.current;
+    if (last === null || body === null) return;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body && active.isConnected) return;
+    focused.current = null;
+    const target =
+      [...body.querySelectorAll<HTMLElement>("[data-board-card]")].find(
+        (node) => node.dataset.boardCard === last.id,
+      ) ??
+      body.querySelector<HTMLElement>(`[data-group="${last.group}"] .sws-group-bar`) ??
+      body.querySelector<HTMLElement>(".sws-board-group .sws-group-bar");
+    target?.focus();
+  });
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+    // A menu a card opened lives outside the pane; its keys are its own.
+    if (body === null || !body.contains(event.target as Node)) return;
     if (event.key === "Escape") {
       if (!viewOpen || event.shiftKey) return;
       event.preventDefault();
@@ -343,16 +472,9 @@ function BoardCards({
     // buttons and everything inside the view keep them.
     const from = (event.target as HTMLElement).closest<HTMLElement>(".sws-board-card");
     const current = from?.querySelector<HTMLElement>("[data-board-card]") ?? null;
-    if (current === null || body === null) return;
-    const cards = [...body.querySelectorAll<HTMLElement>("[data-board-card]")]
-      .map((node, index) => ({
-        node,
-        index,
-        // Stacked, the columns are reordered by CSS; side by side they are not.
-        order: Number(getComputedStyle(node.closest("[data-column]") ?? node).order) || 0,
-      }))
-      .toSorted((left, right) => left.order - right.order || left.index - right.index)
-      .map((entry) => entry.node);
+    if (current === null) return;
+    // The groups are in the document in the order they are shown.
+    const cards = [...body.querySelectorAll<HTMLElement>("[data-board-card]")];
     const next = cards[cards.indexOf(current) + (event.key === "ArrowDown" ? 1 : -1)];
     event.preventDefault();
     if (next === undefined) return;
@@ -373,7 +495,18 @@ function BoardCards({
         ref={setBody}
         onKeyDown={onKeyDown}
       >
-        <div className="sws-board-list">
+        <div
+          className="sws-board-list"
+          onFocus={(event) => {
+            const card = (event.target as HTMLElement).closest<HTMLElement>(".sws-board-card");
+            const group = card?.closest<HTMLElement>("[data-group]")?.dataset.group;
+            const id = card?.dataset.increment;
+            focused.current = id && group ? { id, group } : null;
+          }}
+          onBlur={() => {
+            focused.current = null;
+          }}
+        >
           <div className="sws-board-tools">
             <label className="sws-find">
               <SearchIcon aria-hidden />
@@ -390,27 +523,14 @@ function BoardCards({
                 }}
               />
             </label>
-            {blockedCounts.all > 0 ? (
-              <button
-                type="button"
-                className="sws-board-filter"
-                aria-pressed={filtering}
-                onClick={() => setBlockedOnly(!filtering)}
-              >
-                {filtering ? <CheckIcon aria-hidden /> : <TriangleAlertIcon aria-hidden />}
-                {boardFilterLabel(blockedCounts.all)}
-              </button>
-            ) : null}
           </div>
-          {filtering ? (
-            <p className="sws-board-filter-note" role="status">
-              Showing only the {blockedCounts.all === 1 ? "card that is" : "cards that are"} paused
-              or have a blocked task.
-              <button type="button" onClick={() => setBlockedOnly(false)}>
-                Show all cards
-              </button>
-            </p>
-          ) : null}
+          <BoardMachineLegend
+            options={machineOptions}
+            pick={machine}
+            answered={working.answered}
+            cut={working.cut}
+            onPick={setMachineChoice}
+          />
           {board === null ? (
             <p className="sws-empty sws-pane-empty" role="status">
               {query.error ? `The board could not be read: ${query.error}` : "Reading increments…"}
@@ -422,49 +542,37 @@ function BoardCards({
                 : `No increment matches "${searched}".`}
             </p>
           ) : (
-            <div className="sws-board-columns">
-              {PROJECT_BOARD_COLUMNS.map((column) => {
-                const held = filtering ? columns[column].filter(boardCardBlocked) : columns[column];
-                const limit = shown[column] ?? BOARD_COLUMN_PAGE;
-                const more = boardColumnMore({
-                  column,
-                  held: held.length,
-                  shown: limit,
-                  // Older Done cards are never blocked: the filter has none to fetch.
-                  total: filtering ? held.length : board.counts[column],
-                });
-                const headingId = `sws-board-${column}`;
-                const blocked = blockedCounts[column];
+            <div className="sws-board-columns" data-layout={sideBySide ? "columns" : "stack"}>
+              {order.map((group) => {
+                const total = counts?.[group] ?? 0;
+                // No stuck card: no Blocked group. The columns always show, even empty.
+                if (group === "blocked" && total === 0) return null;
+                const folded = isFolded(group);
+                const limit = shown[group] ?? BOARD_COLUMN_PAGE;
+                // Finished work is not narrowed by machine: it runs nowhere, and
+                // only its newest cards are loaded. Its count stays the whole count.
+                const unsorted = group === "done" && machine !== null;
+                const more = unsorted
+                  ? null
+                  : boardColumnMore({
+                      column: group,
+                      held: held[group].length,
+                      shown: limit,
+                      loaded: groups[group].length,
+                      total: board.counts.done,
+                    });
                 return (
-                  <section
-                    className="sws-board-column"
-                    key={column}
-                    data-column={column}
-                    aria-labelledby={headingId}
-                    style={{ order: BOARD_STACK_ORDER[column] }}
+                  <BoardGroupSection
+                    key={group}
+                    group={group}
+                    label={BOARD_GROUP_LABELS[group]}
+                    count={machine === null || unsorted ? total : held[group].length}
+                    folded={folded}
+                    locked={searching}
+                    onToggle={() => setGroupFolded(group, !folded)}
                   >
-                    <div className="sws-board-column-head">
-                      <h3 id={headingId} className="sws-pane-group-heading" tabIndex={-1}>
-                        {BOARD_COLUMN_LABELS[column]}
-                        <span className="sws-group-count">
-                          {board.counts[column]}
-                          <span className="sr-only"> increments</span>
-                        </span>
-                      </h3>
-                      {blocked > 0 ? (
-                        <button
-                          type="button"
-                          className="sws-board-column-blocked"
-                          aria-pressed={filtering}
-                          aria-label={`${blocked} blocked in ${BOARD_COLUMN_LABELS[column]}: show blocked cards only`}
-                          onClick={() => setBlockedOnly(!filtering)}
-                        >
-                          {blocked} blocked
-                        </button>
-                      ) : null}
-                    </div>
                     <div className="sws-board-cards">
-                      {listed[column].map((card) => (
+                      {listed[group].map((card) => (
                         <BoardCard
                           key={card.incrementId}
                           card={card}
@@ -474,6 +582,8 @@ function BoardCards({
                           multiMachine={working.multiMachine}
                           now={now}
                           viewId={viewId}
+                          stateLabel={boardStateLabel(card)}
+                          pullRequestStates={pullRequestStates}
                           onOpen={openCard}
                           onOpenThread={onOpenThread}
                           onOpenLink={onOpenLink}
@@ -481,27 +591,31 @@ function BoardCards({
                         />
                       ))}
                     </div>
+                    {unsorted ? (
+                      <p className="sws-board-group-note">
+                        Finished work is not sorted by machine. Choose All to see it.
+                      </p>
+                    ) : null}
                     {more ? (
                       <button
                         type="button"
                         className="sws-board-more"
                         disabled={more.kind === "older" && query.isPending}
                         onClick={() => {
-                          const next = limit + BOARD_COLUMN_PAGE;
                           if (more.kind === "older") {
                             setDoneLimit((value) =>
                               Math.min(PROJECT_BOARD_DONE_MAX, value + BOARD_DONE_STEP),
                             );
                             setShown((value) => ({ ...value, done: limit + BOARD_DONE_STEP }));
                           } else {
-                            setShown((value) => ({ ...value, [column]: next }));
+                            setShown((value) => ({ ...value, [group]: limit + BOARD_COLUMN_PAGE }));
                           }
                         }}
                       >
                         {more.label}
                       </button>
                     ) : null}
-                  </section>
+                  </BoardGroupSection>
                 );
               })}
             </div>
