@@ -18,6 +18,13 @@ const mocks = vi.hoisted(() => ({
   undo: vi.fn(),
   complete: vi.fn(),
 }));
+// The Chrome and Mac apps rows read live machine state; their own tests cover them.
+vi.mock("./ChromeAccessRow", () => ({
+  ChromeAccessRow: () => <li data-access-row="browser" />,
+}));
+vi.mock("./MacAppsRow", () => ({
+  MacAppsRow: () => <li data-access-row="mac-apps" />,
+}));
 // The Full Disk Access row and first-run item have their own test.
 vi.mock("../access/FullDiskAccess", () => ({
   FullDiskAccessRow: () => null,
@@ -333,6 +340,6 @@ it("in the desktop app shows the rows for this computer, even with nothing to re
   expect(accessShown()).toBe(true);
   await click("Connection continue");
   await click("Agents continue");
-  expect(rowIds()).toEqual([]);
+  expect(rowIds()).toEqual(["browser"]);
   expect(document.querySelector("h1")?.textContent).toBe("What agents can use on this machine");
 });

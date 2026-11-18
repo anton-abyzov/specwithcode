@@ -6,6 +6,7 @@ import {
 import { isMacPlatform } from "@specweave-studio/shared/keybindings";
 import { teamRulesModeAllowed } from "@specweave-studio/shared/teamRules";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { FirstRunResumeMarker } from "@specweave-studio/contracts";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
@@ -14,8 +15,15 @@ import {
 } from "../../onboarding/accessRecommendation";
 import { shouldRecommendFullAccess } from "../../onboarding/accessRecommendation.logic";
 import { accessRows } from "../../onboarding/accessRows.logic";
+import {
+  firstRunResumeApplies,
+  saveFirstRunResume,
+  takeFirstRunResume,
+} from "../../onboarding/firstRunResume";
 import { teamRulesFromSummary } from "../../teamRules/teamRulesView";
 import { AccessStep } from "./AccessStep";
+import { ChromeAccessRow } from "./ChromeAccessRow";
+import { MacAppsRow } from "./MacAppsRow";
 import { SignInFirstStep } from "./SignInFirstStep";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useProjectScans } from "../../onboarding/useProjectScans";
@@ -226,6 +234,33 @@ export function WelcomeWizard({
         ]),
     );
   }, [environments]);
+  // After Quit & Reopen from Access, setup comes back on Access for the same
+  // machines. The marker is claimed once, after this machine is known, and
+  // used once every machine it names is listed again.
+  const [resumeMarker, setResumeMarker] = useState<FirstRunResumeMarker | null>(null);
+  const resumeTaken = useRef(false);
+  useEffect(() => {
+    if (resumeTaken.current || !desktopApp || !firstRun || primaryEnvironmentId === null) return;
+    resumeTaken.current = true;
+    void takeFirstRunResume().then(setResumeMarker);
+  }, [desktopApp, firstRun, primaryEnvironmentId]);
+  const listedIds = environments.map((environment) => environment.environmentId).join("\n");
+  useEffect(() => {
+    if (resumeMarker === null) return;
+    const applies = firstRunResumeApplies(resumeMarker, {
+      now: Date.now(),
+      primaryEnvironmentId,
+      listedIds: listedIds.split("\n"),
+      finished: !firstRun,
+    });
+    if (!applies) return;
+    setResumeMarker(null);
+    // The person moved on meanwhile: their step wins.
+    if (chosenStep !== null) return;
+    setSetupIds(resumeMarker.setupIds as readonly EnvironmentId[]);
+    setLeftConnectFrom(entryStep);
+    setStep("access");
+  }, [resumeMarker, primaryEnvironmentId, listedIds, firstRun, chosenStep, entryStep]);
   const selectedIds =
     selection ?? new Set(primaryEnvironment ? [primaryEnvironment.environmentId] : []);
   const scans = useProjectScans(step === "import" ? setupIds : NO_ENVIRONMENTS);
@@ -369,6 +404,25 @@ export function WelcomeWizard({
               : tx("What agents can use")
           }
           rows={rows}
+          renderRow={(id, open) =>
+            primaryEnvironmentId === null ? null : id === "browser" ? (
+              <ChromeAccessRow
+                environmentId={primaryEnvironmentId}
+                machine={primaryEnvironment?.label ?? machineNoun}
+                {...open}
+              />
+            ) : id === "mac-apps" ? (
+              <MacAppsRow
+                {...open}
+                onBeforeRelaunch={() =>
+                  saveFirstRunResume(
+                    primaryEnvironmentId,
+                    setupIds.length > 0 ? setupIds : [primaryEnvironmentId],
+                  )
+                }
+              />
+            ) : null
+          }
           files={{
             machineNames: filesMachineIds.map(
               (id) =>

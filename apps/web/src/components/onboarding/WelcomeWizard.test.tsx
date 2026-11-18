@@ -13,6 +13,13 @@ const mocks = vi.hoisted(() => ({
   projects: [] as Array<{ id: string; environmentId: string; workspaceRoot: string }>,
 }));
 // The machine choice and its invitation have their own tests.
+// The Chrome and Mac apps rows read live machine state; their own tests cover them.
+vi.mock("./ChromeAccessRow", () => ({
+  ChromeAccessRow: () => <li data-access-row="browser" />,
+}));
+vi.mock("./MacAppsRow", () => ({
+  MacAppsRow: () => <li data-access-row="mac-apps" />,
+}));
 vi.mock("./ProjectsFolderChoice", () => ({ ProjectsFolderChoice: () => null }));
 vi.mock("../../hooks/useProjectFolderChoice", () => ({ rememberRecentFolder: () => {} }));
 vi.mock("../../state/session", () => ({

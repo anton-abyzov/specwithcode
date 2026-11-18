@@ -19,6 +19,13 @@ const mocks = vi.hoisted(() => ({
   openExternal: vi.fn(),
   linkHere: vi.fn(),
 }));
+// The Chrome and Mac apps rows read live machine state; their own tests cover them.
+vi.mock("./ChromeAccessRow", () => ({
+  ChromeAccessRow: () => <li data-access-row="browser" />,
+}));
+vi.mock("./MacAppsRow", () => ({
+  MacAppsRow: () => <li data-access-row="mac-apps" />,
+}));
 vi.mock("./ProjectsFolderChoice", () => ({ ProjectsFolderChoice: () => null }));
 vi.mock("../../hooks/useProjectFolderChoice", () => ({ rememberRecentFolder: () => {} }));
 vi.mock("../../studio/fleet", () => {

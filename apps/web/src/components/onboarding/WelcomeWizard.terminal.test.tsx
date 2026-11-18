@@ -60,6 +60,13 @@ const state = vi.hoisted(() => ({
 }));
 
 // The machine choice and its invitation have their own tests.
+// The Chrome and Mac apps rows read live machine state; their own tests cover them.
+vi.mock("./ChromeAccessRow", () => ({
+  ChromeAccessRow: () => <li data-access-row="browser" />,
+}));
+vi.mock("./MacAppsRow", () => ({
+  MacAppsRow: () => <li data-access-row="mac-apps" />,
+}));
 // The Full Disk Access row and first-run item have their own test.
 vi.mock("../access/FullDiskAccess", () => ({
   FullDiskAccessRow: () => null,
