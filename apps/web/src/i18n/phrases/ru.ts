@@ -4436,6 +4436,7 @@ export const ru: PhraseCatalog = {
   "Setup can be closed once the import finishes.":
     "Настройку можно закрыть, когда импорт завершится.",
   "Add a folder on this machine": "Добавить папку с этого компьютера",
+  "Start with SpecWeave, for plans and a board": "Начать со SpecWeave: планы и доска",
   "Type a path, browse or drop a folder": "Введите путь, выберите или перетащите папку",
   "Starting from nothing?": "Начинаете с нуля?",
   "New empty project or clone a repository": "Новый пустой проект или клонировать репозиторий",

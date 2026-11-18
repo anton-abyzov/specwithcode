@@ -177,6 +177,13 @@ export function ImportStep({
     } satisfies (typeof candidates)[number];
   }, [candidates, folder, folderEnvironmentId]);
   const selected = folderCandidate === null ? found : [...found, folderCandidate];
+  // 1396 AC-22: an empty folder picked here starts with SpecWeave as its box
+  // stands; undefined while there is no box (a folder with files), null while
+  // the server is still saying whether the folder is empty.
+  const [folderSpecweave, setFolderSpecweave] = useState<boolean | null | undefined>(undefined);
+  const folderSetsUpSpecweave =
+    environments.find((environment) => environment.environmentId === folderEnvironmentId)
+      ?.serverConfig?.specweaveSetUp === true;
   const picked = selected.length > 0;
   useEffect(() => onPickedChange?.(picked), [picked, onPickedChange]);
   const knownProjects = useMemo(
@@ -273,7 +280,15 @@ export function ImportStep({
       ) {
         const created = await createNewProject({
           environmentId,
-          input: { name: candidate.title, kind: "code", parentPath: candidate.path },
+          input: {
+            name: candidate.title,
+            kind: "code",
+            parentPath: candidate.path,
+            // Decided again under the create's lock: files that appeared since get none.
+            ...(typeof folderSpecweave === "boolean"
+              ? { specweave: folderSpecweave, specweaveOnlyIfNew: true }
+              : {}),
+          },
         });
         if (
           importGeneration !== importGenerationRef.current ||
@@ -503,6 +518,8 @@ export function ImportStep({
           projects={knownProjects}
           defaultOpen={candidates.length === 0}
           disabled={isImporting}
+          specweaveSetUp={folderSetsUpSpecweave}
+          onStartWithSpecweave={setFolderSpecweave}
           folder={folder}
           onFolderChange={(next) => {
             setFolder(next);
@@ -540,7 +557,10 @@ export function ImportStep({
               ? tx("Add {folder}", { folder: folderCandidate.title })
               : t("wizard.import.importButton", { count: selected.length }),
           onClick: () => void runImport(selected),
-          disabled: !canImport || selected.length === 0,
+          disabled:
+            !canImport ||
+            selected.length === 0 ||
+            (folderCandidate !== null && folderSpecweave === null),
           busy: isImporting,
         }}
       />

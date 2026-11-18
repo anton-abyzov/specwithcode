@@ -4269,6 +4269,7 @@ export const zh: PhraseCatalog = {
   "Not finished": "未完成",
   "Setup can be closed once the import finishes.": "导入完成后即可关闭设置。",
   "Add a folder on this machine": "添加这台电脑上的文件夹",
+  "Start with SpecWeave, for plans and a board": "从 SpecWeave 开始，用于计划和看板",
   "Type a path, browse or drop a folder": "输入路径、浏览或拖入文件夹",
   "Starting from nothing?": "从零开始？",
   "New empty project or clone a repository": "新建空项目或克隆仓库",

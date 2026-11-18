@@ -4441,6 +4441,7 @@ export const ja: PhraseCatalog = {
   "Setup can be closed once the import finishes.":
     "インポートが終わると、セットアップを閉じられます。",
   "Add a folder on this machine": "このマシンのフォルダを追加",
+  "Start with SpecWeave, for plans and a board": "SpecWeave で始める（計画とボード用）",
   "Type a path, browse or drop a folder": "パスを入力、参照、またはフォルダをドロップ",
   "Starting from nothing?": "ゼロから始めますか？",
   "New empty project or clone a repository": "新しい空のプロジェクト、またはリポジトリをクローン",

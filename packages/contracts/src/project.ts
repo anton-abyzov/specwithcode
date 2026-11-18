@@ -911,6 +911,12 @@ export const ProjectCreateNewInput = Schema.Struct({
    */
   specweave: Schema.optional(Schema.Boolean),
   /**
+   * With `specweave`: only in a folder the create makes or an empty one it
+   * takes, decided under the create's lock. A folder that turns out to hold
+   * files is used as it is, with no Git and no SpecWeave (1396 AC-22).
+   */
+  specweaveOnlyIfNew: Schema.optional(Schema.Boolean),
+  /**
    * Make the first feature guide's sample project (1398 AC-01) instead: a new
    * Git repository named "First feature" (numbered when taken) holding one
    * page, a `node --test` test and a README, with SpecWeave off whatever

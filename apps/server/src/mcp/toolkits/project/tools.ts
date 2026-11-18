@@ -107,16 +107,40 @@ const ProjectReadTool = Tool.make("studio_project_read", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
+/**
+ * 1396 AC-17: studio_project_create's `specweave`, and the result's word on
+ * it. Both reach another machine's create too, so createOnMachine reads them.
+ */
+export const ProjectCreateSpecweaveOption = {
+  specweave: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Set up SpecWeave (plans as specs with tasks, and a board) in a new code project, as the New project dialog's Use SpecWeave does. Defaults to true for a new folder; ignored for an existing folder and for a personal assistant.",
+    }),
+  ),
+} as const;
+export const ProjectCreateSpecweaveResult = {
+  specweave: Schema.optional(
+    Schema.String.annotate({
+      description: "SpecWeave set up, or why not and what the user can press to set it up.",
+    }),
+  ),
+} as const;
 const ProjectCreateTool = Tool.make("studio_project_create", {
   ...shared,
   description:
-    "Start a project the way the New project dialog does, or register an existing folder. With just title: a new Git repository with a README, an icon and a first commit, in <parentPath>/<slug> (a -2, -3 suffix when taken; the result has the final workspaceRoot), parentPath defaulting to the machine's projects folder such as ~/Projects. A parentPath that already is a project, or holds a project of that name, is used as it is. github:true (or {account}) then publishes a private GitHub repository with that machine's GitHub sign-in; published, repository, publishFailure and publishError say how it went, and a failed publish keeps the project. commitError says why a commit failed; the project exists either way. machine creates it on another machine in the fleet (id or label from studio_machine_list), under that machine's worker grant covering all its projects (parentPath works there; github does not, because publishing uses that machine's own sign-in and is its user's to do): it lives there only, and the result's next is the studio_thread_launch call that starts work there. With workspaceRoot instead, an existing folder is registered (createWorkspaceRootIfMissing makes it); a folder that is already a project returns that project, and defaultModelSelection there is the model the new project's threads start on (a project started from its title takes none: its threads start from the machine's model tracks). existing:true means nothing was made. Clone separately with studio_project_clone when needed. Create a project only for the user's own work. A check, test, acceptance run or fixture rarely needs one: use studio_thread_launch with scratch:true, or a test server with its own home. When a check must drive a real project, pass origin:\"automated\" with its workspaceRoot; the sidebar then lists it under Automated, never among the user's projects. Delete it with studio_project_request when the check ends.",
+    "Start a project the way the New project dialog does, or register an existing folder. With just title: a new Git repository with a README, an icon and a first commit, in <parentPath>/<slug> (a -2, -3 suffix when taken; the result has the final workspaceRoot), parentPath defaulting to the machine's projects folder such as ~/Projects. A parentPath that already is a project, or holds a project of that name, is used as it is. github:true (or {account}) then publishes a private GitHub repository with that machine's GitHub sign-in; published, repository, publishFailure and publishError say how it went, and a failed publish keeps the project. commitError says why a commit failed; the project exists either way. machine creates it on another machine in the fleet (id or label from studio_machine_list), under that machine's worker grant covering all its projects (parentPath works there; github does not, because publishing uses that machine's own sign-in and is its user's to do): it lives there only, and the result's next is the studio_thread_launch call that starts work there. With workspaceRoot instead, an existing folder is registered (createWorkspaceRootIfMissing makes it); a folder that is already a project returns that project, and defaultModelSelection there is the model the new project's threads start on (a project started from its title takes none: its threads start from the machine's model tracks). existing:true means nothing was made. A new code project starts with SpecWeave unless specweave:false; an existing folder never gets it here, and the result's specweave says \"SpecWeave set up.\" or why not. Clone separately with studio_project_clone when needed. Create a project only for the user's own work. A check, test, acceptance run or fixture rarely needs one: use studio_thread_launch with scratch:true, or a test server with its own home. When a check must drive a real project, pass origin:\"automated\" with its workspaceRoot; the sidebar then lists it under Automated, never among the user's projects. Delete it with studio_project_request when the check ends.",
   parameters: Schema.Struct({
     ...ProjectCreatePayload.fields,
     workspaceRoot: Schema.optional(ProjectCreatePayload.fields.workspaceRoot),
     ...ProjectCreateToolOptions.fields,
+    ...ProjectCreateSpecweaveOption,
   }),
-  success: Schema.Struct({ ...Project.fields, ...ProjectCreateToolResultFields }),
+  success: Schema.Struct({
+    ...Project.fields,
+    ...ProjectCreateToolResultFields,
+    ...ProjectCreateSpecweaveResult,
+  }),
   dependencies: [...shared.dependencies, ManagedProjectFolders.ManagedProjectFolders, Path.Path],
 }).annotate(Tool.Destructive, true);
 const ProjectUpdateTool = Tool.make("studio_project_update", {
