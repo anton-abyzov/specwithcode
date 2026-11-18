@@ -124,6 +124,11 @@ describe("landing a Sync extra (1390 AC-13)", () => {
     commit(f.a, "feature.ts", "export const feature = 1;\n");
     await send(f, "feature");
     git(f.b, "checkout", "-q", "swc/from-M4/feature");
+    // The head it already holds, sent again by a later run, adds no branch beside it.
+    const refs = git(f.b, "for-each-ref", "refs/heads");
+    const same = await send(f, "feature", { operationId: "ffeedd00-1111-4222-8333-444455556666" });
+    expect(same.landed).toEqual({ branch: "swc/from-M4/feature", landed: "unchanged" });
+    expect(git(f.b, "for-each-ref", "refs/heads")).toBe(refs);
     commit(f.a, "feature.ts", "export const feature = 2;\n");
     const before = snapshot(f.b);
     const { tip, landed } = await send(f, "feature");

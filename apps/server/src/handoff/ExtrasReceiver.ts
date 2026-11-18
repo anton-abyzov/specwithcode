@@ -146,11 +146,12 @@ export async function landExtra(input: {
         })
       ).code === 0;
     let reason: "beside" | "checked-out" = "beside";
+    const existing = await refCommit(root, `refs/heads/${base}`);
+    // Already there, checked out or not: a repeated send adds no branch.
+    if (existing === commit) return { branch: base, landed: "unchanged" };
     if (checkedOut.has(base)) {
       reason = "checked-out";
     } else {
-      const existing = await refCommit(root, `refs/heads/${base}`);
-      if (existing === commit) return { branch: base, landed: "unchanged" };
       if (existing === null) {
         if (await create(base)) return { branch: base, landed: "created" };
       } else {
