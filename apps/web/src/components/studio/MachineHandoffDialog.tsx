@@ -152,6 +152,8 @@ export function MachineHandoffDialog({
     readonly skipped: MachineHandoffUpdateSkipped;
     readonly accepted: boolean;
     readonly onAccept: (accepted: boolean) => void;
+    /** Shown once the source fenced: releases the move so Main stays on the source. */
+    readonly onKeepHere?: () => void;
   } | null;
   /** The machine Main is on now, for the header before a machine is picked; null when unknown. */
   readonly mainLabel?: string | null;
@@ -700,7 +702,9 @@ function GitReview({
           </>
         )}
         {preview.gitSync
-          ? `${sourceLabel} pushes its commits, and ${targetLabel}'s copy fast-forwards to them in every repository. Uncommitted files, sign-ins and running processes stay here.`
+          ? stale
+            ? `${sourceLabel} pushes its commits. ${targetLabel}'s copy fast-forwards only where nothing there would be overwritten. Uncommitted files, sign-ins and running processes stay here.`
+            : `${sourceLabel} pushes its commits, and ${targetLabel}'s copy fast-forwards to them in every repository. Uncommitted files, sign-ins and running processes stay here.`
           : "Committed work only. Uncommitted files, sign-ins and running processes stay here."}
       </p>
       {stale && staleCopy && (
@@ -723,6 +727,11 @@ function GitReview({
               Make {targetLabel} main anyway, on its older commits
             </span>
           </label>
+          {staleCopy.onKeepHere && (
+            <Button variant="outline" size="sm" disabled={busy} onClick={staleCopy.onKeepHere}>
+              Keep Main on {sourceLabel}
+            </Button>
+          )}
         </div>
       )}
       {unmerged && (

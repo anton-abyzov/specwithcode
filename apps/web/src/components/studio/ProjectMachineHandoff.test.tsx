@@ -39,6 +39,7 @@ const state = vi.hoisted(() => ({
   prepare: vi.fn(),
   receive: vi.fn(),
   copyCapabilities: vi.fn(),
+  copyRelease: vi.fn(),
   navigate: vi.fn(),
   props: null as ComponentProps<typeof MachineHandoffDialog> | null,
   denied: new Set<string>(),
@@ -50,14 +51,19 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 vi.mock("../../studio/machineHandoff", () => ({
-  machineHandoff: { prepare: "prepare", receive: "receive", copyCapabilities: "copyCapabilities" },
+  machineHandoff: {
+    prepare: "prepare",
+    receive: "receive",
+    copyCapabilities: "copyCapabilities",
+    copyRelease: "copyRelease",
+  },
 }));
 vi.mock("../../studio/projectLink", () => ({
   projectLink: {},
   linkCopyAsWorkers: async () => ({ status: "linked" }),
 }));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (name: "prepare" | "receive" | "copyCapabilities") => state[name],
+  useAtomCommand: (name: "prepare" | "receive" | "copyCapabilities" | "copyRelease") => state[name],
 }));
 vi.mock("../../hooks/useScratchProject", () => ({
   useScratchProject: () => ({ scratchWorkspaceRootFor: () => null }),
@@ -1519,11 +1525,12 @@ describe("Send to another machine", () => {
 
 it("only fast-forwards the copy there, and holds the move on its reason until the person says anyway", async () => {
   const syncBundle = { ...bundle, destination: { ...bundle.destination, transport: "git-sync" } };
-  const skipped = {
+  const diverged = {
     reason: "local-commits",
     message: "The copy there was not updated to this machine's commits.",
     repository: "repositories/anton-abyzov/specwithcode",
   };
+  const dirty = { reason: "dirty", message: "The copy there was not updated.", repository: "." };
   state.prepare.mockImplementation(async ({ input }) => ({
     _tag: "Success",
     value: {
@@ -1532,31 +1539,78 @@ it("only fast-forwards the copy there, and holds the move on its reason until th
       messageCount: 5,
     },
   }));
-  let refuse = true;
+  let reason: typeof diverged | null = null;
   state.receive.mockImplementation(async ({ input }) => {
-    if (input.mode === "preview") return { _tag: "Success", value: ready };
-    if (input.staleCopy === "refuse" && refuse)
+    if (input.mode === "preview")
+      return { _tag: "Success", value: reason ? { ...ready, updateSkipped: reason } : ready };
+    if (reason && input.staleCopy !== "accept")
       return {
         _tag: "Failure",
-        error: Object.assign(new Error(skipped.message), {
+        error: Object.assign(new Error(reason.message), {
           code: "git_refused",
-          updateSkipped: skipped,
+          updateSkipped: reason,
         }),
       };
     return { _tag: "Success", value: started };
   });
+  const starts = () => state.receive.mock.calls.filter((call) => call[0].input.mode === "start");
+  const publishes = () => state.prepare.mock.calls.filter((call) => call[0].input.publish);
+  await mount();
+  await review();
+  await consent();
+  // The copy diverges after the review: the recheck finds it before anything is published.
+  reason = diverged;
+  await transfer();
+  expect(props().phase).toBe("review");
+  expect(props().staleCopy).toMatchObject({ skipped: diverged, accepted: false });
+  expect(props().staleCopy?.onKeepHere).toBeUndefined();
+  expect(publishes()).toHaveLength(0);
+  expect(starts()).toHaveLength(0);
+  // An "anyway" for one reason never covers another found on the recheck.
+  await act(async () => props().staleCopy!.onAccept(true));
+  reason = dirty;
+  const published = publishes().length;
+  await transfer();
+  expect(props().phase).toBe("review");
+  expect(props().staleCopy).toMatchObject({ skipped: dirty, accepted: false });
+  expect(publishes()).toHaveLength(published);
+  expect(starts()).toHaveLength(0);
+  // The same reason, accepted: the start says so.
+  await act(async () => props().staleCopy!.onAccept(true));
+  await transfer();
+  expect(starts().at(-1)?.[0].input.staleCopy).toBe("accept");
+  expect(props().phase).toBe("complete");
+});
+
+it("keeps Main here after a refused move, releasing the source", async () => {
+  const syncBundle = { ...bundle, destination: { ...bundle.destination, transport: "git-sync" } };
+  const diverged = { reason: "local-commits", message: "m", repository: "." };
+  state.prepare.mockImplementation(async ({ input }) => ({
+    _tag: "Success",
+    value: {
+      bundle: syncBundle,
+      publication: input.publish ? "published" : "unpublished",
+      messageCount: 5,
+    },
+  }));
+  state.receive.mockImplementation(async ({ input }) =>
+    input.mode === "preview"
+      ? { _tag: "Success", value: ready }
+      : {
+          _tag: "Failure",
+          error: Object.assign(new Error("m"), { code: "git_refused", updateSkipped: diverged }),
+        },
+  );
+  state.copyRelease.mockResolvedValue({ _tag: "Success", value: { released: true } });
   await mount();
   await review();
   await consent();
   await transfer();
-  const starts = () => state.receive.mock.calls.filter((call) => call[0].input.mode === "start");
-  expect(starts().at(-1)?.[0].input.staleCopy).toBe("refuse");
-  // Refused: the review stays and names why; nothing moved.
-  expect(props().phase).toBe("review");
-  expect(props().staleCopy).toMatchObject({ skipped, accepted: false });
-  await act(async () => props().staleCopy!.onAccept(true));
-  refuse = false;
-  await transfer();
-  expect(starts().at(-1)?.[0].input.staleCopy).toBe("accept");
-  expect(props().phase).toBe("complete");
+  await act(async () => props().staleCopy!.onKeepHere!());
+  expect(state.copyRelease).toHaveBeenCalledWith({
+    environmentId: "m4",
+    input: expect.objectContaining({ projectId: "source", operationId }),
+  });
+  expect(props().phase).toBe("choose");
+  expect(props().staleCopy).toBeNull();
 });
