@@ -5716,4 +5716,6 @@ export const fr: PhraseCatalog = {
   "its machine": "sa machine",
   "the old machine": "l’ancienne machine",
   Send: "Envoyer",
+  "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
+    "{machine} n’a pas encore confirmé où se trouve le coordinateur. Reconnectez cette machine pour envoyer des messages.",
 };

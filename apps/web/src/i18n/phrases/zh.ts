@@ -5433,4 +5433,6 @@ export const zh: PhraseCatalog = {
   "its machine": "它所在的电脑",
   "the old machine": "原来的电脑",
   Send: "发送",
+  "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
+    "{machine} 尚未确认协调者在哪里。请重新连接后再发送消息。",
 };

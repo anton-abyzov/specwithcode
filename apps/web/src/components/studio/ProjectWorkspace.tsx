@@ -4,6 +4,7 @@ import { projectExecutionScopes } from "../../studio/projectDomain";
 import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
 import { ConnectLinkedMachine } from "./ConnectLinkedMachine";
 import { useEffect, useMemo, useState } from "react";
+import { useTx } from "../../i18n";
 import { Link } from "@tanstack/react-router";
 import { type ThreadId } from "@specweave-studio/contracts";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
@@ -97,6 +98,7 @@ export function ProjectWorkspace({
   /** The project's group key changed since the link was made; the route replaces the URL. */
   onProjectKeyMoved?: (projectKey: string) => void;
 }) {
+  const tx = useTx();
   // Without a route to hold it (tests, embedding), the open thread is plain state.
   const [localSelected, setLocalSelected] = useState<ThreadId | null>(null);
   const [localSelectedEnvironment, setLocalSelectedEnvironment] = useState<string | null>(null);
@@ -348,6 +350,8 @@ export function ProjectWorkspace({
     );
   }
   const pageKey = `${project.environmentId}:${project.id}`;
+  // Named and translated here: the page below shows a problem as the sentence it is given.
+  const unconfirmedText = unconfirmedCoordinatorProblem(member ? checkoutName(member) : "");
   const page = (
     <MoveDialogHold value={holdMoveDialog}>
       <ProjectWorkspaceSurface
@@ -360,7 +364,7 @@ export function ProjectWorkspace({
         }
         ownershipProblem={
           ownershipProblem === UNCONFIRMED_COORDINATOR_PROBLEM && member
-            ? unconfirmedCoordinatorProblem(checkoutName(member))
+            ? tx(unconfirmedText.text, unconfirmedText.values)
             : ownershipProblem
         }
         coordinatorElsewhere={

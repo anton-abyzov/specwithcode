@@ -36,9 +36,11 @@ export const WORKERS_ONLY_PROBLEM = "The coordinator is on another machine. Send
 export const UNCONFIRMED_COORDINATOR_PROBLEM =
   "This machine has not confirmed where the coordinator is yet. Reconnect it to send messages.";
 
-/** The same for a machine this window can name. */
-export const unconfirmedCoordinatorProblem = (machine: string) =>
-  `${machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.`;
+/** The same for a machine this window can name: a phrase and its machine, translated where shown. */
+export const unconfirmedCoordinatorProblem = (machine: string): CopyRoleText => ({
+  text: "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.",
+  values: { machine },
+});
 
 export interface CoordinatorView<T extends CoordinatorMachineMember> {
   readonly member: T | undefined;

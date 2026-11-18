@@ -15,6 +15,7 @@ import {
   unloadedMachineRefs,
   WORKERS_ONLY_PROBLEM,
   workersOnlyProblem,
+  unconfirmedCoordinatorProblem,
 } from "./projectCoordinatorMachine";
 import { COORDINATOR_PENDING_PROBLEM } from "./projectDomain";
 import { offlineSwitchPredecessor } from "./workersOnlyCopy";
@@ -522,5 +523,12 @@ describe("roles with a machine that joined again", () => {
     const copies = orchestratorCopies([old, current], name, () => true, retired);
     expect(copies.find((copy) => copy.main)?.key).toBe("env-m4:proj-a");
     expect(copies.find((copy) => copy.rowRole === "main")?.key).toBe("env-m4:proj-a");
+  });
+});
+
+it("names the unconfirmed machine as a phrase with a slot, so it translates", () => {
+  expect(unconfirmedCoordinatorProblem("m4")).toEqual({
+    text: "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.",
+    values: { machine: "m4" },
   });
 });

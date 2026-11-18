@@ -5599,4 +5599,6 @@ export const ko: PhraseCatalog = {
   "its machine": "해당 컴퓨터",
   "the old machine": "이전 컴퓨터",
   Send: "보내기",
+  "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
+    "{machine}이(가) 아직 코디네이터의 위치를 확인하지 못했습니다. 메시지를 보내려면 다시 연결하세요.",
 };
