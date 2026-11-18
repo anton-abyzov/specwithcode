@@ -132,7 +132,7 @@ export function secondFamilyReady(input: {
   const review = settings.adversarialReview ?? DEFAULT_ADVERSARIAL_REVIEW_SETTINGS;
   const resolution = resolveReviewer({
     providers: input.providers,
-    author: settings.defaultModelSelection ?? input.author,
+    author: input.author,
     reviewers: review.reviewers,
     tier: review.tier,
     tiers: settings.modelTiers,
@@ -146,6 +146,8 @@ export function secondFamilyReady(input: {
 /** How often a running guide reads the board again; the Board tab reads every 30 s. */
 const GUIDE_BOARD_REFRESH_MS = 15_000;
 const RING_ATTEMPTS = 40;
+/** A "finished" mark that failed is tried again after this long. */
+const FINISH_RETRY_MS = 15_000;
 
 /** Rings the Board tab's setup button twice once it is on screen (first-feature.css). */
 function ringBoardSetupButton() {
@@ -206,6 +208,7 @@ function FirstFeatureGuideHost(props: FirstFeatureGuideProps) {
   const remove = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
   const [reviewAll, setReviewAll] = useState<"offered" | "saving" | "done">("offered");
   const [removing, setRemoving] = useState<"offered" | "confirm" | "removing">("offered");
+  const [requestWritten, setRequestWritten] = useState(false);
   const active = shown === "running" || shown === "finished";
   const boardQuery = useEnvironmentQuery(
     useMemo(
@@ -251,18 +254,22 @@ function FirstFeatureGuideHost(props: FirstFeatureGuideProps) {
   useEffect(() => {
     if (inReview && !local.seenInReview) setLocal((held) => ({ ...held, seenInReview: true }));
   }, [inReview, local.seenInReview, setLocal]);
-  // The end is reached: stored as finished, once. A failure says so and tries again on the next change.
+  // The end is reached: stored as finished, once. A failure says so and tries again a little later.
   const finishing = useRef(false);
+  const [finishTry, setFinishTry] = useState(0);
   const reachedEnd = view.current === "end" && shown === "running";
   useEffect(() => {
     if (!reachedEnd || finishing.current) return;
     finishing.current = true;
+    let retry: number | undefined;
     void mark("finished").then((failed) => {
       finishing.current = false;
       setError(failed);
       if (failed === null) setFinishedHere(true);
+      else retry = window.setTimeout(() => setFinishTry((n) => n + 1), FINISH_RETRY_MS);
     });
-  }, [mark, reachedEnd, setFinishedHere]);
+    return () => window.clearTimeout(retry);
+  }, [finishTry, mark, reachedEnd, setFinishedHere]);
 
   if (!active) return null;
   const canReviewAll = canWriteSettings && config?.settings !== undefined;
@@ -279,7 +286,12 @@ function FirstFeatureGuideHost(props: FirstFeatureGuideProps) {
         props.onShowBoard();
         ringBoardSetupButton();
       }}
-      onWriteRequest={() => props.onAsk?.(view.request)}
+      requestWritten={requestWritten}
+      onWriteRequest={() => {
+        if (props.onAsk === undefined) return;
+        props.onAsk(view.request);
+        setRequestWritten(true);
+      }}
       onOpenThread={props.onOpenThread}
       onOpenReview={() => {
         if (view.card === null) return;

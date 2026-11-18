@@ -58,6 +58,25 @@ try {
       await page.locator("#studio-heading").waitFor();
       const label = `${theme} ${width}`;
       check(`${label}: no page errors`, errors.length === 0, errors.join("; "));
+      // 1398 AC-11: the Overview offers the first feature in one card with one action.
+      const offer = await page.evaluate(() => {
+        const cards = [...document.querySelectorAll("[data-first-feature-offer]")];
+        return {
+          cards: cards.length,
+          title: cards[0]?.querySelector("h2")?.textContent ?? null,
+          actions: [...(cards[0]?.querySelectorAll("[data-first-feature-offer-action]") ?? [])].map(
+            (action) => action.textContent?.trim(),
+          ),
+        };
+      });
+      check(
+        `${label}: the first feature card, its title and its one action`,
+        offer.cards === 1 &&
+          offer.title === "Build a first feature" &&
+          offer.actions.length === 1 &&
+          offer.actions[0] === "Try a first feature",
+        JSON.stringify(offer),
+      );
       const overflow = await page.evaluate(() => {
         const scroller = document.querySelector(".studio-scroll");
         const wide = [...document.querySelectorAll(".studio-content *")].filter(

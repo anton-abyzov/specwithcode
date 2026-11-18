@@ -169,7 +169,7 @@ const DismissedSchema = Schema.Boolean;
 export function FirstFeatureOffer() {
   const sample = useFirstFeatureStart();
   const [dismissed, setDismissed] = useLocalStorage(
-    "swc:first-feature-offer-dismissed",
+    `swc:first-feature-offer-dismissed:${sample.environmentId ?? "none"}`,
     false,
     DismissedSchema,
   );

@@ -51,11 +51,7 @@ export function ComposerVoiceMenu({
                     className="shrink-0"
                     // A menu button, not a toggle: a running dictation or call is in its name.
                     aria-label={
-                      call?.active
-                        ? "Voice, in a call"
-                        : dictation.active
-                          ? "Voice, dictating"
-                          : "Voice"
+                      call?.active ? "Voice, in a call" : dictation.active ? "Voice, dictating" : "Voice"
                     }
                     data-composer-voice-menu=""
                   />

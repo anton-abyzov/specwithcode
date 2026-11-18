@@ -138,13 +138,13 @@ export function workingView(input: {
       // The source reads the chosen files while the destination waits to compare them.
       if (measured?.step && measured.step !== "listing")
         return sourceProgressView(measured, sourceLabel);
-      {
-        const fromCopy = copy ? statusProgressView(copy, sourceLabel, targetLabel) : null;
-        // Comparing says why it compares again; later steps speak for themselves.
-        return fromCopy && fromCopy.phase !== "measure"
-          ? fromCopy
-          : comparingProgressView(targetLabel, recompareStep(input.recompare ?? null));
-      }
+    {
+      const fromCopy = copy ? statusProgressView(copy, sourceLabel, targetLabel) : null;
+      // Comparing says why it compares again; later steps speak for themselves.
+      return fromCopy && fromCopy.phase !== "measure"
+        ? fromCopy
+        : comparingProgressView(targetLabel, recompareStep(input.recompare ?? null));
+    }
     case "copying":
       // Approving: the destination still reads as previewed until it starts.
       return (

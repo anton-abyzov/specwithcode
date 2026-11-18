@@ -276,10 +276,7 @@ describe("an open thread's header", () => {
     await act(() =>
       root.render(
         <ProjectThreadHeader
-          thread={{
-            ...thread,
-            environmentId: "ministorm" as EnvironmentThreadShell["environmentId"],
-          }}
+          thread={{ ...thread, environmentId: "ministorm" as EnvironmentThreadShell["environmentId"] }}
           subagents={[]}
           onPeekSubagent={vi.fn()}
           providerEntry={null}
@@ -302,46 +299,43 @@ describe("an open thread's header", () => {
   it.each([
     [{}, "Can't resolve this thread"],
     [{ settledOverride: "settled" }, "Can't reopen this thread"],
-  ] as const)(
-    "says why instead of resolving when the thread's machine is out of reach",
-    async (lifecycle, title) => {
-      const add = vi.spyOn(toastManager, "add");
-      const reason = "Ministorm isn't connected right now, so this thread can't be resolved.";
-      await act(() =>
-        root.render(
-          <ProjectThreadHeader
-            thread={{ ...thread, ...lifecycle } as EnvironmentThreadShell}
-            subagents={[]}
-            onPeekSubagent={vi.fn()}
-            providerEntry={null}
-            projectCwd="/scratch/atlas"
-            canChange
-            renameBlockedReason={null}
-            resolveBlockedReason={reason}
-            expanded={false}
-            {...handlers}
-          />,
-        ),
-      );
-      const resolve = container.querySelector<HTMLButtonElement>(".sws-thread-resolve")!;
-      // Not natively disabled: a disabled button shows no tip and takes no click.
-      expect(resolve.disabled).toBe(false);
-      expect(resolve.getAttribute("aria-disabled")).toBe("true");
-      await act(async () => resolve.click());
-      expect(handlers.onToggleResolved).not.toHaveBeenCalled();
-      expect(add).toHaveBeenCalledWith({
-        id: "thread-resolve-blocked:host:worker",
-        type: "warning",
-        title,
-        description: reason,
-      });
-      // A second click replaces that notice: the same id, never a second toast beside it.
-      await act(async () => resolve.click());
-      expect(new Set(add.mock.calls.map(([toast]) => toast.id))).toEqual(
-        new Set(["thread-resolve-blocked:host:worker"]),
-      );
-    },
-  );
+  ] as const)("says why instead of resolving when the thread's machine is out of reach", async (lifecycle, title) => {
+    const add = vi.spyOn(toastManager, "add");
+    const reason = "Ministorm isn't connected right now, so this thread can't be resolved.";
+    await act(() =>
+      root.render(
+        <ProjectThreadHeader
+          thread={{ ...thread, ...lifecycle } as EnvironmentThreadShell}
+          subagents={[]}
+          onPeekSubagent={vi.fn()}
+          providerEntry={null}
+          projectCwd="/scratch/atlas"
+          canChange
+          renameBlockedReason={null}
+          resolveBlockedReason={reason}
+          expanded={false}
+          {...handlers}
+        />,
+      ),
+    );
+    const resolve = container.querySelector<HTMLButtonElement>(".sws-thread-resolve")!;
+    // Not natively disabled: a disabled button shows no tip and takes no click.
+    expect(resolve.disabled).toBe(false);
+    expect(resolve.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => resolve.click());
+    expect(handlers.onToggleResolved).not.toHaveBeenCalled();
+    expect(add).toHaveBeenCalledWith({
+      id: "thread-resolve-blocked:host:worker",
+      type: "warning",
+      title,
+      description: reason,
+    });
+    // A second click replaces that notice: the same id, never a second toast beside it.
+    await act(async () => resolve.click());
+    expect(new Set(add.mock.calls.map(([toast]) => toast.id))).toEqual(
+      new Set(["thread-resolve-blocked:host:worker"]),
+    );
+  });
   it("renames while Resolve is off, as on another machine's thread", async () => {
     await act(() =>
       root.render(

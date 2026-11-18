@@ -143,6 +143,8 @@ export interface GuideView {
   readonly card: ProjectBoardCard | null;
   readonly askStatus: GuideAskStatus | null;
   readonly request: string;
+  /** Whether a second family can review is known, so the request written is the right one (AC-23). */
+  readonly requestReady: boolean;
   readonly reviews: ReadonlyArray<GuideReviewLine>;
   readonly reviewNote: GuideReviewNote | null;
   /** The current step is stuck on something the guide cannot fix; says where to look. */
@@ -272,6 +274,7 @@ export function guideView(input: GuideInput): GuideView {
     card,
     askStatus: askStatus(card, input.seenInReview),
     request: input.secondFamily === false ? FIRST_FEATURE_REQUEST_NO_REVIEW : FIRST_FEATURE_REQUEST,
+    requestReady: input.secondFamily !== null,
     reviews: reviewLines(card),
     reviewNote: reviewNote(card, input.secondFamily),
     waiting,

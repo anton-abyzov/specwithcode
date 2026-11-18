@@ -71,9 +71,9 @@ it("shows the phases, counts and speed the dialog shows once the window is close
     segment.getAttribute("data-state"),
   );
   expect(segments).toEqual(["done", "active", "todo"]);
-  expect(
-    container.querySelector('[data-slot="folder-copy-banner-numbers"]')?.textContent,
-  ).toContain("2.0 GB of 8.0 GB1,200 of 4,000 files");
+  expect(container.querySelector('[data-slot="folder-copy-banner-numbers"]')?.textContent).toContain(
+    "2.0 GB of 8.0 GB1,200 of 4,000 files",
+  );
   expect(container.textContent).toContain("You can keep working");
   expect(container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("25");
 });

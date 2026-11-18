@@ -27,6 +27,7 @@ import {
   END_REVIEW_ALL_NOT_ALLOWED,
   END_REVIEW_ALL_NOTE,
   END_SENTENCE,
+  FIRST_FEATURE_REQUEST_NO_REVIEW,
   GUIDE_STEP_LABELS,
   GUIDE_TITLE,
   LEAVE_THE_GUIDE,
@@ -59,6 +60,8 @@ export interface FirstFeatureGuideViewProps {
   readonly error?: string | null | undefined;
   readonly reviewAll?: "offered" | "saving" | "done" | "not-allowed" | undefined;
   readonly removing?: "offered" | "confirm" | "removing" | undefined;
+  /** "Write it for me" was pressed in this window: the request is in the composer once. */
+  readonly requestWritten?: boolean | undefined;
   readonly onShowMe: () => void;
   readonly onWriteRequest: () => void;
   readonly onOpenThread: () => void;
@@ -230,28 +233,24 @@ export function FirstFeatureGuideView(props: FirstFeatureGuideViewProps) {
           <>
             <p className="text-sm">
               {tx(
-                view.reviewNote?.kind === "no-second-family"
+                view.request === FIRST_FEATURE_REQUEST_NO_REVIEW
                   ? ASK_SENTENCE_NO_REVIEW
                   : ASK_SENTENCE,
               )}
             </p>
             {view.askStatus ? <AskStatusLine status={view.askStatus} /> : null}
             <div className="flex flex-wrap gap-2">
-              {view.card === null ? (
+              {view.card === null && props.requestWritten !== true ? (
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={disabled}
+                  disabled={disabled || !view.requestReady}
                   onClick={props.onWriteRequest}
                 >
                   {tx(WRITE_IT_FOR_ME)}
                 </Button>
               ) : null}
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={props.onOpenThread}
-              >
+              <Button size="sm" variant="outline" onClick={props.onOpenThread}>
                 {tx(OPEN_THE_THREAD)}
               </Button>
             </div>

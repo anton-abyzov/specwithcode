@@ -41,6 +41,9 @@ vi.mock("../../ui/toast", () => ({
 }));
 
 const { FirstFeatureGuide } = await import("./FirstFeatureGuide");
+const { FIRST_FEATURE_REQUEST } = await import("./firstFeature.logic");
+const { DEFAULT_SERVER_SETTINGS, ProviderDriverKind, ProviderInstanceId } =
+  await import("@specweave-studio/contracts");
 type Props = Parameters<typeof FirstFeatureGuide>[0];
 
 const doneCard: ProjectBoardCard = {
@@ -74,6 +77,7 @@ describe("FirstFeatureGuide host", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     localStorage.clear();
     state.canWrite = true;
+    state.config = { settings: {}, providers: [] };
     state.cards = [];
     state.reads = 0;
     state.navigate.mockClear();
@@ -88,7 +92,10 @@ describe("FirstFeatureGuide host", () => {
     vi.unstubAllGlobals();
   });
 
-  async function show(project: Props["project"]) {
+  async function show(
+    project: Props["project"],
+    extra: { author?: Props["author"]; onAsk?: Props["onAsk"] } = {},
+  ) {
     await act(async () =>
       root.render(
         <FirstFeatureGuide
@@ -96,11 +103,11 @@ describe("FirstFeatureGuide host", () => {
           specweave="on"
           specweaveWaiting={false}
           askWaiting={false}
-          author={null}
+          author={extra.author ?? null}
           canOperate
           onShowBoard={() => {}}
           onOpenIncrement={() => {}}
-          onAsk={() => {}}
+          onAsk={extra.onAsk ?? (() => {})}
           onOpenThread={() => {}}
         />,
       ),
@@ -176,5 +183,57 @@ describe("FirstFeatureGuide host", () => {
       input: { projectId: "project-1", force: true, confirmationTitle: "First feature" },
     });
     expect(state.navigate).toHaveBeenCalledWith({ to: "/" });
+  });
+
+  it("writes the request only once it knows whether a review can run, and only once", async () => {
+    const onAsk = vi.fn();
+    await show(sample(), { onAsk });
+    // No builder known yet: which request to write cannot be told.
+    expect(button("Write it for me")!.disabled).toBe(true);
+    const ready = (id: string, slug: string) => ({
+      instanceId: ProviderInstanceId.make(id),
+      driver: ProviderDriverKind.make(id),
+      enabled: true,
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-11-18T12:00:00.000Z",
+      version: null,
+      models: [{ slug, name: slug, isCustom: false, capabilities: null }],
+      slashCommands: [],
+      skills: [],
+    });
+    state.config = {
+      settings: DEFAULT_SERVER_SETTINGS,
+      providers: [ready("claudeAgent", "claude-opus-5-5"), ready("codex", "gpt-6.1-sol")],
+    };
+    const author = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+    await show(sample(), { onAsk, author });
+    await act(async () => button("Write it for me")!.click());
+    expect(onAsk).toHaveBeenCalledWith(FIRST_FEATURE_REQUEST);
+    expect(button("Write it for me")).toBeUndefined();
+    expect(button("Open the thread")).toBeDefined();
+  });
+
+  it("tries a failed finished mark again", async () => {
+    vi.useFakeTimers();
+    try {
+      state.cards = [doneCard];
+      openedHere();
+      state.commands.mark = vi
+        .fn()
+        .mockResolvedValueOnce({ _tag: "Failure", cause: {} })
+        .mockResolvedValue({ _tag: "Success", value: {} });
+      await show(sample());
+      expect(container.textContent).toContain("The guide could not be updated. Try again.");
+      expect(localStorage.getItem("swc:first-feature-finished:env-1")).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      expect(state.commands.mark).toHaveBeenCalledTimes(2);
+      expect(localStorage.getItem("swc:first-feature-finished:env-1")).toBe("true");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
