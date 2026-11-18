@@ -26,7 +26,15 @@ const KINDS = [
 
 // Call sites whose own width is deliberate: full-window viewers and panels that fill a pane.
 // Each entry: path suffix -> reason. Keep reasons short; the report prints them.
-export const EXEMPT = {};
+export const EXEMPT = {
+  "apps/web/src/components/chat/ChatComposer.tsx": "attachment file viewer",
+  "apps/web/src/components/studio/ProjectWorkspaceAttachments.tsx": "attachment file viewer",
+  "apps/web/src/components/studio/shell/CoordinatorAttachments.tsx": "attachment file viewer",
+  "apps/web/src/components/design/systems/DesignSystemReviewDialog.tsx": "design system review workspace",
+  "apps/web/src/components/studio/ProjectPlan.tsx": "project plan workspace",
+  "apps/web/src/components/studio/ProjectWorkspaceSettings.tsx": "project settings workspace",
+  "apps/web/src/components/usage/UsagePriceOverrides.tsx": "wide price table",
+};
 
 async function walk(dir, filter) {
   const out = [];
@@ -72,7 +80,8 @@ export async function inventory() {
         const line = text.slice(0, match.index).split("\n").length;
         const rel = path.relative(repo, file);
         const widths = [...tag.matchAll(WIDTH_CLASS)].map((m) => m[1]);
-        const exempt = Object.entries(EXEMPT).find(([suffix]) => rel.endsWith(suffix))?.[1] ?? null;
+        const exempt =
+          kind === "dialog" ? (Object.entries(EXEMPT).find(([suffix]) => rel.endsWith(suffix))?.[1] ?? null) : null;
         rows.push({
           platform: "desktop",
           kind,

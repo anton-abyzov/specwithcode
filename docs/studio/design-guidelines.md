@@ -80,6 +80,27 @@ Colors come from the semantic tokens in `index.css`, which every theme and both 
 
 A floating list (popover, menu, select, combobox) uses `shadow-popup dark:shadow-popup-dark`. The composer uses `--shadow-composer`.
 
+## Popups
+
+Menus, popovers, selects, comboboxes, dialogs, sheets and toasts follow one standard. The primitives in `apps/web/src/components/ui/` apply it by default, so a call site that passes no width already complies.
+
+| Kind | Width | Inset |
+| --- | --- | --- |
+| Menu (`MenuPopup width`) | sizes to its rows, 10rem minimum; cap `sm` 16rem, `md` 20rem (default), `lg` 24rem, `xl` 32rem | 4px frame, rows `px-2`, 28px rows (40px touch) |
+| Popover (`PopoverPopup width`) | `auto` sizes to content up to 32rem; fixed `sm` 16rem, `md` 20rem, `lg` 24rem, `xl` 32rem | 16px, `compact` 12px |
+| Select, combobox | the trigger's width up to 24rem | 4px frame |
+| Dialog | `max-w-lg` (32rem) by default; larger only for viewers and workspaces, listed in `EXEMPT` in `apps/web/tests/popup-standard/inventory.mjs`; below 640px a bottom sheet | 24px |
+| Toast | 24rem stack | 12px |
+
+- Every popup is also capped at the window width minus 2rem and keeps 8px from the window's edges (`collisionPadding`), flipping or shifting to stay inside and scrolling inside itself when taller than the window.
+- Section headers are `MenuGroupLabel`: one style, `text-xs` medium, muted. Separators only between groups.
+- Rows in one group either all lead with a 16px icon or none do. Status words trail, muted.
+- Helper text is one short line (`MenuHint`, about 60 characters) that wraps inside the cap and never sets the width. Anything longer goes behind an info button (`MenuInfoLabel`): a menu item, so arrow keys, Enter and a tap reach it, that shows the text in place without closing the menu. A hover-only tooltip is never the only place an explanation lives.
+- Keyboard: arrow keys, Home and End move through a menu, Escape closes it and returns focus to the trigger; dialogs keep focus inside and return it on close.
+- Light and dark both meet WCAG AA text contrast.
+
+Check a change with the headless fixture: `node node_modules/vite-plus/bin/vp build --config apps/web/tests/popup-standard/vite.config.ts`, then `node apps/web/tests/popup-standard/verify.mjs /absolute/owned/report-dir` (390, 840 and 2000px, light and dark, widths, margins, keyboard and axe). `node apps/web/tests/popup-standard/inventory.mjs --check-overrides` lists every popup call site and fails on a width past the cap that is not exempt.
+
 ## Spacing
 
 Use Tailwind's spacing scale (multiples of 4px: `gap-1.5`, `px-2`, `py-1`). Shared insets have names in `base.css`: `--workspace-gutter`, `--sidebar-content-inset`, `--command-content-inset`, `--floating-content-inset`. Layout belongs to the parent, not the component.
