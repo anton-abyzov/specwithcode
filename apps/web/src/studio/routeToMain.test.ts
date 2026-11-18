@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { canRouteToMain, composerMachines, routeTarget, routedCommand } from "./routeToMain";
+import {
+  canRouteToMain,
+  composerMachines,
+  routeTarget,
+  routedCommand,
+  sendButtonText,
+} from "./routeToMain";
 
 describe("routeTarget", () => {
   it("splits main's checkout key, keeping a project id that holds a colon", () => {
@@ -96,32 +102,47 @@ describe("routedCommand", () => {
 });
 
 describe("composerMachines", () => {
-  it("names main on the chip of a copy whose main is elsewhere, and on Send while it routes", () => {
+  it("names the machine shown on the chip, whatever machine the coordinator is on", () => {
+    // The coordinator is elsewhere and reachable: the chip still names the page shown.
     expect(composerMachines({ viewed: "m5", mainKey: "m4:p", routes: true })).toEqual({
-      chip: "m4",
+      chip: "m5",
       send: "m4",
     });
-    // Main unreachable, or the copy's own machine offline: Send names no machine, and the
-    // chip still says where the coordinator runs.
+    // The coordinator's machine cannot be reached: nothing is sent anywhere.
     expect(composerMachines({ viewed: "m5", mainKey: "m4:p", routes: false })).toEqual({
-      chip: "m4",
+      chip: "m5",
       send: null,
     });
-    // Main itself, or a page that is not a copy: both name the machine being looked at.
+    // The coordinator is on the machine shown.
     expect(composerMachines({ viewed: "m4", mainKey: null, routes: false })).toEqual({
       chip: "m4",
       send: "m4",
     });
   });
 
-  it("never lets the chip and Send name two different machines", () => {
+  it("names the machine shown after a row is picked, for every coordinator key", () => {
     for (const viewed of ["m5", "m4"])
       for (const mainKey of [null, "m4:p", "m1:mcp:d580ecec", "bad"])
-        for (const routes of [false, true]) {
-          const named = composerMachines({ viewed, mainKey, routes });
-          if (named.send !== null) expect(named.send).toBe(named.chip);
-          const main = routeTarget(mainKey)?.environmentId;
-          expect(named.chip).toBe(main ?? viewed);
-        }
+        for (const routes of [false, true])
+          expect(composerMachines({ viewed, mainKey, routes }).chip).toBe(viewed);
+  });
+});
+
+describe("sendButtonText", () => {
+  it("never carries a machine label", () => {
+    const machines = ["m4", "m5", "M5", "linux-mini", "Studio M4", "Mac"];
+    for (const continues of [false, true])
+      for (const hasFiles of [false, true]) {
+        const text = sendButtonText({ continues, hasFiles });
+        for (const machine of machines) expect(text).not.toContain(machine);
+        expect(text).not.toMatch(/\bto\b|\bon\b/);
+      }
+  });
+
+  it("reads Send, or continues the coordinator here once its machine has been silent", () => {
+    expect(sendButtonText({ continues: false, hasFiles: false })).toBe("Send");
+    expect(sendButtonText({ continues: false, hasFiles: true })).toBe("Send");
+    expect(sendButtonText({ continues: true, hasFiles: false })).toBe("Continue here and send");
+    expect(sendButtonText({ continues: true, hasFiles: true })).toBe("Continue here");
   });
 });

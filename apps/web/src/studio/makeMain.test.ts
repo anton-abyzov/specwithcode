@@ -92,7 +92,16 @@ describe("makeMainPath", () => {
     expect(makeMainPath(m5, members, machines({ offline: ["m4"] }))).toEqual({
       kind: "takeover",
       main: m4,
+      silentMs: TAKEOVER_UNREACHABLE_MS,
     });
+    // How long it has been silent travels with the path, for the box's line.
+    expect(
+      makeMainPath(
+        m5,
+        members,
+        machines({ offline: ["m4"], unreachableSince: () => NOW - 42 * 60_000 }),
+      ),
+    ).toEqual({ kind: "takeover", main: m4, silentMs: 42 * 60_000 });
   });
 
   it("stays off before 10 minutes and says how long is left", () => {
@@ -124,6 +133,23 @@ describe("makeMainPath", () => {
       kind: "unloaded",
       mainEnvironmentId: "m4",
     });
+    // This page's machine is not connected either: that is said first.
+    expect(makeMainPath(m5, [m5], machines({ offline: ["m5"] }))).toEqual({
+      kind: "unloaded",
+      mainEnvironmentId: "m4",
+      copyOffline: true,
+    });
+    expect(
+      mainOffer(
+        "m5:p",
+        { kind: "unloaded", mainEnvironmentId: "m4" as never, copyOffline: true },
+        { machine: "M5", main: "M4" },
+      ),
+    ).toMatchObject({
+      kind: "blocked",
+      block: "copy-offline",
+      reason: { text: "Connect {machine} first to continue the coordinator there." },
+    });
     // An unlinked checkout has no main elsewhere to wait for.
     const unlinked = copy("m1", { state: "active" }, null);
     expect(makeMainPath(unlinked, [unlinked], machines())).toEqual({ kind: "none" });
@@ -143,7 +169,7 @@ describe("makeMainPath", () => {
     const path = makeMainPath(m5, members, machines({ canMoveFrom: (id) => id !== "m4" }));
     expect(path).toEqual({ kind: "blocked", main: m4, reason: "main-read-only", waitMs: 0 });
     expect(makeMainBlockText(path as never, { machine: "M5", main: "m4" }).reason).toEqual({
-      text: "This window can only read {main}, so it cannot move main from there. Open SpecWithCode on {main}, or connect to it with full access, to make {machine} main.",
+      text: "This window can only read {main}, so it cannot hand the coordinator off from there. Open SpecWithCode on {main}, or connect to it with full access.",
       values: { machine: "M5", main: "m4" },
     });
   });
@@ -187,7 +213,7 @@ describe("makeMainBlockText", () => {
       { machine: "M5", main: "m4" },
     );
     expect(text.reason).toEqual({
-      text: "{main} must be unreachable for 10 minutes before {machine} can become main. That unlocks in {minutes} min.",
+      text: "{main} must be silent for 10 minutes before the coordinator can continue on {machine}. That unlocks in {minutes} min.",
       values: { machine: "M5", main: "m4", minutes: "7" },
     });
     expect(text.note).toEqual({
@@ -200,12 +226,17 @@ describe("makeMainBlockText", () => {
 
   it("names the machine to fix for the other reasons", () => {
     const names = { machine: "M5", main: "m4" };
-    expect(makeMainBlockText({ reason: "copy-offline", waitMs: 0 }, names).note.text).toBe(
-      "{machine} offline",
-    );
-    expect(makeMainBlockText({ reason: "copy-not-ready", waitMs: 0 }, names).reason.text).toContain(
-      "{machine} cannot take over yet.",
-    );
+    expect(makeMainBlockText({ reason: "copy-offline", waitMs: 0 }, names)).toEqual({
+      reason: { text: "Connect {machine} first to continue the coordinator there.", values: names },
+      note: { text: "{machine} offline", values: names },
+    });
+    expect(makeMainBlockText({ reason: "copy-not-ready", waitMs: 0 }, names)).toEqual({
+      reason: {
+        text: "{machine} cannot continue the coordinator yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.",
+        values: names,
+      },
+      note: { text: "not ready", values: names },
+    });
     expect(makeMainBlockText({ reason: "main-read-only", waitMs: 0 }, names).note.text).toBe(
       "read-only on {main}",
     );
@@ -326,15 +357,38 @@ describe("mainOffer", () => {
       kind: "move",
       reason: null,
       note: null,
+      block: null,
     });
-    expect(mainOffer("m5:p", { kind: "takeover", main: m4 }, names)?.kind).toBe("takeover");
+    // A takeover that knows how long main has been silent carries it in whole minutes.
+    expect(mainOffer("m5:p", { kind: "takeover", main: m4 }, names)).toEqual({
+      key: "m5:p",
+      machine: "M5",
+      main: "m4",
+      kind: "takeover",
+      reason: null,
+      note: null,
+      block: null,
+    });
+    expect(
+      mainOffer("m5:p", { kind: "takeover", main: m4, silentMs: 23.9 * 60_000 }, names),
+    ).toMatchObject({ kind: "takeover", silentMinutes: 23 });
     const off = mainOffer(
       "m5:p",
       { kind: "blocked", main: m4, reason: "waiting", waitMs: 60_000 },
       names,
     );
-    expect(off).toMatchObject({ kind: "blocked", note: { text: "in {minutes} min" } });
+    expect(off).toMatchObject({
+      kind: "blocked",
+      block: "waiting",
+      note: { text: "in {minutes} min" },
+    });
+    expect(off).not.toHaveProperty("silentMinutes");
     expect(off?.reason?.values).toEqual({ machine: "M5", main: "m4", minutes: "1" });
+    // Each rule that keeps it off is named on the offer.
+    for (const reason of ["main-read-only", "copy-offline", "copy-not-ready"] as const)
+      expect(
+        mainOffer("m5:p", { kind: "blocked", main: m4, reason, waitMs: 0 }, names)?.block,
+      ).toBe(reason);
   });
 
   it("is off with Connect main first while main's copy is not loaded", () => {
@@ -344,12 +398,21 @@ describe("mainOffer", () => {
       machine: "M5",
       main: "m4",
       kind: "blocked",
+      block: "unloaded",
       reason: {
-        text: "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.",
-        values: names,
+        text: "Connect {main} first. This window has not opened {project} on {main}, so it cannot hand the coordinator off yet.",
+        values: { ...names, project: "this project" },
       },
       note: { text: "connect {main} first", values: names },
     });
+    // With the project's name, the sentence names it.
+    expect(
+      mainOffer(
+        "m5:p",
+        { kind: "unloaded", mainEnvironmentId: "m4" as never },
+        { ...names, project: "Atlas" },
+      )?.reason?.values,
+    ).toEqual({ ...names, project: "Atlas" });
   });
 });
 

@@ -2664,12 +2664,12 @@ video.artifact-viewer-media {
     box-shadow: inset 3px 0 0 var(--machine);
   }
 }
-/* Send, when the message goes to another machine: its color, with its name on the button. */
+/* Send, when the message goes to another machine: its color. */
 .machine-send[data-machine-color]:not(:disabled) {
   background: var(--machine);
   color: var(--color-white);
 }
-/* The coordinator's Send with a machine's name on it. */
+/* The coordinator's Send when it does more than send ("Continue here and send"). */
 .sws-send.sws-send-target {
   width: auto;
   gap: 5px;
@@ -2680,12 +2680,12 @@ video.artifact-viewer-media {
 }
 .sws-send.sws-send-target::after {
   content: attr(data-send-label);
-  max-width: 9rem;
+  max-width: 16rem;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-/* Narrow, the machine's short label stays beside the arrow, never the arrow alone. */
+/* Narrow, its short words stay beside the arrow, never the arrow alone. */
 @media (max-width: 520px) {
   .sws-send.sws-send-target {
     gap: 3px;

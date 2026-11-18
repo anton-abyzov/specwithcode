@@ -1,12 +1,12 @@
 /**
- * Where a copy's message box sends when its main is on another machine. Kept free of UI
- * imports so the hook (`useRouteToMain`) and tests share one rule.
+ * Where the message box sends when the coordinator is on another machine than the one shown.
+ * Kept free of UI imports so the hook (`useRouteToMain`) and tests share one rule.
  *
  * @module routeToMain
  */
 import { checkoutKeyEnvironmentId } from "./projectCoordinatorMachine";
 
-/** Where a copy's message goes: main's checkout, split from its `environmentId:projectId` key. */
+/** Where a message goes: the coordinator's checkout, split from its `environmentId:projectId` key. */
 export function routeTarget(
   mainKey: string | null,
 ): { readonly environmentId: string; readonly projectId: string } | null {
@@ -17,23 +17,38 @@ export function routeTarget(
 }
 
 /**
- * The machines a project page's message box names, from one rule. On a copy whose main is
- * on another machine the coordinator runs on main, so the chip under the box names main
- * whatever state the copy is in (its own machine offline included); Send names main too
- * while it routes there, and no machine while it cannot. Everywhere else both name the
- * machine being looked at. `send` is never a machine the chip does not name.
+ * The machines a project page's message box names, from one rule. The chip under the box
+ * always names the machine whose page is shown. `send` is where a message goes: the
+ * coordinator's machine while the box routes there, no machine while the coordinator is
+ * elsewhere and cannot be reached, else the machine shown. It is wiring only: the Send
+ * button itself never carries a machine name (`sendButtonText`).
  */
 export function composerMachines(input: {
-  /** The machine of the copy this page shows. */
+  /** The machine whose page is shown. */
   readonly viewed: string;
-  /** Main's checkout, `environmentId:projectId`; null when this page is not such a copy. */
+  /** The coordinator's checkout, `environmentId:projectId`; null when it is on the machine shown. */
   readonly mainKey: string | null;
-  /** `canRouteToMain` holds: Send delivers to main's coordinator. */
+  /** `canRouteToMain` holds: Send delivers to the coordinator on its machine. */
   readonly routes: boolean;
 }): { readonly chip: string; readonly send: string | null } {
   const main = routeTarget(input.mainKey)?.environmentId;
   if (!main) return { chip: input.viewed, send: input.viewed };
-  return { chip: main, send: input.routes ? main : null };
+  return { chip: input.viewed, send: input.routes ? main : null };
+}
+
+/**
+ * The words on the Send button. Never a machine name: where a message goes is said by the
+ * line above the box and by the button's tooltip, so the button can never name a machine
+ * the chip does not.
+ */
+export function sendButtonText(input: {
+  /** The coordinator's machine has been silent long enough: the button continues it here. */
+  readonly continues: boolean;
+  /** The draft holds files, which a continued coordinator cannot be sent in the same step. */
+  readonly hasFiles: boolean;
+}): string {
+  if (!input.continues) return "Send";
+  return input.hasFiles ? "Continue here" : "Continue here and send";
 }
 
 /**
@@ -80,4 +95,4 @@ export function routedCommand(
 
 /** A routed message carries text only: files were attached on this machine. */
 export const ROUTED_FILES_MESSAGE =
-  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.";
+  "Files stay on this machine. Remove them to send the text, or open {project} on {machine} to attach them there.";
