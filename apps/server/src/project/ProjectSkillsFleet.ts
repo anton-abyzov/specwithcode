@@ -8,6 +8,11 @@
  * lists or a project lock here records, and each receiving machine checks
  * `fleet:skills` again. One result comes back per machine, in the order asked.
  *
+ * "Also add on" (increment 1399) sends a skill from a GitHub repo connected
+ * here instead, at one commit with its SKILL.md hash. This machine reads that
+ * commit itself first; the registry is never asked about it. Each receiving
+ * machine checks the same repo is connected there and reads it again.
+ *
  * The Studio link reuses a running Skill Studio when its runtime lock names a
  * live process, preferring one rooted at this folder (by the lock's root, or
  * by the port vskill derives from the folder when the lock's command line was
@@ -25,6 +30,10 @@ import type {
   ProjectSkillsStudioLinkInput,
 } from "@specweave-studio/contracts";
 import { ProjectSkillsActionError } from "@specweave-studio/contracts";
+import type {
+  StudioFleetSkillPrevious,
+  StudioFleetSkillSource,
+} from "@specweave-studio/contracts/studioFleet";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- vskill derives Studio's port from an MD5 of the root; Effect has no sync MD5.
 import * as NodeCrypto from "node:crypto";
 
@@ -56,6 +65,16 @@ export interface FleetPushDeps {
   readonly runInstalls: typeof runFleetSkillInstalls;
   /** Versions the registry lists for the skill; undefined when they could not be read. */
   readonly registryVersions: (skillId: string) => Effect.Effect<ReadonlyArray<string> | undefined>;
+  /**
+   * Whether this machine reads `contentHash` for the skill at `source.commit` in a
+   * repo connected here: null when it does, otherwise why not.
+   */
+  readonly verifyGithubSource?: (input: {
+    readonly repo: string;
+    readonly name: string;
+    readonly source: StudioFleetSkillSource;
+    readonly contentHash: string;
+  }) => Effect.Effect<string | null>;
   /** `owner/repo/name@version` pairs the project's locks here record. */
   readonly lockedVersions: (projectId: ProjectId) => Effect.Effect<
     ReadonlyArray<{
@@ -73,10 +92,26 @@ const versionOr = (value: unknown) =>
   typeof value === "string" ? value : value === null ? null : undefined;
 
 /** One machine's result from a fleet install outcome. */
-export function fleetPushResultOf(machineId: string, outcome: FleetSkillOutcome | undefined) {
+export function fleetPushResultOf(
+  machineId: string,
+  outcome: FleetSkillOutcome | undefined,
+): ProjectSkillsFleetPushResult["results"][number] {
   if (!outcomeRecord(outcome))
     return { machineId, ok: false, reason: "unreachable", message: "No answer from this machine." };
   const label = stringOr(outcome.label);
+  const github: {
+    files?: ReadonlyArray<string>;
+    via?: "vskill" | "npx";
+    previous?: StudioFleetSkillPrevious | null;
+  } = {
+    ...(Array.isArray(outcome.files)
+      ? { files: outcome.files.filter((file): file is string => typeof file === "string") }
+      : {}),
+    ...(outcome.via === "vskill" || outcome.via === "npx" ? { via: outcome.via } : {}),
+    ...(outcomeRecord(outcome.previous) || outcome.previous === null
+      ? { previous: outcome.previous as StudioFleetSkillPrevious | null }
+      : {}),
+  };
   if (outcome.result === "preview" && typeof outcome.expectedHash === "string")
     return {
       machineId,
@@ -85,6 +120,7 @@ export function fleetPushResultOf(machineId: string, outcome: FleetSkillOutcome 
       preview: true,
       expectedHash: outcome.expectedHash,
       installedVersion: versionOr(outcome.installedVersion) ?? null,
+      ...github,
     };
   if (outcome.result === "installed")
     return {
@@ -93,6 +129,8 @@ export function fleetPushResultOf(machineId: string, outcome: FleetSkillOutcome 
       ok: true,
       installedVersion: versionOr(outcome.installedVersion) ?? null,
       pinnedVersion: versionOr(outcome.pinnedVersion) ?? null,
+      ...github,
+      ...(outcome.removed === true ? { removed: true } : {}),
     };
   return {
     machineId,
@@ -132,8 +170,31 @@ export const pushSkillToFleet = Effect.fn("projectSkills.pushSkillToFleet")(func
     seen.add(target.machineId);
     chosen.push({ target, machine });
   }
-  const locked = yield* deps.lockedVersions(input.projectId);
+  if (input.github !== undefined) {
+    const [owner, repo, name] = input.skillId.split("/");
+    if (!input.contentHash || input.targets.some((target) => target.agents))
+      return yield* actionError(
+        input.projectId,
+        "version_not_found",
+        "A GitHub source needs the SKILL.md hash of the reviewed commit.",
+      );
+    // An Undo removal names the copy that machine got; the destination checks it is still that copy.
+    if (input.action !== "remove") {
+      const refused = deps.verifyGithubSource
+        ? yield* deps.verifyGithubSource({
+            repo: `${owner}/${repo}`,
+            name: name!,
+            source: input.github,
+            contentHash: input.contentHash,
+          })
+        : "This machine cannot check GitHub sources.";
+      if (refused !== null)
+        return yield* actionError(input.projectId, "version_not_found", refused);
+    }
+  }
+  const locked = input.github === undefined ? yield* deps.lockedVersions(input.projectId) : [];
   if (
+    input.github === undefined &&
     input.targets.some((target) => target.agents) &&
     (!input.contentHash ||
       !locked.some(
@@ -149,6 +210,7 @@ export const pushSkillToFleet = Effect.fn("projectSkills.pushSkillToFleet")(func
       "Install and verify this exact registry version locally before distributing it. Its content hash must match the local registry lock.",
     );
   const known =
+    input.github !== undefined ||
     locked.some((entry) => entry.skillId === input.skillId && entry.version === input.version) ||
     ((yield* deps.registryVersions(input.skillId)) ?? []).includes(input.version);
   if (!known)
@@ -174,6 +236,9 @@ export const pushSkillToFleet = Effect.fn("projectSkills.pushSkillToFleet")(func
       ...(entry.target.agents ? { agents: entry.target.agents } : {}),
       ...(input.preview !== undefined ? { preview: input.preview } : {}),
       ...(entry.target.expectedHash ? { expectedHash: entry.target.expectedHash } : {}),
+      ...(input.github ? { source: input.github } : {}),
+      ...(input.action ? { action: input.action } : {}),
+      ...(input.replaces ? { replaces: input.replaces } : {}),
     };
     const ask: FleetSkillAsk =
       entry.target.scope === "user"

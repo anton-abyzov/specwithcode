@@ -231,6 +231,8 @@ export const ProjectSkillSourceStatus = Schema.Struct({
   repo: Schema.NullOr(Schema.String),
   lockScope: Schema.Literals(["project", "user"]),
   installed: ProjectSkillSourceVersion,
+  /** Where the installed copy came from in `repo`, as the lock records it ("Also add on" sends it). */
+  installedSource: Schema.optional(Schema.Struct({ path: Schema.String, branch: Schema.String })),
   /** The same skill at its source's head; null when the source could not be read. */
   latest: Schema.NullOr(ProjectSkillSourceVersion),
   state: ProjectSkillUpdateState,

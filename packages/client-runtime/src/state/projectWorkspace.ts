@@ -233,6 +233,15 @@ export function createProjectWorkspaceAtoms<R, E>(
       label: "project-workspace:skills-update",
       tag: WS_METHODS.projectsSkillsUpdate,
     }),
+    /** "Keep updated on these machines" records, kept on this machine only. */
+    skillsRolloutKeep: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skills-rollout-keep",
+      tag: WS_METHODS.projectsSkillsRolloutKeep,
+    }),
+    skillsAdopt: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skills-adopt",
+      tag: WS_METHODS.projectsSkillsAdopt,
+    }),
     library: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-workspace:library",
       tag: WS_METHODS.projectsLibraryRead,
