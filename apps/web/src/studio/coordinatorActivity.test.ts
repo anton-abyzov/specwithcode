@@ -36,7 +36,12 @@ describe("summarizeRunItems", () => {
     expect(
       summarizeRunItems([
         item({ type: "subagent" }),
-        item({ type: "dynamic_tool", toolName: "mcp__studio__delegate_task" }),
+        // The wire keeps the started task's id.
+        item({
+          type: "dynamic_tool",
+          toolName: "mcp__studio__delegate_task",
+          output: { taskId: "node:worker" },
+        }),
         item({ type: "command_execution", input: "npm test" }),
         item({ type: "command_execution", input: "npm run build" }),
         item({ type: "dynamic_tool", toolName: "Bash" }),
@@ -120,6 +125,38 @@ describe("runActivity", () => {
       ["Started a worker", "Smoke check"],
       ["Checked the project's threads", undefined],
     ]);
+  });
+
+  it("does not count a launch that needed SpecWeave as a started worker", () => {
+    const needs = (output: unknown) =>
+      item({ type: "dynamic_tool", toolName: "mcp__studio-code__delegate_task", output });
+    // The compact wire result keeps only ids, so the refusal arrives with no
+    // output at all; a full result in tests may still be empty.
+    expect(
+      summarizeRunItems([
+        item({ type: "dynamic_tool", toolName: "mcp__studio-code__delegate_task" }),
+      ]),
+    ).toBe("Used 1 other tool");
+    expect(summarizeRunItems([needs({})])).toBe("Used 1 other tool");
+    // Still running: no answer yet, so it may still start one.
+    expect(
+      summarizeRunItems([
+        item({
+          type: "dynamic_tool",
+          toolName: "mcp__studio-code__delegate_task",
+          status: "running",
+        }),
+      ]),
+    ).toBe("Started 1 worker");
+    expect(
+      summarizeRunItems([
+        needs({ launched: false, needs: "specweave", message: "SpecWeave is not set up" }),
+        needs({ structuredContent: { launched: false, needs: "specweave" } }),
+      ]),
+    ).toBe("Used 2 other tools");
+    expect(summarizeRunItems([...delegated("node:a").slice(0, 1), needs({})])).toBe(
+      "Started 1 worker and used 1 other tool",
+    );
   });
 
   it("keeps a worker the tool call did not start", () => {

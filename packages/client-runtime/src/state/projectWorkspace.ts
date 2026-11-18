@@ -270,6 +270,11 @@ export function createProjectWorkspaceAtoms<R, E>(
       label: "project-workspace:specweave-set-up",
       tag: WS_METHODS.projectsSpecweaveSetUp,
     }),
+    /** "Plan without it", "Not now" and the line above the composer (1396). */
+    specweaveAnswer: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:specweave-answer",
+      tag: WS_METHODS.projectsSpecweaveAnswer,
+    }),
     threadReports: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-workspace:thread-reports",
       tag: WS_METHODS.projectsThreadReportsRead,

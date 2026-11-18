@@ -16,6 +16,7 @@ import {
   composerAccessRecommendationFor,
   type ComposerAccessRecommendation,
 } from "./AccessRecommendation";
+import { composerNotice } from "./composerNotice.logic";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useMachineNickname } from "../../studio/machineNickname";
@@ -1674,6 +1675,8 @@ export interface ChatComposerProps {
   // Pending approvals / inputs
   /** The pending access request card, shown above the composer in place of its approval row. */
   accessRequestCard?: ReactNode;
+  /** The coordinator's SpecWeave line (1396); the Full access recommendation wins over it. */
+  specweaveOffer?: ReactNode;
   activePendingApproval: PendingApproval | null;
   pendingApprovals: PendingApproval[];
   pendingUserInputs: PendingUserInput[];
@@ -7230,6 +7233,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             </div>,
             restingControlsHost,
           )
+        : null}
+      {composerNotice({
+        accessRecommended: accessRecommendation !== null,
+        specweaveOffered: props.specweaveOffer != null,
+      }) === "specweave"
+        ? props.specweaveOffer
         : null}
       {props.accessRequestCard ? (
         <div data-chat-composer-access-request="true" className="mb-3 min-w-0">
