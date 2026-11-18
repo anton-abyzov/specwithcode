@@ -1,11 +1,22 @@
 import { useState } from "react";
+import { AuthFilesystemWriteScope, type ProjectWorkspaceReadResult } from "@specweave-studio/contracts";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { projectWorkspace } from "../../studio/projectWorkspace";
+import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useSpecweaveAnswer, useSpecweaveSetUp } from "../chat/SpecweaveSetupCard";
 import { requestMachineToolInstall } from "../machineTools/machineToolInstallRequest";
 import { Button } from "../ui/button";
 import { SPECWEAVE_SETUP_DESCRIPTION } from "./ProjectCreation";
+import { BoardSetupView } from "./shell/BoardSetup";
+import {
+  SPECWEAVE_NOT_ALLOWED_WRITE,
+  boardOffersNotNow,
+  boardStoredFailure,
+  specweaveStateOf,
+  type SpecweaveShownState,
+} from "./specweaveSetup.logic";
 
 /** What the Git half of "Set up Git and SpecWeave" does, before the SpecWeave list. */
 export const GIT_SETUP_DESCRIPTION =
@@ -136,5 +147,82 @@ export function ProjectSpecweaveSetting({
         </Button>
       )}
     </div>
+  );
+}
+
+/**
+ * The Board tab while the project has no board (1396 AC-11, AC-12): one press
+ * sets SpecWeave up, with Git first in a folder without it. A setup that
+ * failed before, here or when the project was made, shows as Failed with its
+ * reason until one succeeds. "Not now" is stored on the server and keeps the
+ * offer here. Project settings keeps its own two-step row above.
+ */
+export function BoardSpecweaveSetup({
+  project,
+  snapshot,
+  disabled,
+  onChanged,
+  exampleColumns,
+}: {
+  project: Pick<EnvironmentProject, "environmentId" | "id">;
+  snapshot: ProjectWorkspaceReadResult;
+  disabled: boolean;
+  onChanged: () => void;
+  /** Names the example's layout instead of measuring (tests). */
+  exampleColumns?: boolean | undefined;
+}) {
+  // An older server did not say whether the folder is a repository and refused it:
+  // the press turns into "Set up Git and SpecWeave" instead of a dead end.
+  const [offerGit, setOfferGit] = useState(false);
+  const gitRepository = offerGit ? false : snapshot.gitRepository;
+  const canWrite = useEnvironmentScope(project.environmentId, AuthFilesystemWriteScope);
+  const setUp = useSpecweaveSetUp({
+    environmentId: project.environmentId,
+    projectId: project.id,
+    gitRepository,
+    onSettled: onChanged,
+  });
+  const answer = useSpecweaveAnswer({
+    environmentId: project.environmentId,
+    projectId: project.id,
+    onSettled: onChanged,
+  });
+  const [notNowError, setNotNowError] = useState<string | null>(null);
+  const local = setUp.outcome;
+  if (
+    !offerGit &&
+    gitRepository !== false &&
+    local?.state === "failed" &&
+    local.detail.includes(NOT_A_REPOSITORY_HINT)
+  ) {
+    setOfferGit(true);
+    setUp.clear();
+  }
+  const stored = boardStoredFailure(snapshot.specweaveSetupFailure);
+  const shown: SpecweaveShownState =
+    local ??
+    (!canWrite
+      ? { state: "not_allowed", detail: SPECWEAVE_NOT_ALLOWED_WRITE }
+      : (stored ?? { state: "asking" }));
+  return (
+    <BoardSetupView
+      kind={specweaveStateOf(snapshot) === "unfinished" ? "unfinished" : "off"}
+      unfinished={snapshot.specweaveUnfinished}
+      gitRepository={gitRepository}
+      shown={shown}
+      offerNotNow={boardOffersNotNow(snapshot)}
+      disabled={disabled}
+      notNowError={notNowError}
+      onSetUp={() => void setUp.run()}
+      onNotNow={() => void answer("not_now").then(setNotNowError)}
+      onInstallNode={() =>
+        requestMachineToolInstall({
+          environmentId: project.environmentId,
+          tool: "node",
+          machineLabel: null,
+        })
+      }
+      exampleColumns={exampleColumns}
+    />
   );
 }

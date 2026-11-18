@@ -7,8 +7,9 @@
  * the columns), stacked when it is narrow. A "Runs on" legend says what a
  * card's colored edge means and narrows the board to one machine. A card
  * opens the increment view (BoardIncrementView): beside the board in a wide
- * panel, in its place in a narrow one. A project without SpecWeave gets the
- * switch to turn the board on instead of a hidden tab.
+ * panel, in its place in a narrow one. A project without SpecWeave, or with
+ * plans written before it was set up, gets the setup in its place (BoardSetup,
+ * through `setup`) instead of a hidden tab.
  */
 import type { EnvironmentId, ProjectBoardCard, ProjectId } from "@specweave-studio/contracts";
 import { PROJECT_BOARD_DONE_DEFAULT, PROJECT_BOARD_DONE_MAX } from "@specweave-studio/contracts";
@@ -54,6 +55,8 @@ import {
 } from "../../../studio/projectBoardModel";
 import { projectWorkspace } from "../../../studio/projectWorkspace";
 import { nowFromMinute } from "../../../studio/shellModel";
+import { Button } from "../../ui/button";
+import { BOARD_EMPTY_ACTION, BOARD_EMPTY_PROMPT, BOARD_EMPTY_TEXT } from "../specweaveSetup.logic";
 import { BoardCard } from "./BoardCard";
 import { BoardGroupSection } from "./BoardGroupSection";
 import { BoardIncrementView, type BoardViewFile } from "./BoardIncrementView";
@@ -131,9 +134,9 @@ export interface BoardPaneProps {
   projectId: ProjectId;
   workspaceRoot: string;
   bar: ProjectPaneBarProps;
-  /** The project plans with SpecWeave; false shows how to turn the board on. */
+  /** The project plans with SpecWeave; false shows `setup` instead of the board. */
   specweave: boolean;
-  /** The control that turns SpecWeave on, shown while the project has no board. */
+  /** The tab while the project has no board: SpecWeave off or unfinished (BoardSetup). */
   setup: ReactNode;
   /** The project's threads on every machine; a card lists the ones working on it. */
   threads: ReadonlyArray<EnvironmentThreadShell>;
@@ -168,15 +171,7 @@ export function BoardPane(props: BoardPaneProps) {
         role="tabpanel"
         aria-labelledby="sws-pane-tab-board"
       >
-        <section className="sws-board-setup" aria-labelledby="sws-board-setup-title">
-          <h3 id="sws-board-setup-title">Start a board for this project</h3>
-          <p>
-            The board shows the project's work as cards in Planned, Active, In review and Done, each
-            with its tasks, pull requests and the threads working on it. It is built from SpecWeave
-            increments, so turn SpecWeave on to get one.
-          </p>
-          {props.setup}
-        </section>
+        {props.setup}
       </div>
     </>
   );
@@ -575,11 +570,20 @@ function BoardCards({
               {query.error ? `The board could not be read: ${query.error}` : "Reading increments…"}
             </p>
           ) : boardIsEmpty(board) ? (
-            <p className="sws-empty sws-pane-empty" role="status">
-              {searched === ""
-                ? "No increments yet. Plan one with specweave create-increment and it shows here."
-                : `No increment matches "${searched}".`}
-            </p>
+            searched === "" ? (
+              <div className="sws-empty sws-pane-empty sws-board-empty" role="status">
+                <p>{BOARD_EMPTY_TEXT}</p>
+                {onAsk ? (
+                  <Button size="sm" variant="outline" onClick={() => onAsk(BOARD_EMPTY_PROMPT)}>
+                    {BOARD_EMPTY_ACTION}
+                  </Button>
+                ) : null}
+              </div>
+            ) : (
+              <p className="sws-empty sws-pane-empty" role="status">
+                {`No increment matches "${searched}".`}
+              </p>
+            )
           ) : (
             <div className="sws-board-columns" data-layout={sideBySide ? "columns" : "stack"}>
               {order.map((group) => {

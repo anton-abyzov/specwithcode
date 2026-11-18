@@ -84,12 +84,13 @@ async function shot(page, name, { keepScroll = false } = {}) {
 
 const FOLDS_KEY = "studio:project-board-folded:v1";
 /** `folded` names the groups the project's board starts with folded, as a stored choice. */
-async function openPage(theme, viewport, search = "", folded = null) {
+async function openPage(theme, viewport, search = "", folded = null, reducedMotion = "no-preference") {
   const context = await browser.newContext({
     viewport,
     locale: "en-US",
     timezoneId: "UTC",
     colorScheme: theme,
+    reducedMotion,
   });
   if (folded)
     await context.addInitScript(
@@ -1113,14 +1114,144 @@ try {
       await closePage(page, label);
     }
 
-    /* A project without SpecWeave: the tab offers to turn the board on. */
+    /* A project without SpecWeave (1396): the explainer, what setup adds, one
+       press, "Not now", and beside them the example board. */
     {
       const label = `setup ${theme}`;
       const page = await openPage(theme, { width: 1440, height: 900 }, "&setup=1");
-      await page.getByRole("heading", { name: "Start a board for this project" }).waitFor();
-      await page.getByRole("button", { name: "Set up SpecWeave" }).waitFor();
-      check((await page.locator("[data-group]").count()) === 0, `${label}: no groups`);
+      await page.getByRole("heading", { name: "See this project's work as a board" }).waitFor();
+      const setupBox = page.locator(".sws-board-setup");
+      for (const text of [
+        "Plans each piece of work as a short spec with tasks in your repository, and gives the project a board.",
+        ".specweave/",
+        "Agent skills in .claude/ and .agents/",
+        "The new files are left for you to review and commit.",
+      ])
+        check((await setupBox.getByText(text, { exact: true }).count()) === 1, `${label}: ${text}`);
+      check(
+        (await page.getByText("Start a board for this project").count()) === 0,
+        `${label}: the old heading is gone`,
+      );
+      check(
+        (await page.getByRole("button", { name: "Not now" }).count()) === 1,
+        `${label}: Not now is offered`,
+      );
+      // The example board: the real groups and cards, inert, hidden, marked Example.
+      const example = page.locator(".sws-board-example");
+      await example.waitFor();
+      check(
+        (await example.getAttribute("aria-hidden")) === "true" &&
+          (await example.evaluate((node) => node.inert === true)),
+        `${label}: example is inert and hidden`,
+      );
+      check(
+        (await example.locator(".sws-board-example-label").textContent()) === "Example",
+        `${label}: example is labelled`,
+      );
+      check((await example.getAttribute("data-layout")) === "columns", `${label}: example columns`);
+      check(
+        JSON.stringify(
+          await example.evaluate((node) =>
+            [...node.querySelectorAll("[data-group]")].map((group) => group.dataset.group),
+          ),
+        ) === JSON.stringify(["planned", "active", "review", "done"]),
+        `${label}: example groups side by side without Blocked`,
+      );
+      check(
+        (await example.locator('.sws-board-action[aria-label$="with the coordinator"]').count()) === 0,
+        `${label}: no request button on a sample card`,
+      );
+      // It plays once: the moving card ends in Done, and stays there.
+      await page.locator('.sws-board-example[data-frame="3"]').waitFor({ timeout: 15_000 });
+      check(
+        (await example.locator('[data-group="done"] [data-increment="0004-export-reports"]').count()) === 1,
+        `${label}: the moving card ends in Done`,
+      );
+      check(
+        (await example.locator('[data-group="done"] .sws-board-meter').count()) === 0,
+        `${label}: Done shows no meter`,
+      );
+      await page.waitForTimeout(2_000);
+      check((await example.getAttribute("data-frame")) === "3", `${label}: it never loops`);
+      await noOverflow(page, label);
       await shot(page, `setup-${theme}`);
+      await page.getByRole("button", { name: "Set up SpecWeave" }).click();
+      check(
+        (await page.evaluate(() => document.body.dataset.setUp)) === "plain",
+        `${label}: one press runs setup`,
+      );
+      await page.getByRole("status").getByText("Setting up SpecWeave…").waitFor();
+      await closePage(page, label);
+    }
+    {
+      const label = `setup reduced motion ${theme}`;
+      const page = await openPage(
+        theme,
+        { width: 1440, height: 900 },
+        "&setup=1",
+        null,
+        "reduce",
+      );
+      const example = page.locator(".sws-board-example");
+      await example.waitFor();
+      check((await example.getAttribute("data-frame")) === "3", `${label}: still last frame`);
+      await closePage(page, label);
+    }
+    {
+      const label = `setup narrow ${theme}`;
+      const page = await openPage(theme, { width: 560, height: 1000 }, "&setup=1&git=none");
+      const example = page.locator(".sws-board-example");
+      await example.waitFor();
+      check((await example.getAttribute("data-layout")) === "stack", `${label}: example stacks`);
+      check((await example.getAttribute("data-frame")) === "3", `${label}: stacked is still`);
+      check(
+        (await page.getByText("This folder is not a Git repository yet, so this also starts one here.").count()) === 1,
+        `${label}: says Git starts too`,
+      );
+      await noOverflow(page, label);
+      await shot(page, `setup-narrow-${theme}`);
+      await page.getByRole("button", { name: "Set up Git and SpecWeave" }).click();
+      check(
+        (await page.evaluate(() => document.body.dataset.setUp)) === "with-git",
+        `${label}: the press asks for Git`,
+      );
+      await closePage(page, label);
+    }
+    {
+      const label = `setup unfinished ${theme}`;
+      const page = await openPage(theme, { width: 1440, height: 900 }, "&setup=unfinished");
+      await page.getByRole("heading", { name: "4 plans here are not on the board yet" }).waitFor();
+      check(
+        JSON.stringify(await page.locator(".sws-board-setup-titles li").allTextContents()) ===
+          JSON.stringify(["Export reports as CSV", "Search filters", "Onboarding tour"]),
+        `${label}: first three titles`,
+      );
+      check(
+        (await page.getByRole("button", { name: "Finish setup" }).count()) === 1 &&
+          (await page.getByRole("button", { name: "Not now" }).count()) === 0,
+        `${label}: Finish setup, no Not now`,
+      );
+      check((await page.locator(".sws-board-example").count()) === 0, `${label}: no example`);
+      await shot(page, `setup-unfinished-${theme}`);
+      await closePage(page, label);
+    }
+    {
+      const label = `setup failed ${theme}`;
+      const page = await openPage(theme, { width: 1440, height: 900 }, "&setup=failed");
+      await page.getByRole("alert").getByText("inside another repository", { exact: false }).waitFor();
+      check((await page.getByRole("button", { name: "Retry" }).count()) === 1, `${label}: Retry`);
+      await shot(page, `setup-failed-${theme}`);
+      await closePage(page, label);
+    }
+    {
+      const label = `setup node ${theme}`;
+      const page = await openPage(theme, { width: 1440, height: 900 }, "&setup=node");
+      await page.getByRole("button", { name: "Install Node.js" }).click();
+      check(
+        (await page.evaluate(() => document.body.dataset.installNode)) === "1",
+        `${label}: Install Node.js`,
+      );
+      await shot(page, `setup-node-${theme}`);
       await closePage(page, label);
     }
   }
