@@ -33,6 +33,7 @@ import { compactThreadPlan } from "../../studio/threadPlanProgress";
 import { useThreadIncrementProgress } from "../../studio/useThreadIncrementProgress";
 import { PlanProgressChip } from "./PlanProgressChip";
 import { ThreadCardPlanLine } from "./ThreadCardPlanLine";
+import { NOT_ON_BOARD_TITLE, useIncrementBoardNote } from "../chat/SpecweaveOffer";
 
 /** A thread named in a message: its icon, status dot and live title; opens in the right pane. */
 export function ProjectThreadChip({
@@ -116,6 +117,9 @@ export function ProjectThreadCard({
     activityKey: thread.updatedAt,
   });
   const plan = compactThreadPlan(incrementProgress.get(thread.id) ?? null, thread.planProgress);
+  // 1396 AC-13: an increment written before SpecWeave was set up is not on the board yet.
+  const unfinishedNote = useIncrementBoardNote(thread.environmentId, thread.projectId);
+  const boardNote = plan?.source === "increment" ? unfinishedNote : null;
   return (
     <div
       className="sws-thread-card"
@@ -142,14 +146,28 @@ export function ProjectThreadCard({
         <ChevronRightIcon className="sws-thread-card-open" aria-hidden />
       </button>
       <ThreadCardPlanLine plan={plan} />
+
       {blocker ? (
         <span className="sws-thread-card-blocker" data-thread-blocker>
           {blocker}
         </span>
       ) : null}
-      {actions.length > 0 ? (
+      {actions.length > 0 || boardNote !== null ? (
         // Secondary actions sit above the card's open button and do their own thing.
         <span className="sws-thread-card-actions" onClick={(event) => event.stopPropagation()}>
+          {boardNote ? (
+            <Tip label={NOT_ON_BOARD_TITLE}>
+              <button
+                type="button"
+                className="sws-thread-card-action"
+                data-not-on-board=""
+                disabled={boardNote.open === null}
+                onClick={boardNote.open ?? undefined}
+              >
+                {boardNote.label}
+              </button>
+            </Tip>
+          ) : null}
           {actions.map((action) => (
             <ThreadCardActionButton
               key={action.kind}
