@@ -776,6 +776,19 @@ describe("handoff file method and intent", () => {
       );
       await click(button("Make MacBook Pro main"));
       expect(props.onReview).toHaveBeenCalledOnce();
+      // The review, where consent is given, keeps the Make-main title and button.
+      await handoff({
+        phase: "review",
+        preview: { ...preview, gitSync: true },
+        method: "folder",
+        send: facts(),
+        consent: true,
+      });
+      expect(document.querySelector("h2")?.textContent).toBe("Make MacBook Pro main for Product");
+      expect(button("Make MacBook Pro main").disabled).toBe(false);
+      // A method that copies files never reads as a plain switch.
+      await handoff({ method: "clone", onMethodChange: vi.fn(), send: facts() });
+      expect(document.querySelector("h2")?.textContent).not.toContain("main for");
     });
 
     it("moves nothing to the machine that holds Main", async () => {

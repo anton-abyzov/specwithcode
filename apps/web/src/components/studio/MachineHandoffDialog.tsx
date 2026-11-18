@@ -240,6 +240,7 @@ export function MachineHandoffDialog({
   // the dialog reads as "Make {machine} main", not as a project move.
   const switchesMain =
     !copying &&
+    method === "folder" &&
     refused === null &&
     send !== null &&
     pickedHolding(send.holding, send.picked).kind === "copy";
