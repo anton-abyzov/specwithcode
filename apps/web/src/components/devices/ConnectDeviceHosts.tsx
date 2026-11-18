@@ -29,20 +29,30 @@ import {
   DeviceApprovalPrompt,
   DeviceWaitingList,
 } from "./ConnectDeviceViews";
-import { inlineCodeShown, inlineCodesVersion, subscribeInlineCodes } from "./inlineApprovalCode";
+import {
+  FLOATING_CODE_LAYER_CLASS,
+  inlineCodeShown,
+  inlineCodesVersion,
+  subscribeInlineCodes,
+} from "./inlineApprovalCode";
+import { makeLaterStore } from "./laterStore";
 import { useOwnDeviceShortId } from "./ownDeviceId";
 
 const POLL_MS = 4_000;
 const HIDDEN_POLL_MS = 20_000;
 /** Other machines are only watched for approval notices, so less often. */
 const NOTICE_POLL = { visibleMs: 30_000, hiddenMs: 120_000 } as const;
-const takeFreshNotices = makeSeenNotices(() => {
+const appStorage = () => {
   try {
     return localStorage;
   } catch {
     return null;
   }
-});
+};
+const takeFreshNotices = makeSeenNotices(appStorage);
+/** Later, kept across restarts so the pop-up does not come back for a device put off (1416). */
+const laterStore = makeLaterStore(appStorage);
+const NO_LATER: ReadonlySet<string> = new Set();
 
 /** "New device approved on m4 by Anton's MacBook", once per notice on this device. */
 function announceNotices(environmentId: EnvironmentId, notices: ConnectDevicesSnapshot["notices"]) {
@@ -215,7 +225,17 @@ export function DeviceApprovalPromptHost() {
   const environmentId = usePrimaryEnvironmentId();
   const supported = useDeviceApprovalSupported(environmentId);
   const { snapshot, refresh } = useConnectDevices(environmentId, supported);
-  const [later, setLater] = useState<ReadonlySet<string>>(() => new Set());
+  // What Later put off on this machine, read from storage, so a restart keeps it.
+  const [laterRead, setLaterRead] = useState<{
+    readonly machine: EnvironmentId | null;
+    readonly keys: ReadonlySet<string>;
+  }>({ machine: null, keys: NO_LATER });
+  if (laterRead.machine !== environmentId)
+    setLaterRead({
+      machine: environmentId,
+      keys: environmentId === null ? NO_LATER : laterStore.keys(environmentId),
+    });
+  const later = laterRead.machine === environmentId ? laterRead.keys : NO_LATER;
   // Devices allowed while this pop-up is open, so it can say which one a code let in.
   const [allowed, setAllowed] = useState<ReadonlyArray<ConnectDevice>>([]);
   const requests =
@@ -236,7 +256,10 @@ export function DeviceApprovalPromptHost() {
       onApproved={(device) =>
         setAllowed((current) => [...current.filter((entry) => entry.key !== device.key), device])
       }
-      onLater={() => setLater((current) => new Set([...current, ...requests.map(laterKey)]))}
+      onLater={() => {
+        laterStore.add(environmentId, requests.map(laterKey));
+        setLaterRead({ machine: environmentId, keys: laterStore.keys(environmentId) });
+      }}
     />
   );
 }
@@ -312,7 +335,7 @@ export function DeviceWaitingForApprovalHost() {
   );
   if (waiting.length === 0) return null;
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-3 z-50 flex flex-col items-center gap-2">
+    <div className={FLOATING_CODE_LAYER_CLASS}>
       <div className="pointer-events-auto">
         <DeviceWaitingList waiting={waiting} deviceId={deviceId} />
       </div>
