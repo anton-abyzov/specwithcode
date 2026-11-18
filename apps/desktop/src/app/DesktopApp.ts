@@ -52,6 +52,7 @@ import * as DesktopState from "./DesktopState.ts";
 import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as MacBundleName from "../updates/macBundleName.ts";
+import { refreshMacIconAfterUpdate } from "../updates/macIconRefresh.ts";
 import { runElectronSelfInstall } from "../install/electronSelfInstall.ts";
 import type { SelfInstallOutcome } from "../install/macSelfInstall.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
@@ -632,6 +633,38 @@ const startup = Effect.gen(function* () {
     yield* electronApp.exit(0);
     return yield* Effect.never;
   }
+  // The first launch of each version re-registers the bundle so macOS draws its current icon.
+  const iconRefreshContext = yield* Effect.context<never>();
+  yield* Effect.forkScoped(
+    Effect.promise(() =>
+      refreshMacIconAfterUpdate({
+        platform: environment.platform,
+        isPackaged: environment.isPackaged,
+        execPath: process.execPath,
+        appVersion: environment.appVersion,
+        workDir: userDataPath,
+        ask: async (prompt) =>
+          (
+            await Electron.dialog.showMessageBox({
+              type: "info",
+              message: prompt.title,
+              detail: prompt.detail,
+              buttons: [...prompt.buttons],
+              defaultId: 0,
+              cancelId: 1,
+              noLink: true,
+            })
+          ).response,
+        log: (message, data) => {
+          void Effect.runPromiseWith(iconRefreshContext)(logStartupInfo(message, data ?? {}));
+        },
+      }),
+    ).pipe(
+      Effect.catchCause((cause) =>
+        logStartupError("could not refresh the app icon", { cause: Cause.pretty(cause) }),
+      ),
+    ),
+  );
   // After a manual install both apps can sit side by side; the older copy goes to the Trash.
   yield* Effect.forkScoped(
     Effect.promise(() =>
