@@ -60,7 +60,7 @@ export const nodeDownload = (
  * SPECWEAVE_MIN_VERSION is the oldest one SpecWithCode works with; an older
  * copy shows as too old.
  */
-export const SPECWEAVE_VERSION = "3.1.22";
+export const SPECWEAVE_VERSION = "3.2.1";
 export const SPECWEAVE_MIN_VERSION = "3.1.21";
 /** SpecWeave and Copilot CLI need Node.js 20 or newer. */
 export const NODE_MIN_MAJOR = 20;

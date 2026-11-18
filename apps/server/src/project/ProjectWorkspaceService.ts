@@ -69,7 +69,13 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectKnowledge from "./knowledge/ProjectKnowledge.ts";
 import { knowledgeSections } from "./knowledge/knowledgeSections.ts";
 import { fenceText } from "./promptFence.ts";
-import { insideGitWorkTree, isSpecweaveProject } from "./ThreadIncrementProgress.ts";
+import {
+  insideGitWorkTree,
+  isSpecweaveProject,
+  specweaveState as readSpecweaveState,
+  unfinishedIncrements,
+} from "./ThreadIncrementProgress.ts";
+import * as SpecweaveSetupRequests from "./SpecweaveSetupRequests.ts";
 import { INCREMENT_SIZING_RULE } from "./launchIncrement.ts";
 import * as SpecweaveSetup from "./SpecweaveSetup.ts";
 import { discoverProjectRepositories } from "./ProjectRepositoryDiscovery.ts";
@@ -311,6 +317,41 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const knowledge = yield* Effect.serviceOption(ProjectKnowledge.ProjectKnowledge);
   const specweaveSetup = yield* Effect.serviceOption(SpecweaveSetup.SpecweaveSetup);
+  /** Where the per-project SpecWeave facts are kept; none without a server config (tests). */
+  const specweaveFile = Option.map(serverConfig, (config) =>
+    SpecweaveSetupRequests.specweaveSetupFile(config.stateDir),
+  );
+  /** Stores a setup's failure, or clears the failure and the decline after a success. */
+  const rememberSetup = (projectId: ProjectId, result: SpecweaveSetup.SpecweaveSetupResult) =>
+    Option.isNone(specweaveFile)
+      ? Effect.void
+      : Effect.tryPromise(() =>
+          result.ok
+            ? SpecweaveSetupRequests.recordSetupSuccess(specweaveFile.value, projectId)
+            : SpecweaveSetupRequests.recordSetupFailure(specweaveFile.value, projectId, {
+                detail: result.detail,
+                needsNode: result.needs === "node",
+              }),
+        ).pipe(
+          Effect.asVoid,
+          Effect.catch((error) =>
+            Effect.logWarning("The SpecWeave setup result was not stored", { projectId, error }),
+          ),
+        );
+  /** The stored SpecWeave facts the workspace snapshot carries (1396). */
+  const specweaveFactsOf = (projectId: ProjectId) =>
+    Option.isNone(specweaveFile)
+      ? Effect.succeed({})
+      : Effect.promise(() =>
+          SpecweaveSetupRequests.readProjectFacts(specweaveFile.value, projectId),
+        ).pipe(
+          Effect.map((facts) => ({
+            ...(facts.failure === undefined ? {} : { specweaveSetupFailure: facts.failure }),
+            ...(facts.declined === true ? { specweaveDeclined: true } : {}),
+            ...(facts.adviceSeen === true ? { specweaveAdviceSeen: true } : {}),
+            ...(facts.request === undefined ? {} : { specweaveSetupRequest: facts.request }),
+          })),
+        );
   const knowledgeView = (projectId: ProjectId) =>
     Option.isSome(knowledge) ? knowledge.value.view(projectId) : Effect.succeed(null);
   /** Knowledge requests on a host built without the index say so instead of failing oddly. */
@@ -359,19 +400,39 @@ const make = Effect.gen(function* () {
         // A personal assistant's folder is never a SpecWeave project.
         // Bounded: a stalled mount hides the row instead of failing the whole read.
         ...(settings.kind === "personal"
-          ? { specweave: false }
+          ? { specweave: false, specweaveState: "off" as const }
           : Option.match(
               yield* Effect.promise(() =>
                 Promise.all([
-                  isSpecweaveProject(project.workspaceRoot),
+                  readSpecweaveState(project.workspaceRoot),
                   insideGitWorkTree(project.workspaceRoot),
-                ]),
+                ]).then(async ([state, gitRepository]) => ({
+                  state,
+                  gitRepository,
+                  unfinished:
+                    state === "unfinished"
+                      ? await unfinishedIncrements(project.workspaceRoot)
+                      : undefined,
+                })),
               ).pipe(Effect.timeoutOption(Duration.seconds(3))),
               {
                 onNone: () => ({}),
-                onSome: ([specweave, gitRepository]) => ({ specweave, gitRepository }),
+                onSome: ({ state, gitRepository, unfinished }) => ({
+                  specweave: state === "on",
+                  specweaveState: state,
+                  gitRepository,
+                  ...(unfinished === undefined
+                    ? {}
+                    : {
+                        specweaveUnfinished: {
+                          count: unfinished.count,
+                          titles: [...unfinished.titles],
+                        },
+                      }),
+                }),
               },
             )),
+        ...(settings.kind === "personal" ? {} : yield* specweaveFactsOf(projectId)),
       };
     }).pipe(mapProjectFailure(projectId, "workspace.read"));
   const readMemory = ({ projectId, name }: { projectId: ProjectId; name: string }) =>
@@ -673,6 +734,8 @@ const make = Effect.gen(function* () {
       const result = yield* specweaveSetup.value.setUp(project.workspaceRoot, {
         initGit: initGit === true,
       });
+      // Remembered for the project, so every device shows the same reason (1396 AC-08).
+      yield* rememberSetup(projectId, result);
       if (!result.ok) return yield* setupError(result.reason, result.detail, result.needs);
       yield* knowledgeChanged(projectId);
       return {

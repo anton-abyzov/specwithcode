@@ -54,6 +54,8 @@ import {
   ProjectSpecweaveSetUpInput,
   ProjectSpecweaveSetUpResult,
   ProjectSpecweaveSetUpError,
+  ProjectSpecweaveAnswerInput,
+  ProjectSpecweaveAnswerResult,
   ProjectMemoryReadInput,
   ProjectMemoryFile,
   ProjectMemoryWriteInput,
@@ -160,6 +162,7 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsSkillsUpdate: "projects.skillsUpdate",
   projectsWorkspaceRead: "projects.workspaceRead",
   projectsSpecweaveSetUp: "projects.specweaveSetUp",
+  projectsSpecweaveAnswer: "projects.specweaveAnswer",
   projectsStarterSuggestions: "projects.starterSuggestions",
   projectsMemoryRead: "projects.memoryRead",
   projectsMemoryWrite: "projects.memoryWrite",
@@ -291,6 +294,11 @@ export const projectWorkspaceRpcs = [
     payload: ProjectSpecweaveSetUpInput,
     success: ProjectSpecweaveSetUpResult,
     error: Schema.Union([ProjectSpecweaveSetUpError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSpecweaveAnswer, {
+    payload: ProjectSpecweaveAnswerInput,
+    success: ProjectSpecweaveAnswerResult,
+    error,
   }),
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsStarterSuggestions, {
     payload: ProjectStarterSuggestionsInput,
