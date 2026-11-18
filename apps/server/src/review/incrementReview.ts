@@ -4,13 +4,18 @@
  * `.specweave/config.json` `review` layers) and its newest review
  * record (`reports/review*.md`, `reports/reviews/*.md`, as `specweave review`
  * and `specweave review --record` write them), read offline for the plan card
- * and for review delegations. No CLI, no Git; reads write nothing.
+ * and for review delegations, and every recorded review for the Board's
+ * cards. No CLI, no Git; reads write nothing.
  *
  * @module incrementReview
  */
 import * as NodeFSP from "node:fs/promises";
 
-import type { ThreadIncrementReview } from "@specweave-studio/contracts";
+import {
+  PROJECT_BOARD_CARD_REVIEWS,
+  type ProjectBoardCardReview,
+  type ThreadIncrementReview,
+} from "@specweave-studio/contracts";
 import {
   canonicalReviewFamily,
   incrementReviewRepos,
@@ -87,6 +92,7 @@ interface ReviewFile {
   readonly path: string;
   readonly numbered: boolean;
   readonly mtimeMs: number;
+  readonly size: number;
 }
 
 async function listReviewFiles(incrementPath: string): Promise<ReviewFile[]> {
@@ -100,7 +106,7 @@ async function listReviewFiles(incrementPath: string): Promise<ReviewFile[]> {
         .map(async (name) => {
           const path = NodePath.join(dir, name);
           const stat = await NodeFSP.stat(path).catch(() => null);
-          return stat?.isFile() ? { path, numbered, mtimeMs: stat.mtimeMs } : null;
+          return stat?.isFile() ? { path, numbered, mtimeMs: stat.mtimeMs, size: stat.size } : null;
         }),
     );
     return files.filter((file): file is ReviewFile => file !== null);
@@ -139,32 +145,20 @@ export function ledgerAuthorFamily(ledger: string | null): string | null {
   return sorted[0]?.[0] ?? null;
 }
 
-/**
- * What the plan card says about review: the newest review record and, when
- * the policy requires one, whether a record satisfies it. Null when the
- * increment has no review and no policy.
- */
-export async function readIncrementReview(input: {
-  readonly incrementPath: string;
-  readonly spec: string | null;
-  readonly ledger: string | null;
-  /** A legacy tasks.md; when present it holds the tasks, as in SpecWeave. */
-  readonly tasks?: string | null;
-}): Promise<ThreadIncrementReview | null> {
-  const config = await readProjectConfig(input.incrementPath);
-  const policy = resolveIncrementReviewPolicy({ spec: input.spec, config: reviewLayer(config) });
-  const projectRoot = NodePath.resolve(input.incrementPath, "..", "..", "..");
-  const files = await listReviewFiles(input.incrementPath);
-  const author = ledgerAuthorFamily(input.ledger);
-  const records: Array<
-    ReviewRecordForPolicy & {
-      readonly head: string | null;
-      readonly at: string;
-      readonly path: string;
-      readonly atMs: number;
-      readonly numbered: boolean;
-    }
-  > = [];
+type ReviewRecord = ReviewRecordForPolicy & {
+  readonly head: string | null;
+  readonly at: string;
+  readonly path: string;
+  readonly atMs: number;
+  readonly numbered: boolean;
+};
+
+/** Every review record of an increment, newest first; `author` stands in for records that name none. */
+async function readReviewRecords(
+  files: ReadonlyArray<ReviewFile>,
+  author: string | null,
+): Promise<ReviewRecord[]> {
+  const records: ReviewRecord[] = [];
   for (const file of files) {
     const text = await readSmall(file.path, REPORT_BYTES);
     if (text === null) continue;
@@ -199,6 +193,26 @@ export async function readIncrementReview(input: {
       Number(b.numbered) - Number(a.numbered) ||
       b.path.localeCompare(a.path, undefined, { numeric: true }),
   );
+  return records;
+}
+
+/**
+ * What the plan card says about review: the newest review record and, when
+ * the policy requires one, whether a record satisfies it. Null when the
+ * increment has no review and no policy.
+ */
+export async function readIncrementReview(input: {
+  readonly incrementPath: string;
+  readonly spec: string | null;
+  readonly ledger: string | null;
+  /** A legacy tasks.md; when present it holds the tasks, as in SpecWeave. */
+  readonly tasks?: string | null;
+}): Promise<ThreadIncrementReview | null> {
+  const config = await readProjectConfig(input.incrementPath);
+  const policy = resolveIncrementReviewPolicy({ spec: input.spec, config: reviewLayer(config) });
+  const projectRoot = NodePath.resolve(input.incrementPath, "..", "..", "..");
+  const author = ledgerAuthorFamily(input.ledger);
+  const records = await readReviewRecords(await listReviewFiles(input.incrementPath), author);
   const latest = records[0] ?? null;
   if (latest === null && policy === null) return null;
   const satisfied =
@@ -237,4 +251,53 @@ export async function readIncrementReview(input: {
     authorFamily: author,
     policySatisfied: satisfied,
   };
+}
+
+const REVIEW_LIST_CACHE_ENTRIES = 2_000;
+/** Board review lists by increment folder, valid while its review files and ledger author hold. */
+const reviewListCache = new Map<
+  string,
+  { readonly signature: string; readonly value: ReadonlyArray<ProjectBoardCardReview> }
+>();
+
+const canonicalOr = (family: string) => canonicalReviewFamily(family) ?? family;
+
+/**
+ * Every recorded review of an increment for its Board card (1398 AC-22),
+ * newest first and at most PROJECT_BOARD_CARD_REVIEWS, with the reviewer's
+ * and the author's families canonical so a client can compare them.
+ * `ledgerAuthor` is the ledger's author family (ledgerAuthorFamily), used for
+ * records that name none. An increment without a `reports/` folder costs one
+ * stat; the files are read again only when one of them changes.
+ */
+export async function readIncrementReviews(
+  incrementPath: string,
+  ledgerAuthor: string | null,
+): Promise<ReadonlyArray<ProjectBoardCardReview>> {
+  const reports = await NodeFSP.stat(NodePath.join(incrementPath, "reports")).catch(() => null);
+  if (reports === null || !reports.isDirectory()) return [];
+  const files = await listReviewFiles(incrementPath);
+  if (files.length === 0) return [];
+  const signature = [
+    ledgerAuthor ?? "",
+    ...files.map((file) => `${file.path}:${file.mtimeMs}:${file.size}`),
+  ].join("|");
+  const cached = reviewListCache.get(incrementPath);
+  if (cached?.signature === signature) return cached.value;
+  const records = await readReviewRecords(files, ledgerAuthor);
+  const value = records
+    .slice(0, PROJECT_BOARD_CARD_REVIEWS)
+    .map((record): ProjectBoardCardReview => ({
+      model: record.model ?? null,
+      family: canonicalOr(record.family),
+      author: record.author === null ? null : canonicalOr(record.author),
+      verdict: record.verdict ?? null,
+      at: record.at,
+    }));
+  reviewListCache.delete(incrementPath);
+  reviewListCache.set(incrementPath, { signature, value });
+  if (reviewListCache.size > REVIEW_LIST_CACHE_ENTRIES) {
+    reviewListCache.delete(reviewListCache.keys().next().value!);
+  }
+  return value;
 }

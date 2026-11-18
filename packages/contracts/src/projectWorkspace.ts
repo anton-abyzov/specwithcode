@@ -120,6 +120,29 @@ export const ProjectSecretFiles = Schema.Array(Schema.String.check(Schema.isMaxL
   Schema.isMaxLength(MAX_PROJECT_SECRET_FILES),
 );
 
+/** The sample a project was made as (1398): the first feature guide's project. */
+export const FIRST_FEATURE_SAMPLE = "first-feature";
+export const ProjectSample = Schema.Literal(FIRST_FEATURE_SAMPLE);
+export type ProjectSample = typeof ProjectSample.Type;
+/** How the first feature guide ended: the person left it, or it reached its end. */
+export const FirstFeatureGuideEnd = Schema.Literals(["left", "finished"]);
+export type FirstFeatureGuideEnd = typeof FirstFeatureGuideEnd.Type;
+/**
+ * The first feature guide's two stored facts (1398 AC-03). Everything else
+ * the guide shows is read from live state.
+ */
+export const FirstFeatureGuide = Schema.Struct({
+  /** When the guide started: the sample's creation, or its reopening after it was left. */
+  started: Schema.optionalKey(IsoDateTime),
+  /**
+   * `left` or `finished` (FirstFeatureGuideEnd); absent while the guide runs.
+   * A string on the wire, so a value a newer version adds reads as unknown
+   * instead of failing the whole project.
+   */
+  ended: Schema.optionalKey(Schema.String),
+});
+export type FirstFeatureGuide = typeof FirstFeatureGuide.Type;
+
 export const ProjectWorkspaceSettings = Schema.Struct({
   /** Server-managed identity and transfer fence; absent on legacy independent projects. */
   logicalProject: Schema.optional(LogicalProject),
@@ -166,6 +189,15 @@ export const ProjectWorkspaceSettings = Schema.Struct({
    * a `~/` path in the home folder (`~/.config/acme/token.json`). Absent: none.
    */
   secretFiles: Schema.optionalKey(ProjectSecretFiles),
+  /**
+   * Server-managed: the sample this project was made as, `first-feature` for
+   * the first feature guide's project (1398 AC-01). Set only by
+   * projects.createNew; no settings patch can set or clear it. A string on the
+   * wire, like `origin`.
+   */
+  sample: Schema.optionalKey(Schema.String),
+  /** Server-managed: the sample's guide (1398 AC-03), set by projects.firstFeatureGuide. */
+  firstFeatureGuide: Schema.optionalKey(FirstFeatureGuide),
 });
 export type ProjectWorkspaceSettings = typeof ProjectWorkspaceSettings.Type;
 export const DEFAULT_PROJECT_WORKSPACE_SETTINGS: ProjectWorkspaceSettings = {
@@ -318,6 +350,23 @@ export const ProjectSpecweaveAnswerResult = Schema.Struct({
   specweaveSetupRequest: Schema.optionalKey(SpecweaveSetupRequest),
 });
 export type ProjectSpecweaveAnswerResult = typeof ProjectSpecweaveAnswerResult.Type;
+/**
+ * Records a step of the sample project's first feature guide (1398 AC-03):
+ * `started` when it is opened again after it was left, `left` for "Leave the
+ * guide", `finished` at its end. Refused for a project that is not a sample.
+ */
+export const ProjectFirstFeatureGuideMark = Schema.Literals(["started", "left", "finished"]);
+export type ProjectFirstFeatureGuideMark = typeof ProjectFirstFeatureGuideMark.Type;
+export const ProjectFirstFeatureGuideInput = Schema.Struct({
+  projectId: ProjectId,
+  mark: ProjectFirstFeatureGuideMark,
+});
+export type ProjectFirstFeatureGuideInput = typeof ProjectFirstFeatureGuideInput.Type;
+export const ProjectFirstFeatureGuideResult = Schema.Struct({
+  /** The guide's facts after the mark, as `settings.firstFeatureGuide` now reads. */
+  firstFeatureGuide: FirstFeatureGuide,
+});
+export type ProjectFirstFeatureGuideResult = typeof ProjectFirstFeatureGuideResult.Type;
 export const ProjectMemoryReadInput = Schema.Struct({
   projectId: ProjectId,
   name: ProjectMemoryName,

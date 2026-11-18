@@ -8,6 +8,7 @@ import {
   type LogicalProject,
   type LogicalProjectMember,
   type ProjectCoordinatorBinding,
+  type FirstFeatureGuide,
   type ProjectWorkspaceSettings,
   type ProjectWorkspacePatch,
   type ProjectKind,
@@ -89,6 +90,10 @@ export interface ProjectCreateCommand {
   readonly temporarySessionId?: string;
   /** Set for a project a check or agent makes for itself; see projectOrigin. */
   readonly origin?: ProjectOrigin;
+  /** Internal: the sample this project is made as (1398); never from a client payload. */
+  readonly sample?: string;
+  /** Internal: the sample's guide facts at creation (1398). */
+  readonly firstFeatureGuide?: FirstFeatureGuide;
 }
 
 export interface ProjectMetaUpdateCommand {
@@ -96,6 +101,8 @@ export interface ProjectMetaUpdateCommand {
   readonly ownership?: ProjectOwnershipUpdate;
   readonly workspaceSettings?: ProjectWorkspacePatch;
   readonly coordinatorThreadId?: ThreadId;
+  /** Internal: replaces the sample's guide facts (1398); never read from a settings patch. */
+  readonly firstFeatureGuide?: FirstFeatureGuide;
   readonly type: "project.meta.update";
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
@@ -691,6 +698,8 @@ export function planProjectCommand(input: {
               ? { temporarySessionId: command.temporarySessionId }
               : {}),
             ...(command.origin ? { origin: command.origin } : {}),
+            ...(command.sample ? { sample: command.sample } : {}),
+            ...(command.firstFeatureGuide ? { firstFeatureGuide: command.firstFeatureGuide } : {}),
           },
           createdAt: occurredAt,
           updatedAt: occurredAt,
@@ -773,11 +782,15 @@ export function planProjectCommand(input: {
         logicalProject: _identity,
         coordinatorBinding: _binding,
         iconSeedTitle: _iconSeed,
+        sample: _sample,
+        firstFeatureGuide: _guide,
         ...settingsPatch
       } = (command.workspaceSettings ?? {}) as ProjectWorkspacePatch & {
         logicalProject?: unknown;
         coordinatorBinding?: unknown;
         iconSeedTitle?: unknown;
+        sample?: unknown;
+        firstFeatureGuide?: unknown;
       };
       const renamedIdentity =
         command.title !== undefined &&
@@ -795,6 +808,7 @@ export function planProjectCommand(input: {
         command.workspaceSettings ||
         command.coordinatorThreadId ||
         command.ownership ||
+        command.firstFeatureGuide ||
         renamedIdentity ||
         iconSeedTitle !== undefined
           ? {
@@ -807,6 +821,9 @@ export function planProjectCommand(input: {
                 : {}),
               ...(renamedIdentity ? { logicalProject: renamedIdentity } : {}),
               ...(iconSeedTitle === undefined ? {} : { iconSeedTitle }),
+              ...(command.firstFeatureGuide
+                ? { firstFeatureGuide: command.firstFeatureGuide }
+                : {}),
               ...(command.ownership
                 ? {
                     logicalProject: command.ownership.logicalProject,

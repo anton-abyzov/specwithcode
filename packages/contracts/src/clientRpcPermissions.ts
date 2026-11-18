@@ -152,6 +152,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Runs `specweave init`, which writes SpecWeave's files into the project folder.
   [WS_METHODS.projectsSpecweaveSetUp]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsSpecweaveAnswer]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsFirstFeatureGuide]: AuthOrchestrationOperateScope,
   // Designs are files in the project checkout or the app's Playground folder.
   [WS_METHODS.designList]: AuthFilesystemReadScope,
   [WS_METHODS.designGet]: AuthFilesystemReadScope,
