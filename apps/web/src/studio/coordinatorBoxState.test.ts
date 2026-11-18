@@ -185,6 +185,19 @@ describe("coordinatorBoxState: what each state says and offers", () => {
     expect(read(box.continueHere?.note ?? null)).toBe("connect M4 first");
   });
 
+  it("the machine shown offline: both greyed, even when a send could route", () => {
+    const offline = mainOffer(
+      "m5:p",
+      { kind: "blocked", main, reason: "copy-offline", waitMs: 0 },
+      names,
+    )!;
+    const box = coordinatorBoxState(input({ offer: offline, routes: true }));
+    expect(box.kind).toBe("unloaded");
+    expect(read(box.line)).toBe("Connect M5 first to continue the coordinator there.");
+    expect(box.send.enabled).toBe(false);
+    expect(box.continueHere?.enabled).toBe(false);
+  });
+
   it("not ready: both greyed, Continue here says not ready", () => {
     const box = coordinatorBoxState(
       input({ offer: offers.notReady, machineConnected: false, routes: false }),

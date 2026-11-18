@@ -111,7 +111,9 @@ export function coordinatorBoxState(input: CoordinatorBoxInput): CoordinatorBoxS
   // The rules that keep "Continue here" off come first, as `makeMainPath` orders them.
   // A machine shown that is not connected never gets here: the page keeps its own
   // disconnected line and blocked box, decided before the coordinator line.
-  if (offer?.block === "unloaded")
+  // An offer blocked because the machine shown is offline is refused the same way, so no
+  // later caller can reach an enabled Send with it.
+  if (offer?.block === "unloaded" || offer?.block === "copy-offline")
     return state("unloaded", offer.reason ?? placeholder, {}, { enabled: false, note: offer.note });
   if (offer?.kind === "takeover")
     return state(
