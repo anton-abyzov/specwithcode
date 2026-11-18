@@ -3272,6 +3272,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           title: activeThread?.title,
           isCoordinator: projectRouting?.coordinatorThreadId === activeThreadId,
         });
+  // Folding the question card is remembered per thread.
+  const pendingQuestionCollapseKey =
+    activeThreadId === null ? undefined : `${environmentId}:${activeThreadId}`;
   const isChoiceOnlyPendingQuestion =
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   const showComposerTopDrawer =
@@ -7326,6 +7329,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onReplyInChat={replyToPendingQuestionInChat}
                     askedBy={pendingQuestionAsker}
                     renderText={renderPendingQuestionText}
+                    collapseKey={pendingQuestionCollapseKey}
                   />
                 ) : !isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan ? (
                   <ComposerPlanFollowUpBanner
@@ -7351,6 +7355,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onReplyInChat={replyToPendingQuestionInChat}
                       askedBy={pendingQuestionAsker}
                       renderText={renderPendingQuestionText}
+                      collapseKey={pendingQuestionCollapseKey}
                     />
                     {!isChoiceOnlyPendingQuestion ? (
                       // Multi-select steps live in the card's own footer above.

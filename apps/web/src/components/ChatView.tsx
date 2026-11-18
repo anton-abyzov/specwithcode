@@ -637,7 +637,8 @@ import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/Messag
 import {
   overlayComposerIsResting,
   resolveComposerTimelineInset,
-  resolveScrollToEndClearance,
+  measureScrollToEndClearance,
+  publishChatPanelHeight,
 } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { limitFallbackPairing } from "../studio/runIdentity";
@@ -8641,26 +8642,9 @@ function useChatViewActions(
         composerTimelineInsetRef.current = nextInset;
         setComposerTimelineInset(nextInset);
       }
-      const mainSurface = composerOverlayElement?.querySelector<HTMLElement>(
-        '[data-chat-composer-main-surface="true"]',
-      );
-      const button = composerOverlayElement?.parentElement?.querySelector<HTMLElement>(
-        'button[aria-label="Jump to latest"]',
-      );
-      const clearance =
-        composerOverlayElement && mainSurface && button
-          ? resolveScrollToEndClearance({
-              overlayHeight: nextHeight,
-              mainSurfaceTop: mainSurface.getBoundingClientRect().top,
-              button: button.getBoundingClientRect(),
-              attachments: Array.from(
-                composerOverlayElement.querySelectorAll<HTMLElement>(
-                  '[data-composer-banner-surface="attached"]',
-                ),
-                (element) => element.getBoundingClientRect(),
-              ),
-            })
-          : nextHeight;
+      const clearance = composerOverlayElement
+        ? measureScrollToEndClearance(composerOverlayElement, nextHeight)
+        : nextHeight;
       setScrollToEndClearance(clearance);
     },
     [
@@ -8695,7 +8679,11 @@ function useChatViewActions(
   useLayoutEffect(() => {
     if (!composerOverlayElement) return;
 
+    // The panel's height sizes the cards above the composer (--chat-panel-height);
+    // it is published before the overlay is measured so both agree.
+    const panel = composerOverlayElement.parentElement;
     const updateHeight = () => {
+      publishChatPanelHeight(panel);
       publishComposerOverlayHeight(composerOverlayElement.getBoundingClientRect().height);
     };
 
@@ -8704,6 +8692,7 @@ function useChatViewActions(
 
     const resizeObserver = new ResizeObserver(updateHeight);
     resizeObserver.observe(composerOverlayElement);
+    if (panel) resizeObserver.observe(panel);
     return () => {
       resizeObserver.disconnect();
     };
