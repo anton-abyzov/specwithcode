@@ -120,7 +120,6 @@ import {
   specweaveNeededLaunch,
 } from "../orchestrator/requestSpecweaveSetup.ts";
 
-/** Shows the approval card in the calling thread; the user's answer applies the change. */
 /** Whether SpecWeave is on in a folder used as it is (1396); unknown counts as not. */
 const specweaveIsOn = (workspaceRoot: string) =>
   Effect.tryPromise(() => readSpecweaveState(workspaceRoot)).pipe(
@@ -129,6 +128,7 @@ const specweaveIsOn = (workspaceRoot: string) =>
     Effect.orElseSucceed(() => false),
   );
 
+/** Shows the approval card in the calling thread; the user's answer applies the change. */
 const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (input: {
   readonly action: ProjectActionRequests.ProjectAction;
   readonly projectId?: ProjectId | undefined;
