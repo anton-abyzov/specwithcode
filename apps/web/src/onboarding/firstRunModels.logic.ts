@@ -16,7 +16,7 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
 } from "@specweave-studio/contracts";
-import { describeModel } from "@specweave-studio/shared/modelIdentity";
+import { describeModel, sameModelOn } from "@specweave-studio/shared/modelIdentity";
 import {
   defaultTrackSelections,
   effectiveModelLanes,
@@ -149,17 +149,31 @@ function runsOnReady(selection: ModelSelection, ready: ReadonlyArray<ServerProvi
   );
 }
 
-function familyOf(selection: ModelSelection, providers: ReadonlyArray<ServerProvider>) {
-  const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
-  return modelFamily(describeModel(provider, selection.model));
+/**
+ * A list entry's names: from its own agent when the machine lists it, else
+ * from a ready agent that runs the same model, so a saved entry that outlived
+ * its agent is not shown by its raw slug.
+ */
+function namesOf(
+  selection: ModelSelection,
+  listed: ReadonlyArray<ServerProvider>,
+  ready: ReadonlyArray<ServerProvider>,
+) {
+  const own = listed.find((entry) => entry.instanceId === selection.instanceId);
+  if (own !== undefined) return describeModel(own, selection.model);
+  for (const provider of ready) {
+    const slug = sameModelOn(provider, { slug: selection.model });
+    if (slug !== undefined) return describeModel(provider, slug);
+  }
+  return describeModel(undefined, selection.model);
 }
 
 function entryOf(
   selection: ModelSelection,
-  providers: ReadonlyArray<ServerProvider>,
+  listed: ReadonlyArray<ServerProvider>,
+  ready: ReadonlyArray<ServerProvider>,
 ): ModelLineEntry {
-  const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
-  const names = describeModel(provider, selection.model);
+  const names = namesOf(selection, listed, ready);
   return {
     key: `${selection.instanceId}:${selection.model}`,
     name: names.name ?? selection.model,
@@ -187,14 +201,28 @@ export function firstRunModels(input: {
     complex: fit(lists.complex),
     review: fit(lists.review),
   };
-  const families = new Set(
-    MODEL_TRACKS.flatMap((track) => shown[track].map((selection) => familyOf(selection, listed))),
-  );
-  const first = shown.daily[0];
+  const familyOf = (selection: ModelSelection) =>
+    modelFamily(namesOf(selection, listed, ready));
+  // The family that does the everyday work: the first Daily model's, else the first ready agent's.
+  const first = shown.daily[0] ?? shown.complex[0];
   const firstFamily =
-    first === undefined ? ([...families][0] ?? null) : familyOf(first, listed);
-  // No reviewer: nothing ready reviews, or every model the lists name is of one family.
-  const noReviewer = shown.review.length === 0 || families.size <= 1;
+    first === undefined
+      ? (ready.flatMap((provider) => provider.models.map((model) => modelFamily(model)))[0] ??
+        null)
+      : familyOf(first);
+  // A second family is ready when a ready agent runs a model outside the everyday family.
+  const secondFamilyReady = ready.some((provider) =>
+    provider.models.some((model) => {
+      const family = modelFamily(model);
+      return family !== "other" && family !== firstFamily;
+    }),
+  );
+  // No reviewer: nothing ready reviews, or every reviewer is of the everyday family and no
+  // second family is ready. A saved same-family reviewer with a second family ready stays a
+  // list, as Settings > Models shows it with its own warning.
+  const noReviewer =
+    shown.review.length === 0 ||
+    (!secondFamilyReady && shown.review.every((selection) => familyOf(selection) === firstFamily));
   const lines = MODEL_TRACKS.map((track): ModelLine => {
     const list = shown[track];
     if (track === "review" && noReviewer) {
@@ -212,7 +240,7 @@ export function firstRunModels(input: {
     return {
       track,
       kind: "models",
-      shown: list.slice(0, SHOWN_MODELS).map((selection) => entryOf(selection, listed)),
+      shown: list.slice(0, SHOWN_MODELS).map((selection) => entryOf(selection, listed, ready)),
       more: Math.max(0, list.length - SHOWN_MODELS),
     };
   });

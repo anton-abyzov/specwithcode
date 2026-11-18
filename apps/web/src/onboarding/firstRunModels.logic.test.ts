@@ -242,6 +242,30 @@ describe("firstRunModels", () => {
     expect(names(lineOf(viaCopilot, "review"))).toEqual(["GPT-6.1 Sol"]);
   });
 
+  it("names a saved entry whose agent is gone by the ready agent that runs it", () => {
+    const saved: ModelTrackSettings = {
+      modelLanes: { routine: [sel("codex", "gpt-6.1-sol")], complex: [] },
+      adversarialReview: { reviewers: [sel("codex", "gpt-6.1-sol")] },
+    };
+    const result = firstRunModels({ settings: saved, providers: [claude, copilot] });
+    expect(names(lineOf(result, "daily"))).toEqual(["GPT-6.1 Sol"]);
+    expect(names(lineOf(result, "review"))).toEqual(["GPT-6.1 Sol"]);
+  });
+
+  it("shows saved one-family lists as lists while a second family is ready", () => {
+    const claudeOnly: ModelTrackSettings = {
+      modelLanes: {
+        routine: [sel("claudeAgent", "claude-opus-5-5")],
+        complex: [sel("claudeAgent", "claude-fable-5-2")],
+      },
+      adversarialReview: { reviewers: [sel("claudeAgent", "claude-fable-5-2")] },
+    };
+    const withCodex = firstRunModels({ settings: claudeOnly, providers: [claude, codex] });
+    expect(names(lineOf(withCodex, "review"))).toEqual(["Claude Fable 5.2"]);
+    const alone = firstRunModels({ settings: claudeOnly, providers: [claude] });
+    expect(lineOf(alone, "review")?.kind).toBe("no-reviewer");
+  });
+
   it("shows a saved same-family reviewer while a second family is ready", () => {
     const result = firstRunModels({
       settings: { adversarialReview: { reviewers: [sel("claudeAgent", "claude-fable-5-2")] } },

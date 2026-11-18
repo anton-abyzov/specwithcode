@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { providerInstanceInitials } from "@specweave-studio/client-runtime/state/provider-instance-display";
-import { type EnvironmentId, MODEL_TRACK_LABELS } from "@specweave-studio/contracts";
+import {
+  type EnvironmentId,
+  MachineReadinessToolId,
+  MODEL_TRACK_LABELS,
+} from "@specweave-studio/contracts";
 import { Fragment, lazy, type ReactNode, Suspense, useMemo, useRef, useState } from "react";
 
 import { useTx } from "../../i18n";
@@ -29,7 +33,7 @@ const ModelTracksSettings = lazy(() =>
 const KEEP_SCOPE = () => {};
 
 /** Rows the step draws for a machine's tools (`MachineReadinessToolId`), not its agents. */
-const TOOL_ROWS = ["git", "node", "gh", "specweave"];
+const TOOL_ROWS: ReadonlyArray<string> = MachineReadinessToolId.literals;
 
 /**
  * "Add one": focus moves to the first agent row on this machine that is not
