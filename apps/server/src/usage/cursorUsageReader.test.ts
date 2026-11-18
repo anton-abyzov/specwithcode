@@ -9,8 +9,10 @@ describe("readCursorAccountUsage", () => {
       { kind: "keychain" },
       0,
       1,
-      () => Promise.reject(new Error("no network expected")),
-      () => Promise.reject(new CursorKeychainTimeoutError()),
+      {
+        request: () => Promise.reject(new Error("no network expected")),
+        keychainToken: () => Promise.reject(new CursorKeychainTimeoutError()),
+      },
     );
     assert.deepStrictEqual(result, {
       accountKey: null,

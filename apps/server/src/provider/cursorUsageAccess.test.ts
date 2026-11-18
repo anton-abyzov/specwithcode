@@ -197,7 +197,8 @@ describe("Cursor account usage switch", () => {
     }),
   );
 
-  it.effect(
+  // Live clock: expiry is checked against now, and the test clock starts at 1970.
+  it.live(
     "falls back to the desktop app's state.vscdb when the CLI login is missing or expired",
     () =>
       Effect.gen(function* () {
