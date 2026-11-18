@@ -804,7 +804,12 @@ describe("OrchestratorMcpService review delegation", () => {
             clientRequestId: "review-pick",
           });
           const request = yield* delegated(dispatched);
-          assert.deepEqual(request.modelSelection, { instanceId: codex, model: "gpt-6.1-sol" });
+          // A listed reviewer with no effort runs at Medium, the nearest level here being High.
+          assert.deepEqual(request.modelSelection, {
+            instanceId: codex,
+            model: "gpt-6.1-sol",
+            options: [{ id: "effort", value: "high" }],
+          });
           assert.include(
             request.task ?? "",
             "reviewing work written by Claude Opus 5.5 on claudeAgent (Claude)",
