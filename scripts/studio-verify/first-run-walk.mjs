@@ -45,6 +45,9 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const named = (buttons) =>
   buttons.length ? buttons.map((name) => JSON.stringify(name)).join(", ") : "none";
 
+/** What Playwright says when the page navigated in the middle of a read. */
+const NAVIGATED = /Execution context was destroyed|Cannot find context with specified id|navigat/i;
+
 /**
  * Walks setup from wherever it is to its end.
  *
@@ -74,7 +77,19 @@ export async function walkFirstRun(
   /** When a wait of `ms` ends: its own limit or the walk's, whichever comes first. */
   const by = (ms) => Math.min(Date.now() + ms, end);
   const late = (limit, ms) => (limit === end ? `the walk's ${timeoutMs} ms` : `${ms} ms`);
-  const read = () => page.evaluate(readWizard, { dialog: WIZARD_DIALOG });
+  // A page that navigates while it is read (the pair link redirecting) is read
+  // again once the new document is there; any other error ends the walk.
+  const read = async () => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await page.evaluate(readWizard, { dialog: WIZARD_DIALOG });
+      } catch (error) {
+        if (!NAVIGATED.test(String(error?.message ?? error)) || attempt >= 40 || Date.now() >= end)
+          throw error;
+        await pause(pollMs);
+      }
+    }
+  };
   const steps = [];
   let missed = 0;
   const fail = (message, state) => {

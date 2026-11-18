@@ -39,7 +39,10 @@ const SETUP_FRAGMENTS = ["without an account", "import projects", "Keep (Supervi
  * `neutral` enabled neutral controls once `waits` reads have passed, `moves`
  * false for a step that stays open after its press.
  */
-function fakePage(steps, { readyAfter = null, buttons = ["Back", "Install"], clickFails = 0 } = {}) {
+function fakePage(
+  steps,
+  { readyAfter = null, buttons = ["Back", "Install"], clickFails = 0, readErrors = [] } = {},
+) {
   const state = { index: 0, reads: 0, presses: [], selectors: [], clickFails };
   const current = () => steps[state.index];
   return {
@@ -47,6 +50,8 @@ function fakePage(steps, { readyAfter = null, buttons = ["Back", "Install"], cli
     page: {
       evaluate: async () => {
         state.reads++;
+        const error = readErrors.shift();
+        if (error) throw new Error(error);
         const step = current();
         if (!step) return { step: null, neutral: 0, buttons: [] };
         const waiting = (step.waits ?? 0) > 0;
@@ -95,6 +100,24 @@ test("returns no steps when the app is ready without setup, or setup never shows
 test("fails when neither setup nor the ready app shows", async () => {
   const { page, until } = fakePage([]);
   await assert.rejects(walkFirstRun(page, { ...quick, until }), /neither setup nor the ready app/);
+});
+
+test("a read cut off by a navigation is read again", async () => {
+  const { page, state } = fakePage([{ id: "connection" }, { id: "agents" }], {
+    readErrors: [
+      "page.evaluate: Execution context was destroyed, most likely because of a navigation",
+      "page.evaluate: Execution context was destroyed, most likely because of a navigation",
+    ],
+  });
+  assert.deepEqual(await walkFirstRun(page, quick), ["connection", "agents"]);
+  assert.deepEqual(state.presses, ["connection", "agents"]);
+});
+
+test("any other read error ends the walk", async () => {
+  const { page } = fakePage([{ id: "connection" }], {
+    readErrors: ["page.evaluate: Target page, context or browser has been closed"],
+  });
+  await assert.rejects(walkFirstRun(page, quick), /has been closed/);
 });
 
 test("a ready check that keeps flipping still ends at the deadline", async () => {
