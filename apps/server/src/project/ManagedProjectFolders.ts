@@ -353,6 +353,9 @@ function describeCommitFailure(stderr: string): string {
   return lines.at(-1) ?? "Git could not make the first commit.";
 }
 
+/** Files a desktop leaves in a folder it showed; they do not make it a project. */
+const OS_LITTER: ReadonlySet<string> = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
+
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -652,6 +655,7 @@ const make = Effect.gen(function* () {
   // with Node.js missing said apart so the app can offer to install it.
   const setUpSpecweave = (
     cwd: string,
+    options?: SpecweaveSetup.SpecweaveSetupOptions,
   ): Effect.Effect<{ readonly detail: string; readonly needsNode: boolean } | undefined> =>
     Option.match(specweaveSetup, {
       onNone: () =>
@@ -660,11 +664,13 @@ const make = Effect.gen(function* () {
           needsNode: false,
         }),
       onSome: (setup) =>
-        setup.setUp(cwd).pipe(
-          Effect.map((result) =>
-            result.ok ? undefined : { detail: result.detail, needsNode: result.needs === "node" },
+        setup
+          .setUp(cwd, options)
+          .pipe(
+            Effect.map((result) =>
+              result.ok ? undefined : { detail: result.detail, needsNode: result.needs === "node" },
+            ),
           ),
-        ),
     });
   const specweaveFailure = (
     failure: { readonly detail: string; readonly needsNode: boolean } | undefined,
@@ -756,7 +762,8 @@ const make = Effect.gen(function* () {
             )
         : undefined;
     const specweaveFailed =
-      setupError ?? (stageError === undefined ? undefined : { detail: stageError, needsNode: false });
+      setupError ??
+      (stageError === undefined ? undefined : { detail: stageError, needsNode: false });
     const commitError = yield* git
       .execute({
         operation: "ManagedProjectFolders.commit",
@@ -814,7 +821,9 @@ const make = Effect.gen(function* () {
         .exists(path.join(workspaceRoot, ".specweave"))
         .pipe(Effect.orElseSucceed(() => false));
       if (present) return {};
-      const failure = yield* setUpSpecweave(workspaceRoot);
+      // Ticking Use SpecWeave asks for Git too when the folder has none; git
+      // init stages nothing, so the person's files stay theirs to commit.
+      const failure = yield* setUpSpecweave(workspaceRoot, { initGit: true });
       return failure === undefined ? { specweaveAdded: true } : specweaveFailure(failure);
     },
   );
@@ -860,7 +869,8 @@ const make = Effect.gen(function* () {
   const isUnclaimedEmptyFolder = (folder: string) =>
     Effect.all([
       fileSystem.readDirectory(folder).pipe(
-        Effect.map((entries) => entries.length === 0),
+        // A folder Finder or Explorer opened holds their litter and is still empty.
+        Effect.map((entries) => entries.every((entry) => OS_LITTER.has(entry))),
         Effect.orElseSucceed(() => false),
       ),
       projects.getByWorkspaceRoot(folder).pipe(

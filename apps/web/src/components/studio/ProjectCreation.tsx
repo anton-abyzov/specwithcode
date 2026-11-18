@@ -17,6 +17,10 @@ import { newProjectNameNotice, type NewProjectKind } from "../../studio/projectC
 export const SPECWEAVE_SETUP_DESCRIPTION =
   "Runs specweave init: adds .specweave/, agent skills, .claude/settings.json, .gitignore and .gitattributes rules and a README if there is none, and adds SpecWeave sections to AGENTS.md and CLAUDE.md, for specs, tasks and handoffs";
 
+/** The Git step "Use SpecWeave" adds for an existing folder that has no repository yet. */
+export const SPECWEAVE_GIT_NOTE =
+  "An existing folder that is not a Git repository yet gets git init and an empty first commit first; none of your files are added or committed.";
+
 /** What "Use SpecWeave" gives, in one sentence; the file list sits behind a disclosure. */
 export const SPECWEAVE_SETUP_SUMMARY =
   "Plans each piece of work as a spec with tasks, so threads link to a plan and you can track progress";
@@ -30,6 +34,7 @@ export function SpecweaveSetupDetails() {
     <details className="mx-4 mb-2 text-xs text-muted-foreground">
       <summary className="cursor-pointer select-none py-1">What Use SpecWeave adds</summary>
       <p className="mt-1 break-words">{SPECWEAVE_SETUP_DESCRIPTION}.</p>
+      <p className="mt-1 break-words">{SPECWEAVE_GIT_NOTE}</p>
       <p className="mt-1 break-words">{SPECWEAVE_OFF_DESCRIPTION}</p>
     </details>
   );

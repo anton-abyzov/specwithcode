@@ -2436,6 +2436,7 @@ export function ProjectWorkspaceSurface({
                     <ProjectSpecweaveSetting
                       project={project}
                       specweave={snapshot?.specweave}
+                      gitRepository={snapshot?.gitRepository}
                       disabled={!canOperate || !connected}
                       onChanged={query.refresh}
                     />
