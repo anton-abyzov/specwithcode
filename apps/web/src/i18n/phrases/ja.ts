@@ -5852,4 +5852,6 @@ export const ja: PhraseCatalog = {
   "The sample project is ready": "サンプルプロジェクトの準備ができました",
   "It appears in the sidebar once this window catches up.":
     "このウィンドウが更新されるとサイドバーに表示されます。",
+  "This connection cannot change the settings of this Mac.":
+    "この接続では、この Mac の設定を変更できません。",
 };

@@ -68,6 +68,7 @@ export const WAITING_ASK = "Waiting on this step. The coordinator's last message
 export const END_SENTENCE = "That is the loop: plan, board, work, review, done.";
 export const END_REVIEW_ALL = "Review finished features in all projects on this Mac";
 export const END_REVIEW_ALL_NOTE = "Each review uses the reviewer's plan.";
+export const END_REVIEW_ALL_NOT_ALLOWED = "This connection cannot change the settings of this Mac.";
 export const END_REVIEW_ALL_DONE =
   "On for all projects on this Mac. Each review uses the reviewer's plan.";
 export const END_REMOVE = "Remove the sample project";

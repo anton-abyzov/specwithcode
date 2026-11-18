@@ -5844,4 +5844,6 @@ export const ru: PhraseCatalog = {
   "The sample project is ready": "Учебный проект готов",
   "It appears in the sidebar once this window catches up.":
     "Он появится на боковой панели, когда окно обновится.",
+  "This connection cannot change the settings of this Mac.":
+    "Это подключение не может менять настройки этого Mac.",
 };

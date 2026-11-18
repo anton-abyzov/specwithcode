@@ -4,8 +4,8 @@
 import type { ProjectBoardCard, ProjectBoardCardReview } from "@specweave-studio/contracts";
 import { useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { FirstFeatureGuideView } from "../../src/components/studio/firstFeature/FirstFeatureGuide";
-import { FirstFeatureOfferCard } from "../../src/components/studio/firstFeature/FirstFeatureOffer";
+import { FirstFeatureGuideView } from "../../src/components/studio/firstFeature/FirstFeatureGuideView";
+import { FirstFeatureOfferCard } from "../../src/components/studio/firstFeature/FirstFeatureOfferCard";
 import {
   SAMPLE_REVIEW_WARNING_TITLE,
   firstFeatureOffer,
@@ -59,7 +59,7 @@ const done = (reviews?: ProjectBoardCardReview[]) => [
 const atEnd = { ...on, cards: done([review()]), openedReview: true };
 
 type Guide = { kind: "guide"; input: GuideInput; extra?: Record<string, unknown> };
-type Offer = { kind: "offer"; offer: Parameters<typeof firstFeatureOffer>[0] };
+type Offer = { kind: "offer"; offer: Parameters<typeof firstFeatureOffer>[0]; starting?: boolean };
 const offerBase = {
   supported: true,
   finishedBefore: false,
@@ -80,6 +80,7 @@ const continuing = [
 export const STATES: Record<string, Guide | Offer | { kind: "toast" }> = {
   "offer-start": { kind: "offer", offer: offerBase },
   "offer-sign-in": { kind: "offer", offer: { ...offerBase, agentReady: false } },
+  "offer-starting": { kind: "offer", offer: offerBase, starting: true },
   "offer-continue": { kind: "offer", offer: { ...offerBase, projects: continuing } },
   "offer-absent-no-key": { kind: "offer", offer: { ...offerBase, supported: false } },
   "offer-absent-finished": { kind: "offer", offer: { ...offerBase, finishedBefore: true } },
@@ -140,6 +141,21 @@ export const STATES: Record<string, Guide | Offer | { kind: "toast" }> = {
     input: atEnd,
     extra: { finishedStored: true, reviewAll: "done" },
   },
+  "end-review-all-saving": {
+    kind: "guide",
+    input: atEnd,
+    extra: { finishedStored: true, reviewAll: "saving" },
+  },
+  "end-review-all-not-allowed": {
+    kind: "guide",
+    input: atEnd,
+    extra: { finishedStored: true, reviewAll: "not-allowed" },
+  },
+  "end-removing": {
+    kind: "guide",
+    input: atEnd,
+    extra: { finishedStored: true, removing: "removing" },
+  },
   "end-remove-confirm": {
     kind: "guide",
     input: atEnd,
@@ -186,6 +202,7 @@ function Fixture() {
         {state.kind === "offer" ? (
           <FirstFeatureOfferCard
             offer={firstFeatureOffer(state.offer)}
+            starting={state.starting ?? false}
             onStart={noop}
             onDismiss={noop}
           />

@@ -4,9 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
-
-const { FirstFeatureGuideView } = await import("./FirstFeatureGuide");
+const { FirstFeatureGuideView } = await import("./FirstFeatureGuideView");
 const { guideView } = await import("./firstFeature.logic");
 type Props = Parameters<typeof FirstFeatureGuideView>[0];
 type Input = Parameters<typeof guideView>[0];

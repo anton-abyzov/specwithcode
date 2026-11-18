@@ -70,7 +70,10 @@ it("lists the same logical project on other machines, never by path", () => {
 
 it("lists the copies the sidebar groups as this project even when they are not linked", () => {
   const unlinked = (environmentId: string, workspaceRoot: string) =>
-    ({ ...copy(environmentId, workspaceRoot), workspaceSettings: null }) as unknown as EnvironmentProject;
+    ({
+      ...copy(environmentId, workspaceRoot),
+      workspaceSettings: null,
+    }) as unknown as EnvironmentProject;
   const m1Copy = unlinked("m1", "/Users/me/Projects/app-fleet");
   const m4Copy = unlinked("m4", "/Users/me/Projects/app");
   const stranger = unlinked("m5", "/Users/me/Projects/app");

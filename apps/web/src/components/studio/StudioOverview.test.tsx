@@ -49,7 +49,9 @@ const state = vi.hoisted(() => ({
 }));
 // Attention transport is isolated; root selection and aggregation remain real.
 vi.mock("./WhatYouCanDo", () => ({ WhatYouCanDo: () => null }));
-vi.mock("./firstFeature/FirstFeatureOffer", () => ({ FirstFeatureOffer: () => null }));
+vi.mock("./firstFeature/FirstFeatureOffer", () => ({
+  FirstFeatureOffer: () => <div data-testid="first-feature-offer" />,
+}));
 vi.mock("~/connection/catalog", () => ({ environmentCatalog: { retryNow: "retry-now" } }));
 vi.mock("~/state/shell", () => ({
   environmentShell: { stateAtom: (environmentId: string) => `shell:${environmentId}` },
@@ -375,6 +377,10 @@ function shell(
 }
 
 describe("deliberate native session entry", () => {
+  it("offers the first feature guide on the Overview page (1398 AC-20)", async () => {
+    await render();
+    expect(container.querySelectorAll('[data-testid="first-feature-offer"]')).toHaveLength(1);
+  });
   it("keeps overview on mount, rerender and reload without creating a draft", async () => {
     await render();
     await render();

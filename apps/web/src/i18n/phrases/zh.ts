@@ -5602,4 +5602,5 @@ export const zh: PhraseCatalog = {
   "The sample project has no first commit": "示例项目没有首次提交",
   "The sample project is ready": "示例项目已就绪",
   "It appears in the sidebar once this window catches up.": "窗口更新后，它会出现在侧边栏中。",
+  "This connection cannot change the settings of this Mac.": "此连接无法更改这台 Mac 的设置。",
 };

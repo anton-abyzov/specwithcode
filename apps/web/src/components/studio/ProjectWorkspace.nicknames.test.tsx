@@ -14,10 +14,8 @@ vi.mock("../../studio/machineNickname", async (importOriginal) => {
   return {
     ...actual,
     useMachineNicknames: () => resolve,
-    useMachineNickname: (
-      environmentId: string | null | undefined,
-      fallbackLabel?: string | null,
-    ) => (environmentId ? resolve(environmentId, fallbackLabel) : (fallbackLabel ?? "")),
+    useMachineNickname: (environmentId: string | null | undefined, fallbackLabel?: string | null) =>
+      environmentId ? resolve(environmentId, fallbackLabel) : (fallbackLabel ?? ""),
   };
 });
 

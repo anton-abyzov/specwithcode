@@ -73,6 +73,12 @@ const EXPECT = {
     action: "Sign in an agent first",
     title: "Build a first feature",
   },
+  "offer-starting": {
+    offer: "start",
+    action: "Try a first feature",
+    title: "Build a first feature",
+    disabled: true,
+  },
   "offer-continue": { offer: "continue", action: "Open it", title: "Continue your first feature" },
   "offer-absent-no-key": { absent: "[data-first-feature-offer]" },
   "offer-absent-finished": { absent: "[data-first-feature-offer]" },
@@ -96,6 +102,12 @@ const EXPECT = {
   end: { text: "That is the loop: plan, board, work, review, done.", removeDisabled: true },
   "end-finished-stored": { removeDisabled: false },
   "end-review-all-done": { text: "On for all projects on this Mac." },
+  "end-review-all-saving": { reviewAllDisabled: true },
+  "end-review-all-not-allowed": {
+    reviewAllDisabled: true,
+    text: "This connection cannot change the settings of this Mac.",
+  },
+  "end-removing": { text: "Its folder and files stay on disk." },
   "end-remove-confirm": { text: "Its folder and files stay on disk." },
 };
 
@@ -149,6 +161,13 @@ try {
             ),
             guide: guide !== null,
             removeDisabled: remove ? remove.disabled : null,
+            reviewAllDisabled:
+              all("button").find(
+                (b) =>
+                  b.textContent?.trim() === "Review finished features in all projects on this Mac",
+              )?.disabled ?? null,
+            offerDisabled:
+              document.querySelector("[data-first-feature-offer-action]")?.disabled ?? null,
             text: document.body.innerText,
           };
         });
@@ -187,6 +206,18 @@ try {
           );
           check(`${label}: marks are drawn`, seen.marksDrawn);
         }
+        if (want.reviewAllDisabled !== undefined)
+          check(
+            `${label}: Review-all waits`,
+            seen.reviewAllDisabled === want.reviewAllDisabled,
+            String(seen.reviewAllDisabled),
+          );
+        if (want.disabled !== undefined)
+          check(
+            `${label}: action waits while starting`,
+            seen.offerDisabled === want.disabled,
+            String(seen.offerDisabled),
+          );
         if (want.removeDisabled !== undefined)
           check(
             `${label}: Remove waits for finished`,

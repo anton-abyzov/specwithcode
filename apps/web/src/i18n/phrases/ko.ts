@@ -5779,4 +5779,6 @@ export const ko: PhraseCatalog = {
   "The sample project is ready": "샘플 프로젝트가 준비되었습니다",
   "It appears in the sidebar once this window catches up.":
     "이 창이 갱신되면 사이드바에 나타납니다.",
+  "This connection cannot change the settings of this Mac.":
+    "이 연결로는 이 Mac의 설정을 바꿀 수 없습니다.",
 };

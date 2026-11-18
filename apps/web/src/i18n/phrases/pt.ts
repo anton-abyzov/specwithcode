@@ -5847,4 +5847,6 @@ export const pt: PhraseCatalog = {
   "The sample project is ready": "O projeto de exemplo está pronto",
   "It appears in the sidebar once this window catches up.":
     "Ele aparece na barra lateral quando esta janela se atualizar.",
+  "This connection cannot change the settings of this Mac.":
+    "Esta conexão não pode alterar as configurações deste Mac.",
 };

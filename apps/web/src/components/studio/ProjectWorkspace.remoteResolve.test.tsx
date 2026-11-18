@@ -129,25 +129,30 @@ describe("Resolve on a thread that runs on another machine", () => {
       },
       "Still loading that machine's details. Try again in a moment.",
     ],
-  ] as const)("says why, and sends nothing, when that machine %s", async (_case, arrange, reason) => {
-    arrange();
-    await render();
-    expect(rowResolve().getAttribute("aria-disabled")).toBe("true");
-    await act(async () => rowResolve().click());
-    await openLaptopThread();
-    expect(headerResolve().getAttribute("aria-disabled")).toBe("true");
-    await act(async () => headerResolve().click());
-    expect(state.settle).not.toHaveBeenCalled();
-    expect(warnings().map(([toast]) => toast.description)).toEqual([reason, reason]);
-    // The project's own thread is untouched by another machine's trouble.
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>('[aria-label="Back to project threads"]')!.click(),
-    );
-    const own = container.querySelector<HTMLButtonElement>(
-      '[data-thread-id="worker"] .sws-thread-action',
-    )!;
-    expect(own.getAttribute("aria-disabled")).toBeNull();
-  });
+  ] as const)(
+    "says why, and sends nothing, when that machine %s",
+    async (_case, arrange, reason) => {
+      arrange();
+      await render();
+      expect(rowResolve().getAttribute("aria-disabled")).toBe("true");
+      await act(async () => rowResolve().click());
+      await openLaptopThread();
+      expect(headerResolve().getAttribute("aria-disabled")).toBe("true");
+      await act(async () => headerResolve().click());
+      expect(state.settle).not.toHaveBeenCalled();
+      expect(warnings().map(([toast]) => toast.description)).toEqual([reason, reason]);
+      // The project's own thread is untouched by another machine's trouble.
+      await act(async () =>
+        container
+          .querySelector<HTMLButtonElement>('[aria-label="Back to project threads"]')!
+          .click(),
+      );
+      const own = container.querySelector<HTMLButtonElement>(
+        '[data-thread-id="worker"] .sws-thread-action',
+      )!;
+      expect(own.getAttribute("aria-disabled")).toBeNull();
+    },
+  );
 
   describe("history on a machine that predates Resolve", () => {
     const history = (overrides: Record<string, unknown>) => {

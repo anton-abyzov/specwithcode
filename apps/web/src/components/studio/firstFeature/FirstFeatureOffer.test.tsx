@@ -3,9 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
-
-const { FirstFeatureOfferCard } = await import("./FirstFeatureOffer");
+const { FirstFeatureOfferCard } = await import("./FirstFeatureOfferCard");
 const { firstFeatureOffer } = await import("./firstFeature.logic");
 
 describe("FirstFeatureOfferCard (AC-11, AC-12, AC-20)", () => {
