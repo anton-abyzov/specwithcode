@@ -5283,6 +5283,7 @@ export const ja: PhraseCatalog = {
     "{main} に 10 分以上接続できていません。{machine} がメインになり、共有の目標、メモリ、計画から始めます。{main} の会話は履歴としてそこに残ります。{main} は戻るまで自分のマシンで作業を開始できますが、戻るとメインを譲り、その間に実行したものを一覧で示します。",
   "Switching…": "切り替え中…",
   "Make {machine} main": "{machine} をメインにする",
+  "Make {machine} main for {project}": "{project} のメインを {machine} にする",
   "Main for {project} is {machine}. This copy takes work from there.":
     "{project} のメインは {machine} です。このコピーはそこから作業を受け取ります。",
   "Main for {project} is on another machine. This copy takes work from there.":

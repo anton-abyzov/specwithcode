@@ -5218,6 +5218,7 @@ export const ko: PhraseCatalog = {
     "{main}에 10분 이상 연결할 수 없습니다. {machine}이(가) 메인이 되어 공유된 목표, 메모리, 계획에서 시작합니다. {main}의 대화는 기록으로 거기에 남습니다. {main}은(는) 돌아올 때까지 자기 컴퓨터에서 작업을 시작할 수 있지만, 돌아오면 메인을 넘겨주고 그동안 실행한 작업을 보여 줍니다.",
   "Switching…": "전환 중…",
   "Make {machine} main": "{machine}을(를) 메인으로",
+  "Make {machine} main for {project}": "{project}의 메인을 {machine}(으)로",
   "Main for {project} is {machine}. This copy takes work from there.":
     "{project}의 메인은 {machine}입니다. 이 복사본은 거기서 작업을 받습니다.",
   "Main for {project} is on another machine. This copy takes work from there.":

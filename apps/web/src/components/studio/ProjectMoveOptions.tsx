@@ -116,7 +116,10 @@ export function SendSummary({
   const holding = pickedHolding(send.holding, send.picked);
   const other = send.otherProject ?? null;
   const refused = move ? moveRefusal(send) : null;
-  const line = existingCopyLine({ there: targetLabel, holding: send.holding });
+  // Git only into a copy: nothing is copied and the plan names that copy's folder, so the
+  // "only what it is missing is copied" line would contradict the screen.
+  const gitIntoCopy = move && dialog?.method === "folder" && holding.kind === "copy";
+  const line = gitIntoCopy ? null : existingCopyLine({ there: targetLabel, holding: send.holding });
   const note = other
     ? refused
       ? {

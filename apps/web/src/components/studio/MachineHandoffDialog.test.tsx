@@ -709,18 +709,18 @@ describe("handoff file method and intent", () => {
 
     it("still moves Main with Git only, and says so before the click", async () => {
       await handoff({ method: "folder", onMethodChange: vi.fn(), send: facts() });
-      expect(document.querySelector("h2")?.textContent).toBe("Move Product to MacBook Pro");
+      // MacBook Pro already has a copy: nothing is copied, so it reads as making it main.
+      expect(document.querySelector("h2")?.textContent).toBe("Make MacBook Pro main for Product");
       expect(description()).toBe(
         "From MacBook M4. Main moves to MacBook Pro. Nothing on MacBook Pro is replaced without asking.",
       );
       expect(document.querySelector('[data-slot="handoff-coordinator"]')).toBeNull();
-      expect(text("send-existing-copy")).toBe(
-        "MacBook Pro already has a copy, at ~/specweave. Only what it is missing is copied.",
-      );
+      expect(document.querySelector('[data-slot="send-existing-copy"]')).toBeNull();
+      expect(document.body.textContent).not.toContain("Only what it is missing is copied");
       expect(text("send-plan")).toBe(
         "Push this machine's commits, then move Main to MacBook Pro's copy at ~/specweave. Work continues on MacBook Pro, and this copy stops starting work. 3 uncommitted files stay here.",
       );
-      await click(button("Move project to MacBook Pro"));
+      await click(button("Make MacBook Pro main"));
       expect(props.onReview).toHaveBeenCalledOnce();
     });
 
@@ -861,7 +861,8 @@ describe("handoff file method and intent", () => {
         "MacBook Pro already has Main, at ~/b, so there is nothing to move.",
       );
       await git({ picked: "a" });
-      expect(button("Move project to MacBook Pro").disabled).toBe(false);
+      // The picked copy is not Main: nothing is copied, Main switches there.
+      expect(button("Make MacBook Pro main").disabled).toBe(false);
       expect(text("send-plan")).toContain("move Main to MacBook Pro's copy at ~/a");
     });
   });

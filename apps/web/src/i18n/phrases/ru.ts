@@ -5280,6 +5280,7 @@ export const ru: PhraseCatalog = {
     "{main} недоступен 10 минут или дольше. {machine} станет основной и начнёт с общих цели, памяти и плана. Разговор на {main} останется там как история. Пока {main} не вернётся, он ещё может запускать работу на своей машине; затем он уступит и покажет, что запускал за это время.",
   "Switching…": "Переключаем…",
   "Make {machine} main": "Сделать {machine} основной",
+  "Make {machine} main for {project}": "Сделать {machine} основной для {project}",
   "Main for {project} is {machine}. This copy takes work from there.":
     "Основная для {project} — {machine}. Эта копия получает работу оттуда.",
   "Main for {project} is on another machine. This copy takes work from there.":

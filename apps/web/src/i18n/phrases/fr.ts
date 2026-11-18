@@ -5329,6 +5329,7 @@ export const fr: PhraseCatalog = {
     "{main} est injoignable depuis 10 minutes ou plus. {machine} devient la principale et repart de l’objectif, de la mémoire et du plan partagés. La conversation sur {main} y reste comme historique. Tant que {main} n’est pas de retour, elle peut encore démarrer du travail sur sa propre machine ; ensuite elle cède la place et liste ce qu’elle a lancé entre-temps.",
   "Switching…": "Changement…",
   "Make {machine} main": "Faire de {machine} la principale",
+  "Make {machine} main for {project}": "Faire de {machine} la principale de {project}",
   "Main for {project} is {machine}. This copy takes work from there.":
     "La principale de {project} est {machine}. Cette copie reçoit son travail de là-bas.",
   "Main for {project} is on another machine. This copy takes work from there.":

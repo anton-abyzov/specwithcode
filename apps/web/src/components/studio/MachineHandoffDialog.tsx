@@ -3,7 +3,7 @@ import { useState, type ComponentProps, type ReactNode } from "react";
 import type { MachineHandoffRetention } from "@specweave-studio/contracts";
 import type { HandoffFolderMethod } from "../../studio/folderCopy";
 import { useTx } from "../../i18n";
-import { sendHeader } from "../../studio/sendToMachine";
+import { pickedHolding, sendHeader } from "../../studio/sendToMachine";
 import { cn } from "../../lib/utils";
 import { MachineOptionRows, type MachineOption } from "../handoff/MachineOptionRows";
 import { Button } from "../ui/button";
@@ -222,6 +222,13 @@ export function MachineHandoffDialog({
   const moving = !copying || intent === "move";
   // Main may not move to the copy that is Main, nor into a project this one is not linked to.
   const refused = moving ? moveRefusal(send) : null;
+  // Git only, into a copy the machine already has: nothing is copied, only Main switches, so
+  // the dialog reads as "Make {machine} main", not as a project move.
+  const switchesMain =
+    !copying &&
+    refused === null &&
+    send !== null &&
+    pickedHolding(send.holding, send.picked).kind === "copy";
   const header = sendHeader({
     source: sourceLabel,
     there,
@@ -266,10 +273,14 @@ export function MachineHandoffDialog({
                   : complete
                     ? `${projectTitle} is on ${targetLabel}`
                     : there
-                      ? tx(moving ? "Move {project} to {machine}" : "Copy {project} to {machine}", {
-                          project: projectTitle,
-                          machine: there,
-                        })
+                      ? tx(
+                          switchesMain
+                            ? "Make {machine} main for {project}"
+                            : moving
+                              ? "Move {project} to {machine}"
+                              : "Copy {project} to {machine}",
+                          { project: projectTitle, machine: there },
+                        )
                       : tx(
                           moving
                             ? "Move {project} to another machine"
@@ -393,7 +404,11 @@ export function MachineHandoffDialog({
                   disabled={busy || !consent || !target || !!target.unavailable}
                   onClick={onContinue}
                 >
-                  {busy ? "Moving…" : `Move project to ${target?.label ?? "selected machine"}`}
+                  {busy
+                    ? "Moving…"
+                    : switchesMain
+                      ? tx("Make {machine} main", { machine: targetLabel })
+                      : `Move project to ${target?.label ?? "selected machine"}`}
                 </Button>
               </>
             ) : (
@@ -418,7 +433,9 @@ export function MachineHandoffDialog({
                   {busy
                     ? "Checking…"
                     : machineLabel
-                      ? `Move project to ${machineLabel}`
+                      ? switchesMain
+                        ? tx("Make {machine} main", { machine: machineLabel })
+                        : `Move project to ${machineLabel}`
                       : "Move project"}
                 </Button>
               </>
