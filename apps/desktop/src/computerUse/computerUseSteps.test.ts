@@ -451,14 +451,18 @@ describe("iPhone Mirroring", () => {
  * of posting them; the frontmost app changes after `leaveAfter` frontmost checks.
  */
 function replayWithStubs(steps: ReadonlyArray<InputStep>, leaveAfter: number) {
-  const posted: Array<{
+  interface Recorded {
     type: number;
     x?: number;
+    y?: number;
+    button?: number;
     key?: number;
     down?: boolean;
-    flags: number;
+    hid?: boolean;
+    flags: number | undefined;
     clickState: number;
-  }> = [];
+  }
+  const posted: Array<Recorded> = [];
   let checks = 0;
   const nsString = (value: string) => ({ isNil: () => false, js: value });
   const workspace = {
@@ -468,22 +472,32 @@ function replayWithStubs(steps: ReadonlyArray<InputStep>, leaveAfter: number) {
       return { isNil: () => false, bundleIdentifier: nsString(id), localizedName: nsString(id) };
     },
   };
-  const make = (event: object) => ({ ...event, flags: 0, clickState: 0 });
+  const hidSource = { hid: true };
+  // Flags stay undefined until CGEventSetFlags runs, so "set to 0" differs from "never set".
+  const make = (event: Omit<Recorded, "flags" | "clickState">): Recorded => ({
+    ...event,
+    flags: undefined,
+    clickState: 0,
+  });
   const bridge = {
     NSWorkspace: { sharedWorkspace: workspace },
-    CGEventSourceCreate: () => ({}),
-    CGEventCreateMouseEvent: (_: unknown, type: number, point: { x: number }) =>
-      make({ type, x: point.x }),
-    CGEventCreateKeyboardEvent: (_: unknown, key: number, down: boolean) =>
-      make({ type: down ? 10 : 11, key, down }),
+    CGEventSourceCreate: () => hidSource,
+    CGEventCreateMouseEvent: (
+      _: unknown,
+      type: number,
+      point: { x: number; y: number },
+      button: number,
+    ) => make({ type, x: point.x, y: point.y, button }),
+    CGEventCreateKeyboardEvent: (source: unknown, key: number, down: boolean) =>
+      make({ type: down ? 10 : 11, key, down, hid: source === hidSource }),
     CGEventCreateScrollWheelEvent2: () => make({ type: 22 }),
-    CGEventSetIntegerValueField: (event: { clickState: number }, _: number, value: number) => {
+    CGEventSetIntegerValueField: (event: Recorded, _: number, value: number) => {
       event.clickState = value;
     },
-    CGEventSetFlags: (event: { flags: number }, flags: number) => {
+    CGEventSetFlags: (event: Recorded, flags: number) => {
       event.flags = flags;
     },
-    CGEventPost: (_: number, event: (typeof posted)[number]) => posted.push({ ...event }),
+    CGEventPost: (_: number, event: Recorded) => posted.push({ ...event }),
   };
   const context = NodeVM.createContext({
     ObjC: { import: () => undefined },
@@ -514,7 +528,11 @@ describe("input replay guard", () => {
     const steps = actionSteps({ kind: "click", x: 10, y: 20 }, display);
     const { posted, error } = replayWithStubs(steps, 0);
     expect(error).toBeUndefined();
-    expect(posted.map((event) => event.type)).toEqual([5, 1, 2]);
+    expect(posted).toEqual([
+      { type: 5, x: 10, y: 20, button: 0, flags: 0, clickState: 0 },
+      { type: 1, x: 10, y: 20, button: 0, flags: 0, clickState: 1 },
+      { type: 2, x: 10, y: 20, button: 0, flags: 0, clickState: 1 },
+    ]);
   });
 
   it("releases the button at the last drag point when the app leaves mid-drag", () => {
@@ -529,7 +547,11 @@ describe("input replay guard", () => {
     const last = posted.at(-1)!;
     expect(last.type).toBe(2);
     expect(last.clickState).toBe(1);
-    expect(last.x).toBe(posted.at(-2)!.x);
+    // The drag is vertical, so y tells the press point from the last drag point.
+    expect(last.y).toBe(posted.at(-2)!.y);
+    expect(last.y).not.toBe(posted.find((event) => event.type === 1)!.y);
+    expect(last.button).toBe(0);
+    expect(last.flags).toBe(0);
     expect(posted.filter((event) => event.type === 2)).toHaveLength(1);
   });
 
@@ -538,11 +560,11 @@ describe("input replay guard", () => {
     // Checks: awaitFront, shift down, A down, then the app leaves.
     const { posted, error } = replayWithStubs(steps, 3);
     expect(error).toMatch(/left-front/);
-    expect(posted.map((event) => [event.key, event.down, event.flags])).toEqual([
-      [56, true, 0x20000],
-      [0, true, 0x20000],
-      [0, false, 0x20000],
-      [56, false, 0],
+    expect(posted.map((event) => [event.key, event.down, event.flags, event.hid])).toEqual([
+      [56, true, 0x20000, true],
+      [0, true, 0x20000, true],
+      [0, false, 0x20000, true],
+      [56, false, 0, true],
     ]);
   });
 
