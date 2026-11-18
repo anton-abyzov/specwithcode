@@ -86,8 +86,18 @@ const EXPECT = {
   "sample-review-warning": { text: "Automatic review is still on for the sample" },
   "step1-specweave": { knots: ["now", "later", "later"], text: "Turn SpecWeave on." },
   "step1-waiting": { knots: ["now", "later", "later"], waiting: true },
-  "step2-ask": { knots: ["done", "now", "later"], text: "review it and close it." },
-  "step2-ask-no-second-family": { knots: ["done", "now", "later"], text: "build it and close it." },
+  "step2-ask": {
+    knots: ["done", "now", "later"],
+    text: "review it and close it.",
+    writeDisabled: false,
+  },
+  "step2-ask-no-second-family": {
+    knots: ["done", "now", "later"],
+    text: "build it and close it.",
+    writeDisabled: false,
+  },
+  "step2-ask-unknown": { knots: ["done", "now", "later"], writeDisabled: true },
+  "step2-ask-written": { text: "review it and close it.", writeDisabled: null },
   "step2-planning": { status: "planning" },
   "step2-working": { status: "working", text: "Working: 2 of 4 tasks" },
   "step2-in-review": { status: "review" },
@@ -166,6 +176,9 @@ try {
                 (b) =>
                   b.textContent?.trim() === "Review finished features in all projects on this Mac",
               )?.disabled ?? null,
+            writeDisabled:
+              all("button").find((b) => b.textContent?.trim() === "Write it for me")?.disabled ??
+              null,
             offerDisabled:
               document.querySelector("[data-first-feature-offer-action]")?.disabled ?? null,
             text: document.body.innerText,
@@ -211,6 +224,12 @@ try {
             `${label}: Review-all waits`,
             seen.reviewAllDisabled === want.reviewAllDisabled,
             String(seen.reviewAllDisabled),
+          );
+        if (want.writeDisabled !== undefined)
+          check(
+            `${label}: Write it for me ${want.writeDisabled === null ? "gone" : want.writeDisabled ? "waits" : "ready"}`,
+            seen.writeDisabled === want.writeDisabled,
+            String(seen.writeDisabled),
           );
         if (want.disabled !== undefined)
           check(

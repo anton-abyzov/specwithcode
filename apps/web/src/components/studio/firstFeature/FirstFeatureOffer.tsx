@@ -176,6 +176,9 @@ export function FirstFeatureOffer() {
   const [finishedHere] = useFirstFeatureFinishedHere(sample.environmentId);
   const offer = firstFeatureOffer({
     supported: sample.supported,
+    // The server fact is read when the config loads; windows sharing this origin's storage learn
+    // a finish at once through finishedHere. A window on another origin or browser profile keeps
+    // its loaded config and can offer the card again until it reloads; pressing it makes a new sample.
     finishedBefore: sample.finishedOnServer || finishedHere,
     dismissed,
     agentReady: sample.agentReady,

@@ -7,6 +7,7 @@ import { createRoot } from "react-dom/client";
 import { FirstFeatureGuideView } from "../../src/components/studio/firstFeature/FirstFeatureGuideView";
 import { FirstFeatureOfferCard } from "../../src/components/studio/firstFeature/FirstFeatureOfferCard";
 import {
+  FIRST_FEATURE_REQUEST,
   SAMPLE_REVIEW_WARNING_TITLE,
   firstFeatureOffer,
   guideView,
@@ -99,6 +100,12 @@ export const STATES: Record<string, Guide | Offer | { kind: "toast" }> = {
   "step1-waiting": { kind: "guide", input: { ...base, specweaveWaiting: true } },
   "step2-ask": { kind: "guide", input: on },
   "step2-ask-no-second-family": { kind: "guide", input: { ...on, secondFamily: false } },
+  "step2-ask-unknown": { kind: "guide", input: { ...on, secondFamily: null } },
+  "step2-ask-written": {
+    kind: "guide",
+    input: on,
+    extra: { requestWritten: FIRST_FEATURE_REQUEST },
+  },
   "step2-planning": {
     kind: "guide",
     input: { ...on, cards: [card({ tasks: { total: 0, done: 0 } })] },

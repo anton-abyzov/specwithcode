@@ -208,7 +208,8 @@ function FirstFeatureGuideHost(props: FirstFeatureGuideProps) {
   const remove = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
   const [reviewAll, setReviewAll] = useState<"offered" | "saving" | "done">("offered");
   const [removing, setRemoving] = useState<"offered" | "confirm" | "removing">("offered");
-  const [requestWritten, setRequestWritten] = useState(false);
+  // The request text written into the composer in this window, until a card shows.
+  const [requestWritten, setRequestWritten] = useState<string | null>(null);
   const active = shown === "running" || shown === "finished";
   const boardQuery = useEnvironmentQuery(
     useMemo(
@@ -249,6 +250,10 @@ function FirstFeatureGuideHost(props: FirstFeatureGuideProps) {
     openedReview: local.openedReview,
     skipped: local.skipped,
   });
+  const hasCard = view.card !== null;
+  useEffect(() => {
+    if (hasCard) setRequestWritten(null);
+  }, [hasCard]);
   // Seen In review once, so a card back in Active reads as fixing what the review found.
   const inReview = view.card?.column === "review";
   useEffect(() => {
@@ -290,7 +295,7 @@ function FirstFeatureGuideHost(props: FirstFeatureGuideProps) {
       onWriteRequest={() => {
         if (props.onAsk === undefined) return;
         props.onAsk(view.request);
-        setRequestWritten(true);
+        setRequestWritten(view.request);
       }}
       onOpenThread={props.onOpenThread}
       onOpenReview={() => {

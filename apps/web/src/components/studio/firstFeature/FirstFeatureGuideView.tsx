@@ -60,8 +60,8 @@ export interface FirstFeatureGuideViewProps {
   readonly error?: string | null | undefined;
   readonly reviewAll?: "offered" | "saving" | "done" | "not-allowed" | undefined;
   readonly removing?: "offered" | "confirm" | "removing" | undefined;
-  /** "Write it for me" was pressed in this window: the request is in the composer once. */
-  readonly requestWritten?: boolean | undefined;
+  /** The request "Write it for me" put in the composer in this window, while no card shows. */
+  readonly requestWritten?: string | null | undefined;
   readonly onShowMe: () => void;
   readonly onWriteRequest: () => void;
   readonly onOpenThread: () => void;
@@ -233,14 +233,15 @@ export function FirstFeatureGuideView(props: FirstFeatureGuideViewProps) {
           <>
             <p className="text-sm">
               {tx(
-                view.request === FIRST_FEATURE_REQUEST_NO_REVIEW
+                (view.card === null ? (props.requestWritten ?? view.request) : view.request) ===
+                  FIRST_FEATURE_REQUEST_NO_REVIEW
                   ? ASK_SENTENCE_NO_REVIEW
                   : ASK_SENTENCE,
               )}
             </p>
             {view.askStatus ? <AskStatusLine status={view.askStatus} /> : null}
             <div className="flex flex-wrap gap-2">
-              {view.card === null && props.requestWritten !== true ? (
+              {view.card === null && props.requestWritten !== view.request ? (
                 <Button
                   size="sm"
                   variant="outline"

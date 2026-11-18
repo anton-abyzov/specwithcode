@@ -41,7 +41,8 @@ vi.mock("../../ui/toast", () => ({
 }));
 
 const { FirstFeatureGuide } = await import("./FirstFeatureGuide");
-const { FIRST_FEATURE_REQUEST } = await import("./firstFeature.logic");
+const { FIRST_FEATURE_REQUEST, FIRST_FEATURE_REQUEST_NO_REVIEW } =
+  await import("./firstFeature.logic");
 const { DEFAULT_SERVER_SETTINGS, ProviderDriverKind, ProviderInstanceId } =
   await import("@specweave-studio/contracts");
 type Props = Parameters<typeof FirstFeatureGuide>[0];
@@ -213,6 +214,42 @@ describe("FirstFeatureGuide host", () => {
     expect(onAsk).toHaveBeenCalledWith(FIRST_FEATURE_REQUEST);
     expect(button("Write it for me")).toBeUndefined();
     expect(button("Open the thread")).toBeDefined();
+  });
+
+  it("offers the request again when the right one changes after it was written", async () => {
+    const onAsk = vi.fn();
+    const ready = (id: string, slug: string) => ({
+      instanceId: ProviderInstanceId.make(id),
+      driver: ProviderDriverKind.make(id),
+      enabled: true,
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-11-18T12:00:00.000Z",
+      version: null,
+      models: [{ slug, name: slug, isCustom: false, capabilities: null }],
+      slashCommands: [],
+      skills: [],
+    });
+    const author = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+    state.config = {
+      settings: DEFAULT_SERVER_SETTINGS,
+      providers: [ready("claudeAgent", "claude-opus-5-5"), ready("codex", "gpt-6.1-sol")],
+    };
+    await show(sample(), { onAsk, author });
+    await act(async () => button("Write it for me")!.click());
+    expect(onAsk).toHaveBeenLastCalledWith(FIRST_FEATURE_REQUEST);
+    // The second family signs out before Send: the sentence still describes what was written.
+    state.config = {
+      settings: DEFAULT_SERVER_SETTINGS,
+      providers: [ready("claudeAgent", "claude-opus-5-5")],
+    };
+    await show(sample(), { onAsk, author });
+    expect(container.textContent).toContain("plan it, build it, review it and close it.");
+    await act(async () => button("Write it for me")!.click());
+    expect(onAsk).toHaveBeenLastCalledWith(FIRST_FEATURE_REQUEST_NO_REVIEW);
+    expect(container.textContent).toContain("plan it, build it and close it.");
+    expect(button("Write it for me")).toBeUndefined();
   });
 
   it("tries a failed finished mark again", async () => {
