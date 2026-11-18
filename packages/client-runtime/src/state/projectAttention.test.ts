@@ -5,6 +5,7 @@ import {
   aggregateProjectAttention,
   threadDependencyWait,
   observeProjectThread,
+  subagentQuestionWait,
   type AttentionMember,
 } from "./projectAttention.js";
 import {
@@ -791,5 +792,105 @@ describe("the raise rule", () => {
     });
     expect(result.roots[0]).toMatchObject({ ownerMachineId: "host", raised: true });
     expect(result.count).toBe(1);
+  });
+});
+
+// On November 18, 2026, one worker sat under Needs you for a reviewer's card
+// two levels down, after the reviewer had ended and its lead had merged;
+// another for a scope question its own subagent asked while still working.
+describe("a worker's subagent question goes to its lead", () => {
+  const at = (iso: string) => `2026-11-18T${iso}Z`;
+  const ran = (startedAt: string, completedAt: string | null) =>
+    ({
+      latestRun: {
+        runId: `run-${startedAt}`,
+        status: completedAt === null ? "running" : "completed",
+        requestedAt: at(startedAt),
+        startedAt: at(startedAt),
+        completedAt: completedAt === null ? null : at(completedAt),
+      },
+      runtime:
+        completedAt === null ? ({ status: "running" } as EnvironmentThreadShell["runtime"]) : null,
+    }) as Partial<EnvironmentThreadShell>;
+  const asking = (
+    id: string,
+    parent: string,
+    run: Partial<EnvironmentThreadShell>,
+    kind = "user_input",
+  ) =>
+    child(id, parent, {
+      ...run,
+      hasPendingUserInput: kind === "user_input",
+      source: {
+        creationSource: "mcp",
+        pendingRuntimeRequest: {
+          id: kind === "user_input" ? `ask-user:${id}:q1` : `approval:${id}`,
+          kind,
+          createdAt: null,
+        },
+      },
+    } as unknown as Partial<EnvironmentThreadShell>);
+  const worker = (id: string, run: Partial<EnvironmentThreadShell> = {}) =>
+    child(id, "project-coordinator:project", {
+      ...run,
+      source: { creationSource: "mcp", pendingRuntimeRequest: null },
+    } as unknown as Partial<EnvironmentThreadShell>);
+  const aggregate = (root: EnvironmentThreadShell, ...rest: EnvironmentThreadShell[]) =>
+    aggregateProjectAttention({ members: [member], roots: [root], threads: [root, ...rest] });
+
+  it("drops a card once the asker ended and its lead finished a later turn", () => {
+    const skills = worker("skills", ran("13:47:29", "13:47:34"));
+    const laneB = child("lane-b", "skills", ran("09:28:58", "09:37:50"));
+    const review = asking("review", "lane-b", ran("09:19:22", "09:28:53"));
+    const result = aggregate(skills, laneB, review);
+    expect(result.count).toBe(0);
+    expect(result.roots[0]).toMatchObject({ actions: [], waits: [] });
+  });
+
+  it("waits on a lead that is working after the asker ended", () => {
+    const skills = worker("skills", ran("09:00:00", "09:10:00"));
+    const laneB = child("lane-b", "skills", ran("09:00:05", null));
+    const review = asking("review", "lane-b", ran("09:19:22", "09:28:53"));
+    const result = aggregate(skills, laneB, review);
+    expect(result.count).toBe(0);
+    expect(result.roots[0]?.actions).toEqual([]);
+  });
+
+  it("asks the person when no lead works or has run since the asker ended", () => {
+    const skills = worker("skills", ran("09:00:00", "09:10:00"));
+    const laneB = child("lane-b", "skills", ran("09:00:05", "09:15:00"));
+    const review = asking("review", "lane-b", ran("09:19:22", "09:28:53"));
+    expect(aggregate(skills, laneB, review).count).toBe(1);
+    // A lead that is gone cannot answer either.
+    expect(subagentQuestionWait(review, undefined)).toBeNull();
+  });
+
+  it("keeps a working asker's question with its lead", () => {
+    const onboarding = worker("onboarding", ran("14:25:05", "14:30:01"));
+    const cli = asking("cli", "onboarding", ran("14:25:22", null));
+    const result = aggregate(onboarding, cli);
+    expect(result.count).toBe(0);
+    expect(result.roots[0]?.actions).toEqual([]);
+    expect(result.roots[0]?.working).toBe(true);
+  });
+
+  it("still asks the person when a coordinator's own worker asks", () => {
+    const integrations = asking(
+      "integrations",
+      "project-coordinator:project",
+      ran("14:37:25", "14:45:20"),
+    );
+    const result = aggregate(integrations);
+    expect(result.count).toBe(1);
+    expect(result.roots[0]?.actions).toMatchObject([{ threadId: "integrations", reason: "input" }]);
+  });
+
+  it("still asks the person to approve a grandchild's command", () => {
+    const skills = worker("skills", ran("13:47:29", "13:47:34"));
+    const laneB = child("lane-b", "skills", ran("09:28:58", "09:37:50"));
+    const review = asking("review", "lane-b", ran("09:19:22", null), "command");
+    const result = aggregate(skills, laneB, review);
+    expect(result.count).toBe(1);
+    expect(result.roots[0]?.actions).toMatchObject([{ threadId: "review", reason: "approval" }]);
   });
 });

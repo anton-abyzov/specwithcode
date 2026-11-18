@@ -526,6 +526,10 @@ it.effect("shell failure lookups stay on the thread's own turn items", () =>
     const secretLookups = plan.filter((row) => row.detail.startsWith("SEARCH secret "));
     assert.lengthOf(secretLookups, 1);
     assert.include(secretLookups[0]!.detail, "turn_items_thread_run_idx");
+    // An open ask_user card's questions are read through its own node.
+    const questionLookups = plan.filter((row) => row.detail.startsWith("SEARCH question "));
+    assert.lengthOf(questionLookups, 1);
+    assert.include(questionLookups[0]!.detail, "turn_items_node_ordinal_idx (node_id=?)");
   }).pipe(Effect.provide(layerSql)),
 );
 
@@ -679,6 +683,90 @@ it.effect.each([
       const different = (yield* store.getShellSnapshot()).threads.find((t) => t.id === threadId);
       assert.strictEqual(different?.pendingRuntimeRequest?.id, "different-decision");
     }).pipe(Effect.provide(testLayer)),
+);
+
+// November 18, 2026: Needs you rows said "Answer needed" without what to answer.
+it.effect.each([
+  ["sql", layerSql],
+  ["memory", ProjectionStore.layerMemory],
+] as const)("%s: an open question card carries its prompt to the shell row", ([, testLayer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* createThread("question-prompt");
+    const runId = yield* createRun(threadId, "running");
+    const requestId = RuntimeRequestId.make("ask-user:question-prompt:q2");
+    const nodeId = NodeId.make("node:ask-user:question-prompt");
+    const card = (
+      id: string,
+      ordinal: number,
+      cardRequestId: RuntimeRequestId,
+      header: string,
+      labels: readonly [string, string],
+    ) =>
+      store.apply({
+        id: EventId.make(`event:question-prompt:${id}`),
+        type: "turn-item.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`turn-item:ask-user:question-prompt:${id}`),
+          threadId,
+          runId,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal,
+          status: "waiting",
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "user_input_request",
+          requestId: cardRequestId,
+          questions: [
+            {
+              id: "q1",
+              header,
+              question: "Ship now, or wait for the review?",
+              options: labels.map((label) => ({ label, description: label })),
+            },
+          ],
+          responseMode: "message",
+        },
+      });
+    // An earlier card on the same node belongs to another request.
+    yield* card("q1", 4, RuntimeRequestId.make("ask-user:question-prompt:q1"), "Earlier", [
+      "Yes",
+      "No",
+    ]);
+    yield* card("q2", 5, requestId, "Release", ["Ship now", "Wait for review"]);
+    yield* store.apply({
+      id: EventId.make("event:question-prompt:request"),
+      type: "runtime-request.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: requestId,
+        nodeId,
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "message" },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    });
+    const shell = (yield* store.getShellSnapshot()).threads.find((t) => t.id === threadId);
+    assert.strictEqual(shell?.pendingRuntimeRequest?.id, requestId);
+    assert.strictEqual(
+      shell?.pendingRuntimeRequest?.prompt,
+      "Release: Ship now or Wait for review",
+    );
+  }).pipe(Effect.provide(testLayer)),
 );
 
 it.effect.each([

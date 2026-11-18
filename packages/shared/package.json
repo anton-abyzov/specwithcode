@@ -620,6 +620,10 @@
       "types": "./src/reportDocument.ts",
       "import": "./src/reportDocument.ts"
     },
+    "./attentionAsk": {
+      "types": "./src/attentionAsk.ts",
+      "import": "./src/attentionAsk.ts"
+    },
     "./threadReport": {
       "types": "./src/threadReport.ts",
       "import": "./src/threadReport.ts"

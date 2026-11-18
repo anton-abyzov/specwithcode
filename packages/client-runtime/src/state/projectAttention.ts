@@ -126,12 +126,52 @@ export function threadDependencyWait(thread: EnvironmentThreadShell): string | n
   return thread.reportedWait ?? reportWaitReason(thread.reportedBlocker ?? "");
 }
 
+/** How the app names a question card asked through its own ask_user tool. */
+const ASK_USER_REQUEST = /(^|:)ask-user:/u;
+
+/**
+ * Who an open question card on a worker's own subagent waits on. Such a
+ * child reports to its lead, and its result (which names the question) wakes
+ * the lead, so the question is the lead's to settle: the lead answers the card
+ * or relays a decision only the person can make in its own report, the way a
+ * child's report blocker already goes to the lead. "lead" while the asker or
+ * its lead still works; "settled" once the lead has finished a turn that
+ * started after the asker's last run ended, and the card no longer counts.
+ * Null when the person must answer: the thread asks the person directly, the
+ * request is not an ask_user question (a secret, a sign-in or an approval), or
+ * no lead is working or has run since the asker ended (it is gone, or nothing
+ * will wake it).
+ */
+export function subagentQuestionWait(
+  asker: EnvironmentThreadShell,
+  lead: EnvironmentThreadShell | undefined,
+): "lead" | "settled" | null {
+  const pending = asker.source?.pendingRuntimeRequest;
+  if (!pending || !ASK_USER_REQUEST.test(pending.id) || !reportsToParentAgent(asker)) return null;
+  if (threadAwaitingPerson(asker)?.kind !== "answer" || lead === undefined) return null;
+  if (threadRuntimeIsActive(asker.runtime) || threadRuntimeIsActive(lead.runtime)) return "lead";
+  const askerEnded = millis(asker.latestRun?.completedAt);
+  const leadRun = lead.latestRun;
+  const leadStarted = millis(leadRun?.startedAt ?? leadRun?.requestedAt);
+  return askerEnded !== null &&
+    leadStarted !== null &&
+    leadStarted > askerEnded &&
+    leadRun?.completedAt != null
+    ? "settled"
+    : null;
+}
+
+/** The words a root goes by while a subagent's question waits on its lead. */
+export const SUBAGENT_QUESTION_WAIT = "Waiting for subagents";
+
 export function observeProjectThread(
   thread: EnvironmentThreadShell,
   freshness: AttentionFreshness = "live",
+  /** The verdict of subagentQuestionWait: a question its lead settles is not the person's. */
+  questionGoesToLead = false,
 ): AttentionObservation {
   const pending = thread.source?.pendingRuntimeRequest;
-  const person = pending === null ? null : threadAwaitingPerson(thread);
+  const person = pending === null || questionGoesToLead ? null : threadAwaitingPerson(thread);
   const generation = thread.runtime?.activeRunId ?? thread.latestRun?.runId ?? "legacy";
   const requests: AttentionObservation["requests"][number][] = [];
   if (person)
@@ -377,8 +417,11 @@ export function aggregateProjectAttention(input: {
       continue;
     representedThreads.add(keysOf(thread).environmentThread);
     const member = members.get(keysOf(root.thread).member)!;
+    const leadKey = keysOf(thread).parent;
+    const leads = leadKey ? (byEnvironmentThread.get(leadKey) ?? []) : [];
+    const question = subagentQuestionWait(thread, leads.length === 1 ? leads[0] : undefined);
     const observation = inheritRootSettlement(
-      observeProjectThread(thread, member.freshness),
+      observeProjectThread(thread, member.freshness, question !== null),
       root.thread,
     );
     const actions = classifyProjectActions(observation);
@@ -388,7 +431,9 @@ export function aggregateProjectAttention(input: {
       const wait =
         observation.settled || root.thread.runtime?.status === "failed"
           ? null
-          : threadDependencyWait(thread);
+          : question === "lead"
+            ? SUBAGENT_QUESTION_WAIT
+            : threadDependencyWait(thread);
       if (wait && !root.waits.includes(wait)) root.waits.push(wait);
       const executionActive =
         thread.lineage?.relationshipToParent !== "subagent" ||

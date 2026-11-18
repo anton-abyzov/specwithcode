@@ -1059,7 +1059,7 @@ export function ThreadsPane({
                                             {rowStatus}
                                           </span>
                                         );
-                                        // Blocked says on hover what the report asks of the reader.
+                                        // A report blocker's whole ask shows on hover; the row shows its first sentence.
                                         return blocker ? (
                                           <Tip label={blocker} side="top">
                                             {word}

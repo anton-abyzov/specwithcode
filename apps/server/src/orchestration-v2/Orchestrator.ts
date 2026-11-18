@@ -801,6 +801,19 @@ const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
 /** Why a turn stopped when the user switched its provider or model mid-turn. */
 export const MODEL_SWITCH_STOP_MESSAGE = "Switched to another model";
 export const WORKSPACE_MOVE_STOP_MESSAGE = "Moved to another workspace";
+/**
+ * Why a turn stopped when its agent moved the thread into a worktree and
+ * queued the prompt that goes on there. A delegated task's result waits for
+ * that continuation (see finalizeAppOwnedSubagent).
+ */
+export const WORKSPACE_MOVE_CONTINUES_MESSAGE = "Moved to a worktree; the work continues there";
+/**
+ * How long a moved child's result waits for its continuation's run. The
+ * continuation is queued right after the move commits, so it normally appears
+ * within a second; one that failed to queue or was cancelled releases the
+ * result once this passes.
+ */
+export const WORKSPACE_MOVE_CONTINUATION_WAIT_MS = 60_000;
 
 /** A reopened preparation item drops the output and exit code of the attempt it replaces. */
 function withoutPreparationResult(
@@ -4398,7 +4411,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             completedAt: now,
             updatedAt: now,
             type: "run_interrupt_request",
-            message: workspaceMove ? WORKSPACE_MOVE_STOP_MESSAGE : MODEL_SWITCH_STOP_MESSAGE,
+            message: !workspaceMove
+              ? MODEL_SWITCH_STOP_MESSAGE
+              : switchCause === "agent" &&
+                  command.type === "thread.metadata.update" &&
+                  command.continuesInWorktree === true
+                ? WORKSPACE_MOVE_CONTINUES_MESSAGE
+                : WORKSPACE_MOVE_STOP_MESSAGE,
             cause: switchCause,
           },
         });
@@ -12002,6 +12021,41 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
+  // Moved children whose result waits for a continuation, each rechecked once
+  // when its wait ends. Server recovery rechecks any wait a restart cut short.
+  const movedChildRechecks = new Set<RunId>();
+  const recheckMovedChildLater = (
+    parentThreadId: ThreadId,
+    childThreadId: ThreadId,
+    childRunId: RunId,
+    delayMs: number,
+  ): Effect.Effect<void> =>
+    movedChildRechecks.has(childRunId)
+      ? Effect.void
+      : Effect.sync(() => movedChildRechecks.add(childRunId)).pipe(
+          Effect.andThen(
+            Effect.forkDetach(
+              Effect.sleep(Duration.millis(delayMs)).pipe(
+                Effect.andThen(Effect.sync(() => movedChildRechecks.delete(childRunId))),
+                Effect.andThen(
+                  threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(childThreadId)),
+                ),
+                Effect.catchCause((cause) =>
+                  Effect.sync(() => movedChildRechecks.delete(childRunId)).pipe(
+                    Effect.andThen(
+                      Effect.logWarning("Failed to settle a child moved into a worktree", {
+                        childThreadId,
+                        cause,
+                      }),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Effect.asVoid,
+        );
+
   /**
    * Transfers a terminal child's result into its parent and offers the parent
    * wake. Every mutation here targets the PARENT thread, so callers must hold
@@ -12046,6 +12100,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         )
       ) {
         return;
+      }
+      // The child moved itself into a worktree and queued its continuation:
+      // that run's end delivers the result, so the parent never hears of a
+      // stop that was only the move (November 18, 2026: "Stopped" on a
+      // subagent already working in its worktree). The hold lasts until a
+      // later run exists, which then owns the result, or until the wait ends.
+      if (
+        childRun.status === "interrupted" &&
+        !childControls.runs.some((run) => run.ordinal > childRun.ordinal)
+      ) {
+        const moved = (yield* readInterruptRequests(
+          { commandId: CommandId.make(`finalize:${childRun.id}`), threadId: childThreadId },
+          childRun.id,
+        )).find(
+          (item) =>
+            item.type === "run_interrupt_request" &&
+            item.cause === "agent" &&
+            item.message === WORKSPACE_MOVE_CONTINUES_MESSAGE,
+        );
+        const waitedMs =
+          moved === undefined
+            ? undefined
+            : DateTime.toEpochMillis(yield* DateTime.now) -
+              DateTime.toEpochMillis(moved.completedAt ?? moved.updatedAt);
+        if (waitedMs !== undefined && waitedMs < WORKSPACE_MOVE_CONTINUATION_WAIT_MS) {
+          yield* recheckMovedChildLater(
+            childControls.thread.lineage.parentThreadId,
+            childThreadId,
+            childRun.id,
+            WORKSPACE_MOVE_CONTINUATION_WAIT_MS - waitedMs,
+          );
+          return;
+        }
       }
 
       const childResult = yield* projectionStore.getThreadRecords(
