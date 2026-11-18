@@ -261,7 +261,14 @@ describe("requestFullDiskAccess", () => {
     Effect.gen(function* () {
       const error = yield* requestAccess(scope, { ...input, apps: ["Notes"] }).pipe(
         Effect.flip,
-        Effect.provide(service([], "allowed")),
+        Effect.provide(
+          Layer.mergeAll(
+            service([], "allowed"),
+            Layer.mock(AccessRequests.AccessRequests)({}),
+            Layer.mock(ComputerUseBroker.ComputerUseBroker)({}),
+            Layer.mock(DeviceService.DeviceService)({}),
+          ),
+        ),
       );
       assert.equal(error.code, "invalid_request");
     }),
