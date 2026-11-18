@@ -419,7 +419,7 @@ private struct ChatScreen: View {
   /// Other machines waiting for this phone, smaller than this chat's code so
   /// it is clear which code goes where: "linux-mini  BWQ35F" per row (1406).
   private func approvalOthers(_ others: [MachineSummary]) -> some View {
-    VStack(spacing: WeaveSpacing.s2) {
+    VStack(spacing: 0) {
       Text(MachineSummary.approvalOthersHeader)
         .weaveFont(.caption)
         .foregroundStyle(Color.weave.muted)
@@ -448,6 +448,8 @@ private struct ChatScreen: View {
                   .foregroundStyle(Color.weave.muted)
               }
             }
+            .frame(maxWidth: .infinity, minHeight: WeaveSize.minTap)
+            .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
           .accessibilityLabel("\(other.displayName) code \(code.map(String.init).joined(separator: " ")). Copy\(other.approvalReachable ? "" : ". \(other.approvalUnreachableNote)")")

@@ -9,7 +9,7 @@ extension MachineSummary {
   public var approvalTitle: String { "Allow this phone on \(displayName)" }
   public var approvalInstruction: String { "Open SpecWithCode on \(displayName) and type this code:" }
   public var approvalProgress: String { "Connects on its own once \(displayName) allows it." }
-  public static let approvalOthersHeader = "Also waiting for this phone. Type each code on its own machine."
+  public static let approvalOthersHeader = "Also waiting for this phone. Type each code on its own machine; each connects on its own."
   public var approvalUnreachableNote: String { "\(displayName) isn't reachable right now." }
   public var approvalComposerLine: String { "Waiting for \(displayName) to allow this phone. Your draft is kept." }
   public func approvalBanner(code: String) -> String { "Waiting for approval. Type \(code) on \(displayName)." }

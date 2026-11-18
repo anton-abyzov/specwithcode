@@ -725,6 +725,9 @@ final class MachineEntry {
       break
     case let .http(status, _)? where status >= 500:
       break
+    case let .connect(error)? where !error.isPermanent:
+      // The relay or the tunnel failed on the way, as with a broken tunnel.
+      break
     default:
       approvalCode = nil
     }
