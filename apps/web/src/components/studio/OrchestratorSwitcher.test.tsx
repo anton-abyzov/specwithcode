@@ -13,6 +13,9 @@ vi.mock("../ui/toast", () => ({ toastManager: { add: toast } }));
 
 import { linkKeeper, OrchestratorSwitcher, useStartCoordinator } from "./OrchestratorSwitcher";
 
+/** The menu's actions; the info button by the first label is a menu item with no text. */
+const ACTION_ITEMS = '[role="menuitem"]:not([data-slot="menu-info-button"])';
+
 let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
@@ -149,7 +152,7 @@ it("offers Make main to linked copies only: never to main, never to a copy that 
     mainOffers: [offer("minis:p", "Minis"), offer("m3:p", "M3"), offer("m4:p", "M4")],
   });
   expect(makeMainItems().map((row) => row.textContent)).toEqual(["Make Minis main"]);
-  const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
+  const labels = [...document.querySelectorAll(ACTION_ITEMS)].map((row) => row.textContent);
   expect(labels.some((label) => label?.startsWith("Move coordinator"))).toBe(false);
   expect(labels.some((label) => label?.startsWith("Sync to"))).toBe(false);
 });
@@ -231,7 +234,7 @@ it("lists a machine that kept its conversation as paused, and can make it main a
     "Minis kept its coordinator conversation from before as history. View it to read that conversation.",
   );
   // It never starts a second coordinator: the one item moves main there.
-  const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
+  const labels = [...document.querySelectorAll(ACTION_ITEMS)].map((row) => row.textContent);
   expect(labels.filter((label) => label?.includes("Minis"))).toEqual(["Make Minis main"]);
   await act(async () => rows[1]!.click());
   await vi.waitFor(() => expect(calls.onView).toHaveBeenCalledWith("minis:p"));
@@ -294,7 +297,7 @@ it("offers nothing for a machine that already runs its own coordinator, but list
     ...calls,
     copies: [copy("m4:p", "M4"), copy("mini:p", "Mini"), copy("m1:p", "M1", "workers")],
   });
-  const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
+  const labels = [...document.querySelectorAll(ACTION_ITEMS)].map((row) => row.textContent);
   expect(labels.filter((label) => label?.includes("Mini"))).toEqual([]);
   expect(labels.filter((label) => label?.includes("M1"))).toEqual(["Make M1 main"]);
   expect(item("menuitemradio", "Mini")).toBeDefined();
@@ -456,15 +459,13 @@ it("names machines once and labels every group of actions", async () => {
   expect(
     [...document.querySelectorAll('[data-slot="menu-label"]')].map((row) => row.textContent),
   ).toEqual(["View this project on", "This project", "On M4"]);
-  expect([...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent)).toEqual(
-    [
-      "Send to another machine…",
-      "Make Minis main",
-      "Move running threads…M4 offline",
-      "Leave this machine…",
-      "Machine access settings",
-    ],
-  );
+  expect([...document.querySelectorAll(ACTION_ITEMS)].map((row) => row.textContent)).toEqual([
+    "Send to another machine…",
+    "Make Minis main",
+    "Move running threads…M4 offline",
+    "Leave this machine…",
+    "Machine access settings",
+  ]);
   expect(document.querySelector('[role="menu"]')?.textContent).not.toMatch(/orchestrator/i);
   await act(async () => item("menuitem", "Machine access settings")!.click());
   expect(calls.onAllowWorkers).toHaveBeenCalledTimes(1);
@@ -485,14 +486,47 @@ it("says not linked, with what that means, for checkouts registered on their own
   expect(rows.map((row) => row.textContent).join(" ")).not.toContain("separate project");
 });
 
+/** Opens the info button by the menu's first label, where what viewing means is kept. */
+const showInfo = async () => {
+  const button = document.querySelector<HTMLElement>('[data-slot="menu-info-button"]');
+  if (button) await act(async () => button.click());
+};
 const unlinkedNote = () =>
   document.querySelector("[data-orchestrator-unlinked-note]")?.textContent ?? null;
+
+it("keeps what viewing means behind the label's info button, opened without closing the menu", async () => {
+  await renderSwitcher({
+    ...handlers(),
+    copies: [copy("m4:p", "M4", "independent"), copy("m1:p", "M1", "independent")],
+  });
+  const button = document.querySelector<HTMLElement>('[data-slot="menu-info-button"]');
+  expect(button?.getAttribute("role")).toBe("menuitem");
+  expect(button?.getAttribute("aria-label")).toBe("About: View this project on");
+  expect(button?.getAttribute("aria-expanded")).toBe("false");
+  // The menu opens on its machines: the info button follows them in item order.
+  const items = [...document.querySelectorAll('[role^="menuitem"]')];
+  expect(items[0]?.getAttribute("role")).toBe("menuitemradio");
+  expect(items.indexOf(button!)).toBeGreaterThan(
+    items.findLastIndex((item) => item.getAttribute("role") === "menuitemradio"),
+  );
+  expect(document.querySelector("[data-orchestrator-note]")).toBeNull();
+  expect(unlinkedNote()).toBeNull();
+  await showInfo();
+  expect(document.querySelector('[role="menu"]')).not.toBeNull();
+  expect(button?.getAttribute("aria-expanded")).toBe("true");
+  expect(document.querySelector("[data-orchestrator-note]")?.textContent).toBe(
+    "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.",
+  );
+  await showInfo();
+  expect(document.querySelector("[data-orchestrator-note]")).toBeNull();
+});
 
 it("says once that not linked projects can still be viewed and messaged", async () => {
   await renderSwitcher({
     ...handlers(),
     copies: [copy("m4:p", "M4", "independent"), copy("m1:p", "M1", "independent")],
   });
+  await showInfo();
   expect(unlinkedNote()).toBe(
     "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.",
   );
@@ -505,6 +539,7 @@ it("points at the link items when linking is offered", async () => {
     onLink: vi.fn<(key: string) => void>(),
     links: [{ key: "m1:p", machine: "M1" }],
   });
+  await showInfo();
   expect(unlinkedNote()).toMatch(
     /That does not stop you viewing or messaging any of them\. Link them below to make one project\.$/,
   );
@@ -522,6 +557,7 @@ it("does not point at link items a listed copy does not have", async () => {
     onLink: vi.fn<(key: string) => void>(),
     links: [{ key: "m1:p", machine: "M1" }],
   });
+  await showInfo();
   expect(unlinkedNote()).toMatch(/That does not stop you viewing or messaging any of them\.$/);
   expect(document.querySelectorAll("[data-orchestrator-link]")).toHaveLength(1);
 });
@@ -532,6 +568,7 @@ it("keeps that note off a group with a linked machine this app never loaded", as
     copies: [copy("m4:p", "M4", "independent"), copy("m1:p", "M1", "independent")],
     unknown: [{ key: "m5:p", machine: "M5" }],
   });
+  await showInfo();
   expect(unlinkedNote()).toBeNull();
 });
 
@@ -583,7 +620,7 @@ it("gives a copy that is not linked Link, never Make main or a coordinator move"
     links: [{ key: "m5:old", machine: "M5" }],
     mainOffers: [offer("m5:old", "M5")],
   });
-  const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
+  const labels = [...document.querySelectorAll(ACTION_ITEMS)].map((row) => row.textContent);
   expect(labels).toContain("Link M5 to this project…");
   expect(labels.some((label) => /^Make|^Move coordinator/.test(label ?? ""))).toBe(false);
 });

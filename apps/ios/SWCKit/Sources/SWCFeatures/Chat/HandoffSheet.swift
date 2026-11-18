@@ -81,6 +81,10 @@ struct HandoffSheet: View {
         }
       }
       .navigationTitle("Hand off thread")
+      #if os(iOS)
+      // Inline, as the increment sheet beside it: the app's sheets keep a small centered title.
+      .navigationBarTitleDisplayMode(.inline)
+      #endif
       .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() }.disabled(busy) } }
       .interactiveDismissDisabled(busy)
       .task { run { options = try await model.engine.handoffOptions(for: thread) } }
