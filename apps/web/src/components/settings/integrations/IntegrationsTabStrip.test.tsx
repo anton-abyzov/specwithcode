@@ -35,6 +35,7 @@ import {
   IntegrationsTabPanel,
   IntegrationsTabStrip,
   integrationsTabAfterKey,
+  integrationsTabFromNone,
 } from "./IntegrationsTabStrip";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -60,6 +61,8 @@ afterEach(() => {
 });
 
 const tabs = (view: HTMLElement) => [...view.querySelectorAll<HTMLElement>('[role="tab"]')];
+
+import { useSettingsRowsLocked } from "../settingsRowsLocked";
 
 describe("IntegrationsTabStrip", () => {
   it("moves with the arrow, Home and End keys and wraps at the ends", () => {
@@ -112,6 +115,14 @@ describe("IntegrationsTabStrip", () => {
       null,
       null,
     ]);
+  });
+
+  it("opens the first or the last tab from the keyboard when none is open", () => {
+    expect(integrationsTabFromNone("ArrowRight")).toBe("access");
+    expect(integrationsTabFromNone("Home")).toBe("access");
+    expect(integrationsTabFromNone("ArrowLeft")).toBe("preview");
+    expect(integrationsTabFromNone("End")).toBe("preview");
+    expect(integrationsTabFromNone("a")).toBeNull();
   });
 
   it("keeps one tab stop when no tab is open", () => {
@@ -224,6 +235,31 @@ describe("IntegrationsMachineState", () => {
       </IntegrationsMachineState>,
     );
     expect(shown.querySelector('[data-testid="integrations-machine-view-only"]')).not.toBeNull();
+  });
+
+  it("tells its rows when they are out of reach, so lists show in full there", () => {
+    const Probe = () => <span data-testid="probe">{String(useSettingsRowsLocked())}</span>;
+    const probe = (node: Element) => node.querySelector('[data-testid="probe"]')!.textContent;
+    state.access = "denied";
+    expect(
+      probe(
+        render(
+          <IntegrationsMachineState>
+            <Probe />
+          </IntegrationsMachineState>,
+        ),
+      ),
+    ).toBe("true");
+    // Rows that guard themselves stay in reach, and are told so.
+    expect(
+      probe(
+        render(
+          <IntegrationsMachineState disableRows={false}>
+            <Probe />
+          </IntegrationsMachineState>,
+        ),
+      ),
+    ).toBe("false");
   });
 
   it.each(["unknown", "signed-out"] as const)(

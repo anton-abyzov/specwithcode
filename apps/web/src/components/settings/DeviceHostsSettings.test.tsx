@@ -54,6 +54,7 @@ vi.mock("./SettingsScopeContext", () => {
 });
 
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
+import { SettingsRowsLockedContext } from "./settingsRowsLocked";
 
 let renderer: ReactTestRenderer | null = null;
 afterEach(async () => {
@@ -101,6 +102,20 @@ describe("DeviceHostsSettings", () => {
 
     await act(() => toggle(root).props.onClick());
     expect(text(root)).not.toContain("Loft");
+  });
+
+  it("shows the list at once to a sign-in that may only look", async () => {
+    hosts.current = [{ id: "a", label: "Loft", target: "loft.local" }];
+    await act(() => {
+      renderer = create(
+        <SettingsRowsLockedContext.Provider value={true}>
+          <DeviceHostsSettings environmentId={environmentId} />
+        </SettingsRowsLockedContext.Provider>,
+      );
+    });
+    const root = renderer!.root;
+    expect(toggle(root).props["aria-expanded"]).toBe(true);
+    expect(text(root)).toContain("Loft");
   });
 
   it("says so when the machine has no device host", async () => {

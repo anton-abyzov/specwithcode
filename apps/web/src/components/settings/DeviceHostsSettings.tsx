@@ -17,6 +17,7 @@ import { Menu, MenuTrigger, MenuPopup, MenuItem } from "../ui/menu";
 import { SettingsRow } from "./settingsLayout";
 
 import { useSettingsScope } from "./SettingsScopeContext";
+import { useSettingsRowsLocked } from "./settingsRowsLocked";
 import { toastManager } from "../ui/toast";
 import { updateDeviceHosts } from "./deviceHostsSettings.logic";
 import { DeviceHostEditor } from "./DeviceHostEditor";
@@ -35,7 +36,9 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
   const [busy, setBusy] = useState(false);
   // The list opens on request: most machines have no remote host, and the page stays short.
   const [open, setOpen] = useState(false);
-  const shown = open || editing !== null;
+  // A sign-in that may only look cannot press "Manage hosts", so it sees the list as it is.
+  const locked = useSettingsRowsLocked();
+  const shown = open || editing !== null || locked;
   const hostCount = new Set(
     connectedEnvironments.flatMap((environment) =>
       (environment.serverConfig?.settings.deviceHosts ?? []).map((host) => host.id),

@@ -8,6 +8,7 @@ import { cn } from "../../../lib/utils";
 import { hostReachOr, machineReachWords } from "../../../lib/machineStatus";
 import { useEnvironmentScopeAccess } from "../../../state/session";
 import { useSettingsScope } from "../SettingsScopeContext";
+import { SettingsRowsLockedContext } from "../settingsRowsLocked";
 import {
   INTEGRATIONS_TABS,
   type IntegrationsTab,
@@ -25,6 +26,14 @@ const tabElementId = (id: IntegrationsTabId) => `integrations-tab-${id}`;
 const panelElementId = (id: IntegrationsTabId) => `integrations-panel-${id}`;
 
 /** The tab an arrow, Home or End key moves to, or null for any other key. */
+/** With no tab open (an unknown address under the page), a key opens the first or the last. */
+export function integrationsTabFromNone(key: string): IntegrationsTabId | null {
+  if (key === "ArrowRight" || key === "ArrowDown" || key === "Home") return INTEGRATIONS_TABS[0].id;
+  if (key === "ArrowLeft" || key === "ArrowUp" || key === "End")
+    return INTEGRATIONS_TABS[INTEGRATIONS_TABS.length - 1]!.id;
+  return null;
+}
+
 export function integrationsTabAfterKey(
   current: IntegrationsTabId,
   key: string,
@@ -56,8 +65,10 @@ export function IntegrationsTabStrip({ current }: { readonly current: Integratio
   const open = (tab: IntegrationsTab) =>
     navigate({ to: tab.path, hash: "", replace: true, hashScrollIntoView: false });
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (current === null) return;
-    const nextId = integrationsTabAfterKey(current, event.key);
+    const nextId =
+      current === null
+        ? integrationsTabFromNone(event.key)
+        : integrationsTabAfterKey(current, event.key);
     if (nextId === null) return;
     event.preventDefault();
     const next = INTEGRATIONS_TABS.find((tab) => tab.id === nextId)!;
@@ -216,18 +227,20 @@ export function IntegrationsMachineState({
           disabled fieldset would miss the switches, which are not form
           controls. The wrapper stays in the tree either way, so the rows keep
           their state when the grant arrives. */}
-      <div
-        inert={locked}
-        data-testid="integrations-machine-rows"
-        className={cn(
-          "flex min-w-0 flex-col gap-8",
-          // Only the controls dim; the words beside them stay as readable as ever.
-          locked &&
-            "[&_[role=combobox]]:opacity-60 [&_[role=switch]]:opacity-60 [&_button]:opacity-60 [&_input]:opacity-60",
-        )}
-      >
-        {children}
-      </div>
+      <SettingsRowsLockedContext.Provider value={locked}>
+        <div
+          inert={locked}
+          data-testid="integrations-machine-rows"
+          className={cn(
+            "flex min-w-0 flex-col gap-8",
+            // Only the controls dim; the words beside them stay as readable as ever.
+            locked &&
+              "[&_[role=combobox]]:opacity-60 [&_[role=switch]]:opacity-60 [&_button]:opacity-60 [&_input]:opacity-60",
+          )}
+        >
+          {children}
+        </div>
+      </SettingsRowsLockedContext.Provider>
       {links}
     </>
   );

@@ -17,6 +17,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
+import { useSettingsRowsLocked } from "./settingsRowsLocked";
 
 export type AccessGrantsKind = "app" | "device";
 
@@ -64,7 +65,10 @@ export function AccessGrantsList({
   const [grants, setGrants] = useState<ReadonlyArray<AccessGrant> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [removingKey, setRemovingKey] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
+  // Opened for one machine: picking another machine starts on the short list again.
+  const [openFor, setOpenFor] = useState<EnvironmentId | null>(null);
+  const locked = useSettingsRowsLocked();
+  const showAll = openFor === environmentId || locked;
   const copy = COPY[kind];
 
   useEffect(() => {
@@ -111,7 +115,10 @@ export function AccessGrantsList({
       ) : shown.length === 0 ? (
         <p className="text-xs text-muted-foreground">{tx(copy.empty)}</p>
       ) : (
-        <ul className="divide-y divide-border/50 rounded-md border border-border/60">
+        <ul
+          id={`access-grants-${kind}-list`}
+          className="divide-y divide-border/50 rounded-md border border-border/60"
+        >
           {(visible ?? shown).map((grant) => (
             <li key={grant.key} className="flex min-w-0 items-center gap-3 px-3 py-2">
               <div className="min-w-0 flex-1">
@@ -131,13 +138,14 @@ export function AccessGrantsList({
           ))}
         </ul>
       )}
-      {shown !== null && shown.length > ACCESS_GRANTS_SHOWN ? (
+      {shown !== null && shown.length > ACCESS_GRANTS_SHOWN && !locked ? (
         <Button
           size="xs"
           variant="outline"
           aria-expanded={showAll}
+          aria-controls={`access-grants-${kind}-list`}
           data-testid={`access-grants-${kind}-toggle`}
-          onClick={() => setShowAll((value) => !value)}
+          onClick={() => setOpenFor(showAll ? null : environmentId)}
         >
           {showAll ? tx("Show fewer") : tx("Show all {count}", { count: shown.length })}
         </Button>
