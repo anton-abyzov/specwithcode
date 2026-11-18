@@ -20,5 +20,7 @@ export function useStudioConnectAuthPrompt() {
     openAuthPrompt: () => open("app"),
     /** For the first-run setup, which links this machine in its own step. */
     openSetupAuthPrompt: () => open("setup"),
+    /** For Sign in again now, after its sign-out (1417). */
+    openRenewAuthPrompt: () => open("renew"),
   };
 }

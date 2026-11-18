@@ -2,11 +2,14 @@
 import { beforeEach, expect, it } from "vite-plus/test";
 
 import {
+  CONNECT_RENEW_OPEN_MAX_AGE_MS,
   CONNECT_SIGN_IN_STARTED_KEY,
   CONNECT_SIGN_IN_STARTED_MAX_AGE_MS,
+  markConnectRenewOpen,
   markConnectSignInStarted,
   readConnectSignInStarted,
   signInDialogFollowsUp,
+  takeConnectRenewOpen,
   takeConnectSignInStarted,
 } from "./connectSignInStarted";
 
@@ -48,4 +51,19 @@ it("follows up a sign-in that reloaded the window, and not a restored session", 
 it("leaves a sign-in started in setup to setup", () => {
   expect(signInDialogFollowsUp({ sawSignedOut: true, started: "setup" })).toBe(false);
   expect(signInDialogFollowsUp({ sawSignedOut: false, started: "setup" })).toBe(false);
+});
+
+it("does not follow up a renew, which brings back the same account (1417)", () => {
+  markConnectSignInStarted("renew", 1_000);
+  expect(readConnectSignInStarted(2_000)).toBe("renew");
+  expect(signInDialogFollowsUp({ sawSignedOut: true, started: "renew" })).toBe(false);
+  expect(signInDialogFollowsUp({ sawSignedOut: false, started: "renew" })).toBe(false);
+});
+
+it("opens the renew sign-in once, and only soon after the sign-out", () => {
+  markConnectRenewOpen(1_000);
+  expect(takeConnectRenewOpen(2_000)).toBe(true);
+  expect(takeConnectRenewOpen(2_000)).toBe(false);
+  markConnectRenewOpen(1_000);
+  expect(takeConnectRenewOpen(1_001 + CONNECT_RENEW_OPEN_MAX_AGE_MS)).toBe(false);
 });
