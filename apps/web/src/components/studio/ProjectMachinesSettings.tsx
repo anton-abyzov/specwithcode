@@ -362,7 +362,7 @@ export function ProjectMachinesSettings({
                       Review turns
                     </Button>
                   ) : null}
-                  {availability && !machines.startReady(copy.project.environmentId) ? (
+                  {availability ? (
                     <Button
                       size="sm"
                       variant="outline"

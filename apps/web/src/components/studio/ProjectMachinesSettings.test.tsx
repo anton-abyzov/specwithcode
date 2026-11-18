@@ -359,6 +359,17 @@ it("lists the turns a superseded coordinator ran while disconnected", async () =
   expect(text()).toContain("Ship the release notes");
 });
 
+it("offers Continue the coordinator here on a machine that can run its own", async () => {
+  // Every current server says it can run a coordinator per machine; the takeover stays.
+  state.perMachine = ["m3", "m4"];
+  state.problems = { m3: "Connect M3 first." };
+  state.lastSeen = { m3: Date.now() - 12 * 60_000 };
+  await render([kept, joined]);
+  expect(button("Continue the coordinator here").disabled).toBe(false);
+  await click(button("Continue the coordinator here"));
+  expect(text()).toContain("Continue the coordinator on M4?");
+});
+
 it("offers no Start a coordinator here, even on a machine that supports one", async () => {
   // D-06: a second coordinator is never started from settings; the coordinator continues instead.
   state.perMachine = ["m4"];
