@@ -127,7 +127,8 @@ export interface SpecweaveShownState {
 
 /** A failed setup call as the card shows it: Node.js missing, not allowed, or failed with its reason. */
 export function specweaveSetupFailureOutcome(cause: unknown): SpecweaveLocalOutcome {
-  const fields = typeof cause === "object" && cause !== null ? (cause as Record<string, unknown>) : {};
+  const fields =
+    typeof cause === "object" && cause !== null ? (cause as Record<string, unknown>) : {};
   const message =
     cause instanceof Error && cause.message.trim() !== ""
       ? cause.message
@@ -200,7 +201,8 @@ export function specweaveCardShown(input: {
 
 // ── When the snapshot is read again ─────────────────────────────────────
 
-const SNAPSHOT_TOOLS = /^(delegate_task|create_threads|studio_thread_launch|request_specweave_setup)$/;
+const SNAPSHOT_TOOLS =
+  /^(delegate_task|create_threads|studio_thread_launch|request_specweave_setup)$/;
 const SETTLED_ITEM = new Set(["completed", "failed", "cancelled", "interrupted"]);
 
 function bareToolName(name: string): string {
@@ -251,7 +253,9 @@ export interface BoardSetupCopy {
 
 export function boardSetupCopy(input: {
   readonly kind: BoardSetupKind;
-  readonly unfinished?: { readonly count: number; readonly titles: ReadonlyArray<string> } | undefined;
+  readonly unfinished?:
+    | { readonly count: number; readonly titles: ReadonlyArray<string> }
+    | undefined;
   readonly gitRepository: boolean | undefined;
 }): BoardSetupCopy {
   if (input.kind === "off")

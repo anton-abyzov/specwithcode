@@ -83,7 +83,9 @@ afterEach(async () => {
 });
 
 const render = () =>
-  act(async () => root.render(<SpecweaveOffer environmentId={environmentId} projectId={projectId} />));
+  act(async () =>
+    root.render(<SpecweaveOffer environmentId={environmentId} projectId={projectId} />),
+  );
 const button = (name: string) =>
   [...container.querySelectorAll("button")].find(
     (entry) => entry.textContent === name || entry.getAttribute("aria-label") === name,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { ThreadId } from "@specweave-studio/contracts";
 
 import {
   BOARD_OFF_HEADING,
@@ -65,7 +66,11 @@ describe("specweaveCardState", () => {
 
   it("shows this window's own press until the server's card catches up", () => {
     expect(
-      specweaveCardState({ request: request("asking"), local: { state: "setting_up" }, canWrite: true }),
+      specweaveCardState({
+        request: request("asking"),
+        local: { state: "setting_up" },
+        canWrite: true,
+      }),
     ).toEqual({ state: "setting_up" });
     expect(
       specweaveCardState({
@@ -77,7 +82,9 @@ describe("specweaveCardState", () => {
   });
 
   it("reads Not allowed in a window that cannot change files", () => {
-    expect(specweaveCardState({ request: request("asking"), local: null, canWrite: false })).toEqual({
+    expect(
+      specweaveCardState({ request: request("asking"), local: null, canWrite: false }),
+    ).toEqual({
       state: "not_allowed",
       detail: SPECWEAVE_NOT_ALLOWED_WRITE,
     });
@@ -100,7 +107,9 @@ describe("specweaveCardState", () => {
 
 describe("specweaveSetupFailureOutcome", () => {
   it("tells Node.js missing, not allowed and a plain failure apart", () => {
-    expect(specweaveSetupFailureOutcome({ needs: "node", detail: "Node.js was not found" })).toEqual({
+    expect(
+      specweaveSetupFailureOutcome({ needs: "node", detail: "Node.js was not found" }),
+    ).toEqual({
       state: "node_missing",
       detail: "Node.js was not found",
     });
@@ -127,24 +136,32 @@ describe("specweaveSetupFailureOutcome", () => {
 
 describe("specweaveCardShown", () => {
   const card = {
-    threadId: "t1",
+    threadId: ThreadId.make("t1"),
     state: "asking" as const,
     updatedAt: "2026-11-18T10:00:00.000Z",
   };
 
   it("shows only in the thread that asked", () => {
-    expect(specweaveCardShown({ request: card, threadId: "t1", lastUserMessageAt: null })).toBe(true);
-    expect(specweaveCardShown({ request: card, threadId: "t2", lastUserMessageAt: null })).toBe(false);
-    expect(specweaveCardShown({ request: undefined, threadId: "t1", lastUserMessageAt: null })).toBe(
-      false,
-    );
+    expect(
+      specweaveCardShown({ request: card, threadId: ThreadId.make("t1"), lastUserMessageAt: null }),
+    ).toBe(true);
+    expect(
+      specweaveCardShown({ request: card, threadId: ThreadId.make("t2"), lastUserMessageAt: null }),
+    ).toBe(false);
+    expect(
+      specweaveCardShown({
+        request: undefined,
+        threadId: ThreadId.make("t1"),
+        lastUserMessageAt: null,
+      }),
+    ).toBe(false);
   });
 
   it("keeps an open card however the conversation moves", () => {
     expect(
       specweaveCardShown({
         request: card,
-        threadId: "t1",
+        threadId: ThreadId.make("t1"),
         lastUserMessageAt: "2026-11-18T11:00:00.000Z",
       }),
     ).toBe(true);
@@ -153,10 +170,18 @@ describe("specweaveCardShown", () => {
   it("lets a settled card go once the person writes again", () => {
     const on = { ...card, state: "on" as const };
     expect(
-      specweaveCardShown({ request: on, threadId: "t1", lastUserMessageAt: "2026-11-18T09:00:00.000Z" }),
+      specweaveCardShown({
+        request: on,
+        threadId: ThreadId.make("t1"),
+        lastUserMessageAt: "2026-11-18T09:00:00.000Z",
+      }),
     ).toBe(true);
     expect(
-      specweaveCardShown({ request: on, threadId: "t1", lastUserMessageAt: "2026-11-18T11:00:00.000Z" }),
+      specweaveCardShown({
+        request: on,
+        threadId: ThreadId.make("t1"),
+        lastUserMessageAt: "2026-11-18T11:00:00.000Z",
+      }),
     ).toBe(false);
   });
 
@@ -231,8 +256,11 @@ describe("boardSetupCopy", () => {
     expect(copy.titles).toEqual(["One", "Two", "Three"]);
     expect(copy.button).toBe("Set up Git and finish");
     expect(
-      boardSetupCopy({ kind: "unfinished", unfinished: { count: 1, titles: ["One"] }, gitRepository: true })
-        .heading,
+      boardSetupCopy({
+        kind: "unfinished",
+        unfinished: { count: 1, titles: ["One"] },
+        gitRepository: true,
+      }).heading,
     ).toBe("1 plan here is not on the board yet");
   });
 

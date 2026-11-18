@@ -84,7 +84,13 @@ async function shot(page, name, { keepScroll = false } = {}) {
 
 const FOLDS_KEY = "studio:project-board-folded:v1";
 /** `folded` names the groups the project's board starts with folded, as a stored choice. */
-async function openPage(theme, viewport, search = "", folded = null, reducedMotion = "no-preference") {
+async function openPage(
+  theme,
+  viewport,
+  search = "",
+  folded = null,
+  reducedMotion = "no-preference",
+) {
   const context = await browser.newContext({
     viewport,
     locale: "en-US",
@@ -1158,13 +1164,16 @@ try {
         `${label}: example groups side by side without Blocked`,
       );
       check(
-        (await example.locator('.sws-board-action[aria-label$="with the coordinator"]').count()) === 0,
+        (await example.locator('.sws-board-action[aria-label$="with the coordinator"]').count()) ===
+          0,
         `${label}: no request button on a sample card`,
       );
       // It plays once: the moving card ends in Done, and stays there.
       await page.locator('.sws-board-example[data-frame="3"]').waitFor({ timeout: 15_000 });
       check(
-        (await example.locator('[data-group="done"] [data-increment="0004-export-reports"]').count()) === 1,
+        (await example
+          .locator('[data-group="done"] [data-increment="0004-export-reports"]')
+          .count()) === 1,
         `${label}: the moving card ends in Done`,
       );
       check(
@@ -1185,13 +1194,7 @@ try {
     }
     {
       const label = `setup reduced motion ${theme}`;
-      const page = await openPage(
-        theme,
-        { width: 1440, height: 900 },
-        "&setup=1",
-        null,
-        "reduce",
-      );
+      const page = await openPage(theme, { width: 1440, height: 900 }, "&setup=1", null, "reduce");
       const example = page.locator(".sws-board-example");
       await example.waitFor();
       check((await example.getAttribute("data-frame")) === "3", `${label}: still last frame`);
@@ -1205,7 +1208,9 @@ try {
       check((await example.getAttribute("data-layout")) === "stack", `${label}: example stacks`);
       check((await example.getAttribute("data-frame")) === "3", `${label}: stacked is still`);
       check(
-        (await page.getByText("This folder is not a Git repository yet, so this also starts one here.").count()) === 1,
+        (await page
+          .getByText("This folder is not a Git repository yet, so this also starts one here.")
+          .count()) === 1,
         `${label}: says Git starts too`,
       );
       await noOverflow(page, label);
@@ -1238,7 +1243,10 @@ try {
     {
       const label = `setup failed ${theme}`;
       const page = await openPage(theme, { width: 1440, height: 900 }, "&setup=failed");
-      await page.getByRole("alert").getByText("inside another repository", { exact: false }).waitFor();
+      await page
+        .getByRole("alert")
+        .getByText("inside another repository", { exact: false })
+        .waitFor();
       check((await page.getByRole("button", { name: "Retry" }).count()) === 1, `${label}: Retry`);
       await shot(page, `setup-failed-${theme}`);
       await closePage(page, label);

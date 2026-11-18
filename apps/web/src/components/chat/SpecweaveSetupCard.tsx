@@ -231,9 +231,7 @@ export function SpecweaveSetupCard({
     refresh();
   }, [refresh, toolKey]);
 
-  const shown = request
-    ? specweaveCardState({ request, local: setUp.outcome, canWrite })
-    : null;
+  const shown = request ? specweaveCardState({ request, local: setUp.outcome, canWrite }) : null;
   // No server push exists: while the card reads Setting up, ask every 5 s.
   const polling = specweavePollWhile(request?.state) || shown?.state === "setting_up";
   useEffect(() => {
@@ -397,7 +395,9 @@ export function SpecweaveSetupCardView(props: {
           {state === "failed" || state === "node_missing" ? (
             <button
               type="button"
-              className={state === "failed" ? ACCESS_PRIMARY_BUTTON_CLASS : ACCESS_SECONDARY_BUTTON_CLASS}
+              className={
+                state === "failed" ? ACCESS_PRIMARY_BUTTON_CLASS : ACCESS_SECONDARY_BUTTON_CLASS
+              }
               disabled={busy}
               onClick={props.onSetUp}
             >

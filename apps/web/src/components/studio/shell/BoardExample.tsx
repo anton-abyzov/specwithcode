@@ -147,7 +147,9 @@ export function BoardExample(props: {
                   <div
                     key={`${entry.incrementId}:${entry.incrementId === BOARD_EXAMPLE_MOVER ? shownFrame : ""}`}
                     className="sws-board-example-card"
-                    data-moved={entry.incrementId === BOARD_EXAMPLE_MOVER && !still ? "" : undefined}
+                    data-moved={
+                      entry.incrementId === BOARD_EXAMPLE_MOVER && !still ? "" : undefined
+                    }
                   >
                     <BoardCard
                       card={entry}

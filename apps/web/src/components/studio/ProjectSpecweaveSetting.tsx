@@ -1,5 +1,8 @@
 import { useState } from "react";
-import { AuthFilesystemWriteScope, type ProjectWorkspaceReadResult } from "@specweave-studio/contracts";
+import {
+  AuthFilesystemWriteScope,
+  type ProjectWorkspaceReadResult,
+} from "@specweave-studio/contracts";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { projectWorkspace } from "../../studio/projectWorkspace";

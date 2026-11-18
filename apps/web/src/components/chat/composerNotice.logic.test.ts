@@ -43,6 +43,8 @@ describe("specweaveOfferApplies", () => {
     expect(applies({ specweaveState: undefined })).toBe(false);
     expect(applies({}, { coordinator: false })).toBe(false);
     expect(applies({}, { canAnswer: false })).toBe(false);
-    expect(specweaveOfferApplies({ snapshot: null, coordinator: true, canAnswer: true })).toBe(false);
+    expect(specweaveOfferApplies({ snapshot: null, coordinator: true, canAnswer: true })).toBe(
+      false,
+    );
   });
 });

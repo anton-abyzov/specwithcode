@@ -108,7 +108,8 @@ describe("SpecweaveSetupCard", () => {
     );
   const button = (name: string) =>
     [...container.querySelectorAll("button")].find((entry) => entry.textContent === name);
-  const shownState = () => container.querySelector("[data-specweave-card]")?.getAttribute("data-state");
+  const shownState = () =>
+    container.querySelector("[data-specweave-card]")?.getAttribute("data-state");
 
   it("shows the heading, the text and what setup adds, only in the thread that asked", async () => {
     await render({ thread: "another-thread" });
@@ -119,7 +120,9 @@ describe("SpecweaveSetupCard", () => {
       "A plan is a short spec with tasks, kept in your repository. It also puts this project's work on a board.",
     );
     expect(container.querySelector("summary")?.textContent).toBe("What it adds");
-    expect([...container.querySelectorAll("[data-specweave-adds] li")].map((li) => li.textContent)).toEqual([
+    expect(
+      [...container.querySelectorAll("[data-specweave-adds] li")].map((li) => li.textContent),
+    ).toEqual([
       ".specweave/",
       "Agent skills in .claude/ and .agents/",
       "Sections in AGENTS.md and CLAUDE.md",
@@ -132,7 +135,10 @@ describe("SpecweaveSetupCard", () => {
   });
 
   it("says it starts Git first in a folder without one, and asks for it", async () => {
-    state.snapshot = { specweaveState: "off", specweaveSetupRequest: card({ gitRepository: false }) };
+    state.snapshot = {
+      specweaveState: "off",
+      specweaveSetupRequest: card({ gitRepository: false }),
+    };
     await render();
     expect(container.querySelector("[data-specweave-git]")?.textContent).toBe(
       "This folder is not a Git repository yet, so this also starts one here.",
@@ -167,7 +173,10 @@ describe("SpecweaveSetupCard", () => {
 
   it("reads the snapshot every 5 s while Setting up, and stops after", async () => {
     vi.useFakeTimers();
-    state.snapshot = { specweaveState: "off", specweaveSetupRequest: card({ state: "setting_up" }) };
+    state.snapshot = {
+      specweaveState: "off",
+      specweaveSetupRequest: card({ state: "setting_up" }),
+    };
     await render();
     state.refresh.mockReset();
     await act(async () => vi.advanceTimersByTime(5_000));
@@ -204,7 +213,10 @@ describe("SpecweaveSetupCard", () => {
 
     state.snapshot = {
       specweaveState: "off",
-      specweaveSetupRequest: card({ state: "failed", detail: "This folder is inside another repository." }),
+      specweaveSetupRequest: card({
+        state: "failed",
+        detail: "This folder is inside another repository.",
+      }),
     };
     await act(async () => root.unmount());
     root = createRoot(container);

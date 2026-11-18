@@ -1,5 +1,9 @@
 // @vitest-environment jsdom
-import { EnvironmentId, ProjectId, type ProjectWorkspaceReadResult } from "@specweave-studio/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  type ProjectWorkspaceReadResult,
+} from "@specweave-studio/contracts";
 import { Cause } from "effect";
 import { act, cloneElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -115,7 +119,9 @@ describe("BoardSetupView", () => {
     expect(container.textContent).toContain(
       "Plans each piece of work as a short spec with tasks in your repository, and gives the project a board.",
     );
-    expect([...container.querySelectorAll(".sws-board-setup-adds li")].map((li) => li.textContent)).toEqual([
+    expect(
+      [...container.querySelectorAll(".sws-board-setup-adds li")].map((li) => li.textContent),
+    ).toEqual([
       ".specweave/",
       "Agent skills in .claude/ and .agents/",
       "Sections in AGENTS.md and CLAUDE.md",
@@ -139,11 +145,12 @@ describe("BoardSetupView", () => {
       unfinished: { count: 2, titles: ["Export", "Search"] },
       gitRepository: false,
     });
-    expect(container.querySelector("h3")?.textContent).toBe("2 plans here are not on the board yet");
-    expect([...container.querySelectorAll(".sws-board-setup-titles li")].map((li) => li.textContent)).toEqual([
-      "Export",
-      "Search",
-    ]);
+    expect(container.querySelector("h3")?.textContent).toBe(
+      "2 plans here are not on the board yet",
+    );
+    expect(
+      [...container.querySelectorAll(".sws-board-setup-titles li")].map((li) => li.textContent),
+    ).toEqual(["Export", "Search"]);
     expect(buttons()).toEqual(["Set up Git and finish"]);
     expect(container.querySelector(".sws-board-example")).toBeNull();
   });
@@ -153,7 +160,9 @@ describe("BoardSetupView", () => {
     expect(container.querySelector('[role="status"]')?.textContent).toBe("Setting up SpecWeave…");
     expect(button("Set up SpecWeave")?.disabled).toBe(true);
     await view({ shown: { state: "failed", detail: "Inside another repository." } });
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Inside another repository.");
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      "Inside another repository.",
+    );
     expect(buttons()).toEqual(["Retry", "Not now"]);
     await view({ shown: { state: "node_missing", detail: "x" } });
     expect(buttons()).toEqual(["Install Node.js", "Retry", "Not now"]);
@@ -169,8 +178,8 @@ describe("BoardExample", () => {
   const groupsShown = () =>
     [...example().querySelectorAll<HTMLElement>("[data-group]")].map((node) => node.dataset.group);
   const columnOf = (id: string) =>
-    example().querySelector(`[data-increment="${id}"]`)?.closest<HTMLElement>("[data-group]")?.dataset
-      .group;
+    example().querySelector(`[data-increment="${id}"]`)?.closest<HTMLElement>("[data-group]")
+      ?.dataset.group;
 
   it("is inert, hidden, marked Example, and uses the real groups without Blocked", async () => {
     await act(async () => root.render(<BoardExample columns />));
@@ -194,9 +203,9 @@ describe("BoardExample", () => {
     expect(columnOf("0004-export-reports")).toBe("planned");
     await act(async () => vi.advanceTimersByTime(1_600));
     expect(columnOf("0004-export-reports")).toBe("active");
-    expect(example().querySelector('[data-increment="0004-export-reports"]')?.textContent).toContain(
-      "Export reports as CSV",
-    );
+    expect(
+      example().querySelector('[data-increment="0004-export-reports"]')?.textContent,
+    ).toContain("Export reports as CSV");
     visibility = "hidden";
     await act(async () => vi.advanceTimersByTime(5_000));
     expect(columnOf("0004-export-reports")).toBe("active");
@@ -229,7 +238,11 @@ describe("BoardExample", () => {
 });
 
 describe("BoardSpecweaveSetup", () => {
-  const snapshot = (fields: Partial<ProjectWorkspaceReadResult> = {}) =>
+  // An older server leaves fields out, so a test may set one to undefined.
+  type Fields = {
+    [K in keyof ProjectWorkspaceReadResult]?: ProjectWorkspaceReadResult[K] | undefined;
+  };
+  const snapshot = (fields: Fields = {}) =>
     ({
       settings: { kind: "code" },
       memory: { files: [], totalBytes: 0 },
@@ -239,7 +252,7 @@ describe("BoardSpecweaveSetup", () => {
       ...fields,
     }) as ProjectWorkspaceReadResult;
   const onChanged = vi.fn();
-  const render = (fields: Partial<ProjectWorkspaceReadResult> = {}) =>
+  const render = (fields: Fields = {}) =>
     act(async () =>
       root.render(
         <BoardSpecweaveSetup

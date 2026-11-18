@@ -30,7 +30,9 @@ import { BoardExample } from "./BoardExample";
 export interface BoardSetupViewProps {
   readonly kind: BoardSetupKind;
   /** With `unfinished`: how many plans are there and the first titles. */
-  readonly unfinished?: { readonly count: number; readonly titles: ReadonlyArray<string> } | undefined;
+  readonly unfinished?:
+    | { readonly count: number; readonly titles: ReadonlyArray<string> }
+    | undefined;
   /** False: the folder is not a Git repository, and the press starts one. */
   readonly gitRepository: boolean | undefined;
   /** Asking, Setting up, Failed, Node.js missing or Not allowed. */

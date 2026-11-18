@@ -349,9 +349,7 @@ describe("BoardPane", () => {
     await render({ specweave: false });
     // The tab's own words come from BoardSetup (1396); the old heading is gone.
     expect(container.textContent).not.toContain("Start a board for this project");
-    expect(container.querySelector("#sws-pane-board button")?.textContent).toBe(
-      "Set up SpecWeave",
-    );
+    expect(container.querySelector("#sws-pane-board button")?.textContent).toBe("Set up SpecWeave");
     expect(runtime.inputs).toEqual([]);
   });
 

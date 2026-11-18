@@ -356,10 +356,7 @@ import { AdvisorConsultRow } from "./AdvisorConsultRow";
 import { ChromeConnectCard } from "./ChromeConnectCard";
 import { UseWorktreesCard } from "./UseWorktreesCard";
 import { SpecweaveSetupCard } from "./SpecweaveSetupCard";
-import {
-  lastUserMessageAt,
-  specweaveSnapshotToolKey,
-} from "../studio/specweaveSetup.logic";
+import { lastUserMessageAt, specweaveSnapshotToolKey } from "../studio/specweaveSetup.logic";
 import { RunOnDeviceCardProvider, RunOnDeviceCardSlot } from "./RunOnDeviceCard";
 import { ComputerUsePermissionCard } from "../computerUse/ComputerUsePermissions";
 import { useClientSettings } from "~/hooks/useSettings";

@@ -29,7 +29,10 @@ const setup = params.get("setup");
 function FixtureSetup() {
   const [shown, setShown] = useState<SpecweaveShownState>(
     setup === "failed"
-      ? { state: "failed", detail: "SpecWeave could not be set up: this folder is inside another repository." }
+      ? {
+          state: "failed",
+          detail: "SpecWeave could not be set up: this folder is inside another repository.",
+        }
       : setup === "node"
         ? { state: "node_missing", detail: "Node.js was not found." }
         : { state: "asking" },
