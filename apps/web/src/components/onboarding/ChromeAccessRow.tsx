@@ -284,17 +284,23 @@ export function ChromeAccessRow({
   // Chrome's profiles are read once Set up is pressed, never when the step opens.
   const [profiles, setProfiles] = useState<readonly ChromeProfileChoice[] | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
+  const [profilesRead, setProfilesRead] = useState(false);
   const listed = useRef(false);
   useEffect(() => {
     if (!open || listed.current || !profileListAllowed()) return;
     listed.current = true;
-    void readChromeProfiles().then((found) => {
-      setProfiles(found);
-      // With several, none starts picked: the person picks where the accounts are (D-15).
-      // With one there is no list, so that one is the profile.
-      setChosen((current) => current ?? (found?.length === 1 ? found[0]!.directory : null));
-    });
+    void readChromeProfiles()
+      .catch(() => null)
+      .then((found) => {
+        setProfiles(found);
+        // With several, none starts picked: the person picks where the accounts are (D-15).
+        // With one there is no list, so that one is the profile.
+        setChosen((current) => current ?? (found?.length === 1 ? found[0]!.directory : null));
+        setProfilesRead(true);
+      });
   }, [open]);
+  // Until the read settles, Add to Chrome waits: a store link now could open in another profile.
+  const profilesPending = open && profileListAllowed() && !profilesRead;
   const storeUrl = status?.storeUrl ?? BROWSER_EXTENSION_STORE_URL;
   const canOpenInProfile = profileListAllowed() && profiles !== null && profiles.length > 0;
   const tx = useTx();
@@ -331,6 +337,7 @@ export function ChromeAccessRow({
       steps={
         <BrowserExtensionSteps
           profiles={profiles}
+          profilesPending={profilesPending}
           chosen={chosen}
           onChoose={setChosen}
           storeUrl={storeUrl}

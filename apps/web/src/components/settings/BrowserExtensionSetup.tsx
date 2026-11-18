@@ -64,6 +64,7 @@ export type PairingCodeState =
  */
 export function BrowserExtensionSteps({
   profiles,
+  profilesPending = false,
   chosen,
   onChoose,
   storeUrl,
@@ -78,6 +79,8 @@ export function BrowserExtensionSteps({
 }: {
   /** Chrome's profiles; null or empty where they cannot be read, and the store link opens as today. */
   readonly profiles: readonly ChromeProfileChoice[] | null;
+  /** Chrome's profiles are still being read: Add to Chrome waits, with no store link yet. */
+  readonly profilesPending?: boolean | undefined;
   readonly chosen: string | null;
   readonly onChoose: (directory: string) => void;
   readonly storeUrl: string;
@@ -143,8 +146,9 @@ export function BrowserExtensionSteps({
                 <ExternalLinkIcon />
                 {tx("Add to Chrome")}
               </Button>
-            ) : onAddToChrome && list ? (
-              // Several profiles and none picked: no store link that would open in another one.
+            ) : profilesPending || (onAddToChrome && list) ? (
+              // Profiles still being read, or several and none picked: no store link that
+              // would open in another profile.
               <Button size="sm" variant="outline" disabled data-chrome-add-waits-for-pick="">
                 <ExternalLinkIcon />
                 {tx("Add to Chrome")}
@@ -161,13 +165,15 @@ export function BrowserExtensionSteps({
               </Button>
             )}
             <span className="text-muted-foreground">
-              {onAddToChrome && picked !== undefined
-                ? tx("Opens the store page in {profile}.", { profile: picked.name })
-                : onAddToChrome && list
-                  ? tx("Pick a profile above first.")
-                  : onAddToChrome && !list && profiles?.length === 1
-                    ? tx("Opens the store page in Chrome.")
-                    : why.lastUsed}
+              {profilesPending
+                ? null
+                : onAddToChrome && picked !== undefined
+                  ? tx("Opens the store page in {profile}.", { profile: picked.name })
+                  : onAddToChrome && list
+                    ? tx("Pick a profile above first.")
+                    : onAddToChrome && !list && profiles?.length === 1
+                      ? tx("Opens the store page in Chrome.")
+                      : why.lastUsed}
             </span>
           </div>
         </li>

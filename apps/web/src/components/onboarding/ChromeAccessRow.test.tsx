@@ -449,6 +449,20 @@ describe("ChromeAccessRow", () => {
     expect(text()).toContain("It opens in the Chrome profile you used last.");
   });
 
+  it("while Chrome's profiles are still being read, Add to Chrome waits with no store link", async () => {
+    vi.stubGlobal("window", { desktopBridge: { getClientPlatform: () => "win32" } });
+    state.profiles.mockReturnValue(new Promise(() => undefined));
+    await render();
+    await act(() => button("Set up").props.onClick());
+    expect(state.profiles).toHaveBeenCalledTimes(1);
+    const waiting = renderer.root.find(
+      (node) => node.props["data-chrome-add-waits-for-pick"] === "" && !node.props.render,
+    );
+    expect(waiting.props.disabled).toBe(true);
+    expect(renderer.root.findAll((node) => node.type === "a" && node.props.href)).toEqual([]);
+    expect(text()).not.toContain("It opens in the Chrome profile you used last.");
+  });
+
   it("elsewhere, reads Chrome's profiles once Set up is pressed and opens the store in the one picked", async () => {
     vi.stubGlobal("window", { desktopBridge: { getClientPlatform: () => "win32" } });
     state.profiles.mockResolvedValue([
