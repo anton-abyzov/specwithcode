@@ -239,7 +239,10 @@ describe("copies of a shared project", () => {
       ["coordinator", false],
       ["workers", false],
     ]);
-    expect(copyRolesSummary([kept, joined])).toBe("M3: Main · M4: Copy");
+    expect(copyRolesSummary([kept, joined])).toEqual({
+      text: "On {coordinator} (coordinator) and {last}",
+      values: { coordinator: "M3", last: "M4" },
+    });
     expect(copyRolesSummary([kept])).toBeNull();
   });
 

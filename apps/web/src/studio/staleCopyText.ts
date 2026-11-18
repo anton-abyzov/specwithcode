@@ -14,7 +14,7 @@ export function sameStaleReason(
 }
 
 /**
- * Why "Make {machine} main" cannot bring that machine's copy to the source's latest commits,
+ * Why "Continue the coordinator on {machine}" cannot bring that machine's copy to the source's latest commits,
  * in words for the review screen. The copy is only ever fast-forwarded: nothing there is
  * overwritten, so a copy that diverged or holds local edits stays as it is.
  */

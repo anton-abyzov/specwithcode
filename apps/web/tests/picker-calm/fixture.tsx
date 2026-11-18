@@ -445,11 +445,11 @@ function WindowScene() {
               Message the project coordinator
             </label>
             <textarea id="window-prompt" rows={1} placeholder="Ask the coordinator…" />
+            {/* As CoordinatorComposer draws it: Send wears M1's color and never its name. */}
             <button
               type="button"
-              className="sws-send sws-send-target machine-send"
-              aria-label="Send to M1"
-              data-send-label="Send to M1"
+              className="sws-send machine-send"
+              aria-label="Send to the coordinator on M1"
               {...machineColorProps(m1)}
             >
               ↑

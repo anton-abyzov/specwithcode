@@ -48,11 +48,19 @@ import { useLinkMachines } from "./useLinkMachines";
 const keyOf = (project: Pick<EnvironmentProject, "environmentId" | "id">) =>
   `${project.environmentId}:${project.id}`;
 
+/** Told how a switch asked with them ended; exactly one is called, once. */
+export interface MainSwitchAfter {
+  /** The coordinator continues on that machine now (an offline switch that went through). */
+  readonly continued: () => void;
+  /** Nothing continued: it was put away, refused, failed, or opened the confirmed move instead. */
+  readonly stopped: () => void;
+}
+
 export interface MainSwitch {
-  /** One "Make {machine} main" per copy that has the switch, pressable or off with its reason. */
+  /** One "Continue the coordinator here" per machine that has the switch, pressable or off with its reason. */
   readonly offers: readonly MainOffer[];
-  /** Runs the switch for that copy; null where the page offers none. */
-  readonly run: ((key: string) => void) | null;
+  /** Runs the switch for that machine; null where the page offers none. */
+  readonly run: ((key: string, after?: MainSwitchAfter) => void) | null;
   /** Told when this page's move dialog opens or closes, so a move asked elsewhere returns there. */
   readonly moveOpenChange: (open: boolean) => void;
   /** The confirmation of an offline switch; rendered once by the page. */
@@ -60,11 +68,11 @@ export interface MainSwitch {
 }
 
 /**
- * "Make {machine} main" for a project page: which copies have the switch, and what a click
- * does. With the old main connected it opens that main's own confirmed coordinator move (on
- * main's page, shown first when the click came from the copy's). With the old main
- * unreachable for 10 minutes it asks once, then the copy takes over. It never starts a
- * second coordinator.
+ * "Continue the coordinator here" for a project page: which machines have the switch, and
+ * what a click does. With the coordinator's machine connected it opens that machine's own
+ * confirmed coordinator move (on its page, shown first when the click came from another
+ * machine's). With it unreachable for 10 minutes it asks once, then this machine continues
+ * the coordinator. It never starts a second coordinator.
  */
 export function useMakeMain({
   project,
@@ -101,6 +109,17 @@ export function useMakeMain({
   const [confirm, setConfirm] = useState<EnvironmentProject | null>(null);
   const [busy, setBusy] = useState(false);
   const running = useRef(false);
+  // What the caller of the switch in flight waits for; told once, then dropped.
+  const after = useRef<MainSwitchAfter | null>(null);
+  const settle = (how: keyof MainSwitchAfter) => {
+    const told = after.current;
+    after.current = null;
+    told?.[how]();
+  };
+  // A page that goes away tells a waiting caller nothing continued here.
+  const settleRef = useRef(settle);
+  settleRef.current = settle;
+  useEffect(() => () => settleRef.current("stopped"), []);
   const current = keyOf(project);
   const nameOf = (member: EnvironmentProject) =>
     copies.find((copy) => copy.key === keyOf(member))?.machine ??
@@ -129,6 +148,7 @@ export function useMakeMain({
         const offer = mainOffer(keyOf(member), path, {
           machine: nameOf(member),
           main: machineName(path.mainEnvironmentId),
+          project: project.title,
         });
         if (offer) offers.push(offer);
         continue;
@@ -145,15 +165,21 @@ export function useMakeMain({
       });
       if (offer) offers.push(offer);
     }
-  // The wait counts down while a switch is waiting for it, and only then.
-  const waiting = offers.some((offer) => offer.kind === "blocked" && offer.note?.values?.minutes);
+  // The clock runs while a switch counts its wait down or says how long the coordinator's
+  // machine has been silent, and only then.
+  const waiting = offers.some(
+    (offer) =>
+      (offer.kind === "blocked" && offer.note?.values?.minutes) ||
+      (offer.kind === "takeover" && offer.silentMinutes !== undefined),
+  );
   useEffect(() => {
     if (!waiting) return;
     const timer = setInterval(() => setNow(Date.now()), 20_000);
     return () => clearInterval(timer);
   }, [waiting]);
 
-  // A move asked for on a copy's page lands here, on main's page, and opens its dialog once.
+  // A move asked for on another machine's page lands here, on the coordinator's page, and
+  // opens its dialog once.
   const returnTo = useRef<string | null>(null);
   const moveOpened = useRef(false);
   const latest = useRef({ onCheckout, openMove });
@@ -171,7 +197,7 @@ export function useMakeMain({
     if (!open) {
       toastManager.add({
         type: "warning",
-        title: tx("Main cannot move from this machine yet."),
+        title: tx("The coordinator cannot be handed off from this machine yet."),
         description: tx("Send this project its first message here, then try again."),
       });
       return;
@@ -225,10 +251,11 @@ export function useMakeMain({
         const { reason } = unloadedMainText({
           machine,
           main: machineName(outcome.mainEnvironmentId),
+          project: project.title,
         });
         toastManager.add({
           type: "warning",
-          title: tx("{machine} cannot become main yet.", { machine }),
+          title: tx("The coordinator cannot continue on {machine} yet.", { machine }),
           description: tx(reason.text, reason.values),
         });
       } else if (outcome.status === "blocked") {
@@ -236,14 +263,14 @@ export function useMakeMain({
         const { reason } = makeMainBlockText(outcome, names);
         toastManager.add({
           type: "warning",
-          title: tx("{machine} cannot become main yet.", { machine }),
+          title: tx("The coordinator cannot continue on {machine} yet.", { machine }),
           description: tx(reason.text, reason.values),
         });
       } else if (outcome.status === "main") {
         const previous = nameOf(outcome.previous);
         toastManager.add({
           type: "success",
-          title: tx("{machine} is main now", { machine }),
+          title: tx("The coordinator continues on {machine}", { machine }),
           description: tx(
             "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.",
             { main: previous },
@@ -252,30 +279,45 @@ export function useMakeMain({
         if (outcome.unclaimed.length > 0) {
           toastManager.add({
             type: "warning",
-            title: tx("{machine} is main now, with machines not yet following it", { machine }),
+            title: tx(
+              "The coordinator continues on {machine}. {names} have not confirmed it yet.",
+              {
+                machine,
+                names: outcome.unclaimed.join(", "),
+              },
+            ),
             description: tx(
-              "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.",
-              { machines: outcome.unclaimed.join(", ") },
+              "They refuse work from the old coordinator only once they have confirmed the new one.",
             ),
           });
         }
+        settle("continued");
       }
     } catch (cause) {
       toastManager.add({
         type: "error",
-        title: tx("{machine} did not become main", { machine }),
+        title: tx("The coordinator stayed on {main}", {
+          main: offers.find((offer) => offer.key === keyOf(member))?.main ?? tx("its machine"),
+        }),
         description: cause instanceof Error && cause.message ? cause.message : tx("Retry it."),
       });
     } finally {
       running.current = false;
       setBusy(false);
       setConfirm(null);
+      // Anything but a finished offline switch: nothing continued here.
+      settle("stopped");
     }
   };
 
-  const run = (key: string) => {
+  const run = (key: string, then?: MainSwitchAfter) => {
     const member = members.find((item) => keyOf(item) === key);
-    if (!member || running.current) return;
+    if (!member || running.current) {
+      then?.stopped();
+      return;
+    }
+    settle("stopped");
+    after.current = then ?? null;
     // An offline switch leaves the old conversation behind, so it asks first. The move
     // has its own review and consent.
     if (makeMainPath(member, members, reach).kind === "takeover") setConfirm(member);
@@ -285,27 +327,31 @@ export function useMakeMain({
   const confirmOffer = confirm ? offers.find((offer) => offer.key === keyOf(confirm)) : undefined;
   const names = {
     machine: confirmOffer?.machine ?? (confirm ? nameOf(confirm) : ""),
-    main: confirmOffer?.main ?? tx("the old main"),
+    main: confirmOffer?.main ?? tx("the old machine"),
+  };
+  const putAway = () => {
+    setConfirm(null);
+    settle("stopped");
   };
   const element = (
-    <Dialog open={confirm !== null} onOpenChange={(open) => !open && !busy && setConfirm(null)}>
+    <Dialog open={confirm !== null} onOpenChange={(open) => !open && !busy && putAway()}>
       <DialogPopup showCloseButton={!busy} className="w-full sm:max-w-md" data-make-main-confirm="">
         <DialogHeader>
-          <DialogTitle>{tx("Make {machine} main?", names)}</DialogTitle>
+          <DialogTitle>{tx("Continue the coordinator on {machine}?", names)}</DialogTitle>
           <DialogDescription>
             {tx(
-              "{main} has been unreachable for 10 minutes or more. {machine} becomes main and starts from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.",
+              "{main} has been offline for 10 minutes or more. The coordinator starts on {machine} from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.",
               names,
             )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel />
         <DialogFooter>
-          <Button variant="outline" disabled={busy} onClick={() => setConfirm(null)}>
+          <Button variant="outline" disabled={busy} onClick={putAway}>
             {tx("Cancel")}
           </Button>
           <Button disabled={busy} onClick={() => confirm && void runSwitch(confirm)}>
-            {busy ? tx("Switching…") : tx("Make {machine} main", names)}
+            {busy ? tx("Starting the coordinator…") : tx("Continue here")}
           </Button>
         </DialogFooter>
       </DialogPopup>

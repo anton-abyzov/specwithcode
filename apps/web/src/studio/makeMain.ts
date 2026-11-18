@@ -1,12 +1,13 @@
 /**
- * "Make {machine} main": the one switch that moves a linked project's main to another
- * copy. `makeMainPath` picks how, `makeMain` runs it:
+ * "Continue the coordinator here": the one switch that brings a linked project's coordinator
+ * to another machine. `makeMainPath` picks how, `makeMain` runs it:
  *
- * - The old main is connected: the existing coordinator move (its conversation and Git
- *   state move, the old main becomes a copy), behind that move's own confirm.
- * - The old main has been unreachable for `TAKEOVER_UNREACHABLE_MS` or more: this copy
- *   takes over (`projectLink.takeover`), naming the old main so it gives way when it is
- *   back. Never `startCoordinator`, which names no predecessor and leaves two mains.
+ * - The coordinator's machine is connected: the existing coordinator move (its conversation
+ *   and Git state move), behind that move's own confirm.
+ * - The coordinator's machine has been unreachable for `TAKEOVER_UNREACHABLE_MS` or more:
+ *   this machine continues it (`projectLink.takeover`), naming the old machine so it gives
+ *   way when it is back. Never `startCoordinator`, which names no predecessor and leaves two
+ *   coordinators.
  * - Otherwise nothing runs, and the reason says when it unlocks.
  *
  * Kept free of UI imports so pages, dialogs and tests share one decision.
@@ -29,10 +30,10 @@ import { highestEpoch, linkMemberOf, takeoverAvailability } from "./projectLink"
 import { coordinatorElsewhere } from "./workersOnlyCopy";
 
 /**
- * Why the switch is off for now. waiting: the old main has not been unreachable long
- * enough. main-read-only: the online move needs write access on the old main, which this
- * window does not hold. copy-offline: the copy's own machine is not connected.
- * copy-not-ready: its machine cannot take over (an older app, or no permission there).
+ * Why the switch is off for now. waiting: the coordinator's machine has not been silent long
+ * enough. main-read-only: the online move needs write access on the coordinator's machine,
+ * which this window does not hold. copy-offline: the machine it would continue on is not
+ * connected. copy-not-ready: that machine cannot continue it (an older app, or no permission).
  */
 /** Words for the switch: an English phrase and its `{slot}` values, translated where shown. */
 export interface MainText {
@@ -49,9 +50,19 @@ export type MakeMainPath<P> =
    * Off: this window has never loaded main's copy, so it cannot tell whether main is
    * connected or how long it has been gone. Connecting main's machine shows the switch.
    */
-  | { readonly kind: "unloaded"; readonly mainEnvironmentId: EnvironmentId }
+  | {
+      readonly kind: "unloaded";
+      readonly mainEnvironmentId: EnvironmentId;
+      /** The machine it would continue on is not connected either, which is said first. */
+      readonly copyOffline?: boolean;
+    }
   | { readonly kind: "move"; readonly main: P }
-  | { readonly kind: "takeover"; readonly main: P }
+  | {
+      readonly kind: "takeover";
+      readonly main: P;
+      /** How long the coordinator's machine has been silent; absent where nobody measured. */
+      readonly silentMs?: number;
+    }
   | {
       readonly kind: "blocked";
       readonly main: P;
@@ -120,7 +131,12 @@ export function makeMainPath<P extends EnvironmentProject>(
   if (!main) {
     // Main is not loaded here: the copy's own binding still names its machine.
     const ref = coordinatorElsewhere(copy, linked);
-    return ref ? { kind: "unloaded", mainEnvironmentId: ref.environmentId } : { kind: "none" };
+    if (!ref) return { kind: "none" };
+    return {
+      kind: "unloaded",
+      mainEnvironmentId: ref.environmentId,
+      ...(machines.connected(copy.environmentId) ? {} : { copyOffline: true }),
+    };
   }
   // Main on this same machine (another folder) is not a switch between machines.
   if (main.environmentId === copy.environmentId) return { kind: "none" };
@@ -142,8 +158,9 @@ export function makeMainPath<P extends EnvironmentProject>(
     now: machines.now,
   });
   if (!availability.available) return blocked("waiting", availability.waitMs);
+  const since = machines.unreachableSince(main.environmentId);
   return machines.takeoverReady(copy.environmentId)
-    ? { kind: "takeover", main }
+    ? { kind: "takeover", main, ...(since === null ? {} : { silentMs: machines.now - since }) }
     : blocked("copy-not-ready");
 }
 
@@ -164,7 +181,7 @@ export function makeMainBlockText(
       const values = { ...names, minutes: String(waitMinutes(path.waitMs)) };
       return {
         reason: {
-          text: "{main} must be unreachable for 10 minutes before {machine} can become main. That unlocks in {minutes} min.",
+          text: "{main} must be silent for 10 minutes before the coordinator can continue on {machine}. That unlocks in {minutes} min.",
           values,
         },
         note: { text: "in {minutes} min", values },
@@ -173,20 +190,23 @@ export function makeMainBlockText(
     case "main-read-only":
       return {
         reason: {
-          text: "This window can only read {main}, so it cannot move main from there. Open SpecWithCode on {main}, or connect to it with full access, to make {machine} main.",
+          text: "This window can only read {main}, so it cannot hand the coordinator off from there. Open SpecWithCode on {main}, or connect to it with full access.",
           values: names,
         },
         note: { text: "read-only on {main}", values: names },
       };
     case "copy-offline":
       return {
-        reason: { text: "Connect {machine} first to make it main.", values: names },
+        reason: {
+          text: "Connect {machine} first to continue the coordinator there.",
+          values: names,
+        },
         note: { text: "{machine} offline", values: names },
       };
     case "copy-not-ready":
       return {
         reason: {
-          text: "{machine} cannot take over yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.",
+          text: "{machine} cannot continue the coordinator yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.",
           values: names,
         },
         note: { text: "not ready", values: names },
@@ -194,12 +214,12 @@ export function makeMainBlockText(
   }
 }
 
-/** One "Make {machine} main" as a menu row or a button shows it. */
+/** One "Continue the coordinator here" as a menu row or a button shows it. */
 export interface MainOffer {
-  /** The copy that would become main, `environmentId:projectId`. */
+  /** The checkout the coordinator would continue on, `environmentId:projectId`. */
   readonly key: string;
   readonly machine: string;
-  /** The machine main is on now. */
+  /** The machine the coordinator is on now. */
   readonly main: string;
   /** What a click does: the confirmed move, the confirmed takeover, or nothing yet. */
   readonly kind: "move" | "takeover" | "blocked";
@@ -207,19 +227,29 @@ export interface MainOffer {
   readonly reason: MainText | null;
   /** The same in a few words, beside the row. */
   readonly note: MainText | null;
+  /** Which rule keeps it off; null while it can be pressed. */
+  readonly block?: MakeMainBlock | "unloaded" | null;
+  /** Whole minutes the coordinator's machine has been silent, for a takeover that knows. */
+  readonly silentMinutes?: number;
 }
 
-/** Why the switch is off while main's copy is not loaded in this window. */
-export function unloadedMainText(names: { readonly machine: string; readonly main: string }): {
+/** Why the switch is off while this window has not opened the project on the coordinator's machine. */
+export function unloadedMainText(names: {
+  readonly machine: string;
+  readonly main: string;
+  /** The project's name; "this project" where the caller has none. */
+  readonly project?: string;
+}): {
   readonly reason: MainText;
   readonly note: MainText;
 } {
+  const values = { machine: names.machine, main: names.main };
   return {
     reason: {
-      text: "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.",
-      values: names,
+      text: "Connect {main} first. This window has not opened {project} on {main}, so it cannot hand the coordinator off yet.",
+      values: { ...values, project: names.project ?? "this project" },
     },
-    note: { text: "connect {main} first", values: names },
+    note: { text: "connect {main} first", values },
   };
 }
 
@@ -227,13 +257,39 @@ export function unloadedMainText(names: { readonly machine: string; readonly mai
 export function mainOffer<P>(
   key: string,
   path: MakeMainPath<P>,
-  names: { readonly machine: string; readonly main: string },
+  input: { readonly machine: string; readonly main: string; readonly project?: string },
 ): MainOffer | null {
+  const names = { machine: input.machine, main: input.main };
   if (path.kind === "none") return null;
   if (path.kind === "unloaded")
-    return { key, ...names, kind: "blocked", ...unloadedMainText(names) };
-  if (path.kind !== "blocked") return { key, ...names, kind: path.kind, reason: null, note: null };
-  return { key, ...names, kind: "blocked", ...makeMainBlockText(path, names) };
+    return path.copyOffline
+      ? {
+          key,
+          ...names,
+          kind: "blocked",
+          block: "copy-offline",
+          ...makeMainBlockText({ reason: "copy-offline", waitMs: 0 }, names),
+        }
+      : { key, ...names, kind: "blocked", block: "unloaded", ...unloadedMainText(input) };
+  if (path.kind === "blocked")
+    return {
+      key,
+      ...names,
+      kind: "blocked",
+      block: path.reason,
+      ...makeMainBlockText(path, names),
+    };
+  return {
+    key,
+    ...names,
+    kind: path.kind,
+    reason: null,
+    note: null,
+    block: null,
+    ...(path.kind === "takeover" && path.silentMs !== undefined
+      ? { silentMinutes: Math.floor(path.silentMs / 60_000) }
+      : {}),
+  };
 }
 
 type Call<I, A> = (args: {

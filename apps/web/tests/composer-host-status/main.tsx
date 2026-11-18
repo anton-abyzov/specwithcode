@@ -1,5 +1,5 @@
 /* Synthetic data only: a project page's coordinator column while the machine that
-   runs it comes and goes. The real CoordinatorComposer, Runs on chip, voice menu and
+   runs it comes and goes. The real CoordinatorComposer, machine chip ("On {machine}"), voice menu and
    blocked-host text, wired as ProjectWorkspaceSurface wires them.
    `?state=` online | offline | reconnecting | connecting | signed-out | this-device
    `?name=` the viewed machine's name, `?theme=dark`, `?width=` the column in px,
@@ -43,7 +43,7 @@ const NOW = Date.parse("2026-11-13T18:00:00Z");
 Date.now = () => NOW;
 const synced = params.get("synced");
 window.__lastSyncedAt = synced === "unknown" ? null : NOW - Number(synced ?? 0) * 60_000;
-// `?view=this-mac`: Runs on switched to this device's own copy, which is connected.
+// `?view=this-mac`: the chip switched to this device's own copy, which is connected.
 const viewThis = params.get("view") === "this-mac";
 const machine = viewThis ? "M4 Max" : (params.get("name") ?? "linux-mini");
 window.__fixtureMachine = machine;
@@ -166,14 +166,7 @@ function Harness() {
           hostStatus ? (
             <ProjectComposerHostStatus status={hostStatus} environmentId={environmentId} />
           ) : blocked ? (
-            <CoordinatorBlockedNotice
-              text={blocked}
-              coordinator={null}
-              projectTitle="specweave"
-              current="linux-mini-env:specweave"
-              copies={[]}
-              onOpen={null}
-            />
+            <CoordinatorBlockedNotice text={blocked} box={null} />
           ) : null
         }
         notices={null}
@@ -182,6 +175,7 @@ function Harness() {
             <OrchestratorSwitcher
               identity={{ color: "teal" } as never}
               label={machine}
+              projectTitle="specweave"
               connected={connected}
               statusDetail={statusDetail}
               current={viewThis ? "this-mac:specweave" : "linux-mini-env:specweave"}
@@ -191,6 +185,9 @@ function Harness() {
                   machine: viewThis ? (params.get("name") ?? "linux-mini") : machine,
                   folder: "/workspace/specweave",
                   role: "coordinator",
+                  main: true,
+                  rowRole: "main",
+                  label: { text: "Coordinator" },
                   canStart: false,
                 },
                 {
@@ -198,6 +195,9 @@ function Harness() {
                   machine: "M4 Max",
                   folder: "/Users/me/specweave",
                   role: "workers",
+                  main: false,
+                  rowRole: "copy",
+                  label: { text: "" },
                   canStart: true,
                 },
               ]}

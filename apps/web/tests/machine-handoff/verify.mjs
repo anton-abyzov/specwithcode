@@ -144,11 +144,11 @@ try {
     NodeAssert.ok(
       await dialog
         .getByText(
-          /^From MacBook Pro M4\. Main moves to .+\. Nothing on .+ is replaced without asking\.$/,
+          /^From MacBook Pro M4\. The coordinator continues on .+\. Nothing on .+ is replaced without asking\.$/,
         )
         .isVisible(),
     );
-    // Git only always moves Main: nothing asks Copy or move.
+    // Git only always moves the coordinator: nothing asks Copy or move.
     NodeAssert.equal(await dialog.locator('[data-slot="handoff-coordinator"]').count(), 0);
     const m1 = dialog.getByRole("radio", { name: /^Mac mini M1/ });
     const m3 = dialog.getByRole("radio", { name: /^MacBook Air M3/ });

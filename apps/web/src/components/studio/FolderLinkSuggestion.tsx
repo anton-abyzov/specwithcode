@@ -13,6 +13,7 @@ import type {
 } from "../../studio/folderLinkSuggestion";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useTx } from "../../i18n";
 import { Button } from "../ui/button";
 import { Radio, RadioGroup } from "../ui/radio-group";
 import {
@@ -62,6 +63,7 @@ export function FolderLinkSuggestionDialog({
   readonly onLink: (match: FolderCopyMatch) => void;
   readonly onAddOnly: () => void;
 }) {
+  const tx = useTx();
   const match = matches.find((item) => matchKey(item) === selected) ?? matches[0];
   if (!match) return null;
   const linkLabel = (item: FolderCopyMatch) =>
@@ -93,7 +95,7 @@ export function FolderLinkSuggestionDialog({
                 value={matchKey(match)}
                 onValueChange={(value) => onSelect(String(value))}
                 disabled={busy !== null}
-                aria-label="Copy of"
+                aria-label={tx("Project on another machine")}
               >
                 {matches.map((item) => (
                   <label

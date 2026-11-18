@@ -156,77 +156,79 @@ describe("the dialog's words", () => {
 
   it("names the real Main under the title, and where it goes on a move", () => {
     const base = { source: "linux-mini", there: "M5", main: "m4" };
-    expect(say(sendHeader({ ...base, move: false }))).toBe("From linux-mini. Main stays on m4.");
-    expect(say(sendHeader({ ...base, move: true }))).toBe("From linux-mini. Main moves to M5.");
+    expect(say(sendHeader({ ...base, move: false }))).toBe(
+      "From linux-mini. The coordinator stays on m4.",
+    );
+    expect(say(sendHeader({ ...base, move: true }))).toBe(
+      "From linux-mini. The coordinator continues on M5.",
+    );
     expect(say(sendHeader({ ...base, move: true, there: null }))).toBe(
-      "From linux-mini. Main moves to the machine you choose.",
+      "From linux-mini. The coordinator continues on the machine you choose.",
     );
     // Nothing in sight names Main: never guessed as the source.
-    expect(say(sendHeader({ ...base, move: false, main: null }))).toBe(
-      "From linux-mini. Main stays where it is.",
-    );
+    expect(say(sendHeader({ ...base, move: false, main: null }))).toBe("From linux-mini.");
   });
 
   it("says plainly when the source is not linked to the destination's project", () => {
     const base = { source: "m1", there: "M5", main: "m1", move: false };
     expect(say(sendHeader({ ...base, otherProject: { main: "m4" } }))).toBe(
-      "From m1. m1's copy is not linked to the project M5 belongs to (Main: m4).",
+      "From m1. M5 has this repository as a separate project (coordinator on m4).",
     );
     expect(say(sendHeader({ ...base, otherProject: { main: null } }))).toBe(
-      "From m1. m1's copy is not linked to the project M5 belongs to.",
+      "From m1. M5 has this repository as a separate project.",
     );
     expect(say(otherProjectNote({ source: "m1", there: "M5", main: "m4" }))).toBe(
-      "Only files are copied into M5's copy. Main stays on m4, and m1 is not linked to that project. To make them one project, link m1 to it from the machine menu.",
+      "Only files go into M5's folder. Its coordinator stays on m4. To make them one project, link m1 to it from the machine menu.",
     );
     expect(say(otherProjectNote({ source: "m1", there: "M5", main: null }))).toContain(
-      "Its Main does not change",
+      "Its coordinator does not change",
     );
   });
 
   it("says once what the machine already has", () => {
     expect(existingCopyLine({ there: "m1", holding: copy })).toBe(
-      "m1 already has a copy, at ~/specweave. Only what it is missing is copied.",
+      "m1 already has this project, at ~/specweave. Only what it is missing is copied.",
     );
     expect(existingCopyLine({ there: "m4", holding: main })).toBe(
-      "m4 already has Main, at ~/specweave, so there is nothing to move.",
+      "m4 already has the coordinator, at ~/specweave.",
     );
     expect(
       existingCopyLine({
         there: "m1",
         holding: { kind: "several", copies: [copy.copy, copy.copy], mainId: null },
       }),
-    ).toBe("m1 has 2 copies of this project. Pick the one to send to.");
+    ).toBe("m1 has this project in 2 folders. Pick one.");
     expect(existingCopyLine({ there: "m1", holding: { kind: "none" } })).toBeNull();
   });
 
   it("says exactly what each choice does before the click", () => {
     const base = { there: "m1", main: "m4", way: "copy", localFiles: 3 } as const;
     expect(sendPlan({ ...base, choice: "copy", holding: copy })).toBe(
-      "Copy 3 changed local files into m1's copy at ~/specweave. Main stays on m4.",
+      "Copy 3 changed local files into ~/specweave on m1. The coordinator stays on m4.",
     );
     expect(sendPlan({ ...base, choice: "move", holding: copy })).toBe(
-      "Copy 3 changed local files into m1's copy at ~/specweave, then move Main there. Work continues on m1, and this copy stops starting work.",
+      "Copy 3 changed local files into ~/specweave on m1, then continue the coordinator there. The coordinator continues on m1.",
     );
     expect(sendPlan({ ...base, choice: "copy", holding: copy, localFiles: 0 })).toBe(
-      "Compare with m1's copy at ~/specweave and copy what it is missing. Main stays on m4.",
+      "Compare with ~/specweave on m1 and copy what it is missing. The coordinator stays on m4.",
     );
     expect(sendPlan({ ...base, choice: "copy", holding: { kind: "none" } })).toBe(
-      "Copy the folder to m1. Main stays on m4.",
+      "Copy the folder to m1. The coordinator stays on m4.",
     );
     expect(sendPlan({ ...base, choice: "move", holding: { kind: "none" } })).toBe(
-      "Copy the folder to m1, then move Main there. Work continues on m1, and this copy stops starting work.",
+      "Copy the folder to m1, then continue the coordinator there. The coordinator continues on m1.",
     );
     // Git only always moves Main; uncommitted work stays.
     expect(sendPlan({ ...base, way: "git", choice: "move", holding: copy })).toBe(
-      "Push this machine's commits, then move Main to m1's copy at ~/specweave. Work continues on m1, and this copy stops starting work. 3 uncommitted files stay here.",
+      "Push this machine's commits, then continue the coordinator in ~/specweave on m1. The coordinator continues on m1. 3 uncommitted files stay here.",
     );
     // A machine holding Main is never moved to: the plan is a copy, and Main stays there.
     expect(sendPlan({ ...base, there: "m4", choice: "move", holding: main, localFiles: 0 })).toBe(
-      "Compare with m4's copy at ~/specweave and copy what it is missing. Main stays on m4.",
+      "Compare with ~/specweave on m4 and copy what it is missing. The coordinator stays on m4.",
     );
     // Main unknown here: the plan does not invent a machine.
     expect(sendPlan({ ...base, main: null, choice: "copy", holding: { kind: "none" } })).toBe(
-      "Copy the folder to m1. Main stays where it is.",
+      "Copy the folder to m1. The coordinator stays where it is.",
     );
     // Several copies: no plan until one is picked.
     expect(

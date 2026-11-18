@@ -172,10 +172,10 @@ import SWCWire
     #expect(early[0].takeover == .hidden)
     #expect(early[1].takeover == .waiting(minutes: 6))
     #expect(early[1].isStandby)
-    #expect(early[2].takeover == .unavailable("Update SpecWithCode on M3 to take over."))
+    #expect(early[2].takeover == .unavailable("Update SpecWithCode on M3 to continue the coordinator there."))
     let late = LinkedProjectResolver.rows(copies, now: Self.now, unreachableSince: Self.now.addingTimeInterval(-11 * 60))
     #expect(late[1].takeover == .ready)
-    #expect(late[1].note?.hasPrefix("M4 has been unreachable for 10 minutes or more.") == true)
+    #expect(late[1].note?.hasPrefix("M4 has been offline for 10 minutes or more.") == true)
     // A reachable coordinator offers nothing.
     var online = copies
     online[0].machineOnline = true
@@ -278,8 +278,8 @@ extension LinkedProjectResolverTests {
 
   @Test func switchedOffPromptReadsForOneOrSeveral() {
     let one = [copy("m1", switchedOff: true)]
-    #expect(LinkedProjectResolver.switchedOffPromptMessage(one, project: "SpecWeave") == "M1 has a copy of SpecWeave and is switched off on this phone. Turn it on to see its threads and coordinator.")
+    #expect(LinkedProjectResolver.switchedOffPromptMessage(one, project: "SpecWeave") == "M1 has SpecWeave and is switched off on this phone. Turn it on to see its threads and coordinator.")
     let two = one + [copy("m3", switchedOff: true)]
-    #expect(LinkedProjectResolver.switchedOffPromptMessage(two, project: "SpecWeave").hasPrefix("2 machines with a copy of SpecWeave are switched off"))
+    #expect(LinkedProjectResolver.switchedOffPromptMessage(two, project: "SpecWeave").hasPrefix("2 machines with SpecWeave are switched off"))
   }
 }
