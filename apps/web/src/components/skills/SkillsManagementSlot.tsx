@@ -1,5 +1,7 @@
 import type { EnvironmentId, ProjectId, ProjectSkillsSnapshot } from "@specweave-studio/contracts";
 
+import { SkillUpdateCenter } from "./SkillUpdateCenter";
+
 export interface SkillsManagementSlotProps {
   /** The one machine the page is set up for. */
   readonly environmentId: EnvironmentId;
@@ -20,6 +22,13 @@ export interface SkillsManagementSlotProps {
  * installed list. The page passes everything they need, so adding them does
  * not touch `ProjectSkillsSettings.tsx`.
  */
-export function SkillsManagementSlot(_props: SkillsManagementSlotProps) {
-  return null;
+export function SkillsManagementSlot(props: SkillsManagementSlotProps) {
+  return (
+    <SkillUpdateCenter
+      environmentId={props.environmentId}
+      projectId={props.projectId}
+      userLevel={props.userLevel}
+      onChanged={props.onChanged}
+    />
+  );
 }

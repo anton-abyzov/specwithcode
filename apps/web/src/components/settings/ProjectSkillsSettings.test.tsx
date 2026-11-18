@@ -12,6 +12,7 @@ import {
 } from "@specweave-studio/contracts";
 
 const state = vi.hoisted(() => ({
+  latest: new Map<string, string>() as ReadonlyMap<string, string>,
   data: null as unknown,
   error: null as string | null,
   isPending: false,
@@ -125,6 +126,16 @@ vi.mock("~/hooks/useCopyToClipboard", () => ({
     copyToClipboard: (value: string) => state.copied.push(value),
     isCopied: false,
   }),
+}));
+vi.mock("../skills/SkillsManagementSlot", () => ({
+  SkillsManagementSlot: (props: { machineName: string; userLevel: boolean }) => (
+    <div data-testid="skills-management-slot" data-machine={props.machineName}>
+      {String(props.userLevel)}
+    </div>
+  ),
+}));
+vi.mock("../skills/SkillUpdateLatest", () => ({
+  useSkillLatestVersions: () => state.latest,
 }));
 vi.mock("./settingsLayout", () => ({
   SettingsSection: (props: { id?: string; title: string; children: unknown }) => (

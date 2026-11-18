@@ -104,3 +104,17 @@ export function outcomeAgents(outcomes: ReadonlyArray<ProjectSkillUpdateOutcome>
   }
   return [...seen];
 }
+
+/**
+ * Newer versions per skill name, for the Skills page's "Update available"
+ * chips: only a source that holds a different, versioned copy counts.
+ */
+export function skillLatestVersions(
+  statuses: ReadonlyArray<ProjectSkillSourceStatus>,
+): ReadonlyMap<string, string> {
+  const latest = new Map<string, string>();
+  for (const status of statuses)
+    if (status.state === "update" && status.latest?.version)
+      latest.set(status.skill, status.latest.version);
+  return latest;
+}

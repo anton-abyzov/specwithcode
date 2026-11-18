@@ -34,6 +34,7 @@ import { SkillAuthoringSheet } from "../skills/SkillAuthoringSheet";
 import { SkillMachineMatrix } from "../skills/SkillMachineMatrix";
 import { SkillsBuiltInBlock, SkillsEmptyAgents } from "../skills/SkillsBuiltIn";
 import { SkillsManagementSlot } from "../skills/SkillsManagementSlot";
+import { useSkillLatestVersions } from "../skills/SkillUpdateLatest";
 import { splitBuiltInSkillRows } from "../skills/skillsPage.logic";
 import { cn } from "~/lib/utils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -825,6 +826,8 @@ function ScopedProjectSkillsView({
     linked.skillView === "compare" ? "compare" : null,
   );
   const [updates, setUpdates] = useState<Readonly<Record<string, string | null>>>({});
+  // Newer versions in each skill's own source, for the "Update available" chips.
+  const latestVersions = useSkillLatestVersions({ environmentId, projectId, userLevel });
   const openWith = useCallback((name: string, focus?: SkillSheetFocus) => {
     setEditError(null);
     setOpenSkill(name);
@@ -1164,6 +1167,7 @@ function ScopedProjectSkillsView({
             userLevel={userLevel}
             current={currentRead}
             projectIdFor={remoteProjectId}
+            latest={latestVersions}
           />
         </div>
       ) : machineOffline ? (
@@ -1244,7 +1248,7 @@ function ScopedProjectSkillsView({
                         key={row.name}
                         row={row}
                         entries={entries}
-                        update={updates[row.name] ?? null}
+                        update={updates[row.name] ?? latestVersions.get(row.name) ?? null}
                         onOpen={openWith}
                       />
                     ))
