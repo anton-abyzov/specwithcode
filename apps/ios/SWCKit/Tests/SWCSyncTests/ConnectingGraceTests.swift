@@ -196,6 +196,13 @@ final class AttemptGate: Sendable {
     }
     #expect(!flashed)
 
+    // The machine drops off the network mid-wait: the row and code stay up.
+    h.gate.set(.fail)
+    h.engine.reconnect(machineId: env)
+    #expect(await until { if case .unreachable? = h.engine.machines[env]?.status.lastError { return true } else { return false } })
+    h.engine.publishNow()
+    #expect(waiting())
+
     // Approved: the next attempt connects and the code goes away.
     h.gate.set(.answer)
     h.engine.reconnect(machineId: env)

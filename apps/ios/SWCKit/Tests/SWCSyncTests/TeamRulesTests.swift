@@ -127,9 +127,13 @@ import SWCWire
     off.isDisconnected = true
     model.machines = [m1, m4, m5, off]
     #expect(model.machinesAwaitingApproval(first: "m5").map(\.id) == ["m5", "m1"])
+    #expect(model.machinesAwaitingApproval().map(\.id) == ["m1", "m5"])
+    // Connected: gone, even before its code is cleared.
     model.machines[0].status = .connected
-    model.machines[0].deviceApprovalCode = nil
     #expect(model.machinesAwaitingApproval(first: "m5").map(\.id) == ["m5"])
+    // Switched off on this phone: gone, with its code still set.
+    model.machines[2].isDisconnected = true
+    #expect(model.machinesAwaitingApproval(first: "m5").isEmpty)
   }
 
   /// The phone names itself the way machines list it (1406 AC-07).

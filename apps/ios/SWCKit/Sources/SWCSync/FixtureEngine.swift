@@ -211,11 +211,14 @@ public final class FixtureEngine: AppEngine {
       phones = FixtureSample.phones(now: now)
     }
     if scenario == .approval || scenario == .approvalSaved {
+      let codes = ["6X9SF6", "K7QX2M", "U63FZA", "5F5646"]
       for i in model.machines.indices {
         model.machines[i].status = .offline
-        model.machines[i].deviceApprovalCode = "6X9SF6"
+        model.machines[i].deviceApprovalCode = codes[i % codes.count]
         unreachable.insert(model.machines[i].id)
       }
+      model.thisPhoneName = "iPhone 16 Pro"
+      model.thisPhoneShortID = "7KQ2"
     }
     if scenario == .offlineRecovery || scenario == .offlineStartup {
       model.connect = ConnectState(methods: [.apple])

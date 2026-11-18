@@ -1054,8 +1054,10 @@ private struct ChatScreen: View {
       // The transcript itself says the machine is offline and offers Reconnect.
       if showsOfflineTranscript { return nil }
       if let machine = approvalMachine, let code = machine.deviceApprovalCode {
+        // One action fits the banner: the way to keep working wins; the
+        // toolbar's laptop button still opens Connection options.
         if let other = reachableOrchestrator {
-          return ConnectionNotice(message: machine.approvalBanner(code: code), kind: .info, actionTitle: "View on \(other.machineLabel)", action: { showOrchestrator(other.ref) })
+          return ConnectionNotice(message: "\(machine.approvalBanner(code: code)) \(other.machineLabel)'s coordinator is available.", kind: .info, actionTitle: "View on \(other.machineLabel)", action: { showOrchestrator(other.ref) })
         }
         return ConnectionNotice(message: machine.approvalBanner(code: code), kind: .info, actionTitle: "Connection options", action: { nav.push(.machine(machineId)) })
       }
