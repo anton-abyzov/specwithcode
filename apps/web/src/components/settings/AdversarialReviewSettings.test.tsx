@@ -205,9 +205,9 @@ describe("AdversarialReviewSettings", () => {
   it("notes beside the switch how much longer review makes the work", () => {
     render(<AdversarialReviewSettings />);
     const note = byLabel("Review finished features automatically").findByProps({
-      "data-note-label": "How much longer this takes",
+      "data-note-label": "How much longer work takes with Review finished features automatically",
     });
-    expect(note.children.join("")).toContain("about 2.6 times as long");
+    expect(note.children.join("")).toContain("a median 2.6 times as long");
   });
 
   it("writes only the review depth", () => {

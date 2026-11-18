@@ -212,7 +212,11 @@ export function AdvisorSettings(props: {
         id="advisor-enabled"
         title="Let threads ask a stronger model"
         titleInfo={
-          <PolicyTooltip label={tx(SLOWER_WORK_NOTE_LABEL)}>{tx(ADVISOR_TIME_NOTE)}</PolicyTooltip>
+          <PolicyTooltip
+            label={tx(SLOWER_WORK_NOTE_LABEL, { setting: tx("Let threads ask a stronger model") })}
+          >
+            {tx(ADVISOR_TIME_NOTE)}
+          </PolicyTooltip>
         }
         description="A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage."
         resetAction={reset("enabled", tx("advisor"), advisor.enabled, { enabled: false })}

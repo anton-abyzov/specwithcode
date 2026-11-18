@@ -163,7 +163,11 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
             id="adversarial-review-auto"
             title={tx("Review finished features automatically")}
             titleInfo={
-              <PolicyTooltip label={tx(SLOWER_WORK_NOTE_LABEL)}>
+              <PolicyTooltip
+                label={tx(SLOWER_WORK_NOTE_LABEL, {
+                  setting: tx("Review finished features automatically"),
+                })}
+              >
                 {tx(ADVERSARIAL_REVIEW_TIME_NOTE)}
               </PolicyTooltip>
             }

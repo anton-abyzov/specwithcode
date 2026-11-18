@@ -5706,7 +5706,7 @@ export const ko: PhraseCatalog = {
   "Add one": "추가하기",
   "+{n} more": "+{n}개 더",
   "Ready once an agent is signed in.": "에이전트가 로그인하면 준비됩니다.",
-  "How much longer this takes": "얼마나 더 걸리는지",
-  "Can make work take much longer to finish: about 2.6 times as long in measured runs, usually 1.5 to 3.5 times, because each review round and its fixes add time.": "작업 완료까지 시간이 훨씬 오래 걸릴 수 있습니다. 측정 결과 약 2.6배, 보통 1.5~3.5배였습니다. 리뷰 라운드마다 리뷰와 수정에 시간이 들기 때문입니다.",
-  "Can make work take longer: each consult adds about 2 minutes, so threads took about 1.1 times as long in measured runs, up to 1.4 times with many consults.": "작업 시간이 늘어날 수 있습니다. 상담 한 번에 약 2분이 걸려, 측정 결과 스레드 전체가 약 1.1배, 상담이 많으면 최대 1.4배 걸렸습니다.",
+  "How much longer work takes with {setting}": "'{setting}' 사용 시 작업이 얼마나 더 걸리는지",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "작업 완료까지 시간이 훨씬 오래 걸릴 수 있습니다. 측정 결과 리뷰한 작업은 리뷰 전 같은 작업보다 중앙값 2.6배의 시간이 걸렸습니다(실행의 절반은 1.6~3.6배). 리뷰 라운드와 그 수정에 시간이 들기 때문입니다.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "작업 시간이 늘어날 수 있습니다. 상담 한 번에 약 2분이 걸립니다. 측정 결과 상담한 스레드는 약 1.1배의 시간이 걸렸고, 10개 중 1개는 1.4배 이상 걸렸습니다.",
 };

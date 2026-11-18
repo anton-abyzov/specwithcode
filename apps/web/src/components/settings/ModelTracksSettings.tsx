@@ -669,7 +669,11 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
                     }
                   />
                 </label>
-                <PolicyTooltip label={tx(SLOWER_WORK_NOTE_LABEL)}>
+                <PolicyTooltip
+                  label={tx(SLOWER_WORK_NOTE_LABEL, {
+                    setting: tx("Review finished features automatically"),
+                  })}
+                >
                   {tx(ADVERSARIAL_REVIEW_TIME_NOTE)}
                 </PolicyTooltip>
               </span>

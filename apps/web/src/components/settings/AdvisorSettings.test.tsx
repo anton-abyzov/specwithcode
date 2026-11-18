@@ -232,7 +232,7 @@ describe("AdvisorSettings", () => {
   it("notes beside the switch how much longer consults make the work", () => {
     render();
     const note = row("Let threads ask a stronger model").findByProps({
-      "data-note-label": "How much longer this takes",
+      "data-note-label": "How much longer work takes with Let threads ask a stronger model",
     });
     expect(note.children.join("")).toContain("about 1.1 times as long");
   });

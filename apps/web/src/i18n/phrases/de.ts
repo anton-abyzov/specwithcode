@@ -5814,7 +5814,7 @@ export const de: PhraseCatalog = {
   "Add one": "Eines hinzufügen",
   "+{n} more": "+{n} weitere",
   "Ready once an agent is signed in.": "Bereit, sobald ein Agent angemeldet ist.",
-  "How much longer this takes": "Wie viel länger das dauert",
-  "Can make work take much longer to finish: about 2.6 times as long in measured runs, usually 1.5 to 3.5 times, because each review round and its fixes add time.": "Kann die Arbeit deutlich verlängern: in Messungen etwa 2,6-mal so lange, meist 1,5- bis 3,5-mal, weil jede Review-Runde und ihre Korrekturen Zeit kosten.",
-  "Can make work take longer: each consult adds about 2 minutes, so threads took about 1.1 times as long in measured runs, up to 1.4 times with many consults.": "Kann die Arbeit verlängern: Jede Konsultation kostet etwa 2 Minuten, daher dauerten Threads in Messungen etwa 1,1-mal so lange, bei vielen Konsultationen bis zu 1,4-mal.",
+  "How much longer work takes with {setting}": "Wie viel länger die Arbeit mit „{setting}“ dauert",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "Kann die Arbeit deutlich verlängern: In Messungen dauerte geprüfte Arbeit im Median 2,6-mal so lange wie dieselbe Arbeit vor dem Review (die Hälfte der Läufe 1,6- bis 3,6-mal), weil jede Review-Runde und ihre Korrekturen Zeit kosten.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "Kann die Arbeit verlängern: Jede Konsultation kostet etwa 2 Minuten. In Messungen dauerten Threads mit Konsultationen etwa 1,1-mal so lange, jeder zehnte 1,4-mal so lange oder länger.",
 };
