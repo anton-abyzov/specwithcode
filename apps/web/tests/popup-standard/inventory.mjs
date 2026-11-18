@@ -30,16 +30,19 @@ export const EXEMPT = {
   "apps/web/src/components/chat/ChatComposer.tsx": "attachment file viewer",
   "apps/web/src/components/studio/ProjectWorkspaceAttachments.tsx": "attachment file viewer",
   "apps/web/src/components/studio/shell/CoordinatorAttachments.tsx": "attachment file viewer",
-  "apps/web/src/components/design/systems/DesignSystemReviewDialog.tsx": "design system review workspace",
+  "apps/web/src/components/design/systems/DesignSystemReviewDialog.tsx":
+    "design system review workspace",
   "apps/web/src/components/studio/ProjectPlan.tsx": "project plan workspace",
   "apps/web/src/components/studio/ProjectWorkspaceSettings.tsx": "project settings workspace",
   "apps/web/src/components/usage/UsagePriceOverrides.tsx": "wide price table",
+  "apps/web/src/components/chat/ExpandedImageDialog.tsx": "full-window image viewer",
 };
 
 async function walk(dir, filter) {
   const out = [];
   for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
-    if (entry.name === "node_modules" || entry.name === "build" || entry.name.startsWith(".")) continue;
+    if (entry.name === "node_modules" || entry.name === "build" || entry.name.startsWith("."))
+      continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) out.push(...(await walk(full, filter)));
     else if (filter(full)) out.push(full);
@@ -81,13 +84,20 @@ export async function inventory() {
         const rel = path.relative(repo, file);
         const widths = [...tag.matchAll(WIDTH_CLASS)].map((m) => m[1]);
         const exempt =
-          kind === "dialog" ? (Object.entries(EXEMPT).find(([suffix]) => rel.endsWith(suffix))?.[1] ?? null) : null;
+          kind === "dialog"
+            ? (Object.entries(EXEMPT).find(([suffix]) => rel.endsWith(suffix))?.[1] ?? null)
+            : null;
         rows.push({
           platform: "desktop",
           kind,
           file: rel,
           line,
-          surface: rel.replace(/^apps\/web\/src\/(components\/)?/, "").split("/").slice(0, -1).join("/") || "(root)",
+          surface:
+            rel
+              .replace(/^apps\/web\/src\/(components\/)?/, "")
+              .split("/")
+              .slice(0, -1)
+              .join("/") || "(root)",
           widthToken: prop(tag, "width") ?? prop(tag, "size"),
           widthClasses: widths,
           exempt,
@@ -105,7 +115,17 @@ export async function inventory() {
     }
   }
   for (const [type, count] of [...toastTypes].sort((a, b) => b[1] - a[1])) {
-    rows.push({ platform: "desktop", kind: "toast", file: "apps/web/src/components/ui/toast.tsx", line: 0, surface: `type ${type}`, callers: count, widthToken: null, widthClasses: [], exempt: null });
+    rows.push({
+      platform: "desktop",
+      kind: "toast",
+      file: "apps/web/src/components/ui/toast.tsx",
+      line: 0,
+      surface: `type ${type}`,
+      callers: count,
+      widthToken: null,
+      widthClasses: [],
+      exempt: null,
+    });
   }
 
   // iPhone (SwiftUI): system presentations and custom overlays.
@@ -123,7 +143,16 @@ export async function inventory() {
       const text = await fs.readFile(file, "utf8");
       for (const [re, kind] of IOS) {
         for (const m of text.matchAll(re)) {
-          rows.push({ platform: "iphone", kind, file: path.relative(repo, file), line: text.slice(0, m.index).split("\n").length, surface: path.basename(file, ".swift"), widthToken: null, widthClasses: [], exempt: null });
+          rows.push({
+            platform: "iphone",
+            kind,
+            file: path.relative(repo, file),
+            line: text.slice(0, m.index).split("\n").length,
+            surface: path.basename(file, ".swift"),
+            widthToken: null,
+            widthClasses: [],
+            exempt: null,
+          });
         }
       }
     }
@@ -135,7 +164,21 @@ export async function inventory() {
 
 // The standard's largest width per kind, in rem (docs/studio/design-guidelines.md, Popups).
 export const MAX_REM = { menu: 32, popover: 32, dialog: 48, "alert dialog": 32 };
-const NAMED_REM = { "3xs": 16, "2xs": 18, xs: 20, sm: 24, md: 28, lg: 32, xl: 36, "2xl": 42, "3xl": 48, "4xl": 56, "5xl": 64, "6xl": 72, "7xl": 80 };
+const NAMED_REM = {
+  "3xs": 16,
+  "2xs": 18,
+  xs: 20,
+  sm: 24,
+  md: 28,
+  lg: 32,
+  xl: 36,
+  "2xl": 42,
+  "3xl": 48,
+  "4xl": 56,
+  "5xl": 64,
+  "6xl": 72,
+  "7xl": 80,
+};
 /** A width class's size in rem, or null when it does not fix a size (w-full, min-w-0, w-max). */
 export function classRem(cls) {
   const bare = cls.replace(/^(?:[a-z0-9]+:)+/, "");
@@ -149,14 +192,41 @@ export function classRem(cls) {
   if (value === "none") return Infinity;
   return null;
 }
-/** Menus, popovers and dialogs whose own width classes go past the standard's cap. */
+// A menu's width token (menu.tsx menuPopupWidthClassName); md is the default.
+const MENU_TOKEN_REM = { sm: 16, md: 20, lg: 24, xl: 32 };
+// Width classes that do not set a size of their own.
+const NEUTRAL = /^(?:min-w|max-w|w)-(?:0|auto|full|fit|max|min|none)$/;
+/**
+ * The width a call site may reach without a decision: a menu its own token (a `max-w-` in
+ * className replaces the token's cap), popovers and dialogs their kind's largest width.
+ */
+export function allowedRem(row) {
+  if (row.kind === "menu") return MENU_TOKEN_REM[row.widthToken ?? "md"] ?? MAX_REM.menu;
+  return MAX_REM[row.kind];
+}
+/**
+ * Menus, popovers and dialogs that escape the standard: a width class past the call site's
+ * allowance, or one the checker cannot size (vw units, CSS variables), which needs a decision
+ * as much as an oversized one. Exempt dialogs are listed in EXEMPT with their reason.
+ */
 export function overrides(rows) {
-  return rows.filter(
-    (row) =>
-      row.kind in MAX_REM &&
-      !row.exempt &&
-      row.widthClasses.some((c) => (classRem(c) ?? 0) > MAX_REM[row.kind]),
-  );
+  return rows.filter((row) => {
+    if (!(row.kind in MAX_REM) || row.exempt) return false;
+    return row.widthClasses.some((cls) => {
+      const bare = cls.replace(/^(?:[a-z0-9-]+:)+/, "");
+      if (NEUTRAL.test(bare)) return false;
+      // A menu as wide as its anchor stays under its token's max-width.
+      if (row.kind === "menu" && bare === "w-(--anchor-width)") return false;
+      // A viewport guard only narrows, so it is fine beside a sized width class.
+      if (/^max-w-\[(?:\d+vw|calc\(100vw-[\d.]+rem\))\]$/.test(bare)) {
+        return !row.widthClasses.some(
+          (c) => /^w-/.test(c) && (classRem(c) ?? Infinity) <= allowedRem(row),
+        );
+      }
+      const rem = classRem(cls);
+      return rem === null || rem > allowedRem(row);
+    });
+  });
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -164,13 +234,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const out = args.find((a) => !a.startsWith("--"));
   const rows = await inventory();
   const counts = {};
-  for (const row of rows) counts[`${row.platform} ${row.kind}`] = (counts[`${row.platform} ${row.kind}`] ?? 0) + 1;
+  for (const row of rows)
+    counts[`${row.platform} ${row.kind}`] = (counts[`${row.platform} ${row.kind}`] ?? 0) + 1;
   const flagged = overrides(rows);
-  if (out) await fs.writeFile(out, JSON.stringify({ counts, rows, overrides: flagged.length }, null, 2));
+  if (out)
+    await fs.writeFile(out, JSON.stringify({ counts, rows, overrides: flagged.length }, null, 2));
   console.log(JSON.stringify(counts, null, 1));
   console.log(`width overrides to decide: ${flagged.length}`);
   if (args.includes("--check-overrides")) {
-    for (const row of flagged) console.log(`  ${row.file}:${row.line} ${row.kind} ${row.widthClasses.join(" ")}`);
+    for (const row of flagged)
+      console.log(`  ${row.file}:${row.line} ${row.kind} ${row.widthClasses.join(" ")}`);
     if (flagged.length) process.exit(1);
   }
 }

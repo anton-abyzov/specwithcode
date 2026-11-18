@@ -24,7 +24,10 @@ const output = path.resolve(
   args.find((a) => !a.startsWith("--")) ?? ".artifacts/popup-standard/evidence",
 );
 await fs.mkdir(output, { recursive: true });
-const axeSource = await fs.readFile(path.resolve("apps/web/node_modules/axe-core/axe.min.js"), "utf8");
+const axeSource = await fs.readFile(
+  path.resolve("apps/web/node_modules/axe-core/axe.min.js"),
+  "utf8",
+);
 const root = path.resolve(".artifacts/popup-standard/site");
 const server = http.createServer(async (req, res) => {
   try {
@@ -54,14 +57,70 @@ const browser = await chromium.launch({
 const REM = 16;
 // The popup each case opens, its kind's width cap in px, and whether arrow keys move in it.
 const CASES = [
-  { name: "machine", trigger: "[data-coordinator-machine]", popup: '[data-slot="menu-popup"]', cap: 20 * REM, keys: true, info: true },
-  { name: "machine-linked", trigger: "[data-coordinator-machine]", popup: '[data-slot="menu-popup"]', cap: 20 * REM, keys: true },
-  { name: "menu", trigger: "[data-popup-trigger]", popup: '[data-slot="menu-popup"]', cap: 20 * REM, keys: true },
-  { name: "popover", trigger: "[data-popup-trigger]", popup: '[data-slot="popover-popup"]', cap: 32 * REM },
-  { name: "dialog", trigger: "[data-popup-trigger]", popup: '[role="dialog"]', cap: 32 * REM, trap: true },
-  { name: "alert", trigger: "[data-popup-trigger]", popup: '[role="alertdialog"]', cap: 32 * REM, trap: true },
-  { name: "select", trigger: "[data-popup-trigger]", popup: '[data-slot="select-popup"]', cap: 24 * REM },
-  { name: "toast", trigger: "[data-popup-trigger]", popup: '[data-slot="toast-viewport"] > :first-child', cap: 24 * REM },
+  {
+    name: "machine",
+    trigger: "[data-coordinator-machine]",
+    popup: '[data-slot="menu-popup"]',
+    cap: 20 * REM,
+    keys: true,
+    info: true,
+  },
+  {
+    name: "machine-linked",
+    trigger: "[data-coordinator-machine]",
+    popup: '[data-slot="menu-popup"]',
+    cap: 20 * REM,
+    keys: true,
+  },
+  {
+    name: "menu",
+    trigger: "[data-popup-trigger]",
+    popup: '[data-slot="menu-popup"]',
+    cap: 20 * REM,
+    keys: true,
+  },
+  {
+    name: "popover",
+    trigger: "[data-popup-trigger]",
+    popup: '[data-slot="popover-popup"]',
+    cap: 32 * REM,
+  },
+  {
+    name: "dialog",
+    trigger: "[data-popup-trigger]",
+    popup: '[role="dialog"]',
+    cap: 32 * REM,
+    trap: true,
+  },
+  {
+    name: "alert",
+    trigger: "[data-popup-trigger]",
+    popup: '[role="alertdialog"]',
+    cap: 32 * REM,
+    trap: true,
+  },
+  // The destructive button again on the unthemed tokens, whose error colors differ.
+  {
+    name: "alert-unthemed",
+    page: "alert",
+    query: "&palette=none",
+    trigger: "[data-popup-trigger]",
+    popup: '[role="alertdialog"]',
+    cap: 32 * REM,
+    trap: true,
+  },
+  {
+    name: "select",
+    trigger: "[data-popup-trigger]",
+    popup: '[data-slot="select-popup"]',
+    cap: 24 * REM,
+  },
+  {
+    name: "toast",
+    trigger: "[data-popup-trigger]",
+    popup: '[data-slot="toast-viewport"] > :first-child',
+    cap: 24 * REM,
+  },
 ];
 const SIZES = [
   { name: "390", width: 390, height: 844 },
@@ -88,7 +147,9 @@ try {
           reducedMotion: "reduce",
         });
         page.on("pageerror", (error) => errors.push(`${id}: ${error.message}`));
-        await page.goto(`${origin}/?case=${item.name}&theme=${theme}`);
+        await page.goto(
+          `${origin}/?case=${item.page ?? item.name}&theme=${theme}${item.query ?? ""}`,
+        );
         const trigger = page.locator(item.trigger).first();
         await trigger.click();
         const popup = page.locator(item.popup).first();
@@ -108,7 +169,17 @@ try {
         const axe = await page.evaluate(async (selector) => {
           const node = document.querySelector(selector);
           const result = await window.axe.run(node ?? document, {
-            runOnly: { type: "rule", values: ["color-contrast", "aria-command-name", "aria-input-field-name", "button-name", "link-name", "aria-dialog-name"] },
+            runOnly: {
+              type: "rule",
+              values: [
+                "color-contrast",
+                "aria-command-name",
+                "aria-input-field-name",
+                "button-name",
+                "link-name",
+                "aria-dialog-name",
+              ],
+            },
           });
           return result.violations.map((v) => `${v.id}: ${v.nodes.length}`);
         }, item.popup);
@@ -117,7 +188,12 @@ try {
           case: item.name,
           size: size.name,
           theme,
-          box: box && { x: Math.round(box.x), y: Math.round(box.y), width: Math.round(box.width), height: Math.round(box.height) },
+          box: box && {
+            x: Math.round(box.x),
+            y: Math.round(box.y),
+            width: Math.round(box.width),
+            height: Math.round(box.height),
+          },
           cap: Math.min(item.cap, size.width - 2 * REM),
           axe,
           shot,
@@ -131,9 +207,15 @@ try {
           );
         }
         if (!before && box && !sheet) {
-          check(box.width <= row.cap + 1, `${id}: ${Math.round(box.width)} px wide, cap ${row.cap}`);
           check(
-            box.x >= MARGIN - 1 && box.y >= MARGIN - 1 && box.x + box.width <= size.width - MARGIN + 1 && box.y + box.height <= size.height - MARGIN + 1,
+            box.width <= row.cap + 1,
+            `${id}: ${Math.round(box.width)} px wide, cap ${row.cap}`,
+          );
+          check(
+            box.x >= MARGIN - 1 &&
+              box.y >= MARGIN - 1 &&
+              box.x + box.width <= size.width - MARGIN + 1 &&
+              box.y + box.height <= size.height - MARGIN + 1,
             `${id}: outside the window margin ${JSON.stringify(row.box)}`,
           );
           check(axe.length === 0, `${id}: axe ${axe.join(", ")}`);
@@ -141,34 +223,71 @@ try {
         // The explanation behind the first label's info button, opened in place.
         const infoButton = page.locator('[data-slot="menu-info-button"]').first();
         if (item.info && (await infoButton.count())) {
+          const target = await infoButton.boundingBox();
+          row.infoTarget = target && {
+            width: Math.round(target.width),
+            height: Math.round(target.height),
+          };
+          if (!before && target && size.width < 640) {
+            check(
+              target.width >= 40 && target.height >= 32,
+              `${id}: info button ${row.infoTarget.width}x${row.infoTarget.height} is under a finger-sized target`,
+            );
+          }
           await infoButton.click();
           await page.waitForTimeout(250);
           const infoBox = await popup.boundingBox();
-          row.info = infoBox && { width: Math.round(infoBox.width), height: Math.round(infoBox.height) };
+          row.info = infoBox && {
+            width: Math.round(infoBox.width),
+            height: Math.round(infoBox.height),
+          };
           row.infoShot = path.join(output, `${id}-info.png`);
           await page.screenshot({ path: row.infoShot });
           if (!before && infoBox) {
             check(infoBox.width <= row.cap + 1, `${id} info: ${Math.round(infoBox.width)} px wide`);
             check(infoBox.y >= MARGIN - 1, `${id} info: above the window margin`);
-            check(await page.locator(item.popup).count() === 1, `${id}: info closed the menu`);
+            check((await page.locator(item.popup).count()) === 1, `${id}: info closed the menu`);
           }
           await infoButton.click();
           await page.waitForTimeout(150);
         }
         if (!before && item.keys) {
+          // The pointer rests on a row first (the info click above leaves it there): Escape must
+          // still hand focus back to the trigger.
+          await page.locator(`${item.popup} [role^="menuitem"]`).first().hover();
           await page.keyboard.press("ArrowDown");
           const first = await page.evaluate(() => document.activeElement?.getAttribute("role"));
+          const firstSlot = await page.evaluate(() =>
+            document.activeElement?.getAttribute("data-slot"),
+          );
           await page.keyboard.press("End");
           const last = await page.evaluate(() => document.activeElement?.textContent?.trim());
           await page.keyboard.press("Home");
+          const home = await page.evaluate(() => document.activeElement?.getAttribute("data-slot"));
           await page.keyboard.press("Escape");
           await page.waitForTimeout(250);
           const back = await page.evaluate(
             (selector) => document.activeElement === document.querySelector(selector),
             item.trigger,
           );
-          row.keys = { first, last, back };
+          // Opened from the keyboard, the menu starts on its first real row, never on an
+          // icon-only info button.
+          await page.keyboard.press("Enter");
+          await popup.waitFor({ timeout: 4000 });
+          await page.waitForTimeout(250);
+          const keyboardFirst = await page.evaluate(() =>
+            document.activeElement?.getAttribute("data-slot"),
+          );
+          await page.keyboard.press("Escape");
+          await page.waitForTimeout(250);
+          row.keys = { first, firstSlot, last, home, keyboardFirst, back };
           check(/^menuitem/.test(first ?? ""), `${id}: ArrowDown focused ${first}`);
+          for (const [step, slot] of [
+            ["Home", home],
+            ["keyboard open", keyboardFirst],
+          ]) {
+            check(slot !== "menu-info-button", `${id}: ${step} focused the info button`);
+          }
           check(back, `${id}: Escape did not return focus to the trigger`);
         }
         if (!before && item.trap) {
@@ -214,7 +333,9 @@ await fs.writeFile(
   JSON.stringify({ before, results, failures, errors }, null, 2),
 );
 for (const row of results)
-  console.log(`${row.id.padEnd(28)} ${String(row.box?.width ?? "-").padStart(5)} px  cap ${row.cap}  axe ${row.axe.length}`);
+  console.log(
+    `${row.id.padEnd(28)} ${String(row.box?.width ?? "-").padStart(5)} px  cap ${row.cap}  axe ${row.axe.length}`,
+  );
 if (errors.length) console.log(`page errors:\n  ${errors.join("\n  ")}`);
 if (failures.length) {
   console.log(`failures (${failures.length}):\n  ${failures.join("\n  ")}`);

@@ -91,8 +91,10 @@ describe("Studio Connect machine row", () => {
   });
 
   it("keeps red for the confirmation: the row's own button is neutral", () => {
-    expect(renderRow()).not.toContain("dark:bg-destructive");
-    expect(renderRow({ confirmationOpen: true })).toContain("dark:bg-destructive");
+    expect(renderRow()).not.toContain("bg-destructive-solid text-destructive-solid-foreground");
+    expect(renderRow({ confirmationOpen: true })).toContain(
+      "bg-destructive-solid text-destructive-solid-foreground",
+    );
   });
 
   it("expands the confirmation beneath the machine's row", () => {

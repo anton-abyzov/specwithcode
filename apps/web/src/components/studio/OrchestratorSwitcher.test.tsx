@@ -459,15 +459,13 @@ it("names machines once and labels every group of actions", async () => {
   expect(
     [...document.querySelectorAll('[data-slot="menu-label"]')].map((row) => row.textContent),
   ).toEqual(["View this project on", "This project", "On M4"]);
-  expect([...document.querySelectorAll(ACTION_ITEMS)].map((row) => row.textContent)).toEqual(
-    [
-      "Send to another machine…",
-      "Make Minis main",
-      "Move running threads…M4 offline",
-      "Leave this machine…",
-      "Machine access settings",
-    ],
-  );
+  expect([...document.querySelectorAll(ACTION_ITEMS)].map((row) => row.textContent)).toEqual([
+    "Send to another machine…",
+    "Make Minis main",
+    "Move running threads…M4 offline",
+    "Leave this machine…",
+    "Machine access settings",
+  ]);
   expect(document.querySelector('[role="menu"]')?.textContent).not.toMatch(/orchestrator/i);
   await act(async () => item("menuitem", "Machine access settings")!.click());
   expect(calls.onAllowWorkers).toHaveBeenCalledTimes(1);
@@ -505,6 +503,12 @@ it("keeps what viewing means behind the label's info button, opened without clos
   expect(button?.getAttribute("role")).toBe("menuitem");
   expect(button?.getAttribute("aria-label")).toBe("About: View this project on");
   expect(button?.getAttribute("aria-expanded")).toBe("false");
+  // The menu opens on its machines: the info button follows them in item order.
+  const items = [...document.querySelectorAll('[role^="menuitem"]')];
+  expect(items[0]?.getAttribute("role")).toBe("menuitemradio");
+  expect(items.indexOf(button!)).toBeGreaterThan(
+    items.findLastIndex((item) => item.getAttribute("role") === "menuitemradio"),
+  );
   expect(document.querySelector("[data-orchestrator-note]")).toBeNull();
   expect(unlinkedNote()).toBeNull();
   await showInfo();

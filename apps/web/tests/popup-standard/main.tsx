@@ -1,7 +1,7 @@
 /* Synthetic data only. One page per popup, opened by its trigger, so verify.mjs can measure
    and shoot it at any window size.
    `?case=` machine | machine-linked | menu | popover | dialog | alert | select | toast
-   `?theme=dark`. The machine cases render the real OrchestratorSwitcher (the "Runs on"
+   `?theme=dark`, `?palette=none` for the unthemed tokens. The machine cases render the real OrchestratorSwitcher (the "Runs on"
    menu) at the coordinator's foot: `machine` is two checkouts that were never linked, as on
    the M5 screenshot of November 18, 2026; `machine-linked` a main and two copies. The other
    cases render the shared primitives with the longest content call sites give them. */
@@ -29,7 +29,12 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../../src/components/ui/menu";
-import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../../src/components/ui/popover";
+import {
+  Popover,
+  PopoverPopup,
+  PopoverTitle,
+  PopoverTrigger,
+} from "../../src/components/ui/popover";
 import {
   Dialog,
   DialogDescription,
@@ -63,13 +68,18 @@ import "./fixture.css";
 const params = new URLSearchParams(location.search);
 const dark = params.get("theme") === "dark";
 document.documentElement.classList.toggle("dark", dark);
-applyThemePalette("studio-chat", dark ? "dark" : "light");
+// `?palette=none` keeps the unthemed tokens, so contrast is checked on both.
+if (params.get("palette") !== "none") applyThemePalette("studio-chat", dark ? "dark" : "light");
 const view = params.get("case") ?? "machine";
 
 const LONG =
   "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.";
 
-const copy = (machine: string, role: "main" | "copy" | "unlinked", canStart = false): OrchestratorCopy => ({
+const copy = (
+  machine: string,
+  role: "main" | "copy" | "unlinked",
+  canStart = false,
+): OrchestratorCopy => ({
   key: `${machine}:p`,
   machine,
   folder: "/w/atlas",
@@ -252,7 +262,12 @@ function GalleryToast() {
         size="sm"
         data-popup-trigger=""
         onClick={() =>
-          toastManager.add({ type: "success", title: "Atlas linked to m1", description: LONG, timeout: 0 })
+          toastManager.add({
+            type: "success",
+            title: "Atlas linked to m1",
+            description: LONG,
+            timeout: 0,
+          })
         }
       >
         Toast

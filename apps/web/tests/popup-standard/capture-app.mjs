@@ -237,7 +237,10 @@ function findTriggers({ unsafeSource, probeSource, probeUnsafeSource, probeAllow
     const sig = `${role}|${name}`;
     if (seen.has(sig)) continue;
     seen.add(sig);
-    const stem = name.split(/ for |:/)[0].trim().toLowerCase();
+    const stem = name
+      .split(/ for |:/)[0]
+      .trim()
+      .toLowerCase();
     if ((stems.get(stem) ?? 0) >= 2) continue;
     stems.set(stem, (stems.get(stem) ?? 0) + 1);
     const id = String(found.length);
@@ -289,7 +292,9 @@ function newPopup({ popupSelector }) {
 // The first line of a Playwright error plus the line that says what blocked the click.
 const whyFailed = (error) => {
   const lines = String(error?.message ?? error).split("\n");
-  const cause = lines.find((l) => /intercepts pointer|not visible|outside of the viewport|not stable|detached/.test(l));
+  const cause = lines.find((l) =>
+    /intercepts pointer|not visible|outside of the viewport|not stable|detached/.test(l),
+  );
   return [lines[0], cause?.trim()].filter(Boolean).join(" / ").slice(0, 300);
 };
 
@@ -301,7 +306,10 @@ const kindOf = (popup) => {
     ] ?? "unknown"
   );
 };
-const capOf = (kind) => (/dialog|alert|sheet|command/.test(kind) ? 512 : 320);
+// The standard's largest width per kind (docs/studio/design-guidelines.md, Popups): menus up to
+// their xl token, lists their trigger's width or 24rem, whichever is wider.
+const capOf = (kind, triggerWidth = 0) =>
+  /select|combobox|listbox/.test(kind) ? Math.max(384, Math.ceil(triggerWidth)) : 512;
 
 const results = [];
 const failed = [];
@@ -542,11 +550,19 @@ try {
         try {
           viewPath = await openView();
         } catch (error) {
-          skipped.push({ view: view.name, combo, reason: String(error.message ?? error).split("\n")[0] });
+          skipped.push({
+            view: view.name,
+            combo,
+            reason: String(error.message ?? error).split("\n")[0],
+          });
           continue;
         }
         if (!view.scope && !view.family && crawledPaths.has(viewPath)) {
-          skipped.push({ view: view.name, combo, reason: `same page as ${crawledPaths.get(viewPath)} (${viewPath})` });
+          skipped.push({
+            view: view.name,
+            combo,
+            reason: `same page as ${crawledPaths.get(viewPath)} (${viewPath})`,
+          });
           continue;
         }
         if (!view.scope && !view.family) crawledPaths.set(viewPath, view.name);
@@ -591,7 +607,9 @@ try {
         let shots = 0;
         // --list: print what would be clicked and click nothing (vets names before a run).
         if (opts.list !== undefined) {
-          console.log(`${combo} ${view.name}: ${triggers.map((t) => `${t.probe ? "?" : ""}${t.name}`).join(" | ")}`);
+          console.log(
+            `${combo} ${view.name}: ${triggers.map((t) => `${t.probe ? "?" : ""}${t.name}`).join(" | ")}`,
+          );
           continue;
         }
         for (const trigger of triggers) {
@@ -606,6 +624,7 @@ try {
               continue;
             }
             await page.evaluate(markPopups, { popupSelector: POPUP });
+            const triggerBox = await page.locator(`[data-cap-id="${match.id}"]`).boundingBox();
             await page.locator(`[data-cap-id="${match.id}"]`).click({ timeout: 4000 });
             const popup = await page
               .waitForFunction(newPopup, { popupSelector: POPUP }, { timeout: 2500 })
@@ -642,7 +661,8 @@ try {
                 viewport: size,
                 box,
                 inside,
-                overCap: box.width > capOf(kind),
+                triggerWidth: triggerBox ? Math.round(triggerBox.width) : null,
+                overCap: box.width > capOf(kind, triggerBox?.width) + 1,
                 shot,
               });
             }
@@ -683,7 +703,10 @@ try {
     ...new Map(
       list
         .filter((f) => !opened(f))
-        .map((f) => [`${f.view}|${f.trigger}`, { view: f.view, trigger: f.trigger, reason: f.reason }]),
+        .map((f) => [
+          `${f.view}|${f.trigger}`,
+          { view: f.view, trigger: f.trigger, reason: f.reason },
+        ]),
     ).values(),
   ];
   const widest = [...results]
@@ -700,14 +723,25 @@ try {
     sizes: SIZES,
     themes: THEMES,
     margin: MARGIN,
-    caps: { menu: 320, popover: 320, select: 320, combobox: 320, listbox: 320, dialog: 512 },
+    caps: {
+      menu: 512,
+      popover: 512,
+      select: "max(384, trigger)",
+      combobox: "max(384, trigger)",
+      listbox: "max(384, trigger)",
+      dialog: 512,
+    },
     distinctPopups: distinct.size,
     totalsByKind: totals,
     overCapAt2000: [
-      ...new Set(results.filter((r) => r.width === 2000 && r.overCap).map((r) => `${r.view} | ${r.trigger}`)),
+      ...new Set(
+        results.filter((r) => r.width === 2000 && r.overCap).map((r) => `${r.view} | ${r.trigger}`),
+      ),
     ],
     outsideViewport: [
-      ...new Set(results.filter((r) => !r.inside).map((r) => `${r.view} | ${r.trigger} | ${r.width}`)),
+      ...new Set(
+        results.filter((r) => !r.inside).map((r) => `${r.view} | ${r.trigger} | ${r.width}`),
+      ),
     ],
     widestAt2000: widest,
     failedToOpen: unique(failed),

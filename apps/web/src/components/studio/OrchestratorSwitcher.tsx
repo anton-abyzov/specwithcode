@@ -40,7 +40,7 @@ import {
   MenuGroup,
   MenuGroupLabel,
   MenuHint,
-  MenuInfoLabel,
+  MenuInfoGroup,
   MenuItem,
   MenuPopup,
   MenuRadioGroup,
@@ -277,31 +277,29 @@ export function OrchestratorSwitcher({
       <MenuPopup align="start" side="top" className="w-[min(20rem,calc(100vw-2rem))]">
         <AfterUnmount pending={pendingView} />
         {viewable && onView ? (
-          <MenuGroup>
+          <MenuInfoGroup
+            label={tx("View this project on")}
+            infoLabel={`${tx("About")}: ${tx("View this project on")}`}
+            info={
+              <>
+                <MenuHint data-orchestrator-note="">
+                  {tx(
+                    "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.",
+                  )}
+                </MenuHint>
+                {allUnlinked ? (
+                  <MenuHint data-orchestrator-unlinked-note="">
+                    {tx(
+                      "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.",
+                    )}
+                    {linkCoversRows ? ` ${tx("Link them below to make one project.")}` : null}
+                  </MenuHint>
+                ) : null}
+              </>
+            }
+          >
             {/* What viewing means sits behind the label's info button: the lines are too long
                 to stand in a menu, and the menu should open on its machines. */}
-            <MenuInfoLabel
-              infoLabel={`${tx("About")}: ${tx("View this project on")}`}
-              info={
-                <>
-                  <MenuHint data-orchestrator-note="">
-                    {tx(
-                      "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.",
-                    )}
-                  </MenuHint>
-                  {allUnlinked ? (
-                    <MenuHint data-orchestrator-unlinked-note="">
-                      {tx(
-                        "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.",
-                      )}
-                      {linkCoversRows ? ` ${tx("Link them below to make one project.")}` : null}
-                    </MenuHint>
-                  ) : null}
-                </>
-              }
-            >
-              {tx("View this project on")}
-            </MenuInfoLabel>
             <MenuRadioGroup
               value={current}
               onValueChange={(value) => {
@@ -361,7 +359,7 @@ export function OrchestratorSwitcher({
                 </MenuRadioItem>
               ))}
             </MenuRadioGroup>
-          </MenuGroup>
+          </MenuInfoGroup>
         ) : null}
         {projectActions ? (
           <>

@@ -3,7 +3,7 @@
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon, ChevronRightIcon, InfoIcon } from "lucide-react";
 import type * as React from "react";
-import { useId, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { usePagePopup } from "./pagePopups";
@@ -33,6 +33,35 @@ const menuPopupWidthClassName = {
 
 /** Every popup keeps this far from the window's edges, flipping or shifting to stay inside. */
 const POPUP_COLLISION_PADDING = 8;
+
+/**
+ * Escape returns focus to whatever opened the menu. Base UI 1.5 skips its own return when a
+ * row the pointer is resting on holds focus at close, leaving focus on the page body; this
+ * puts it back only in that case, and only for Escape, so a click elsewhere keeps its focus.
+ */
+function EscapeFocusReturn() {
+  const ref = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const active = document.activeElement;
+    const opener = active instanceof HTMLElement && active !== document.body ? active : null;
+    const popup = ref.current?.closest<HTMLElement>('[data-slot="menu-popup"]');
+    let escaped = false;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") escaped = true;
+    };
+    popup?.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      popup?.removeEventListener("keydown", onKeyDown, true);
+      if (!escaped || !opener) return;
+      setTimeout(() => {
+        const now = document.activeElement;
+        if ((!now || now === document.body) && opener.isConnected)
+          opener.focus({ preventScroll: true });
+      }, 0);
+    };
+  }, []);
+  return <span hidden data-slot="menu-focus-return" ref={ref} />;
+}
 
 function MenuPopup({
   children,
@@ -83,7 +112,10 @@ function MenuPopup({
           data-slot="menu-popup"
           {...props}
         >
-          <div className="max-h-(--available-height) w-full overflow-y-auto p-1">{children}</div>
+          <div className="max-h-(--available-height) w-full overflow-y-auto p-1">
+            {children}
+            <EscapeFocusReturn />
+          </div>
         </MenuPrimitive.Popup>
       </MenuPrimitive.Positioner>
     </MenuPrimitive.Portal>
@@ -277,47 +309,62 @@ function MenuHint({ className, ...props }: React.ComponentProps<"p">) {
 }
 
 /**
- * A group label with an info button at its end. The button is a menu item, so arrow keys,
- * Enter and a tap reach it; it shows or hides the explanation under the label without closing
- * the menu. Use it for anything longer than one short line (docs/studio/design-guidelines.md,
- * Popups). `infoLabel` names the button for assistive technology.
+ * A menu group whose label carries an info button. The button sits on the label row but comes
+ * after the group's rows in the DOM, so the menu still opens with focus on its first real row
+ * and arrow keys reach the button after the group's last row. It shows or hides `info` under
+ * the label without closing the menu. Use it for anything longer than one short line
+ * (docs/studio/design-guidelines.md, Popups). `infoLabel` names the button for assistive
+ * technology.
  */
-function MenuInfoLabel({
-  children,
+function MenuInfoGroup({
+  label,
   info,
   infoLabel,
   defaultOpen = false,
+  children,
 }: {
-  children: React.ReactNode;
+  label: React.ReactNode;
   info: React.ReactNode;
   infoLabel: string;
   defaultOpen?: boolean;
+  children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const id = useId();
   return (
-    <>
-      <div className="flex items-center gap-1 pe-1" data-slot="menu-info-label">
-        <MenuGroupLabel className="min-w-0 flex-1">{children}</MenuGroupLabel>
-        <MenuPrimitive.Item
-          aria-controls={open ? id : undefined}
-          aria-expanded={open}
-          aria-label={infoLabel}
-          className="mt-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground outline-none data-highlighted:bg-accent data-highlighted:text-accent-foreground aria-expanded:text-foreground"
-          closeOnClick={false}
-          data-slot="menu-info-button"
-          onClick={() => setOpen((value) => !value)}
-          title={infoLabel}
-        >
-          <InfoIcon aria-hidden className="size-3.5" />
-        </MenuPrimitive.Item>
-      </div>
+    <MenuPrimitive.Group
+      className="grid grid-cols-[minmax(0,1fr)_auto] items-start"
+      data-slot="menu-group"
+    >
+      <MenuGroupLabel className="col-start-1 row-start-1 min-w-0 self-center">
+        {label}
+      </MenuGroupLabel>
       {open ? (
-        <div data-slot="menu-info" id={id}>
+        <div
+          className="col-span-2 row-start-2 flex flex-col gap-1 pb-0.5"
+          data-slot="menu-info"
+          id={id}
+        >
           {info}
         </div>
       ) : null}
-    </>
+      <div className="col-span-2 row-start-3 min-w-0">{children}</div>
+      <MenuPrimitive.Item
+        aria-controls={open ? id : undefined}
+        aria-expanded={open}
+        aria-label={infoLabel}
+        className={cn(
+          "col-start-2 row-start-1 me-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center self-center rounded-sm text-muted-foreground outline-none data-highlighted:bg-accent data-highlighted:text-accent-foreground aria-expanded:text-foreground",
+          // A finger-sized target on phones and touch screens; the desktop look stays 24 px.
+          "max-sm:h-8 max-sm:w-10 pointer-coarse:h-8 pointer-coarse:w-10",
+        )}
+        closeOnClick={false}
+        data-slot="menu-info-button"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <InfoIcon aria-hidden className="size-3.5" />
+      </MenuPrimitive.Item>
+    </MenuPrimitive.Group>
   );
 }
 
@@ -391,6 +438,7 @@ function MenuSubPopup({
   align?: MenuPrimitive.Positioner.Props["align"];
   sideOffset?: MenuPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
+  width?: keyof typeof menuPopupWidthClassName;
 }) {
   const defaultAlignOffset = align !== "center" ? -5 : undefined;
 
@@ -428,7 +476,7 @@ export {
   MenuRadioItemIndicator,
   MenuGroupLabel,
   MenuHint,
-  MenuInfoLabel,
+  MenuInfoGroup,
   MenuGroupLabel as DropdownMenuLabel,
   MenuSeparator,
   MenuSeparator as DropdownMenuSeparator,
