@@ -1471,6 +1471,10 @@ export const layer = Layer.effect(
       );
 
     const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks")(function* () {
+      // An automatic install runs unheld and compares these rows from the helper's
+      // first read until its gate goes up: the tick writes nothing meanwhile, and a
+      // due routine stays due for the first tick after it.
+      if (yield* updateHold.installApplying) return;
       yield* followDispatchedRuns;
       const now = yield* localNow;
       yield* expireFinishedRoutines(now);

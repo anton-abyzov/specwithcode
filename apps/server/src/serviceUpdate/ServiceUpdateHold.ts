@@ -344,6 +344,11 @@ export interface ServiceUpdateHoldShape {
    * is asked again only once it is not.
    */
   readonly automaticInstallUnderway: Effect.Effect<boolean>;
+  /**
+   * Whether the agent is applying an install now (`automaticInstallApplying`).
+   * Optional so a hand-made hold reads as never applying.
+   */
+  readonly automaticInstallApplying?: Effect.Effect<boolean>;
 }
 
 /** Agent statuses with a release found, downloading, ready or installing. */
@@ -402,6 +407,24 @@ const AUTOMATIC_INSTALL_STATUSES: ReadonlyArray<unknown> = ["waiting-for-quiet",
  */
 export function automaticInstallUnderway(reading: Pick<AgentStateReading, "status">): boolean {
   return AUTOMATIC_INSTALL_STATUSES.includes(reading.status);
+}
+
+/**
+ * Whether the agent is applying an install right now: it reports `installing`,
+ * written within the apply timeout. The helper compares the guarded rows from
+ * its first read until its gate goes up, and an automatic install runs unheld,
+ * so a background writer that waits on this keeps that comparison true. An
+ * agent that died while installing stops counting after the timeout.
+ */
+export function automaticInstallApplying(
+  reading: Pick<AgentStateReading, "status" | "updatedAtMs">,
+  nowMs: number,
+): boolean {
+  return (
+    reading.status === "installing" &&
+    reading.updatedAtMs !== null &&
+    nowMs - reading.updatedAtMs <= AGENT_APPLY_TIMEOUT_MS + AGENT_RETRY_MS
+  );
 }
 
 export class ServiceUpdateHold extends Context.Service<ServiceUpdateHold, ServiceUpdateHoldShape>()(
@@ -1124,6 +1147,13 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
       automaticInstallUnderway: Effect.map(readAgentState, (reading) =>
         Option.isSome(reading) ? automaticInstallUnderway(reading.value) : false,
       ),
+      automaticInstallApplying: Effect.gen(function* () {
+        const reading = yield* readAgentState;
+        return (
+          Option.isSome(reading) &&
+          automaticInstallApplying(reading.value, yield* Clock.currentTimeMillis)
+        );
+      }).pipe(Effect.orElseSucceed(() => false)),
     });
   });
 
@@ -1145,6 +1175,8 @@ export interface ServiceUpdateHoldView {
   readonly awaitReleased: Effect.Effect<void>;
   /** Fails with `ServiceUpdateInProgressError` while held. */
   readonly refuse: (action: string) => Effect.Effect<void, ServiceUpdateInProgressError>;
+  /** True while the agent applies an install (`automaticInstallApplying`); false without a hold. */
+  readonly installApplying: Effect.Effect<boolean>;
 }
 
 const viewOf = (hold: Option.Option<ServiceUpdateHoldShape>): ServiceUpdateHoldView => {
@@ -1154,12 +1186,17 @@ const viewOf = (hold: Option.Option<ServiceUpdateHoldShape>): ServiceUpdateHoldV
       awaitReleased: Effect.void,
       refuse: () => Effect.void,
       admit: (_action, effect) => effect,
+      installApplying: Effect.succeed(false),
     };
   }
   const { isHeld, awaitReleased, current, installGated, recordRefusal } = hold.value;
   return {
     isHeld,
     awaitReleased,
+    // Read lazily: a mocked hold without it (Layer.mock throws on access) reads as never applying.
+    installApplying: Effect.suspend(
+      () => hold.value.automaticInstallApplying ?? Effect.succeed(false),
+    ).pipe(Effect.catchDefect(() => Effect.succeed(false))),
     admit: hold.value.withAdmission,
     refuse: (action) =>
       Effect.gen(function* () {
