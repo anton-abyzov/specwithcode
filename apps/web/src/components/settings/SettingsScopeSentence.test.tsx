@@ -84,7 +84,9 @@ describe("SettingsScopeSentence", () => {
     });
     expect(view.textContent).toContain("Set up for");
     expect(view.textContent).toContain("All projects");
-    expect(view.textContent).toContain("Each machine keeps its own. Changes here only affect Desk.");
+    expect(view.textContent).toContain(
+      "Each machine keeps its own. Changes here only affect Desk.",
+    );
     expect(view.textContent).not.toMatch(/environment/i);
     expect(view.querySelector('[aria-label="Machine: Desk"]')).not.toBeNull();
     expect(view.querySelector('[aria-label="Project: All projects"]')).not.toBeNull();

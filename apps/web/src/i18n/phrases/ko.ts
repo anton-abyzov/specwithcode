@@ -5445,4 +5445,35 @@ export const ko: PhraseCatalog = {
     "{machines}의 해결된 기록을 불러올 수 없습니다.",
   "Resolved history from another machine could not be loaded.":
     "다른 기기의 해결된 기록을 불러올 수 없습니다.",
+  "Set up for {project} on {machine}": "{machine}의 {project}에 맞게 설정",
+  "Unavailable machine": "사용할 수 없는 컴퓨터",
+  "No machines": "컴퓨터 없음",
+  "Each machine keeps its own. Changes here only affect {machine}.":
+    "컴퓨터마다 따로 보관합니다. 여기서 바꾼 내용은 {machine}에만 적용됩니다.",
+  "On this machine": "이 컴퓨터에 있음",
+  "Not on {machine}": "{machine}에 없음",
+  "Needs sign-in": "로그인 필요",
+  "Update available {version}": "업데이트 가능 {version}",
+  "Built into the agent": "에이전트에 내장",
+  "Read {time}, scan incomplete": "{time}에 읽음, 스캔 미완료",
+  "Read {time}": "{time}에 읽음",
+  "Offline, not read": "오프라인, 읽지 않음",
+  "No project there, not read": "프로젝트가 없어 읽지 않음",
+  "Could not be read": "읽을 수 없음",
+  "copies differ": "사본이 서로 다름",
+  "Across machines": "컴퓨터 간 비교",
+  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
+    "읽기 전용입니다. 컴퓨터마다 자기 스킬을 보고합니다. 읽지 못한 컴퓨터는 없는 것으로 표시하지 않습니다.",
+  "No skills on the machines that were read.": "읽은 컴퓨터에 스킬이 없습니다.",
+  "Showing the first 32 machines. Open Connections to inspect the rest.":
+    "처음 32대만 표시합니다. 나머지는 연결에서 확인하세요.",
+  "The machine list could not be refreshed. Listed machines may be out of date.":
+    "컴퓨터 목록을 새로 고칠 수 없습니다. 표시된 컴퓨터가 최신이 아닐 수 있습니다.",
+  "These come with the agent or its account. They are listed so you can see what it loads, and cannot be installed, switched off or edited here.":
+    "에이전트나 그 계정에 딸려 오는 스킬입니다. 무엇을 불러오는지 볼 수 있게 나열하며, 여기서는 설치하거나 끄거나 편집할 수 없습니다.",
+  "{agent}: no skills installed on {machine}": "{agent}: {machine}에 설치된 스킬 없음",
+  "This project has no folder on {machine}. Pick another machine above.":
+    "이 프로젝트는 {machine}에 폴더가 없습니다. 위에서 다른 컴퓨터를 고르세요.",
+  "Nothing is installed on {machine} yet.": "{machine}에는 아직 설치된 것이 없습니다.",
+  "Skills view": "스킬 보기",
 };

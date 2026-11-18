@@ -5543,4 +5543,35 @@ export const es: PhraseCatalog = {
     "No se pudo cargar el historial resuelto de {machines}.",
   "Resolved history from another machine could not be loaded.":
     "No se pudo cargar el historial resuelto de otra máquina.",
+  "Set up for {project} on {machine}": "Configurar para {project} en {machine}",
+  "Unavailable machine": "Equipo no disponible",
+  "No machines": "Sin equipos",
+  "Each machine keeps its own. Changes here only affect {machine}.":
+    "Cada equipo tiene los suyos. Los cambios aquí solo afectan a {machine}.",
+  "On this machine": "En este equipo",
+  "Not on {machine}": "No está en {machine}",
+  "Needs sign-in": "Requiere iniciar sesión",
+  "Update available {version}": "Actualización disponible: {version}",
+  "Built into the agent": "Incluidas en el agente",
+  "Read {time}, scan incomplete": "Leído a las {time}, análisis incompleto",
+  "Read {time}": "Leído a las {time}",
+  "Offline, not read": "Sin conexión, no leído",
+  "No project there, not read": "Sin proyecto allí, no leído",
+  "Could not be read": "No se pudo leer",
+  "copies differ": "las copias difieren",
+  "Across machines": "Entre equipos",
+  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
+    "Solo lectura. Cada equipo informa de sus propias skills. Un equipo que no se pudo leer nunca aparece como si le faltara algo.",
+  "No skills on the machines that were read.": "No hay skills en los equipos leídos.",
+  "Showing the first 32 machines. Open Connections to inspect the rest.":
+    "Se muestran los primeros 32 equipos. Abre Conexiones para ver el resto.",
+  "The machine list could not be refreshed. Listed machines may be out of date.":
+    "No se pudo actualizar la lista de equipos. Los equipos mostrados pueden estar desactualizados.",
+  "These come with the agent or its account. They are listed so you can see what it loads, and cannot be installed, switched off or edited here.":
+    "Vienen con el agente o con su cuenta. Se muestran para que veas qué carga, y aquí no se pueden instalar, desactivar ni editar.",
+  "{agent}: no skills installed on {machine}": "{agent}: no hay skills instaladas en {machine}",
+  "This project has no folder on {machine}. Pick another machine above.":
+    "Este proyecto no tiene carpeta en {machine}. Elige otro equipo arriba.",
+  "Nothing is installed on {machine} yet.": "Todavía no hay nada instalado en {machine}.",
+  "Skills view": "Vista de skills",
 };

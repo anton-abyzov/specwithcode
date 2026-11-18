@@ -12,7 +12,11 @@ const presence = (extra: Record<string, unknown> = {}) => ({
   enabled: true,
   ...extra,
 });
-const row = (name: string, extra: Record<string, unknown> = {}, agent: Record<string, unknown> = {}) =>
+const row = (
+  name: string,
+  extra: Record<string, unknown> = {},
+  agent: Record<string, unknown> = {},
+) =>
   ({
     name,
     status: "ok",
@@ -33,7 +37,9 @@ const snapshot = (rows: ProjectSkillRow[], state = "ok") =>
     cwd: "~",
     checkedAt: "2026-11-18T10:00:00.000Z",
     rows,
-    providers: [{ instanceId: "codex", driver: "codex", label: "Codex", state, skills: rows.length }],
+    providers: [
+      { instanceId: "codex", driver: "codex", label: "Codex", state, skills: rows.length },
+    ],
     locks: [],
     doctor: "ok",
   }) as unknown as ProjectSkillsSnapshot;
@@ -83,7 +89,11 @@ describe("buildSkillMatrix", () => {
       machine("unlinked", { linked: false, snapshot: null, successful: false }),
       machine("pending", { pending: true, snapshot: null, successful: false }),
       machine("failed", { error: "Request timed out", snapshot: null, successful: false }),
-      machine("signin", { error: "Not signed in on this machine", snapshot: null, successful: false }),
+      machine("signin", {
+        error: "Not signed in on this machine",
+        snapshot: null,
+        successful: false,
+      }),
       machine("denied", { error: "Permission denied", snapshot: null, successful: false }),
       machine("partial", { snapshot: snapshot([], "timeout") }),
     ]);
@@ -118,7 +128,11 @@ describe("buildSkillMatrix", () => {
         snapshot: snapshot([row("notes", {}, { fileVersion: "2.0.0" })], "timeout"),
       }),
     ]);
-    expect(matrix.rows[0]?.cells[1]).toEqual({ kind: "installed", version: "2.0.0", differs: false });
+    expect(matrix.rows[0]?.cells[1]).toEqual({
+      kind: "installed",
+      version: "2.0.0",
+      differs: false,
+    });
   });
 
   it("does not call a claude.ai skill missing on a machine that reports none", () => {

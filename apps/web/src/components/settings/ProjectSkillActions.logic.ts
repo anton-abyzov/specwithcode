@@ -14,6 +14,7 @@ import type {
   ProjectSkillsFleetTarget,
   ProjectSkillsLiveness,
 } from "@specweave-studio/contracts";
+import { CLAUDE_AI_SKILL_SCOPE } from "@specweave-studio/contracts";
 import type { StudioFleetMachine } from "@specweave-studio/contracts/studioFleet";
 
 import { projectSkillLevel } from "./ProjectSkillsSettings.logic";
@@ -61,6 +62,8 @@ export function skillSwitchFor(
   options: { readonly userLevel?: boolean } = {},
 ): SkillSwitch {
   const enabled = !presence.enabled;
+  if (presence.scope === CLAUDE_AI_SKILL_SCOPE)
+    return { available: false, reason: "Synced from claude.ai. Manage it on claude.ai" };
   switch (presence.driver) {
     case "claudeAgent": {
       if (presence.scope === "plugin")

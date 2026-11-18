@@ -5285,4 +5285,35 @@ export const zh: PhraseCatalog = {
   "Open Settings > Machines to fix it.": "打开“设置 > 电脑”来修复。",
   "Resolved history from {machines} could not be loaded.": "无法加载 {machines} 的已解决历史。",
   "Resolved history from another machine could not be loaded.": "无法加载另一台机器的已解决历史。",
+  "Set up for {project} on {machine}": "在 {machine} 上为 {project} 设置",
+  "Unavailable machine": "计算机不可用",
+  "No machines": "没有计算机",
+  "Each machine keeps its own. Changes here only affect {machine}.":
+    "每台计算机各自保存。此处的更改只影响 {machine}。",
+  "On this machine": "在这台计算机上",
+  "Not on {machine}": "{machine} 上没有",
+  "Needs sign-in": "需要登录",
+  "Update available {version}": "可更新到 {version}",
+  "Built into the agent": "代理内置",
+  "Read {time}, scan incomplete": "{time} 读取,扫描未完成",
+  "Read {time}": "{time} 读取",
+  "Offline, not read": "离线,未读取",
+  "No project there, not read": "那里没有项目,未读取",
+  "Could not be read": "无法读取",
+  "copies differ": "副本不一致",
+  "Across machines": "跨计算机",
+  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
+    "只读。每台计算机报告自己的技能。无法读取的计算机绝不会显示为缺少技能。",
+  "No skills on the machines that were read.": "已读取的计算机上没有技能。",
+  "Showing the first 32 machines. Open Connections to inspect the rest.":
+    "显示前 32 台计算机。其余请在“连接”中查看。",
+  "The machine list could not be refreshed. Listed machines may be out of date.":
+    "无法刷新计算机列表。列出的计算机可能已过时。",
+  "These come with the agent or its account. They are listed so you can see what it loads, and cannot be installed, switched off or edited here.":
+    "它们随代理或其账户提供。列出是为了让你看到代理加载了什么,无法在此安装、关闭或编辑。",
+  "{agent}: no skills installed on {machine}": "{agent}:{machine} 上未安装技能",
+  "This project has no folder on {machine}. Pick another machine above.":
+    "此项目在 {machine} 上没有文件夹。请在上方选择另一台计算机。",
+  "Nothing is installed on {machine} yet.": "{machine} 上尚未安装任何内容。",
+  "Skills view": "技能视图",
 };

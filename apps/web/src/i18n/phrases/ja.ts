@@ -5514,4 +5514,36 @@ export const ja: PhraseCatalog = {
     "{machines} の解決済み履歴を読み込めませんでした。",
   "Resolved history from another machine could not be loaded.":
     "別のマシンの解決済み履歴を読み込めませんでした。",
+  "Set up for {project} on {machine}": "{machine} の {project} 用に設定",
+  "Unavailable machine": "利用できないマシン",
+  "No machines": "マシンがありません",
+  "Each machine keeps its own. Changes here only affect {machine}.":
+    "マシンごとに別々に保持されます。ここでの変更は {machine} にのみ反映されます。",
+  "On this machine": "このマシンにあります",
+  "Not on {machine}": "{machine} にはありません",
+  "Needs sign-in": "サインインが必要",
+  "Update available {version}": "更新あり {version}",
+  "Built into the agent": "エージェントに組み込み",
+  "Read {time}, scan incomplete": "{time} に読み取り、スキャン未完了",
+  "Read {time}": "{time} に読み取り",
+  "Offline, not read": "オフライン、未読み取り",
+  "No project there, not read": "プロジェクトがないため未読み取り",
+  "Could not be read": "読み取れませんでした",
+  "copies differ": "コピーに差異あり",
+  "Across machines": "マシン間の比較",
+  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
+    "読み取り専用です。各マシンが自分のスキルを報告します。読み取れなかったマシンを「ない」と表示することはありません。",
+  "No skills on the machines that were read.": "読み取ったマシンにスキルはありません。",
+  "Showing the first 32 machines. Open Connections to inspect the rest.":
+    "最初の 32 台を表示しています。残りは「接続」で確認できます。",
+  "The machine list could not be refreshed. Listed machines may be out of date.":
+    "マシンの一覧を更新できませんでした。表示中のマシンは古い可能性があります。",
+  "These come with the agent or its account. They are listed so you can see what it loads, and cannot be installed, switched off or edited here.":
+    "エージェントまたはそのアカウントに付属するものです。読み込まれる内容がわかるよう一覧にしていますが、ここではインストール、オフへの切り替え、編集はできません。",
+  "{agent}: no skills installed on {machine}":
+    "{agent}: {machine} にスキルはインストールされていません",
+  "This project has no folder on {machine}. Pick another machine above.":
+    "このプロジェクトのフォルダーは {machine} にありません。上で別のマシンを選んでください。",
+  "Nothing is installed on {machine} yet.": "{machine} にはまだ何もインストールされていません。",
+  "Skills view": "スキルの表示",
 };

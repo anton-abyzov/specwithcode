@@ -5512,4 +5512,35 @@ export const ru: PhraseCatalog = {
     "Не удалось загрузить завершённую историю с {machines}.",
   "Resolved history from another machine could not be loaded.":
     "Не удалось загрузить завершённую историю с другого компьютера.",
+  "Set up for {project} on {machine}": "Настройка для {project} на {machine}",
+  "Unavailable machine": "Компьютер недоступен",
+  "No machines": "Нет компьютеров",
+  "Each machine keeps its own. Changes here only affect {machine}.":
+    "У каждого компьютера свой набор. Изменения здесь касаются только {machine}.",
+  "On this machine": "На этом компьютере",
+  "Not on {machine}": "Нет на {machine}",
+  "Needs sign-in": "Нужен вход",
+  "Update available {version}": "Доступно обновление {version}",
+  "Built into the agent": "Встроены в агента",
+  "Read {time}, scan incomplete": "Прочитано в {time}, проверка неполная",
+  "Read {time}": "Прочитано в {time}",
+  "Offline, not read": "Не в сети, не прочитано",
+  "No project there, not read": "Там нет проекта, не прочитано",
+  "Could not be read": "Не удалось прочитать",
+  "copies differ": "копии различаются",
+  "Across machines": "По всем компьютерам",
+  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
+    "Только чтение. Каждый компьютер сообщает о своих навыках. Компьютер, который не удалось прочитать, никогда не показывается как без навыка.",
+  "No skills on the machines that were read.": "На прочитанных компьютерах нет навыков.",
+  "Showing the first 32 machines. Open Connections to inspect the rest.":
+    "Показаны первые 32 компьютера. Остальные смотрите в разделе «Подключения».",
+  "The machine list could not be refreshed. Listed machines may be out of date.":
+    "Не удалось обновить список компьютеров. Показанные компьютеры могут быть устаревшими.",
+  "These come with the agent or its account. They are listed so you can see what it loads, and cannot be installed, switched off or edited here.":
+    "Они поставляются с агентом или его аккаунтом. Показаны, чтобы было видно, что он загружает; установить, выключить или изменить их здесь нельзя.",
+  "{agent}: no skills installed on {machine}": "{agent}: на {machine} нет установленных навыков",
+  "This project has no folder on {machine}. Pick another machine above.":
+    "У этого проекта нет папки на {machine}. Выберите другой компьютер выше.",
+  "Nothing is installed on {machine} yet.": "На {machine} пока ничего не установлено.",
+  "Skills view": "Вид навыков",
 };

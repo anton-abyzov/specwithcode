@@ -5514,4 +5514,35 @@ export const pt: PhraseCatalog = {
     "Não foi possível carregar o histórico resolvido de {machines}.",
   "Resolved history from another machine could not be loaded.":
     "Não foi possível carregar o histórico resolvido de outra máquina.",
+  "Set up for {project} on {machine}": "Configurar para {project} em {machine}",
+  "Unavailable machine": "Máquina indisponível",
+  "No machines": "Nenhuma máquina",
+  "Each machine keeps its own. Changes here only affect {machine}.":
+    "Cada máquina tem os seus. As alterações aqui afetam apenas {machine}.",
+  "On this machine": "Nesta máquina",
+  "Not on {machine}": "Não está em {machine}",
+  "Needs sign-in": "Requer início de sessão",
+  "Update available {version}": "Atualização disponível: {version}",
+  "Built into the agent": "Incluídas no agente",
+  "Read {time}, scan incomplete": "Lido às {time}, análise incompleta",
+  "Read {time}": "Lido às {time}",
+  "Offline, not read": "Offline, não lido",
+  "No project there, not read": "Sem projeto lá, não lido",
+  "Could not be read": "Não foi possível ler",
+  "copies differ": "as cópias diferem",
+  "Across machines": "Entre máquinas",
+  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
+    "Só leitura. Cada máquina informa as suas próprias skills. Uma máquina que não pôde ser lida nunca aparece como se faltasse algo.",
+  "No skills on the machines that were read.": "Não há skills nas máquinas lidas.",
+  "Showing the first 32 machines. Open Connections to inspect the rest.":
+    "A mostrar as primeiras 32 máquinas. Abra Ligações para ver as restantes.",
+  "The machine list could not be refreshed. Listed machines may be out of date.":
+    "Não foi possível atualizar a lista de máquinas. As máquinas listadas podem estar desatualizadas.",
+  "These come with the agent or its account. They are listed so you can see what it loads, and cannot be installed, switched off or edited here.":
+    "Vêm com o agente ou com a sua conta. São listadas para que veja o que ele carrega e não podem ser instaladas, desligadas nem editadas aqui.",
+  "{agent}: no skills installed on {machine}": "{agent}: nenhuma skill instalada em {machine}",
+  "This project has no folder on {machine}. Pick another machine above.":
+    "Este projeto não tem pasta em {machine}. Escolha outra máquina acima.",
+  "Nothing is installed on {machine} yet.": "Ainda não há nada instalado em {machine}.",
+  "Skills view": "Vista de skills",
 };

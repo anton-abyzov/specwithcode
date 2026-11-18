@@ -73,7 +73,10 @@ it.layer(NodeServices.layer)("discoverClaudeSkills, claude.ai-synced skills", (i
       yield* writeFile(path.join(synced, "b_new", "manifest.json"), '{"lastUpdated":20}');
       // No manifest: still listed, and it never displaces a dated bucket.
       yield* writeFile(path.join(synced, "c_bare", "docx", "SKILL.md"), skillFile("docx", "Bare."));
-      yield* writeFile(path.join(synced, "c_bare", "xlsx", "SKILL.md"), skillFile("xlsx", "Sheets."));
+      yield* writeFile(
+        path.join(synced, "c_bare", "xlsx", "SKILL.md"),
+        skillFile("xlsx", "Sheets."),
+      );
 
       const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined, {});
 
@@ -119,11 +122,15 @@ it.layer(NodeServices.layer)("discoverClaudeSkills, claude.ai-synced skills", (i
 });
 
 it("marks Codex system skills as built in, and nothing a person installed", () => {
-  assert.isTrue(isBuiltInAgentSkill({ scope: "system", path: "/h/.codex/skills/.system/x/SKILL.md" }));
+  assert.isTrue(
+    isBuiltInAgentSkill({ scope: "system", path: "/h/.codex/skills/.system/x/SKILL.md" }),
+  );
   assert.isTrue(isBuiltInAgentSkill({ scope: null, path: "/h/.codex/skills/.system/x/SKILL.md" }));
   assert.isTrue(
     isBuiltInAgentSkill({ scope: null, path: "C:\\h\\.codex\\skills\\.system\\x\\SKILL.md" }),
   );
   assert.isFalse(isBuiltInAgentSkill({ scope: "user", path: "/h/.claude/skills/x/SKILL.md" }));
-  assert.isFalse(isBuiltInAgentSkill({ scope: "plugin", path: "/h/.claude/plugins/cache/x/SKILL.md" }));
+  assert.isFalse(
+    isBuiltInAgentSkill({ scope: "plugin", path: "/h/.claude/plugins/cache/x/SKILL.md" }),
+  );
 });

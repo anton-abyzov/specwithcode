@@ -97,7 +97,11 @@ function render() {
       <SkillMachineMatrix
         environmentId={"desk" as never}
         userLevel
-        current={{ snapshot: snapshot([row("notes", "1.2.0"), row("draw")]), error: null, pending: false }}
+        current={{
+          snapshot: snapshot([row("notes", "1.2.0"), row("draw")]),
+          error: null,
+          pending: false,
+        }}
         projectIdFor={projectIdFor as never}
         latest={new Map([["notes", "1.3.0"]])}
       />,

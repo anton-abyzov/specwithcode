@@ -87,14 +87,10 @@ export function SettingsScopeSentence() {
     return (
       <div className="space-y-1 px-3 sm:px-4">
         <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-base text-muted-foreground">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="shrink-0">{tx("Set up for")}</span>
-            <ProjectScopeMenu {...props} machineWording />
-          </span>
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="shrink-0">{tx("on")}</span>
-            <EnvironmentScopeMenu {...props} machineWording />
-          </span>
+          {renderRich(tx("Set up for {project} on {machine}"), {
+            project: <ProjectScopeMenu {...props} machineWording />,
+            machine: <EnvironmentScopeMenu {...props} machineWording />,
+          })}
         </p>
         {machine ? (
           <p className="text-xs text-muted-foreground" data-testid="settings-scope-caption">

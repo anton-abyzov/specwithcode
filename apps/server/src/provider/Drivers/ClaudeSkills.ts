@@ -867,7 +867,10 @@ const discoverClaudeSyncedSkills = Effect.fn("discoverClaudeSyncedSkills")(funct
     );
   const decodeManifest = Schema.decodeUnknownOption(SyncedManifestJson);
 
-  const found = new Map<string, { readonly updated: number; readonly skill: ServerProviderSkill }>();
+  const found = new Map<
+    string,
+    { readonly updated: number; readonly skill: ServerProviderSkill }
+  >();
   for (const bucket of yield* list(syncedRoot)) {
     const bucketPath = path.join(syncedRoot, bucket);
     const manifest = yield* fileSystem
