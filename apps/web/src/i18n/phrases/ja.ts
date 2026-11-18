@@ -5624,4 +5624,24 @@ export const ja: PhraseCatalog = {
   "Manage profiles": "プロファイルを管理",
   "Profiles: {count}": "プロファイル: {count}",
   "Device hosts: {count}": "デバイスホスト: {count}",
+  "Not reachable from here": "ここからは接続できません",
+  "Sign in to reach {machine}": "サインインして {machine} に接続",
+  "Can't reach {machine} from this window": "このウィンドウから {machine} に接続できません",
+  "Signed out of SpecWithCode Connect": "SpecWithCode Connect からサインアウトしました",
+  "This machine is not affected.": "このマシンには影響ありません。",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "サインインが必要です。SpecWithCode Connect にサインインすると、このウィンドウから接続できます",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "SpecWithCode Connect にサインインすると、このウィンドウから接続できます。",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.":
+    "このウィンドウは SpecWithCode Connect 経由で接続しますが、サインインしていません。サインインすると再び接続できます。",
+  "{machines} can't be reached from this window until you sign in.":
+    "{machines} はサインインするまでこのウィンドウから接続できません。",
+  "Still connected: {machines}.": "接続中: {machines}。",
+  "Some of your machines can't be reached from this window until you sign in. This machine is not affected.":
+    "一部のマシンはサインインするまでこのウィンドウから接続できません。このマシンには影響ありません。",
+  "{machine} is running, but this window can't reach it until you sign in.":
+    "{machine} は動作中ですが、サインインするまでこのウィンドウから接続できません。",
+  "{machines} are running, but this window can't reach them until you sign in.":
+    "{machines} は動作中ですが、サインインするまでこのウィンドウから接続できません。",
 };

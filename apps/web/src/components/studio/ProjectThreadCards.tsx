@@ -20,6 +20,7 @@ import {
 } from "../../studio/useResolveThreadConflicts";
 import { threadAttentionNote } from "../../studio/projectWorkspaceModel";
 import {
+  useHostDownNote,
   useHostIdentityMismatch,
   useHostOffline,
   useHostReach,
@@ -89,6 +90,7 @@ export function ProjectThreadCard({
     hostOffline,
     useHostReach(thread.environmentId),
     useHostIdentityMismatch(thread.environmentId),
+    useHostDownNote(thread.environmentId),
   );
   // An unreachable host's last report is stale; the card says the host is offline instead.
   const blocker = hostOffline ? null : threadAttentionNote(thread);
