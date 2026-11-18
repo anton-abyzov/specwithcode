@@ -4,7 +4,7 @@ import type {
   ConnectDeviceRequest,
   ConnectDevicesSnapshot,
 } from "@specweave-studio/contracts/connectDevices";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 
 import {
@@ -16,7 +16,15 @@ import {
 import {
   FLOATING_CODE_LAYER_CLASS,
   InlineDeviceApprovalCode,
+  inlineCodeShown,
+  inlineCodesVersion,
+  subscribeInlineCodes,
 } from "../../src/components/devices/inlineApprovalCode";
+import {
+  Collapsible,
+  CollapsiblePanel,
+  CollapsibleTrigger,
+} from "../../src/components/ui/collapsible";
 import { Button } from "../../src/components/ui/button";
 import {
   Dialog,
@@ -213,6 +221,51 @@ function JoinDialog() {
   );
 }
 
+/**
+ * First run's Connect section (1416): its panel keeps the machine rows mounted
+ * while collapsed. The floating card, drawn as the app's host draws it, must
+ * stay up while the row's code is out of sight and leave once it is shown.
+ */
+function FirstRunCollapsed() {
+  useSyncExternalStore(subscribeInlineCodes, inlineCodesVersion);
+  const shown = inlineCodeShown("env-work-mac");
+  return (
+    <div className="fixture-shell">
+      <div className="fixture-bar">SpecWithCode · Laptop</div>
+      {shown ? null : (
+        <div className={FLOATING_CODE_LAYER_CLASS} data-fixture-floating>
+          <div className="pointer-events-auto">
+            <DeviceWaitingList
+              deviceId="R2DK"
+              waiting={[{ id: "env-work-mac", machine: "Work Mac", code: "K7QX2M" }]}
+            />
+          </div>
+        </div>
+      )}
+      <div
+        className="fixture-page"
+        style={{ paddingTop: 280 }}
+        data-fixture-inline-shown={String(shown)}
+      >
+        <Collapsible className="rounded-xl border border-border">
+          <CollapsibleTrigger className="w-full px-3 py-3 text-left text-sm" data-fixture-toggle>
+            SpecWithCode Connect
+          </CollapsibleTrigger>
+          <CollapsiblePanel keepMounted>
+            <div className="px-3 pb-3">
+              <InlineDeviceApprovalCode
+                environmentId={"env-work-mac" as never}
+                machine="Work Mac"
+                code="K7QX2M"
+              />
+            </div>
+          </CollapsiblePanel>
+        </Collapsible>
+      </div>
+    </div>
+  );
+}
+
 function Fixture() {
   const [log, setLog] = useState<Array<string>>([]);
   const note = (line: string) => setLog((current) => [...current, line]);
@@ -234,6 +287,7 @@ function Fixture() {
     </output>
   );
   if (scene === "join-dialog") return <JoinDialog />;
+  if (scene === "first-run-collapsed") return <FirstRunCollapsed />;
   if (scene === "waiting")
     return (
       <div className="fixture-shell">

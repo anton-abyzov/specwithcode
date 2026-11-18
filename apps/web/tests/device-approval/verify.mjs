@@ -299,6 +299,53 @@ try {
       receipt.checks.push({ theme, scene: "join-dialog-floating", ok: true });
       await page.close();
     }
+    // 6. First run's collapsed Connect panel keeps the row mounted: the floating card stays up
+    // until the row's code is on screen, then leaves, and comes back when it is collapsed (1416).
+    {
+      const { page, errors } = await open("scene=first-run-collapsed", theme, [1280, 800]);
+      const shown = () =>
+        page.locator("[data-fixture-inline-shown]").getAttribute("data-fixture-inline-shown");
+      await page.locator("[data-fixture-toggle]").waitFor();
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector("[data-fixture-inline-shown]")
+            ?.getAttribute("data-fixture-inline-shown") === "false",
+      );
+      assert.ok(
+        await uncovered(page, "[data-fixture-floating] [data-device-waiting-code]"),
+        "collapsed: the floating card shows the code",
+      );
+      await shot(page, `first-run-collapsed-${theme}.png`);
+      await page.locator("[data-fixture-toggle]").click();
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector("[data-fixture-inline-shown]")
+            ?.getAttribute("data-fixture-inline-shown") === "true",
+      );
+      assert.equal(await page.locator("[data-fixture-floating]").count(), 0);
+      assert.ok(
+        await uncovered(page, "[data-inline-device-approval] [data-device-waiting-code]"),
+        "expanded: the row's code is on screen",
+      );
+      await shot(page, `first-run-expanded-${theme}.png`);
+      await page.locator("[data-fixture-toggle]").click();
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector("[data-fixture-inline-shown]")
+            ?.getAttribute("data-fixture-inline-shown") === "false",
+      );
+      assert.equal(await shown(), "false");
+      assert.ok(
+        await uncovered(page, "[data-fixture-floating] [data-device-waiting-code]"),
+        "collapsed again: the floating card is back",
+      );
+      assert.deepEqual(errors, []);
+      receipt.checks.push({ theme, scene: "first-run-collapsed", ok: true });
+      await page.close();
+    }
     // The same card in the dialog's own layer, as before 1416, is covered: the check sees the bug.
     {
       const { page } = await open("scene=join-dialog&floating=1&layer=old", theme, [1280, 800]);
