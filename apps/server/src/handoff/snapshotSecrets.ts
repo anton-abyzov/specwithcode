@@ -130,22 +130,31 @@ const STAGED_PARALLEL = 8;
  * The same check on what a snapshot will carry: the blobs staged in its private
  * index, read after `write-tree`. A file a running thread rewrote between the
  * check above and the staging is judged by what was staged, so what is checked
- * is what travels. `changed` are the tree's entries that differ from the base
- * commit; of those, the untracked ones are read for tokens (first 64 KB of the
- * blob) and every one is measured against the per-file limit.
+ * is what travels. Of the tree's entries that differ from the base commit,
+ * every file the base does not have (an untracked file, also one that appeared
+ * in a folder swapped in for a checked file) is checked by name and read for
+ * tokens (first 64 KB of the blob), and every changed file is measured against
+ * the per-file limit and counted against the file limit.
  */
 export async function checkStagedContent(input: {
   readonly root: string;
   readonly baseCommit: string;
   readonly tree: string;
-  readonly untracked: ReadonlySet<string>;
+  /** Whether a new file is a secret by its name: such a file never travels in a snapshot. */
+  readonly secretName: (path: string) => boolean;
   readonly allow?: ReadonlySet<string>;
   readonly maxFileBytes: number;
+  /** How many changed files one snapshot carries. */
+  readonly maxChangedFiles: number;
   readonly maxFiles?: number;
 }): Promise<{
   readonly flagged: ReadonlyArray<SnapshotContentFinding>;
+  /** New files that are secrets by name. */
+  readonly secretNames: ReadonlyArray<string>;
   /** The first staged file over the per-file limit. */
   readonly tooLarge: { readonly path: string; readonly bytes: number } | null;
+  /** The first changed file past the file limit. */
+  readonly tooMany: { readonly path: string } | null;
 }> {
   const { root } = input;
   const diff = await runGit(root, [
@@ -157,16 +166,22 @@ export async function checkStagedContent(input: {
     input.tree,
   ]);
   const fields = diff.stdout.split("\0");
-  const changed: Array<{ path: string; oid: string }> = [];
+  const changed: Array<{ path: string; oid: string; added: boolean }> = [];
   for (let index = 0; index + 1 < fields.length; index += 2) {
     const meta = fields[index]!.split(" ");
     const path = fields[index + 1]!;
     // Regular files only: a deletion, a link and a nested repository carry no blob to read.
     if (meta[1] !== "100644" && meta[1] !== "100755") continue;
     const oid = meta[3];
-    if (oid !== undefined && path.length > 0) changed.push({ path, oid });
+    if (oid !== undefined && path.length > 0)
+      changed.push({ path, oid, added: meta[4] === "A" || meta[0] === ":000000" });
   }
-  if (changed.length === 0) return { flagged: [], tooLarge: null };
+  if (changed.length === 0) return { flagged: [], secretNames: [], tooLarge: null, tooMany: null };
+  const secretNames = changed
+    .filter(({ path, added }) => added && input.secretName(path))
+    .map(({ path }) => path)
+    .toSorted();
+  const named = new Set(secretNames);
   const sizes = new Map<string, number>();
   const listed = await runGit(root, ["ls-tree", "-r", "-l", "-z", input.tree]);
   for (const entry of listed.stdout.split("\0")) {
@@ -185,8 +200,9 @@ export async function checkStagedContent(input: {
   }
   const toRead = changed
     .filter(
-      ({ path }) =>
-        input.untracked.has(path) &&
+      ({ path, added }) =>
+        added &&
+        !named.has(path) &&
         input.allow?.has(path) !== true &&
         (sizes.get(path) ?? 0) <= input.maxFileBytes,
     )
@@ -207,5 +223,15 @@ export async function checkStagedContent(input: {
       }
     }),
   );
-  return { flagged: flagged.toSorted((a, b) => a.path.localeCompare(b.path)), tooLarge };
+  return {
+    flagged: flagged.toSorted((a, b) => a.path.localeCompare(b.path)),
+    secretNames,
+    tooLarge,
+    tooMany:
+      changed
+        .filter(({ path }) => !named.has(path))
+        .toSorted((a, b) => a.path.localeCompare(b.path))
+        .slice(input.maxChangedFiles, input.maxChangedFiles + 1)
+        .map(({ path }) => ({ path }))[0] ?? null,
+  };
 }

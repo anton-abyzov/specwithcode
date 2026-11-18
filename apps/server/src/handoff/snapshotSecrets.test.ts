@@ -261,6 +261,38 @@ describe("a snapshot with the content check (1390 AC-14, AC-31)", () => {
     expect(snapshot(a)).toEqual(before);
   });
 
+  it("judges files that appear in a folder swapped in for a checked file (P2-05)", async () => {
+    const a = dirtyRepository();
+    write(a, "swap.txt", "nothing to see\n");
+    const written = await writeCheckpoint({
+      cwd: a,
+      threadId: "sync-test",
+      ref: "refs/specwithcode/extras/test/3",
+      contentCheck: {
+        pastLimit: "leave-out",
+        // The checked file becomes a folder holding a note with a token and a secret by name.
+        onChecked: async () => {
+          NodeFS.rmSync(NodePath.join(a, "swap.txt"));
+          write(a, "swap.txt/n.txt", `token=${fakeToken()}\n`);
+          write(a, "swap.txt/.env", "API_KEY=1\n");
+          write(a, "swap.txt/fine.txt", "fine\n");
+        },
+      },
+    });
+    const carried = filesOf(a, written.commit);
+    expect(carried).toContain("swap.txt/fine.txt");
+    expect(carried).not.toContain("swap.txt/n.txt");
+    expect(carried).not.toContain("swap.txt/.env");
+    expect(written.leftOutByContent).toContainEqual({
+      path: "swap.txt/n.txt",
+      reason: "content",
+      kind: "GitHub token",
+    });
+    expect(written.excludedSecretPaths).toContain("swap.txt/.env");
+    expect(written.excludedSecretCount).toBe(written.excludedSecretPaths.length);
+    NodeFS.rmSync(NodePath.join(a, "swap.txt"), { recursive: true });
+  });
+
   it("leaves a thread's checkpoint as it is today: no content check unless asked for", async () => {
     const a = dirtyRepository();
     const written = await writeCheckpoint({ cwd: a, threadId: "thread-1" });

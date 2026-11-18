@@ -115,8 +115,28 @@ export function unusualFetchConfig(input: {
   return null;
 }
 
-/** A folder or `file://` address names a place on one machine only. */
-const isLocalAddress = (canonical: string) => canonical.startsWith("file://");
+/**
+ * A folder or `file://` address, or one whose host is the machine itself
+ * (`localhost`, a loopback address), names a place on one machine only.
+ */
+const isLocalAddress = (canonical: string) => {
+  if (canonical.startsWith("file://")) return true;
+  const host = (canonical.split("/")[0] ?? "").replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "::1" ||
+    host === "0.0.0.0" ||
+    /^127(\.\d{1,3}){3}$/.test(host)
+  );
+};
+
+/**
+ * The marks of an unfinished operation, plus the one Git keeps while a
+ * cherry-pick or revert of several commits is part way through with nothing
+ * left to resolve: no head mark, a clean tree, and commits still to pick.
+ */
+const UNFINISHED_MARKS = [...UNFINISHED_OPERATION_MARKS, "sequencer"];
 
 export interface SyncRepository {
   /** Relative to the project folder with `/` separators; "." is the folder itself. */
@@ -198,7 +218,7 @@ async function operationUnfinished(git: SyncGit, cwd: string): Promise<boolean> 
   const gitDir = await read(git, cwd, ["rev-parse", "--absolute-git-dir"]);
   // A Git folder that cannot be found is never taken for a finished state.
   if (!gitDir.ok || gitDir.text.length === 0) return true;
-  for (const mark of UNFINISHED_OPERATION_MARKS) {
+  for (const mark of UNFINISHED_MARKS) {
     if ((await NodeFSP.lstat(NodePath.join(gitDir.text, mark)).catch(() => null)) !== null)
       return true;
   }
@@ -429,6 +449,11 @@ export async function cloneRepository(
   const target = NodePath.join(realRoot, ...input.path.split("/"));
   if ((await NodeFSP.lstat(target).catch(() => null)) !== null)
     return refuse('A folder is already there. Use "Compare all files…".');
+  /** The folders this call made on the way, innermost last: removed again when nothing is cloned. */
+  const made: Array<string> = [];
+  const undo = async () => {
+    for (const folder of made.toReversed()) await NodeFSP.rmdir(folder).catch(() => undefined);
+  };
   try {
     // One folder at a time, creating nothing past a link: a link on the way would
     // put the clone, or an empty folder, outside the project folder.
@@ -438,12 +463,17 @@ export async function cloneRepository(
       let entry = await NodeFSP.lstat(folder).catch(() => null);
       if (entry === null) {
         await NodeFSP.mkdir(folder);
+        made.push(folder);
         entry = await NodeFSP.lstat(folder);
       }
-      if (!entry.isDirectory()) return refuse("The folder's path leaves the project folder.");
+      if (!entry.isDirectory()) {
+        await undo();
+        return refuse("The folder's path leaves the project folder.");
+      }
     }
     await NodeFSP.mkdir(target);
   } catch {
+    await undo();
     return refuse("The folder could not be created.");
   }
   const cloned = await context
@@ -474,6 +504,7 @@ export async function cloneRepository(
   if (cloned.code !== 0) {
     // The folder this call created exclusively: all that is in it is this clone's.
     await NodeFSP.rm(target, { recursive: true, force: true }).catch(() => undefined);
+    await undo();
     return refuse(
       context.signal?.aborted === true ? "The clone was cancelled." : gitReason(cloned.stderr),
     );

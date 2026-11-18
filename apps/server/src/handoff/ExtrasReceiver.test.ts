@@ -8,6 +8,7 @@ import { vi } from "vite-plus/test";
 import { type EffectiveWorkGrant, unscopedGrant } from "../fleet/workGrantPolicy.ts";
 import { createBundle } from "./bundleGit.ts";
 import {
+  arrivalLockKey,
   checkedOutBranches,
   extraBranchName,
   extraId,
@@ -211,6 +212,18 @@ describe("landing a Sync extra (1390 AC-13)", () => {
       }),
     ).toBe(true);
     expect(git(f.b, "rev-parse", "refs/heads/swc/from-M4/feature")).toBe(next);
+  });
+
+  it("names one lock for a repository however its folder is reached", async () => {
+    const f = twoMachines();
+    const worktree = NodePath.join(f.base, "b-other");
+    git(f.b, "worktree", "add", "-q", "-b", "other", worktree);
+    const link = NodePath.join(f.base, "b-link");
+    NodeFS.symlinkSync(f.b, link);
+    const key = await arrivalLockKey(f.b);
+    expect(await arrivalLockKey(worktree)).toBe(key);
+    expect(await arrivalLockKey(link)).toBe(key);
+    expect(await arrivalLockKey(f.a)).not.toBe(key);
   });
 
   it("removes the hidden refs an earlier, dead arrival left behind (P2-08)", async () => {

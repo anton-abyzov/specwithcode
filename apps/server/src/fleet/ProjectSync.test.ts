@@ -13,6 +13,7 @@ import {
   cloneRepository,
   fastForwardRepository,
   fetchAll,
+  readRepositoryFacts,
   isLinkedWorktree,
   runSync,
   statusOf,
@@ -584,15 +585,23 @@ describe("project sync: clone (1390 AC-11)", () => {
     const port = (server.address() as NodeNet.AddressInfo).port;
     const cancel = new AbortController();
     server.once("connection", () => cancel.abort());
+    // An address another machine could use, read here from the server above.
+    const config = NodePath.join(f.base, "slow.gitconfig");
+    NodeFS.writeFileSync(
+      config,
+      `[url "git://127.0.0.1:${port}/"]\n\tinsteadOf = git://sync.test/\n`,
+    );
+    process.env.GIT_CONFIG_GLOBAL = config;
     try {
       const { run, commands } = recording();
       const result = await cloneRepository({ ...context(run), signal: cancel.signal }, f.a, {
-        path: "repositories/slow",
-        remote: `git://127.0.0.1:${port}/acme/slow.git`,
+        path: "repositories/deep/slow",
+        remote: "git://sync.test/acme/slow.git",
       });
       expect(result).toMatchObject({ action: "none", reason: "refused" });
       expect(commands.some((args) => args[0] === "clone")).toBe(true);
-      expect(NodeFS.existsSync(NodePath.join(f.a, "repositories", "slow"))).toBe(false);
+      // The folder and the folders made on the way to it are gone.
+      expect(NodeFS.existsSync(NodePath.join(f.a, "repositories"))).toBe(false);
     } finally {
       for (const socket of sockets) socket.destroy();
       await new Promise((done) => server.close(done));
@@ -815,6 +824,35 @@ describe("project sync: what counts as clean and as a clone address", () => {
     expect((await statusOf(recording().run, [root(f.a)]))[0]).toMatchObject({ clean: false });
   });
 
+  it("treats a cherry-pick of several commits that is part way through as not clean", async () => {
+    const f = fixture();
+    // Two commits to pick; the first conflicts, is resolved and committed, the second is pending.
+    git(f.b, "checkout", "-q", "-b", "picks");
+    const one = commit(f.b, "app.ts", "export const a = 'picked';\n");
+    const two = commit(f.b, "second.ts", "export const second = 1;\n");
+    git(f.b, "push", "-q", "origin", "picks");
+    git(f.a, "fetch", "-q", "origin");
+    commit(f.a, "app.ts", "export const a = 'mine';\n");
+    git(f.a, "push", "-q", "origin", "main");
+    expect(() => git(f.a, "cherry-pick", one, two)).toThrow();
+    write(f.a, "app.ts", "export const a = 'resolved';\n");
+    git(f.a, "add", "--", "app.ts");
+    git(f.a, "commit", "-q", "--no-edit");
+    git(f.a, "push", "-q", "origin", "main");
+    expect(git(f.a, "status", "--porcelain=v1")).toBe("");
+    expect(NodeFS.existsSync(NodePath.join(f.a, ".git", "CHERRY_PICK_HEAD"))).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(f.a, ".git", "sequencer"))).toBe(true);
+    // The checkout is level with the remote and clean; the next push leaves it behind.
+    git(f.publisher, "pull", "-q", "--ff-only", "origin", "main");
+    f.publish("other.ts", "export const other = 1;\n");
+    const before = snapshot(f.a);
+    const { step, result, commands } = await sync(f.a, f.b, { force: true });
+    expect(step.uncommitted).toBeGreaterThan(0);
+    expect(result).toMatchObject({ moved: 0 });
+    expect(commands.some((args) => args[0] === "merge")).toBe(false);
+    expect(snapshot(f.a)).toEqual(before);
+  });
+
   it("names no clone address for a folder or file origin (P2-07)", async () => {
     const f = fixture();
     const { run } = recording();
@@ -835,6 +873,28 @@ describe("project sync: what counts as clean and as a clone address", () => {
     const again = await fetchAll(context(run), [{ path: "repositories/lib", cwd: nested }]);
     expect(again[0]).toMatchObject({ fetch: "ok", remote: "https://sync.test/remote.git" });
     expect(say(planProjectSync(here, again)[1]!)).toBe("clone:missing");
+    // An address of this machine itself is none another machine can use.
+    for (const local of [
+      "https://localhost/acme/app.git",
+      "https://127.0.0.1:3000/acme/app.git",
+      "git://[::1]/acme/app.git",
+      "ssh://git@LOCALHOST/acme/app.git",
+      "git@localhost:acme/app.git",
+      "127.0.0.1:acme/app.git",
+    ]) {
+      git(nested, "remote", "set-url", "origin", local);
+      const facts = await readRepositoryFacts(
+        context(run),
+        { path: "repositories/lib", cwd: nested },
+        { fetch: false },
+      );
+      expect(facts.remote, local).toBeNull();
+      expect(
+        await cloneRepository(context(run), f.a, { path: "repositories/local", remote: local }),
+        local,
+      ).toMatchObject({ action: "none", reason: "refused" });
+    }
+    expect(NodeFS.existsSync(NodePath.join(f.a, "repositories"))).toBe(false);
   });
 });
 

@@ -116,6 +116,19 @@ export async function moveBranchForward(input: {
 }
 
 /**
+ * What arrivals in one repository are serialised by: the real path of its Git
+ * data, the same for the project folder, a link to it and every worktree of
+ * it, so two arrivals never work in one repository at once.
+ */
+export async function arrivalLockKey(root: string): Promise<string> {
+  const common = await runGit(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    allowFailure: true,
+  });
+  const folder = common.code === 0 && common.stdout.trim().length > 0 ? common.stdout.trim() : root;
+  return NodeFSP.realpath(folder).catch(() => NodePath.resolve(folder));
+}
+
+/**
  * Removes the hidden refs an arrival that never finished left behind (the
  * server stopped mid-way). Arrivals in one repository run one at a time, so
  * every such ref but the current one's belongs to a dead operation.
@@ -384,8 +397,9 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const root = yield* repositoryRoot(caller, meta);
         // One arrival at a time per repository: names are chosen by what exists.
+        const key = yield* Effect.tryPromise({ try: () => arrivalLockKey(root), catch: fromGit });
         const landed = yield* locks.withLock(
-          root,
+          key,
           Effect.tryPromise({
             try: () =>
               landExtra({

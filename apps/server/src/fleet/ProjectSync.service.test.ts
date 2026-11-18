@@ -407,12 +407,19 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
           () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
         );
         const port = (server.address() as NodeNet.AddressInfo).port;
+        // An address another machine could use, read here from the server above.
+        const config = NodePath.join(f.base, "slow.gitconfig");
+        NodeFS.writeFileSync(
+          config,
+          `[url "git://127.0.0.1:${port}/"]\n\tinsteadOf = git://sync.test/\n`,
+        );
+        process.env.GIT_CONFIG_GLOBAL = config;
         const target = NodePath.join(f.a, "repositories", "slow");
         const run = yield* Effect.forkChild(
           sync.run({
             ...input,
             fastForward: [],
-            clone: [{ path: "repositories/slow", remote: `git://127.0.0.1:${port}/acme/slow.git` }],
+            clone: [{ path: "repositories/slow", remote: "git://sync.test/acme/slow.git" }],
           }),
         );
         yield* Effect.promise(() => connection);
@@ -433,6 +440,7 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
       }).pipe(
         Effect.ensuring(
           Effect.promise(async () => {
+            process.env.GIT_CONFIG_GLOBAL = "/dev/null";
             for (const socket of sockets) socket.destroy();
             await new Promise((resolve) => server.close(resolve));
           }),

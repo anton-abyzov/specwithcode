@@ -240,13 +240,21 @@ export async function writeCheckpoint(input: {
         root,
         baseCommit,
         tree: ownTree,
-        untracked: untrackedPaths,
+        secretName: (path) => isSecretLikeProjectPath(path) || isUntrackedSecretConfigPath(path),
         allow: new Set(input.contentCheck.sendAnyway ?? []),
         maxFileBytes: HANDOFF_MAX_SNAPSHOT_FILE_BYTES,
+        maxChangedFiles: HANDOFF_MAX_SNAPSHOT_FILES,
       });
       if (staged.tooLarge !== null) skip({ ...staged.tooLarge, reason: "too-large" });
-      if (staged.flagged.length > 0) {
-        const flagged = staged.flagged.map((file) => file.path);
+      if (staged.tooMany !== null)
+        skip({ path: staged.tooMany.path, bytes: 0, reason: "too-many-files" });
+      for (const path of staged.secretNames) {
+        excludedSecretCount += 1;
+        secretPaths.add(path);
+        excludedSecretPaths.push(path);
+      }
+      if (staged.flagged.length > 0 || staged.secretNames.length > 0) {
+        const flagged = [...staged.flagged.map((file) => file.path), ...staged.secretNames];
         for (let index = 0; index < flagged.length; index += 100) {
           await runGit(
             root,
