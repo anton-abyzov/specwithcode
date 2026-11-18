@@ -151,6 +151,16 @@ describe("device approval copy", () => {
 });
 
 describe("the waiting device", () => {
+  it("never puts something that looks like a real code in the empty code box", () => {
+    // The pop-up and the list share one code form.
+    const html = renderToStaticMarkup(
+      <ConnectDevicesList snapshot={snapshot()} actions={actions} />,
+    );
+    const placeholder = /placeholder="([^"]*)"/.exec(html)?.[1];
+    expect(placeholder).toBe("6 characters");
+    expect(placeholder).not.toMatch(/^[A-Z0-9]{6}$/);
+  });
+
   it("says where to go and shows the code large with Copy", () => {
     const html = renderToStaticMarkup(<DeviceWaitingCard machine="m4" code="K7QX2M" />);
     expect(html).toContain("Open SpecWithCode on m4 and type this code:");

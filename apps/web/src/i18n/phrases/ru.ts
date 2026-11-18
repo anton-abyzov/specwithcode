@@ -5450,6 +5450,7 @@ export const ru: PhraseCatalog = {
     "Слишком много неверных кодов. Введите код прямо на {machine} или подождите 10 минут.",
   "Try again.": "Попробуйте ещё раз.",
   "Turning away…": "Отклоняем…",
+  "6 characters": "6 символов",
   "Type the code shown on {device}": "Введите код, который показывает {device}",
   "another device": "другое устройство",
   "the update": "обновление",
@@ -5479,14 +5480,12 @@ export const ru: PhraseCatalog = {
     "{device} запрашивает доступ. Оно подключено через {hub}.",
   "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
     "{machine} отклонила это устройство. Запросите снова завтра или одобрите его в SpecWithCode на {machine}.",
-  "Different machine at address":
-    "По адресу другой компьютер",
+  "Different machine at address": "По адресу другой компьютер",
   "{machine}'s address now answers as a different SpecWithCode":
     "По адресу {machine} теперь отвечает другой SpecWithCode",
   "This host's address now answers as a different SpecWithCode":
     "По адресу этого хоста теперь отвечает другой SpecWithCode",
-  "Open Settings > Machines to fix it.":
-    "Откройте Настройки > Машины, чтобы это исправить.",
+  "Open Settings > Machines to fix it.": "Откройте Настройки > Машины, чтобы это исправить.",
   "Resolved history from {machines} could not be loaded.":
     "Не удалось загрузить завершённую историю с {machines}.",
   "Resolved history from another machine could not be loaded.":

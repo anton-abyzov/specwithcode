@@ -101,7 +101,7 @@ function CodeForm({
             setCode(event.target.value);
             setError(null);
           }}
-          placeholder="K7QX2M"
+          placeholder={tx("6 characters")}
           spellCheck={false}
           value={code}
         />

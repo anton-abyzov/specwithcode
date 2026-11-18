@@ -5491,6 +5491,7 @@ export const de: PhraseCatalog = {
     "Zu viele falsche Codes. Gib den Code direkt auf {machine} ein oder warte 10 Minuten.",
   "Try again.": "Versuche es erneut.",
   "Turning away…": "Wird abgewiesen…",
+  "6 characters": "6 Zeichen",
   "Type the code shown on {device}": "Gib den auf {device} angezeigten Code ein",
   "another device": "ein anderes Gerät",
   "the update": "das Update",
@@ -5520,14 +5521,12 @@ export const de: PhraseCatalog = {
     "{device} fragt an. Es wurde über {hub} gekoppelt.",
   "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
     "{machine} hat dieses Gerät abgewiesen. Frag morgen erneut an oder gib es in SpecWithCode auf {machine} frei.",
-  "Different machine at address":
-    "Anderer Rechner unter der Adresse",
+  "Different machine at address": "Anderer Rechner unter der Adresse",
   "{machine}'s address now answers as a different SpecWithCode":
     "Unter der Adresse von {machine} antwortet jetzt ein anderes SpecWithCode",
   "This host's address now answers as a different SpecWithCode":
     "Unter der Adresse dieses Hosts antwortet jetzt ein anderes SpecWithCode",
-  "Open Settings > Machines to fix it.":
-    "Öffne Einstellungen > Rechner, um das zu beheben.",
+  "Open Settings > Machines to fix it.": "Öffne Einstellungen > Rechner, um das zu beheben.",
   "Resolved history from {machines} could not be loaded.":
     "Erledigter Verlauf von {machines} konnte nicht geladen werden.",
   "Resolved history from another machine could not be loaded.":

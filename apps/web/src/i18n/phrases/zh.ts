@@ -5231,6 +5231,7 @@ export const zh: PhraseCatalog = {
     "错误代码次数过多。请直接在 {machine} 上输入代码，或等待 10 分钟。",
   "Try again.": "请重试。",
   "Turning away…": "正在拒绝…",
+  "6 characters": "6 个字符",
   "Type the code shown on {device}": "输入 {device} 上显示的代码",
   "another device": "另一台设备",
   "the update": "更新",
@@ -5259,16 +5260,12 @@ export const zh: PhraseCatalog = {
   "{device} is asking. It was paired through {hub}.": "{device} 正在申请。它是通过 {hub} 配对的。",
   "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
     "{machine} 拒绝了此设备。请明天再申请，或在 {machine} 上的 SpecWithCode 中批准它。",
-  "Different machine at address":
-    "该地址是另一台机器",
+  "Different machine at address": "该地址是另一台机器",
   "{machine}'s address now answers as a different SpecWithCode":
     "{machine} 的地址现在以另一个 SpecWithCode 的身份应答",
   "This host's address now answers as a different SpecWithCode":
     "此主机的地址现在以另一个 SpecWithCode 的身份应答",
-  "Open Settings > Machines to fix it.":
-    "打开“设置 > 电脑”来修复。",
-  "Resolved history from {machines} could not be loaded.":
-    "无法加载 {machines} 的已解决历史。",
-  "Resolved history from another machine could not be loaded.":
-    "无法加载另一台机器的已解决历史。",
+  "Open Settings > Machines to fix it.": "打开“设置 > 电脑”来修复。",
+  "Resolved history from {machines} could not be loaded.": "无法加载 {machines} 的已解决历史。",
+  "Resolved history from another machine could not be loaded.": "无法加载另一台机器的已解决历史。",
 };
