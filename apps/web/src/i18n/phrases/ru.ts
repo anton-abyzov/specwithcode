@@ -5776,38 +5776,51 @@ export const ru: PhraseCatalog = {
   "Turn SpecWeave on": "Включить SpecWeave",
   "Ask for it whole": "Попросить всё сразу",
   "Read the review": "Прочитать ревью",
-  "This project has no plans or board yet. Turn SpecWeave on.": "В этом проекте пока нет планов и доски. Включите SpecWeave.",
+  "This project has no plans or board yet. Turn SpecWeave on.":
+    "В этом проекте пока нет планов и доски. Включите SpecWeave.",
   "Show me": "Показать",
-  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.": "Попросите всю функцию одним запросом. Ваши агенты спланируют её, сделают, проверят и закроют.",
-  "Ask for the whole feature in one request. Your agents plan it, build it and close it.": "Попросите всю функцию одним запросом. Ваши агенты спланируют её, сделают и закроют.",
+  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.":
+    "Попросите всю функцию одним запросом. Ваши агенты спланируют её, сделают, проверят и закроют.",
+  "Ask for the whole feature in one request. Your agents plan it, build it and close it.":
+    "Попросите всю функцию одним запросом. Ваши агенты спланируют её, сделают и закроют.",
   "Write it for me": "Написать за меня",
   "Open the thread": "Открыть тред",
-  "Planning": "Планирование",
+  Planning: "Планирование",
   "Working: {done} of {total} tasks": "В работе: {done} из {total} задач",
   "In review": "На ревью",
   "Fixing what the review found": "Исправляет найденное на ревью",
-  "When the card is in Done, open it and read what the review found.": "Когда карточка окажется в «Готово», откройте её и прочитайте, что нашло ревью.",
+  "When the card is in Done, open it and read what the review found.":
+    "Когда карточка окажется в «Готово», откройте её и прочитайте, что нашло ревью.",
   "Open the review": "Открыть ревью",
-  "Ship": "Можно выпускать",
+  Ship: "Можно выпускать",
   "Fix first": "Сначала исправить",
   "No verdict": "Без вердикта",
   "A reviewer": "Ревьюер",
-  "Reviewed by {model}, the same family that built it.": "Проверено моделью {model} из того же семейства, что и сделала работу.",
-  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.": "Ревью не запускалось. Для ревью нужна модель из второго семейства, например {codex} или {muse}.",
+  "Reviewed by {model}, the same family that built it.":
+    "Проверено моделью {model} из того же семейства, что и сделала работу.",
+  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
+    "Ревью не запускалось. Для ревью нужна модель из второго семейства, например {codex} или {muse}.",
   "No review is recorded for this feature.": "Для этой функции не записано ни одного ревью.",
   "Add one": "Добавить",
   "Skip this step": "Пропустить шаг",
   "Leave the guide": "Выйти из руководства",
-  "Waiting on this step. The Board tab says what went wrong.": "Этот шаг ждёт. На вкладке «Доска» написано, что пошло не так.",
-  "Waiting on this step. The coordinator's last message says why.": "Этот шаг ждёт. Причина в последнем сообщении координатора.",
-  "That is the loop: plan, board, work, review, done.": "Вот и весь цикл: план, доска, работа, ревью, готово.",
-  "Review finished features in all projects on this Mac": "Проверять готовые функции во всех проектах на этом Mac",
+  "Waiting on this step. The Board tab says what went wrong.":
+    "Этот шаг ждёт. На вкладке «Доска» написано, что пошло не так.",
+  "Waiting on this step. The coordinator's last message says why.":
+    "Этот шаг ждёт. Причина в последнем сообщении координатора.",
+  "That is the loop: plan, board, work, review, done.":
+    "Вот и весь цикл: план, доска, работа, ревью, готово.",
+  "Review finished features in all projects on this Mac":
+    "Проверять готовые функции во всех проектах на этом Mac",
   "Each review uses the reviewer's plan.": "Каждое ревью расходует тариф ревьюера.",
-  "On for all projects on this Mac. Each review uses the reviewer's plan.": "Включено для всех проектов на этом Mac. Каждое ревью расходует тариф ревьюера.",
+  "On for all projects on this Mac. Each review uses the reviewer's plan.":
+    "Включено для всех проектов на этом Mac. Каждое ревью расходует тариф ревьюера.",
   "Remove the sample project": "Удалить учебный проект",
-  "Remove {name} from SpecWithCode? Its folder and files stay on disk.": "Удалить {name} из SpecWithCode? Папка и файлы останутся на диске.",
+  "Remove {name} from SpecWithCode? Its folder and files stay on disk.":
+    "Удалить {name} из SpecWithCode? Папка и файлы останутся на диске.",
   "Build a first feature": "Сделайте первую функцию",
-  "Your agents plan and build one small feature and another model reviews it, on your own plans.": "Ваши агенты спланируют и сделают одну небольшую функцию, а другая модель её проверит, на ваших собственных тарифах.",
+  "Your agents plan and build one small feature and another model reviews it, on your own plans.":
+    "Ваши агенты спланируют и сделают одну небольшую функцию, а другая модель её проверит, на ваших собственных тарифах.",
   "Try a first feature": "Попробовать",
   "Sign in an agent first": "Сначала подключите агента",
   "Continue your first feature": "Продолжите первую функцию",
@@ -5815,17 +5828,20 @@ export const ru: PhraseCatalog = {
   "Open it": "Открыть",
   "Dismiss Build a first feature": "Скрыть «Сделайте первую функцию»",
   "First feature guide": "Руководство по первой функции",
-  "Automatic review is still on for the sample": "Автоматическое ревью в учебном проекте всё ещё включено",
-  "done": "готово",
-  "skipped": "пропущено",
-  "Reviews": "Ревью",
+  "Automatic review is still on for the sample":
+    "Автоматическое ревью в учебном проекте всё ещё включено",
+  done: "готово",
+  skipped: "пропущено",
+  Reviews: "Ревью",
   "Removed {name}": "{name} удалён",
   "Its folder and files stay on disk.": "Папка и файлы остались на диске.",
-  "The guide could not be updated. Try again.": "Не удалось обновить руководство. Попробуйте ещё раз.",
+  "The guide could not be updated. Try again.":
+    "Не удалось обновить руководство. Попробуйте ещё раз.",
   "The setting was not saved. Try again.": "Настройка не сохранилась. Попробуйте ещё раз.",
   "The sample project was not removed. Try again.": "Учебный проект не удалён. Попробуйте ещё раз.",
   "Could not make the sample project": "Не удалось создать учебный проект",
   "The sample project has no first commit": "В учебном проекте нет первого коммита",
   "The sample project is ready": "Учебный проект готов",
-  "It appears in the sidebar once this window catches up.": "Он появится на боковой панели, когда окно обновится.",
+  "It appears in the sidebar once this window catches up.":
+    "Он появится на боковой панели, когда окно обновится.",
 };

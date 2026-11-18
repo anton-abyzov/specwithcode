@@ -121,8 +121,20 @@ describe("FirstFeatureGuideView", () => {
         card({
           column: "done",
           reviews: [
-            { model: "muse-wonder-full-1.0", family: "meta", author: "claude", verdict: "ship", at: "b" },
-            { model: "gpt-6.1-sol", family: "openai", author: "claude", verdict: "fix first", at: "a" },
+            {
+              model: "muse-wonder-full-1.0",
+              family: "meta",
+              author: "claude",
+              verdict: "ship",
+              at: "b",
+            },
+            {
+              model: "gpt-6.1-sol",
+              family: "openai",
+              author: "claude",
+              verdict: "fix first",
+              at: "a",
+            },
           ],
         }),
       ],
@@ -133,7 +145,9 @@ describe("FirstFeatureGuideView", () => {
       "GPT 6.1 SolFix first",
     ]);
     expect(
-      rows.map((row) => row.querySelector("[data-provider-logo]")?.getAttribute("data-provider-logo")),
+      rows.map((row) =>
+        row.querySelector("[data-provider-logo]")?.getAttribute("data-provider-logo"),
+      ),
     ).toEqual(["meta", "openai"]);
     button("Open the review")!.click();
     expect(handlers.onOpenReview).toHaveBeenCalledOnce();
@@ -156,8 +170,14 @@ describe("FirstFeatureGuideView", () => {
 
   it("draws a skipped knot hollow, not done", async () => {
     await show({ skipped: ["specweave"] });
-    const knots = [...container.querySelectorAll("[data-step]")].filter((node) => node.tagName === "LI");
-    expect(knots.map((knot) => knot.getAttribute("data-state"))).toEqual(["skipped", "now", "later"]);
+    const knots = [...container.querySelectorAll("[data-step]")].filter(
+      (node) => node.tagName === "LI",
+    );
+    expect(knots.map((knot) => knot.getAttribute("data-state"))).toEqual([
+      "skipped",
+      "now",
+      "later",
+    ]);
   });
 
   it("ends with the loop and two actions, neither chosen, Remove only once finished is stored", async () => {
@@ -179,7 +199,9 @@ describe("FirstFeatureGuideView", () => {
     button("Remove the sample project")!.click();
     expect(handlers.onRemove).toHaveBeenCalledOnce();
     await show(end, { finishedStored: true, removing: "confirm", reviewAll: "done" });
-    expect(text()).toContain("Remove First feature from SpecWithCode? Its folder and files stay on disk.");
+    expect(text()).toContain(
+      "Remove First feature from SpecWithCode? Its folder and files stay on disk.",
+    );
     expect(text()).toContain("On for all projects on this Mac.");
     button("Remove")!.click();
     expect(handlers.onRemoveConfirm).toHaveBeenCalledOnce();

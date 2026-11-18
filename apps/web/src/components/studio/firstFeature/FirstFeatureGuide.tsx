@@ -93,7 +93,12 @@ const LocalGuideSchema = Schema.Struct({
   closed: Schema.Boolean,
 });
 type LocalGuide = typeof LocalGuideSchema.Type;
-const EMPTY_LOCAL: LocalGuide = { skipped: [], seenInReview: false, openedReview: false, closed: false };
+const EMPTY_LOCAL: LocalGuide = {
+  skipped: [],
+  seenInReview: false,
+  openedReview: false,
+  closed: false,
+};
 
 /** The guide's window-only facts for one sample project. */
 export function useFirstFeatureLocal(environmentId: EnvironmentId, projectId: ProjectId) {
@@ -172,7 +177,11 @@ export interface FirstFeatureGuideViewProps {
 }
 
 function verdictLabel(verdict: GuideView["reviews"][number]["verdict"]) {
-  return verdict === "ship" ? REVIEW_SHIP : verdict === "fix first" ? REVIEW_FIX_FIRST : REVIEW_NO_VERDICT;
+  return verdict === "ship"
+    ? REVIEW_SHIP
+    : verdict === "fix first"
+      ? REVIEW_FIX_FIRST
+      : REVIEW_NO_VERDICT;
 }
 
 /** The thread with three knots, as the first-run stage bar draws it (1387). */
@@ -240,8 +249,12 @@ function ReviewList({ view }: { readonly view: GuideView }) {
         <ul className="grid gap-1" aria-label={tx("Reviews")} data-first-feature-reviews="">
           {view.reviews.map((review, index) => (
             <li key={`${review.at}:${index}`} className="flex min-w-0 items-center gap-2 text-xs">
-              {review.brand === null ? null : <ProviderLogo brand={review.brand} className="size-3.5" />}
-              <span className="min-w-0 truncate text-foreground">{review.model ?? tx(REVIEW_UNNAMED)}</span>
+              {review.brand === null ? null : (
+                <ProviderLogo brand={review.brand} className="size-3.5" />
+              )}
+              <span className="min-w-0 truncate text-foreground">
+                {review.model ?? tx(REVIEW_UNNAMED)}
+              </span>
               <span
                 className={
                   review.verdict === "ship"
@@ -320,16 +333,29 @@ export function FirstFeatureGuideView(props: FirstFeatureGuideViewProps) {
         {step === "ask" ? (
           <>
             <p className="text-sm">
-              {tx(view.reviewNote?.kind === "no-second-family" ? ASK_SENTENCE_NO_REVIEW : ASK_SENTENCE)}
+              {tx(
+                view.reviewNote?.kind === "no-second-family"
+                  ? ASK_SENTENCE_NO_REVIEW
+                  : ASK_SENTENCE,
+              )}
             </p>
             {view.askStatus ? <AskStatusLine status={view.askStatus} /> : null}
             <div className="flex flex-wrap gap-2">
               {view.card === null ? (
-                <Button size="sm" variant="outline" disabled={disabled} onClick={props.onWriteRequest}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={disabled}
+                  onClick={props.onWriteRequest}
+                >
                   {tx(WRITE_IT_FOR_ME)}
                 </Button>
               ) : null}
-              <Button size="sm" variant={view.card === null ? "ghost" : "outline"} onClick={props.onOpenThread}>
+              <Button
+                size="sm"
+                variant={view.card === null ? "ghost" : "outline"}
+                onClick={props.onOpenThread}
+              >
                 {tx(OPEN_THE_THREAD)}
               </Button>
             </div>
@@ -340,7 +366,12 @@ export function FirstFeatureGuideView(props: FirstFeatureGuideViewProps) {
             <p className="text-sm">{tx(REVIEW_SENTENCE)}</p>
             <ReviewList view={view} />
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" disabled={view.card === null} onClick={props.onOpenReview}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={view.card === null}
+                onClick={props.onOpenReview}
+              >
                 {tx(OPEN_THE_REVIEW)}
               </Button>
               {view.reviewNote?.kind === "no-second-family" ? (
@@ -351,11 +382,13 @@ export function FirstFeatureGuideView(props: FirstFeatureGuideViewProps) {
             </div>
           </>
         ) : null}
-        {step === "end" ? (
-          <GuideEnd {...props} />
-        ) : null}
+        {step === "end" ? <GuideEnd {...props} /> : null}
         {view.waiting ? (
-          <p role="status" className="text-xs text-warning-foreground" data-first-feature-waiting="">
+          <p
+            role="status"
+            className="text-xs text-warning-foreground"
+            data-first-feature-waiting=""
+          >
             {tx(view.waiting)}
           </p>
         ) : null}
@@ -367,7 +400,12 @@ export function FirstFeatureGuideView(props: FirstFeatureGuideViewProps) {
       </div>
       <p className="flex flex-wrap justify-end gap-4">
         {step === "end" ? null : (
-          <Button size="xs" variant="link" className="text-muted-foreground" onClick={() => props.onSkip(step)}>
+          <Button
+            size="xs"
+            variant="link"
+            className="text-muted-foreground"
+            onClick={() => props.onSkip(step)}
+          >
             {tx(SKIP_THIS_STEP)}
           </Button>
         )}
@@ -389,7 +427,11 @@ function GuideEnd(props: FirstFeatureGuideViewProps) {
       <p className="text-sm">{tx(END_SENTENCE)}</p>
       <div className="grid gap-1">
         {reviewAll === "done" ? (
-          <p role="status" className="text-xs text-success-foreground" data-first-feature-review-all="done">
+          <p
+            role="status"
+            className="text-xs text-success-foreground"
+            data-first-feature-review-all="done"
+          >
             {tx(END_REVIEW_ALL_DONE)}
           </p>
         ) : (
@@ -420,7 +462,12 @@ function GuideEnd(props: FirstFeatureGuideViewProps) {
             >
               {tx(END_REMOVE_YES)}
             </Button>
-            <Button size="sm" variant="ghost" disabled={removing === "removing"} onClick={props.onRemoveCancel}>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={removing === "removing"}
+              onClick={props.onRemoveCancel}
+            >
               {tx(END_CANCEL)}
             </Button>
           </div>
@@ -490,13 +537,10 @@ function ringBoardSetupButton() {
     button.removeAttribute("data-first-feature-ring");
     void button.offsetWidth;
     button.setAttribute("data-first-feature-ring", "");
-    button.addEventListener(
-      "animationend",
-      (event) => {
-        if (event.animationName === "first-feature-ring")
-          button.removeAttribute("data-first-feature-ring");
-      },
-    );
+    button.addEventListener("animationend", (event) => {
+      if (event.animationName === "first-feature-ring")
+        button.removeAttribute("data-first-feature-ring");
+    });
     button.focus({ preventScroll: false });
   };
   requestAnimationFrame(look);

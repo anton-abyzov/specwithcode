@@ -200,6 +200,7 @@ export const useComposerDraftStore = { getState: () => ({ setModelSelection: () 
 export const isElectron = false;
 // components/studio/WhatYouCanDo, CapacityFleet
 export const WhatYouCanDo = () => null;
+export const FirstFeatureOffer = () => null;
 export const CapacityFleet = () => null;
 // components/ProjectFavicon
 export const ProjectFavicon = (props: {

@@ -4476,7 +4476,8 @@ export const fr: PhraseCatalog = {
   "Setup can be closed once the import finishes.":
     "La configuration pourra être fermée une fois l'importation terminée.",
   "Add a folder on this machine": "Ajouter un dossier de cette machine",
-  "Start with SpecWeave, for plans and a board": "Commencer avec SpecWeave, pour des plans et un tableau",
+  "Start with SpecWeave, for plans and a board":
+    "Commencer avec SpecWeave, pour des plans et un tableau",
   "Type a path, browse or drop a folder": "Saisissez un chemin, parcourez ou déposez un dossier",
   "Starting from nothing?": "Vous partez de zéro ?",
   "New empty project or clone a repository": "Nouveau projet vide ou cloner un dépôt",
@@ -5827,56 +5828,74 @@ export const fr: PhraseCatalog = {
   "Turn SpecWeave on": "Activer SpecWeave",
   "Ask for it whole": "La demander en entier",
   "Read the review": "Lire la revue",
-  "This project has no plans or board yet. Turn SpecWeave on.": "Ce projet n’a encore ni plans ni tableau. Activez SpecWeave.",
+  "This project has no plans or board yet. Turn SpecWeave on.":
+    "Ce projet n’a encore ni plans ni tableau. Activez SpecWeave.",
   "Show me": "Me montrer",
-  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.": "Demandez toute la fonctionnalité en une seule requête. Vos agents la planifient, la construisent, la relisent et la clôturent.",
-  "Ask for the whole feature in one request. Your agents plan it, build it and close it.": "Demandez toute la fonctionnalité en une seule requête. Vos agents la planifient, la construisent et la clôturent.",
+  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.":
+    "Demandez toute la fonctionnalité en une seule requête. Vos agents la planifient, la construisent, la relisent et la clôturent.",
+  "Ask for the whole feature in one request. Your agents plan it, build it and close it.":
+    "Demandez toute la fonctionnalité en une seule requête. Vos agents la planifient, la construisent et la clôturent.",
   "Write it for me": "L’écrire pour moi",
   "Open the thread": "Ouvrir le fil",
-  "Planning": "Planification",
+  Planning: "Planification",
   "Working: {done} of {total} tasks": "En cours : {done} tâches sur {total}",
   "In review": "En revue",
   "Fixing what the review found": "Correction de ce que la revue a trouvé",
-  "When the card is in Done, open it and read what the review found.": "Quand la carte est dans Terminé, ouvrez-la et lisez ce que la revue a trouvé.",
+  "When the card is in Done, open it and read what the review found.":
+    "Quand la carte est dans Terminé, ouvrez-la et lisez ce que la revue a trouvé.",
   "Open the review": "Ouvrir la revue",
-  "Ship": "Prête à livrer",
+  Ship: "Prête à livrer",
   "Fix first": "À corriger d’abord",
   "No verdict": "Sans verdict",
   "A reviewer": "Un relecteur",
-  "Reviewed by {model}, the same family that built it.": "Relue par {model}, de la même famille que celle qui l’a construite.",
-  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.": "Aucune revue n’a eu lieu. Une revue demande un modèle d’une deuxième famille, comme {codex} ou {muse}.",
-  "No review is recorded for this feature.": "Aucune revue n’est enregistrée pour cette fonctionnalité.",
+  "Reviewed by {model}, the same family that built it.":
+    "Relue par {model}, de la même famille que celle qui l’a construite.",
+  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
+    "Aucune revue n’a eu lieu. Une revue demande un modèle d’une deuxième famille, comme {codex} ou {muse}.",
+  "No review is recorded for this feature.":
+    "Aucune revue n’est enregistrée pour cette fonctionnalité.",
   "Add one": "En ajouter un",
   "Skip this step": "Passer cette étape",
   "Leave the guide": "Quitter le guide",
-  "Waiting on this step. The Board tab says what went wrong.": "Cette étape attend. L’onglet Tableau dit ce qui n’a pas marché.",
-  "Waiting on this step. The coordinator's last message says why.": "Cette étape attend. Le dernier message du coordinateur dit pourquoi.",
-  "That is the loop: plan, board, work, review, done.": "Voilà la boucle : plan, tableau, travail, revue, terminé.",
-  "Review finished features in all projects on this Mac": "Relire les fonctionnalités terminées dans tous les projets de ce Mac",
+  "Waiting on this step. The Board tab says what went wrong.":
+    "Cette étape attend. L’onglet Tableau dit ce qui n’a pas marché.",
+  "Waiting on this step. The coordinator's last message says why.":
+    "Cette étape attend. Le dernier message du coordinateur dit pourquoi.",
+  "That is the loop: plan, board, work, review, done.":
+    "Voilà la boucle : plan, tableau, travail, revue, terminé.",
+  "Review finished features in all projects on this Mac":
+    "Relire les fonctionnalités terminées dans tous les projets de ce Mac",
   "Each review uses the reviewer's plan.": "Chaque revue utilise l’abonnement du relecteur.",
-  "On for all projects on this Mac. Each review uses the reviewer's plan.": "Activé pour tous les projets de ce Mac. Chaque revue utilise l’abonnement du relecteur.",
+  "On for all projects on this Mac. Each review uses the reviewer's plan.":
+    "Activé pour tous les projets de ce Mac. Chaque revue utilise l’abonnement du relecteur.",
   "Remove the sample project": "Retirer le projet d’exemple",
-  "Remove {name} from SpecWithCode? Its folder and files stay on disk.": "Retirer {name} de SpecWithCode ? Son dossier et ses fichiers restent sur le disque.",
+  "Remove {name} from SpecWithCode? Its folder and files stay on disk.":
+    "Retirer {name} de SpecWithCode ? Son dossier et ses fichiers restent sur le disque.",
   "Build a first feature": "Créez une première fonctionnalité",
-  "Your agents plan and build one small feature and another model reviews it, on your own plans.": "Vos agents planifient et construisent une petite fonctionnalité, et un autre modèle la relit, avec vos propres abonnements.",
+  "Your agents plan and build one small feature and another model reviews it, on your own plans.":
+    "Vos agents planifient et construisent une petite fonctionnalité, et un autre modèle la relit, avec vos propres abonnements.",
   "Try a first feature": "Essayer une première fonctionnalité",
   "Sign in an agent first": "Connectez d’abord un agent",
   "Continue your first feature": "Reprenez votre première fonctionnalité",
-  "Your sample project is where you left it.": "Votre projet d’exemple est là où vous l’avez laissé.",
+  "Your sample project is where you left it.":
+    "Votre projet d’exemple est là où vous l’avez laissé.",
   "Open it": "L’ouvrir",
   "Dismiss Build a first feature": "Masquer Créez une première fonctionnalité",
   "First feature guide": "Guide de la première fonctionnalité",
-  "Automatic review is still on for the sample": "La revue automatique reste activée pour l’exemple",
-  "done": "terminé",
-  "skipped": "passé",
-  "Reviews": "Revues",
+  "Automatic review is still on for the sample":
+    "La revue automatique reste activée pour l’exemple",
+  done: "terminé",
+  skipped: "passé",
+  Reviews: "Revues",
   "Removed {name}": "{name} retiré",
   "Its folder and files stay on disk.": "Son dossier et ses fichiers restent sur le disque.",
   "The guide could not be updated. Try again.": "Le guide n’a pas pu être mis à jour. Réessayez.",
   "The setting was not saved. Try again.": "Le réglage n’a pas été enregistré. Réessayez.",
-  "The sample project was not removed. Try again.": "Le projet d’exemple n’a pas été retiré. Réessayez.",
+  "The sample project was not removed. Try again.":
+    "Le projet d’exemple n’a pas été retiré. Réessayez.",
   "Could not make the sample project": "Impossible de créer le projet d’exemple",
   "The sample project has no first commit": "Le projet d’exemple n’a pas de premier commit",
   "The sample project is ready": "Le projet d’exemple est prêt",
-  "It appears in the sidebar once this window catches up.": "Il apparaîtra dans la barre latérale quand cette fenêtre sera à jour.",
+  "It appears in the sidebar once this window catches up.":
+    "Il apparaîtra dans la barre latérale quand cette fenêtre sera à jour.",
 };

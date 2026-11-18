@@ -68,7 +68,8 @@ export const WAITING_ASK = "Waiting on this step. The coordinator's last message
 export const END_SENTENCE = "That is the loop: plan, board, work, review, done.";
 export const END_REVIEW_ALL = "Review finished features in all projects on this Mac";
 export const END_REVIEW_ALL_NOTE = "Each review uses the reviewer's plan.";
-export const END_REVIEW_ALL_DONE = "On for all projects on this Mac. Each review uses the reviewer's plan.";
+export const END_REVIEW_ALL_DONE =
+  "On for all projects on this Mac. Each review uses the reviewer's plan.";
 export const END_REMOVE = "Remove the sample project";
 export const END_REMOVE_CONFIRM =
   "Remove {name} from SpecWithCode? Its folder and files stay on disk.";
@@ -224,7 +225,10 @@ export function reviewNote(
   if (reviews.some(reviewIsCrossFamily)) return null;
   const same = reviews.find(reviewIsSameFamily);
   if (same === undefined) return null;
-  return { kind: "same-family", model: same.model === null ? REVIEW_UNNAMED : modelLabel(same.model) };
+  return {
+    kind: "same-family",
+    model: same.model === null ? REVIEW_UNNAMED : modelLabel(same.model),
+  };
 }
 
 /** Whether each step is done by what the app sees. */
@@ -279,7 +283,12 @@ export function guideView(input: GuideInput): GuideView {
 export type GuideShown = "running" | "left" | "finished" | "closed";
 
 export function guideShown(
-  project: { readonly workspaceSettings?: { readonly sample?: string; readonly firstFeatureGuide?: FirstFeatureGuide } | null | undefined },
+  project: {
+    readonly workspaceSettings?:
+      | { readonly sample?: string; readonly firstFeatureGuide?: FirstFeatureGuide }
+      | null
+      | undefined;
+  },
   closedHere: boolean,
 ): GuideShown | null {
   if (!isFirstFeatureSample(project)) return null;
@@ -329,6 +338,7 @@ export function firstFeatureOffer<
   if (!input.supported || input.dismissed) return { kind: "hidden" };
   const active = activeFirstFeatureSample(input.projects);
   if (active !== undefined) return { kind: "continue", project: active };
-  if (input.finishedBefore || firstFeatureGuideFinishedIn(input.projects)) return { kind: "hidden" };
+  if (input.finishedBefore || firstFeatureGuideFinishedIn(input.projects))
+    return { kind: "hidden" };
   return input.agentReady ? { kind: "start" } : { kind: "sign-in" };
 }

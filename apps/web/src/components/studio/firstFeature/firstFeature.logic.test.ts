@@ -77,7 +77,11 @@ describe("guideView: steps from live state", () => {
   });
 
   it("reaches the end only when the review was opened from the guide", () => {
-    const opened = input({ specweave: "on", cards: [card({ column: "done" })], openedReview: true });
+    const opened = input({
+      specweave: "on",
+      cards: [card({ column: "done" })],
+      openedReview: true,
+    });
     expect(guideView(opened).current).toBe("end");
     // Opening needs a card: the flag alone does not tie the knot.
     expect(guideView(input({ specweave: "on", openedReview: true })).current).toBe("ask");
@@ -154,7 +158,9 @@ describe("step 3: the reviews", () => {
         ],
       }),
     );
-    expect(view.reviews.map((line) => [line.model, line.brand, line.verdict, line.crossFamily])).toEqual([
+    expect(
+      view.reviews.map((line) => [line.model, line.brand, line.verdict, line.crossFamily]),
+    ).toEqual([
       ["Muse Wonder Full 1.0", "meta", "ship", true],
       ["Claude Sonnet 5.5", "claude", null, false],
     ]);
@@ -221,8 +227,12 @@ describe("firstFeatureOffer (AC-11, AC-12, AC-20)", () => {
   const base = { supported: true, finishedBefore: false, dismissed: false, agentReady: true };
 
   it("offers nothing without the server's key or once dismissed", () => {
-    expect(firstFeatureOffer({ ...base, supported: false, projects: [] })).toEqual({ kind: "hidden" });
-    expect(firstFeatureOffer({ ...base, dismissed: true, projects: [] })).toEqual({ kind: "hidden" });
+    expect(firstFeatureOffer({ ...base, supported: false, projects: [] })).toEqual({
+      kind: "hidden",
+    });
+    expect(firstFeatureOffer({ ...base, dismissed: true, projects: [] })).toEqual({
+      kind: "hidden",
+    });
   });
 
   it("asks for an agent first, then offers the sample", () => {

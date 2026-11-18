@@ -152,7 +152,15 @@ export function useFirstFeatureStart() {
     } finally {
       setStarting(false);
     }
-  }, [config?.firstFeatureSample, createNew, environmentId, navigate, openProject, projects, providers]);
+  }, [
+    config?.firstFeatureSample,
+    createNew,
+    environmentId,
+    navigate,
+    openProject,
+    projects,
+    providers,
+  ]);
 
   return {
     supported: config?.firstFeatureSample === true,

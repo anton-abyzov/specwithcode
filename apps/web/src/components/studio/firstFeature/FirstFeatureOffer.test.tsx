@@ -43,7 +43,8 @@ describe("FirstFeatureOfferCard (AC-11, AC-12, AC-20)", () => {
     );
   }
   const title = () => container.querySelector("h2")?.textContent;
-  const action = () => container.querySelector<HTMLButtonElement>("[data-first-feature-offer-action]");
+  const action = () =>
+    container.querySelector<HTMLButtonElement>("[data-first-feature-offer-action]");
 
   it("shows one card with its title and one action, naming no time", async () => {
     await show(offer());
@@ -94,7 +95,9 @@ describe("FirstFeatureOfferCard (AC-11, AC-12, AC-20)", () => {
 
   it("can be dismissed", async () => {
     await show(offer());
-    container.querySelector<HTMLButtonElement>('[aria-label="Dismiss Build a first feature"]')!.click();
+    container
+      .querySelector<HTMLButtonElement>('[aria-label="Dismiss Build a first feature"]')!
+      .click();
     expect(onDismiss).toHaveBeenCalledOnce();
   });
 });
