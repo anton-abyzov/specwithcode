@@ -362,6 +362,7 @@ export const make = Effect.gen(function* () {
       fleetUpdateRequest: true,
       fleetUpdateWaitsForFolderCopies: true,
       fleetSkillUpdate: true,
+      fleetSkillGithubSource: true,
       fleetSelfAllowWorkers: true,
       fleetAccountJoinWorkers: true,
       fleetDiskRoom: true,

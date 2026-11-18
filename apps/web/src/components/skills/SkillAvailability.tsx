@@ -48,7 +48,10 @@ export function skillAvailabilityState(input: {
   if (!input.snapshot.providers.some((provider) => provider.state === "ok"))
     return { state: "unknown", text: "No supported agent scan", row };
   if (!row || row.providers.length === 0)
-    return { state: "missing", text: "Not found in this scope", row };
+    // An agent that could not open some of its skill folders cannot say the skill is absent.
+    return input.snapshot.providers.some((provider) => provider.incomplete === true)
+      ? { state: "unknown", text: "Scan incomplete · refresh", row }
+      : { state: "missing", text: "Not found in this scope", row };
   if (input.skillId && row.lock?.skillId !== input.skillId)
     return {
       state: "unknown",

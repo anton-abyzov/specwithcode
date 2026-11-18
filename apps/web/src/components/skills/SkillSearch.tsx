@@ -8,6 +8,7 @@ import {
   AuthTerminalOperateScope,
   formatSkillSourceVersion,
   type ProjectSkillSearchAvailable,
+  type ProjectSkillSourceStatus,
   type ProjectSkillsSearchResult,
   type ProjectSkillUpdateOutcome,
 } from "@specweave-studio/contracts";
@@ -28,6 +29,7 @@ import {
   skillFolderInput,
   type SkillFolderScope,
 } from "./SkillUpdate.logic";
+import { SkillRolloutAfter } from "./SkillRollout";
 import {
   SkillUpdateOutcomeLine,
   skillCommandErrorText,
@@ -82,6 +84,7 @@ export function SkillSearch({
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
   const [outcomes, setOutcomes] = useState<ReadonlyArray<ProjectSkillUpdateOutcome>>([]);
+  const [statuses, setStatuses] = useState<ReadonlyArray<ProjectSkillSourceStatus>>([]);
   const [noteMessage, setNoteMessage] = useState<string | null>(null);
   const asked = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -148,6 +151,7 @@ export function SkillSearch({
       return;
     }
     setOutcomes(done.value.outcomes ?? []);
+    setStatuses(done.value.statuses);
     if (query.length >= MIN_QUERY) {
       asked.current += 1;
       void ask(query);
@@ -190,7 +194,15 @@ export function SkillSearch({
         </p>
       ) : null}
       {outcomes.map((outcome) => (
-        <SkillUpdateOutcomeLine key={outcome.skill} outcome={outcome} />
+        <div key={outcome.skill} className="space-y-2">
+          <SkillUpdateOutcomeLine outcome={outcome} />
+          <SkillRolloutAfter
+            environmentId={environmentId}
+            projectId={scope.projectId}
+            outcome={outcome}
+            statuses={statuses}
+          />
+        </div>
       ))}
       {result ? (
         <div

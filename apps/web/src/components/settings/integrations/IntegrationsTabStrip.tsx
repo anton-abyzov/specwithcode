@@ -8,6 +8,7 @@ import { cn } from "../../../lib/utils";
 import { hostReachOr, machineReachWords } from "../../../lib/machineStatus";
 import { useEnvironmentScopeAccess } from "../../../state/session";
 import { useSettingsScope } from "../SettingsScopeContext";
+import { SettingsRowsLockedContext } from "../settingsRowsLocked";
 import {
   INTEGRATIONS_TABS,
   type IntegrationsTab,
@@ -25,6 +26,14 @@ const tabElementId = (id: IntegrationsTabId) => `integrations-tab-${id}`;
 const panelElementId = (id: IntegrationsTabId) => `integrations-panel-${id}`;
 
 /** The tab an arrow, Home or End key moves to, or null for any other key. */
+/** With no tab open (an unknown address under the page), a key opens the first or the last. */
+export function integrationsTabFromNone(key: string): IntegrationsTabId | null {
+  if (key === "ArrowRight" || key === "ArrowDown" || key === "Home") return INTEGRATIONS_TABS[0].id;
+  if (key === "ArrowLeft" || key === "ArrowUp" || key === "End")
+    return INTEGRATIONS_TABS[INTEGRATIONS_TABS.length - 1]!.id;
+  return null;
+}
+
 export function integrationsTabAfterKey(
   current: IntegrationsTabId,
   key: string,
@@ -56,8 +65,10 @@ export function IntegrationsTabStrip({ current }: { readonly current: Integratio
   const open = (tab: IntegrationsTab) =>
     navigate({ to: tab.path, hash: "", replace: true, hashScrollIntoView: false });
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (current === null) return;
-    const nextId = integrationsTabAfterKey(current, event.key);
+    const nextId =
+      current === null
+        ? integrationsTabFromNone(event.key)
+        : integrationsTabAfterKey(current, event.key);
     if (nextId === null) return;
     event.preventDefault();
     const next = INTEGRATIONS_TABS.find((tab) => tab.id === nextId)!;
@@ -85,8 +96,9 @@ export function IntegrationsTabStrip({ current }: { readonly current: Integratio
               role="tab"
               id={tabElementId(tab.id)}
               aria-selected={selected}
-              aria-controls={panelElementId(tab.id)}
-              tabIndex={selected || current === null ? 0 : -1}
+              // Only the open tab has a panel in the page; the others are routes not yet shown.
+              aria-controls={selected ? panelElementId(tab.id) : undefined}
+              tabIndex={selected || (current === null && tab === INTEGRATIONS_TABS[0]) ? 0 : -1}
               className={cn(
                 "flex min-h-9 min-w-0 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-2 text-start text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
                 "@xl/integrations-tabs:-mb-px @xl/integrations-tabs:rounded-b-none @xl/integrations-tabs:border-0 @xl/integrations-tabs:border-b-2 @xl/integrations-tabs:border-transparent @xl/integrations-tabs:bg-transparent @xl/integrations-tabs:px-3",
@@ -135,6 +147,7 @@ export function IntegrationsMachineState({
   children,
   links,
   changeScope = AuthSettingsWriteScope,
+  alsoScope,
   disableRows = true,
 }: {
   readonly children: ReactNode;
@@ -142,6 +155,8 @@ export function IntegrationsMachineState({
   readonly links?: ReactNode;
   /** The grant this tab's changes need. */
   readonly changeScope?: AuthEnvironmentScope;
+  /** A second grant the same changes need, when one is not enough. */
+  readonly alsoScope?: AuthEnvironmentScope;
   /** False for rows that turn their own controls off and stay open to read. */
   readonly disableRows?: boolean;
 }) {
@@ -155,7 +170,11 @@ export function IntegrationsMachineState({
   const away = reach !== null && reach !== "connected";
   // "denied" is a sign-in that may read only; a session still loading or
   // signed out says nothing about what this sign-in may change.
-  const viewOnly = useEnvironmentScopeAccess(away ? null : environmentId, changeScope) === "denied";
+  const reachable = away ? null : environmentId;
+  // Both are read every render, so the number of hooks never changes.
+  const first = useEnvironmentScopeAccess(reachable, changeScope);
+  const second = useEnvironmentScopeAccess(reachable, alsoScope ?? changeScope);
+  const viewOnly = first === "denied" || second === "denied";
   const locked = viewOnly && disableRows;
   if (scope.kind === "unavailable") {
     return (
@@ -208,18 +227,20 @@ export function IntegrationsMachineState({
           disabled fieldset would miss the switches, which are not form
           controls. The wrapper stays in the tree either way, so the rows keep
           their state when the grant arrives. */}
-      <div
-        inert={locked}
-        data-testid="integrations-machine-rows"
-        className={cn(
-          "flex min-w-0 flex-col gap-8",
-          // Only the controls dim; the words beside them stay as readable as ever.
-          locked &&
-            "[&_[role=combobox]]:opacity-60 [&_[role=switch]]:opacity-60 [&_button]:opacity-60 [&_input]:opacity-60",
-        )}
-      >
-        {children}
-      </div>
+      <SettingsRowsLockedContext.Provider value={locked}>
+        <div
+          inert={locked}
+          data-testid="integrations-machine-rows"
+          className={cn(
+            "flex min-w-0 flex-col gap-8",
+            // Only the controls dim; the words beside them stay as readable as ever.
+            locked &&
+              "[&_[role=combobox]]:opacity-60 [&_[role=switch]]:opacity-60 [&_button]:opacity-60 [&_input]:opacity-60",
+          )}
+        >
+          {children}
+        </div>
+      </SettingsRowsLockedContext.Provider>
       {links}
     </>
   );

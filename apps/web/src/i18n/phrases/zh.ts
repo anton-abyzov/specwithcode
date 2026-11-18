@@ -5383,4 +5383,8 @@ export const zh: PhraseCatalog = {
   "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
     "智能体通过 SpecWithCode 扩展使用你已登录的 Chrome。它有单独的设置页面。",
   "Open Chrome settings": "打开 Chrome 设置",
+  "Manage hosts": "管理主机",
+  "Manage profiles": "管理配置文件",
+  "Profiles: {count}": "配置文件：{count}",
+  "Device hosts: {count}": "设备主机：{count}",
 };

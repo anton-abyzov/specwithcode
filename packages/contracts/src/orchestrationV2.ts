@@ -2321,6 +2321,12 @@ export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
   reopenedFromAskedAt: Schema.optional(Schema.NullOr(Schema.String)),
   /** What a waiting access request asks for; absent for every other request. */
   access: Schema.optional(OrchestrationV2PendingAccessRequest),
+  /**
+   * A question card in a row's words ("MCP sign-in: Ship without it or I will
+   * sign in once"), at most 160 characters. Absent for other requests and from
+   * older servers, whose rows then say only "Answer needed".
+   */
+  prompt: Schema.optional(Schema.String),
 });
 export type OrchestrationV2PendingRuntimeRequestSummary =
   typeof OrchestrationV2PendingRuntimeRequestSummary.Type;
@@ -3929,6 +3935,12 @@ export type OrchestrationV2ServerCommand =
        * provider sessions stay attached.
        */
       readonly sameWorkingFolder?: true;
+      /**
+       * Server only: an agent moves its own thread into a worktree and has
+       * queued the prompt that continues its work there, so the turn it stops
+       * is a pause: a delegated task's parent is not told the child stopped.
+       */
+      readonly continuesInWorktree?: true;
       readonly limitRecoveryAffinity?: NonNullable<OrchestrationV2LimitAvailability["affinity"]>;
       readonly limitAvailability?: {
         readonly runId: RunId;

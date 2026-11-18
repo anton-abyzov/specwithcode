@@ -5,6 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
+  /** Grants this sign-in lacks, by name; `access` answers for the rest. */
+  deniedScopes: [] as string[],
   navigate: vi.fn(() => Promise.resolve()),
   access: "granted" as "granted" | "denied" | "signed-out" | "unknown",
   accessFor: vi.fn(),
@@ -17,7 +19,8 @@ vi.mock("../../../state/session", () => ({
   useEnvironmentScopeAccess: (environmentId: string | null, scope: string) => {
     if (environmentId === null) state.accessFor(null);
     else state.accessFor(environmentId, scope);
-    return environmentId === null ? "unknown" : state.access;
+    if (environmentId === null) return "unknown";
+    return state.deniedScopes.includes(scope) ? "denied" : state.access;
   },
 }));
 vi.mock("../SettingsScopeContext", () => ({
@@ -32,6 +35,7 @@ import {
   IntegrationsTabPanel,
   IntegrationsTabStrip,
   integrationsTabAfterKey,
+  integrationsTabFromNone,
 } from "./IntegrationsTabStrip";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -47,6 +51,7 @@ function render(node: React.ReactNode) {
 beforeEach(() => {
   vi.clearAllMocks();
   state.access = "granted";
+  state.deniedScopes = [];
   state.scope = { kind: "environment", environmentId: "mini", label: "Mini" };
   state.phase = "connected";
 });
@@ -56,6 +61,8 @@ afterEach(() => {
 });
 
 const tabs = (view: HTMLElement) => [...view.querySelectorAll<HTMLElement>('[role="tab"]')];
+
+import { useSettingsRowsLocked } from "../settingsRowsLocked";
 
 describe("IntegrationsTabStrip", () => {
   it("moves with the arrow, Home and End keys and wraps at the ends", () => {
@@ -98,6 +105,30 @@ describe("IntegrationsTabStrip", () => {
     const tab = tabs(view)[1]!;
     expect(tab.getAttribute("aria-controls")).toBe(panel.id);
     expect(panel.getAttribute("aria-labelledby")).toBe(tab.id);
+  });
+
+  it("points only the open tab at a panel, since the others are not in the page", () => {
+    const view = render(<IntegrationsTabStrip current="mcp" />);
+    expect(tabs(view).map((tab) => tab.getAttribute("aria-controls"))).toEqual([
+      null,
+      "integrations-panel-mcp",
+      null,
+      null,
+    ]);
+  });
+
+  it("opens the first or the last tab from the keyboard when none is open", () => {
+    expect(integrationsTabFromNone("ArrowRight")).toBe("access");
+    expect(integrationsTabFromNone("Home")).toBe("access");
+    expect(integrationsTabFromNone("ArrowLeft")).toBe("preview");
+    expect(integrationsTabFromNone("End")).toBe("preview");
+    expect(integrationsTabFromNone("a")).toBeNull();
+  });
+
+  it("keeps one tab stop when no tab is open", () => {
+    const view = render(<IntegrationsTabStrip current={null} />);
+    expect(tabs(view).map((tab) => tab.tabIndex)).toEqual([0, -1, -1, -1]);
+    expect(tabs(view).every((tab) => tab.getAttribute("aria-controls") === null)).toBe(true);
   });
 
   it("opens a tab as a navigation that drops the row and replaces history", () => {
@@ -190,6 +221,45 @@ describe("IntegrationsMachineState", () => {
     expect(shown.querySelector('[data-testid="integrations-machine-view-only"]')).not.toBeNull();
     expect(shown.querySelector("button")!.closest("[inert]")).toBeNull();
     expect(state.accessFor).toHaveBeenLastCalledWith("mini", "filesystem:write");
+  });
+
+  it("is view only when either of the two grants a tab needs is missing", () => {
+    state.deniedScopes = ["terminal:operate"];
+    const shown = render(
+      <IntegrationsMachineState
+        changeScope={"filesystem:write" as never}
+        alsoScope={"terminal:operate" as never}
+        disableRows={false}
+      >
+        rows
+      </IntegrationsMachineState>,
+    );
+    expect(shown.querySelector('[data-testid="integrations-machine-view-only"]')).not.toBeNull();
+  });
+
+  it("tells its rows when they are out of reach, so lists show in full there", () => {
+    const Probe = () => <span data-testid="probe">{String(useSettingsRowsLocked())}</span>;
+    const probe = (node: Element) => node.querySelector('[data-testid="probe"]')!.textContent;
+    state.access = "denied";
+    expect(
+      probe(
+        render(
+          <IntegrationsMachineState>
+            <Probe />
+          </IntegrationsMachineState>,
+        ),
+      ),
+    ).toBe("true");
+    // Rows that guard themselves stay in reach, and are told so.
+    expect(
+      probe(
+        render(
+          <IntegrationsMachineState disableRows={false}>
+            <Probe />
+          </IntegrationsMachineState>,
+        ),
+      ),
+    ).toBe("false");
   });
 
   it.each(["unknown", "signed-out"] as const)(

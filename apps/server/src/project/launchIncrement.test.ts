@@ -16,6 +16,7 @@ import {
   SPECWEAVE_OFF_BRIEF,
   SPECWEAVE_OFF_NEW_BRIEF,
   SPECWEAVE_OFF_WARNING,
+  SPECWEAVE_UNFINISHED_WARNING,
   UNPLANNED_BRIEF,
   launchIncrementFields,
   resolveLaunchIncrement,
@@ -312,7 +313,14 @@ describe("resolveLaunchIncrement", () => {
     const plain = await temp("launch-increment-off-");
     // An increment a worker wrote without `specweave init` does not turn SpecWeave on.
     await increment(plain, "0001-simple-site");
+    // "new" raises the setup card until the user plans without SpecWeave (1396).
     expect(await launch(plain, { ref: "new", isCoordinator: true })).toEqual({
+      ok: true,
+      value: { needsSpecweave: true },
+    });
+    expect(
+      await launch(plain, { ref: "new", isCoordinator: true, specweaveDeclined: true }),
+    ).toEqual({
       ok: true,
       value: { brief: SPECWEAVE_OFF_NEW_BRIEF, warning: SPECWEAVE_OFF_WARNING },
     });
@@ -325,6 +333,75 @@ describe("resolveLaunchIncrement", () => {
       expect(brief).toContain("Set up SpecWeave");
     }
     expect(SPECWEAVE_OFF_WARNING).toContain("Board > Set up SpecWeave");
+  });
+
+  describe("each SpecWeave state against new, NNNN, none and omitted (1396 AC-03)", () => {
+    async function inState(state: "on" | "unfinished" | "off") {
+      if (state === "on") {
+        const root = await project();
+        await increment(root, "0001-simple-site");
+        return root;
+      }
+      const root = await temp(`launch-increment-${state}-`);
+      if (state === "unfinished") await increment(root, "0001-simple-site");
+      return root;
+    }
+    // Only the off brief, which says not to run them, may name the commands.
+    const noSpecweaveCommand = (value: { brief?: string }) =>
+      expect([undefined, SPECWEAVE_OFF_BRIEF]).toContain(value.brief);
+
+    it("on: nothing changes", async () => {
+      const root = await inState("on");
+      expect(await launch(root, { ref: "new", isCoordinator: true })).toEqual({
+        ok: true,
+        value: { brief: NEW_INCREMENT_BRIEF },
+      });
+      const found = await launch(root, { ref: "0001", isCoordinator: true });
+      expect(found.ok && found.value.increment?.incrementId).toBe("0001-simple-site");
+      expect(found.ok && found.value.raiseSetupCard).toBeUndefined();
+      expect(found.ok && found.value.warning).toBeUndefined();
+      expect(await launch(root, { ref: "none", isCoordinator: true })).toEqual({
+        ok: true,
+        value: { brief: NO_INCREMENT_BRIEF },
+      });
+      expect(await launch(root, { isCoordinator: true })).toEqual({
+        ok: true,
+        value: { brief: UNPLANNED_BRIEF },
+      });
+    });
+
+    it("unfinished: new raises the card, NNNN goes on with the card, the rest hand out no command", async () => {
+      const root = await inState("unfinished");
+      expect(await launch(root, { ref: "new", isCoordinator: true })).toEqual({
+        ok: true,
+        value: { needsSpecweave: true },
+      });
+      const found = await launch(root, { ref: "0001", isCoordinator: true });
+      expect(found.ok).toBe(true);
+      if (!found.ok) return;
+      expect(found.value.increment?.incrementId).toBe("0001-simple-site");
+      expect(found.value.raiseSetupCard).toBe(true);
+      expect(found.value.warning).toBe(SPECWEAVE_UNFINISHED_WARNING);
+      const none = await launch(root, { ref: "none", isCoordinator: true });
+      expect(none).toEqual({ ok: true, value: { brief: SPECWEAVE_OFF_BRIEF } });
+      // The bare increments folder no longer hands out UNPLANNED_BRIEF's sizing rule.
+      const omitted = await launch(root, { isCoordinator: false });
+      expect(omitted).toEqual({ ok: true, value: {} });
+      for (const result of [none, omitted]) if (result.ok) noSpecweaveCommand(result.value);
+    });
+
+    it("off: new raises the card, NNNN is not found, none and omitted hand out no command", async () => {
+      const root = await inState("off");
+      expect(await launch(root, { ref: "new", isCoordinator: true })).toEqual({
+        ok: true,
+        value: { needsSpecweave: true },
+      });
+      expect((await launch(root, { ref: "0001", isCoordinator: true })).ok).toBe(false);
+      const none = await launch(root, { ref: "none" });
+      expect(none).toEqual({ ok: true, value: { brief: SPECWEAVE_OFF_BRIEF } });
+      if (none.ok) noSpecweaveCommand(none.value);
+      expect(await launch(root, {})).toEqual({ ok: true, value: {} });
+    });
   });
 
   it("appends the brief to the task, or stands alone for an empty one", () => {

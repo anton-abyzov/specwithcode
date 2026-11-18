@@ -178,6 +178,8 @@ export function BrowserProfilesSetting({ disabled }: { readonly disabled: boolea
   );
   const importInFlightRef = useRef(false);
   const [importInFlight, setImportInFlight] = useState(false);
+  // The list opens on request, so the rows below it stay in reach.
+  const [open, setOpen] = useState(false);
   const profileWritesDisabled = disabled || !settingsHydrated;
   // Agent tabs open on the primary server, so its setting and support decide.
   const agentProfileId = usePrimarySettings((settings) => settings.agentBrowserProfileId);
@@ -431,71 +433,84 @@ export function BrowserProfilesSetting({ disabled }: { readonly disabled: boolea
       {...searchableSetting("browser-profiles")}
       description="Profiles separate cookies and logins. Incognito data is cleared when the app closes. Agents start every tab signed out unless you choose a profile for them."
       control={
-        <Menu onOpenChange={(open) => open && loadSources()}>
-          <MenuTrigger
-            render={
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={profileWritesDisabled || importInFlight}
-              />
-            }
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            aria-expanded={open}
+            aria-controls="browser-profiles-list"
+            onClick={() => setOpen((value) => !value)}
           >
-            <PlusIcon />
-            {tx("Add profile")}
-          </MenuTrigger>
-          <MenuPopup align="end">
-            <MenuItem
-              disabled={!settingsHydrated || atProfileLimit}
-              onClick={() => createProfile("New profile")}
-            >
-              {tx("Blank profile")}
-            </MenuItem>
-            {atProfileLimit ? (
-              <MenuItem disabled>{tx("You’ve reached the profile limit")}</MenuItem>
-            ) : null}
-            <MenuSeparator />
-            <MenuGroup>
-              <MenuGroupLabel>{tx("Import from")}</MenuGroupLabel>
-              {sources === null ? (
-                <MenuItem disabled>{tx("Looking for browsers…")}</MenuItem>
-              ) : importableSources.length === 0 ? (
-                <MenuItem disabled>{tx("No supported browsers found")}</MenuItem>
-              ) : (
-                // Every source is a plain row — running, needs-permission and
-                // ready all look the same here. The wizard picks up whatever
-                // state the source is in and walks the user forward from there.
-                <>
-                  {importableSources.map((source) => (
-                    <MenuItem
-                      key={source.id}
-                      disabled={!settingsHydrated || primaryEnvironment == null}
-                      onClick={() => {
-                        if (!settingsHydrated || primaryEnvironment == null) return;
-                        setImportSession({
-                          source,
-                          environmentId: primaryEnvironment.environmentId,
-                          environmentName: resolveEnvironmentOptionLabel({
-                            isPrimary: true,
-                            environmentId: primaryEnvironment.environmentId,
-                            runtimeLabel: primaryEnvironment.label,
-                          }),
-                        });
-                      }}
-                    >
-                      {source.name}
-                    </MenuItem>
-                  ))}
-                  {primaryEnvironment == null ? (
-                    <MenuItem disabled>
-                      {tx("Connect to an environment to import cookies")}
-                    </MenuItem>
-                  ) : null}
-                </>
-              )}
-            </MenuGroup>
-          </MenuPopup>
-        </Menu>
+            {tx("Manage profiles")}
+          </Button>
+          {open ? (
+            <Menu onOpenChange={(menuOpen) => menuOpen && loadSources()}>
+              <MenuTrigger
+                render={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={profileWritesDisabled || importInFlight}
+                  />
+                }
+              >
+                <PlusIcon />
+                {tx("Add profile")}
+              </MenuTrigger>
+              <MenuPopup align="end">
+                <MenuItem
+                  disabled={!settingsHydrated || atProfileLimit}
+                  onClick={() => createProfile("New profile")}
+                >
+                  {tx("Blank profile")}
+                </MenuItem>
+                {atProfileLimit ? (
+                  <MenuItem disabled>{tx("You’ve reached the profile limit")}</MenuItem>
+                ) : null}
+                <MenuSeparator />
+                <MenuGroup>
+                  <MenuGroupLabel>{tx("Import from")}</MenuGroupLabel>
+                  {sources === null ? (
+                    <MenuItem disabled>{tx("Looking for browsers…")}</MenuItem>
+                  ) : importableSources.length === 0 ? (
+                    <MenuItem disabled>{tx("No supported browsers found")}</MenuItem>
+                  ) : (
+                    // Every source is a plain row — running, needs-permission and
+                    // ready all look the same here. The wizard picks up whatever
+                    // state the source is in and walks the user forward from there.
+                    <>
+                      {importableSources.map((source) => (
+                        <MenuItem
+                          key={source.id}
+                          disabled={!settingsHydrated || primaryEnvironment == null}
+                          onClick={() => {
+                            if (!settingsHydrated || primaryEnvironment == null) return;
+                            setImportSession({
+                              source,
+                              environmentId: primaryEnvironment.environmentId,
+                              environmentName: resolveEnvironmentOptionLabel({
+                                isPrimary: true,
+                                environmentId: primaryEnvironment.environmentId,
+                                runtimeLabel: primaryEnvironment.label,
+                              }),
+                            });
+                          }}
+                        >
+                          {source.name}
+                        </MenuItem>
+                      ))}
+                      {primaryEnvironment == null ? (
+                        <MenuItem disabled>
+                          {tx("Connect to an environment to import cookies")}
+                        </MenuItem>
+                      ) : null}
+                    </>
+                  )}
+                </MenuGroup>
+              </MenuPopup>
+            </Menu>
+          ) : null}
+        </div>
       }
     >
       {/*
@@ -503,137 +518,152 @@ export function BrowserProfilesSetting({ disabled }: { readonly disabled: boolea
         carries the bottom spacing `SettingsRow` leaves to its children
         (`pt-3 pb-1`).
       */}
-      <div className="mt-2 mb-2 overflow-hidden rounded-lg border border-border/60">
-        {listedProfiles.map((profile, index) => {
-          const builtIn = isBuiltInBrowserProfileId(profile.id);
-          const isDefault = profile.id === resolvedDefaultId;
-          const isAgentProfile = profile.id === agentProfileId;
-          return (
-            <div
-              key={profile.id}
-              className={cn(
-                "flex items-center gap-3 px-3 py-2",
-                index > 0 && "border-t border-border/60",
-              )}
-            >
-              <span className="flex min-w-0 flex-1 items-center gap-2">
-                {builtIn ? (
-                  // Dimmed here rather than on the table: a wrapper-level dim
-                  // stacks with the rename field's and the row menu button's
-                  // own, while every other disabled control in the block
-                  // sits at --disabled-opacity.
-                  <span
-                    className={cn(
-                      "truncate text-sm text-foreground",
-                      profileWritesDisabled && "opacity-(--disabled-opacity)",
-                    )}
-                  >
-                    {profile.name}
-                  </span>
-                ) : (
-                  <DraftInput
-                    nativeInput
-                    size="sm"
-                    className="w-full max-w-56"
-                    aria-label={`Rename ${profile.name}`}
-                    disabled={profileWritesDisabled || importInFlight}
-                    maxLength={BROWSER_PROFILE_NAME_MAX_LENGTH}
-                    showCount
-                    value={profile.name}
-                    onCommit={(next) => renameProfile(profile.id, next)}
-                  />
+      {!open ? (
+        <p
+          id="browser-profiles-list"
+          className="mt-2 mb-2 text-xs text-muted-foreground"
+          data-testid="browser-profiles-count"
+        >
+          {tx("Profiles: {count}", { count: listedProfiles.length })}
+        </p>
+      ) : (
+        <div
+          id="browser-profiles-list"
+          className="mt-2 mb-2 overflow-hidden rounded-lg border border-border/60"
+        >
+          {listedProfiles.map((profile, index) => {
+            const builtIn = isBuiltInBrowserProfileId(profile.id);
+            const isDefault = profile.id === resolvedDefaultId;
+            const isAgentProfile = profile.id === agentProfileId;
+            return (
+              <div
+                key={profile.id}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2",
+                  index > 0 && "border-t border-border/60",
                 )}
-                {/* Status labels stay at full strength: dimming a filled badge
-                    drops its text below 4.5:1. */}
-                {isDefault ? (
-                  <span className="flex">
-                    <Badge>{tx("Default")}</Badge>
-                  </span>
-                ) : null}
-                {isAgentProfile ? (
-                  <span className="flex">
-                    <Badge variant="outline">{tx("Agents")}</Badge>
-                  </span>
-                ) : null}
-              </span>
-              <Menu>
-                <MenuTrigger
-                  render={
-                    <Button
-                      size="icon-xs"
-                      variant="ghost-muted"
+              >
+                <span className="flex min-w-0 flex-1 items-center gap-2">
+                  {builtIn ? (
+                    // Dimmed here rather than on the table: a wrapper-level dim
+                    // stacks with the rename field's and the row menu button's
+                    // own, while every other disabled control in the block
+                    // sits at --disabled-opacity.
+                    <span
+                      className={cn(
+                        "truncate text-sm text-foreground",
+                        profileWritesDisabled && "opacity-(--disabled-opacity)",
+                      )}
+                    >
+                      {profile.name}
+                    </span>
+                  ) : (
+                    <DraftInput
+                      nativeInput
+                      size="sm"
+                      className="w-full max-w-56"
+                      aria-label={`Rename ${profile.name}`}
                       disabled={profileWritesDisabled || importInFlight}
-                      aria-label={`${profile.name} options`}
+                      maxLength={BROWSER_PROFILE_NAME_MAX_LENGTH}
+                      showCount
+                      value={profile.name}
+                      onCommit={(next) => renameProfile(profile.id, next)}
                     />
-                  }
-                >
-                  <MoreVertical />
-                </MenuTrigger>
-                <MenuPopup align="end">
-                  <MenuItem
-                    disabled={!settingsHydrated || isDefault}
-                    onClick={() => {
-                      if (settingsHydrated) {
-                        updateSettings({ browserDefaultProfileId: profile.id });
-                      }
-                    }}
-                  >
-                    {tx("Set as default")}
-                  </MenuItem>
-                  <MenuItem
-                    disabled={!agentProfileSupported}
-                    onClick={() =>
-                      updateSettings({ agentBrowserProfileId: isAgentProfile ? null : profile.id })
+                  )}
+                  {/* Status labels stay at full strength: dimming a filled badge
+                    drops its text below 4.5:1. */}
+                  {isDefault ? (
+                    <span className="flex">
+                      <Badge>{tx("Default")}</Badge>
+                    </span>
+                  ) : null}
+                  {isAgentProfile ? (
+                    <span className="flex">
+                      <Badge variant="outline">{tx("Agents")}</Badge>
+                    </span>
+                  ) : null}
+                </span>
+                <Menu>
+                  <MenuTrigger
+                    render={
+                      <Button
+                        size="icon-xs"
+                        variant="ghost-muted"
+                        disabled={profileWritesDisabled || importInFlight}
+                        aria-label={`${profile.name} options`}
+                      />
                     }
                   >
-                    {isAgentProfile ? tx("Stop using for agents") : tx("Use for agents")}
-                  </MenuItem>
-                  <MenuItem
-                    disabled={!settingsHydrated || !removalAvailable}
-                    onClick={() => {
-                      // Clearing a server copy closes its open tabs, so it asks first.
-                      if (serverProfileData.environmentIds.length > 0) {
-                        setProfilePendingClear(profile);
-                      } else clearProfileData(profile.id, profile.name);
-                    }}
-                  >
-                    {tx("Clear cookies and cache")}
-                  </MenuItem>
-                  {builtIn ? null : (
+                    <MoreVertical />
+                  </MenuTrigger>
+                  <MenuPopup align="end">
                     <MenuItem
-                      variant="destructive"
-                      disabled={!settingsHydrated || !removalAvailable}
+                      disabled={!settingsHydrated || isDefault}
                       onClick={() => {
-                        if (settingsHydrated) setProfilePendingRemoval(profile);
+                        if (settingsHydrated) {
+                          updateSettings({ browserDefaultProfileId: profile.id });
+                        }
                       }}
                     >
-                      {tx("Remove profile and data")}
+                      {tx("Set as default")}
                     </MenuItem>
-                  )}
-                  {!agentProfileSupported ? (
-                    <>
-                      <MenuSeparator />
-                      <MenuItem disabled>
-                        {tx("Update the server to share logins with agents")}
+                    <MenuItem
+                      disabled={!agentProfileSupported}
+                      onClick={() =>
+                        updateSettings({
+                          agentBrowserProfileId: isAgentProfile ? null : profile.id,
+                        })
+                      }
+                    >
+                      {isAgentProfile ? tx("Stop using for agents") : tx("Use for agents")}
+                    </MenuItem>
+                    <MenuItem
+                      disabled={!settingsHydrated || !removalAvailable}
+                      onClick={() => {
+                        // Clearing a server copy closes its open tabs, so it asks first.
+                        if (serverProfileData.environmentIds.length > 0) {
+                          setProfilePendingClear(profile);
+                        } else clearProfileData(profile.id, profile.name);
+                      }}
+                    >
+                      {tx("Clear cookies and cache")}
+                    </MenuItem>
+                    {builtIn ? null : (
+                      <MenuItem
+                        variant="destructive"
+                        disabled={!settingsHydrated || !removalAvailable}
+                        onClick={() => {
+                          if (settingsHydrated) setProfilePendingRemoval(profile);
+                        }}
+                      >
+                        {tx("Remove profile and data")}
                       </MenuItem>
-                    </>
-                  ) : null}
-                  {!removalAvailable ? (
-                    <>
-                      <MenuSeparator />
-                      <MenuItem disabled>
-                        {environmentsReady
-                          ? tx("Connect to an environment to clear profile data")
-                          : tx("Checking environments…")}
-                      </MenuItem>
-                    </>
-                  ) : null}
-                </MenuPopup>
-              </Menu>
-            </div>
-          );
-        })}
-      </div>
+                    )}
+                    {!agentProfileSupported ? (
+                      <>
+                        <MenuSeparator />
+                        <MenuItem disabled>
+                          {tx("Update the server to share logins with agents")}
+                        </MenuItem>
+                      </>
+                    ) : null}
+                    {!removalAvailable ? (
+                      <>
+                        <MenuSeparator />
+                        <MenuItem disabled>
+                          {environmentsReady
+                            ? tx("Connect to an environment to clear profile data")
+                            : tx("Checking environments…")}
+                        </MenuItem>
+                      </>
+                    ) : null}
+                  </MenuPopup>
+                </Menu>
+              </div>
+            );
+          })}
+        </div>
+      )}
       <AlertDialog
         open={profilePendingRemoval !== null}
         onOpenChange={(open) => {

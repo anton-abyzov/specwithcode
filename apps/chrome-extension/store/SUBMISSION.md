@@ -1,4 +1,28 @@
-# Chrome Web Store submission: SpecWithCode Browser 1.0.5
+# Chrome Web Store submission: SpecWithCode Browser 1.0.7
+
+## Update to 1.0.7 (the item is already listed)
+
+Upload the new package on the existing item; the listing, privacy tab and permissions stay as they are.
+
+1. Build from the merged `main`: `node apps/chrome-extension/scripts/build.mjs`. It writes `apps/chrome-extension/dist/specwithcode-browser-1.0.7.zip` and refuses a manifest with new permissions or host permissions.
+2. Sign in to <https://chrome.google.com/webstore/devconsole> as the publisher account and open **SpecWithCode Browser**.
+3. **Package** tab → **Upload new package** → pick `specwithcode-browser-1.0.7.zip`. The dashboard should show version 1.0.7.
+4. **Privacy practices** tab: nothing changes. The permissions are the same five (`debugger`, `tabs`, `tabGroups`, `storage`, `alarms`), no host permissions, no new data handled. The new pairing page is a page of the extension itself.
+5. **Test instructions**: replace them with the text in section 4 below (the steps now start from the page the extension opens on install).
+6. Optional: replace `screenshot-2-pair.png` once it is regenerated from the new popup.
+7. **Submit for review.** Review of an item with `debugger` usually takes several days. The app keeps working with 1.0.6 meanwhile.
+
+### What changed in 1.0.7
+
+- On a first install, and only then, the extension opens its own pairing page in that Chrome profile with the code field focused. An update or a Chrome update opens nothing.
+- The page and the popup say where the code comes from: "Copy the code from SpecWithCode: first-run setup, or Settings > Chrome."
+- No default profile name. The name field starts empty with one-press suggestions Personal, Work and Agents, and Pair stays off until there is a name. Enter in the code field pairs once there is a name, and moves to the name field when there is none.
+- One pairing tab at a time: opening it again brings the open one to the front, and a second copy closes the older one.
+- A profile already paired says so before pairing again: "This profile is paired with {machine}. Pairing here replaces that."
+- A profile still named "Chrome" (the old default) is asked to "Give it a name agents can tell apart".
+- When SpecWithCode accepts only the Chrome Web Store copy (close code 4403), the popup says so instead of "not reachable".
+
+The sections below describe the listing as submitted. For 1.0.7 follow the update steps above: never create a new item, since a new item gets a new extension id that SpecWithCode refuses (close code 4403).
 
 Every field the developer dashboard asks for, in the order it asks, with paste-ready values. Images are in `screenshots/`; the privacy policy text is in `privacy-policy.md`.
 
@@ -6,14 +30,14 @@ Every field the developer dashboard asks for, in the order it asks, with paste-r
 
 - **Publisher account:** anton.abyzov@gmail.com (registration fee of USD 5 already paid). Per the JobWeave notes of October 6, 2026, the account still has **no verified contact email**. Add one and click the verification link (Dashboard → Account → Contact email) before submitting; publishing is blocked without it.
 - **Privacy policy page:** publish `privacy-policy.md` at <https://spec-weave.com/specwithcode/chrome-extension-privacy>. The page does not exist yet and review checks that it loads.
-- **Package:** `apps/chrome-extension/dist/specwithcode-browser-1.0.5.zip`. Build it with `node apps/chrome-extension/scripts/build.mjs` (or `pnpm --filter @specweave-studio/chrome-extension build`). The build refuses a manifest with a `key`, host permissions, an unreviewed permission or a description over 132 characters.
+- **Package:** `apps/chrome-extension/dist/specwithcode-browser-1.0.7.zip`. Build it with `node apps/chrome-extension/scripts/build.mjs` (or `pnpm --filter @specweave-studio/chrome-extension build`). The build refuses a manifest with a `key`, host permissions, an unreviewed permission or a description over 132 characters.
 - **Screenshots:** regenerate with `PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never node apps/chrome-extension/store/screenshots/src/render.mjs` (headless Chromium).
 
 ## 1. Package
 
 | Field  | Value                                                       |
 | ------ | ----------------------------------------------------------- |
-| Upload | `apps/chrome-extension/dist/specwithcode-browser-1.0.5.zip` |
+| Upload | `apps/chrome-extension/dist/specwithcode-browser-1.0.7.zip` |
 
 The summary shown on the listing comes from the manifest `description` (119 of 132 characters):
 
@@ -144,10 +168,11 @@ Tick these categories:
 
 ```
 SpecWithCode Browser needs the SpecWithCode desktop app on the same computer (download: https://spec-weave.com). It has no account or server.
-1. Install and open SpecWithCode. Go to Settings › Chrome and copy the pairing code.
-2. Click the SpecWithCode Browser toolbar icon, paste the code, enter a profile name (e.g. "Review") and click "Pair this profile". The popup shows "Connected" and the badge shows ON.
-3. In SpecWithCode, ask any agent to open https://example.com and take a screenshot. A tab opens inside a blue "SpecWithCode · Review" tab group.
-4. Drag that tab out of the group: the agent lets go of it. Click Pause or Unpair in the popup to stop all access.
+1. Install the extension. It opens its own pairing page with the code field focused.
+2. Install and open SpecWithCode. In first-run setup (or Settings › Chrome) press Copy code.
+3. Paste the code in the pairing page, type the name "Review" and press Enter. The page shows "Paired" and the toolbar badge shows ON.
+4. In SpecWithCode, ask any agent to open https://example.com and take a screenshot. A tab opens inside a blue "SpecWithCode · Review" tab group.
+5. Drag that tab out of the group: the agent lets go of it. Click Pause or Unpair in the popup to stop all access.
 Without the desktop app the extension stays "Not paired" and does nothing.
 ```
 
@@ -164,7 +189,7 @@ The `debugger` permission usually triggers an in-depth review, so expect more th
 1. Sign in to <https://chrome.google.com/webstore/devconsole> as anton.abyzov@gmail.com.
 2. Account: add a contact email and verify it from the link Google sends.
 3. Confirm <https://spec-weave.com/specwithcode/chrome-extension-privacy> loads with the text of `privacy-policy.md`.
-4. Items → New item → upload `apps/chrome-extension/dist/specwithcode-browser-1.0.5.zip`.
+4. Open the existing **SpecWithCode Browser** item → **Package** → **Upload new package** → `apps/chrome-extension/dist/specwithcode-browser-1.0.7.zip`. Never use Items → New item: it makes a new extension id.
 5. Store listing: paste the detailed description; set category Developer Tools and language English.
 6. Store listing: upload the store icon, the five screenshots in order and both promo tiles.
 7. Store listing: set homepage and support URLs to `https://spec-weave.com`.

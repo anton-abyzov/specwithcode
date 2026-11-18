@@ -760,6 +760,13 @@ export function useFleetRemoveSupported(environmentId: EnvironmentId): boolean {
   return useServerConfigs().get(environmentId)?.environment.capabilities.studioFleetRemove === true;
 }
 
+/** Whether this server sends a skill from a connected GitHub repo to other machines ("Also add on"). */
+export function useFleetSkillGithubSupported(environmentId: EnvironmentId): boolean {
+  return (
+    useServerConfigs().get(environmentId)?.environment.capabilities.fleetSkillGithubSource === true
+  );
+}
+
 /**
  * Removes a machine from this server's list. The server first gives up its
  * worker grant and its management token on that machine, and says which it

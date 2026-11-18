@@ -229,9 +229,47 @@ export async function hasAnySpecweaveConfig(folder: string): Promise<boolean> {
  * the files decide, so turning SpecWeave on is running `specweave init`.
  */
 export async function isSpecweaveProject(workspaceRoot: string): Promise<boolean> {
-  return (
-    (await hasSpecweaveConfig(workspaceRoot)) || (await planningRootAbove(workspaceRoot)) !== null
+  return (await specweaveState(workspaceRoot)) === "on";
+}
+
+/**
+ * The one answer to "is SpecWeave on here" (1396):
+ * - `on`: set up with `specweave init`, or an umbrella above plans it;
+ * - `unfinished`: the folder holds increment folders but was never set up, as
+ *   an older `specweave create-increment` leaves a plain folder;
+ * - `off`: neither. A personal assistant is always `off`.
+ */
+export type SpecweaveState = "on" | "unfinished" | "off";
+
+export async function specweaveState(
+  workspaceRoot: string,
+  options: { readonly personal?: boolean } = {},
+): Promise<SpecweaveState> {
+  if (options.personal === true) return "off";
+  if (
+    (await hasSpecweaveConfig(workspaceRoot)) ||
+    (await planningRootAbove(workspaceRoot)) !== null
+  )
+    return "on";
+  return (await incrementIds(workspaceRoot)).length > 0 ? "unfinished" : "off";
+}
+
+/** How many increments an `unfinished` folder holds, and the first titles, newest first. */
+export async function unfinishedIncrements(
+  workspaceRoot: string,
+  listed = 3,
+): Promise<{ readonly count: number; readonly titles: ReadonlyArray<string> }> {
+  const ids = await incrementIds(workspaceRoot);
+  const titles = await Promise.all(
+    ids.slice(0, listed).map(async (id) => {
+      const meta = await incrementMeta(
+        workspaceRoot,
+        NodePath.join(workspaceRoot, INCREMENTS_DIR, id, "metadata.json"),
+      );
+      return meta.title ?? id;
+    }),
   );
+  return { count: ids.length, titles };
 }
 
 /**

@@ -424,6 +424,7 @@ export function BrowserExtensionCard({
         </div>
 
         <PreferSpecWithCodeBrowser environmentId={environmentId} machine={machine} />
+        <AllowHandLoadedExtension environmentId={environmentId} machine={machine} />
 
         {!canOperate && (
           <p className="text-xs text-muted-foreground">
@@ -594,6 +595,11 @@ function CheckResult({ check }: { check: BrowserExtensionCheck }) {
   );
 }
 
+/** A profile still called by a default name ("Chrome", numbered by the relay when repeated). */
+export function profileNeedsName(label: string): boolean {
+  return /^(Chrome|Unnamed profile)( \(\d+\))?$/.test(label.trim());
+}
+
 /** Threads acting in a profile; servers before per-tab ownership report one lease. */
 function threadsOf(profile: BrowserExtensionProfile): ReadonlyArray<BrowserExtensionThreadUse> {
   if (profile.threads) return profile.threads;
@@ -646,6 +652,59 @@ function PreferSpecWithCodeBrowser({
           void update({
             environmentId,
             input: { patch: { preferSpecWithCodeBrowser: checked } },
+          })
+        }
+      />
+    </div>
+  );
+}
+
+/**
+ * Developer switch. Off, the relay admits only the Chrome Web Store copy of
+ * the extension; on, a copy loaded by hand connects too, still with the code.
+ */
+function AllowHandLoadedExtension({
+  environmentId,
+  machine,
+}: {
+  environmentId: EnvironmentId;
+  machine: string;
+}) {
+  const tx = useTx();
+  const allow = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.allowHandLoadedBrowserExtension,
+  );
+  const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const update = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "save the hand-loaded extension switch",
+  });
+  return (
+    <div
+      className="flex items-start justify-between gap-4 rounded-md border border-border/60 px-3 py-2.5"
+      data-testid="allow-hand-loaded-extension"
+    >
+      <div className="min-w-0 max-w-prose space-y-0.5">
+        <p className="text-sm font-medium">
+          {tx("Developer: allow copies not from the Chrome Web Store")}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {renderRich(
+            tx(
+              "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, any other extension id can connect too, such as a copy loaded by hand in chrome://extensions, but still only with the pairing code, and it is marked not from the Chrome Web Store. Turning it off disconnects those copies.",
+            ),
+            { machine: machine },
+          )}
+        </p>
+      </div>
+      <Switch
+        aria-label={tx("Developer: allow copies not from the Chrome Web Store")}
+        checked={allow}
+        disabled={!canWrite}
+        onCheckedChange={(checked) =>
+          void update({
+            environmentId,
+            input: { patch: { allowHandLoadedBrowserExtension: checked } },
           })
         }
       />
@@ -736,6 +795,11 @@ function ConnectedProfiles({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0 space-y-0.5">
                   <p className="font-medium">{profile.label}</p>
+                  {profileNeedsName(profile.label) && (
+                    <p className="text-xs text-warning-foreground">
+                      {tx("Give it a name agents can tell apart")}
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     {renderRich(
                       tx("{browser} · extension {extensionVersion} · connected {value} · {value2}"),

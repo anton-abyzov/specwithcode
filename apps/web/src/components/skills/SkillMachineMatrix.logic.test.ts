@@ -221,4 +221,26 @@ describe("buildSkillMatrix", () => {
       { kind: "installed", version: "1.0.0", differs: false },
     ]);
   });
+
+  it("shows unknown, never missing, on a machine whose skill folders could not all be read", () => {
+    const unreadable = {
+      ...snapshot([]),
+      providers: [
+        {
+          instanceId: "claude",
+          driver: "claudeAgent",
+          label: "Claude",
+          state: "ok",
+          skills: 0,
+          incomplete: true,
+        },
+      ],
+    } as unknown as ProjectSkillsSnapshot;
+    const matrix = buildSkillMatrix([
+      machine("desk", { current: true, snapshot: snapshot([row("notes")]) }),
+      machine("mini", { snapshot: unreadable }),
+    ]);
+    expect(cellsOf(matrix, "notes")).toEqual(["installed", "unknown"]);
+    expect(matrix.columns[1]?.state).toBe("partial");
+  });
 });

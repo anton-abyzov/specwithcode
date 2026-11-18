@@ -10,7 +10,8 @@ export {
 /**
  * What the page is shown: `ready` (two machines, both connected), `single`
  * (one machine), `other` (setting up the machine you are not sitting at),
- * `offline`, `connecting`, `viewonly` and `unavailable`.
+ * `offline`, `connecting`, `viewonly`, `noterminal` (may change settings and
+ * files, may not run commands) and `unavailable`.
  */
 export type FixtureState =
   | "ready"
@@ -19,6 +20,7 @@ export type FixtureState =
   | "offline"
   | "connecting"
   | "viewonly"
+  | "noterminal"
   | "unavailable";
 
 const params = new URLSearchParams(location.search);
@@ -34,7 +36,7 @@ const here = {
 };
 const other = {
   environmentId: EnvironmentId.make("remote"),
-  label: "Studio Mini",
+  label: "Loft Mini",
   connection: {
     phase:
       fixtureState === "offline"
@@ -117,8 +119,12 @@ export const useEnvironmentScope = () => mayChange;
 export const useEnvironmentsWithScope = (
   targets: ReadonlyArray<{ readonly environmentId: string }>,
 ): ReadonlySet<string> => new Set(mayChange ? targets.map((target) => target.environmentId) : []);
-export const useEnvironmentScopeAccess = (environmentId: string | null) =>
-  environmentId === null ? "unknown" : mayChange ? "granted" : "denied";
+export const useEnvironmentScopeAccess = (environmentId: string | null, scope?: string) =>
+  environmentId === null
+    ? "unknown"
+    : !mayChange || (fixtureState === "noterminal" && scope === "terminal:operate")
+      ? "denied"
+      : "granted";
 export const readEnvironmentScope = () => mayChange;
 export const awaitEnvironmentScope = async () => mayChange;
 export const environmentSession = {};

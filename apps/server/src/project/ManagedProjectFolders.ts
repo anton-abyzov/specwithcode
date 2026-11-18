@@ -43,6 +43,7 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as SpecweaveSetup from "./SpecweaveSetup.ts";
+import * as SpecweaveSetupRequests from "./SpecweaveSetupRequests.ts";
 import * as WorkspaceSensitivePaths from "../workspace/WorkspaceSensitivePaths.ts";
 import {
   isGitSpawnFailure,
@@ -672,6 +673,21 @@ const make = Effect.gen(function* () {
             ),
           ),
     });
+  // A setup that failed while the project was made is remembered for it, so the
+  // Board shows the reason after the toast is gone (1396 AC-08). Soft.
+  const rememberFailure = (
+    projectId: ProjectId,
+    failure: { readonly detail: string; readonly needsNode: boolean } | undefined,
+  ) =>
+    failure === undefined
+      ? Effect.void
+      : Effect.tryPromise(() =>
+          SpecweaveSetupRequests.recordSetupFailure(
+            SpecweaveSetupRequests.specweaveSetupFile(config.stateDir),
+            projectId,
+            failure,
+          ),
+        ).pipe(Effect.asVoid, Effect.ignore);
   const specweaveFailure = (
     failure: { readonly detail: string; readonly needsNode: boolean } | undefined,
   ) =>
@@ -815,7 +831,7 @@ const make = Effect.gen(function* () {
   // SpecWeave for a folder that was already there: `specweave init` only. Its
   // files are left for the person to commit, since the repository is theirs.
   const addSpecweaveToExisting = Effect.fn("ManagedProjectFolders.addSpecweaveToExisting")(
-    function* (workspaceRoot: string, wanted: boolean) {
+    function* (projectId: ProjectId, workspaceRoot: string, wanted: boolean) {
       if (!wanted) return {};
       const present = yield* fileSystem
         .exists(path.join(workspaceRoot, ".specweave"))
@@ -824,6 +840,7 @@ const make = Effect.gen(function* () {
       // Ticking Use SpecWeave asks for Git too when the folder has none; git
       // init stages nothing, so the person's files stay theirs to commit.
       const failure = yield* setUpSpecweave(workspaceRoot, { initGit: true });
+      yield* rememberFailure(projectId, failure);
       return failure === undefined ? { specweaveAdded: true } : specweaveFailure(failure);
     },
   );
@@ -841,7 +858,7 @@ const make = Effect.gen(function* () {
         projectId: owner.value.id,
         workspaceRoot,
         existing: true,
-        ...(yield* addSpecweaveToExisting(workspaceRoot, specweave)),
+        ...(yield* addSpecweaveToExisting(owner.value.id, workspaceRoot, specweave)),
       };
     }
     const id = yield* crypto.randomUUIDv4.pipe(
@@ -860,7 +877,7 @@ const make = Effect.gen(function* () {
       projectId: project.id,
       workspaceRoot,
       existing: true,
-      ...(yield* addSpecweaveToExisting(workspaceRoot, specweave)),
+      ...(yield* addSpecweaveToExisting(project.id, workspaceRoot, specweave)),
     };
   });
 
@@ -1011,6 +1028,7 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.ignore);
     }
+    yield* rememberFailure(project.id, specweaveResult);
     return {
       projectId: project.id,
       workspaceRoot,

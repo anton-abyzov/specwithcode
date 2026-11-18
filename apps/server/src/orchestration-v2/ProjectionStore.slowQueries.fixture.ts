@@ -238,6 +238,26 @@ SELECT
     LIMIT 1
   ) AS pending_request_payload_json,
   (
+    SELECT json_object(
+      'requestId', json_extract(question.payload_json, '$.requestId'),
+      'questions', json(json_extract(question.payload_json, '$.questions'))
+    )
+    FROM orchestration_v2_projection_runtime_requests request
+    CROSS JOIN orchestration_v2_projection_turn_items question
+      INDEXED BY orchestration_v2_projection_turn_items_node_ordinal_idx
+      ON question.node_id = request.node_id
+    WHERE request.thread_id = t.thread_id
+      AND request.status = 'pending'
+      AND request.kind = 'user_input'
+      AND (request.runtime_request_id LIKE 'ask-user:%'
+        OR request.runtime_request_id LIKE 'update-reopen%')
+      AND question.thread_id = t.thread_id
+      AND question.type = 'user_input_request'
+      AND json_extract(question.payload_json, '$.requestId') = request.runtime_request_id
+    ORDER BY request.created_at DESC, request.runtime_request_id DESC
+    LIMIT 1
+  ) AS pending_question_json,
+  (
     SELECT secret.payload_json
     -- Keep runs outermost so completed history is never scanned for a pending secret.
     FROM orchestration_v2_projection_runs r

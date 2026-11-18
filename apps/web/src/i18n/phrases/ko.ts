@@ -5548,4 +5548,8 @@ export const ko: PhraseCatalog = {
   "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
     "에이전트는 SpecWithCode 확장 프로그램을 통해 로그인된 Chrome을 사용합니다. 전용 설정 페이지가 있습니다.",
   "Open Chrome settings": "Chrome 설정 열기",
+  "Manage hosts": "호스트 관리",
+  "Manage profiles": "프로필 관리",
+  "Profiles: {count}": "프로필: {count}",
+  "Device hosts: {count}": "기기 호스트: {count}",
 };

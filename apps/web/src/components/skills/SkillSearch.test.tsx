@@ -22,7 +22,14 @@ vi.mock("../../state/server", () => ({
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: (_environmentId: unknown, scope: string) => mocks.scopes.has(scope),
 }));
-vi.mock("../../studio/machineNickname", () => ({ useMachineNickname: () => "M4" }));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNickname: () => "M4",
+  useMachineNicknames: () => (_id: string, label: string) => label,
+}));
+vi.mock("../../studio/fleet", () => ({
+  useStudioFleet: () => ({ snapshot: null }),
+  useFleetSkillGithubSupported: () => true,
+}));
 import { SkillSearch } from "./SkillSearch";
 
 const environmentId = EnvironmentId.make("local");

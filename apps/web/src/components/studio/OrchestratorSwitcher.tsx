@@ -175,16 +175,15 @@ export function OrchestratorSwitcher({
   const status = (
     <>
       <span className="sws-dot" data-tone={face.connected ? "machine" : "failed"} aria-hidden />
-      <span
-        className="sws-host-name"
-        title={
-          face.hostLabel && face.hostLabel !== face.label
-            ? `${runsOnText} (${face.hostLabel})`
-            : runsOnText
-        }
-      >
-        {runsOnText}
-      </span>
+      {/* No native title: the system tooltip floated over the message above the composer,
+          outside the popup standard (docs/studio/design-guidelines.md, Popups). The computer's
+          own name goes to assistive technology instead. */}
+      <span className="sws-host-name">{runsOnText}</span>
+      {face.hostLabel && face.hostLabel !== face.label ? (
+        <span className="sr-only" data-orchestrator-host="">
+          {` (${face.hostLabel})`}
+        </span>
+      ) : null}
       <span className="sr-only" data-orchestrator-status="">
         {face.connected ? `, ${tx("connected")}` : `, ${tx(face.statusDetail)}`}
       </span>

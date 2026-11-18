@@ -50,6 +50,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsSkillRepos]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsSkillsSearch]: AuthFilesystemReadScope,
   [WS_METHODS.projectsSkillsUpdate]: AuthFilesystemWriteScope,
+  // "Keep updated on these machines" records and Adopt. Each widens per operation below.
+  [WS_METHODS.projectsSkillsRolloutKeep]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectsSkillsAdopt]: AuthFilesystemReadScope,
   [WS_METHODS.managedUpdatesEnroll]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesRevoke]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesCheck]: AuthEnvironmentMaintainScope,
@@ -158,6 +161,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsLibraryAddArtifact]: AuthFilesystemWriteScope,
   // Runs `specweave init`, which writes SpecWeave's files into the project folder.
   [WS_METHODS.projectsSpecweaveSetUp]: AuthFilesystemWriteScope,
+  [WS_METHODS.projectsSpecweaveAnswer]: AuthOrchestrationOperateScope,
   // Designs are files in the project checkout or the app's Playground folder.
   [WS_METHODS.designList]: AuthFilesystemReadScope,
   [WS_METHODS.designGet]: AuthFilesystemReadScope,
@@ -460,6 +464,18 @@ export function clientRpcRequiredScopes(
     return operation === "status"
       ? [AuthOrchestrationReadScope]
       : [AuthFilesystemWriteScope, AuthTerminalOperateScope];
+  // The record is this machine's own setting; reading it is like reading the page.
+  if (method === WS_METHODS.projectsSkillsRolloutKeep)
+    return operation === "read"
+      ? [AuthOrchestrationReadScope]
+      : [AuthOrchestrationReadScope, AuthSettingsWriteScope];
+  // Adopt writes the skill locks; a proposal opens a pull request on GitHub.
+  if (method === WS_METHODS.projectsSkillsAdopt)
+    return operation === "check" || operation === "propose-preview"
+      ? [AuthFilesystemReadScope]
+      : operation === "adopt"
+        ? [AuthFilesystemReadScope, AuthFilesystemWriteScope]
+        : [AuthFilesystemReadScope, AuthSourceControlWriteScope, AuthTerminalOperateScope];
   // Writes another tool's configuration, which that tool then runs as commands.
   if (method === WS_METHODS.nativeConnectionApply)
     return [AuthFilesystemWriteScope, AuthTerminalOperateScope];
