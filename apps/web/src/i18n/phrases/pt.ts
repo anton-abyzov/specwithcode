@@ -5774,4 +5774,7 @@ export const pt: PhraseCatalog = {
   "Add one": "Adicionar um",
   "+{n} more": "+{n} mais",
   "Ready once an agent is signed in.": "Pronto assim que um agente entrar.",
+  "How much longer this takes": "Quanto tempo a mais leva",
+  "Can make work take much longer to finish: about 2.6 times as long in measured runs, usually 1.5 to 3.5 times, because each review round and its fixes add time.": "Pode fazer o trabalho levar muito mais tempo: cerca de 2,6 vezes mais nas medições, normalmente de 1,5 a 3,5 vezes, porque cada rodada de revisão e suas correções somam tempo.",
+  "Can make work take longer: each consult adds about 2 minutes, so threads took about 1.1 times as long in measured runs, up to 1.4 times with many consults.": "Pode fazer o trabalho levar mais tempo: cada consulta soma cerca de 2 minutos, então as threads levaram cerca de 1,1 vez mais nas medições, até 1,4 vez com muitas consultas.",
 };

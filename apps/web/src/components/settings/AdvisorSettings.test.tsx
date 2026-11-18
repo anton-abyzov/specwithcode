@@ -121,6 +121,9 @@ vi.mock("../ui/number-field", () => ({
 }));
 vi.mock("./settingsLayout", () => ({
   SETTINGS_PICKER_TRIGGER_CLASSNAME: "",
+  PolicyTooltip: ({ label, children }: { label?: string; children: string }) => (
+    <span data-note-label={label}>{children}</span>
+  ),
   SettingsSection: ({ title, children }: { title: string; children: ReactNode }) => (
     <div role="group" aria-label={title}>
       {children}
@@ -135,9 +138,11 @@ vi.mock("./settingsLayout", () => ({
     mixed,
     onResetOverride,
     serverScoped,
+    titleInfo,
     "aria-disabled": disabled,
   }: {
     title: string;
+    titleInfo?: ReactNode;
     control?: ReactNode;
     resetAction?: ReactNode;
     settingKeys?: readonly string[];
@@ -156,6 +161,7 @@ vi.mock("./settingsLayout", () => ({
       data-server-scoped={serverScoped}
       data-disabled={disabled === true}
     >
+      {titleInfo}
       {control}
       {resetAction}
     </section>
@@ -223,6 +229,14 @@ afterEach(() => {
 });
 
 describe("AdvisorSettings", () => {
+  it("notes beside the switch how much longer consults make the work", () => {
+    render();
+    const note = row("Let threads ask a stronger model").findByProps({
+      "data-note-label": "How much longer this takes",
+    });
+    expect(note.children.join("")).toContain("about 1.1 times as long");
+  });
+
   it("renders the defaults, off, with the other rows waiting for the switch", () => {
     render();
     expect(renderer!.root.findByProps({ role: "group", "aria-label": "Advisor" })).toBeDefined();

@@ -5778,4 +5778,7 @@ export const ja: PhraseCatalog = {
   "Add one": "追加する",
   "+{n} more": "ほか {n} 件",
   "Ready once an agent is signed in.": "エージェントがサインインすると使えます。",
+  "How much longer this takes": "どれだけ長くかかるか",
+  "Can make work take much longer to finish: about 2.6 times as long in measured runs, usually 1.5 to 3.5 times, because each review round and its fixes add time.": "作業の完了までの時間が大幅に延びることがあります。計測では約 2.6 倍、通常は 1.5〜3.5 倍でした。レビューの各ラウンドと修正に時間がかかるためです。",
+  "Can make work take longer: each consult adds about 2 minutes, so threads took about 1.1 times as long in measured runs, up to 1.4 times with many consults.": "作業時間が延びることがあります。相談 1 回あたり約 2 分かかり、計測ではスレッド全体で約 1.1 倍、相談が多い場合は最大 1.4 倍でした。",
 };

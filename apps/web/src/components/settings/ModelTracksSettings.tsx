@@ -69,7 +69,12 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { clock } from "./FallbackOrderList";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { SETTINGS_PICKER_TRIGGER_CLASSNAME, useRelativeTimeTick } from "./settingsLayout";
+import {
+  PolicyTooltip,
+  SETTINGS_PICKER_TRIGGER_CLASSNAME,
+  useRelativeTimeTick,
+} from "./settingsLayout";
+import { ADVERSARIAL_REVIEW_TIME_NOTE, SLOWER_WORK_NOTE_LABEL } from "./slowerWorkNotes";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -650,18 +655,24 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
           }
           control={
             track === "review" ? (
-              <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                {tx("Review finished features")}
-                <Switch
-                  size="sm"
-                  mixed={mixedReview}
-                  checked={review.autoOnFeatureComplete}
-                  aria-label={tx("Review finished features automatically")}
-                  onCheckedChange={(checked) =>
-                    updateSettings({ adversarialReview: { autoOnFeatureComplete: checked } })
-                  }
-                />
-              </label>
+              // The note sits outside the label: a button inside it would take the label's click.
+              <span className="flex items-center gap-1">
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  {tx("Review finished features")}
+                  <Switch
+                    size="sm"
+                    mixed={mixedReview}
+                    checked={review.autoOnFeatureComplete}
+                    aria-label={tx("Review finished features automatically")}
+                    onCheckedChange={(checked) =>
+                      updateSettings({ adversarialReview: { autoOnFeatureComplete: checked } })
+                    }
+                  />
+                </label>
+                <PolicyTooltip label={tx(SLOWER_WORK_NOTE_LABEL)}>
+                  {tx(ADVERSARIAL_REVIEW_TIME_NOTE)}
+                </PolicyTooltip>
+              </span>
             ) : undefined
           }
         />
