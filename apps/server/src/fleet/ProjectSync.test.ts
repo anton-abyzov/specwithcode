@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - disposable real Git fixtures only.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
@@ -10,6 +11,7 @@ import { planProjectSync, type ProjectSyncStep } from "@specweave-studio/contrac
 import { runGit } from "./folderTransfer/git.ts";
 import {
   cloneRepository,
+  fastForwardRepository,
   fetchAll,
   isLinkedWorktree,
   runSync,
@@ -39,6 +41,7 @@ afterAll(() => {
   }
 });
 afterEach(() => {
+  process.env.GIT_CONFIG_GLOBAL = ISOLATED.GIT_CONFIG_GLOBAL;
   for (const folder of temporary.splice(0)) NodeFS.rmSync(folder, { recursive: true, force: true });
 });
 
@@ -108,6 +111,18 @@ function fixture() {
     return head;
   };
   return { base, remote, publisher, a, b, publish };
+}
+
+/**
+ * Gives the fixture's bare repositories an address another machine could use:
+ * `https://sync.test/{name}.git` reads from `{base}/{name}.git` through the
+ * module's own Git, for this test only.
+ */
+function addressable(base: string) {
+  const config = NodePath.join(base, "gitconfig");
+  NodeFS.writeFileSync(config, `[url "${base}/"]\n\tinsteadOf = https://sync.test/\n`);
+  process.env.GIT_CONFIG_GLOBAL = config;
+  return (name: string) => `https://sync.test/${name}.git`;
 }
 
 const root = (cwd: string): SyncRepository => ({ path: ".", cwd });
@@ -338,6 +353,8 @@ describe("project sync on real repositories (1390 AC-11)", () => {
     git(nestedOnB, "checkout", "-q", "-b", "main");
     const tip = commit(nestedOnB, "lib.ts", "export const lib = 1;\n");
     git(nestedOnB, "push", "-q", "-u", "origin", "main");
+    const address = addressable(f.base)("lib");
+    git(nestedOnB, "remote", "set-url", "origin", address);
     const { run } = recording();
     const ctx = context(run);
     const here = await fetchAll(ctx, await syncRepositories(run, f.a, ["."]));
@@ -356,7 +373,10 @@ describe("project sync on real repositories (1390 AC-11)", () => {
     expect(results[0]).toMatchObject({ action: "clone", reason: "missing", branch: "main" });
     const cloned = NodePath.join(f.a, "repositories", "lib");
     expect(git(cloned, "rev-parse", "HEAD")).toBe(tip);
-    expect(git(cloned, "remote", "get-url", "origin")).toBe(libRemote);
+    expect(git(cloned, "config", "--get", "remote.origin.url")).toBe(address);
+    expect(git(cloned, "config", "--get-all", "remote.origin.fetch")).toBe(
+      "+refs/heads/*:refs/remotes/origin/*",
+    );
     // The project's own repository only gained an untracked folder.
     expect({ ...snapshot(f.a), workingTree: "" }).toEqual({ ...before, workingTree: "" });
     expect(remoteSnapshot(libRemote)).toBe(remote);
@@ -529,20 +549,71 @@ describe("project sync: clone (1390 AC-11)", () => {
   const ask = async (f: ReturnType<typeof fixture>, path: string, remote: string) =>
     cloneRepository(context(recording().run), f.a, { path, remote });
 
+  it("clones into a remote named origin whatever this machine's Git settings name it", async () => {
+    const f = fixture();
+    const address = addressable(f.base)("remote");
+    NodeFS.appendFileSync(
+      process.env.GIT_CONFIG_GLOBAL!,
+      '[clone]\n\tdefaultRemoteName = upstream\n[remote "origin"]\n\ttagOpt = --no-tags\n',
+    );
+    const result = await ask(f, "repositories/app", address);
+    expect(result).toMatchObject({ action: "clone", reason: "missing", branch: "main" });
+    const cloned = NodePath.join(f.a, "repositories", "app");
+    expect(git(cloned, "remote")).toBe("origin");
+    expect(git(cloned, "config", "--get-all", "remote.origin.fetch")).toBe(
+      "+refs/heads/*:refs/remotes/origin/*",
+    );
+    expect(git(cloned, "config", "--local", "--list")).not.toContain("mirror");
+  });
+
+  it("does not clone from a folder or a file address of another machine (P2-07)", async () => {
+    const f = fixture();
+    for (const remote of [f.remote, `file://${f.remote}`]) {
+      const result = await ask(f, "repositories/app", remote);
+      expect(result, remote).toMatchObject({ action: "none", reason: "refused" });
+    }
+    expect(NodeFS.existsSync(NodePath.join(f.a, "repositories"))).toBe(false);
+  });
+
+  it("stops a cancelled clone and removes the folder it made (P2-09)", async () => {
+    const f = fixture();
+    // A server that accepts and never answers: the clone waits until it is stopped.
+    const sockets: Array<NodeNet.Socket> = [];
+    const server = NodeNet.createServer((socket) => sockets.push(socket));
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const port = (server.address() as NodeNet.AddressInfo).port;
+    const cancel = new AbortController();
+    server.once("connection", () => cancel.abort());
+    try {
+      const { run, commands } = recording();
+      const result = await cloneRepository({ ...context(run), signal: cancel.signal }, f.a, {
+        path: "repositories/slow",
+        remote: `git://127.0.0.1:${port}/acme/slow.git`,
+      });
+      expect(result).toMatchObject({ action: "none", reason: "refused" });
+      expect(commands.some((args) => args[0] === "clone")).toBe(true);
+      expect(NodeFS.existsSync(NodePath.join(f.a, "repositories", "slow"))).toBe(false);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((done) => server.close(done));
+    }
+  });
+
   it("refuses a folder that exists, a path outside the project and a remote with a credential", async () => {
     const f = fixture();
+    const address = addressable(f.base)("remote");
     NodeFS.mkdirSync(NodePath.join(f.a, "taken"));
     write(f.a, "taken/keep.txt", "mine\n");
     for (const [path, remote] of [
-      ["taken", f.remote],
-      [".", f.remote],
-      ["../outside", f.remote],
-      ["nested/.git/x", f.remote],
+      ["taken", address],
+      [".", address],
+      ["../outside", address],
+      ["nested/.git/x", address],
       // Names a file system may read as `.git`.
-      ["nested/.GIT", f.remote],
-      ["nested/.git.", f.remote],
-      ["nested/.g\u200cit", f.remote],
-      ["nested/GIT~1", f.remote],
+      ["nested/.GIT", address],
+      ["nested/.git.", address],
+      ["nested/.g\u200cit", address],
+      ["nested/GIT~1", address],
       ["fine", "https://user:secret@example.com/acme/app.git"],
       ["fine", "ext::sh -c touch%20/tmp/x"],
       ["fine", "--upload-pack=touch /tmp/x"],
@@ -561,21 +632,22 @@ describe("project sync: clone (1390 AC-11)", () => {
     const outside = NodePath.join(f.base, "outside");
     NodeFS.mkdirSync(outside);
     NodeFS.symlinkSync(outside, NodePath.join(f.a, "linked"));
-    const result = await ask(f, "linked/repo", f.remote);
+    const address = addressable(f.base)("remote");
+    const result = await ask(f, "linked/repo", address);
     expect(result).toMatchObject({ action: "none", reason: "refused" });
     expect(NodeFS.readdirSync(outside)).toEqual([]);
     // Nor does it create a folder behind the link on the way to the refusal.
-    const deeper = await ask(f, "linked/sub/repo", f.remote);
+    const deeper = await ask(f, "linked/sub/repo", address);
     expect(deeper).toMatchObject({ action: "none", reason: "refused" });
     expect(NodeFS.readdirSync(outside)).toEqual([]);
     // A file on the way is no folder to clone into either.
     write(f.a, "plain.txt", "text\n");
-    expect(await ask(f, "plain.txt/repo", f.remote)).toMatchObject({ reason: "refused" });
+    expect(await ask(f, "plain.txt/repo", address)).toMatchObject({ reason: "refused" });
   });
 
   it("leaves no folder behind when the clone fails", async () => {
     const f = fixture();
-    const result = await ask(f, "repositories/none", NodePath.join(f.base, "no-such.git"));
+    const result = await ask(f, "repositories/none", addressable(f.base)("no-such"));
     expect(result).toMatchObject({ action: "none", reason: "refused" });
     expect(result.detail).toMatch(/no-such\.git/);
     expect(NodeFS.existsSync(NodePath.join(f.a, "repositories", "none"))).toBe(false);
@@ -603,11 +675,198 @@ describe("project sync: status", () => {
   });
 });
 
+describe("project sync: the fetch never follows the repository's own settings (P2-01)", () => {
+  /** Machine A with a commit only it holds on `feature`, checked out on a branch only it has. */
+  function withLocalWork() {
+    const f = fixture();
+    git(f.publisher, "checkout", "-q", "-b", "feature");
+    commit(f.publisher, "feature.ts", "export const feature = 1;\n");
+    git(f.publisher, "push", "-q", "-u", "origin", "feature");
+    git(f.publisher, "checkout", "-q", "main");
+    git(f.a, "fetch", "-q", "origin");
+    git(f.a, "checkout", "-q", "feature");
+    const local = commit(f.a, "feature.ts", "export const feature = 'not pushed';\n");
+    git(f.a, "checkout", "-q", "-b", "scratch", "main");
+    git(f.a, "tag", "local-only");
+    f.publish();
+    return { ...f, local };
+  }
+  const refs = (cwd: string) =>
+    git(cwd, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/tags");
+
+  it("does not fetch a repository whose fetch settings write into its own branches", async () => {
+    const f = withLocalWork();
+    git(f.a, "config", "remote.origin.fetch", "+refs/heads/*:refs/heads/*");
+    const before = { refs: refs(f.a), state: snapshot(f.a) };
+    const { run, commands } = recording();
+    const here = await fetchAll(context(run), [root(f.a)]);
+    expect(here[0]).toMatchObject({ fetch: "unusual-config" });
+    expect(here[0]!.fetchError).toContain("+refs/heads/*:refs/heads/*");
+    expect(commands.some((args) => args[0] === "fetch")).toBe(false);
+    expect(git(f.a, "rev-parse", "refs/heads/feature")).toBe(f.local);
+    expect({ refs: refs(f.a), state: snapshot(f.a) }).toEqual(before);
+    const plan = planProjectSync(here, here);
+    expect(say(plan[0]!)).toBe("none:fetch-config");
+    // Asked to move anyway, it still does not fetch or merge.
+    const results = await runSync(context(run), f.a, [root(f.a)], {
+      fastForward: [{ path: ".", otherBranch: "scratch" }],
+      clone: [],
+    });
+    expect(results[0]).toMatchObject({ reason: "fetch-config", moved: 0 });
+    expect(commands.some((args) => args[0] === "fetch" || args[0] === "merge")).toBe(false);
+    expect({ refs: refs(f.a), state: snapshot(f.a) }).toEqual(before);
+  });
+
+  it("does not fetch a mirror, or one whose extra fetch line writes outside refs/remotes", async () => {
+    for (const set of [
+      ["remote.origin.mirror", "true"],
+      ["--add", "remote.origin.fetch", "+refs/pull/*/head:refs/heads/pr/*"],
+      ["--add", "remote.origin.fetch", "refs/tags/*:refs/tags/*"],
+    ]) {
+      const f = withLocalWork();
+      git(f.a, "config", ...set);
+      const before = refs(f.a);
+      const { run, commands } = recording();
+      const here = await fetchAll(context(run), [root(f.a)]);
+      expect(here[0]!.fetch, set.join(" ")).toBe("unusual-config");
+      expect(commands.some((args) => args[0] === "fetch")).toBe(false);
+      expect(refs(f.a)).toBe(before);
+    }
+  });
+
+  it("deletes and moves no branch or tag under prune and tag settings, nor a rewritten address", async () => {
+    const f = withLocalWork();
+    // The remote loses a branch, moves a tag this machine also has, and gains a tag.
+    git(f.publisher, "push", "-q", "origin", "--delete", "feature");
+    git(f.a, "tag", "shared", "main");
+    git(f.publisher, "tag", "shared");
+    git(f.publisher, "tag", "v1");
+    git(f.publisher, "push", "-q", "origin", "shared", "v1");
+    for (const [key, value] of [
+      ["fetch.prune", "true"],
+      ["fetch.pruneTags", "true"],
+      ["remote.origin.prune", "true"],
+      ["remote.origin.pruneTags", "true"],
+    ] as const)
+      git(f.a, "config", key, value);
+    const tracking = git(f.a, "rev-parse", "refs/remotes/origin/feature");
+    const before = refs(f.a);
+    const { run } = recording();
+    const here = await fetchAll(context(run), [root(f.a)]);
+    expect(here[0]).toMatchObject({ fetch: "ok" });
+    // What was fetched arrived; nothing local was deleted or moved.
+    expect(git(f.a, "rev-parse", "refs/remotes/origin/main")).toBe(
+      git(f.publisher, "rev-parse", "main"),
+    );
+    expect(git(f.a, "rev-parse", "refs/remotes/origin/feature")).toBe(tracking);
+    expect(git(f.a, "rev-parse", "refs/tags/shared")).toBe(git(f.a, "rev-parse", "main"));
+    expect(
+      refs(f.a)
+        .split("\n")
+        .filter((line) => !line.startsWith("refs/tags/v1 ")),
+    ).toEqual(before.split("\n"));
+    // Asked to bring every tag, Git still replaces none: the fetch may say so, nothing moves.
+    git(f.a, "config", "remote.origin.tagOpt", "--tags");
+    await fetchAll(context(run), [root(f.a)]);
+    expect(git(f.a, "rev-parse", "refs/tags/shared")).toBe(git(f.a, "rev-parse", "main"));
+    expect(git(f.a, "rev-parse", "refs/tags/local-only")).toBe(git(f.a, "rev-parse", "main"));
+    expect(
+      refs(f.a)
+        .split("\n")
+        .filter((line) => line.startsWith("refs/heads/")),
+    ).toEqual(before.split("\n").filter((line) => line.startsWith("refs/heads/")));
+    git(f.a, "config", "--unset", "remote.origin.tagOpt");
+    // The address is rewritten to another repository: only refs/remotes can change.
+    const other = NodePath.join(f.base, "other.git");
+    git(f.base, "init", "-q", "--bare", "-b", "main", other);
+    const elsewhere = NodePath.join(f.base, "elsewhere");
+    git(f.base, "clone", "-q", other, elsewhere);
+    git(elsewhere, "checkout", "-q", "-b", "scratch");
+    commit(elsewhere, "other.ts", "export const other = 1;\n");
+    git(elsewhere, "push", "-q", "origin", "scratch");
+    const config = NodePath.join(f.base, "rewrite.gitconfig");
+    NodeFS.writeFileSync(config, `[url "${other}"]\n\tinsteadOf = ${f.remote}\n`);
+    process.env.GIT_CONFIG_GLOBAL = config;
+    const state = { refs: refs(f.a), state: snapshot(f.a) };
+    await fetchAll(context(run), [root(f.a)]);
+    expect(git(f.a, "rev-parse", "refs/remotes/origin/scratch")).toBe(
+      git(elsewhere, "rev-parse", "scratch"),
+    );
+    expect({ refs: refs(f.a), state: snapshot(f.a) }).toEqual(state);
+  });
+});
+
+describe("project sync: what counts as clean and as a clone address", () => {
+  it("treats an unfinished cherry-pick with no changed file as not clean (P2-06)", async () => {
+    const f = fixture();
+    // A cherry-pick of a change already there stops with nothing to commit.
+    const head = git(f.a, "rev-parse", "HEAD");
+    expect(() => git(f.a, "cherry-pick", head)).toThrow();
+    expect(git(f.a, "status", "--porcelain=v1")).toBe("");
+    expect(NodeFS.existsSync(NodePath.join(f.a, ".git", "CHERRY_PICK_HEAD"))).toBe(true);
+    f.publish();
+    const before = snapshot(f.a);
+    const { step, result, commands } = await sync(f.a, f.b, { force: true });
+    expect(say(step)).toBe("fetch:uncommitted");
+    expect(step.uncommitted).toBeGreaterThan(0);
+    expect(result).toMatchObject({ action: "fetch", reason: "uncommitted", moved: 0 });
+    expect(commands.some((args) => args[0] === "merge")).toBe(false);
+    expect(snapshot(f.a)).toEqual(before);
+    expect((await statusOf(recording().run, [root(f.a)]))[0]).toMatchObject({ clean: false });
+  });
+
+  it("names no clone address for a folder or file origin (P2-07)", async () => {
+    const f = fixture();
+    const { run } = recording();
+    const here = await fetchAll(context(run), [root(f.a)]);
+    // The fixture's origin is a folder on this machine.
+    expect(here[0]).toMatchObject({ fetch: "ok", remote: null });
+    git(f.b, "remote", "set-url", "origin", `file://${f.remote}`);
+    const nested = NodePath.join(f.b, "repositories", "lib");
+    git(f.base, "clone", "-q", f.remote, nested);
+    const there = await fetchAll(context(run), [
+      root(f.b),
+      { path: "repositories/lib", cwd: nested },
+    ]);
+    expect(there.map((facts) => facts.remote)).toEqual([null, null]);
+    expect(say(planProjectSync(here, there)[1]!)).toBe("none:missing-no-remote");
+    // An address another machine can use is named.
+    git(nested, "remote", "set-url", "origin", addressable(f.base)("remote"));
+    const again = await fetchAll(context(run), [{ path: "repositories/lib", cwd: nested }]);
+    expect(again[0]).toMatchObject({ fetch: "ok", remote: "https://sync.test/remote.git" });
+    expect(say(planProjectSync(here, again)[1]!)).toBe("clone:missing");
+  });
+});
+
+describe("project sync: in use is read live (P2-02)", () => {
+  it("does not move a checkout a thread started working in after the recheck's reads", async () => {
+    const f = fixture();
+    f.publish();
+    const { run, commands } = recording();
+    await fetchAll(context(run), [root(f.a)]);
+    const before = snapshot(f.a);
+    // Free when the facts are read, taken when asked again right before the merge.
+    let asked = 0;
+    const inUse = async () => ((asked += 1) === 1 ? null : "Started just now");
+    const result = await fastForwardRepository(context(run, inUse), root(f.a), "main");
+    expect(asked).toBe(2);
+    expect(result).toMatchObject({
+      action: "fetch",
+      reason: "in-use",
+      inUseBy: "Started just now",
+      moved: 0,
+      downgraded: true,
+    });
+    expect(commands.some((args) => args[0] === "merge")).toBe(false);
+    expect(snapshot(f.a)).toEqual(before);
+  });
+});
+
 describe("project sync: the Git commands it runs (1390 AC-11)", () => {
   // Runs last: every test above recorded what the module ran.
   it("never runs a command that resets, rebases, stashes, switches, deletes, pushes or commits", () => {
     expect(everyCommand.length).toBeGreaterThan(100);
-    const READS = new Set(["remote", "symbolic-ref", "rev-parse", "rev-list", "status"]);
+    const READS = new Set(["config", "symbolic-ref", "rev-parse", "rev-list", "status"]);
     const WRITES = new Set(["fetch", "merge", "clone"]);
     const verbs = new Set(everyCommand.map((args) => args[0]!));
     expect([...verbs].filter((verb) => !READS.has(verb) && !WRITES.has(verb))).toEqual([]);
@@ -636,7 +895,18 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
     ])
       expect(verbs.has(forbidden), forbidden).toBe(false);
     for (const args of everyCommand) {
-      if (args[0] === "fetch") expect(args).toEqual(["fetch", "--quiet", "origin"]);
+      // The fetch names its own destinations: never the repository's configured ones.
+      if (args[0] === "fetch")
+        expect(args).toEqual([
+          "fetch",
+          "--quiet",
+          "--no-prune",
+          "--no-prune-tags",
+          "--no-recurse-submodules",
+          "--refmap=",
+          "origin",
+          "+refs/heads/*:refs/remotes/origin/*",
+        ]);
       if (args[0] === "merge") {
         expect(args.slice(0, 5)).toEqual([
           "merge",
@@ -648,8 +918,20 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
         expect(args[5]).toMatch(/^[0-9a-f]{40}$/);
         expect(args).toHaveLength(6);
       }
-      if (args[0] === "clone") expect(args.slice(0, 3)).toEqual(["clone", "--quiet", "--"]);
-      if (args[0] === "remote") expect(args).toEqual(["remote", "get-url", "origin"]);
+      if (args[0] === "clone")
+        expect(args.slice(0, 6)).toEqual([
+          "clone",
+          "--quiet",
+          "--origin",
+          "origin",
+          "--no-recurse-submodules",
+          "--",
+        ]);
+      // Settings are only read.
+      if (args[0] === "config") {
+        expect(args.slice(0, 2)).toEqual(["config", "--get-all"]);
+        expect(args).toHaveLength(3);
+      }
       // No read is told to write: no `-d`, `--delete`, `--force` or `-f` anywhere.
       expect(
         args.filter((arg) => /^(-d|-D|-f|--delete|--force|--hard|--prune)$/.test(arg)),

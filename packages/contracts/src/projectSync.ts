@@ -54,6 +54,12 @@ export const ProjectSyncReason = Schema.Literals([
   "fetch-failed",
   /** The repository is here but has no `origin`. */
   "no-remote",
+  /**
+   * `origin` is set up as a mirror, or to fetch into refs outside `refs/remotes/`: a fetch
+   * there could move this machine's own branches, so Sync does not fetch it. `detail` names
+   * the setting.
+   */
+  "fetch-config",
   /** Missing here and the other machine names a remote: cloned from it. */
   "missing",
   /** Missing here and not in Git on a remote. Only the full compare can bring it. */
@@ -100,10 +106,14 @@ export const ProjectSyncRepositoryFacts = Schema.Struct({
   uncommitted: NonNegativeInt,
   /** The title of a running thread that works in this very checkout. */
   inUseBy: Schema.NullOr(bounded(500)),
-  /** `origin`'s address, only when it carries no credential; a missing copy clones from it. */
+  /**
+   * `origin`'s address as it is written in the repository's settings, only when it carries
+   * no credential and is not a folder or `file://` address of this machine; a missing copy
+   * clones from it.
+   */
   remote: Schema.NullOr(bounded(2048)),
-  fetch: Schema.Literals(["ok", "failed", "no-remote", "not-run"]),
-  /** Git's reason for a failed fetch. */
+  fetch: Schema.Literals(["ok", "failed", "no-remote", "not-run", "unusual-config"]),
+  /** Git's reason for a failed fetch, or the setting that keeps Sync from fetching. */
   fetchError: Schema.NullOr(bounded(2000)),
 });
 export type ProjectSyncRepositoryFacts = typeof ProjectSyncRepositoryFacts.Type;
@@ -116,7 +126,15 @@ export const ProjectSyncFetchResult = Schema.Struct({
 });
 export type ProjectSyncFetchResult = typeof ProjectSyncFetchResult.Type;
 
-/** One repository on one machine: the single thing Sync does there, and why. */
+/**
+ * One repository on one machine: the single thing Sync does there, and why.
+ *
+ * A checkout that is level with its upstream is `none` with `up-to-date` or
+ * `not-pushed` also while it has uncommitted files or a running thread: there
+ * is nothing to move forward. A caller must not show a bare "Up to date" for
+ * such a step: when `uncommitted` is above 0 or `inUseBy` is set, it says so
+ * ("{n} uncommitted files", "In use by {thread}") beside it.
+ */
 export const ProjectSyncStep = Schema.Struct({
   path: repositoryPath,
   action: ProjectSyncAction,
@@ -161,6 +179,7 @@ export function planProjectSyncRepository(
     remote: facts.remote,
     detail,
   });
+  if (facts.fetch === "unusual-config") return step("none", "fetch-config", facts.fetchError);
   if (facts.fetch === "failed") return step("none", "fetch-failed", facts.fetchError);
   if (facts.fetch === "no-remote") return step("none", "no-remote");
   if (facts.branch === null) return step("fetch", "detached");

@@ -3,8 +3,9 @@
  * Sync for a project that exists on two machines (1390). Each machine fetches
  * `origin` for its own repositories and fast-forwards a clean checkout that is
  * only behind; a repository it lacks is cloned. This module runs exactly these
- * Git commands that change anything: `fetch origin`, `merge --ff-only` and
- * `clone`. It never resets, rebases, merges with a merge commit, stashes,
+ * Git commands that change anything: a fetch of `origin`'s branches into
+ * `refs/remotes/origin/` (never the destinations the repository's settings
+ * name), `merge --ff-only` and `clone`. It never resets, rebases, merges with a merge commit, stashes,
  * switches a branch, deletes, pushes or commits, and it never calls the folder
  * copy's reconcile paths, which can stash and reset.
  */
@@ -34,6 +35,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { UNFINISHED_OPERATION_MARKS } from "../handoff/bundleGit.ts";
 import { type GitResult, runGit } from "./folderTransfer/git.ts";
 import * as HandoffGit from "./handoffGit.ts";
 import { canonicalOrigin, safeRelativePath } from "./handoffGitTypes.ts";
@@ -48,14 +50,73 @@ const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 export type SyncGit = (
   cwd: string,
   args: ReadonlyArray<string>,
-  options?: { readonly allowFailure?: boolean; readonly timeoutMs?: number },
+  options?: {
+    readonly allowFailure?: boolean;
+    readonly timeoutMs?: number;
+    readonly signal?: AbortSignal;
+  },
 ) => Promise<GitResult>;
 
 export interface SyncContext {
   readonly git: SyncGit;
-  /** The title of a running thread that works in this very checkout, or null. */
+  /**
+   * The title of a running thread that works in this very checkout, or null.
+   * Asked each time it matters, never remembered: a thread may start between
+   * two reads.
+   */
   readonly inUse: (checkout: string) => Promise<string | null>;
+  /** Stops a fetch or a clone that is under way when the call is cancelled. A merge is never stopped. */
+  readonly signal?: AbortSignal;
 }
+
+/** What Sync fetches, and where to: `origin`'s branches into its remote-tracking refs. */
+const FETCH_REFSPEC = "+refs/heads/*:refs/remotes/origin/*";
+/**
+ * The fetch names its own destinations (`--refmap=` switches the configured
+ * ones off) and never prunes, whatever `fetch.prune`, `fetch.pruneTags` or
+ * `remote.origin.prune` say. Tags come as Git brings them by default: new ones
+ * that point into the fetched history, and none that would replace a tag here.
+ */
+const FETCH_ARGS = [
+  "fetch",
+  "--quiet",
+  "--no-prune",
+  "--no-prune-tags",
+  "--no-recurse-submodules",
+  "--refmap=",
+  "origin",
+  FETCH_REFSPEC,
+];
+
+/**
+ * Why `origin` is not fetched, or null: it is a mirror, or one of its fetch
+ * lines writes outside `refs/remotes/`. Such a repository keeps its own
+ * branches where a fetch writes, so Sync leaves it alone and says so.
+ */
+export function unusualFetchConfig(input: {
+  readonly mirror: string;
+  readonly refspecs: ReadonlyArray<string>;
+}): string | null {
+  if (/^(true|yes|on|1|fetch|push)$/iu.test(input.mirror.trim()))
+    return "origin is set up as a mirror (remote.origin.mirror).";
+  for (const line of input.refspecs) {
+    const refspec = line.trim();
+    // `^refs/…` leaves refs out and has no destination.
+    if (refspec.length === 0 || refspec.startsWith("^")) continue;
+    const colon = refspec.indexOf(":");
+    if (colon < 0) continue;
+    const destination = refspec.slice(colon + 1);
+    if (destination.length > 0 && !destination.startsWith("refs/remotes/"))
+      return `origin fetches into refs outside refs/remotes/ (remote.origin.fetch ${refspec}).`.slice(
+        0,
+        1900,
+      );
+  }
+  return null;
+}
+
+/** A folder or `file://` address names a place on one machine only. */
+const isLocalAddress = (canonical: string) => canonical.startsWith("file://");
 
 export interface SyncRepository {
   /** Relative to the project folder with `/` separators; "." is the folder itself. */
@@ -128,7 +189,20 @@ async function uncommittedCount(git: SyncGit, cwd: string): Promise<number | nul
     "--ignore-submodules=none",
   ]);
   if (!status.ok) return null;
-  return status.text.length === 0 ? 0 : status.text.split("\n").length;
+  const files = status.text.length === 0 ? 0 : status.text.split("\n").length;
+  // An unfinished merge, rebase, cherry-pick, revert or bisect is not clean, also with no file changed.
+  return files === 0 && (await operationUnfinished(git, cwd)) ? 1 : files;
+}
+
+async function operationUnfinished(git: SyncGit, cwd: string): Promise<boolean> {
+  const gitDir = await read(git, cwd, ["rev-parse", "--absolute-git-dir"]);
+  // A Git folder that cannot be found is never taken for a finished state.
+  if (!gitDir.ok || gitDir.text.length === 0) return true;
+  for (const mark of UNFINISHED_OPERATION_MARKS) {
+    if ((await NodeFSP.lstat(NodePath.join(gitDir.text, mark)).catch(() => null)) !== null)
+      return true;
+  }
+  return false;
 }
 
 /** Path, branch, head commit, clean or not: a local Git read, no network. */
@@ -144,8 +218,10 @@ export async function readRepositoryStatus(
 }
 
 /**
- * A repository as the plan needs it. `fetch: true` runs `git fetch origin`
- * first; the recheck before a fast-forward passes false and reads local Git.
+ * A repository as the plan needs it. `fetch: true` fetches `origin` first; the
+ * recheck before a fast-forward passes false and reads local Git. Either way
+ * `origin`'s fetch settings are read, and a repository they make unsafe to
+ * fetch is reported as `unusual-config` and never fetched.
  */
 export async function readRepositoryFacts(
   context: SyncContext,
@@ -154,14 +230,31 @@ export async function readRepositoryFacts(
 ): Promise<ProjectSyncRepositoryFacts> {
   const { git } = context;
   const { cwd, path } = repository;
-  const origin = await read(git, cwd, ["remote", "get-url", "origin"]);
-  const hasOrigin = origin.ok && origin.text.length > 0;
+  // The address as written: another machine applies its own rewrites to it.
+  const urls = await read(git, cwd, ["config", "--get-all", "remote.origin.url"]);
+  const address = urls.ok ? (urls.text.split("\n")[0] ?? "").trim() : "";
+  const hasOrigin = address.length > 0;
   let fetch: ProjectSyncRepositoryFacts["fetch"] = hasOrigin ? "not-run" : "no-remote";
   let fetchError: string | null = null;
-  if (hasOrigin && options.fetch) {
-    const fetched = await git(cwd, ["fetch", "--quiet", "origin"], {
+  if (hasOrigin) {
+    const [refspecs, mirror] = await Promise.all([
+      read(git, cwd, ["config", "--get-all", "remote.origin.fetch"]),
+      read(git, cwd, ["config", "--get-all", "remote.origin.mirror"]),
+    ]);
+    const unusual = unusualFetchConfig({
+      mirror: mirror.ok ? (mirror.text.split("\n").at(-1) ?? "") : "",
+      refspecs: refspecs.ok ? refspecs.text.split("\n") : [],
+    });
+    if (unusual !== null) {
+      fetch = "unusual-config";
+      fetchError = unusual;
+    }
+  }
+  if (fetch === "not-run" && options.fetch) {
+    const fetched = await git(cwd, FETCH_ARGS, {
       allowFailure: true,
       timeoutMs: FETCH_MS,
+      ...(context.signal === undefined ? {} : { signal: context.signal }),
     }).catch((cause: unknown) => ({
       code: -1,
       stdout: "",
@@ -202,11 +295,19 @@ export async function readRepositoryFacts(
     behind,
     // A status Git could not read is never treated as clean.
     uncommitted: uncommitted ?? 1,
+    // Read last, after the status read above.
     inUseBy: await context.inUse(cwd),
-    remote: hasOrigin && canonicalOrigin(origin.text) !== null ? origin.text : null,
+    remote: cloneAddress(address),
     fetch,
     fetchError,
   };
+}
+
+/** The address when another machine can clone from it: no credential, no folder of this machine. */
+function cloneAddress(address: string): string | null {
+  if (address.length === 0 || address.startsWith("-")) return null;
+  const canonical = canonicalOrigin(address);
+  return canonical === null || isLocalAddress(canonical) ? null : address;
 }
 
 const result = (
@@ -253,6 +354,18 @@ export async function fastForwardRepository(
   if (!target.ok || !SHA.test(target.text)) {
     return { ...planned, action: "fetch", reason: "no-upstream", downgraded: true };
   }
+  // Asked once more, with nothing but the merge left to run: a thread that started
+  // working here during the reads above keeps the checkout as it is.
+  const startedHere = await context.inUse(repository.cwd);
+  if (startedHere !== null) {
+    return {
+      ...planned,
+      action: "fetch",
+      reason: "in-use",
+      inUseBy: startedHere,
+      downgraded: true,
+    };
+  }
   const merged = await git(
     repository.cwd,
     // Ignored files in the way stop the merge instead of being written over.
@@ -275,8 +388,10 @@ export async function fastForwardRepository(
 /**
  * Clones a repository this machine lacks into its place in the project folder.
  * The folder must not exist: it is created exclusively, so nothing there is
- * ever written over. A remote that carries a credential or names a transport
- * other than https, ssh, git or a local path is refused.
+ * ever written over. A remote that carries a credential, names a transport
+ * other than https, ssh or git, or is a folder or `file://` address (a place
+ * on one machine only) is refused. A clone that fails or is cancelled leaves
+ * no folder behind.
  */
 export async function cloneRepository(
   context: SyncContext,
@@ -307,7 +422,7 @@ export async function cloneRepository(
     input.path.split("/").some(isGitFolderName)
   )
     return refuse("The repository's folder is not a path inside the project.");
-  if (input.remote.startsWith("-") || canonicalOrigin(input.remote) === null)
+  if (cloneAddress(input.remote) === null)
     return refuse("The remote is not an address Sync clones from.");
   const realRoot = await NodeFSP.realpath(root).catch(() => null);
   if (realRoot === null) return refuse("The project folder is missing.");
@@ -332,19 +447,36 @@ export async function cloneRepository(
     return refuse("The folder could not be created.");
   }
   const cloned = await context
-    .git(target, ["clone", "--quiet", "--", input.remote, "."], {
-      allowFailure: true,
-      timeoutMs: CLONE_MS,
-    })
+    // The remote is always named origin, whatever `clone.defaultRemoteName` says.
+    .git(
+      target,
+      [
+        "clone",
+        "--quiet",
+        "--origin",
+        "origin",
+        "--no-recurse-submodules",
+        "--",
+        input.remote,
+        ".",
+      ],
+      {
+        allowFailure: true,
+        timeoutMs: CLONE_MS,
+        ...(context.signal === undefined ? {} : { signal: context.signal }),
+      },
+    )
     .catch((cause: unknown) => ({
       code: -1,
       stdout: "",
       stderr: cause instanceof Error ? cause.message : "The clone did not finish.",
     }));
   if (cloned.code !== 0) {
-    // Only the folder this call made, and only while Git left nothing in it.
-    await NodeFSP.rmdir(target).catch(() => undefined);
-    return refuse(gitReason(cloned.stderr));
+    // The folder this call created exclusively: all that is in it is this clone's.
+    await NodeFSP.rm(target, { recursive: true, force: true }).catch(() => undefined);
+    return refuse(
+      context.signal?.aborted === true ? "The clone was cancelled." : gitReason(cloned.stderr),
+    );
   }
   const { branch } = await branchAndHead(context.git, target);
   return step({ branch });
@@ -404,7 +536,7 @@ export async function statusOf(
   return inParallel(repositories, (repository) => readRepositoryStatus(git, repository));
 }
 
-/** `git fetch origin` in every repository. One that fails is reported; the others continue. */
+/** Fetches `origin` in every repository. One that fails is reported; the others continue. */
 export async function fetchAll(
   context: SyncContext,
   repositories: ReadonlyArray<SyncRepository>,
@@ -478,20 +610,55 @@ export class ProjectSync extends Context.Service<
 const failed = (reason: string, code: ProjectSyncError["code"] = "failed") =>
   new ProjectSyncError({ code, reason });
 
+const gitFailure = (cause: unknown) =>
+  failed(cause instanceof Error ? cause.message.slice(0, 1900) : "Git did not finish.");
+
+/**
+ * Git work that is never cut short: a cancelled call waits for it, so the
+ * project's lock is not released while Git still writes. Each Git command
+ * ends by itself, under its own time limit.
+ */
+export const untilGitEnds = <A>(run: () => Promise<A>): Effect.Effect<A, ProjectSyncError> =>
+  Effect.tryPromise({ try: run, catch: gitFailure }).pipe(Effect.uninterruptible);
+
+/**
+ * Git work a cancelled call stops (a fetch, a clone): the signal is aborted,
+ * and the call still waits until `run` has ended, so whoever holds the
+ * project's lock keeps it until Git is gone and `run` has cleaned up.
+ */
+export const stoppedWhenCancelled = <A>(
+  run: (signal: AbortSignal) => Promise<A>,
+): Effect.Effect<A, ProjectSyncError> =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const controller = new AbortController();
+      const settled = run(controller.signal).then(
+        (value) => ({ ok: true as const, value }),
+        (cause: unknown) => ({ ok: false as const, cause }),
+      );
+      return { controller, settled };
+    }),
+    ({ settled }) =>
+      Effect.promise(() => settled).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.value) : Effect.fail(gitFailure(outcome.cause)),
+        ),
+      ),
+    ({ controller, settled }) =>
+      Effect.promise(() => {
+        // After `run` has ended this changes nothing; before, it stops Git and waits for it.
+        controller.abort();
+        return settled;
+      }),
+  );
+
 const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const admission = yield* ProjectAdmission.ProjectAdmission;
   const handoffGit = yield* HandoffGit.HandoffGit;
   const sql = yield* SqlClient.SqlClient;
 
-  const attempt = <A>(run: () => Promise<A>) =>
-    Effect.tryPromise({
-      try: run,
-      catch: (cause) =>
-        failed(cause instanceof Error ? cause.message.slice(0, 1900) : "Git did not finish."),
-      // A cancelled call must not release the project's lock while Git still writes:
-      // the Git commands end by themselves, each under its own time limit.
-    }).pipe(Effect.uninterruptible);
+  const attempt = untilGitEnds;
 
   const repositories = Effect.fn("ProjectSync.repositories")(function* (projectId: ProjectId) {
     const snapshot = yield* projects.snapshot.pipe(
@@ -542,38 +709,40 @@ const make = Effect.gen(function* () {
     WHERE EXISTS (SELECT 1 FROM orchestration_v2_projection_runs r WHERE r.thread_id=t.thread_id AND r.status NOT IN ('completed','interrupted','failed','cancelled','rolled_back'))
       OR EXISTS (SELECT 1 FROM orchestration_v2_projection_provider_sessions s WHERE s.thread_id=t.thread_id AND s.status IN ('running','working','connecting','starting'))
     ORDER BY t.updated_at DESC, t.thread_id
-  `.pipe(Effect.mapError(() => failed("Could not read which threads are running.")));
+  `;
 
-  const context = Effect.gen(function* () {
-    const rows = yield* runningThreads;
-    const threads = yield* attempt(() =>
-      Promise.all(
-        rows.map(async (row) => {
-          const folder = row.worktreePath ?? row.workspaceRoot;
-          const real = await NodeFSP.realpath(folder).catch(() => NodePath.resolve(folder));
-          const top = await read(defaultGit, real, ["rev-parse", "--show-toplevel"]).catch(
-            () => null,
-          );
-          const checkout =
-            top?.ok === true
-              ? await NodeFSP.realpath(top.text).catch(() => NodePath.resolve(top.text))
-              : null;
-          return { title: row.title ?? "a thread", folder: real, checkout };
-        }),
-      ),
-    );
-    const syncContext: SyncContext = {
-      git: defaultGit,
-      inUse: async (checkout) =>
-        threads.find((thread) =>
-          threadUsesCheckout({
-            threadFolder: thread.folder,
-            threadCheckout: thread.checkout,
-            checkout,
-          }),
-        )?.title ?? null,
-    };
-    return syncContext;
+  /**
+   * Which running thread works in a checkout, read from the database each time
+   * it is asked: before a plan, and again immediately before a merge. A list
+   * that cannot be read counts as in use, so nothing moves on a guess.
+   */
+  const inUse: SyncContext["inUse"] = async (checkout) => {
+    const rows = await Effect.runPromise(runningThreads).catch(() => null);
+    if (rows === null) return "a thread (the list of running threads could not be read)";
+    for (const row of rows) {
+      const folder = row.worktreePath ?? row.workspaceRoot;
+      const real = await NodeFSP.realpath(folder).catch(() => NodePath.resolve(folder));
+      // A thread in a folder outside the checkout and not above it cannot work in it.
+      if (
+        real !== checkout &&
+        !checkout.startsWith(`${real}${NodePath.sep}`) &&
+        !real.startsWith(`${checkout}${NodePath.sep}`)
+      )
+        continue;
+      const top = await read(defaultGit, real, ["rev-parse", "--show-toplevel"]).catch(() => null);
+      const threadCheckout =
+        top?.ok === true
+          ? await NodeFSP.realpath(top.text).catch(() => NodePath.resolve(top.text))
+          : null;
+      if (threadUsesCheckout({ threadFolder: real, threadCheckout, checkout }))
+        return row.title ?? "a thread";
+    }
+    return null;
+  };
+  const syncContext = (signal?: AbortSignal): SyncContext => ({
+    git: defaultGit,
+    inUse,
+    ...(signal === undefined ? {} : { signal }),
   });
 
   return ProjectSync.of({
@@ -590,9 +759,11 @@ const make = Effect.gen(function* () {
         input.projectId,
         Effect.gen(function* () {
           const found = yield* repositories(input.projectId);
-          const syncContext = yield* context;
           return {
-            repositories: yield* attempt(() => fetchAll(syncContext, found.repositories)),
+            // A cancelled fetch is stopped; the lock is held until Git has ended.
+            repositories: yield* stoppedWhenCancelled((signal) =>
+              fetchAll(syncContext(signal), found.repositories),
+            ),
             scanLimited: found.scanLimited,
           };
         }),
@@ -603,25 +774,24 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const found = yield* repositories(input.projectId);
           const out: Array<ProjectSyncStepResult> = [];
-          // Which threads run is read again for each repository, right before it moves.
+          // A merge is never cut short. A cancelled call ends between two repositories.
           for (const wanted of input.fastForward) {
-            const syncContext = yield* context;
             out.push(
               ...(yield* attempt(() =>
-                runSync(syncContext, found.root, found.repositories, {
+                runSync(syncContext(), found.root, found.repositories, {
                   fastForward: [wanted],
                   clone: [],
                 }),
               )),
             );
           }
-          if (input.clone.length > 0) {
-            const syncContext = yield* context;
+          // A cancelled clone is stopped and its folder removed before the lock is released.
+          for (const wanted of input.clone) {
             out.push(
-              ...(yield* attempt(() =>
-                runSync(syncContext, found.root, found.repositories, {
+              ...(yield* stoppedWhenCancelled((signal) =>
+                runSync(syncContext(signal), found.root, found.repositories, {
                   fastForward: [],
-                  clone: input.clone,
+                  clone: [wanted],
                 }),
               )),
             );

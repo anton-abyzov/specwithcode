@@ -317,7 +317,7 @@ async function holdsCheckpoint(
 export type InPlaceRefusal = "dirty" | "moved" | "blocked" | "midway";
 
 /** What Git leaves in its folder while a merge, rebase, cherry-pick, revert or bisect is unfinished. */
-const UNFINISHED_OPERATION_MARKS = [
+export const UNFINISHED_OPERATION_MARKS = [
   "MERGE_HEAD",
   "CHERRY_PICK_HEAD",
   "REVERT_HEAD",
