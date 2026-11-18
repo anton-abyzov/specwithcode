@@ -249,8 +249,8 @@
   vertical-align: baseline;
 }
 
-/* A worker on another machine is one row whatever its title: the title shrinks to an
-   ellipsis before the machine, state or action ever wrap onto a second line. */
+/* A worker on another machine is one row whatever its title. Title and message shrink to an
+   ellipsis side by side (the full text shows on hover); the machine and action never wrap. */
 .sws-thread-card[data-remote-worker] {
   display: flex;
   flex-wrap: nowrap;
@@ -258,15 +258,17 @@
 }
 .sws-thread-card[data-remote-worker] .sws-thread-card-head {
   flex: 1 1 auto;
+  overflow: hidden;
 }
-.sws-thread-card[data-remote-worker] .sws-thread-card-title {
-  min-width: 0;
+.sws-thread-card[data-remote-worker] .sws-thread-card-title,
+.sws-thread-card[data-remote-worker] .sws-thread-card-status {
+  flex: 0 1 auto;
+  min-width: 3em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sws-thread-card[data-remote-worker] .sws-machine-chip,
-.sws-thread-card[data-remote-worker] .sws-thread-card-status {
+.sws-thread-card[data-remote-worker] .sws-machine-chip {
   flex: none;
   white-space: nowrap;
 }
@@ -278,8 +280,28 @@
 /* In the Threads pane the cards line up edge to edge, as the rows below them do. */
 .sws-thread-cards[data-placement="pane"] {
   justify-items: stretch;
+  container-type: inline-size;
 }
 .sws-thread-cards[data-placement="pane"] > li,
 .sws-thread-cards[data-placement="pane"] .sws-thread-card {
   width: 100%;
+}
+/* A narrow pane gives the message its own line under the title, and the open button
+   keeps only its icon (its name stays in the hover label). */
+@container (max-width: 420px) {
+  .sws-thread-card[data-remote-worker] .sws-thread-card-head {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .sws-thread-card[data-remote-worker] .sws-thread-card-title {
+    flex: 1 1 0;
+  }
+  .sws-thread-card[data-remote-worker] .sws-thread-card-status {
+    flex: 1 0 100%;
+    max-width: 100%;
+    padding-left: 17px;
+  }
+  .sws-thread-card[data-remote-worker] .sws-thread-card-action > span {
+    display: none;
+  }
 }
