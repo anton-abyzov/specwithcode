@@ -112,9 +112,77 @@ export function machineReachWords(
   state: MachineReachState,
   phase?: EnvironmentConnectionPresentation["phase"],
   identityMismatch = false,
+  note: HostDownNote | null = null,
 ): MachineReachWords {
   if (identityMismatchShown(state, identityMismatch)) return IDENTITY_MISMATCH;
-  return state === "stopped" && phase === "unsupported" ? NEEDS_UPDATE : REACH_WORDS[state];
+  const words =
+    state === "stopped" && phase === "unsupported" ? NEEDS_UPDATE : REACH_WORDS[state];
+  return hostDownNoteShown(state, note) ? { ...words, ...HOST_DOWN_NOTE_WORDS[note] } : words;
+}
+
+/**
+ * Why a down machine is out of reach, when the app knows more than the reach
+ * state says: this window has no SpecWithCode Connect sign-in and its only way
+ * there needs one (`needs-sign-in`), or this machine's server still reaches it
+ * though this window cannot (`reachable-from-machine`).
+ */
+export type HostDownNote = "needs-sign-in" | "reachable-from-machine";
+
+/** The words a note puts in place of the reach state's own; the rest stays. */
+const HOST_DOWN_NOTE_WORDS: Record<HostDownNote, Partial<MachineReachWords>> = {
+  "needs-sign-in": {
+    headline: "Sign in to reach {machine}",
+    short: "Needs sign-in",
+    next: null,
+    hint: null,
+    action:
+      "This window reaches it through SpecWithCode Connect and is signed out. Sign in to open it here.",
+  },
+  "reachable-from-machine": {
+    headline: "Can't reach {machine} from this window",
+    short: "Not reachable from here",
+  },
+};
+
+/**
+ * Whether a note names why a machine is down. Only a machine that is down says
+ * it, a device with no network keeps its own words, and a machine nobody asked
+ * to connect stays "Not connected" whatever the fleet says.
+ */
+export function hostDownNoteShown(
+  state: MachineReachState | undefined,
+  note: HostDownNote | null | undefined,
+): note is HostDownNote {
+  if (note === null || note === undefined || state === undefined) return false;
+  if (state === "no-network" || !isMachineReachDown(state)) return false;
+  return note === "needs-sign-in" || state !== "not-connected";
+}
+
+/**
+ * The note for one saved machine: its connection stopped for want of a
+ * Connect sign-in, or the fleet of this machine's server says it answers.
+ */
+export function hostDownNote(input: {
+  readonly connectSignInRequired?: boolean | undefined;
+  readonly reachableFromMachine: boolean;
+}): HostDownNote | null {
+  if (input.connectSignInRequired === true) return "needs-sign-in";
+  return input.reachableFromMachine ? "reachable-from-machine" : null;
+}
+
+const NONE_REACHABLE: ReadonlySet<string> = new Set();
+
+/**
+ * The saved machines this machine's server reached on its last fleet check, by
+ * environment id. Empty without a fleet.
+ */
+export function fleetReachableEnvironmentIds(
+  snapshot: Pick<StudioFleetSnapshot, "machines"> | null | undefined,
+): ReadonlySet<string> {
+  const ids = (snapshot?.machines ?? [])
+    .filter((machine) => machine.status === "reachable")
+    .map((machine) => machine.environmentId);
+  return ids.length === 0 ? NONE_REACHABLE : new Set(ids);
 }
 
 const NO_MISMATCH: ReadonlySet<string> = new Set();
@@ -130,6 +198,25 @@ export function identityMismatchedEnvironmentIds(
     .filter((machine) => machine.status === "identity-mismatch")
     .map((machine) => machine.environmentId);
   return ids.length === 0 ? NO_MISMATCH : new Set(ids);
+}
+
+/**
+ * A machine's status line once its connection stopped because this window has
+ * no SpecWithCode Connect sign-in. Retrying cannot fix it; signing in does.
+ */
+export const NEEDS_SIGN_IN_STATUS: MachineStatus = {
+  text: "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window",
+  short: "Needs sign-in",
+  reason: null,
+  retryable: false,
+};
+
+/** Whether a connection stopped for want of a SpecWithCode Connect sign-in. */
+export function needsConnectSignIn(
+  connection: Pick<EnvironmentConnectionPresentation, "phase"> &
+    Partial<Pick<EnvironmentConnectionPresentation, "connectSignInRequired">>,
+): boolean {
+  return connection.phase === "error" && connection.connectSignInRequired === true;
 }
 
 /** A machine's status line once its address answers as a different SpecWithCode. */
@@ -174,8 +261,10 @@ export function reachFromPhase(
 export function hostDownWord(
   state: MachineReachState | undefined,
   identityMismatch = false,
+  note: HostDownNote | null = null,
 ): string {
   if (identityMismatchShown(state, identityMismatch)) return "Different machine at address";
+  if (hostDownNoteShown(state, note)) return HOST_DOWN_NOTE_WORDS[note].short!;
   switch (state) {
     case "not-answering":
       return "Not answering";
@@ -254,6 +343,7 @@ export function machineStatus(
     return canOperate
       ? { text: "Connected", short: "Connected", ...quiet }
       : { text: "Permission to operate threads required", short: "No permission", ...quiet };
+  if (!isThisMachine && needsConnectSignIn(connection)) return NEEDS_SIGN_IN_STATUS;
   const state = machineReach(connection, now).state;
   const words = machineReachWords(state, connection.phase);
   const short = words.short.replace(/…$/, "");
@@ -277,7 +367,12 @@ export function machineStatus(
 
 /** A connection with the facts its reach is judged from, when the caller has them. */
 type ReachConnection = Pick<EnvironmentConnectionPresentation, "phase" | "error"> &
-  Partial<Pick<EnvironmentConnectionPresentation, "lostAt" | "lastConnectedAt" | "cause">>;
+  Partial<
+    Pick<
+      EnvironmentConnectionPresentation,
+      "lostAt" | "lastConnectedAt" | "cause" | "connectSignInRequired"
+    >
+  >;
 
 /** What the app says about its own machine while its server is slow to answer. */
 export const THIS_MACHINE_CATCHING_UP = "Catching up…";
@@ -319,7 +414,8 @@ export function machineDetail(lastSeen: string | null, reason: string | null): s
 /** The banner a chat shows while its machine is not connected. */
 export function machineUnavailableTitle(
   label: string,
-  connection: Pick<EnvironmentConnectionPresentation, "phase" | "error">,
+  connection: Pick<EnvironmentConnectionPresentation, "phase" | "error"> &
+    Partial<Pick<EnvironmentConnectionPresentation, "connectSignInRequired">>,
   isThisMachine = false,
 ): string {
   if (isThisMachine) {
@@ -339,6 +435,7 @@ export function machineUnavailableTitle(
     case "offline":
       return "This device is offline";
     case "error":
+      return needsConnectSignIn(connection) ? `Sign in to reach ${label}` : `Can't reach ${label}`;
     case "connected":
       return `Can't reach ${label}`;
   }
@@ -390,7 +487,14 @@ export function savedMachineStatus(
     case "unsupported":
       return { text: "Client not supported", tone: "muted", reason, retryable: false };
     case "error":
-      return { text: "Connection failed", tone: "error", reason, retryable: true };
+      return needsConnectSignIn(connection) && !isThisMachine
+        ? {
+            text: "Needs sign-in",
+            tone: "error",
+            reason: "Sign in to SpecWithCode Connect to reach it from this window.",
+            retryable: false,
+          }
+        : { text: "Connection failed", tone: "error", reason, retryable: true };
     case "available":
       return { text: "Not connected", tone: "muted", ...quiet };
   }

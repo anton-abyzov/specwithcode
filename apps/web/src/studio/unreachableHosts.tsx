@@ -9,7 +9,12 @@ import type { MachineReachState } from "@specweave-studio/client-runtime/connect
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 
 import { recordMachinePhases } from "../lib/machineLastSeen";
-import { identityMismatchedEnvironmentIds } from "../lib/machineStatus";
+import {
+  fleetReachableEnvironmentIds,
+  hostDownNote,
+  identityMismatchedEnvironmentIds,
+  type HostDownNote,
+} from "../lib/machineStatus";
 import {
   useEnvironments,
   useMachineReachStates,
@@ -21,6 +26,7 @@ import { usePrimaryFleetSnapshot } from "./fleet";
 
 const NONE: ReadonlySet<string> = new Set();
 const NO_STATES: MachineReachStates = new Map();
+const NO_NOTES: ReadonlyMap<string, HostDownNote> = new Map();
 export const UnreachableHostsContext = createContext<ReadonlySet<string>>(NONE);
 /** What each saved machine reads as now; a machine missing here reads as connected. */
 export const MachineReachContext = createContext<MachineReachStates>(NO_STATES);
@@ -30,21 +36,39 @@ export const MachineReachContext = createContext<MachineReachStates>(NO_STATES);
  * it), so every word stays as the reach state alone says.
  */
 export const IdentityMismatchContext = createContext<ReadonlySet<string>>(NONE);
+/**
+ * Why each saved machine would be out of reach beyond its reach state: this
+ * window needs a SpecWithCode Connect sign-in for it, or this machine's server
+ * still reaches it. Words use a note only while the machine is down.
+ */
+export const HostDownNoteContext = createContext<ReadonlyMap<string, HostDownNote>>(NO_NOTES);
 
 export function UnreachableHostsProvider({ children }: { children: ReactNode }) {
   const unreachable = useUnreachableEnvironmentIds();
   const states = useMachineReachStates();
-  const { environments } = useEnvironments();
+  const { environments, presentationById } = useEnvironments();
   // The same list the shell already reads for automatic connects; kept stable between reads.
   const fleet = usePrimaryFleetSnapshot(usePrimaryEnvironmentId());
   const mismatched = useMemo(() => identityMismatchedEnvironmentIds(fleet), [fleet]);
+  const notes = useMemo(() => {
+    const reachable = fleetReachableEnvironmentIds(fleet);
+    const next = new Map<string, HostDownNote>();
+    for (const [environmentId, presentation] of presentationById) {
+      const note = hostDownNote({
+        connectSignInRequired: presentation.connection.connectSignInRequired,
+        reachableFromMachine: reachable.has(environmentId),
+      });
+      if (note !== null) next.set(environmentId, note);
+    }
+    return next.size === 0 ? NO_NOTES : next;
+  }, [fleet, presentationById]);
   // Mounted for the whole shell, so it sees every machine leave "connected".
   useEffect(() => recordMachinePhases(environments), [environments]);
   return (
     <UnreachableHostsContext.Provider value={unreachable}>
       <MachineReachContext.Provider value={states}>
         <IdentityMismatchContext.Provider value={mismatched}>
-          {children}
+          <HostDownNoteContext.Provider value={notes}>{children}</HostDownNoteContext.Provider>
         </IdentityMismatchContext.Provider>
       </MachineReachContext.Provider>
     </UnreachableHostsContext.Provider>
@@ -81,6 +105,17 @@ export function useIdentityMismatchedHosts(): ReadonlySet<string> {
 export function useHostIdentityMismatch(environmentId: string | null | undefined): boolean {
   const mismatched = useContext(IdentityMismatchContext);
   return environmentId ? mismatched.has(environmentId) : false;
+}
+
+/** Why each saved machine would be out of reach beyond its reach state. */
+export function useHostDownNotes(): ReadonlyMap<string, HostDownNote> {
+  return useContext(HostDownNoteContext);
+}
+
+/** Why one machine would be out of reach beyond its reach state, or null. */
+export function useHostDownNote(environmentId: string | null | undefined): HostDownNote | null {
+  const notes = useContext(HostDownNoteContext);
+  return environmentId ? (notes.get(environmentId) ?? null) : null;
 }
 
 export { hostReachOr } from "../lib/machineStatus";

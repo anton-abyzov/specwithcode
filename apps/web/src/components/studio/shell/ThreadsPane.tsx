@@ -102,9 +102,19 @@ import { HandoffRowAction, HandoffRowBadge } from "../../handoff/HandoffBadge";
 import { designRoute } from "../../design/gallery/designLinks";
 import {
   useHostReachStates,
+  useHostDownNotes,
   useIdentityMismatchedHosts,
   useUnreachableHosts,
 } from "../../../studio/unreachableHosts";
+
+/**
+ * A group's heading. The "Offline" group holds threads of every machine this
+ * window cannot reach, a running one included (signed out of Connect, or only
+ * this window cut off), so its heading says that; each row says why.
+ */
+export function threadGroupHeading(group: string): string {
+  return group === "Offline" ? "Not reachable from here" : group;
+}
 
 const SORT_STORAGE_KEY = "studio:project-threads-sort:v1";
 const SortSchema = Schema.Literals(THREAD_SORTS);
@@ -232,6 +242,7 @@ export function ThreadsPane({
   const unreachable = useUnreachableHosts();
   const hostReach = useHostReachStates();
   const identityMismatched = useIdentityMismatchedHosts();
+  const hostNotes = useHostDownNotes();
   const { environments } = useEnvironments();
   const nickname = useMachineNicknames();
   const machineIdentity = useMachineIdentities();
@@ -952,7 +963,7 @@ export function ThreadsPane({
                   onClick={openEverything ? undefined : () => setGroupFolded(group, !isFolded)}
                 >
                   {isFolded ? <ChevronRightIcon aria-hidden /> : <ChevronDownIcon aria-hidden />}
-                  {group}
+                  {threadGroupHeading(group)}
                   <span className="sws-group-count">
                     {threads.length}
                     {openEverything ? " shown" : ""}
@@ -1002,6 +1013,7 @@ export function ThreadsPane({
                               hostOffline,
                               hostReach.get(thread.environmentId),
                               identityMismatched.has(thread.environmentId),
+                              hostNotes.get(thread.environmentId) ?? null,
                             ),
                             subagentsWorking,
                           ));
@@ -1286,7 +1298,8 @@ export function ThreadsPane({
                 >
                   Show more
                   <span className="sr-only">
-                    , {Math.min(hidden, THREAD_GROUP_PAGE_STEP)} of {hidden} hidden {group} threads
+                    , {Math.min(hidden, THREAD_GROUP_PAGE_STEP)} of {hidden} hidden{" "}
+                    {threadGroupHeading(group)} threads
                   </span>
                 </Button>
               ) : !openEverything && threads.length > THREAD_GROUP_PAGE ? (
