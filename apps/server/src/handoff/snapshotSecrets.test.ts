@@ -144,9 +144,9 @@ describe("a snapshot with the content check (1390 AC-14, AC-31)", () => {
     ].toSorted();
     expect(leftOut).toContain("notes.txt content GitHub token");
     expect(leftOut).toContain(".env name");
-    expect(leftOut.filter((line) => line.startsWith(".specweave/project/credentials.json"))).toHaveLength(
-      1,
-    );
+    expect(
+      leftOut.filter((line) => line.startsWith(".specweave/project/credentials.json")),
+    ).toHaveLength(1);
     expect(leftOut.some((line) => line.startsWith("deep.txt"))).toBe(false);
     // Built with a private index: the branch, index and working tree did not change.
     expect(snapshot(a)).toEqual(before);

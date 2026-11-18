@@ -608,12 +608,7 @@ export const make = Effect.gen(function* () {
     planMerge: (environmentId, request) =>
       postJson(environmentId, "plan-merge", encodePlanMerge(request), decodePlanMerge),
     extrasNegotiate: (environmentId, request) =>
-      postJson(
-        environmentId,
-        "extras-negotiate",
-        encodeExtrasNegotiate(request),
-        decodeNegotiate,
-      ),
+      postJson(environmentId, "extras-negotiate", encodeExtrasNegotiate(request), decodeNegotiate),
     extrasReplicate: (environmentId, meta, bundle) =>
       Effect.try({
         try: () => encodeFrame(encodeExtrasMeta(meta), bundle),

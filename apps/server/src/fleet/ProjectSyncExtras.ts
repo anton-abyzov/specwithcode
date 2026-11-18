@@ -432,9 +432,7 @@ const make = Effect.gen(function* () {
         call(
           context,
           peers.extrasNegotiate(target, { ...common, candidates: [...candidates] }),
-        ).then(
-          (answer) => answer.known,
-        ),
+        ).then((answer) => answer.known),
       replicate: (meta, bundle) =>
         call(
           context,

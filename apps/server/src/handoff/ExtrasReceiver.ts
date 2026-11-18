@@ -135,11 +135,9 @@ export async function landExtra(input: {
         });
         if (continues.code === 0) {
           // Moves only from the head just read: a branch that changed meanwhile stays.
-          const moved = await runGit(
-            root,
-            ["update-ref", `refs/heads/${base}`, commit, existing],
-            { allowFailure: true },
-          );
+          const moved = await runGit(root, ["update-ref", `refs/heads/${base}`, commit, existing], {
+            allowFailure: true,
+          });
           if (moved.code === 0) return { branch: base, landed: "moved-forward" };
         }
       }
@@ -261,7 +259,11 @@ const make = Effect.gen(function* () {
       ? new HandoffRefusal({
           status: cause.code === "failed" ? 500 : 409,
           code:
-            cause.code === "too_large" ? "too_large" : cause.code === "failed" ? "failed" : "invalid",
+            cause.code === "too_large"
+              ? "too_large"
+              : cause.code === "failed"
+                ? "failed"
+                : "invalid",
           message: at(cause.message),
         })
       : new HandoffRefusal({ status: 500, code: "failed", message: at("Git did not finish") });

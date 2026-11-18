@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - disposable real Git fixtures only.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - disposable real Git fixtures, and a fixed time for a branch name.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -93,9 +93,7 @@ describe("what Git does not carry (1390 AC-12)", () => {
     const before = snapshot(f.a);
     const refs = allRefs(f.a);
     const extras = await inventoryRepository({ path: ".", cwd: f.a });
-    expect(extras.notPushed.map((entry) => `${entry.branch} ${entry.commits}`)).toEqual([
-      "main 2",
-    ]);
+    expect(extras.notPushed.map((entry) => `${entry.branch} ${entry.commits}`)).toEqual(["main 2"]);
     expect(extras.onlyHere.map((entry) => `${entry.branch} ${entry.commits}`)).toEqual([
       "local-only 1",
     ]);
@@ -253,9 +251,9 @@ describe("sending extras to the other machine (1390 AC-13)", () => {
     const f = twoMachines();
     write(f.a, ".env", "API_KEY=abc\n");
     const { peer, sent } = peerOn(f.b);
-    expect(
-      await send(f.a, { kind: "uncommitted", path: ".", sendAnyway: [] }, peer),
-    ).toMatchObject({ status: "stays", stays: "nothing-to-send", arrivedAs: null });
+    expect(await send(f.a, { kind: "uncommitted", path: ".", sendAnyway: [] }, peer)).toMatchObject(
+      { status: "stays", stays: "nothing-to-send", arrivedAs: null },
+    );
     expect(await send(f.a, { kind: "branch", path: ".", branch: "gone" }, peer)).toMatchObject({
       status: "stays",
       stays: "missing-branch",

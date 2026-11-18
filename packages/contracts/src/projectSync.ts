@@ -265,7 +265,9 @@ export type ProjectSyncBranchExtra = typeof ProjectSyncBranchExtra.Type;
 export const ProjectSyncRepositoryExtras = Schema.Struct({
   path: repositoryPath,
   /** Branches with an upstream that have commits it lacks: one line per branch. */
-  notPushed: Schema.Array(ProjectSyncBranchExtra).check(Schema.isMaxLength(PROJECT_SYNC_MAX_LISTED)),
+  notPushed: Schema.Array(ProjectSyncBranchExtra).check(
+    Schema.isMaxLength(PROJECT_SYNC_MAX_LISTED),
+  ),
   /** Branches with no upstream and no branch of that name on `origin`. */
   onlyHere: Schema.Array(ProjectSyncBranchExtra).check(Schema.isMaxLength(PROJECT_SYNC_MAX_LISTED)),
   /** Branches left off either list because it was full. */

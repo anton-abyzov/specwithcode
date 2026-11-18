@@ -308,7 +308,7 @@ export async function cloneRepository(
   if (realRoot === null) return refuse("The project folder is missing.");
   const target = NodePath.join(realRoot, ...input.path.split("/"));
   if ((await NodeFSP.lstat(target).catch(() => null)) !== null)
-    return refuse("A folder is already there. Use \"Compare all files…\".");
+    return refuse('A folder is already there. Use "Compare all files…".');
   const parent = NodePath.dirname(target);
   try {
     await NodeFSP.mkdir(parent, { recursive: true });
@@ -478,18 +478,19 @@ const make = Effect.gen(function* () {
     // A tree past the scan limits lists its root alone, marked as such.
     const scanned = yield* handoffGit.discover({ workspaceRoot: root }).pipe(
       Effect.map((paths) => ({ paths, scanLimited: false })),
-      Effect.catchTag("HandoffGitError", (error) =>
-        error.reason === "scan-limit"
-          ? Effect.succeed({ paths: ["."] as ReadonlyArray<string>, scanLimited: true })
-          : Effect.fail(
-              failed(
-                error.reason === "missing-repository"
-                  ? "The project folder is not a Git repository."
-                  : `The project folder could not be scanned: ${error.reason}.`,
-                error.reason === "missing-repository" ? "invalid" : "failed",
+      Effect.catchTags({
+        HandoffGitError: (error) =>
+          error.reason === "scan-limit"
+            ? Effect.succeed({ paths: ["."] as ReadonlyArray<string>, scanLimited: true })
+            : Effect.fail(
+                failed(
+                  error.reason === "missing-repository"
+                    ? "The project folder is not a Git repository."
+                    : `The project folder could not be scanned: ${error.reason}.`,
+                  error.reason === "missing-repository" ? "invalid" : "failed",
+                ),
               ),
-            ),
-      ),
+      }),
     );
     return {
       root,

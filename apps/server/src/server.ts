@@ -786,6 +786,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provideMerge(ExtrasReceiver.layer),
     Layer.provide(ProjectSyncExtras.layer.pipe(Layer.provideMerge(ProjectSync.layer))),
     Layer.provide(HandoffPeers.layer),
+    Layer.provide(RemoteWorkers.layerFleetWorkers),
   ),
   // Folder copy: the source's line to a copy's destination machine, for secrets sent sealed.
   SealedSecretsPeer.layer.pipe(Layer.provide(RemoteWorkers.layerFleetWorkers)),

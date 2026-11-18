@@ -575,6 +575,11 @@ export async function measureCommitRange(input: {
     "-z",
     ...range,
   ]);
-  const files = new Set(touched.stdout.split("\0").map((path) => path.trim()).filter(Boolean));
+  const files = new Set(
+    touched.stdout
+      .split("\0")
+      .map((path) => path.trim())
+      .filter(Boolean),
+  );
   return { oversizedFile, files: files.size };
 }

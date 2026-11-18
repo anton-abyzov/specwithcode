@@ -86,7 +86,8 @@ export async function checkSnapshotContent(input: {
   for (const path of input.untracked) {
     if (input.allow?.has(path)) continue;
     if (read >= maxFiles) {
-      if (input.pastLimit === "leave-out") leftOut.push({ path, reason: "not-checked", kind: null });
+      if (input.pastLimit === "leave-out")
+        leftOut.push({ path, reason: "not-checked", kind: null });
       else notCheckedCount += 1;
       continue;
     }

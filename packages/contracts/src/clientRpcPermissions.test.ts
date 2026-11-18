@@ -41,7 +41,7 @@ describe("project sync scopes (1390 AC-33)", () => {
 
   it("gives each call exactly one scope from the existing set", () => {
     for (const [method, scope] of Object.entries(expected)) {
-      expect(clientRpcRequiredScopes(method), method).toEqual([scope]);
+      expect(clientRpcRequiredScopes(method, undefined), method).toEqual([scope]);
       expect(CLIENT_GUARDED_RPC_SCOPES[method as keyof typeof expected]).toBe(scope);
     }
   });
@@ -56,7 +56,7 @@ describe("project sync scopes (1390 AC-33)", () => {
   });
 
   it("keeps the calls a sync is modelled on at the scopes it copies", () => {
-    expect(clientRpcRequiredScopes("handoffMode.checkpointNow")).toEqual([
+    expect(clientRpcRequiredScopes("handoffMode.checkpointNow", undefined)).toEqual([
       AuthSourceControlWriteScope,
     ]);
   });
@@ -68,7 +68,10 @@ describe("the sync plan (1390 AC-11)", () => {
   });
 
   it("gives each state its one action", () => {
-    const plan = (change: Partial<ProjectSyncRepositoryFacts>, otherBranch: string | null = "main") => {
+    const plan = (
+      change: Partial<ProjectSyncRepositoryFacts>,
+      otherBranch: string | null = "main",
+    ) => {
       const step = planProjectSyncRepository(facts(change), { branch: otherBranch });
       return `${step.action}:${step.reason}`;
     };

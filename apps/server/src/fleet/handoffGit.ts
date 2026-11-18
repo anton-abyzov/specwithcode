@@ -573,7 +573,8 @@ const make = Effect.gen(function* () {
       const cwd = yield* resolveRepository(input.workspaceRoot, relativePath, stage).pipe(
         at(relativePath),
       );
-      const moves = incoming && (yield* text(cwd, ["rev-parse", "HEAD"], stage)) !== repository.head;
+      const moves =
+        incoming && (yield* text(cwd, ["rev-parse", "HEAD"], stage)) !== repository.head;
       yield* guardConfigTree(
         admitted,
         cwd,

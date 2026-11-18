@@ -274,9 +274,10 @@ describe("who may send extras here (1390 AC-13)", () => {
 
   it("refuses a request that names another machine than the one asking", () => {
     expect(ask({ sourceEnvironmentId: other })).toMatchObject({ kind: "refused", status: 403 });
-    expect(
-      ask({ caller: { sourceEnvironmentId: other, grant: grant() } }),
-    ).toMatchObject({ kind: "refused", status: 403 });
+    expect(ask({ caller: { sourceEnvironmentId: other, grant: grant() } })).toMatchObject({
+      kind: "refused",
+      status: 403,
+    });
   });
 
   it("refuses a project that is not linked both ways, or linked twice", () => {
@@ -286,9 +287,7 @@ describe("who may send extras here (1390 AC-13)", () => {
     });
     expect(
       ask({
-        projects: [
-          project({ workspaceSettings: { logicalProject: { members: [members[0]!] } } }),
-        ],
+        projects: [project({ workspaceSettings: { logicalProject: { members: [members[0]!] } } })],
       }),
     ).toMatchObject({ kind: "refused", check: "project-link" });
     expect(

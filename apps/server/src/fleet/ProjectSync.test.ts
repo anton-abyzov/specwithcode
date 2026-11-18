@@ -5,11 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
 
-import {
-  planProjectSync,
-  type ProjectSyncRepositoryFacts,
-  type ProjectSyncStep,
-} from "@specweave-studio/contracts";
+import { planProjectSync, type ProjectSyncStep } from "@specweave-studio/contracts";
 
 import { runGit } from "./folderTransfer/git.ts";
 import {
@@ -343,10 +339,7 @@ describe("project sync on real repositories (1390 AC-11)", () => {
     const { run } = recording();
     const ctx = context(run);
     const here = await fetchAll(ctx, await syncRepositories(run, f.a, ["."]));
-    const there = await fetchAll(
-      ctx,
-      await syncRepositories(run, f.b, [".", "repositories/lib"]),
-    );
+    const there = await fetchAll(ctx, await syncRepositories(run, f.b, [".", "repositories/lib"]));
     const plan = planProjectSync(here, there);
     expect(plan.map((step) => `${step.path} ${say(step)}`)).toEqual([
       ". none:up-to-date",
@@ -633,9 +626,9 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
       if (args[0] === "clone") expect(args.slice(0, 3)).toEqual(["clone", "--quiet", "--"]);
       if (args[0] === "remote") expect(args).toEqual(["remote", "get-url", "origin"]);
       // No read is told to write: no `-d`, `--delete`, `--force` or `-f` anywhere.
-      expect(args.filter((arg) => /^(-d|-D|-f|--delete|--force|--hard|--prune)$/.test(arg))).toEqual(
-        [],
-      );
+      expect(
+        args.filter((arg) => /^(-d|-D|-f|--delete|--force|--hard|--prune)$/.test(arg)),
+      ).toEqual([]);
     }
   });
 });
