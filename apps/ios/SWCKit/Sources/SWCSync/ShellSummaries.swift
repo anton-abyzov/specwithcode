@@ -623,6 +623,9 @@ public enum ShellSummaries {
     summary.waitReason = attention.dependencyWait
     summary.asksForAccess = thread.pendingRuntimeRequest?.isAccessRequest == true
     summary.traits = traits(thread.modelSelection, providers: providers)
+    summary.modelChoices = ModelChoice.available(providers: providers, current: thread.modelSelection)
+    summary.modelSelection = thread.modelSelection
+    summary.latestRunStartedAt = thread.latestRunStartedAt
     summary.runtimeMode = RuntimeModeChoice(rawValue: thread.runtimeMode.rawValue)
     return summary
   }

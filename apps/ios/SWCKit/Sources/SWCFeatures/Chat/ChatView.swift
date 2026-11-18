@@ -36,6 +36,7 @@ private struct ChatScreen: View {
   @Environment(AppRouter.self) private var router
   @Environment(StackNavigator.self) private var nav
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.scenePhase) private var scenePhase
   @Environment(\.isNavigationSidebarVisible) private var sidebarVisible
   @Environment(\.isWideLayout) private var wide
   @Environment(\.layoutClass) private var layoutClass
@@ -138,6 +139,12 @@ private struct ChatScreen: View {
         composerFocused = false
         dictation.stop()
         model.closeSession(session)
+        // A sent model only bridges the queue while this chat watches it;
+        // reopened, the thread's own selection is the truth.
+        router.sentModels[target] = nil
+      }
+      .onChange(of: scenePhase) { _, phase in
+        if phase == .background { router.sentModels[target] = nil }
       }
       .task(id: router.pendingComposerFocus) {
         guard router.pendingComposerFocus == target else { return }
@@ -267,6 +274,10 @@ private struct ChatScreen: View {
     } action: { _, distance in
       if isNearBottom, distance > 200 { isNearBottom = false }
       else if !isNearBottom, distance < 80 { isNearBottom = true }
+    }
+    .onChange(of: threadSummary?.modelSelection) {
+      // The thread's model changed: a sent model is now either applied or overruled.
+      router.sentModels[target] = nil
     }
     .onChange(of: tailSignature) {
       guard isNearBottom else { return }
@@ -838,11 +849,14 @@ private struct ChatScreen: View {
           }
           if showsModelOptions, let thread = threadSummary {
             ModelOptionsMenu(
-              model: thread.identity.model,
+              model: chosenModelName ?? thread.identity.model,
               traits: chosenTraits,
               runtimeMode: thread.runtimeMode,
-              hasPendingChanges: !(router.optionDrafts[target] ?? []).isEmpty,
+              models: thread.modelChoices,
+              selectedModelId: chosenModelId,
+              hasPendingChanges: !(router.optionDrafts[target] ?? []).isEmpty || router.modelDrafts[target] != nil,
               onSet: setOption,
+              onModel: setModel,
               onAccess: setAccess
             )
             .layoutPriority(-1)
@@ -1072,21 +1086,84 @@ private struct ChatScreen: View {
   /// Threads only: a coordinator's messages go through its own send, which takes no model.
   private var showsModelOptions: Bool {
     guard let thread = threadSummary, session.sendBlockedReason == nil else { return false }
-    return thread.traits?.isEmpty == false || thread.runtimeMode != nil
+    return thread.traits?.isEmpty == false || thread.runtimeMode != nil || thread.modelChoices.count > 1
   }
 
-  /// The thread's options with the ones chosen here laid over them.
+  /// A model sent from here that the thread does not run on yet: a queued
+  /// message switches the thread only when its run starts. Later messages keep
+  /// naming it until the thread's own selection catches up.
+  private var sentModel: ModelSelection? {
+    guard let sent = router.sentModels[target],
+          ModelChoice.sameSelection(threadSummary?.modelSelection, sent.threadWas),
+          !Self.runStarted(threadSummary?.latestRunStartedAt, after: sent.runStartedBefore)
+    else { return nil }
+    return sent.selection
+  }
+
+  /// A run started after the send. A queued run counts as latest before it
+  /// starts, with no start time, so only a later start time spends it.
+  static func runStarted(_ latest: Date?, after before: Date?) -> Bool {
+    guard let latest else { return false }
+    guard let before else { return true }
+    return latest > before
+  }
+
+  /// The selection the next message builds on, without this composer's
+  /// unsent pick: a sent model still on its way, else the thread's own.
+  private var baseSelection: ModelSelection? { sentModel ?? threadSummary?.modelSelection }
+
+  /// The model the next message runs on: the unsent pick, else the base.
+  private var nextSelection: ModelSelection? { router.modelDrafts[target] ?? baseSelection }
+
+  private func choice(for selection: ModelSelection?) -> ModelChoice? {
+    guard let selection else { return nil }
+    return threadSummary?.modelChoices.first { $0.matches(selection) }
+  }
+
+  /// The options of the model the next message runs on. A picked or sent
+  /// model shows its own (from its defaults); the thread's model shows the
+  /// thread's values.
+  private var baseTraits: ModelTraits? {
+    if router.modelDrafts[target] == nil, sentModel == nil { return threadSummary?.traits }
+    guard let selection = nextSelection else { return nil }
+    return choice(for: selection)?.traits(for: selection)
+  }
+
+  /// Those options with the ones chosen here laid over them.
   private var chosenTraits: ModelTraits? {
-    guard let traits = threadSummary?.traits else { return nil }
+    guard let traits = baseTraits else { return nil }
     return (router.optionDrafts[target] ?? []).reduce(traits) { $0.setting($1.id, to: $1.value) }
   }
+
+  /// The model the chip names: the one the next message runs on. The
+  /// thread's identity is the fallback; it may name a running fallback model.
+  private var chosenModelName: String? {
+    choice(for: nextSelection)?.name ?? threadSummary?.identity.model
+  }
+
+  /// The choice the menu checks.
+  private var chosenModelId: String? { choice(for: nextSelection)?.id }
 
   private func setOption(_ id: String, _ value: ModelOption.Value) {
     var chosen = router.optionDrafts[target] ?? []
     chosen.removeAll { $0.id == id }
-    // Back to the thread's own value: nothing left to send.
-    if threadSummary?.traits?.selection.option(id) != value { chosen.append(ModelOption(id: id, value: value)) }
+    // Back to the model's own value: nothing left to send.
+    if baseTraits?.selection.option(id) != value { chosen.append(ModelOption(id: id, value: value)) }
     router.optionDrafts[target] = chosen.isEmpty ? nil : chosen
+  }
+
+  private func setModel(_ choice: ModelChoice) {
+    guard choice.id != chosenModelId else { return }
+    // Options belong to a model; a different model starts from its own.
+    router.optionDrafts[target] = nil
+    if let base = baseSelection, choice.matches(base) {
+      router.modelDrafts[target] = nil
+    } else if let own = threadSummary?.modelSelection, choice.matches(own) {
+      // Back to the thread's own model while a sent one is on its way: keep its options.
+      router.modelDrafts[target] = own
+    } else {
+      router.modelDrafts[target] = choice.selection
+    }
   }
 
   private func setAccess(_ mode: RuntimeModeChoice) {
@@ -1110,8 +1187,26 @@ private struct ChatScreen: View {
     router.drafts[target] = ""
     router.attachmentDrafts[target] = nil
     let chosen = router.optionDrafts[target] ?? []
-    let selection = chosen.isEmpty ? nil : threadSummary?.traits.map { ModelTraits.merging($0.selection, with: chosen) }
+    let picked = router.modelDrafts[target]
+    // A pick or a sent model still on its way is sent whole, whether or not
+    // the catalog lists it right now; otherwise only changed options go.
+    let modelBase = picked ?? sentModel
+    let selection: ModelSelection? = if let modelBase {
+      ModelTraits.merging(modelBase, with: chosen)
+    } else {
+      chosen.isEmpty ? nil : threadSummary?.traits.map { ModelTraits.merging($0.selection, with: chosen) }
+    }
+    if sentModel == nil { router.sentModels[target] = nil }
+    let previousSent = router.sentModels[target]
+    var sent: SentModel?
+    if modelBase != nil, let selection {
+      sent = SentModel(selection: selection, threadWas: threadSummary?.modelSelection, runStartedBefore: threadSummary?.latestRunStartedAt)
+      router.sentModels[target] = sent
+    }
     router.optionDrafts[target] = nil
+    router.modelDrafts[target] = nil
+    let sendId = UUID()
+    router.lastSendIds[target] = sendId
     session.lastError = nil
     isNearBottom = true
     let target = target
@@ -1119,7 +1214,13 @@ private struct ChatScreen: View {
       do {
         try await model.engine.send(text, images: images, modelSelection: selection, to: target)
       } catch {
-        if !chosen.isEmpty, router.optionDrafts[target] == nil { router.optionDrafts[target] = chosen }
+        // Only this send's own record is undone; a later send's stays.
+        if let sent, router.sentModels[target]?.id == sent.id { router.sentModels[target] = previousSent }
+        // A pick or options made while the send ran, or a later send, win over the failed ones.
+        if router.lastSendIds[target] == sendId {
+          if router.modelDrafts[target] == nil { router.modelDrafts[target] = picked }
+          if router.optionDrafts[target] == nil, !chosen.isEmpty, router.modelDrafts[target] == picked { router.optionDrafts[target] = chosen }
+        }
         // Whatever was added while the upload ran stays, after what failed to send.
         let added = router.drafts[target] ?? ""
         router.drafts[target] = added.isEmpty ? original : "\(original)\n\(added)"
