@@ -30,10 +30,25 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { awaitGateOpen, makeGatedHold } from "../serviceUpdate/UpdateInstallGate.testkit.ts";
 import {
+  IosSimulatorSetupSupport,
+  type IosSimulatorSetup,
+  type KeptCheck,
+  makeIosSimulatorSetup,
+  makeIosSimulatorSetupCheck,
+} from "./iosSimulatorSupport.ts";
+import { type DeviceHostSummary, isDevicePlatformSetupCode } from "@specweave-studio/contracts";
+import * as PlatformError from "effect/PlatformError";
+import {
   AGENT_DEVICE_VERSION,
   DEVICE_HUB_VERSION,
   agentDeviceStateDir,
 } from "./DeviceToolchain.ts";
+
+/** Tests never spawn Xcode tools: the kept iOS check has no answer yet, so the host uses its quick test. */
+const iosCheckNotYetAnswered: KeptCheck<IosSimulatorSetup> = {
+  current: () => undefined,
+  read: () => Promise.reject(new Error("Tests must not force the real iOS check")),
+};
 
 const processOutput = (code: number, stdout = "", stderr = "", timedOut = false) => ({
   code: ChildProcessSpawner.ExitCode(code),
@@ -67,6 +82,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     yield* fs.writeFileString(path.join(installDir, ".install-complete"), version!);
   }
   const host = yield* LocalDeviceHost.make().pipe(
+    Effect.provideService(IosSimulatorSetupSupport, iosCheckNotYetAnswered),
     Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
     Effect.provideService(HostProcessEnvironment, { HOME: baseDir, PATH: "" }),
     Effect.provideService(HostProcessIsExecutable, false),
@@ -581,6 +597,7 @@ const args=process.argv.slice(2); fs.writeFileSync(${JSON.stringify(argumentsPat
 http.createServer((req,res)=>res.end('ok')).listen(Number(args[args.indexOf('--port')+1]),'127.0.0.1');`,
       );
       const host = yield* LocalDeviceHost.make().pipe(
+        Effect.provideService(IosSimulatorSetupSupport, iosCheckNotYetAnswered),
         Effect.provide(
           Layer.mergeAll(
             ServerConfig.layerTest(baseDir, baseDir),
@@ -619,6 +636,8 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
       yield* fs.makeDirectory(`${baseDir}/sdk/${directory}`, { recursive: true });
       yield* fs.writeFileString(`${baseDir}/sdk/${directory}/${tool}`, "");
     }
+    yield* fs.makeDirectory(`${baseDir}/.android/avd`, { recursive: true });
+    yield* fs.writeFileString(`${baseDir}/.android/avd/Pixel.ini`, "");
     const onTestHost = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
         Effect.provideService(HostProcessEnvironment, {
@@ -629,6 +648,7 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
         Effect.provideService(HostProcessPlatform, "darwin"),
       );
     const host = yield* LocalDeviceHost.make().pipe(
+      Effect.provideService(IosSimulatorSetupSupport, iosCheckNotYetAnswered),
       Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
       onTestHost,
       Effect.provideService(
@@ -661,6 +681,7 @@ it.effect(
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-device-consent-" });
       const host = yield* LocalDeviceHost.make().pipe(
+        Effect.provideService(IosSimulatorSetupSupport, iosCheckNotYetAnswered),
         Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
         Effect.provideService(HostProcessEnvironment, { HOME: baseDir, PATH: "" }),
         Effect.provideService(HostProcessPlatform, "linux"),
@@ -740,6 +761,7 @@ const makeLifecycleFixture = (hold: ServiceUpdateHold.ServiceUpdateHoldShape) =>
         }),
     };
     const host = yield* LocalDeviceHost.make().pipe(
+      Effect.provideService(IosSimulatorSetupSupport, iosCheckNotYetAnswered),
       Effect.provide(ServerConfig.layerTest(baseDir, baseDir)),
       Effect.provideService(Scope.Scope, hostScope),
       Effect.provideService(HostProcessEnvironment, { HOME: baseDir, PATH: "" }),
@@ -970,3 +992,321 @@ it.layer(NodeServices.layer)("LocalDeviceHost during a service update", (it) => 
     }).pipe(Effect.scoped),
   );
 });
+
+const IOS_RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-18-0";
+const XCODE_DEVELOPER = "/Applications/Xcode.app/Contents/Developer";
+const tool = (ok: boolean, stdout = "", timedOut = false) => ({
+  ok,
+  stdout,
+  ...(timedOut ? { timedOut } : {}),
+});
+const runtimesOutput = (runtimes: ReadonlyArray<object>) =>
+  tool(true, JSON.stringify({ runtimes }));
+const devicesOutput = (devices: Record<string, ReadonlyArray<object>>) =>
+  tool(true, JSON.stringify({ devices }));
+
+interface IosFixture {
+  /** `xcode-select -p`; undefined when it fails. */
+  readonly selected?: string;
+  readonly help?: ReturnType<typeof tool>;
+  readonly runtimes?: ReturnType<typeof tool>;
+  readonly devices?: ReturnType<typeof tool>;
+  readonly apps?: ReadonlyArray<string>;
+}
+
+const iosFixtureCheck = (fixture: () => IosFixture, calls: { count: number } = { count: 0 }) =>
+  makeIosSimulatorSetupCheck({
+    run: async (command, args) => {
+      const current = fixture();
+      if (command === "xcode-select") {
+        calls.count++;
+        return current.selected === undefined ? tool(false) : tool(true, `${current.selected}\n`);
+      }
+      // The command line tools have no simctl, so only a selected Xcode answers by default.
+      if (args[0] === "help") return current.help ?? tool(command.includes(".app/"));
+      if (args[1] === "runtimes") return current.runtimes ?? tool(false);
+      if (args[1] === "devices") return current.devices ?? tool(false);
+      throw new Error(`Unexpected tool ${command} ${args.join(" ")}`);
+    },
+    findXcodeApps: async () => fixture().apps ?? [],
+  });
+
+const READY_IOS: IosFixture = {
+  selected: XCODE_DEVELOPER,
+  runtimes: runtimesOutput([{ identifier: IOS_RUNTIME, platform: "iOS", isAvailable: true }]),
+  devices: devicesOutput({ [IOS_RUNTIME]: [{ udid: "A", isAvailable: true }] }),
+};
+
+const checkIos = (fixture: IosFixture, platform: NodeJS.Platform = "darwin") =>
+  LocalDeviceHost.__testing
+    .platformCheck("ios", makeIosSimulatorSetup({ check: iosFixtureCheck(() => fixture) }), true)
+    .pipe(
+      Effect.provideService(HostProcessPlatform, platform),
+      Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
+      Effect.provide(NodePath.layerPosix),
+    );
+
+describe("iOS setup codes", () => {
+  it.effect("reports one code per missing step and claims Xcode only when simctl answered", () =>
+    Effect.gen(function* () {
+      const cases: ReadonlyArray<readonly [string, IosFixture, NodeJS.Platform, object]> = [
+        [
+          "not a Mac",
+          READY_IOS,
+          "linux",
+          { available: false, code: "not_mac", reason: "iOS Simulators need macOS with Xcode." },
+        ],
+        [
+          "only the command line tools, no Xcode app",
+          { selected: "/Library/Developer/CommandLineTools" },
+          "darwin",
+          { available: false, code: "xcode_missing", xcodeAppFound: false, simctlAnswered: false },
+        ],
+        [
+          "no developer tools at all",
+          {},
+          "darwin",
+          { available: false, code: "xcode_missing", xcodeAppFound: false, simctlAnswered: false },
+        ],
+        [
+          "Xcode in Applications, command line tools selected",
+          { selected: "/Library/Developer/CommandLineTools", apps: ["/Applications/Xcode.app"] },
+          "darwin",
+          {
+            available: false,
+            code: "xcode_not_selected",
+            xcodeAppFound: true,
+            simctlAnswered: false,
+          },
+        ],
+        [
+          "Xcode selected but its simctl does not answer",
+          { selected: XCODE_DEVELOPER, help: tool(false) },
+          "darwin",
+          {
+            available: false,
+            code: "xcode_setup_unfinished",
+            xcodeAppFound: true,
+            simctlAnswered: false,
+          },
+        ],
+        [
+          "simctl answers but cannot list runtimes",
+          { selected: XCODE_DEVELOPER },
+          "darwin",
+          {
+            available: false,
+            code: "xcode_setup_unfinished",
+            xcodeAppFound: true,
+            simctlAnswered: true,
+          },
+        ],
+        [
+          "no iOS runtime, only another platform's",
+          {
+            ...READY_IOS,
+            runtimes: runtimesOutput([
+              {
+                identifier: "com.apple.CoreSimulator.SimRuntime.watchOS-11-0",
+                platform: "watchOS",
+              },
+              { identifier: IOS_RUNTIME, platform: "iOS", isAvailable: false },
+            ]),
+          },
+          "darwin",
+          {
+            available: true,
+            code: "ios_runtime_missing",
+            xcodeAppFound: true,
+            simctlAnswered: true,
+          },
+        ],
+        [
+          "an iOS runtime but no simulator on it",
+          { ...READY_IOS, devices: devicesOutput({ [IOS_RUNTIME]: [] }) },
+          "darwin",
+          {
+            available: true,
+            code: "ios_simulator_missing",
+            xcodeAppFound: true,
+            simctlAnswered: true,
+          },
+        ],
+        [
+          "ready",
+          READY_IOS,
+          "darwin",
+          { available: true, xcodeAppFound: true, simctlAnswered: true },
+        ],
+        [
+          "a tool timed out",
+          { selected: XCODE_DEVELOPER, help: tool(false, "", true) },
+          "darwin",
+          { available: false, xcodeAppFound: true, simctlAnswered: false },
+        ],
+      ];
+      for (const [name, fixture, platform, expected] of cases) {
+        const availability = yield* checkIos(fixture, platform);
+        expect({ name, ...availability }).toMatchObject({ name, ...expected });
+        if (!("code" in expected)) expect(availability.code, name).toBeUndefined();
+        if (availability.code !== undefined)
+          expect(isDevicePlatformSetupCode(availability.code), name).toBe(true);
+      }
+    }),
+  );
+});
+
+const checkAndroid = (
+  files: ReadonlyArray<string>,
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = "darwin",
+  avds: ReadonlyArray<string> | "unreadable" = [],
+) =>
+  LocalDeviceHost.__testing.platformCheck("android", iosCheckNotYetAnswered, true).pipe(
+    Effect.provideService(HostProcessEnvironment, environment),
+    Effect.provideService(HostProcessPlatform, platform),
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: (file) => Effect.succeed(files.includes(file)),
+        readDirectory: () =>
+          avds === "unreadable"
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "readDirectory",
+                }),
+              )
+            : Effect.succeed([...avds]),
+      }),
+    ),
+    Effect.provide(platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix),
+  );
+
+describe("Android setup codes", () => {
+  const sdk = "/sdk";
+  const allTools = [
+    `${sdk}/platform-tools/adb`,
+    `${sdk}/emulator/emulator`,
+    `${sdk}/cmdline-tools/latest/bin/avdmanager`,
+  ];
+  const avdFolder = "/home/test/.android/avd";
+
+  it.effect("tells a missing Android Studio from a missing SDK", () =>
+    Effect.gen(function* () {
+      expect(yield* checkAndroid([], { HOME: "/home/test" })).toMatchObject({
+        available: false,
+        code: "android_studio_missing",
+        androidStudioFound: false,
+        reason:
+          "Android SDK was not found. Install it with Android Studio or set ANDROID_HOME to your SDK directory.",
+      });
+      expect(
+        yield* checkAndroid(["/Applications/Android Studio.app"], { HOME: "/home/test" }),
+      ).toMatchObject({ available: false, code: "android_sdk_missing", androidStudioFound: true });
+      // Linux installs live anywhere, so a miss cannot say Android Studio is absent.
+      const linux = yield* checkAndroid([], { HOME: "/home/test", PATH: "" }, "linux");
+      expect(linux).toMatchObject({ available: false, code: "android_sdk_missing" });
+      expect(linux.androidStudioFound).toBeUndefined();
+      expect(
+        yield* checkAndroid(
+          ["C:\\Program Files\\Android\\Android Studio"],
+          { USERPROFILE: "C:\\Users\\test", ProgramFiles: "C:\\Program Files" },
+          "win32",
+        ),
+      ).toMatchObject({ code: "android_sdk_missing", androidStudioFound: true });
+    }),
+  );
+
+  it.effect("lists every missing SDK part and keeps today's text", () =>
+    Effect.gen(function* () {
+      expect(yield* checkAndroid([], { HOME: "/home/test", ANDROID_HOME: sdk })).toEqual({
+        available: false,
+        code: "android_tools_missing",
+        missing: ["platform_tools", "emulator", "cmdline_tools"],
+        reason: `Android SDK Platform-Tools are missing from ${sdk}. Install them in Android Studio's SDK Manager.`,
+      });
+      expect(
+        yield* checkAndroid([`${sdk}/platform-tools/adb`, `${sdk}/tools/bin/avdmanager`], {
+          HOME: "/home/test",
+          ANDROID_HOME: sdk,
+        }),
+      ).toMatchObject({ code: "android_tools_missing", missing: ["emulator", "cmdline_tools"] });
+    }),
+  );
+
+  it.effect("reports a missing virtual device while the platform stays available", () =>
+    Effect.gen(function* () {
+      const environment = { HOME: "/home/test", ANDROID_HOME: sdk };
+      expect(yield* checkAndroid(allTools, environment)).toEqual({
+        available: true,
+        code: "android_avd_missing",
+      });
+      expect(yield* checkAndroid([...allTools, avdFolder], environment, "darwin", [])).toEqual({
+        available: true,
+        code: "android_avd_missing",
+      });
+      expect(
+        yield* checkAndroid([...allTools, avdFolder], environment, "darwin", [
+          "Pixel.avd",
+          "Pixel.ini",
+        ]),
+      ).toEqual({ available: true });
+      // A folder that cannot be read is not proof that no device exists.
+      expect(
+        yield* checkAndroid([...allTools, avdFolder], environment, "darwin", "unreadable"),
+      ).toEqual({ available: true });
+      expect(
+        yield* checkAndroid(
+          [...allTools, "/avds"],
+          { ...environment, ANDROID_AVD_HOME: "/avds" },
+          "darwin",
+          ["Tablet.ini"],
+        ),
+      ).toEqual({ available: true });
+    }),
+  );
+});
+
+it.effect("Check again runs a fresh iOS check and ignores a kept no", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-device-recheck-" });
+    let fixture: IosFixture = { selected: "/Library/Developer/CommandLineTools" };
+    const calls = { count: 0 };
+    const setup = makeIosSimulatorSetup({ check: iosFixtureCheck(() => fixture, calls) });
+    yield* Effect.promise(() => setup.read());
+    expect(calls.count).toBe(1);
+    const host = yield* LocalDeviceHost.make().pipe(
+      Effect.provideService(IosSimulatorSetupSupport, setup),
+      Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+      Effect.provideService(HostProcessEnvironment, { HOME: baseDir, PATH: "" }),
+      Effect.provideService(HostProcessPlatform, "darwin"),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () => Effect.die(new Error("Setup checks must not run device helpers")),
+      }),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die(new Error("Setup checks must not make network requests"))),
+      ),
+    );
+    const ios = (summary: DeviceHostSummary) =>
+      summary.platforms.find((platform) => platform.platform === "ios");
+    // Xcode is installed after the first check said no.
+    fixture = READY_IOS;
+    expect(ios(yield* host.summary)).toMatchObject({ available: false, code: "xcode_missing" });
+    expect(calls.count).toBe(1);
+    expect(host.inspect).toBeDefined();
+    expect(ios(yield* host.inspect!)).toEqual({
+      platform: "ios",
+      available: true,
+      xcodeAppFound: true,
+      simctlAnswered: true,
+    });
+    expect(calls.count).toBe(2);
+    // The fresh yes is kept for ordinary reads.
+    expect(ios(yield* host.summary)).toMatchObject({ available: true });
+    expect(calls.count).toBe(2);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

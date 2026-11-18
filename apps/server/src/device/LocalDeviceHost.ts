@@ -16,6 +16,8 @@ import {
   type DeviceHostSummary,
   type DevicePlatform,
   type DevicePlatformAvailability,
+  type DevicePlatformSetupCode,
+  type AndroidSdkPart,
   LOCAL_DEVICE_HOST_ID,
 } from "@specweave-studio/contracts";
 import { waitForHttpReady } from "@specweave-studio/shared/httpReadiness";
@@ -54,6 +56,13 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
+import {
+  type IosSetupStatus,
+  type IosSimulatorSetup,
+  IosSimulatorSetupSupport,
+  iosSimulatorSetup,
+  type KeptCheck,
+} from "./iosSimulatorSupport.ts";
 import {
   agentDeviceStateDir,
   type DeviceToolPaths,
@@ -120,28 +129,175 @@ interface RunningHost {
   readonly helpers: DeviceHost.DeviceHostReady["helpers"];
 }
 
+type Availability = Omit<DevicePlatformAvailability, "platform" | "code" | "missing"> & {
+  readonly code?: DevicePlatformSetupCode;
+  readonly missing?: ReadonlyArray<AndroidSdkPart>;
+};
+
+const IOS_REASONS: Partial<Record<IosSetupStatus, string>> = {
+  xcode_missing: "Xcode was not found. Install Xcode from the App Store to run iOS Simulators.",
+  xcode_not_selected:
+    "Xcode was found, but the command line tools are selected instead. Run sudo xcode-select -s with the Xcode app's path.",
+  xcode_setup_unfinished:
+    "Xcode has not finished setting up. Open Xcode once to install its parts and accept its license.",
+  unknown: "Xcode did not answer in time. Check again.",
+};
+
+/**
+ * iOS on this machine's own host. The full check (Xcode.app, the selected
+ * developer folder, `simctl` and its runtimes and devices) is kept between
+ * reads; until its first answer the read falls back to the quick `xcrun` test
+ * this host always used, without a code. A forced read waits for a fresh check.
+ */
+const iosAvailability = Effect.fn("LocalDeviceHost.iosAvailability")(function* (
+  setupCheck: KeptCheck<IosSimulatorSetup>,
+  force: boolean,
+): Effect.fn.Return<Availability, never, FileSystem.FileSystem | Path.Path> {
+  if ((yield* HostProcessPlatform) !== "darwin")
+    return { available: false, reason: "iOS Simulators need macOS with Xcode.", code: "not_mac" };
+  const setup = force
+    ? yield* Effect.promise(() => setupCheck.read({ force: true }))
+    : setupCheck.current();
+  if (setup === undefined) {
+    return (yield* isCommandAvailable("xcrun"))
+      ? { available: true }
+      : { available: false, reason: "Xcode command line tools were not found." };
+  }
+  const facts = {
+    xcodeAppFound: setup.xcodeAppPath !== null,
+    simctlAnswered: setup.simctlAnswered,
+  };
+  switch (setup.status) {
+    case "ready":
+      return { available: true, ...facts };
+    // simctl answers, so the toolchain works; only a simulator is missing.
+    case "ios_runtime_missing":
+    case "ios_simulator_missing":
+      return { available: true, code: setup.status, ...facts };
+    case "unknown":
+      return { available: false, reason: IOS_REASONS.unknown!, ...facts };
+    default:
+      return { available: false, reason: IOS_REASONS[setup.status]!, code: setup.status, ...facts };
+  }
+});
+
+/**
+ * Whether Android Studio is installed: the app bundle on macOS and the install
+ * folder on Windows answer yes or no; on Linux it can live anywhere, so a miss
+ * is unknown (undefined).
+ */
+const androidStudioFound = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const environment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcessPlatform;
+  const home = environment.HOME ?? environment.USERPROFILE ?? "";
+  const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
+  const candidates =
+    platform === "darwin"
+      ? [
+          "/Applications/Android Studio.app",
+          "/Applications/Android Studio Preview.app",
+          path.join(home, "Applications", "Android Studio.app"),
+        ]
+      : platform === "win32"
+        ? [
+            path.join(environment.ProgramFiles ?? "C:\\Program Files", "Android", "Android Studio"),
+            path.join(
+              environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"),
+              "Programs",
+              "Android Studio",
+            ),
+          ]
+        : [
+            "/opt/android-studio/bin/studio.sh",
+            "/usr/local/android-studio/bin/studio.sh",
+            "/snap/bin/android-studio",
+            path.join(home, "android-studio", "bin", "studio.sh"),
+            path.join(home, ".local", "share", "JetBrains", "Toolbox", "apps", "android-studio"),
+            ...(environment.PATH ?? "")
+              .split(":")
+              .filter(Boolean)
+              .map((directory) => path.join(directory, "studio.sh")),
+          ];
+  for (const candidate of candidates) if (yield* exists(candidate)) return true;
+  return platform === "darwin" || platform === "win32" ? false : undefined;
+});
+
+/**
+ * Whether an Android virtual device exists, read from the AVD folder the
+ * emulator uses (its `.ini` files), so no Java tool runs on every read.
+ * Undefined when the folder exists but cannot be read.
+ */
+const androidAvdExists = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const environment = yield* HostProcessEnvironment;
+  const home = environment.HOME ?? environment.USERPROFILE ?? "";
+  const folder = environment.ANDROID_AVD_HOME?.trim()
+    ? environment.ANDROID_AVD_HOME.trim()
+    : environment.ANDROID_USER_HOME?.trim()
+      ? path.join(environment.ANDROID_USER_HOME.trim(), "avd")
+      : environment.ANDROID_EMULATOR_HOME?.trim()
+        ? path.join(environment.ANDROID_EMULATOR_HOME.trim(), "avd")
+        : environment.ANDROID_SDK_HOME?.trim()
+          ? path.join(environment.ANDROID_SDK_HOME.trim(), ".android", "avd")
+          : path.join(home, ".android", "avd");
+  if (!(yield* fs.exists(folder).pipe(Effect.orElseSucceed(() => false)))) return false;
+  const names = yield* fs.readDirectory(folder).pipe(Effect.option);
+  if (Option.isNone(names)) return undefined;
+  return names.value.some((name) => name.endsWith(".ini"));
+});
+
+/** Android on this machine's own host; file checks only, so it is never kept. */
+const androidAvailability = Effect.fn("LocalDeviceHost.androidAvailability")(
+  function* (): Effect.fn.Return<Availability, never, FileSystem.FileSystem | Path.Path> {
+    const sdk = yield* androidSdk;
+    if (!sdk.root) {
+      const studio = yield* androidStudioFound;
+      return {
+        available: false,
+        reason:
+          "Android SDK was not found. Install it with Android Studio or set ANDROID_HOME to your SDK directory.",
+        code: studio === false ? "android_studio_missing" : "android_sdk_missing",
+        ...(studio === undefined ? {} : { androidStudioFound: studio }),
+      };
+    }
+    const missing: AndroidSdkPart[] = [];
+    if (!sdk.adb) missing.push("platform_tools");
+    if (!sdk.emulator) missing.push("emulator");
+    if (!sdk.avdmanager) missing.push("cmdline_tools");
+    if (missing.length > 0) {
+      // Today's text names the first missing part; `missing` names them all.
+      const reason = !sdk.adb
+        ? `Android SDK Platform-Tools are missing from ${sdk.root}. Install them in Android Studio's SDK Manager.`
+        : !sdk.emulator
+          ? `Android Emulator is missing from ${sdk.root}. Install it in Android Studio's SDK Manager.`
+          : sdk.legacyAvdmanager
+            ? `The Android SDK command-line tools in ${sdk.root} appear to be an older, unsupported version. Install Android SDK Command-line Tools (latest) in Android Studio's SDK Manager under SDK Tools.`
+            : `Android SDK Command-line Tools (latest) are missing from ${sdk.root}. Install them in Android Studio's SDK Manager.`;
+      return { available: false, reason, code: "android_tools_missing", missing };
+    }
+    // Physical devices work over adb without a virtual device, so the platform stays available.
+    return (yield* androidAvdExists) === false
+      ? { available: true, code: "android_avd_missing" }
+      : { available: true };
+  },
+);
+
+const platformCheck = (
+  platform: DevicePlatform,
+  setupCheck: KeptCheck<IosSimulatorSetup>,
+  force: boolean,
+) => (platform === "ios" ? iosAvailability(setupCheck, force) : androidAvailability());
+
+/** Today's text, or null when the platform is available. */
 const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   platform: DevicePlatform,
+  setupCheck: KeptCheck<IosSimulatorSetup> = iosSimulatorSetup,
 ): Effect.fn.Return<string | null, never, FileSystem.FileSystem | Path.Path> {
-  const hostPlatform = yield* HostProcessPlatform;
-  if (platform === "ios") {
-    if (hostPlatform !== "darwin") return "iOS Simulators need macOS with Xcode.";
-    if (!(yield* isCommandAvailable("xcrun"))) return "Xcode command line tools were not found.";
-    return null;
-  }
-  const sdk = yield* androidSdk;
-  if (!sdk.root)
-    return "Android SDK was not found. Install it with Android Studio or set ANDROID_HOME to your SDK directory.";
-  if (!sdk.adb)
-    return `Android SDK Platform-Tools are missing from ${sdk.root}. Install them in Android Studio's SDK Manager.`;
-  if (!sdk.emulator)
-    return `Android Emulator is missing from ${sdk.root}. Install it in Android Studio's SDK Manager.`;
-  if (!sdk.avdmanager) {
-    if (sdk.legacyAvdmanager)
-      return `The Android SDK command-line tools in ${sdk.root} appear to be an older, unsupported version. Install Android SDK Command-line Tools (latest) in Android Studio's SDK Manager under SDK Tools.`;
-    return `Android SDK Command-line Tools (latest) are missing from ${sdk.root}. Install them in Android Studio's SDK Manager.`;
-  }
-  return null;
+  const availability = yield* platformCheck(platform, setupCheck, false);
+  return availability.available ? null : (availability.reason ?? null);
 });
 
 /** Resolve the SDK once for both diagnostics and the environment passed to helpers. */
@@ -297,6 +453,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const runningRef = yield* Ref.make<RunningHost | null>(null);
   const restartDelayRef = yield* Ref.make(0);
   const hostId = LOCAL_DEVICE_HOST_ID;
+  const iosSetup = yield* IosSimulatorSetupSupport;
 
   // Refuse foreground starts promptly: waiting while holding the device
   // lifecycle lock would prevent settings changes and shutdown from stopping it.
@@ -316,56 +473,61 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       ),
   };
 
-  const platformAvailability = Effect.fn("LocalDeviceHost.platformAvailability")(function* (
+  const checkPlatform = Effect.fn("LocalDeviceHost.checkPlatform")(function* (
     platform: DevicePlatform,
+    force: boolean,
   ): Effect.fn.Return<DevicePlatformAvailability> {
-    const reason = yield* platformReason(platform).pipe(
+    const availability = yield* platformCheck(platform, iosSetup, force).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
-    return reason === null ? { platform, available: true } : { platform, available: false, reason };
+    return { platform, ...availability };
   });
+  const platformAvailability = (platform: DevicePlatform) => checkPlatform(platform, false);
 
-  const summary: Effect.Effect<DeviceHostSummary> = Effect.gen(function* () {
-    const [platforms, hubInstalled, agentDeviceInstalled] = yield* Effect.all([
-      Effect.all([platformAvailability("ios"), platformAvailability("android")]),
-      isDeviceHubInstalled(config.baseDir).pipe(
+  /** Forced, it runs the setup checks again whatever answer is kept ("Check again"). */
+  const summaryWith = (force: boolean): Effect.Effect<DeviceHostSummary> =>
+    Effect.gen(function* () {
+      const [platforms, hubInstalled, agentDeviceInstalled] = yield* Effect.all([
+        Effect.all([checkPlatform("ios", force), checkPlatform("android", force)]),
+        isDeviceHubInstalled(config.baseDir).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        ),
+        isAgentDeviceInstalled(config.baseDir).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        ),
+      ]);
+      const running = yield* Ref.get(runningRef);
+      const daemon = running?.agentDevice
+        ? yield* readDaemonFile().pipe(Effect.option)
+        : Option.none();
+      const hubAlive = running
+        ? yield* running.hub.child.isRunning.pipe(Effect.orElseSucceed(() => false))
+        : false;
+      const agentAlive =
+        Option.isSome(daemon) && daemon.value.pid ? yield* isProcessAlive(daemon.value.pid) : false;
+      const tools = yield* deviceToolVersions(config.baseDir, {
+        ...(hubAlive ? { hub: DEVICE_HUB_VERSION } : {}),
+        ...(agentAlive && Option.isSome(daemon) && daemon.value.version
+          ? { agent: daemon.value.version }
+          : {}),
+      }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
-      ),
-      isAgentDeviceInstalled(config.baseDir).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-      ),
-    ]);
-    const running = yield* Ref.get(runningRef);
-    const daemon = running?.agentDevice
-      ? yield* readDaemonFile().pipe(Effect.option)
-      : Option.none();
-    const hubAlive = running
-      ? yield* running.hub.child.isRunning.pipe(Effect.orElseSucceed(() => false))
-      : false;
-    const agentAlive =
-      Option.isSome(daemon) && daemon.value.pid ? yield* isProcessAlive(daemon.value.pid) : false;
-    const tools = yield* deviceToolVersions(config.baseDir, {
-      ...(hubAlive ? { hub: DEVICE_HUB_VERSION } : {}),
-      ...(agentAlive && Option.isSome(daemon) && daemon.value.version
-        ? { agent: daemon.value.version }
-        : {}),
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-    );
-    return {
-      tools,
-      id: hostId,
-      kind: "local",
-      label: "This machine",
-      platforms,
-      hubInstalled,
-      agentDeviceInstalled,
-    };
-  });
+      );
+      return {
+        tools,
+        id: hostId,
+        kind: "local",
+        label: "This machine",
+        platforms,
+        hubInstalled,
+        agentDeviceInstalled,
+      };
+    });
+  const summary = summaryWith(false);
 
   const stopHub = (hub: HubProcess | undefined) =>
     hub ? Scope.close(hub.scope, Exit.void).pipe(Effect.ignore) : Effect.void;
@@ -971,6 +1133,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const host: DeviceHost.DeviceHost["Service"] = {
     id: hostId,
     summary,
+    inspect: summaryWith(true),
     platformAvailability,
     ensureReady,
     ensureAgentReady,
@@ -987,6 +1150,9 @@ export const layer = Layer.effect(DeviceHost.DeviceHost, make());
 export const __testing = {
   AgentDeviceDaemonFile,
   androidSdk,
+  androidStudioFound,
+  androidAvdExists,
+  platformCheck,
   platformReason,
   deviceHostEnvironment,
   hubEnvironment,
