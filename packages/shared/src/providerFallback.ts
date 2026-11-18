@@ -931,16 +931,27 @@ function resolveProviderFallbackPass(input: {
     });
     if (elsewhere !== null) return elsewhere;
   }
+  // A Review-track model the person saved on their list (Muse Wonder Full on
+  // Daily) is the last resort for regular work: it runs only once every other
+  // entry of the list, the same model elsewhere and the project model have no
+  // room. It is one that would be Review-only had nobody named it, so GPT-6.1
+  // Sol, on the built-in Daily and Review tracks both, keeps its place.
+  const onReviewTrack =
+    input.review === true
+      ? () => false
+      : reviewOnlyModel({ adversarialReview: input.rule.adversarialReview });
+  let lastResort: ModelSelection | undefined;
   if (explicitOrder) {
     // The person's own entries only. A built-in entry of a track they left
     // empty waits its turn below, after the same model elsewhere, the project
     // model and the coordinator's proven model.
-    const ordered = firstAvailable(
-      (selection) => !orderChain.builtIn.has(fallbackSelectionKey(selection)),
-    );
+    const personal = (selection: ModelSelection) =>
+      !orderChain.builtIn.has(fallbackSelectionKey(selection));
+    const ordered = firstAvailable((selection) => personal(selection) && !onReviewTrack(selection));
     if (ordered !== undefined) return ordered;
+    lastResort = firstAvailable(personal);
     // The user said this list is the whole chain: past it the thread waits.
-    if (listOnly) return null;
+    if (listOnly) return lastResort ?? null;
   }
   const same =
     input.currentModel === undefined
@@ -976,6 +987,7 @@ function resolveProviderFallbackPass(input: {
     const back = home();
     if (back !== null) return back;
   }
+  if (lastResort !== undefined) return lastResort;
   // A default billed per token (a Claude CLI signed in to the Console) counts
   // too: the user named that instance, so its spend is theirs to choose. It
   // never shows a usage read, so free room the reads verify still comes

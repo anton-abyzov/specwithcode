@@ -144,6 +144,23 @@ export interface RegularTrackRule {
 }
 
 /**
+ * Whether `model`'s line (`modelLine`) is on the Review track: the person's
+ * reviewers, else the built-in Review order.
+ */
+function reviewTrackLine(
+  rule: Pick<RegularTrackRule, "adversarialReview">,
+): (selection: Pick<ModelSelection, "model">) => boolean {
+  const reviewers = rule.adversarialReview?.reviewers ?? [];
+  const reviewLines = new Set(
+    (reviewers.length > 0
+      ? reviewers.map((entry) => entry.model)
+      : DEFAULT_MODEL_TRACKS.review.map((entry) => entry.model)
+    ).map(modelLine),
+  );
+  return ({ model }) => reviewLines.has(modelLine(model));
+}
+
+/**
  * Whether `model` belongs only to the Review track, so regular work never
  * falls back to it. The Review track is the person's reviewers, else the
  * built-in Review order; a model is Review-only when its line (`modelLine`)
@@ -158,13 +175,7 @@ export interface RegularTrackRule {
 export function reviewOnlyModel(
   rule: RegularTrackRule,
 ): (selection: Pick<ModelSelection, "model">) => boolean {
-  const reviewers = rule.adversarialReview?.reviewers ?? [];
-  const reviewLines = new Set(
-    (reviewers.length > 0
-      ? reviewers.map((entry) => entry.model)
-      : DEFAULT_MODEL_TRACKS.review.map((entry) => entry.model)
-    ).map(modelLine),
-  );
+  const onReviewTrack = reviewTrackLine(rule);
   const builtInLines = new Set<string>();
   const lane = (saved: ReadonlyArray<ModelSelection> | undefined, track: "daily" | "complex") => {
     if (saved !== undefined && saved.length > 0) return saved.map((entry) => entry.model);
@@ -182,7 +193,7 @@ export function reviewOnlyModel(
   return ({ model }) => {
     const line = modelLine(model);
     return (
-      reviewLines.has(line) &&
+      onReviewTrack({ model }) &&
       !builtInLines.has(line) &&
       !regular.some((named) => isSameModel({ slug: named }, { slug: model }))
     );
