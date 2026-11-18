@@ -29,6 +29,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { walkFirstRun } from "../studio-verify/first-run-walk.mjs";
 
 process.env.PWDEBUG = "0";
 process.env.PLAYWRIGHT_HTML_OPEN = "never";
@@ -532,56 +533,17 @@ const main = async () => {
   try {
     await page.goto(pairUrl, { waitUntil: "domcontentloaded", timeout: TIMEOUT_MS });
     const nav = page.getByRole("navigation", { name: "Projects and chats" });
-    const wizard = page.getByRole("dialog").filter({ hasText: "SpecWithCode" }).first();
-    // First-run wizard: go on without an account, then skip the
-    // agent, access and project-import steps. With no agent installed the
-    // agents step offers "Continue without an agent".
-    const wizardButtons = [
-      /^Use without an account$/u,
-      /^Do not import projects$/u,
-      // The access step: new chats keep the access they start with.
-      /^Keep (Supervised|current access)$/u,
-      /^Skip/u,
-      /^Continue( without an agent)?$/u,
-      /^(Finish|Done|Get started|Close)$/u,
-    ];
-    // isVisible() does not wait, so poll until the sidebar is usable.
-    const deadline = Date.now() + TIMEOUT_MS;
-    let ready = false;
-    while (!ready && Date.now() < deadline) {
-      if (await wizard.isVisible().catch(() => false)) {
-        let clicked = null;
-        for (const name of wizardButtons) {
-          const button = wizard.getByRole("button", { name }).last();
-          if (
-            (await button.isVisible().catch(() => false)) &&
-            (await button.isEnabled().catch(() => false))
-          ) {
-            clicked = (await button.innerText().catch(() => String(name))).trim().split("\n")[0];
-            await button.click();
-            break;
-          }
-        }
-        if (clicked) wizardSteps.push(clicked);
-        if (wizardSteps.length > 12) throw new Error("the first-run wizard did not finish");
-      } else {
-        ready = await nav.isVisible().catch(() => false);
-      }
-      if (!ready) await page.waitForTimeout(1000);
-    }
-    if (!ready) {
-      const offered = await wizard
-        .getByRole("button")
-        .allInnerTexts()
-        .catch(() => []);
-      throw new Error(
-        `the sidebar navigation 'Projects and chats' never became visible${
-          offered.length
-            ? `; the wizard offered: ${offered.map((text) => JSON.stringify(text.trim())).join(", ")}`
-            : ""
-        }`,
+    // First-run setup, on each step's neutral action (scripts/studio-verify/first-run-walk.mjs).
+    const ready = () => nav.isVisible().catch(() => false);
+    try {
+      wizardSteps.push(
+        ...(await walkFirstRun(page, { until: ready, appearTimeoutMs: TIMEOUT_MS })),
       );
+    } catch (error) {
+      wizardSteps.push(...(error.firstRunSteps ?? []));
+      throw error;
     }
+    await nav.waitFor({ state: "visible", timeout: TIMEOUT_MS });
     record("pairing-authenticated-ui", true, {
       url: new URL(page.url()).pathname,
       wizardSteps,
