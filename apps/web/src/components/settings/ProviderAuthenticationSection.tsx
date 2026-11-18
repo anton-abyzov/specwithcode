@@ -28,7 +28,12 @@ import { SettingsRow } from "./settingsLayout";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { clearChatGptSignIn, noteChatGptSignInStarted } from "./chatGptWelcomeState";
 
-import { CopilotSignInHints } from "./CopilotSignInHints";
+import {
+  COPILOT_HOST_UNTOUCHED,
+  CopilotSignInHints,
+  pickedCopilotHost,
+  type CopilotHostChoice,
+} from "./CopilotSignInHints";
 
 const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
 
@@ -60,6 +65,7 @@ export function ProviderAuthenticationSection({
   const [error, setError] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState("");
   const [pending, setPending] = useState(false);
+  const [copilotHost, setCopilotHost] = useState<CopilotHostChoice>(COPILOT_HOST_UNTOUCHED);
   const pendingRef = useRef(false);
   const terminalQueue = useRef<ProviderAuthRespondInput[]>([]);
   const terminalSending = useRef(false);
@@ -112,6 +118,9 @@ export function ProviderAuthenticationSection({
           : `Sign in on ${environmentLabel}.`;
   const statusMessage = auth?.phase === "failed" ? auth.message : null;
   const disabled = readOnly || pending || query.error !== null || isDiscovering;
+  // GitHub Copilot only: the server reports what this machine has only for Copilot.
+  const isCopilot = auth?.copilotExistingSignIns !== undefined;
+  const host = isCopilot ? pickedCopilotHost(copilotHost) : undefined;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
   // A completed, cancelled or expired flow must not expose a stale sign-in link.
@@ -304,7 +313,9 @@ export function ProviderAuthenticationSection({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={disabled || !provider.enabled || !provider.installed || !auth}
+                disabled={
+                  disabled || !provider.enabled || !provider.installed || !auth || host === null
+                }
                 onClick={() => {
                   noteChatGptSignInStarted(environmentId, instanceId);
                   void run(() =>
@@ -315,6 +326,7 @@ export function ProviderAuthenticationSection({
                         ...(methodId && auth?.methods?.some((method) => method.id === methodId)
                           ? { methodId }
                           : {}),
+                        ...(host ? { host } : {}),
                       },
                     }),
                   );
@@ -556,9 +568,13 @@ export function ProviderAuthenticationSection({
       <CopilotSignInHints
         environmentId={environmentId}
         environmentLabel={environmentLabel}
+        instanceId={instanceId}
         found={auth?.copilotExistingSignIns}
         message={statusMessage ?? error}
         readOnly={readOnly}
+        {...(active || needsExternalSetup
+          ? {}
+          : { host: copilotHost, onHostChange: setCopilotHost })}
       />
     </SettingsRow>
   );

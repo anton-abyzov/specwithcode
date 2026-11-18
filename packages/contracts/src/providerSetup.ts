@@ -114,6 +114,16 @@ export const ProviderAuthStartInput = Schema.Struct({
   methodId: Schema.optionalKey(SetupOperationId),
   returnUrl: Schema.optionalKey(Schema.String),
   callbackMode: Schema.optionalKey(Schema.Literals(["server", "client"])),
+  /**
+   * The GitHub host to sign in to (GitHub Copilot only): `github.com` or an
+   * enterprise host such as `company.ghe.com`. Older servers ignore it.
+   */
+  host: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isMaxLength(253),
+      Schema.isPattern(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/u),
+    ),
+  ),
 });
 export type ProviderAuthStartInput = typeof ProviderAuthStartInput.Type;
 

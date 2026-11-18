@@ -43,12 +43,15 @@ import {
   copilotCliNotInstalledMessage,
   copilotCliTooOldMessage,
   copilotDeviceLoginArgs,
+  copilotHostInvalidMessage,
   copilotLoginUnrecognizedMessage,
   copilotNodeMissingMessage,
   copilotOutputShowsNodeMissing,
   isCopilotDeviceLogin,
+  normalizeCopilotHost,
   readCopilotDeviceCode,
   readCopilotVersion,
+  resolveCopilotLoginHost,
   supportsCopilotDeviceLogin,
   withCopilotLoginHost,
 } from "./CopilotDeviceAuthentication.ts";
@@ -422,12 +425,23 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
           "start",
           copilotCliTooOldMessage(version, /(?:^|\s)--device-code(?:\s|$)/u.test(help)),
         );
-      // One enterprise host among this machine's gh sign-ins: sign in there.
-      const existing = probeCopilotExistingSignIns ? yield* probeCopilotExistingSignIns : undefined;
+      // The host picked in the sign-in step, a host variable, or the one
+      // enterprise host among this machine's gh sign-ins.
+      const picked = context.host === undefined ? undefined : normalizeCopilotHost(context.host);
+      if (context.host !== undefined && picked === undefined)
+        return yield* failure("start", copilotHostInvalidMessage());
+      const existing =
+        picked === undefined && probeCopilotExistingSignIns
+          ? yield* probeCopilotExistingSignIns
+          : undefined;
       const args = withCopilotLoginHost(
         deviceArgs,
         help,
-        existing ? copilotEnterpriseHost(existing.ghAccounts) : undefined,
+        resolveCopilotLoginHost({
+          picked,
+          environment,
+          ghEnterpriseHost: existing ? copilotEnterpriseHost(existing.ghAccounts) : undefined,
+        }),
       );
       // Copilot device login still opens a browser by default. Its argv override
       // is scoped to this login; the controlling client owns the browser action.
