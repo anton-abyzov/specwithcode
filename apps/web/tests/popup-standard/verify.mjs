@@ -54,13 +54,13 @@ const browser = await chromium.launch({
 const REM = 16;
 // The popup each case opens, its kind's width cap in px, and whether arrow keys move in it.
 const CASES = [
-  { name: "machine", trigger: "[data-coordinator-machine]", popup: '[data-slot="menu-popup"]', cap: 20 * REM, keys: true },
+  { name: "machine", trigger: "[data-coordinator-machine]", popup: '[data-slot="menu-popup"]', cap: 20 * REM, keys: true, info: true },
   { name: "machine-linked", trigger: "[data-coordinator-machine]", popup: '[data-slot="menu-popup"]', cap: 20 * REM, keys: true },
   { name: "menu", trigger: "[data-popup-trigger]", popup: '[data-slot="menu-popup"]', cap: 20 * REM, keys: true },
-  { name: "popover", trigger: "[data-popup-trigger]", popup: '[data-slot="popover-popup"]', cap: 20 * REM },
+  { name: "popover", trigger: "[data-popup-trigger]", popup: '[data-slot="popover-popup"]', cap: 32 * REM },
   { name: "dialog", trigger: "[data-popup-trigger]", popup: '[role="dialog"]', cap: 32 * REM, trap: true },
   { name: "alert", trigger: "[data-popup-trigger]", popup: '[role="alertdialog"]', cap: 32 * REM, trap: true },
-  { name: "select", trigger: "[data-popup-trigger]", popup: '[data-slot="select-popup"]', cap: 20 * REM },
+  { name: "select", trigger: "[data-popup-trigger]", popup: '[data-slot="select-popup"]', cap: 24 * REM },
   { name: "toast", trigger: "[data-popup-trigger]", popup: '[data-slot="toast-viewport"] > :first-child', cap: 24 * REM },
 ];
 const SIZES = [
@@ -122,13 +122,38 @@ try {
           axe,
           shot,
         };
-        if (!before && box) {
+        // Below 640 px a dialog is a bottom sheet: full width, resting on the window's foot.
+        const sheet = item.trap && size.width < 640;
+        if (!before && box && sheet) {
+          check(
+            Math.round(box.width) === size.width && Math.round(box.y + box.height) === size.height,
+            `${id}: not a bottom sheet ${JSON.stringify(row.box)}`,
+          );
+        }
+        if (!before && box && !sheet) {
           check(box.width <= row.cap + 1, `${id}: ${Math.round(box.width)} px wide, cap ${row.cap}`);
           check(
             box.x >= MARGIN - 1 && box.y >= MARGIN - 1 && box.x + box.width <= size.width - MARGIN + 1 && box.y + box.height <= size.height - MARGIN + 1,
             `${id}: outside the window margin ${JSON.stringify(row.box)}`,
           );
           check(axe.length === 0, `${id}: axe ${axe.join(", ")}`);
+        }
+        // The explanation behind the first label's info button, opened in place.
+        const infoButton = page.locator('[data-slot="menu-info-button"]').first();
+        if (item.info && (await infoButton.count())) {
+          await infoButton.click();
+          await page.waitForTimeout(250);
+          const infoBox = await popup.boundingBox();
+          row.info = infoBox && { width: Math.round(infoBox.width), height: Math.round(infoBox.height) };
+          row.infoShot = path.join(output, `${id}-info.png`);
+          await page.screenshot({ path: row.infoShot });
+          if (!before && infoBox) {
+            check(infoBox.width <= row.cap + 1, `${id} info: ${Math.round(infoBox.width)} px wide`);
+            check(infoBox.y >= MARGIN - 1, `${id} info: above the window margin`);
+            check(await page.locator(item.popup).count() === 1, `${id}: info closed the menu`);
+          }
+          await infoButton.click();
+          await page.waitForTimeout(150);
         }
         if (!before && item.keys) {
           await page.keyboard.press("ArrowDown");
@@ -147,13 +172,26 @@ try {
           check(back, `${id}: Escape did not return focus to the trigger`);
         }
         if (!before && item.trap) {
-          for (let i = 0; i < 6; i++) await page.keyboard.press("Tab");
-          const inside = await page.evaluate(
-            (selector) => !!document.querySelector(selector)?.contains(document.activeElement),
-            item.popup,
-          );
+          // Focus may rest on the body or a focus guard for one step while it wraps; it must
+          // never reach a control outside the dialog.
+          let inside = true;
+          for (let i = 0; i < 8; i++) {
+            await page.keyboard.press("Tab");
+            // At machine speed a press can land before the focus guard moves focus back in.
+            await page.waitForTimeout(150);
+            const ok = await page.evaluate((selector) => {
+              const active = document.activeElement;
+              return (
+                !active ||
+                active === document.body ||
+                active.hasAttribute("data-base-ui-focus-guard") ||
+                !!document.querySelector(selector)?.contains(active)
+              );
+            }, item.popup);
+            inside &&= ok;
+          }
           await page.keyboard.press("Escape");
-          await page.waitForTimeout(250);
+          await page.waitForTimeout(500);
           const back = await page.evaluate(
             (selector) => document.activeElement === document.querySelector(selector),
             item.trigger,

@@ -1,8 +1,9 @@
 "use client";
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import { CheckIcon, ChevronRightIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, InfoIcon } from "lucide-react";
 import type * as React from "react";
+import { useId, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { usePagePopup } from "./pagePopups";
@@ -20,9 +21,23 @@ function MenuTrigger({ className, children, ...props }: MenuPrimitive.Trigger.Pr
   );
 }
 
+// One width scale for every menu (docs/studio/design-guidelines.md, Popups): a menu sizes to
+// its rows up to its cap and wraps longer text, so a long line never stretches it across the
+// window. md suits most menus; lg and xl are for pickers whose rows carry long names.
+const menuPopupWidthClassName = {
+  sm: "max-w-[min(16rem,calc(100vw-2rem))]",
+  md: "max-w-[min(20rem,calc(100vw-2rem))]",
+  lg: "max-w-[min(24rem,calc(100vw-2rem))]",
+  xl: "max-w-[min(32rem,calc(100vw-2rem))]",
+} as const;
+
+/** Every popup keeps this far from the window's edges, flipping or shifting to stay inside. */
+const POPUP_COLLISION_PADDING = 8;
+
 function MenuPopup({
   children,
   className,
+  width = "md",
   sideOffset = 4,
   align = "center",
   alignOffset,
@@ -37,6 +52,7 @@ function MenuPopup({
   side?: MenuPrimitive.Positioner.Props["side"];
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
   keepMounted?: boolean;
+  width?: keyof typeof menuPopupWidthClassName;
 }) {
   return (
     <MenuPrimitive.Portal keepMounted={keepMounted}>
@@ -44,6 +60,7 @@ function MenuPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
+        collisionPadding={POPUP_COLLISION_PADDING}
         className="z-[130]"
         data-slot="menu-positioner"
         side={side}
@@ -58,8 +75,9 @@ function MenuPopup({
             // the Review panel header). Drag hit-testing ignores z-index, so
             // the topmost row would stay unhoverable without this opt-out.
             "[-webkit-app-region:no-drag]",
-            // Menus size to their content from one minimum, never past the viewport.
-            "min-w-[min(10rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]",
+            // Menus size to their content from one minimum up to their width cap.
+            "min-w-[min(10rem,calc(100vw-2rem))]",
+            menuPopupWidthClassName[width],
             className,
           )}
           data-slot="menu-popup"
@@ -233,7 +251,7 @@ function MenuGroupLabel({
   return (
     <MenuPrimitive.GroupLabel
       className={cn(
-        "px-2 py-1.5 font-medium text-muted-foreground text-xs data-inset:ps-9 sm:data-inset:ps-8",
+        "px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs leading-4 data-inset:ps-9 sm:data-inset:ps-8",
         className,
       )}
       data-inset={inset}
@@ -243,10 +261,70 @@ function MenuGroupLabel({
   );
 }
 
+/**
+ * One short line under a group label saying what the group does. It wraps inside the menu's
+ * width and never sets it. Longer explanations belong in a row's tooltip or behind an info
+ * action, not here (docs/studio/design-guidelines.md, Popups).
+ */
+function MenuHint({ className, ...props }: React.ComponentProps<"p">) {
+  return (
+    <p
+      className={cn("px-2 pb-1.5 text-pretty text-muted-foreground text-xs leading-4", className)}
+      data-slot="menu-hint"
+      {...props}
+    />
+  );
+}
+
+/**
+ * A group label with an info button at its end. The button is a menu item, so arrow keys,
+ * Enter and a tap reach it; it shows or hides the explanation under the label without closing
+ * the menu. Use it for anything longer than one short line (docs/studio/design-guidelines.md,
+ * Popups). `infoLabel` names the button for assistive technology.
+ */
+function MenuInfoLabel({
+  children,
+  info,
+  infoLabel,
+  defaultOpen = false,
+}: {
+  children: React.ReactNode;
+  info: React.ReactNode;
+  infoLabel: string;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const id = useId();
+  return (
+    <>
+      <div className="flex items-center gap-1 pe-1" data-slot="menu-info-label">
+        <MenuGroupLabel className="min-w-0 flex-1">{children}</MenuGroupLabel>
+        <MenuPrimitive.Item
+          aria-controls={open ? id : undefined}
+          aria-expanded={open}
+          aria-label={infoLabel}
+          className="mt-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground outline-none data-highlighted:bg-accent data-highlighted:text-accent-foreground aria-expanded:text-foreground"
+          closeOnClick={false}
+          data-slot="menu-info-button"
+          onClick={() => setOpen((value) => !value)}
+          title={infoLabel}
+        >
+          <InfoIcon aria-hidden className="size-3.5" />
+        </MenuPrimitive.Item>
+      </div>
+      {open ? (
+        <div data-slot="menu-info" id={id}>
+          {info}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function MenuSeparator({ className, ...props }: MenuPrimitive.Separator.Props) {
   return (
     <MenuPrimitive.Separator
-      className={cn("mx-2 my-1 h-px bg-border", className)}
+      className={cn("mx-2 my-1.5 h-px bg-border", className)}
       data-slot="menu-separator"
       {...props}
     />
@@ -349,6 +427,8 @@ export {
   MenuRadioItem as DropdownMenuRadioItem,
   MenuRadioItemIndicator,
   MenuGroupLabel,
+  MenuHint,
+  MenuInfoLabel,
   MenuGroupLabel as DropdownMenuLabel,
   MenuSeparator,
   MenuSeparator as DropdownMenuSeparator,

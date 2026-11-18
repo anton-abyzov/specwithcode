@@ -23,6 +23,7 @@ import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
+  MenuHint,
   MenuItem,
   MenuPopup,
   MenuSeparator,
@@ -121,7 +122,7 @@ function GalleryMenu() {
         <MenuPopup align="start">
           <MenuGroup>
             <MenuGroupLabel>Open in</MenuGroupLabel>
-            <p className="px-2 pb-1 text-muted-foreground text-xs">{LONG}</p>
+            <MenuHint>{LONG}</MenuHint>
             <MenuItem>
               <FolderIcon aria-hidden />
               Finder
