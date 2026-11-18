@@ -5706,4 +5706,7 @@ export const es: PhraseCatalog = {
   "On {coordinator} (coordinator) and {last}": "En {coordinator} (coordinador) y {last}",
   "On {coordinator} (coordinator), {machines} and {last}":
     "En {coordinator} (coordinador), {machines} y {last}",
+  "Fix the extra coordinator on {machine}": "Corregir el coordinador sobrante en {machine}",
+  "Connect {machine}": "Conectar {machine}",
+  "Project on another machine": "Proyecto en otra máquina",
 };

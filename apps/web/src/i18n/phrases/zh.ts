@@ -5443,4 +5443,7 @@ export const zh: PhraseCatalog = {
   "On {coordinator} (coordinator) and {last}": "在 {coordinator}（协调者）和 {last} 上",
   "On {coordinator} (coordinator), {machines} and {last}":
     "在 {coordinator}（协调者）、{machines} 和 {last} 上",
+  "Fix the extra coordinator on {machine}": "修复 {machine} 上多余的协调者",
+  "Connect {machine}": "连接 {machine}",
+  "Project on another machine": "另一台电脑上的项目",
 };

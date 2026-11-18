@@ -5673,4 +5673,7 @@ export const ru: PhraseCatalog = {
   "On {coordinator} (coordinator) and {last}": "На {coordinator} (координатор) и {last}",
   "On {coordinator} (coordinator), {machines} and {last}":
     "На {coordinator} (координатор), {machines} и {last}",
+  "Fix the extra coordinator on {machine}": "Исправить лишний координатор на {machine}",
+  "Connect {machine}": "Подключить {machine}",
+  "Project on another machine": "Проект на другой машине",
 };

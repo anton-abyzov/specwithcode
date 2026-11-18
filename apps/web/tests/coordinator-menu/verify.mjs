@@ -247,6 +247,15 @@ try {
       assert.deepEqual(await texts(page, "[data-orchestrator-connect]"), ["Connect…"]);
       assert.deepEqual(await texts(page, "[data-orchestrator-fix]"), ["Fix…"]);
       assert.equal(await page.locator('[data-orchestrator-fix="m1:p"]').count(), 1);
+      // Read out with the machine each one acts on; the visible words stay short.
+      assert.equal(
+        await page.locator('[data-orchestrator-fix="m1:p"]').getAttribute("aria-label"),
+        "Fix the extra coordinator on m1",
+      );
+      assert.equal(
+        await page.locator('[data-orchestrator-connect="linux-mini:p"]').getAttribute("aria-label"),
+        "Connect linux-mini",
+      );
       assert.equal(await page.locator('[data-orchestrator-connect="linux-mini:p"]').count(), 1);
       // Each is a menu item of its own beside its row, never inside it; "Connect…" stays on
       // while its row is greyed.

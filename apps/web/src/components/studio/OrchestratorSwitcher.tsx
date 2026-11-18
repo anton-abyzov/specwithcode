@@ -409,6 +409,9 @@ export function OrchestratorSwitcher({
                       <MenuItem
                         className="shrink-0 rounded-md border border-border px-2 text-xs"
                         data-orchestrator-fix={row.key}
+                        aria-label={tx("Fix the extra coordinator on {machine}", {
+                          machine: row.name,
+                        })}
                         onClick={() => {
                           // Its own action: it never picks the row beside it.
                           pendingView.current = () => onFix(row.key);
@@ -421,6 +424,7 @@ export function OrchestratorSwitcher({
                       <MenuItem
                         className="shrink-0 rounded-md border border-border px-2 text-xs"
                         data-orchestrator-connect={row.key}
+                        aria-label={tx("Connect {machine}", { machine: row.name })}
                         onClick={onAllowWorkers}
                       >
                         {tx("Connect…")}

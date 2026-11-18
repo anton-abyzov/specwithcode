@@ -5609,4 +5609,7 @@ export const ko: PhraseCatalog = {
   "On {coordinator} (coordinator) and {last}": "{coordinator}(코디네이터) 및 {last}에서",
   "On {coordinator} (coordinator), {machines} and {last}":
     "{coordinator}(코디네이터), {machines} 및 {last}에서",
+  "Fix the extra coordinator on {machine}": "{machine}의 중복 코디네이터 수정",
+  "Connect {machine}": "{machine} 연결",
+  "Project on another machine": "다른 컴퓨터의 프로젝트",
 };

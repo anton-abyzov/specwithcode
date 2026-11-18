@@ -5682,4 +5682,7 @@ export const ja: PhraseCatalog = {
   "On {coordinator} (coordinator) and {last}": "{coordinator}（コーディネーター）と {last} 上",
   "On {coordinator} (coordinator), {machines} and {last}":
     "{coordinator}（コーディネーター）、{machines}、{last} 上",
+  "Fix the extra coordinator on {machine}": "{machine} の余分なコーディネーターを修正",
+  "Connect {machine}": "{machine} を接続",
+  "Project on another machine": "別のマシン上のプロジェクト",
 };

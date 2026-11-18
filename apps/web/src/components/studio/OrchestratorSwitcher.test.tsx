@@ -217,14 +217,16 @@ it("gives every row exactly one state: pill, reason or nothing", async () => {
     [...document.querySelectorAll("[data-orchestrator-fix]")].map((node) => [
       node.getAttribute("data-orchestrator-fix"),
       node.textContent,
+      node.getAttribute("aria-label"),
     ]),
-  ).toEqual([["m1:p", "Fix…"]]);
+  ).toEqual([["m1:p", "Fix…", "Fix the extra coordinator on M1"]]);
   expect(
     [...document.querySelectorAll("[data-orchestrator-connect]")].map((node) => [
       node.getAttribute("data-orchestrator-connect"),
       node.textContent,
+      node.getAttribute("aria-label"),
     ]),
-  ).toEqual([["linux-mini:p", "Connect…"]]);
+  ).toEqual([["linux-mini:p", "Connect…", "Connect linux-mini"]]);
   // A separate project's row says what that means.
   expect(rowOf("m5:p").title).toBe(
     "Separate project: M5 added this repository on its own, with its own coordinator, threads and memory.",
