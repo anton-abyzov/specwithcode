@@ -17,6 +17,8 @@ const CHECK_TIMEOUT_MS = 5_000;
 export const IOS_SIMULATOR_RECHECK_MS = 10 * 60_000;
 /** A check that could not tell (it timed out) runs again after this long. */
 export const UNKNOWN_RECHECK_MS = 60_000;
+/** A forced read this soon after a forced answer reuses it, so repeated presses spawn nothing new. */
+export const FORCED_REUSE_MS = 5_000;
 
 export interface IosSimulatorProbe {
   /**
@@ -48,7 +50,9 @@ export const makeKeptCheck = <A>(input: {
   readonly now?: () => number;
 }): KeptCheck<A> => {
   const now = input.now ?? Date.now;
-  let answer: { readonly value: A; readonly at: number; readonly run: number } | undefined;
+  let answer:
+    | { readonly value: A; readonly at: number; readonly run: number; readonly forced: boolean }
+    | undefined;
   let running: { readonly promise: Promise<A>; readonly forced: boolean } | undefined;
   let runs = 0;
   const start = (forced: boolean) => {
@@ -58,7 +62,7 @@ export const makeKeptCheck = <A>(input: {
       .catch(() => input.onFailure)
       .then((value) => {
         // A slower, older run never replaces a newer answer.
-        if (answer === undefined || answer.run < run) answer = { value, at: now(), run };
+        if (answer === undefined || answer.run < run) answer = { value, at: now(), run, forced };
         if (running?.promise === promise) running = undefined;
         return value;
       });
@@ -77,7 +81,12 @@ export const makeKeptCheck = <A>(input: {
       return answer?.value;
     },
     read: (options) => {
-      if (options?.force === true) return running?.forced ? running.promise : start(true);
+      if (options?.force === true) {
+        if (running?.forced) return running.promise;
+        if (answer?.forced && now() - answer.at < FORCED_REUSE_MS)
+          return Promise.resolve(answer.value);
+        return start(true);
+      }
       if (answer !== undefined && !stale(answer)) return Promise.resolve(answer.value);
       return running?.promise ?? start(false);
     },
@@ -212,6 +221,8 @@ export const makeIosSimulatorSetupCheck =
   }) =>
   async (): Promise<IosSimulatorSetup> => {
     const selected = await input.run("xcode-select", ["-p"]);
+    if (selected.timedOut === true)
+      return { status: "unknown", xcodeAppPath: null, simctlAnswered: false };
     const developerDir = selected.ok ? selected.stdout.trim() : "";
     const selectedApp = developerDir === "" ? null : developerDirApp(developerDir);
     const help =
@@ -235,8 +246,8 @@ export const makeIosSimulatorSetupCheck =
         simctlAnswered: false,
       };
     }
-    // A developer folder outside an app bundle (DEVELOPER_DIR) whose simctl answers is a working Xcode.
-    const xcodeAppPath = selectedApp ?? developerDir;
+    // A developer folder outside an app bundle (DEVELOPER_DIR) can answer too; only a bundle counts as Xcode.app.
+    const xcodeAppPath = selectedApp ?? (await input.findXcodeApps().catch(() => []))[0] ?? null;
     const simctl = NodePath.posix.join(developerDir, "usr", "bin", "simctl");
     const answered = (status: IosSetupStatus): IosSimulatorSetup => ({
       status,
@@ -259,14 +270,17 @@ export const makeIosSimulatorSetupCheck =
     return answered(device ? "ready" : "ios_simulator_missing");
   };
 
-/** Xcode*.app in /Applications and ~/Applications. */
+/** Xcode.app and versioned copies (Xcode-16.2.app, Xcode-beta.app), never the Xcodes manager app. */
+export const isXcodeAppName = (name: string) => /^Xcode([-_ ].*)?\.app$/.test(name);
+
+/** Xcode app bundles in /Applications and ~/Applications. */
 const findXcodeApps = async (): Promise<ReadonlyArray<string>> => {
   const folders = ["/Applications", NodePath.join(NodeOs.homedir(), "Applications")];
   const found: string[] = [];
   for (const folder of folders) {
     const names = await NodeFs.readdir(folder).catch(() => [] as string[]);
     for (const name of names.toSorted())
-      if (/^Xcode.*\.app$/.test(name)) found.push(NodePath.join(folder, name));
+      if (isXcodeAppName(name)) found.push(NodePath.join(folder, name));
   }
   return found;
 };

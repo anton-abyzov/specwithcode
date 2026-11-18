@@ -4,7 +4,9 @@ import {
   IOS_SIMULATOR_RECHECK_MS,
   type IosSimulatorSetup,
   UNKNOWN_RECHECK_MS,
+  FORCED_REUSE_MS,
   iosSimulatorProbeFrom,
+  isXcodeAppName,
   makeIosSimulatorProbe,
   makeIosSimulatorSetup,
   makeKeptCheck,
@@ -176,5 +178,38 @@ describe("iosSimulatorProbeFrom", () => {
     await settled();
     expect(missing.current()).toBe(false);
     expect(unknown.current()).toBeUndefined();
+  });
+});
+
+describe("forced reads and Xcode names", () => {
+  it("reuses a forced answer for a few seconds, then checks again", async () => {
+    let checks = 0;
+    let now = 0;
+    const kept = makeKeptCheck<boolean>({
+      check: () => Promise.resolve(++checks > 1),
+      classify: (value) => (value ? "yes" : "no"),
+      onFailure: false,
+      now: () => now,
+    });
+    expect(await kept.read({ force: true })).toBe(false);
+    now += FORCED_REUSE_MS - 1;
+    expect(await kept.read({ force: true })).toBe(false);
+    expect(checks).toBe(1);
+    now += 1;
+    expect(await kept.read({ force: true })).toBe(true);
+    expect(checks).toBe(2);
+  });
+
+  it("counts Xcode copies but not the Xcodes manager", () => {
+    for (const name of [
+      "Xcode.app",
+      "Xcode-16.2.app",
+      "Xcode-beta.app",
+      "Xcode_16.app",
+      "Xcode 16.app",
+    ])
+      expect(isXcodeAppName(name), name).toBe(true);
+    for (const name of ["Xcodes.app", "XcodeClean.app", "Xcode.app.zip"])
+      expect(isXcodeAppName(name), name).toBe(false);
   });
 });

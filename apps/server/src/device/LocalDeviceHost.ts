@@ -134,13 +134,15 @@ type Availability = Omit<DevicePlatformAvailability, "platform" | "code" | "miss
   readonly missing?: ReadonlyArray<AndroidSdkPart>;
 };
 
+/** "Check again" waits at most this long; a cold CoreSimulator start takes several seconds. */
+const FORCED_IOS_CHECK_CAP = Duration.seconds(25);
+
 const IOS_REASONS: Partial<Record<IosSetupStatus, string>> = {
   xcode_missing: "Xcode was not found. Install Xcode from the App Store to run iOS Simulators.",
   xcode_not_selected:
     "Xcode was found, but the command line tools are selected instead. Run sudo xcode-select -s with the Xcode app's path.",
   xcode_setup_unfinished:
     "Xcode has not finished setting up. Open Xcode once to install its parts and accept its license.",
-  unknown: "Xcode did not answer in time. Check again.",
 };
 
 /**
@@ -155,9 +157,16 @@ const iosAvailability = Effect.fn("LocalDeviceHost.iosAvailability")(function* (
 ): Effect.fn.Return<Availability, never, FileSystem.FileSystem | Path.Path> {
   if ((yield* HostProcessPlatform) !== "darwin")
     return { available: false, reason: "iOS Simulators need macOS with Xcode.", code: "not_mac" };
+  // A forced check that outlasts the cap leaves the kept answer in place and finishes in the background.
   const setup = force
-    ? yield* Effect.promise(() => setupCheck.read({ force: true }))
+    ? Option.getOrElse(
+        yield* Effect.promise(() => setupCheck.read({ force: true })).pipe(
+          Effect.timeoutOption(FORCED_IOS_CHECK_CAP),
+        ),
+        () => setupCheck.current(),
+      )
     : setupCheck.current();
+  // Not checked yet: main's quick answer (the xcrun shim exists on every Mac), with no facts, so nothing claims Xcode.
   if (setup === undefined) {
     return (yield* isCommandAvailable("xcrun"))
       ? { available: true }
@@ -174,8 +183,9 @@ const iosAvailability = Effect.fn("LocalDeviceHost.iosAvailability")(function* (
     case "ios_runtime_missing":
     case "ios_simulator_missing":
       return { available: true, code: setup.status, ...facts };
+    // A tool timed out: keep main's optimistic answer rather than stop a working Mac.
     case "unknown":
-      return { available: false, reason: IOS_REASONS.unknown!, ...facts };
+      return { available: true, ...facts };
     default:
       return { available: false, reason: IOS_REASONS[setup.status]!, code: setup.status, ...facts };
   }
@@ -199,6 +209,15 @@ const androidStudioFound = Effect.gen(function* () {
           "/Applications/Android Studio.app",
           "/Applications/Android Studio Preview.app",
           path.join(home, "Applications", "Android Studio.app"),
+          path.join(
+            home,
+            "Library",
+            "Application Support",
+            "JetBrains",
+            "Toolbox",
+            "apps",
+            "AndroidStudio",
+          ),
         ]
       : platform === "win32"
         ? [
@@ -207,6 +226,13 @@ const androidStudioFound = Effect.gen(function* () {
               environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"),
               "Programs",
               "Android Studio",
+            ),
+            path.join(
+              environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"),
+              "JetBrains",
+              "Toolbox",
+              "apps",
+              "AndroidStudio",
             ),
           ]
         : [
@@ -221,6 +247,13 @@ const androidStudioFound = Effect.gen(function* () {
               .map((directory) => path.join(directory, "studio.sh")),
           ];
   for (const candidate of candidates) if (yield* exists(candidate)) return true;
+  if (platform === "darwin") {
+    // Renamed or versioned bundles, such as "Android Studio Ladybug.app".
+    for (const folder of ["/Applications", path.join(home, "Applications")]) {
+      const names = yield* fs.readDirectory(folder).pipe(Effect.orElseSucceed(() => []));
+      if (names.some((name) => /^Android Studio.*\.app$/.test(name))) return true;
+    }
+  }
   return platform === "darwin" || platform === "win32" ? false : undefined;
 });
 

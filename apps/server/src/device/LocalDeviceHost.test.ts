@@ -1008,6 +1008,7 @@ const devicesOutput = (devices: Record<string, ReadonlyArray<object>>) =>
 interface IosFixture {
   /** `xcode-select -p`; undefined when it fails. */
   readonly selected?: string;
+  readonly selectedTimedOut?: boolean;
   readonly help?: ReturnType<typeof tool>;
   readonly runtimes?: ReturnType<typeof tool>;
   readonly devices?: ReturnType<typeof tool>;
@@ -1020,6 +1021,7 @@ const iosFixtureCheck = (fixture: () => IosFixture, calls: { count: number } = {
       const current = fixture();
       if (command === "xcode-select") {
         calls.count++;
+        if (current.selectedTimedOut) return tool(false, "", true);
         return current.selected === undefined ? tool(false) : tool(true, `${current.selected}\n`);
       }
       // The command line tools have no simctl, so only a selected Xcode answers by default.
@@ -1139,10 +1141,22 @@ describe("iOS setup codes", () => {
           { available: true, xcodeAppFound: true, simctlAnswered: true },
         ],
         [
-          "a tool timed out",
+          "simctl timed out: main's optimistic answer, no code",
           { selected: XCODE_DEVELOPER, help: tool(false, "", true) },
           "darwin",
-          { available: false, xcodeAppFound: true, simctlAnswered: false },
+          { available: true, xcodeAppFound: true, simctlAnswered: false },
+        ],
+        [
+          "xcode-select timed out is not proof Xcode is missing",
+          { selectedTimedOut: true, apps: ["/Applications/Xcode.app"] },
+          "darwin",
+          { available: true, xcodeAppFound: false, simctlAnswered: false },
+        ],
+        [
+          "a DEVELOPER_DIR toolchain answers but is not an Xcode app",
+          { ...READY_IOS, selected: "/opt/toolchains/xcode/Developer", help: tool(true) },
+          "darwin",
+          { available: true, xcodeAppFound: false, simctlAnswered: true },
         ],
       ];
       for (const [name, fixture, platform, expected] of cases) {
