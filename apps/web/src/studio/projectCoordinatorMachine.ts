@@ -10,6 +10,7 @@
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type { LogicalProjectMember } from "@specweave-studio/contracts";
 import { COORDINATOR_PENDING_PROBLEM, copyRoles, logicalCoordinators } from "./projectDomain";
+import type { MachineRowRole } from "./machineRowState";
 import { copyRoleLabel, type CopyRoleText } from "./workersOnlyCopy";
 
 export {
@@ -30,11 +31,14 @@ export function coordinatorMachineKey(member: CoordinatorMachineMember): string 
 }
 
 export const SUPERSEDED_COORDINATOR_PROBLEM =
-  "Another machine took over this coordinator. It gives way once its machine is reachable; view the newer coordinator to send messages.";
-export const WORKERS_ONLY_PROBLEM =
-  "Work starts on another machine. This copy takes work from there. Switch to that machine above to send messages.";
+  "The coordinator continued on another machine. This one gives way once it is reachable; Send opens the newer one.";
+export const WORKERS_ONLY_PROBLEM = "The coordinator is on another machine. Send opens it there.";
 export const UNCONFIRMED_COORDINATOR_PROBLEM =
-  "This copy has not confirmed its coordinator yet. Reconnect its machine to send messages.";
+  "This machine has not confirmed where the coordinator is yet. Reconnect it to send messages.";
+
+/** The same for a machine this window can name. */
+export const unconfirmedCoordinatorProblem = (machine: string) =>
+  `${machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.`;
 
 export interface CoordinatorView<T extends CoordinatorMachineMember> {
   readonly member: T | undefined;
@@ -197,9 +201,15 @@ export interface OrchestratorCopy {
    * independent: the same repository, not linked, with its own orchestrator.
    */
   readonly role: "coordinator" | "workers" | "pending" | "independent";
-  /** This copy is the project's main (`copyRoles`), the one Settings also calls Main. */
+  /** This machine holds the project's coordinator conversation (`copyRoles`). */
   readonly main: boolean;
-  /** The badge Settings shows for the same copy: "Main", "Copy · main on m4", "Moving main". */
+  /**
+   * The machine's part as its menu row reads it (`machineRowState`): the `copyRoles` role,
+   * which keeps a linked machine that still runs a coordinator of its own (`also-main`)
+   * apart from the one that holds the project's coordinator.
+   */
+  readonly rowRole: MachineRowRole;
+  /** The words Settings shows for the same machine: "Coordinator", "Extra coordinator", or none. */
   readonly label: CopyRoleText;
   /** A coordinator can be started on this linked copy now. */
   readonly canStart: boolean;
@@ -218,10 +228,6 @@ export function orchestratorCopies<T extends EnvironmentProject>(
   retired?: { has(environmentId: string): boolean },
 ): OrchestratorCopy[] {
   const roles = copyRoles(members, retired);
-  const machineNamed = (environmentId: string) => {
-    const member = members.find((candidate) => candidate.environmentId === environmentId);
-    return member ? machineOf(member) : null;
-  };
   return members.map((member) => {
     const of = member.workspaceSettings?.logicalProject
       ? roles.get(coordinatorMachineKey(member))
@@ -241,10 +247,11 @@ export function orchestratorCopies<T extends EnvironmentProject>(
       folder: member.workspaceRoot,
       role,
       main: of?.role === "main",
-      // A checkout registered on its own has no role in a linked project: it is "not linked".
+      rowRole: of ? of.role : role === "independent" ? "independent" : "single",
+      // A checkout registered on its own is a separate project, not part of this one.
       label: of
-        ? copyRoleLabel(of.role, of.mainEnvironmentId ? machineNamed(of.mainEnvironmentId) : null)
-        : { text: role === "independent" ? "not linked" : "" },
+        ? copyRoleLabel(of.role)
+        : { text: role === "independent" ? "Separate project" : "" },
       // Narrowed by keptCoordinatorCopies once the page has the threads.
       canStart:
         role === "workers" &&
@@ -260,7 +267,7 @@ export function orchestratorCopies<T extends EnvironmentProject>(
  * to another machine. A transferred binding alone does not say so: a copy that
  * joined as workers only is transferred too, and a move into a separate worktree
  * leaves the registered copy transferred with a successor on its own machine. Those
- * copies get the plain "Copy" badge instead of the "coordinator paused" note.
+ * machines get no note instead of "Old conversation kept".
  */
 export function keptCoordinatorCopies<T extends EnvironmentProject>(
   copies: readonly OrchestratorCopy[],

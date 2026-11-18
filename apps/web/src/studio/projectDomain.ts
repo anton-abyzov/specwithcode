@@ -13,7 +13,6 @@ import { projectThreads } from "./projectWorkspaceModel";
 import { isOrchestratorThreadId } from "./projectCoordinatorThreads";
 import { modelLabel, shortMachineName, type ProviderNameSource } from "./shellModel";
 import { isNestedSubagentThread } from "./threadSubagents";
-import { copyRoleLabel } from "./workersOnlyCopy";
 
 export interface ProjectExecutionScope {
   environmentId: EnvironmentId;
@@ -342,8 +341,8 @@ export function requestExecutionLabel(
 }
 
 /**
- * "M4: Main · M3: Copy" for a project shared across machines; null for a project with
- * one copy. The sidebar shows the project once and names each copy here.
+ * "On M4 (coordinator) and M3" for a project that is on several machines; null for a project
+ * on one. The sidebar shows the project once and names each machine here.
  */
 export function copyRolesSummary<
   T extends EnvironmentProject & { readonly environmentLabel?: string | null },
@@ -356,10 +355,10 @@ export function copyRolesSummary<
   const shared = members.filter((member) => member.workspaceSettings?.logicalProject);
   if (new Set(shared.map((member) => member.environmentId)).size < 2) return null;
   const roles = copyRoles(shared, retired);
-  return shared
-    .map((member) => {
-      const role = roles.get(memberKey(member))?.role ?? "copy";
-      return `${nameOf(member)}: ${copyRoleLabel(role, null).text}`;
-    })
-    .join(" · ");
+  const names = shared.map((member) =>
+    roles.get(memberKey(member))?.role === "main"
+      ? `${nameOf(member)} (coordinator)`
+      : nameOf(member),
+  );
+  return `On ${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
