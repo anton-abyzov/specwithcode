@@ -502,28 +502,35 @@ function isOneThing(token: string): boolean {
   return /\.[\p{L}\p{N}]{1,8}$/u.test(token.replace(/[.,;:!?)\]]+$/, ""));
 }
 
+const OPENERS = "([{";
+const CLOSERS = ")]}";
+
 /**
  * Adds the space a writer left out after a comma or semicolon. `depth` is how
  * many brackets are open before the token: a list in brackets may hold spaces.
+ * `from` is where the token starts in its note and `loose` holds the places of
+ * brackets that never close, which open nothing.
  */
-function spaceAfterMarks(token: string, depth: number): { text: string; depth: number } {
+function spaceAfterMarks(
+  token: string,
+  depth: number,
+  from: number,
+  loose: ReadonlySet<number>,
+): { text: string; depth: number } {
   let open = depth;
-  const brackets = () => {
-    for (const mark of token) {
-      if (mark === "(" || mark === "[" || mark === "{") open += 1;
-      else if (mark === ")" || mark === "]" || mark === "}") open = Math.max(0, open - 1);
-    }
+  const bracket = (mark: string, at: number) => {
+    if (OPENERS.includes(mark)) open += loose.has(from + at) ? 0 : 1;
+    else if (CLOSERS.includes(mark)) open = Math.max(0, open - 1);
   };
   if (isOneThing(token)) {
-    brackets();
+    for (let at = 0; at < token.length; at += 1) bracket(token[at]!, at);
     return { text: token, depth: open };
   }
   let result = "";
   for (let at = 0; at < token.length; at += 1) {
     const mark = token[at]!;
     result += mark;
-    if (mark === "(" || mark === "[" || mark === "{") open += 1;
-    else if (mark === ")" || mark === "]" || mark === "}") open = Math.max(0, open - 1);
+    bracket(mark, at);
     if (mark !== "," && mark !== ";") continue;
     const next = token[at + 1];
     if (next === undefined || !/[\p{L}\p{N}]/u.test(next)) continue;
@@ -549,33 +556,43 @@ function spaceAfterMarks(token: string, depth: number): { text: string; depth: n
  * to the coordinator quote the note unrepaired.
  */
 export function boardNoteText(note: string): string {
+  const parts = note.split(/(`[^`]*`)/);
   // A list in brackets may run across spaces, so the depth is carried from
   // word to word. A bracket that never closes is not a list (":(" or a
-  // sentence cut short): the note is then read word by word instead, or
-  // everything after it would be left unrepaired.
-  const read = (carry: boolean) => {
-    let depth = 0;
-    const text = note
-      .split(/(`[^`]*`)/)
-      .map((part, index) =>
-        index % 2 === 1
-          ? part
-          : part
-              .split(/(\s+)/)
-              .map((token, at) => {
-                if (at % 2 === 1) return " ";
-                const spaced = spaceAfterMarks(token, carry ? depth : 0);
-                depth = spaced.depth;
-                return spaced.text;
-              })
-              .join(""),
-      )
-      .join("")
-      .trim();
-    return { text, open: depth > 0 };
-  };
-  const carried = read(true);
-  return carried.open ? read(false).text : carried.text;
+  // sentence cut short) and opens nothing, or everything after it would be
+  // left unrepaired; the lists that do close stay as written.
+  const unclosed: number[] = [];
+  let offset = 0;
+  parts.forEach((part, index) => {
+    if (index % 2 === 0)
+      for (let at = 0; at < part.length; at += 1) {
+        if (OPENERS.includes(part[at]!)) unclosed.push(offset + at);
+        else if (CLOSERS.includes(part[at]!)) unclosed.pop();
+      }
+    offset += part.length;
+  });
+  const loose = new Set(unclosed);
+  let depth = 0;
+  offset = 0;
+  return parts
+    .map((part, index) => {
+      let from = offset;
+      offset += part.length;
+      if (index % 2 === 1) return part;
+      return part
+        .split(/(\s+)/)
+        .map((token, order) => {
+          const start = from;
+          from += token.length;
+          if (order % 2 === 1) return " ";
+          const spaced = spaceAfterMarks(token, depth, start, loose);
+          depth = spaced.depth;
+          return spaced.text;
+        })
+        .join("");
+    })
+    .join("")
+    .trim();
 }
 
 /** What a pull request's state reads as beside its number. */

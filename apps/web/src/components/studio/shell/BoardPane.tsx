@@ -383,8 +383,9 @@ function BoardCards({
   // One later move is followed, the threads' own: a planned card they find at
   // work goes to Active, so the fold it opened is given back and Active opens
   // instead. Any other change of group, while its view is open, unfolds
-  // nothing; and once the person folds or unfolds the card's group by hand it
-  // is theirs, so nothing is followed or given back after that.
+  // nothing; and once the person folds or unfolds by hand the card's group,
+  // or the group a promotion would move it to, those are theirs: nothing is
+  // followed or given back after that.
   const revealed = useRef<{
     id: string;
     group: BoardGroupId | null;
@@ -424,7 +425,14 @@ function BoardCards({
     if (groupSettled) state.settled = true;
   }, [folds, groupSettled, openId, openedColumn, openedGroup, openedPromoted, setGroupFolded]);
   const toggleGroup = (group: BoardGroupId, folded: boolean) => {
-    if (revealed.current?.group === group) revealed.current.settled = true;
+    // The card's group, or the one the threads would move a planned card to.
+    const follow = revealed.current;
+    if (
+      follow &&
+      (follow.group === group ||
+        (follow.group === "planned" && (group === "active" || group === "blocked")))
+    )
+      follow.settled = true;
     setGroupFolded(group, folded);
   };
 

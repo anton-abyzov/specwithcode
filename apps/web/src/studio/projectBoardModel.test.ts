@@ -479,6 +479,13 @@ describe("a reason as the board shows it", () => {
       "waiting (since Monday, still blocked, needs review",
     );
     expect(boardNoteText("failed :( retry,now")).toBe("failed :( retry, now");
+    // A list that does close, in the same note, stays as written.
+    expect(boardNoteText("owns [T-01,T-02, T-03,T-04] and (later Monday,still")).toBe(
+      "owns [T-01,T-02, T-03,T-04] and (later Monday, still",
+    );
+    expect(boardNoteText("see [a,b] and (c,d")).toBe("see [a,b] and (c, d");
+    expect(boardNoteText("((a,b) then,go")).toBe("((a,b) then, go");
+    expect(boardNoteText("in `f(a,` the (x,y) pair,then")).toBe("in `f(a,` the (x,y) pair, then");
   });
 
   it("reads a slash between numbers as a ratio, not a path", () => {
