@@ -145,7 +145,10 @@ export const layer = HttpApiBuilder.group(
               kind: outcome.device.kind,
               approvedBy: caller.kind,
             });
-          return outcome;
+          // The answer names the device as the list does, short ID included (1406).
+          return outcome.status === "approved"
+            ? { ...outcome, device: ConnectDeviceTrust.listedDevice(outcome.device) }
+            : outcome;
         }),
       )
       .handle("deny", ({ payload }) =>
