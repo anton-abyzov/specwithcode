@@ -637,7 +637,7 @@ export function QueuedRunsControl({
                 <TooltipTrigger
                   render={
                     <span
-                      className="ms-auto shrink-0 whitespace-nowrap text-2xs text-muted-foreground/80"
+                      className="ms-auto shrink-0 whitespace-nowrap text-2xs text-muted-foreground"
                       data-queue-steer-hint
                       data-queue-steer-reason={steerHint}
                     />
