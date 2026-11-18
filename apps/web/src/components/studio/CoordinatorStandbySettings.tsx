@@ -62,10 +62,10 @@ export type StandbyRowState = "unknown" | "ready" | "failed";
 /** One worker machine's arming row. */
 export const standbyRowText = (worker: string, standby: string, state: StandbyRowState) =>
   state === "ready"
-    ? `Ready. ${standby} can take over.`
+    ? `Ready. ${standby} can continue the coordinator.`
     : state === "failed"
       ? `Not ready. ${worker} has not allowed ${standby} yet.`
-      : `${worker} lets ${standby} take over.`;
+      : `${worker} lets ${standby} continue the coordinator.`;
 
 export const standbyWarningText = (
   standby: string,
@@ -152,7 +152,7 @@ export function CoordinatorStandbyView(props: CoordinatorStandbyViewProps) {
         description={
           <>
             <span className="block">
-              Another copy can take over this coordinator when this machine stops answering.
+              Another machine can continue this coordinator when this machine stops answering.
             </span>
             {props.problem ? <span className="block">{props.problem}</span> : null}
           </>
@@ -165,7 +165,7 @@ export function CoordinatorStandbyView(props: CoordinatorStandbyViewProps) {
               props.onStandby(value === "off" ? null : (value as EnvironmentId))
             }
           >
-            <SelectTrigger size="sm" aria-label="Take over automatically on">
+            <SelectTrigger size="sm" aria-label="Continue the coordinator automatically on">
               <SelectValue>{chosen ? chosen.label : "Off"}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -195,7 +195,7 @@ export function CoordinatorStandbyView(props: CoordinatorStandbyViewProps) {
       {props.standby !== null ? (
         <SettingsRow
           title="After"
-          description="How long this machine must stay quiet before the other copy takes over."
+          description="How long this machine must stay quiet before the other machine continues the coordinator."
           control={
             <Select
               value={String(props.afterMinutes)}
@@ -204,7 +204,7 @@ export function CoordinatorStandbyView(props: CoordinatorStandbyViewProps) {
                 props.onAfter(Number(value) as CoordinatorStandbyAfterMinutes)
               }
             >
-              <SelectTrigger size="sm" aria-label="Take over after">
+              <SelectTrigger size="sm" aria-label="After">
                 <SelectValue>{afterLabel(props.afterMinutes)}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -926,8 +926,8 @@ function TakeoverNotices({
                 onClick={() => setHandBack(`${returned.environmentId}:${returned.id}`)}
               >
                 {returned.environmentId === primaryEnvironmentId
-                  ? "Make this machine the coordinator again"
-                  : `Make ${previousLabel} the coordinator again`}
+                  ? "Continue the coordinator on this machine again"
+                  : `Continue the coordinator on ${previousLabel} again`}
               </Button>
             ) : null
           }

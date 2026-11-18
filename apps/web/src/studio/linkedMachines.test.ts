@@ -77,7 +77,7 @@ describe("sharedProjectBadge", () => {
   it("marks a handed-off copy with where its coordinator runs", () => {
     expect(sharedProjectBadge(workersCopy, [workersCopy], nameOf)).toEqual({
       role: "workers",
-      label: "Handed off: coordinator on m4, ministorm runs workers",
+      label: "Coordinator on m4",
     });
   });
 
@@ -98,7 +98,7 @@ describe("sharedProjectBadge", () => {
       id: "p-m1",
     } as unknown as EnvironmentProject;
     expect(sharedProjectBadge(thirdCopy, [thirdCopy, m4Copy], nameOf)?.label).toBe(
-      "Handed off: coordinator on ministorm, m1 runs workers",
+      "Coordinator on ministorm",
     );
   });
 
@@ -111,7 +111,7 @@ describe("sharedProjectBadge", () => {
     } as unknown as EnvironmentProject;
     expect(sharedProjectBadge(coordinatorCopy, [coordinatorCopy], nameOf)).toEqual({
       role: "coordinator",
-      label: "Shared from m4 with ministorm",
+      label: "On m4 and ministorm",
     });
   });
 

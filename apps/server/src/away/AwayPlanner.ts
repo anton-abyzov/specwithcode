@@ -219,7 +219,7 @@ function failureGap(
         kind: "project-link",
         ...onTarget,
         fix: clip(
-          `Link this project with its copy on ${target.label} in the project's Machines settings.`,
+          `Link this project with the one on ${target.label} in the project's Machines settings.`,
         ),
       };
     default:
@@ -344,7 +344,9 @@ export function coordinatorItem(facts: AwayPlanFacts, project: AwayProjectFact):
     return {
       ...withProject,
       action: "stay",
-      reason: clip(`Not linked with a copy on ${facts.target.label}, so it stays here.`),
+      reason: clip(
+        `${facts.target.label} does not have this project, so its coordinator stays here. Add it first.`,
+      ),
     };
   }
   if (project.inDoubt === true)
@@ -352,7 +354,7 @@ export function coordinatorItem(facts: AwayPlanFacts, project: AwayProjectFact):
       ...withProject,
       action: "move",
       reason: clip(
-        `Finishes the handover to ${facts.target.label}, which it has not confirmed yet. No machine coordinates it until then.`,
+        `Finishes the hand off to ${facts.target.label}, which it has not confirmed yet. No machine coordinates it until then.`,
       ),
     };
   const blocked = targetBlocker(facts.target);
@@ -361,13 +363,13 @@ export function coordinatorItem(facts: AwayPlanFacts, project: AwayProjectFact):
     return {
       ...withProject,
       action: "move",
-      reason: clip(`Hands over once ${facts.target.label} lets this machine's work into it.`),
+      reason: clip(`Goes once ${facts.target.label} lets this machine's work into it.`),
     };
   }
   return {
     ...withProject,
     action: "move",
-    reason: clip(`Hands over to ${facts.target.label}. This machine's copy steps back.`),
+    reason: clip(`Continues on ${facts.target.label}.`),
   };
 }
 
@@ -382,9 +384,9 @@ function projectGap(facts: AwayPlanFacts, project: AwayProjectFact): AwayMissing
       machineLabel: clip(target.label, 120),
       projectId: project.id,
       projectTitle: clip(project.title),
-      detail: clip(`${project.title} has no linked copy on ${target.label}.`),
+      detail: clip(`${target.label} has no project linked to ${project.title}.`),
       fix: clip(
-        `Link ${project.title} with a copy on ${target.label} in the project's Machines settings.`,
+        `Link ${project.title} with its project on ${target.label} in the project's Machines settings.`,
       ),
     };
   }

@@ -79,7 +79,7 @@ it("names every unlinked copy a row holds, and links one at a time", async () =>
   const groups = [row("atlas", copy("m4"), copy("m1"), copy("m3"))];
   await show(groups);
   const offer = offers.suggestionFor(groups[0]!)!;
-  expect(offer.label).toBe("Same repository (acme/atlas) also added on m1 and m3, not linked");
+  expect(offer.label).toBe("Same repository (acme/atlas) is a separate project on m1 and m3");
   expect(offer.action).toBe("Link with Atlas on m1…");
   await act(async () => offer.onLink());
   expect(dialogs.at(-1)).toMatchObject({

@@ -664,7 +664,7 @@ export function ProjectRow(props: {
   const elsewhereName = elsewhere.map((machine) => machine.name).join(", ");
   const elsewhereText =
     elsewhere.length > 0
-      ? tx("Runs on {machine}. No copy on this device.", { machine: elsewhereName })
+      ? tx("On {machine}. Not on this device.", { machine: elsewhereName })
       : null;
   const [addingHere, setAddingHere] = useState<{ seq: number } | null>(null);
   const addSource = props.displayedProject ?? group.memberProjects[0];

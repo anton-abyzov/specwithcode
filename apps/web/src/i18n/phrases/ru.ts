@@ -2316,19 +2316,6 @@ export const ru: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
     "Удалить с этого устройства старую запись {name} ({host})?\nМашина подключилась заново как новая и продолжает работать; уходят только мёртвая запись и её кэшированные треды здесь.",
   "Use 2 or 3 characters.": "Используйте 2 или 3 символа.",
-  "Not shared": "Не общий",
-  "{machine} is main now, with machines not yet following it":
-    "{machine} теперь основная, но некоторые машины ещё не следуют за ней",
-  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.":
-    "Эти машины ещё не приняли новую основную: {machines}. Работу прежней они начнут отклонять только после этого.",
-  "Not linked · also on {machine}": "Не связана · также на {machine}",
-  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.":
-    "Эта копия не связана с копиями на {machine}. Свяжите их из меню проекта, чтобы был один координатор.",
-  "No other machine has a copy of this project.":
-    "Ни на одной другой машине нет копии этого проекта.",
-  "Connect to see its role": "Подключитесь, чтобы увидеть роль",
-  "This app cannot see this machine, so it cannot tell what this copy does.":
-    "Приложение не видит эту машину, поэтому не может сказать, что делает эта копия.",
   "{name} wears {color}": "У {name} цвет {color}",
   "Change the color of {name}, now {color}": "Изменить цвет {name}, сейчас {color}",
   "Change color": "Изменить цвет",
@@ -4563,17 +4550,10 @@ export const ru: PhraseCatalog = {
   "Older releases were not counted.": "Более старые релизы не учтены.",
   "Installs from npm could not be read.": "Не удалось прочитать установки из npm.",
   "Installs from npm": "Установки из npm",
-  "View this project on": "Смотреть проект на",
-  "coordinator paused": "координатор на паузе",
   "Machine access settings": "Настройки доступа между машинами",
   "{machine} offline": "{machine} не в сети",
   "workers only": "только исполнители",
   coordinator: "координатор",
-  "not linked": "не связан",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
-    "Не связан: у {machine} свой координатор, свои треды и своя память для этого репозитория.",
-  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.":
-    "Не связан: это отдельные проекты для этого репозитория, у каждого свой координатор, свои треды и своя память. Это не мешает смотреть любой из них и писать в него.",
   "Link them below to make one project.": "Свяжите их ниже, чтобы получился один проект.",
   "{value}Messages go to Percy. {value2}": "{value}Сообщения идут в Percy. {value2}",
   "Show only topics that need you in {project}":
@@ -4805,8 +4785,6 @@ export const ru: PhraseCatalog = {
     "{machine} задаст это при следующем запуске работы здесь. Это максимум, что запущенный ею здесь тред может делать без запроса.",
   "{title} (archived)": "{title} (в архиве)",
   "{title} (automated)": "{title} (автоматический)",
-  "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.":
-    "Это приложение не подключено к {machine}, поэтому его копию нельзя показать. Подключите его в Настройки > Машины.",
   "This window is signed out": "Это окно вышло из аккаунта",
   "Quit and reopen the app to sign in again.":
     "Закройте и снова откройте приложение, чтобы войти заново.",
@@ -4834,14 +4812,11 @@ export const ru: PhraseCatalog = {
   "Last synced {age}.": "Последняя синхронизация: {age}.",
   "Synced just now.": "Синхронизировано только что.",
   "Hide details": "Скрыть подробности",
-  "Runs on {machine}": "Работает на {machine}",
   connected: "подключён",
   "Last viewed machine not listed": "Последний просмотренный компьютер не в списке",
   "Viewing {machine}. Choose a machine to view":
     "Просмотр {machine}. Выберите компьютер для просмотра",
   "{machine}: this project's machines": "{machine}: компьютеры этого проекта",
-  "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.":
-    "Просмотр ничего не переносит: работа остаётся на каждом компьютере. Добавление или перенос проекта сначала спросит.",
   "Nothing is sent to another machine.": "На другой компьютер ничего не отправляется.",
   "Your draft stays here until it reconnects.":
     "Черновик останется здесь, пока связь не восстановится.",
@@ -4897,8 +4872,6 @@ export const ru: PhraseCatalog = {
     "Не установлен. Скачайте его с официального сайта или попросите того, кто может обслуживать эту машину, установить его отсюда.",
   "Browse…": "Обзор…",
   "Add to this machine…": "Добавить на этот компьютер…",
-  "Runs on {machine}. No copy on this device.":
-    "Работает на {machine}. На этом устройстве копии нет.",
   "Agent status": "Статус агента",
   "Last time it was not signed in.": "В прошлый раз вход не был выполнен.",
   "Last time it was signed in as {account}.": "В прошлый раз вход был выполнен как {account}.",
@@ -5096,16 +5069,6 @@ export const ru: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "Путь к AppImage нельзя записать в команду. Переместите AppImage в папку с простым путём и откройте его оттуда.",
   "Could not write {path} ({error}).": "Не удалось записать {path} ({error}).",
-  Main: "Основная",
-  "Moving main": "Основная переезжает",
-  "Copy · main on {machine}": "Копия · основная на {machine}",
-  "Work for this project starts here. Copies on other machines take work from it.":
-    "Работа над этим проектом начинается здесь. Копии на других машинах получают работу отсюда.",
-  "Main is on {machine}. This copy can also start work of its own.":
-    "Основная на {machine}. Эта копия тоже может начинать свою работу.",
-  "Work starts on {machine}. This copy takes work from there.":
-    "Работа начинается на {machine}. Эта копия получает работу оттуда.",
-  "Main is moving between machines right now.": "Основная прямо сейчас переезжает между машинами.",
   "{there} can start work here": "{there} может начинать работу здесь",
   "{there} can't start work here": "{there} не может начинать работу здесь",
   "This machine can start work on {there}": "Эта машина может начинать работу на {there}",
@@ -5250,75 +5213,22 @@ export const ru: PhraseCatalog = {
   "Waiting for the install. This page updates by itself.":
     "Ждём установку. Эта страница обновится сама.",
   "After it installs, choose Check again.": "После установки выберите «Проверить снова».",
-  "{main} must be unreachable for 10 minutes before {machine} can become main. That unlocks in {minutes} min.":
-    "{main} должен быть недоступен 10 минут, прежде чем {machine} сможет стать основной. Это откроется через {minutes} мин.",
   "in {minutes} min": "через {minutes} мин",
-  "This window can only read {main}, so it cannot move main from there. Open SpecWithCode on {main}, or connect to it with full access, to make {machine} main.":
-    "Это окно может только читать {main}, поэтому не может перенести основную оттуда. Откройте SpecWithCode на {main} или подключитесь к нему с полным доступом, чтобы сделать {machine} основной.",
   "read-only on {main}": "только чтение на {main}",
-  "Connect {machine} first to make it main.":
-    "Сначала подключите {machine}, чтобы сделать эту машину основной.",
-  "{machine} cannot take over yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
-    "{machine} пока не может принять управление. Обновите там SpecWithCode или подключитесь к нему с правом менять настройки и запускать работу.",
   "not ready": "не готов",
-  "Main cannot move from this machine yet.": "Основную пока нельзя перенести с этой машины.",
   "Send this project its first message here, then try again.":
     "Отправьте здесь первое сообщение этому проекту и попробуйте снова.",
-  "{machine} cannot become main yet.": "{machine} пока не может стать основной.",
-  "{machine} is main now": "{machine} теперь основная",
   "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
     "Она начинает с общих цели, памяти и плана. Разговор на {main} остаётся там как история, а {main} уступит, когда вернётся.",
-  "{machine} did not become main": "{machine} не стала основной",
   "Retry it.": "Повторите попытку.",
-  "the old main": "прежняя основная",
-  "Make {machine} main?": "Сделать {machine} основной?",
-  "{main} has been unreachable for 10 minutes or more. {machine} becomes main and starts from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
-    "{main} недоступен 10 минут или дольше. {machine} станет основной и начнёт с общих цели, памяти и плана. Разговор на {main} останется там как история. Пока {main} не вернётся, он ещё может запускать работу на своей машине; затем он уступит и покажет, что запускал за это время.",
   "Switching…": "Переключаем…",
-  "Make {machine} main": "Сделать {machine} основной",
-  "Make {machine} main for {project}": "Сделать {machine} основной для {project}",
-  "Main for {project} is {machine}. This copy takes work from there.":
-    "Основная для {project} — {machine}. Эта копия получает работу оттуда.",
-  "Main for {project} is on another machine. This copy takes work from there.":
-    "Основная для {project} — на другой машине. Эта копия получает работу оттуда.",
   "The conversation here is kept as history.": "Разговор здесь сохранён как история.",
-  "Write to {machine}'s coordinator": "Написать координатору на {machine}",
-  "Write to main's coordinator": "Написать координатору основной",
-  "Write opens {machine}'s page for this project, where its coordinator answers. Nothing is sent from here.":
-    "«Написать» открывает страницу этого проекта на {machine}, где отвечает его координатор. Отсюда ничего не отправляется.",
-  "Write opens main's page for this project, where its coordinator answers. Nothing is sent from here.":
-    "«Написать» открывает страницу этого проекта на основной машине, где отвечает её координатор. Отсюда ничего не отправляется.",
-  "{main} has been unreachable for 10 minutes or more. Making {machine} main starts from the shared goal, memory and plan; the conversation on {main} stays there as history.":
-    "{main} недоступен 10 минут или дольше. Если сделать {machine} основной, она начнёт с общих цели, памяти и плана; разговор на {main} останется там как история.",
-  "Making {machine} main moves the coordinator and its conversation here from {main}, which becomes a copy.":
-    "Если сделать {machine} основной, координатор и его разговор переедут сюда с {main}, а {main} станет копией.",
-  "{machine} became main while {main} was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
-    "{machine} стала основной, пока {main} был недоступен. Она начала с общих цели, памяти и плана; прежний разговор остаётся на {main} как история.",
-  "{machine} became main while the old main was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
-    "{machine} стала основной, пока прежняя основная была недоступна. Она начала с общих цели, памяти и плана; прежний разговор остаётся на старой машине как история.",
   "Got it": "Понятно",
   "{machine} kept its coordinator conversation from before as history. View it to read that conversation.":
     "{machine} сохранил прежний разговор координатора как историю. Откройте его, чтобы прочитать тот разговор.",
-  "Makes the project on {machine} part of this one. Main does not change, and threads and files stay where they are. You confirm what {machine} gives up first.":
-    "Проект на {machine} станет частью этого. Основная не меняется, треды и файлы останутся на своих местах. Сначала вы подтвердите, от чего откажется {machine}.",
   "Link {machine} to this project…": "Связать {machine} с этим проектом…",
-  "{main} is unreachable: {machine} takes over and starts from the shared goal, memory and plan. You confirm first.":
-    "{main} недоступен: {machine} примет управление и начнёт с общих цели, памяти и плана. Сначала вы подтвердите.",
-  "Moves the coordinator and its conversation from {main} to {machine}. {main} becomes a copy. You confirm first.":
-    "Переносит координатора и его разговор с {main} на {machine}. {main} станет копией. Сначала вы подтвердите.",
   "Link {machine} to this project": "Связать {machine} с этим проектом",
-  "{machine} joins {project} as a copy. Main stays on {main}: linking does not change it.":
-    "{machine} присоединяется к {project} как копия. Основная остаётся на {main}: связывание её не меняет.",
   "Link {machine}": "Связать {machine}",
-  "Main stays on {main}. To have main on {machine}, make {machine} main after linking.":
-    "Основная остаётся на {main}. Чтобы основная была на {machine}, сделайте {machine} основной после связывания.",
-  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
-    "Связать {machine} с этим проектом. {machine} отказывается от собственных цели и инструкций: с этого момента он следует цели и инструкциям этого проекта, а его собственные будут заменены, если он станет основной. Его собственный координатор останавливается, а тот разговор остаётся на {machine} как история. Его воркеры продолжают работать. Основная остаётся на {main}. Файлы не копируются.",
-  "Work for {project} starts on {machine}.": "Работа над {project} начинается на {machine}.",
-  "Work for {project} starts on another machine.":
-    "Работа над {project} начинается на другой машине.",
-  "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
-    "Сначала подключите {main}. Это окно не загрузило основную копию на {main}, поэтому пока не может сделать {machine} основной.",
   "connect {main} first": "сначала подключите {main}",
   "Copy {project} to {machine}": "Скопировать {project} на {machine}",
   "Move {project} to {machine}": "Перенести {project} на {machine}",
@@ -5327,56 +5237,17 @@ export const ru: PhraseCatalog = {
   "Nothing on {machine} is replaced without asking.":
     "На {machine} ничего не заменяется без вопроса.",
   "the other machine": "другой машине",
-  "From {source}. Main stays on {main}.": "С {source}. Основная остаётся на {main}.",
-  "From {source}. Main stays where it is.": "С {source}. Основная остаётся там, где она есть.",
-  "From {source}. Main moves to {machine}.": "С {source}. Основная переходит на {machine}.",
-  "From {source}. Main moves to the machine you choose.":
-    "С {source}. Основная переходит на выбранную машину.",
-  "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
-    "С {source}. Копия на {source} не связана с проектом, к которому относится {machine} (основная: {main}).",
-  "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
-    "С {source}. Копия на {source} не связана с проектом, к которому относится {machine}.",
-  "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
-    "В копию на {machine} копируются только файлы. Основная остаётся на {main}, а {source} не связывается с этим проектом. Чтобы это был один проект, свяжите {source} с ним через меню машин.",
-  "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
-    "В копию на {machine} копируются только файлы. Её основная не меняется, а {source} не связывается с этим проектом. Чтобы это был один проект, свяжите {source} с ним через меню машин.",
-  "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
-    "Отсюда основную нельзя перенести на {machine}: {source} не связана с проектом, к которому относится {machine}. Сначала свяжите {source} с ним через меню машин или скопируйте файлы.",
-  "Not available: that machine already has Main.": "Недоступно: на этой машине уже основная.",
-  "Not available: it would move Main into a project this copy is not linked to.":
-    "Недоступно: основная перешла бы в проект, с которым эта копия не связана.",
-  "{machine} has a copy. Main stays on {main}.":
-    "На {machine} есть копия. Основная остаётся на {main}.",
-  "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
-    "Не связано: копия на {machine} относится к проекту, основная которого на {main}, а {source} в него не входит. Ничего не связано.",
-  "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
-    "Не связано: копия на {machine} относится к другому проекту, а {source} в него не входит. Ничего не связано.",
   "Link with a project on another machine": "Связать с проектом на другой машине",
-  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
-    "Выберите копию {project} на другой машине. У каждой копии остаётся свой координатор; основная остаётся на {main}, и её можно сменить в любой момент.",
-  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
-    "Выберите копию {project} на другой машине. У каждой копии остаётся свой координатор, а основную можно сменить в любой момент.",
-  "Other copy": "Другая копия",
   "No project on another connected machine. Add the folder on that machine first, then link it here.":
     "На других подключённых машинах нет проектов. Сначала добавьте папку на той машине, затем свяжите её здесь.",
   "{project} on {machine}": "{project} на {machine}",
   "Not a copy:": "Не копия:",
   "Compared when you review the link.": "Сравнение при проверке связи.",
   "Reading folders…": "Чтение папок…",
-  "No copy of {project} was found on another machine.":
-    "Копия {project} на другой машине не найдена.",
   "Other projects ({count})": "Другие проекты ({count})",
   "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
     "Судя по папкам, это не копии {project}. Выбирайте только если это переименованная или заново клонированная копия.",
   "Review link": "Проверить связь",
-  "Message {machine}'s coordinator for {project}.":
-    "Напишите координатору {machine} для {project}.",
-  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
-    "Отправка передаёт сообщение координатору {machine} и открывает его страницу, куда придёт ответ.",
-  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
-    "Отправка передаёт сообщение главному координатору и открывает его страницу, куда придёт ответ.",
-  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
-    "Файлы остаются на этом компьютере. Уберите их, чтобы отправить текст на главный, или откройте страницу главного и прикрепите их там.",
   "1 device waiting": "1 устройство ждёт",
   "A Linux computer": "Компьютер Linux",
   "A Mac": "Mac",
@@ -5619,4 +5490,177 @@ export const ru: PhraseCatalog = {
   "Manage profiles": "Управлять профилями",
   "Profiles: {count}": "Профили: {count}",
   "Device hosts: {count}": "Хосты устройств: {count}",
+  "Let this machine continue a coordinator": "Разрешить этой машине продолжать работу координатора",
+  "Separate project · also on {machine}": "Отдельный проект · также на {machine}",
+  "{machine} has this repository as a separate project. Link them from the project menu to share one coordinator, plan and memory.":
+    "На {machine} этот репозиторий добавлен как отдельный проект. Свяжите их из меню проекта, чтобы у них были общие координатор, план и память.",
+  "Only on this machine": "Только на этой машине",
+  "No other machine has this project.": "Ни на одной другой машине нет этого проекта.",
+  "Connect to see its state": "Подключитесь, чтобы увидеть состояние",
+  "This app cannot see this machine, so it cannot tell what it does for this project.":
+    "Приложение не видит эту машину, поэтому не может сказать, что она делает для этого проекта.",
+  "Continue here": "Продолжить здесь",
+  "The coordinator continued on {machine} while {main} was offline. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
+    "Координатор продолжил работу на {machine}, пока {main} был не в сети. Он начал с общих цели, памяти и плана; прежний разговор остаётся на {main} как история.",
+  "The coordinator continued on {machine} while its old machine was offline. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
+    "Координатор продолжил работу на {machine}, пока его прежняя машина была не в сети. Он начал с общих цели, памяти и плана; прежний разговор остаётся на старой машине как история.",
+  "{project} is on {machine}. The coordinator stays on {main}.":
+    "{project} есть на {machine}. Координатор остаётся на {main}.",
+  "{machine} has this repository as a separate project whose coordinator is on {main}. Nothing was linked.":
+    "На {machine} этот репозиторий добавлен как отдельный проект, его координатор на {main}. Ничего не связано.",
+  "{machine} has this repository as a separate project. Nothing was linked.":
+    "На {machine} этот репозиторий добавлен как отдельный проект. Ничего не связано.",
+  "Continue the coordinator on {machine}": "Продолжить работу координатора на {machine}",
+  "{project} on your machines": "{project} на ваших машинах",
+  "Separate project: {machine} added this repository on its own, with its own coordinator, threads and memory.":
+    "Отдельный проект: на {machine} этот репозиторий добавлен самостоятельно, со своим координатором, тредами и памятью.",
+  "Pick a machine to see its threads and files. Nothing moves until you sync or hand off.":
+    "Выберите машину, чтобы увидеть её треды и файлы. Ничего не переносится, пока вы не запустите синхронизацию или передачу.",
+  "These are separate projects for this repository, each with its own coordinator, threads and memory. You can still open and message each one.":
+    "Это отдельные проекты для этого репозитория, у каждого свой координатор, свои треды и своя память. Любой из них всё равно можно открыть и написать в него.",
+  "Fix…": "Исправить…",
+  "Connect…": "Подключить…",
+  "Makes the project on {machine} part of this one. The coordinator stays where it is, and threads and files stay where they are. You confirm what {machine} gives up first.":
+    "Проект на {machine} станет частью этого. Координатор остаётся на месте, треды и файлы тоже останутся на своих местах. Сначала вы подтвердите, от чего откажется {machine}.",
+  "Work on {machine}": "Работа на {machine}",
+  "{main} is offline: the coordinator starts on {machine} from the shared goal, memory and plan. You confirm first.":
+    "{main} не в сети: координатор начнёт работу на {machine} с общих цели, памяти и плана. Сначала вы подтвердите.",
+  "Syncs {machine}, then moves the coordinator conversation here from {main}. You confirm first.":
+    "Синхронизирует {machine}, затем переносит разговор координатора сюда с {main}. Сначала вы подтвердите.",
+  "Continue the coordinator here": "Продолжить работу координатора здесь",
+  "Pick {project} on another machine. Linking makes them one project with one coordinator.":
+    "Выберите {project} на другой машине. После связывания это будет один проект с одним координатором.",
+  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.":
+    "Выберите {project} на другой машине. Координатор остаётся на {main}; продолжить его работу на другой машине можно в любой момент.",
+  "Other machine": "Другая машина",
+  "{project} was not found on another machine.": "{project} на другой машине не найден.",
+  "Preparing the machine that keeps its coordinator…":
+    "Подготовка машины, на которой остаётся координатор…",
+  "Joining the other machine…": "Присоединение другой машины…",
+  "Copying notes and listing both machines…":
+    "Копирование заметок и добавление обеих машин в список…",
+  "{machine} joins {project}. The coordinator stays on {main}: linking does not move it.":
+    "{machine} присоединяется к {project}. Координатор остаётся на {main}: связывание его не переносит.",
+  "Reading both machines…": "Чтение обеих машин…",
+  "The coordinator stays on {main}. To continue it on {machine}, use Continue here after linking.":
+    "Координатор остаётся на {main}. Чтобы продолжить его работу на {machine}, после связывания нажмите «Продолжить здесь».",
+  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if the coordinator continues there. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. The coordinator stays on {main}. Files are not copied.":
+    "Связать {machine} с этим проектом. {machine} отказывается от собственных цели и инструкций: с этого момента он следует цели и инструкциям этого проекта, а его собственные будут заменены, если координатор продолжит работу там. Его собственный координатор останавливается, а тот разговор остаётся на {machine} как история. Его воркеры продолжают работать. Координатор остаётся на {main}. Файлы не копируются.",
+  "The coordinator cannot continue on {machine}: it has this repository as a separate project. Link it first.":
+    "Координатор не может продолжить работу на {machine}: там этот репозиторий добавлен как отдельный проект. Сначала свяжите его.",
+  "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":
+    "Продолжает в папке, уже сохранённой там, которая обновляется из origin. Всегда переносит туда координатора.",
+  "Not available: that machine already has the coordinator.":
+    "Недоступно: координатор уже на этой машине.",
+  "Not available: it would move the coordinator into a separate project.":
+    "Недоступно: координатор перешёл бы в отдельный проект.",
+  "Goes to the coordinator on {machine} and opens it there":
+    "Отправляется координатору на {machine} и открывает его там",
+  "On {machine}. Not on this device.": "На {machine}. На этом устройстве нет.",
+  "The coordinator cannot be handed off from this machine yet.":
+    "С этой машины координатора пока нельзя передать.",
+  "The coordinator cannot continue on {machine} yet.":
+    "Координатор пока не может продолжить работу на {machine}.",
+  "The coordinator continues on {machine}": "Координатор продолжает работу на {machine}",
+  "The coordinator continues on {machine}. {names} have not confirmed it yet.":
+    "Координатор продолжает работу на {machine}. {names} пока это не подтвердили.",
+  "They refuse work from the old coordinator only once they have confirmed the new one.":
+    "Работу от прежнего координатора они начнут отклонять только после того, как подтвердят новый.",
+  "The coordinator stayed on {main}": "Координатор остался на {main}",
+  "Continue the coordinator on {machine}?": "Продолжить работу координатора на {machine}?",
+  "{main} has been offline for 10 minutes or more. The coordinator starts on {machine} from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
+    "{main} не в сети 10 минут или дольше. Координатор начнёт работу на {machine} с общих цели, памяти и плана. Разговор на {main} останется там как история. Пока {main} не вернётся, он ещё может запускать работу на своей машине; затем он уступит и покажет, что запускал за это время.",
+  "Starting the coordinator…": "Запуск координатора…",
+  "The coordinator's machine is not reachable from here.": "Машина координатора отсюда недоступна.",
+  "The coordinator's machine did not confirm the message. It may not have arrived.":
+    "Машина координатора не подтвердила сообщение. Возможно, оно не дошло.",
+  "Nothing was sent.": "Ничего не отправлено.",
+  "The coordinator continues here. Send your message again.":
+    "Координатор продолжает работу здесь. Отправьте сообщение ещё раз.",
+  "{main} must be silent for 10 minutes before the coordinator can continue on {machine}. That unlocks in {minutes} min.":
+    "{main} должен молчать 10 минут, прежде чем координатор сможет продолжить работу на {machine}. Это откроется через {minutes} мин.",
+  "This window can only read {main}, so it cannot hand the coordinator off from there. Open SpecWithCode on {main}, or connect to it with full access.":
+    "Это окно может только читать {main}, поэтому не может передать координатора оттуда. Откройте SpecWithCode на {main} или подключитесь к нему с полным доступом.",
+  "Connect {machine} first to continue the coordinator there.":
+    "Сначала подключите {machine}, чтобы продолжить там работу координатора.",
+  "{machine} cannot continue the coordinator yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
+    "{machine} пока не может продолжить работу координатора. Обновите там SpecWithCode или подключитесь к нему с правом менять настройки и запускать работу.",
+  "Connect {main} first. This window has not opened {project} on {main}, so it cannot hand the coordinator off yet.":
+    "Сначала подключите {main}. Это окно не открывало {project} на {main}, поэтому пока не может передать координатора.",
+  "The coordinator continued on another machine. This one gives way once it is reachable; Send opens the newer one.":
+    "Координатор продолжил работу на другой машине. Этот уступит ему, как только станет доступен; «Отправить» откроет новый.",
+  "The coordinator is on another machine. Send opens it there.":
+    "Координатор на другой машине. «Отправить» откроет его там.",
+  "This machine has not confirmed where the coordinator is yet. Reconnect it to send messages.":
+    "Эта машина ещё не подтвердила, где координатор. Переподключите её, чтобы отправлять сообщения.",
+  "Separate project": "Отдельный проект",
+  "Continue here and send": "Продолжить здесь и отправить",
+  "Files stay on this machine. Remove them to send the text, or open {project} on {machine} to attach them there.":
+    "Файлы остаются на этой машине. Уберите их, чтобы отправить текст, или откройте {project} на {machine} и прикрепите их там.",
+  "From {source}. {machine} has this repository as a separate project (coordinator on {main}).":
+    "С {source}. На {machine} этот репозиторий добавлен как отдельный проект (координатор на {main}).",
+  "From {source}. {machine} has this repository as a separate project.":
+    "С {source}. На {machine} этот репозиторий добавлен как отдельный проект.",
+  "From {source}. The coordinator continues on {machine}.":
+    "С {source}. Координатор продолжит работу на {machine}.",
+  "From {source}. The coordinator continues on the machine you choose.":
+    "С {source}. Координатор продолжит работу на выбранной машине.",
+  "From {source}. The coordinator stays on {main}.": "С {source}. Координатор остаётся на {main}.",
+  "From {source}.": "С {source}.",
+  "Only files go into {machine}'s folder. Its coordinator stays on {main}. To make them one project, link {source} to it from the machine menu.":
+    "В папку на {machine} попадут только файлы. Координатор этого проекта остаётся на {main}. Чтобы это был один проект, свяжите {source} с ним через меню машин.",
+  "Only files go into {machine}'s folder. Its coordinator does not change. To make them one project, link {source} to it from the machine menu.":
+    "В папку на {machine} попадут только файлы. Координатор этого проекта не меняется. Чтобы это был один проект, свяжите {source} с ним через меню машин.",
+  "The coordinator stays where it is.": "Координатор остаётся на месте.",
+  "Extra coordinator": "Лишний координатор",
+  "Handing off the coordinator…": "Передача координатора…",
+  "The coordinator conversation is on this machine.": "Разговор координатора на этой машине.",
+  "The coordinator is on {machine}. This machine also runs a coordinator of its own, which should be fixed.":
+    "Координатор на {machine}. На этой машине тоже работает свой координатор, это нужно исправить.",
+  "The coordinator is on {machine}. Messages typed here go to it.":
+    "Координатор на {machine}. Сообщения, набранные здесь, уходят ему.",
+  "The coordinator is being handed off right now.": "Координатор прямо сейчас передаётся.",
+  "Unlink {project} on {machine}?": "Отвязать {project} на {machine}?",
+  "Extra coordinator on {machine}": "Лишний координатор на {machine}",
+  "It becomes its own project again, with an active coordinator and a copy of this project's notes. {main} stops sending it work. Threads and files stay where they are.":
+    "Он снова станет отдельным проектом, с активным координатором и копией заметок этого проекта. {main} перестанет отправлять ему работу. Треды и файлы останутся на своих местах.",
+  "{machine} also runs a coordinator for {project}. The project's coordinator is on {main}.":
+    "На {machine} тоже работает координатор для {project}. Координатор проекта на {main}.",
+  "To make {machine} part of this project again, link it afterwards. Linking makes it give way to the coordinator on {main}.":
+    "Чтобы снова включить {machine} в этот проект, потом свяжите их заново. После связывания {machine} уступит координатору на {main}.",
+  "{other} still follows the coordinator on {machine}. Continue the coordinator on another machine first.":
+    "{other} всё ещё следует за координатором на {machine}. Сначала продолжите работу координатора на другой машине.",
+  "{machine} cannot be unlinked from this window.": "{machine} нельзя отвязать из этого окна.",
+  "Unlink {project} on {machine}": "Отвязать {project} на {machine}",
+  "The coordinator for {project} is on another machine.": "Координатор {project} на другой машине.",
+  "Ask the coordinator for {project} (on {machine}).":
+    "Спросите координатора {project} (на {machine}).",
+  "The coordinator for {project} is on {machine}, which is not answering.":
+    "Координатор {project} на {machine}, и эта машина не отвечает.",
+  "Continue here syncs {machine}, then moves the coordinator conversation here from {main}.":
+    "«Продолжить здесь» синхронизирует {machine}, затем переносит разговор координатора сюда с {main}.",
+  "{main} has been offline for 10 minutes or more. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
+    "{main} не в сети 10 минут или дольше. «Продолжить здесь»: координатор начнёт работу на {machine} с общих цели, памяти и плана. Его разговор на {main} можно будет прочитать там, а {main} уступит, когда вернётся.",
+  "{main} has been offline for {n} minutes. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
+    "{main} не в сети уже {n} мин. «Продолжить здесь»: координатор начнёт работу на {machine} с общих цели, памяти и плана. Его разговор на {main} можно будет прочитать там, а {main} уступит, когда вернётся.",
+  "{machine} is not answering. Continue here unlocks in {m} min.":
+    "{machine} не отвечает. «Продолжить здесь» станет доступно через {m} мин.",
+  "This window can only read {machine}, so it cannot send there. Open SpecWithCode on {machine}, or connect to it with full access.":
+    "Это окно может только читать {machine}, поэтому не может туда отправлять. Откройте SpecWithCode на {machine} или подключитесь к нему с полным доступом.",
+  "The coordinator moved to {new}. Nothing was sent.":
+    "Координатор перешёл на {new}. Ничего не отправлено.",
+  "{machine} did not take the message: {reason}. Nothing was sent.":
+    "Сообщение не принято на {machine}: {reason}. Ничего не отправлено.",
+  "The coordinator for {project} is on {machine}. Send opens it there.":
+    "Координатор {project} на {machine}. «Отправить» откроет его там.",
+  "The coordinator for {project} is on another machine that this window cannot reach.":
+    "Координатор {project} на другой машине, к которой это окно не может подключиться.",
+  "This window cannot open {machine}": "Это окно не может открыть {machine}",
+  "Offline · last seen {time}": "Не в сети · последняя активность: {time}",
+  "Needs update · {version}": "Нужно обновление · {version}",
+  "Old conversation kept": "Прежний разговор сохранён",
+  "this project": "этот проект",
+  "its machine": "его машина",
+  "the old machine": "прежняя машина",
+  Send: "Отправить",
 };

@@ -75,10 +75,10 @@ export function sharedProjectBadge(
   if (coordinator)
     return {
       role: "workers",
-      label: `Handed off: coordinator on ${nameOf(coordinator.environmentId)}, ${here} runs workers`,
+      label: `Coordinator on ${nameOf(coordinator.environmentId)}`,
     };
   return {
     role: "coordinator",
-    label: `Shared from ${here} with ${others.map(nameOf).join(", ")}`,
+    label: `On ${here} and ${others.map(nameOf).join(", ")}`,
   };
 }

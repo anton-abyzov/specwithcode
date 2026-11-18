@@ -113,7 +113,7 @@ export const projectLink = {
 export const TAKEOVER_UNREACHABLE_MS = 10 * 60_000;
 
 /**
- * Whether "Take over coordinator here" may be pressed: never while the
+ * Whether "Continue the coordinator here" may be pressed: never while the
  * coordinator's machine is connected, and only after it has been unreachable
  * for 10 minutes. Automatic takeover runs on the server only, for a standby
  * the owner armed (standbyArming.ts); this button stays manual.

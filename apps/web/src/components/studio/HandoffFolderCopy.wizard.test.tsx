@@ -154,7 +154,7 @@ it("leaves a one-click copy's skipped steps off the line, with nothing to click"
   expect(hasStep("review")).toBe(false);
   // The line shows progress only: no step is a button.
   expect(document.querySelectorAll('[data-slot="copy-steps"] button')).toHaveLength(0);
-  expect(pageText()).toContain("M3 has a copy. The coordinator stays here.");
+  expect(pageText()).toContain("Project is on M3. The coordinator stays here.");
   expect(button("Open on M3")).toBeTruthy();
 });
 

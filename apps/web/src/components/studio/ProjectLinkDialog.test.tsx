@@ -287,16 +287,16 @@ it("links another machine's copy into this project without changing main", async
   // recent one, and main still stays here.
   expect(text()).toContain("Link M3 to this project");
   expect(text()).toContain(
-    "M3 joins EasyChamp as a copy. Main stays on M4: linking does not change it.",
+    "M3 joins EasyChamp. The coordinator stays on M4: linking does not move it.",
   );
   expect(document.querySelector("[data-link-main-stays]")?.textContent).toBe(
-    "Main stays on M4. To have main on M3, make M3 main after linking.",
+    "The coordinator stays on M4. To continue it on M3, use Continue here after linking.",
   );
   expect(document.querySelector<HTMLElement>("fieldset[hidden]")?.textContent).toContain(
     "Coordinator stays on",
   );
   expect(document.querySelector("[data-link-consent]")?.textContent).toBe(
-    "Link M3 to this project. M3 gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on M3 as history. Its workers keep running. Main stays on M4. Files are not copied.",
+    "Link M3 to this project. M3 gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if the coordinator continues there. Its own coordinator stops, and that conversation stays on M3 as history. Its workers keep running. The coordinator stays on M4. Files are not copied.",
   );
   // Nothing links before the person agrees to that.
   expect(button("Link M3").disabled).toBe(true);
