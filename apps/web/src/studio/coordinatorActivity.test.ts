@@ -122,6 +122,22 @@ describe("runActivity", () => {
     ]);
   });
 
+  it("does not count a launch that needed SpecWeave as a started worker", () => {
+    const needs = (output: unknown) =>
+      item({ type: "dynamic_tool", toolName: "mcp__studio-code__delegate_task", output });
+    // The compact wire result keeps only ids, so the refusal arrives empty.
+    expect(summarizeRunItems([needs({})])).toBe("Used 1 other tool");
+    expect(
+      summarizeRunItems([
+        needs({ launched: false, needs: "specweave", message: "SpecWeave is not set up" }),
+        needs({ structuredContent: { launched: false, needs: "specweave" } }),
+      ]),
+    ).toBe("Used 2 other tools");
+    expect(summarizeRunItems([...delegated("node:a").slice(0, 1), needs({})])).toBe(
+      "Started 1 worker and used 1 other tool",
+    );
+  });
+
   it("keeps a worker the tool call did not start", () => {
     const activity = runActivity("run-1", [
       ...delegated("node:smoke").slice(0, 1),

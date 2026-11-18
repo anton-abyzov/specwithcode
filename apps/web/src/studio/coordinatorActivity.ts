@@ -115,8 +115,10 @@ function categorize(item: ActivityItem): Category | null {
       return "web";
     case "dynamic_tool": {
       const tool = bareToolName(item.toolName ?? "");
-      if (/^(delegate_task|studio_thread_launch|studio_thread_create|Task|Agent)$/.test(tool))
-        return "worker";
+      if (/^(Task|Agent)$/.test(tool)) return "worker";
+      // A launch that answered without a task or thread started nothing, such
+      // as `{ launched: false, needs: "specweave" }` (1396): not a worker.
+      if (WORKER_LAUNCH_TOOL.test(tool)) return launchStartedNothing(item) ? "other" : "worker";
       if (tool.startsWith("studio_thread_send")) return "message";
       // A delegated worker's status is a look at its thread.
       if (/^studio_thread_(list|read|wait)/.test(tool) || tool === "task_status") return "threads";
@@ -180,6 +182,22 @@ function filePath(item: ActivityItem): string | undefined {
 }
 
 const WORKER_LAUNCH_TOOL = /^(delegate_task|studio_thread_launch|studio_thread_create)$/;
+
+/**
+ * The launch answered and named nothing it started: the compact wire result
+ * keeps only ids, so an answer without one, or the full `launched: false`
+ * result, is a launch that did not happen.
+ */
+function launchStartedNothing(item: ActivityItem): boolean {
+  if (typeof item.output !== "object" || item.output === null) return false;
+  const output = item.output as Record<string, unknown>;
+  const nested = output.structuredContent;
+  const fields = [output, typeof nested === "object" && nested !== null ? nested : {}] as const;
+  if (fields.some((entry) => (entry as Record<string, unknown>).launched === false)) return true;
+  if (fields.some((entry) => Array.isArray((entry as Record<string, unknown>).threads)))
+    return false;
+  return launchedIds(item).length === 0;
+}
 
 /** What a worker-launching tool call reports it started, once it has answered. */
 function launchedIds(item: ActivityItem): ReadonlyArray<string> {
