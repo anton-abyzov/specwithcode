@@ -30,7 +30,11 @@ import {
   resumeQueueWithProjectModel,
 } from "../studio/coordinatorContinuation";
 import { latestWorkStep } from "../studio/coordinatorProgress";
-import { useHostReach, useUnreachableHosts } from "../studio/unreachableHosts";
+import {
+  useHostIdentityMismatch,
+  useHostReach,
+  useUnreachableHosts,
+} from "../studio/unreachableHosts";
 import { threadBlocker } from "../studio/projectWorkspaceModel";
 import {
   machineNickname as machineNicknameNow,
@@ -3319,6 +3323,9 @@ function useChatViewState(props: ChatViewProps) {
     ? (activeEnvironment?.environmentId ?? null)
     : null;
   const activeEnvironmentReach = useHostReach(activeEnvironment?.environmentId);
+  const activeEnvironmentIdentityMismatch = useHostIdentityMismatch(
+    activeEnvironment?.environmentId,
+  );
   const [reconnectWarningGraceElapsedEnvironmentId, setReconnectWarningGraceElapsedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const reconnectWarningGraceElapsed = hasEnvironmentReconnectWarningGraceElapsed(
@@ -3820,6 +3827,7 @@ function useChatViewState(props: ChatViewProps) {
             connection: unavailableConnection,
             isThisMachine: activeEnvironmentUnavailableState.isThisMachine,
             reach: activeEnvironmentReach,
+            identityMismatch: activeEnvironmentIdentityMismatch,
           })
         : null;
     const unavailableStatus = unavailableBanner?.status ?? null;
@@ -3962,6 +3970,7 @@ function useChatViewState(props: ChatViewProps) {
     openThreadRoute,
     automaticEnvironment,
     activeEnvironmentReach,
+    activeEnvironmentIdentityMismatch,
     activeEnvironmentUnavailableState,
     handleReconnectActiveEnvironment,
     canDisconnectActiveEnvironment,

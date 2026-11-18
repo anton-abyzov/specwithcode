@@ -4681,8 +4681,6 @@ export const ru: PhraseCatalog = {
     "Передаёт работу машине для режима «Не на месте», когда этот Mac засыпает. Сначала она ждёт заданное время, и если вы вернётесь раньше, ничего не переносится. Только Mac.",
   "How long the target waits after the lid closes before it takes over.":
     "Сколько машина ждёт после закрытия крышки, прежде чем взять работу.",
-  "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.":
-    "Она также получает ключ для управления доступом, обновлениями и навыками на этой машине на год. Текущие ограничения по проектам и входам продолжают действовать.",
   "Its app sees this machine": "Её приложение видит эту машину",
   "Its work may use any sign-in on this machine.":
     "Её работа может использовать любой вход на этой машине.",
@@ -4723,8 +4721,6 @@ export const ru: PhraseCatalog = {
   "No sign-ins: every launch is refused": "Нет входов: каждый запуск отклоняется",
   "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.":
     "Нет. Чтобы открыть проекты этой машины с {machineLabel}, создайте здесь одноразовую ссылку и откройте её там.",
-  "Not included. Each secret transfer still asks you.":
-    "Не входит. Каждая передача секрета по-прежнему требует вашего подтверждения.",
   "Not set up yet.": "Ещё не настроено.",
   "Nothing allowed yet: tick a project or pick All projects":
     "Пока ничего не разрешено: отметьте проект или выберите «Все проекты»",
@@ -5279,6 +5275,7 @@ export const ru: PhraseCatalog = {
     "{main} недоступен 10 минут или дольше. {machine} станет основной и начнёт с общих цели, памяти и плана. Разговор на {main} останется там как история. Пока {main} не вернётся, он ещё может запускать работу на своей машине; затем он уступит и покажет, что запускал за это время.",
   "Switching…": "Переключаем…",
   "Make {machine} main": "Сделать {machine} основной",
+  "Make {machine} main for {project}": "Сделать {machine} основной для {project}",
   "Main for {project} is {machine}. This copy takes work from there.":
     "Основная для {project} — {machine}. Эта копия получает работу оттуда.",
   "Main for {project} is on another machine. This copy takes work from there.":
@@ -5329,4 +5326,171 @@ export const ru: PhraseCatalog = {
     "Когда запущенный вами тред завершается и все задачи его инкремента выполнены или пропущены, модель из другого семейства проверяет работу в новом треде, один раз на инкремент. Действует для проектов этой машины, если проект не задал своё. Проверки, которые просите вы или агент, и проверка при закрытии инкремента идут в любом случае.",
   "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
     "Когда запущенный вами тред завершается и все задачи его инкремента выполнены или пропущены, модель из другого семейства проверяет работу в новом треде, один раз на инкремент. Действует только для этого проекта. Проверки, которые просите вы или агент, и проверка при закрытии инкремента идут в любом случае.",
+  "Copy {project} to {machine}": "Скопировать {project} на {machine}",
+  "Move {project} to {machine}": "Перенести {project} на {machine}",
+  "Copy {project} to another machine": "Скопировать {project} на другую машину",
+  "Move {project} to another machine": "Перенести {project} на другую машину",
+  "Nothing on {machine} is replaced without asking.":
+    "На {machine} ничего не заменяется без вопроса.",
+  "the other machine": "другой машине",
+  "From {source}. Main stays on {main}.": "С {source}. Основная остаётся на {main}.",
+  "From {source}. Main stays where it is.": "С {source}. Основная остаётся там, где она есть.",
+  "From {source}. Main moves to {machine}.": "С {source}. Основная переходит на {machine}.",
+  "From {source}. Main moves to the machine you choose.":
+    "С {source}. Основная переходит на выбранную машину.",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
+    "С {source}. Копия на {source} не связана с проектом, к которому относится {machine} (основная: {main}).",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
+    "С {source}. Копия на {source} не связана с проектом, к которому относится {machine}.",
+  "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "В копию на {machine} копируются только файлы. Основная остаётся на {main}, а {source} не связывается с этим проектом. Чтобы это был один проект, свяжите {source} с ним через меню машин.",
+  "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "В копию на {machine} копируются только файлы. Её основная не меняется, а {source} не связывается с этим проектом. Чтобы это был один проект, свяжите {source} с ним через меню машин.",
+  "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
+    "Отсюда основную нельзя перенести на {machine}: {source} не связана с проектом, к которому относится {machine}. Сначала свяжите {source} с ним через меню машин или скопируйте файлы.",
+  "Not available: that machine already has Main.": "Недоступно: на этой машине уже основная.",
+  "Not available: it would move Main into a project this copy is not linked to.":
+    "Недоступно: основная перешла бы в проект, с которым эта копия не связана.",
+  "{machine} has a copy. Main stays on {main}.":
+    "На {machine} есть копия. Основная остаётся на {main}.",
+  "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
+    "Не связано: копия на {machine} относится к проекту, основная которого на {main}, а {source} в него не входит. Ничего не связано.",
+  "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
+    "Не связано: копия на {machine} относится к другому проекту, а {source} в него не входит. Ничего не связано.",
+  "Link with a project on another machine": "Связать с проектом на другой машине",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
+    "Выберите копию {project} на другой машине. У каждой копии остаётся свой координатор; основная остаётся на {main}, и её можно сменить в любой момент.",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
+    "Выберите копию {project} на другой машине. У каждой копии остаётся свой координатор, а основную можно сменить в любой момент.",
+  "Other copy": "Другая копия",
+  "No project on another connected machine. Add the folder on that machine first, then link it here.":
+    "На других подключённых машинах нет проектов. Сначала добавьте папку на той машине, затем свяжите её здесь.",
+  "{project} on {machine}": "{project} на {machine}",
+  "Not a copy:": "Не копия:",
+  "Compared when you review the link.": "Сравнение при проверке связи.",
+  "Reading folders…": "Чтение папок…",
+  "No copy of {project} was found on another machine.":
+    "Копия {project} на другой машине не найдена.",
+  "Other projects ({count})": "Другие проекты ({count})",
+  "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
+    "Судя по папкам, это не копии {project}. Выбирайте только если это переименованная или заново клонированная копия.",
+  "Review link": "Проверить связь",
+  "Message {machine}'s coordinator for {project}.":
+    "Напишите координатору {machine} для {project}.",
+  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
+    "Отправка передаёт сообщение координатору {machine} и открывает его страницу, куда придёт ответ.",
+  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
+    "Отправка передаёт сообщение главному координатору и открывает его страницу, куда придёт ответ.",
+  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
+    "Файлы остаются на этом компьютере. Уберите их, чтобы отправить текст на главный, или откройте страницу главного и прикрепите их там.",
+  "1 device waiting": "1 устройство ждёт",
+  "A Linux computer": "Компьютер Linux",
+  "A Mac": "Mac",
+  "A Windows PC": "ПК с Windows",
+  "A computer": "Компьютер",
+  "A device cannot approve itself. Type this code on another device or on the machine.":
+    "Устройство не может одобрить само себя. Введите этот код на другом устройстве или на машине.",
+  "A new device wants to use {machine}": "Новое устройство хочет использовать {machine}",
+  "A phone": "Телефон",
+  "A tablet": "Планшет",
+  "Allow {coordinatorLabel} to run work on {hereLabel}?":
+    "Разрешить {coordinatorLabel} запускать работу на {hereLabel}?",
+  "Allowing…": "Разрешаем…",
+  "An Android phone": "Телефон Android",
+  "An Android tablet": "Планшет Android",
+  "An iPad": "iPad",
+  "An iPhone": "iPhone",
+  "Approve this device on the machine.": "Одобрите это устройство на машине.",
+  "Approved {date} by {approver}": "Одобрено {date} ({approver})",
+  "Checking devices…": "Проверка устройств…",
+  "Code shown on {device}": "Код, который показывает {device}",
+  "Could not reach this machine.": "Не удалось связаться с этой машиной.",
+  "Could not reach this machine. Try again.":
+    "Не удалось связаться с этой машиной. Попробуйте ещё раз.",
+  "Could not remove {device}": "Не удалось удалить устройство {device}",
+  "Could not repair the list": "Не удалось восстановить список",
+  "Could not save the list": "Не удалось сохранить список",
+  "Could not turn that device away": "Не удалось отклонить это устройство",
+  "Deny turns it away for a day.": "«Отклонить» не пускает его сутки.",
+  "Devices that can use this machine": "Устройства, которые могут использовать эту машину",
+  "First seen {date}": "Впервые замечено {date}",
+  "It also gets a key to this machine for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Project limits stay in force.":
+    "Оно также получает ключ к этой машине на год: терминалы, файлы, настройки и входы, а также доступ, обновления и навыки. Ограничения проектов продолжают действовать.",
+  "It stops using {machine} right away. To use it again, it asks with a new code.":
+    "Оно сразу перестаёт использовать {machine}. Чтобы снова получить доступ, оно запросит его с новым кодом.",
+  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
+    "Его приложение одобрено здесь по коду, поэтому оно может использовать эту машину, а агенты этой машины теперь могут запускать на нём работу. Изменить или удалить его можно в «Настройки > Машины».",
+  "Kept by the update": "Сохранено при обновлении",
+  "Kept by the update. Check this list.": "Сохранено при обновлении. Проверьте этот список.",
+  Later: "Позже",
+  "New device approved on {machine} by {approver}":
+    "Новое устройство одобрено на {machine} ({approver})",
+  "No device is waiting with that code. Check the code shown on the device that asked for {machine}.":
+    "Нет устройства, которое ждёт с этим кодом. Проверьте код на устройстве, которое запросило доступ к {machine}.",
+  "No other devices yet. A phone or computer signed in to SpecWithCode Connect asks here first, with a code.":
+    "Других устройств пока нет. Телефон или компьютер, вошедший в SpecWithCode Connect, сначала запрашивает доступ здесь, с кодом.",
+  "Not sent on their own. Each secret transfer asks first, and that card appears on the machine that asks, not on this one.":
+    "Сами по себе не отправляются. Каждая передача секретов сначала спрашивает разрешения, и эта карточка появляется на машине, которая запрашивает, а не на этой.",
+  "Open SpecWithCode on {machine} and type this code:":
+    "Откройте SpecWithCode на {machine} и введите этот код:",
+  "Remove {device}?": "Удалить устройство {device}?",
+  "Sign in to SpecWithCode Connect again on this device to ask {machine} for approval.":
+    "Снова войдите в SpecWithCode Connect на этом устройстве, чтобы запросить одобрение у {machine}.",
+  "The device list on {machine} is damaged, so other devices are turned away until it is repaired. Repair starts an empty list; devices then ask again with a code.":
+    "Список устройств на {machine} повреждён, поэтому другие устройства не допускаются, пока его не восстановят. Восстановление создаёт пустой список; затем устройства снова запрашивают доступ с кодом.",
+  "The device list on {machine} is damaged. Open SpecWithCode on {machine} to repair it.":
+    "Список устройств на {machine} повреждён. Откройте SpecWithCode на {machine}, чтобы восстановить его.",
+  "The list is right": "Список верный",
+  "These devices were in use when {machine} updated, so they were kept. Remove any you do not know.":
+    "Эти устройства работали во время обновления на {machine}, поэтому они сохранены. Удалите те, которые вы не знаете.",
+  "This device connects on its own once {machine} allows it.":
+    "Это устройство подключится само, как только {machine} его разрешит.",
+  "This machine cannot check new devices yet. Open SpecWithCode on it and update.":
+    "Эта машина пока не умеет проверять новые устройства. Откройте на ней SpecWithCode и обновите.",
+  "This machine does not ask before new devices connect yet. Update it to choose which devices can use it.":
+    "Эта машина пока не спрашивает, прежде чем подключаются новые устройства. Обновите её, чтобы выбирать, какие устройства могут её использовать.",
+  "Too many wrong codes. Type the code on {machine} itself, or wait 10 minutes.":
+    "Слишком много неверных кодов. Введите код прямо на {machine} или подождите 10 минут.",
+  "Try again.": "Попробуйте ещё раз.",
+  "Turning away…": "Отклоняем…",
+  "6 characters": "6 символов",
+  "Type the code shown on {device}": "Введите код, который показывает {device}",
+  "another device": "другое устройство",
+  "the update": "обновление",
+  "{coordinatorLabel} receives a key to {hereLabel} for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Its work is capped at {cap}. Project limits stay in force. Each secret transfer asks first, on {coordinatorLabel}.":
+    "{coordinatorLabel} получает ключ к {hereLabel} на год: терминалы, файлы, настройки и входы, а также доступ, обновления и навыки. Его работа ограничена: {cap}. Ограничения проектов продолжают действовать. Каждая передача секретов сначала спрашивает разрешения на {coordinatorLabel}.",
+  "{count} devices waiting": "Устройств в ожидании: {count}",
+  "{device} can now use {machine}": "{device} теперь может использовать {machine}",
+  "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
+    "{device} запрашивает доступ. Вход в SpecWithCode Connect выполнен как {account}.",
+  "{device} is asking. It signed in to your SpecWithCode Connect account.":
+    "{device} запрашивает доступ. Вход выполнен в ваш аккаунт SpecWithCode Connect.",
+  "{device} is waiting to use {machine}.": "{device} ждёт доступа к {machine}.",
+  "{label} joined": "Подключено: {label}",
+  "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
+    "{machine} больше не пускает это устройство. Одобрите его снова в SpecWithCode на {machine}.",
+  "{position} of {total} waiting": "{position} из {total} в ожидании",
+  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
+    "«Разрешить» даёт ему терминалы, файлы, настройки и входы в аккаунты на {machine}, а также запуск работы там, так же как это приложение.",
+  "Asked at {time}": "Запрос в {time}",
+  "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
+    "Имя устройство выбирает само. Доказывает, что это устройство перед вами, только код, поэтому разрешайте лишь код, который видите на нём.",
+  "Too many devices are waiting for approval on {machine}. Try again in a few minutes.":
+    "Слишком много устройств ждут одобрения на {machine}. Попробуйте через несколько минут.",
+  "{device} is asking. It was paired through another of your machines.":
+    "{device} запрашивает доступ. Оно подключено через другую вашу машину.",
+  "{device} is asking. It was paired through {hub}.":
+    "{device} запрашивает доступ. Оно подключено через {hub}.",
+  "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
+    "{machine} отклонила это устройство. Запросите снова завтра или одобрите его в SpecWithCode на {machine}.",
+  "Different machine at address": "По адресу другой компьютер",
+  "{machine}'s address now answers as a different SpecWithCode":
+    "По адресу {machine} теперь отвечает другой SpecWithCode",
+  "This host's address now answers as a different SpecWithCode":
+    "По адресу этого хоста теперь отвечает другой SpecWithCode",
+  "Open Settings > Machines to fix it.": "Откройте Настройки > Машины, чтобы это исправить.",
+  "Resolved history from {machines} could not be loaded.":
+    "Не удалось загрузить завершённую историю с {machines}.",
+  "Resolved history from another machine could not be loaded.":
+    "Не удалось загрузить завершённую историю с другого компьютера.",
 };

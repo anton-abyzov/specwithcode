@@ -4694,8 +4694,6 @@ export const pt: PhraseCatalog = {
     "Passa o trabalho para o destino ao se ausentar quando este Mac dorme. O destino espera primeiro o tempo de espera, e nada muda se você voltar antes. Só no Mac.",
   "How long the target waits after the lid closes before it takes over.":
     "Quanto tempo o destino espera depois que a tampa fecha antes de assumir.",
-  "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.":
-    "Ela também recebe uma chave para gerenciar acesso, atualizações e skills nesta máquina, por um ano. Os limites de projetos e logins existentes continuam valendo.",
   "Its app sees this machine": "O app dela vê esta máquina",
   "Its work may use any sign-in on this machine.":
     "O trabalho dela pode usar qualquer login desta máquina.",
@@ -4735,8 +4733,6 @@ export const pt: PhraseCatalog = {
   "No sign-ins: every launch is refused": "Nenhum login: todo início é recusado",
   "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.":
     "Não. Para abrir os projetos desta máquina a partir de {machineLabel}, gere um link de uso único aqui e abra-o lá.",
-  "Not included. Each secret transfer still asks you.":
-    "Não incluído. Cada transferência de segredo ainda pergunta a você.",
   "Not set up yet.": "Ainda não configurado.",
   "Nothing allowed yet: tick a project or pick All projects":
     "Nada permitido ainda: marque um projeto ou escolha Todos os projetos",
@@ -5285,6 +5281,7 @@ export const pt: PhraseCatalog = {
     "{main} está inacessível há 10 minutos ou mais. {machine} vira a principal e começa do objetivo, da memória e do plano compartilhados. A conversa em {main} fica lá como histórico. Até {main} voltar, ela ainda pode iniciar trabalho na própria máquina; depois cede e lista o que executou nesse meio-tempo.",
   "Switching…": "Trocando…",
   "Make {machine} main": "Tornar {machine} a principal",
+  "Make {machine} main for {project}": "Tornar {machine} a principal de {project}",
   "Main for {project} is {machine}. This copy takes work from there.":
     "A principal de {project} é {machine}. Esta cópia recebe trabalho de lá.",
   "Main for {project} is on another machine. This copy takes work from there.":
@@ -5335,4 +5332,171 @@ export const pt: PhraseCatalog = {
     "Quando um thread que você iniciou termina e todas as tarefas do incremento estão feitas ou puladas, um modelo de outra família revisa o trabalho em um novo thread, uma vez por incremento. Vale para os projetos desta máquina, a menos que um projeto mude. Revisões que você ou um agente pedem, e a revisão no fechamento do incremento, acontecem de qualquer forma.",
   "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
     "Quando um thread que você iniciou termina e todas as tarefas do incremento estão feitas ou puladas, um modelo de outra família revisa o trabalho em um novo thread, uma vez por incremento. Vale só para este projeto. Revisões que você ou um agente pedem, e a revisão no fechamento do incremento, acontecem de qualquer forma.",
+  "Copy {project} to {machine}": "Copiar {project} para {machine}",
+  "Move {project} to {machine}": "Mover {project} para {machine}",
+  "Copy {project} to another machine": "Copiar {project} para outra máquina",
+  "Move {project} to another machine": "Mover {project} para outra máquina",
+  "Nothing on {machine} is replaced without asking.":
+    "Nada em {machine} é substituído sem perguntar.",
+  "the other machine": "a outra máquina",
+  "From {source}. Main stays on {main}.": "De {source}. A principal continua em {main}.",
+  "From {source}. Main stays where it is.": "De {source}. A principal continua onde está.",
+  "From {source}. Main moves to {machine}.": "De {source}. A principal passa para {machine}.",
+  "From {source}. Main moves to the machine you choose.":
+    "De {source}. A principal passa para a máquina que você escolher.",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
+    "De {source}. A cópia de {source} não está vinculada ao projeto ao qual {machine} pertence (principal: {main}).",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
+    "De {source}. A cópia de {source} não está vinculada ao projeto ao qual {machine} pertence.",
+  "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "Só arquivos são copiados para a cópia de {machine}. A principal continua em {main}, e {source} não está vinculado a esse projeto. Para que sejam um só projeto, vincule {source} pelo menu de máquinas.",
+  "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "Só arquivos são copiados para a cópia de {machine}. A principal dela não muda, e {source} não está vinculado a esse projeto. Para que sejam um só projeto, vincule {source} pelo menu de máquinas.",
+  "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
+    "A principal não pode passar para {machine} daqui: {source} não está vinculado ao projeto ao qual {machine} pertence. Vincule {source} antes pelo menu de máquinas, ou copie os arquivos.",
+  "Not available: that machine already has Main.": "Indisponível: essa máquina já tem a principal.",
+  "Not available: it would move Main into a project this copy is not linked to.":
+    "Indisponível: moveria a principal para um projeto ao qual esta cópia não está vinculada.",
+  "{machine} has a copy. Main stays on {main}.":
+    "{machine} tem uma cópia. A principal continua em {main}.",
+  "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
+    "Sem vínculo: a cópia em {machine} pertence a um projeto cuja principal é {main}, e {source} não faz parte dele. Nada foi vinculado.",
+  "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
+    "Sem vínculo: a cópia em {machine} pertence a outro projeto, e {source} não faz parte dele. Nada foi vinculado.",
+  "Link with a project on another machine": "Vincular a um projeto em outra máquina",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
+    "Escolha a cópia de {project} em outra máquina. Cada cópia mantém seu próprio coordenador; a principal continua em {main} e você pode trocá-la quando quiser.",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
+    "Escolha a cópia de {project} em outra máquina. Cada cópia mantém seu próprio coordenador, e você pode trocar a principal quando quiser.",
+  "Other copy": "Outra cópia",
+  "No project on another connected machine. Add the folder on that machine first, then link it here.":
+    "Nenhum projeto em outra máquina conectada. Primeiro adicione a pasta nessa máquina e depois vincule-a aqui.",
+  "{project} on {machine}": "{project} em {machine}",
+  "Not a copy:": "Não é uma cópia:",
+  "Compared when you review the link.": "Comparado ao revisar o vínculo.",
+  "Reading folders…": "Lendo pastas…",
+  "No copy of {project} was found on another machine.":
+    "Nenhuma cópia de {project} foi encontrada em outra máquina.",
+  "Other projects ({count})": "Outros projetos ({count})",
+  "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
+    "Pelas pastas, não são cópias de {project}. Escolha um só se for uma cópia renomeada ou clonada de novo.",
+  "Review link": "Revisar vínculo",
+  "Message {machine}'s coordinator for {project}.":
+    "Escreva ao coordenador de {machine} para {project}.",
+  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
+    "Enviar entrega sua mensagem ao coordenador de {machine} e abre a página dele, onde chega a resposta.",
+  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
+    "Enviar entrega sua mensagem ao coordenador principal e abre a página dele, onde chega a resposta.",
+  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
+    "Os arquivos ficam nesta máquina. Remova-os para enviar o texto à principal, ou abra a página da principal para anexá-los lá.",
+  "1 device waiting": "1 dispositivo aguardando",
+  "A Linux computer": "Um computador Linux",
+  "A Mac": "Um Mac",
+  "A Windows PC": "Um PC com Windows",
+  "A computer": "Um computador",
+  "A device cannot approve itself. Type this code on another device or on the machine.":
+    "Um dispositivo não pode aprovar a si mesmo. Digite este código em outro dispositivo ou na máquina.",
+  "A new device wants to use {machine}": "Um novo dispositivo quer usar {machine}",
+  "A phone": "Um celular",
+  "A tablet": "Um tablet",
+  "Allow {coordinatorLabel} to run work on {hereLabel}?":
+    "Permitir que {coordinatorLabel} execute trabalho em {hereLabel}?",
+  "Allowing…": "Permitindo…",
+  "An Android phone": "Um celular Android",
+  "An Android tablet": "Um tablet Android",
+  "An iPad": "Um iPad",
+  "An iPhone": "Um iPhone",
+  "Approve this device on the machine.": "Aprove este dispositivo na máquina.",
+  "Approved {date} by {approver}": "Aprovado em {date} por {approver}",
+  "Checking devices…": "Verificando dispositivos…",
+  "Code shown on {device}": "Código mostrado em {device}",
+  "Could not reach this machine.": "Não foi possível acessar esta máquina.",
+  "Could not reach this machine. Try again.":
+    "Não foi possível acessar esta máquina. Tente de novo.",
+  "Could not remove {device}": "Não foi possível remover {device}",
+  "Could not repair the list": "Não foi possível reparar a lista",
+  "Could not save the list": "Não foi possível salvar a lista",
+  "Could not turn that device away": "Não foi possível recusar esse dispositivo",
+  "Deny turns it away for a day.": "Negar recusa o dispositivo por um dia.",
+  "Devices that can use this machine": "Dispositivos que podem usar esta máquina",
+  "First seen {date}": "Visto pela primeira vez em {date}",
+  "It also gets a key to this machine for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Project limits stay in force.":
+    "Ele também recebe uma chave desta máquina por um ano: terminais, arquivos, configurações e logins, além de acesso, atualizações e habilidades. Os limites do projeto continuam valendo.",
+  "It stops using {machine} right away. To use it again, it asks with a new code.":
+    "Ele para de usar {machine} na hora. Para usar de novo, ele pede com um novo código.",
+  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
+    "O app dele foi aprovado aqui com um código, então ele pode usar esta máquina, e os agentes desta máquina já podem executar trabalho nele. Você pode alterar ou remover isso em Configurações > Máquinas.",
+  "Kept by the update": "Mantido pela atualização",
+  "Kept by the update. Check this list.": "Mantido pela atualização. Confira esta lista.",
+  Later: "Depois",
+  "New device approved on {machine} by {approver}":
+    "Novo dispositivo aprovado em {machine} por {approver}",
+  "No device is waiting with that code. Check the code shown on the device that asked for {machine}.":
+    "Nenhum dispositivo está aguardando com esse código. Confira o código mostrado no dispositivo que pediu acesso a {machine}.",
+  "No other devices yet. A phone or computer signed in to SpecWithCode Connect asks here first, with a code.":
+    "Ainda não há outros dispositivos. Um celular ou computador conectado ao SpecWithCode Connect pede aqui primeiro, com um código.",
+  "Not sent on their own. Each secret transfer asks first, and that card appears on the machine that asks, not on this one.":
+    "Não são enviados sozinhos. Cada transferência de segredos pede permissão antes, e esse cartão aparece na máquina que pede, não nesta.",
+  "Open SpecWithCode on {machine} and type this code:":
+    "Abra o SpecWithCode em {machine} e digite este código:",
+  "Remove {device}?": "Remover {device}?",
+  "Sign in to SpecWithCode Connect again on this device to ask {machine} for approval.":
+    "Entre de novo no SpecWithCode Connect neste dispositivo para pedir aprovação a {machine}.",
+  "The device list on {machine} is damaged, so other devices are turned away until it is repaired. Repair starts an empty list; devices then ask again with a code.":
+    "A lista de dispositivos em {machine} está danificada, então outros dispositivos são recusados até ela ser reparada. O reparo começa uma lista vazia; depois os dispositivos pedem de novo com um código.",
+  "The device list on {machine} is damaged. Open SpecWithCode on {machine} to repair it.":
+    "A lista de dispositivos em {machine} está danificada. Abra o SpecWithCode em {machine} para repará-la.",
+  "The list is right": "A lista está certa",
+  "These devices were in use when {machine} updated, so they were kept. Remove any you do not know.":
+    "Estes dispositivos estavam em uso durante a atualização de {machine}, então foram mantidos. Remova os que você não conhece.",
+  "This device connects on its own once {machine} allows it.":
+    "Este dispositivo se conecta sozinho assim que {machine} permitir.",
+  "This machine cannot check new devices yet. Open SpecWithCode on it and update.":
+    "Esta máquina ainda não consegue verificar novos dispositivos. Abra o SpecWithCode nela e atualize.",
+  "This machine does not ask before new devices connect yet. Update it to choose which devices can use it.":
+    "Esta máquina ainda não pergunta antes de novos dispositivos se conectarem. Atualize-a para escolher quais dispositivos podem usá-la.",
+  "Too many wrong codes. Type the code on {machine} itself, or wait 10 minutes.":
+    "Muitos códigos errados. Digite o código diretamente em {machine} ou aguarde 10 minutos.",
+  "Try again.": "Tente de novo.",
+  "Turning away…": "Recusando…",
+  "6 characters": "6 caracteres",
+  "Type the code shown on {device}": "Digite o código mostrado em {device}",
+  "another device": "outro dispositivo",
+  "the update": "atualização",
+  "{coordinatorLabel} receives a key to {hereLabel} for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Its work is capped at {cap}. Project limits stay in force. Each secret transfer asks first, on {coordinatorLabel}.":
+    "{coordinatorLabel} recebe uma chave de {hereLabel} por um ano: terminais, arquivos, configurações e logins, além de acesso, atualizações e habilidades. O trabalho tem limite de {cap}. Os limites do projeto continuam valendo. Cada transferência de segredos pede permissão antes, em {coordinatorLabel}.",
+  "{count} devices waiting": "{count} dispositivos aguardando",
+  "{device} can now use {machine}": "{device} já pode usar {machine}",
+  "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
+    "{device} está pedindo acesso. Ele entrou no SpecWithCode Connect como {account}.",
+  "{device} is asking. It signed in to your SpecWithCode Connect account.":
+    "{device} está pedindo acesso. Ele entrou na sua conta do SpecWithCode Connect.",
+  "{device} is waiting to use {machine}.": "{device} está aguardando para usar {machine}.",
+  "{label} joined": "{label} entrou",
+  "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
+    "{machine} não deixa mais este dispositivo entrar. Aprove de novo no SpecWithCode em {machine}.",
+  "{position} of {total} waiting": "{position} de {total} aguardando",
+  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
+    "Permitir deixa que ele use terminais, arquivos, configurações e logins em {machine} e comece trabalho lá, como este app.",
+  "Asked at {time}": "Pedido às {time}",
+  "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
+    "O nome é o próprio dispositivo que escolhe. Só o código prova que é o dispositivo na sua frente, então permita apenas um código que você consiga ler nele.",
+  "Too many devices are waiting for approval on {machine}. Try again in a few minutes.":
+    "Há dispositivos demais aguardando aprovação em {machine}. Tente de novo em alguns minutos.",
+  "{device} is asking. It was paired through another of your machines.":
+    "{device} está pedindo acesso. Ele foi pareado por outra das suas máquinas.",
+  "{device} is asking. It was paired through {hub}.":
+    "{device} está pedindo acesso. Ele foi pareado por {hub}.",
+  "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
+    "{machine} recusou este dispositivo. Peça de novo amanhã ou aprove-o no SpecWithCode em {machine}.",
+  "Different machine at address": "Outra máquina no endereço",
+  "{machine}'s address now answers as a different SpecWithCode":
+    "O endereço de {machine} agora responde como outro SpecWithCode",
+  "This host's address now answers as a different SpecWithCode":
+    "O endereço deste host agora responde como outro SpecWithCode",
+  "Open Settings > Machines to fix it.": "Abra Configurações > Máquinas para corrigir.",
+  "Resolved history from {machines} could not be loaded.":
+    "Não foi possível carregar o histórico resolvido de {machines}.",
+  "Resolved history from another machine could not be loaded.":
+    "Não foi possível carregar o histórico resolvido de outra máquina.",
 };

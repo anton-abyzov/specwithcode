@@ -40,7 +40,8 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 export const ACCESS_GRANTS_FILE = "access-grants.json";
 
 const StoredGrant = Schema.Struct({
-  kind: Schema.Literals(["app", "device", "machine", "folder"]),
+  // "permission" is never stored (System Settings holds it); listed so the kinds match the card.
+  kind: Schema.Literals(["app", "device", "machine", "folder", "permission"]),
   key: Schema.String,
   label: Schema.String,
   grantedAt: Schema.String,
@@ -251,6 +252,10 @@ const make = Effect.gen(function* () {
             return yield* new AccessRequestError({ reason: "agent_stopped" });
           }
           const allowed = input.answer.type === "allow" ? input.answer : null;
+          // A macOS permission is granted in System Settings, never by a click on the card.
+          if (allowed !== null && item.subjects.some((subject) => subject.kind === "permission")) {
+            return yield* new AccessRequestError({ reason: "system_settings_only" });
+          }
           // Grants first: the card says allowed only once they are written.
           const added =
             allowed === null ? [] : yield* grant(input.threadId, item.subjects, allowed.scope);

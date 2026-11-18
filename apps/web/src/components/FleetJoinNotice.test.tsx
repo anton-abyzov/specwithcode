@@ -53,7 +53,9 @@ it("says a machine joined, with nothing to press, and remembers it", async () =>
   expect(state.add).toHaveBeenCalledTimes(1);
   const notice = state.add.mock.calls[0]![0] as Record<string, unknown>;
   expect(notice).toMatchObject({ type: "info", title: "MacBook Pro joined", timeout: 0 });
-  expect(notice.description).toContain("Nothing to accept");
+  // 1327: the join reaches this machine only after its app was approved here.
+  expect(notice.description).toContain("Its app was approved here with a code");
+  expect(notice.description).not.toContain("Nothing to accept");
   expect(notice).not.toHaveProperty("actionProps");
   expect(state.save.mock.calls[0]?.slice(0, 2)).toEqual([
     `studio:fleet-account-joins-seen:v1:env-${state.id}`,

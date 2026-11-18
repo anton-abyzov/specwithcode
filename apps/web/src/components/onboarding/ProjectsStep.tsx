@@ -82,6 +82,7 @@ export function ImportStep({
   const nickname = useMachineNicknames();
   const writableEnvironments = useEnvironmentsWithScope(scans, AuthOrchestrationOperateScope);
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const createNewProject = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
   const projects = useProjects();
   const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string> | null>(null);
@@ -237,6 +238,9 @@ export function ImportStep({
         : 0;
     let importedThreadCount = 0;
     let skippedThreadCount = 0;
+    // Why a picked folder's first commit was not made (no Git name or email,
+    // say): the project stands, and the person is told with the import's notice.
+    let commitNotice = "";
     const refreshEnvironments = new Set<EnvironmentId>();
     for (const candidate of selection) {
       const { environmentId } = candidate;
@@ -252,6 +256,37 @@ export function ImportStep({
       }
       if (importedProjects.has(candidate.key)) continue;
       let projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate);
+      // A folder picked here, not one setup found, goes through New project's
+      // rules: an empty folder starts as a Git repository with a first commit,
+      // and a folder with files is used as it is. The title is the folder's own
+      // name, so the server always takes the picked folder, never a new child.
+      if (
+        projectId === null &&
+        candidate.key === folderCandidate?.key &&
+        environments.find((environment) => environment.environmentId === environmentId)
+          ?.serverConfig?.specweaveSetUp === true
+      ) {
+        const created = await createNewProject({
+          environmentId,
+          input: { name: candidate.title, kind: "code", parentPath: candidate.path },
+        });
+        if (
+          importGeneration !== importGenerationRef.current ||
+          importedProjects !== importedProjectsRef.current
+        ) {
+          return;
+        }
+        // The server may have used another folder only if the title and the
+        // folder disagree; then it is not this candidate, so fall back below.
+        if (created._tag === "Success" && sameFolder(created.value.workspaceRoot, candidate.path)) {
+          projectId = created.value.projectId;
+          if (created.value.commitError) commitNotice = created.value.commitError;
+        } else if (created._tag !== "Success" && isAtomCommandInterrupted(created)) {
+          continue;
+        }
+        // Any other failure (a folder New project refuses, say) falls back to
+        // adding the folder as it is, as first-run setup always did.
+      }
       if (projectId === null) {
         let attempt = projectAttempts.get(candidate.key);
         if (attempt === undefined) {
@@ -343,6 +378,11 @@ export function ImportStep({
       } else {
         importWarningRef.current = t("wizard.import.historyFailed");
       }
+    }
+    if (commitNotice) {
+      importWarningRef.current = [importWarningRef.current, commitNotice]
+        .filter(Boolean)
+        .join(t("common.sentenceSpace"));
     }
     finishAfterImport();
   };

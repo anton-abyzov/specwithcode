@@ -217,14 +217,28 @@ export const ProjectWorkspaceReadResult = Schema.Struct({
    * request; older servers leave it out.
    */
   specweave: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The folder is inside a Git work tree (a `.git` in it or a parent), read
+   * from disk. False offers "Set up Git and SpecWeave"; older servers leave it out.
+   */
+  gitRepository: Schema.optionalKey(Schema.Boolean),
 });
 export type ProjectWorkspaceReadResult = typeof ProjectWorkspaceReadResult.Type;
 /** Runs `specweave init` in the project's folder, on the person's request. */
-export const ProjectSpecweaveSetUpInput = Schema.Struct({ projectId: ProjectId });
+export const ProjectSpecweaveSetUpInput = Schema.Struct({
+  projectId: ProjectId,
+  /**
+   * The folder is not a Git repository yet and the person asked for one:
+   * `git init` runs first. Without it such a folder is refused, as older servers do.
+   */
+  initGit: Schema.optionalKey(Schema.Boolean),
+});
 export type ProjectSpecweaveSetUpInput = typeof ProjectSpecweaveSetUpInput.Type;
 export const ProjectSpecweaveSetUpResult = Schema.Struct({
   /** The folder already had `.specweave/config.json`; nothing was run. */
   alreadySetUp: Schema.Boolean,
+  /** `git init` ran first, because `initGit` was asked for. */
+  gitInitialized: Schema.optionalKey(Schema.Boolean),
 });
 export type ProjectSpecweaveSetUpResult = typeof ProjectSpecweaveSetUpResult.Type;
 export class ProjectSpecweaveSetUpError extends Schema.TaggedError<ProjectSpecweaveSetUpError>()(

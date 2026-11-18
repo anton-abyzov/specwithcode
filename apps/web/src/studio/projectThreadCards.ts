@@ -26,9 +26,11 @@ export function threadCardStatus(
   thread: StatusShell,
   hostOffline = false,
   hostReach?: MachineReachState,
+  /** The fleet says the host's address now answers as a different SpecWithCode. */
+  hostIdentityMismatch = false,
 ): ThreadCardStatus {
   const tone = threadTone(thread, hostOffline);
-  const word = threadStatusWord(thread, hostOffline, hostReach);
+  const word = threadStatusWord(thread, hostOffline, hostReach, hostIdentityMismatch);
   if (word !== null) return { tone, label: word };
   if (tone === "idle" && thread.latestRun?.status === "completed")
     return { tone: "done", label: "Done" };

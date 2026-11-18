@@ -1483,3 +1483,20 @@ describe("conditional restart ownership and admission", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
+
+describe("automaticInstallApplying", () => {
+  it("counts an install as applying only while the agent's installing state is fresh", () => {
+    const at = 1_000_000;
+    const bound = Hold.AGENT_APPLY_TIMEOUT_MS + Hold.AGENT_RETRY_MS;
+    const applying = (status: string, updatedAtMs: number | null, nowMs: number) =>
+      Hold.automaticInstallApplying({ status, updatedAtMs }, nowMs);
+    assert.isTrue(applying("installing", at, at + 1_000));
+    assert.isTrue(applying("installing", at, at + bound));
+    // An agent that died while installing stops counting.
+    assert.isFalse(applying("installing", at, at + bound + 1));
+    assert.isFalse(applying("installing", null, at));
+    // Waiting for quiet can last hours: due work keeps running then.
+    assert.isFalse(applying("waiting-for-quiet", at, at + 1_000));
+    assert.isFalse(applying("installed", at, at + 1_000));
+  });
+});

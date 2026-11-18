@@ -20,10 +20,10 @@ const state = vi.hoisted(() => ({
   send: vi.fn<FixtureProcedure>(),
   /** Renders of the Markdown stand-in whose props changed. */
   markdownRenders: 0,
-  nativeContinue: vi.fn(async (_kind: string, _selection: unknown) => {}),
+  nativeContinue: vi.fn<FixtureProcedure>(async (_kind: string, _selection: unknown) => {}),
   nativeError: null as string | null,
-  openLink: vi.fn(async () => undefined),
-  openMenu: vi.fn(async () => undefined),
+  openLink: vi.fn<FixtureProcedure>(async () => undefined),
+  openMenu: vi.fn<FixtureProcedure>(async () => undefined),
   refresh: vi.fn<FixtureProcedure>(),
   settle: vi.fn<FixtureProcedure>(),
   navigate: vi.fn<FixtureProcedure>(),
@@ -75,7 +75,7 @@ const state = vi.hoisted(() => ({
   /** The coordinator's runtime requests; a pending user_input one with its card asks a question. */
   runtimeRequests: [] as unknown[],
   detailStatus: "live",
-  shellRefresh: vi.fn(),
+  shellRefresh: vi.fn<FixtureProcedure>(),
   coordinatorId: "coord" as string | null,
   coordinatorModel: { instanceId: "claude-native", model: "coordinator-model" } as {
     instanceId: string;

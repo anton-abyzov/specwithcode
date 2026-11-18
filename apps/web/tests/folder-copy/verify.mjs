@@ -100,6 +100,12 @@ const walker = (page, label, flow, viewport) => {
       name,
     );
   const body = () => page.locator('[data-slot="dialog-panel"]').textContent();
+  /** Starts the next copy from Done: Copy changes again when it shows, else the ⋯ menu item. */
+  const startNew = async () => {
+    const again = footer.getByRole("button", { name: "Copy changes again", exact: true });
+    if (await again.count()) await again.click();
+    else await menu("Start a new copy");
+  };
   /** Opens the ⋯ menu in the footer and picks one of its items. */
   const menu = async (name) => {
     await footer.getByRole("button", { name: "More actions", exact: true }).click();
@@ -195,7 +201,9 @@ const walker = (page, label, flow, viewport) => {
         steps === NO_STEPS ? "" : steps,
         `${label} ${flow} ${stage}: step bar`,
       );
-    if (title) NodeAssert.equal(layout.title, title, `${label} ${flow} ${stage}: title`);
+    if (title instanceof RegExp)
+      NodeAssert.match(layout.title, title, `${label} ${flow} ${stage}: title`);
+    else if (title) NodeAssert.equal(layout.title, title, `${label} ${flow} ${stage}: title`);
     if (primary === null)
       NodeAssert.deepEqual(layout.primaries, [], `${label} ${flow} ${stage}: no enabled primary`);
     else {
@@ -265,6 +273,7 @@ const walker = (page, label, flow, viewport) => {
     calls,
     body,
     menu,
+    startNew,
     check,
     close,
     reopen,
@@ -278,24 +287,20 @@ const chooseFirst = async (page) => {
   if (!(await box.isVisible())) await page.getByRole("button", { name: "Details" }).click();
   await box.click();
 };
-/** Which coordinator choice is checked: "Keep on …" or "Move to …". */
+/** What the dialog does, from its title: "Copy …" keeps Main, "Move …" moves it. */
 const intent = async (page) =>
-  (
-    await page
-      .locator('[data-slot="handoff-coordinator"] [role="radio"][aria-checked="true"]')
-      .first()
-      .evaluate((radio) => radio.closest("label")?.textContent ?? radio.textContent ?? "")
-  ).trim();
-/** Picks "Move to {machine}" in "Where should the coordinator run?". */
+  (await page.getByRole("dialog").getByRole("heading").first().textContent()).trim();
+/** A move asked for with "Make X main": the fixture opens a fresh flow set to move. */
 const moveCoordinator = (page) =>
-  page.locator('[data-slot="handoff-coordinator"] label').filter({ hasText: "Move to" }).click();
+  page.evaluate(() => window.dispatchEvent(new Event("fixture-move")));
 const COPY_TITLE = "Copy SpecWeave to ministorm";
-const MOVE_TITLE = COPY_TITLE;
+const MOVE_TITLE = "Move SpecWeave to ministorm";
 /** The setup screen shows no step line. */
 const NO_STEPS = "none";
 const DONE_TITLE = "SpecWeave is on ministorm";
 // A copy of files only leaves the project here: its Done says copied, not on.
-const COPIED_TITLE = "SpecWeave is copied to ministorm";
+// A finished copy names when it was copied: "SpecWeave is on ministorm (copied 2h ago)".
+const COPIED_TITLE = /^SpecWeave is on ministorm \(copied [^)]+\)$/;
 const COPY_ONLY = ["where", "what", "review", "copy", "done"];
 const ONE_CLICK = ["where", "copy", "done"];
 const MOVE = ["where", "what", "review", "copy", "transfer", "done"];
@@ -314,7 +319,7 @@ const choosing = async (page, w) => {
     title: COPY_TITLE,
   });
   NodeAssert.equal(await action("Cancel").count(), 1, "Where offers Cancel");
-  NodeAssert.match(await intent(page), /^Keep on /, "the dialog opened keeping the coordinator");
+  NodeAssert.match(await intent(page), /^Copy /, "the dialog opened as a copy: Main stays");
   await chooseFirst(page);
   await check("where-choose", {
     primary: "Copy to ministorm",
@@ -341,12 +346,12 @@ const choosing = async (page, w) => {
     steps: bar(["done", "current", "next", "next", "next"]),
     leading: "Stop copy",
   });
-  NodeAssert.match(await body(), /Measured (?!earlier)[^·]+·Measure again/);
+  NodeAssert.match(await body(), /Measured (?!earlier)[^·]+?Check for changes/);
   NodeAssert.match(await body(), /Your choices.*Copy to ministorm: \/home\/anton/);
   const pendingBeforeRefresh = await page.evaluate(() =>
     localStorage.getItem("specwithcode:folder-copy:m4:source"),
   );
-  await page.getByRole("button", { name: "Measure again", exact: true }).click();
+  await page.getByRole("button", { name: "Check for changes", exact: true }).click();
   await page
     .getByText("Nothing changed since then, so your choices stay.", { exact: false })
     .waitFor();
@@ -359,17 +364,17 @@ const choosing = async (page, w) => {
   await page.evaluate(() => {
     window.__folderCopyFixture.scanCurrent = false;
   });
-  await page.getByRole("button", { name: "Measure again", exact: true }).click();
+  await page.getByRole("button", { name: "Check for changes", exact: true }).click();
   await page.getByRole("button", { name: "Measure and compare again", exact: true }).waitFor();
   NodeAssert.equal(await action("Preview on ministorm").isDisabled(), true);
   await check("what-source-changed", { primary: null, leading: "Stop copy" });
   await page.evaluate(() => {
     window.__folderCopyFixture.scanCurrent = true;
   });
-  await page.getByRole("button", { name: "Measure again", exact: true }).click();
-  await page
-    .getByText("Nothing changed since then, so your choices stay.", { exact: false })
-    .waitFor();
+  await page.getByRole("button", { name: "Measure and compare again", exact: true }).click();
+  // A new comparison measures again and lands back on What with a fresh scan.
+  await page.getByRole("button", { name: "Check for changes", exact: true }).waitFor();
+  NodeAssert.equal(await action("Preview on ministorm").isEnabled(), true);
   // The step bar only shows progress: nothing in it can be clicked.
   NodeAssert.equal(
     await page.locator('[data-slot="copy-steps"] button').count(),
@@ -458,10 +463,17 @@ const choosing = async (page, w) => {
   });
   NodeAssert.match(await body(), /ministorm has a copy\. The coordinator stays here\./);
 
-  // Done was seen: the reopen archives the copy and starts at Where with a last-copy strip.
+  // Done was seen: the reopen still shows the finished copy. Copy changes again archives it
+  // and starts at Where with a last-copy strip.
   await close();
-  const statuses = await calls("copyStatus");
   await reopen();
+  await check("done-reopened", {
+    primary: "Open on ministorm",
+    leading: "Undo…",
+    title: COPIED_TITLE,
+  });
+  const statuses = await calls("copyStatus");
+  await action("Copy changes again").click();
   await page.locator('[data-slot="copy-last"]').waitFor();
   // The reopen shows the last copy without scrolling.
   NodeAssert.ok(
@@ -493,7 +505,7 @@ const choosing = async (page, w) => {
  * closed while copying shows Checking on reopen, then what happened.
  */
 const oneClick = async (page, w) => {
-  const { action, step, pause, release, body, menu, check, close, reopen } = w;
+  const { action, step, pause, release, body, startNew, check, close, reopen } = w;
   await check("where", { primary: "Copy to ministorm", leading: null, title: COPY_TITLE });
   await action("Copy to ministorm").click();
   const finished = bar(["done", "done", "current"], ONE_CLICK);
@@ -506,7 +518,7 @@ const oneClick = async (page, w) => {
   NodeAssert.equal(await step("what").count(), 0, "a step this run skipped is not listed");
 
   // A second copy closed while copying: the reopen checks it, then says it finished.
-  await menu("Start a new copy");
+  await startNew();
   await check("where-new", { primary: "Copy to ministorm", leading: null, title: COPY_TITLE });
   await pause("copyApprove");
   await action("Copy to ministorm").click();
@@ -538,9 +550,9 @@ const oneClick = async (page, w) => {
  * coordinator move (which locks closing), and a measure error in the footer.
  */
 const move = async (page, w) => {
-  const { footer, action, pause, release, calls, body, menu, check, fixture } = w;
+  const { footer, action, pause, release, calls, body, menu, startNew, check, fixture } = w;
   await moveCoordinator(page);
-  NodeAssert.match(await intent(page), /^Move to ministorm/);
+  NodeAssert.match(await intent(page), /^Move SpecWeave to ministorm/);
   await chooseFirst(page);
   await check("where", {
     primary: "Copy and move to ministorm",
@@ -691,7 +703,7 @@ const move = async (page, w) => {
   );
   // Running work matters before Apply only: Done never contradicts the finished move.
   NodeAssert.doesNotMatch(await body(), /Work is still running here/);
-  await menu("Start a new copy");
+  await startNew();
   await fixture(() =>
     window.__folderCopyFixture.failNext("copyOffer", "io", "The source folder cannot be read."),
   );
@@ -764,7 +776,7 @@ const capturedCopy = async (page, w) => {
   await fixture(() => {
     window.__folderCopyFixture.scanCurrent = false;
   });
-  await page.getByRole("button", { name: "Measure again", exact: true }).click();
+  await page.getByRole("button", { name: "Check for changes", exact: true }).click();
   await page.getByText(/The source changed. You can still copy the captured files/).waitFor();
   NodeAssert.match(await body(), /measurements and notices show the current source/);
   await check("captured-newer-source", {

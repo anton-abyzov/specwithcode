@@ -60,6 +60,11 @@ const state = vi.hoisted(() => ({
 }));
 
 // The machine choice and its invitation have their own tests.
+// The Full Disk Access row and first-run item have their own test.
+vi.mock("../access/FullDiskAccess", () => ({
+  FullDiskAccessRow: () => null,
+  FirstRunFullDiskAccess: () => null,
+}));
 vi.mock("./ProjectsFolderChoice", () => ({ ProjectsFolderChoice: () => null }));
 vi.mock("../../hooks/useProjectFolderChoice", () => ({ rememberRecentFolder: () => {} }));
 vi.mock("../../studio/machineNickname", () => ({

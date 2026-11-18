@@ -98,6 +98,8 @@ public struct MachineSummary: Identifiable, Hashable, Sendable {
   public var teamRules: TeamRulesInfo? = nil
   /// Why the machine's Team rules refuse this phone right now, in the machine's words.
   public var teamRulesRefusal: String? = nil
+  /// The code this machine waits for before this phone may use it (1327).
+  public var deviceApprovalCode: String? = nil
 
   public init(id: String, label: String, displayName: String? = nil, status: MachineStatus, platform: String? = nil, serverVersion: String? = nil, address: String? = nil, tokenDaysLeft: Int? = nil, isStale: Bool = false, viaConnect: Bool = false, needsSignIn: Bool = false, checkedAt: Date? = nil, hasDirectPairing: Bool? = nil) {
     self.displayName = displayName ?? MachineNickname.shortName(label)
@@ -260,6 +262,12 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
   public var isCoordinatorWorker = false
   /// The model's options and the thread's values, for the composer's options menu.
   public var traits: ModelTraits?
+  /// The models it can switch to from that menu, from its machine's catalog.
+  public var modelChoices: [ModelChoice] = []
+  /// The model it runs on, as its machine records it.
+  public var modelSelection: ModelSelection?
+  /// When its latest run started, so a phone can tell a queued run has begun.
+  public var latestRunStartedAt: Date?
   /// Its access level, for the same menu.
   public var runtimeMode: RuntimeModeChoice?
   public var machineLabel: String
@@ -738,6 +746,9 @@ public final class AppModel {
   public var machines: [MachineSummary] = []
   /// The personal assistant project, if one exists on any machine.
   public var aide: ProjectSummary?
+  /// Every machine's live Percy, `aide` first. Each machine keeps its own
+  /// chats, so the phone lists them all and opens whichever is picked.
+  public var aideSeats: [ProjectSummary] = []
   /// Whether Percy is shown: true when any machine's settings turn it on.
   /// While false, `aide` is nil and Percy's chats are left out of every list.
   public var aideEnabled = false
@@ -787,9 +798,15 @@ public final class AppModel {
 
   public func machine(_ id: String) -> MachineSummary? { machines.first { $0.id == id } }
 
+  /// Whether a project is a machine's Percy.
+  public func isAideSeat(_ ref: ProjectRef) -> Bool {
+    aide?.ref == ref || aideSeats.contains { $0.ref == ref }
+  }
+
   /// The project row for a project or any machine's copy of it.
   public func project(_ ref: ProjectRef) -> ProjectSummary? {
     if aide?.ref == ref { return aide }
+    if let seat = aideSeats.first(where: { $0.ref == ref }) { return seat }
     return projects.first { $0.ref == ref } ?? projects.first { $0.contains(ref) }
   }
 

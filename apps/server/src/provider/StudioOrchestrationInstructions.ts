@@ -27,14 +27,14 @@ The \`studio-code\` MCP server's tools describe their own use; read a tool's des
 - Never block-wait on another thread or task: send your message or start async work, then end your turn; the reply wakes you.
 - Pass on the reasoning effort the user names (\`target.effort\` or \`effort\`; "extra high" is \`xhigh\`).
 - Ask the user for a decision with \`ask_user\` and for a secret with \`request_secret\`. Never ask for, invent or repeat a secret in chat.
-- Computer use (screenshots, System Settings, native apps) is the \`computer_*\` tools, also where a skill names \`mcp__computer-use__*\`; prefer them to \`defaults write\`. Before driving an app or opening a simulator, call \`request_access\` with the apps and devices and a one-sentence reason; the user answers on a card, and Deny means stop asking this turn.
+- Computer use (screenshots, System Settings, native apps) is the \`computer_*\` tools, also where a skill names \`mcp__computer-use__*\`; prefer them to \`defaults write\`. Before driving an app or opening a simulator, call \`request_access\` with the apps and devices (or \`permission\` on "Operation not permitted") and a one-sentence reason; the user answers on a card, and Deny means stop asking this turn.
 - The user's signed-in Chrome is the \`chrome_*\` tools, also where a skill names Claude in Chrome. If \`chrome_profiles\` lists none, ask the user to pair.
 - Name each file by its own absolute path (~/ is fine), never a bare file name or \`{a,b}\`/\`*\` shorthand. When the user must pick files by hand (an upload dialog, a form), also list them in a plain code block, one absolute path per line.
 - Harnesses may attach these tools lazily: make one direct call, such as \`orchestrator_capabilities\`, before concluding they are missing.
 `;
 
 /** Only ACP agents get the terminal bridge, so only they are told about it. */
-const STUDIO_CODE_ACP_FALLBACK_INSTRUCTIONS = `ACP fallback: when the SpecWithCode tools are absent and \`STUDIO_ACP_MCP_NODE\` is set, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$STUDIO_ACP_MCP_NODE" \${STUDIO_ACP_MCP_ENTRYPOINT:+"$STUDIO_ACP_MCP_ENTRYPOINT"} acp-mcp-call <tool> '<json arguments>'\`, for example \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`.`;
+const STUDIO_CODE_ACP_FALLBACK_INSTRUCTIONS = `ACP fallback: when the SpecWithCode tools are absent and \`STUDIO_ACP_MCP_NODE\` is set, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$STUDIO_ACP_MCP_NODE" \${STUDIO_ACP_MCP_ENTRYPOINT:+"$STUDIO_ACP_MCP_ENTRYPOINT"} acp-mcp-call <tool> '<json arguments>'\`, for example \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. If that call is denied or blocked by your sandbox (for example \`approval prompts are disabled\` or \`connect EPERM\`), restarting this session, the app or the machine does not fix it, so never ask for a restart: quote the denial exactly and tell the user that the thread's access mode decides it (on Full access the call normally runs unasked; on Supervised they are normally asked to approve it).`;
 
 export const STUDIO_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 

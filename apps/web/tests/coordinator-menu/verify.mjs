@@ -174,6 +174,70 @@ try {
     results.push({ theme, case: "copy's message box, main unreachable", file });
     await page.close();
 
+    // m5's page from records like the M5's of November 17, 2026: main is m4 everywhere on
+    // the page (not m1, whose side coordinator has a higher epoch), and Send routes to m4.
+    page = await open(`theme=${theme}&case=m5`, { width: 760, height: 560 });
+    const routedBox = page.locator("[data-workers-only]");
+    await routedBox.waitFor();
+    assert.equal(
+      await page.locator("[data-followed-main]").getAttribute("data-followed-main"),
+      "m4",
+    );
+    assert.equal(await page.locator("[data-move-source]").getAttribute("data-move-source"), "m4");
+    assert.equal(
+      await routedBox.locator("p").first().textContent(),
+      "Main for Atlas is m4. This copy takes work from there.",
+    );
+    assert.equal(
+      await page.locator("[data-make-main-note]").textContent(),
+      "Making m5 main moves the coordinator and its conversation here from m4, which becomes a copy.",
+    );
+    assert.equal(
+      await page.locator("[data-routes-to-main]").textContent(),
+      "Send delivers your message to m4's coordinator and opens its page, where the answer comes.",
+    );
+    assert.equal(await page.locator("[data-write-to-main-note]").count(), 0);
+    const routedPrompt = page.locator("#project-prompt");
+    assert.equal(await routedPrompt.isDisabled(), false);
+    assert.equal(
+      await routedPrompt.getAttribute("placeholder"),
+      "Message m4's coordinator for Atlas.",
+    );
+    await routedPrompt.fill("time now?");
+    file = await shot(page, `m5-routes-to-m4-${theme}`);
+    const routedSend = page.locator(".sws-composer-card button.sws-send");
+    // The chip under the box and Send name one machine: main, where the coordinator runs.
+    assert.deepEqual(await page.locator(".sws-host-name").allTextContents(), ["Runs on m4"]);
+    assert.equal(await routedSend.getAttribute("data-send-label"), "Send to m4");
+    // The menu still names and acts on the copy being viewed.
+    const chip = page.locator("[data-coordinator-machine]");
+    assert.equal(await chip.getAttribute("aria-label"), "Viewing m5. Choose a machine to view");
+    await chip.click();
+    assert.ok(
+      (await page.locator('[role="menu"]').textContent()).includes("On m5"),
+      "the machine actions are the viewed copy's",
+    );
+    await page.keyboard.press("Escape");
+    assert.equal(await routedSend.isDisabled(), false);
+    await routedSend.click();
+    await page.waitForFunction(() => (window.__routed ?? []).length === 1);
+    assert.deepEqual(await page.evaluate(() => window.__routed), [
+      { environmentId: "m4", projectId: "p", text: "time now?" },
+    ]);
+    await page.locator("[data-make-main]").click();
+    assert.deepEqual(await madeMain(page), ["m5:p"]);
+    results.push({ theme, case: "m5 state, routed send and move from m4", file });
+    await page.close();
+
+    // m4 unreachable: Send cannot route and names no machine; the chip still names m4.
+    page = await open(`theme=${theme}&case=m5&main=lost`, { width: 760, height: 560 });
+    await page.locator("[data-workers-only]").waitFor();
+    assert.deepEqual(await page.locator(".sws-host-name").allTextContents(), ["Runs on m4"]);
+    const offSend = page.locator(".sws-composer-card button.sws-send");
+    assert.equal(await offSend.getAttribute("data-send-label"), null);
+    assert.equal(await offSend.isDisabled(), true);
+    await page.close();
+
     // After an offline switch: the new main says where the earlier conversation is.
     page = await open(`theme=${theme}&case=switched`, { width: 720, height: 520 });
     const said = page.locator("[data-offline-switch]");
@@ -216,10 +280,7 @@ try {
     // Settings > Machines: an unlinked copy that exists elsewhere is Not linked.
     page = await open(`theme=${theme}&case=settings`);
     await page.locator("[data-settings-label]").waitFor();
-    assert.equal(
-      await page.locator("[data-role-label]").textContent(),
-      "Not linked · also on m3",
-    );
+    assert.equal(await page.locator("[data-role-label]").textContent(), "Not linked · also on m3");
     file = await shot(page, `settings-not-linked-${theme}`);
     results.push({ theme, case: "Settings label", file });
     await page.close();

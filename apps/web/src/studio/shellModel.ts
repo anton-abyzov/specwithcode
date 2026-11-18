@@ -639,10 +639,12 @@ export function threadStatusWord(
   hostOffline = false,
   /** Why the host is down, so a busy machine's row does not say "offline". */
   hostReach?: MachineReachState,
+  /** The fleet says the host's address now answers as a different SpecWithCode. */
+  hostIdentityMismatch = false,
 ): string | null {
   if (threadTone(thread, hostOffline) === "resolved") return null;
   // Its last known state is stale; "Blocked" or "Working" would be a guess.
-  if (hostOffline) return hostDownWord(hostReach);
+  if (hostOffline) return hostDownWord(hostReach, hostIdentityMismatch);
   const status = resolveSidebarThreadStatus(thread);
   if (status === "approval" && thread.source?.pendingRuntimeRequest !== null)
     return approvalWaitLabel(thread);

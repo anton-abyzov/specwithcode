@@ -380,8 +380,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.OPEN_IN_EXTERNAL_BROWSER_CHANNEL, input),
   checkSystemPermission: (pane: string) =>
     ipcRenderer.invoke(IpcChannels.CHECK_SYSTEM_PERMISSION_CHANNEL, pane),
-  openSystemSettings: (pane: string) =>
-    ipcRenderer.invoke(IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL, pane),
+  openSystemSettings: (request) =>
+    ipcRenderer.invoke(IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL, request),
+  closeSystemSettingsHelper: () =>
+    ipcRenderer.invoke(IpcChannels.CLOSE_SYSTEM_SETTINGS_HELPER_CHANNEL, undefined),
   probeRemoteEditors: () => ipcRenderer.invoke(IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL, undefined),
   pasteAsText: () => ipcRenderer.invoke(IpcChannels.PASTE_AS_TEXT_CHANNEL, undefined),
   onMenuAction: (listener) => {

@@ -158,6 +158,7 @@ export function HandoffFolderCopy({
     readonly done: boolean;
     readonly review?: boolean;
     readonly doneAt?: string | null;
+    readonly projectId?: string | null;
   }) => void;
   readonly canMove: boolean;
   /** Uncommitted files in the source, named in What comes along; null when unknown. */
@@ -699,15 +700,13 @@ export function HandoffFolderCopy({
   const draft = useCopyDraft({
     project,
     machines,
-    canMove,
-    explicit: { mode: defaultMode !== undefined, machine: machineRequested },
+    explicit: { machine: machineRequested },
     showFinished: !machineRequested && defaultMode !== "copy-and-move",
     form: { machine, folderDraft, mode, chooseFirst, secrets: secrets.chosen },
     latestPending,
     setForm: {
       machine: setMachine,
       folder: setFolder,
-      mode: setMode,
       chooseFirst: setChooseFirst,
       secrets: secrets.setChosen,
     },
@@ -1342,11 +1341,6 @@ export function HandoffFolderCopy({
             }}
             findingHome={findingHome}
             mode={mode}
-            onModeChange={(next) => {
-              setMode(next);
-              draft.keepDraft({ mode: next });
-            }}
-            canMove={canMove}
             chooseFirst={chooseFirst}
             onChooseFirstChange={(next) => {
               setChooseFirst(next);
@@ -1433,7 +1427,9 @@ export function HandoffFolderCopy({
             <HandoffCopyScanFreshness
               capturedAt={copy?.capturedAt}
               status={scanStatus}
-              sourceChanged={sourceChanged}
+              // The footer offers Measure and compare again only on Review; on What the
+              // freshness line holds it, or a changed source would leave no way forward.
+              sourceChanged={stage === "preview" && sourceChanged}
               busy={busy}
               onRefresh={() => void refreshScan()}
               onCompareAgain={rechoose}

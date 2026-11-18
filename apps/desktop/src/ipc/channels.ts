@@ -155,6 +155,8 @@ export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 
 export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission";
 
+export const CLOSE_SYSTEM_SETTINGS_HELPER_CHANNEL = "desktop:close-system-settings-helper";
+
 export const PREVIEW_RECORDING_INPUT_CHANNEL = "desktop:preview-recording-input";
 
 export const RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:receive-provider-auth-callback";

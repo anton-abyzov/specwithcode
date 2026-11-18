@@ -143,17 +143,13 @@ try {
     NodeAssert.ok(await dialog.getByRole("heading", { name: /^Move EasyChamp to / }).isVisible());
     NodeAssert.ok(
       await dialog
-        .getByText(/^From MacBook Pro M4\. Nothing on .+ is replaced without asking\.$/)
+        .getByText(
+          /^From MacBook Pro M4\. Main moves to .+\. Nothing on .+ is replaced without asking\.$/,
+        )
         .isVisible(),
     );
-    // Git only always moves the coordinator: the question shows Move chosen.
-    NodeAssert.match(
-      await dialog
-        .locator('[data-slot="handoff-coordinator"] [role="radio"][aria-checked="true"]')
-        .first()
-        .evaluate((radio) => radio.closest("label")?.textContent ?? ""),
-      /^Move to /,
-    );
+    // Git only always moves Main: nothing asks Copy or move.
+    NodeAssert.equal(await dialog.locator('[data-slot="handoff-coordinator"]').count(), 0);
     const m1 = dialog.getByRole("radio", { name: /^Mac mini M1/ });
     const m3 = dialog.getByRole("radio", { name: /^MacBook Air M3/ });
     const offline = dialog.getByRole("radio", { name: /^Offline machine/ });

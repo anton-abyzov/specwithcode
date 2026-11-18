@@ -324,6 +324,11 @@ public final class LiveEngine: AppEngine {
       Task { await connectSessionRejected() }
     }
     if let days = status.tokenDaysLeft { entry.tokenDaysLeft = days }
+    // A computer got through again: the relay accepts the session Clerk kept.
+    if status.state == .connected, let connect, connect.lastUnconfirmed != nil {
+      connect.lastUnconfirmed = nil
+      updateConnect { if $0.lastError == ConnectState.relayRefusedMessage { $0.lastError = nil } }
+    }
     // Connected, or the attempt really failed: the grace is over for good.
     if status.state == .connected || MachineEntry.isFailure(status) {
       entry.settlingUntil = nil
@@ -531,6 +536,7 @@ public final class LiveEngine: AppEngine {
       ShellSummaries.Machine(environmentId: entry.environmentId, label: entry.label, online: entry.isOnline, settling: entry.isSettling(at: now), snapshot: entry.snapshot ?? entry.cachedSnapshot, projectOrder: entry.settings?.sidebarProjectOrder, scratchWorkspaceRoot: entry.config?.scratchWorkspaceRoot, lastSeenAt: entry.lastSeenAt, providers: entry.config?.providers ?? [])
     }, names: fleetNames, nicknames: nicknames, home: fleetHome, includeAide: aideEnabled, cache: summaryCache)
     assign(model, \.aide, output.aide)
+    assign(model, \.aideSeats, output.aideSeats)
     assign(model, \.projects, output.projects)
     assign(model, \.threadsByProject, output.threadsByProject)
     assign(model, \.recentThreads, output.recentThreads)
@@ -604,6 +610,7 @@ public final class LiveEngine: AppEngine {
     result.isSettling = settling
     if case .http(status: 429, code: _)? = entry.status.lastError { result.isRefusingSignIns = true }
     if case let .teamRules(message)? = entry.status.lastError { result.teamRulesRefusal = message }
+    if case let .awaitingApproval(code, _)? = entry.status.lastError { result.deviceApprovalCode = code }
     result.teamRules = entry.teamRules.map(TeamRulesInfo.init)
     return result
   }

@@ -23,6 +23,7 @@ import {
   type MachineHandoffReceiveResult,
   type MachineHandoffBundle,
   type MachineHandoffBusyThreads,
+  type MachineHandoffUpdateSkipped,
   type EnvironmentId,
   type ProjectId,
   ThreadId,
@@ -53,7 +54,9 @@ import { toastManager } from "../ui/toast";
 import { HandoffFolderCopy, folderCopyStorageKey } from "./HandoffFolderCopy";
 import { repositoryKeyOf } from "@specweave-studio/shared/existingCopy";
 import { useRetiredMachineRecords } from "../settings/useReplacedMachineRecords";
-import { machineHoldings, pickedHolding } from "../../studio/sendToMachine";
+import { machineHoldings, otherProjectOf, pickedHolding } from "../../studio/sendToMachine";
+import { moveRefusal } from "./ProjectMoveOptions";
+import type { MainSwitch } from "./useMakeMain";
 import {
   copyActivityKey,
   registerCopyOpener,
@@ -91,6 +94,7 @@ import { MoveDialogHold } from "../../studio/moveDialogHold";
 import { HandoffAccountMachines } from "./HandoffAccountMachines";
 import { HandoffBusyThreads } from "./HandoffBusyThreads";
 import { refusedBusyOf } from "./handoffCopySteps";
+import { sameStaleReason } from "../../studio/staleCopyText";
 import { readPendingCopy } from "./handoffFolderCopyPending";
 
 function previewInput(projectId: ProjectId, bundle: MachineHandoffBundle) {
@@ -147,7 +151,10 @@ export function ProjectMachineHandoff({
   openRequest = null,
   onRequestHandled,
   showTrigger = true,
+  mainSwitch = null,
 }: {
+  /** The page's "Make X main" (`useMakeMain`), offered on a finished copy's done screen. */
+  readonly mainSwitch?: Pick<MainSwitch, "offers" | "run"> | null;
   readonly project: EnvironmentProject;
   readonly coordinatorId: ThreadId | null;
   readonly onOpenChange?: (open: boolean) => void;
@@ -189,6 +196,7 @@ export function ProjectMachineHandoff({
   const prepare = useAtomCommand(machineHandoff.prepare, { reportFailure: false });
   const receive = useAtomCommand(machineHandoff.receive, { reportFailure: false });
   const capabilities = useAtomCommand(machineHandoff.copyCapabilities, { reportFailure: false });
+  const release = useAtomCommand(machineHandoff.copyRelease, { reportFailure: false });
   const storageKey = machineHandoffStorageKey(project.environmentId, project.id);
   const [open, setOpen] = useState(false);
   useEffect(() => () => onOpenChange?.(false), [onOpenChange]);
@@ -212,6 +220,14 @@ export function ProjectMachineHandoff({
   const [previewCheckout, setPreviewCheckout] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<MachineHandoffReceiveResult | null>(null);
   const [consent, setConsent] = useState(false);
+  // A Git move into an existing copy that cannot fast-forward: why, and whether the person
+  // chose to move anyway on its older commits. The move refuses until they do.
+  // `published`: the refusal came after the source fenced, so Keep Main here must release it.
+  const [staleCopy, setStaleCopy] = useState<{
+    readonly skipped: MachineHandoffUpdateSkipped;
+    readonly accepted: boolean;
+    readonly published: boolean;
+  } | null>(null);
   const [phase, setPhase] = useState<
     "choose" | "checking" | "review" | "transferring" | "complete"
   >("choose");
@@ -228,8 +244,13 @@ export function ProjectMachineHandoff({
   const [canRestart, setCanRestart] = useState(false);
   // A machine that has the project updates through Git; a copy is for one that does not.
   const [method, setMethod] = useState<HandoffFolderMethod>(DEFAULT_COPY_METHOD);
-  // Opening the dialog means moving the project; "Copy files only" is the other choice.
+  // Move: Main goes there (Git only, "Make X main", an unfinished move). Copy: files only.
+  // The dialog never asks; how it was opened and how files travel decide.
   const [intent, setIntent] = useState<MoveIntent>("move");
+  // Opened to move Main ("Make X main"): leaving Git only keeps the move.
+  const [moveAsked, setMoveAsked] = useState(false);
+  // A move asked for while a copy's done screen is up starts the copy flow afresh.
+  const [copyFlowRun, setCopyFlowRun] = useState(0);
   // "Sync to X…": X already has this project, so only files travel, into its own folder.
   const [syncKey, setSyncKey] = useState<string | null>(null);
   // The copy flow's machine, so switching to Git keeps it.
@@ -238,6 +259,7 @@ export function ProjectMachineHandoff({
   const [pickedCopies, setPickedCopies] = useState<Readonly<Record<string, string>>>({});
   const [copyDone, setCopyDone] = useState(false);
   const [copyDoneAt, setCopyDoneAt] = useState<string | null>(null);
+  const [copyDoneProject, setCopyDoneProject] = useState<string | null>(null);
   const [copyBusy, setCopyBusyState] = useState(false);
   const [copyLocked, setCopyLocked] = useState(false);
   // Sharing is what the dialog opens on; moving and copying files start from it.
@@ -488,6 +510,8 @@ export function ProjectMachineHandoff({
       (item) => `${item.environmentId}:${item.id}` === requestedTarget,
     );
     setIntent("move");
+    setMoveAsked(true);
+    setCopyFlowRun((run) => run + 1);
     setSyncKey(null);
     setMethod(
       existing && ownCheckout(project) && ownCheckout(existing) ? "folder" : DEFAULT_COPY_METHOD,
@@ -558,10 +582,12 @@ export function ProjectMachineHandoff({
   };
 
   const review = async () => {
-    if (running.current || !target || !sourceReady) return;
+    // Never into the copy that is Main, nor into a project this copy is not linked to.
+    if (running.current || !target || !sourceReady || moveRefusal(send)) return;
     running.current = true;
     setError(null);
     setCanRestart(false);
+    setStaleCopy(null);
     setPhase("checking");
     let at: EnvironmentId = project.environmentId;
     try {
@@ -669,12 +695,63 @@ export function ProjectMachineHandoff({
       }
       setSnapshot(prepared.value);
       setPreviewCheckout(checked.value.workspacePath);
+      setStaleCopy(
+        checked.value.updateSkipped
+          ? {
+              skipped: checked.value.updateSkipped,
+              accepted: false,
+              // A resumed operation may already be published: Keep Main must release it.
+              published: prepared.value.publication === "published",
+            }
+          : null,
+      );
       if (checked.value.phase === "started" && checked.value.coordinatorThreadId) {
         await complete(checked.value, prepared.value.bundle);
       } else setPhase("review");
     } catch (cause) {
       showError(cause, at);
       setPhase("choose");
+    } finally {
+      running.current = false;
+    }
+  };
+
+  /** After a refusal past publishing: release the source's fence, so Main stays here. */
+  const keepMainHere = async () => {
+    const operationId = snapshot?.bundle.manifest.operationId;
+    if (running.current || !operationId) return;
+    running.current = true;
+    try {
+      const released = await release({
+        environmentId: project.environmentId,
+        input: {
+          projectId: project.id,
+          operationId,
+          reason: "Main stays here: the copy there could not fast-forward.",
+        },
+      });
+      if (released._tag === "Failure") throw squashAtomCommandFailure(released);
+      // Forget only this operation's pointer; another window may have stored a newer one.
+      const stored = localStorage.getItem(storageKey);
+      if (stored?.includes(operationId)) localStorage.removeItem(storageKey);
+      if (!released.value.released) {
+        setSnapshot(null);
+        setStaleCopy(null);
+        setConsent(false);
+        setPhase("choose");
+        setError(
+          "That move is no longer waiting on this machine. Check where Main is now before moving again.",
+        );
+        return;
+      }
+      markUnpublished(null);
+      setSnapshot(null);
+      setStaleCopy(null);
+      setConsent(false);
+      setError(null);
+      setPhase("choose");
+    } catch (cause) {
+      showError(cause, project.environmentId);
     } finally {
       running.current = false;
     }
@@ -701,6 +778,20 @@ export function ProjectMachineHandoff({
         await complete(checked.value, snapshot.bundle);
         return;
       }
+      // The copy there may have changed since the review. An "anyway" covers only the reason
+      // the person saw; any other one goes back to the review before anything is published.
+      const fresh = checked.value.updateSkipped ?? null;
+      const acceptStale = staleCopy?.accepted === true && sameStaleReason(staleCopy.skipped, fresh);
+      if (fresh && !acceptStale) {
+        setStaleCopy({
+          skipped: fresh,
+          accepted: false,
+          published: staleCopy?.published === true,
+        });
+        setPhase("review");
+        return;
+      }
+      if (!fresh && staleCopy) setStaleCopy(null);
       // Recorded before publishing so a reload never offers to drop this operation; a failed
       // write publishes nothing, so the review stays editable.
       localStorage.setItem(
@@ -744,9 +835,32 @@ export function ProjectMachineHandoff({
           operationId,
           mode: "start",
           bundle: published.value.bundle,
+          // Only fast-forward the copy there; stop with the reason unless the person chose
+          // to move anyway on its older commits.
+          ...(published.value.bundle.destination?.transport === "git-sync"
+            ? { staleCopy: acceptStale ? ("accept" as const) : ("refuse" as const) }
+            : {}),
         },
       });
-      if (started._tag === "Failure") throw squashAtomCommandFailure(started);
+      if (started._tag === "Failure") {
+        const failure = squashAtomCommandFailure(started);
+        // The copy changed since the check: show why on the review, not as a failure.
+        if (
+          failure &&
+          typeof failure === "object" &&
+          "updateSkipped" in failure &&
+          failure.updateSkipped
+        ) {
+          setStaleCopy({
+            skipped: failure.updateSkipped as MachineHandoffUpdateSkipped,
+            accepted: false,
+            published: true,
+          });
+          setPhase("review");
+          return;
+        }
+        throw failure;
+      }
       if (started.value.phase !== "started" || !started.value.coordinatorThreadId)
         throw new Error(
           "The files are saved, but the coordinator has not started. Try the handoff again.",
@@ -824,13 +938,21 @@ export function ProjectMachineHandoff({
       : method === "folder" && target?.environmentId === sendMachine
         ? target.id
         : (pickedCopies[sendMachine] ?? null);
-  const mainLabel =
-    machines.find((item) => item.id === holdings.mainEnvironmentId)?.label ??
-    source?.label ??
-    "this machine";
+  // Named from every saved machine, the source included; never guessed as the source.
+  const machineLabelOf = (environmentId: string | null) =>
+    environments.find((item) => item.environmentId === environmentId)?.label ?? null;
+  const sendCopy = sendHolding ? pickedHolding(sendHolding, sendPicked) : null;
+  // The destination copy belongs to a project this copy is not linked to: files only.
+  const sendOther = otherProjectOf({
+    source: project,
+    copy: sendCopy?.kind === "copy" || sendCopy?.kind === "main" ? sendCopy.copy : null,
+    projects,
+    retired,
+  });
   const send =
     sendMachine && sendHolding
       ? {
+          otherProject: sendOther ? { main: machineLabelOf(sendOther.mainEnvironmentId) } : null,
           holding: sendHolding,
           picked: sendPicked,
           onPick: (id: string) => {
@@ -838,8 +960,24 @@ export function ProjectMachineHandoff({
             // In the Git move the picked copy is its destination folder.
             if (method === "folder") setSelected(`${sendMachine}:${id}`);
           },
-          mainLabel,
+          mainLabel: machineLabelOf(holdings.mainEnvironmentId),
           localFiles: sourceChanges?.state === "dirty" ? sourceChanges.fileCount : null,
+        }
+      : null;
+  // A finished copy into a linked copy offers the page's own switch for that copy.
+  const doneOffer =
+    copyDone && copyMachine && copyDoneProject && !sendOther && method !== "folder"
+      ? mainSwitch?.offers.find((offer) => offer.key === `${copyMachine}:${copyDoneProject}`)
+      : undefined;
+  const makeMain =
+    doneOffer && mainSwitch?.run
+      ? {
+          offer: doneOffer,
+          run: () => {
+            // The switch has its own confirmed move or takeover; this dialog steps aside.
+            changeOpen(false);
+            mainSwitch.run?.(doneOffer.key);
+          },
         }
       : null;
   /** The folder the copy fills on a machine: its one copy, or the copy picked among several. */
@@ -852,7 +990,7 @@ export function ProjectMachineHandoff({
 
   /**
    * Opens the dialog. Every request but an unfinished Git handoff starts on the copy, with
-   * the coordinator kept here; "move" starts with it moving.
+   * Main kept where it is; "move" starts with it moving.
    */
   const openDialog = (
     mode: MachineHandoffOpenRequest["mode"],
@@ -871,6 +1009,7 @@ export function ProjectMachineHandoff({
     }
     const machine = syncCandidate?.environmentId ?? requestedMachineId;
     changeOpen(true);
+    setMoveAsked(mode === "move");
     setSyncKey(syncCandidate ? syncTarget! : null);
     if (syncCandidate) setCopyMachine(null);
     // An unfinished Git handoff wins over the menu's Copy: it may already be published.
@@ -983,12 +1122,6 @@ export function ProjectMachineHandoff({
           chooseGitMachine(environmentId as EnvironmentId);
         }}
         intent={method === "folder" ? "move" : intent}
-        onIntentChange={(next) => {
-          // Git always continues the project there; copying files only uses the copy flow.
-          if (next !== "copy" || discardPreview() === "failed") return;
-          setIntent("copy");
-          setMethod(DEFAULT_COPY_METHOD);
-        }}
         sourceChanges={sourceChanges}
         leftBehind={
           open ? (
@@ -1005,8 +1138,12 @@ export function ProjectMachineHandoff({
         onMethodChange={(next) => {
           if (discardPreview() === "failed") return;
           if (next === "folder") {
+            // Git only always moves Main there.
             setIntent("move");
             if (method !== "folder" && copyMachine) chooseGitMachine(copyMachine);
+          } else if (method === "folder") {
+            // Back to a folder copy: Main stays, unless the dialog was opened to move it.
+            setIntent(moveAsked ? "move" : "copy");
           }
           setMethod(next);
         }}
@@ -1018,9 +1155,12 @@ export function ProjectMachineHandoff({
         copyDoneAt={copyDone ? copyDoneAt : null}
         copyTargetLabel={machines.find((item) => item.id === copyMachine)?.label ?? null}
         send={send}
+        makeMain={makeMain}
+        mainLabel={machineLabelOf(holdings.mainEnvironmentId)}
         copyFlow={
           method === "folder" ? undefined : (
             <HandoffFolderCopy
+              key={copyFlowRun}
               project={project}
               coordinatorId={coordinatorId}
               workspaceContext={workspaceContext}
@@ -1056,12 +1196,13 @@ export function ProjectMachineHandoff({
               // Requested, so a saved draft or last copy cannot swap the machine or its folder.
               machineRequested={requestedMachine !== null || syncCopy !== undefined}
               defaultMode={intent === "move" ? "copy-and-move" : "copy-only"}
-              onChoicesChange={({ mode, machine, done, review, doneAt }) => {
+              onChoicesChange={({ mode, machine, done, review, doneAt, projectId }) => {
                 copyAtReview.current = review === true;
                 setIntent(mode === "copy-and-move" ? "move" : "copy");
                 setCopyMachine(machine);
                 setCopyDone(done);
                 setCopyDoneAt(doneAt ?? null);
+                setCopyDoneProject(done ? (projectId ?? null) : null);
                 if (done && machine) rememberMachine(machine);
               }}
               savedProject={(environmentId, folder) =>
@@ -1137,6 +1278,17 @@ export function ProjectMachineHandoff({
         }
         consent={consent}
         onConsent={setConsent}
+        staleCopy={
+          staleCopy
+            ? {
+                skipped: staleCopy.skipped,
+                accepted: staleCopy.accepted,
+                onAccept: (accepted: boolean) =>
+                  setStaleCopy((current) => (current ? { ...current, accepted } : current)),
+                ...(staleCopy.published ? { onKeepHere: () => void keepMainHere() } : {}),
+              }
+            : null
+        }
         onReview={() => void review()}
         onContinue={() => void transfer()}
         onOpenDestination={() => {

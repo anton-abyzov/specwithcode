@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   old: [] as string[],
   perMachine: [] as string[],
   rearm: [] as string[],
+  oldUnlink: [] as string[],
 }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@specweave-studio/client-runtime/state/runtime")>()),
@@ -43,6 +44,11 @@ vi.mock("../../state/use-atom-command", () => ({
                   ]
                 : [],
           },
+        };
+      if (tag === "projectLink.unlink" && state.oldUnlink.includes(request.environmentId))
+        return {
+          _tag: "Failure",
+          error: Object.assign(new Error("not linked"), { code: "not_linked" }),
         };
       if (tag === "projectLink.takeover" || tag === "projectLink.startCoordinator")
         return {
@@ -158,6 +164,7 @@ beforeEach(() => {
   state.old = [];
   state.rearm = [];
   state.perMachine = [];
+  state.oldUnlink = [];
   localStorage.clear();
   container = document.createElement("div");
   document.body.append(container);
@@ -375,4 +382,78 @@ it("starts a second coordinator on a machine that supports it, with no takeover 
     expect.stringContaining("Coordinator. Plans the work"),
     expect.stringContaining("Coordinator. Plans the work"),
   ]);
+});
+
+it("unlinks a coordinator started beside main, and only that one", async () => {
+  const roster = identity("logical:1", [ref("m3", "kept"), ref("m4", "joined"), ref("m1", "side")]);
+  const follows = copy("m4", "joined", roster, "transferred", {
+    successor: ref("m3", "kept"),
+    operationId: "op-move",
+  });
+  const side = copy("m1", "side", roster, "active", { epoch: 2, operationId: "op-start" });
+  const main = copy("m3", "kept", roster, "active");
+  state.projects = [main, follows, side];
+  await render([main, follows, side]);
+  const unlinks = [...document.querySelectorAll<HTMLButtonElement>("button")].filter(
+    (node) => node.textContent?.trim() === "Unlink",
+  );
+  // The plain copy and the side coordinator can leave; main cannot.
+  expect(unlinks.map((node) => node.getAttribute("aria-label"))).toEqual([
+    "Unlink the copy on M4",
+    "Unlink the copy on M1",
+  ]);
+  await click(unlinks[1]!);
+  const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(
+    (node) => node.textContent?.trim() === "Unlink",
+  )!;
+  await click(confirm);
+  const writes = state.calls.filter((call) => call.tag === "projectLink.unlink");
+  expect(writes.map((call) => [call.environmentId, call.input.side])).toEqual([
+    ["m1", "member"],
+    ["m3", "coordinator"],
+  ]);
+  expect(writes[0]!.input.leaveCoordinator).toBe(true);
+  expect(writes[1]!.input.member).toEqual(ref("m1", "side"));
+  expect(text()).toContain("M1 has its own coordinator again");
+
+  // An older app on M1 refuses it: the person is told to update, main is not touched.
+  state.oldUnlink = ["m1"];
+  state.calls = [];
+  const rows = [...document.querySelectorAll<HTMLButtonElement>("button")].filter(
+    (node) => node.getAttribute("aria-label") === "Unlink the copy on M1",
+  );
+  await click(rows[0]!);
+  await click(
+    [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(
+      (node) => node.textContent?.trim() === "Unlink",
+    )!,
+  );
+  expect(text()).toContain("Update SpecWithCode on M1 to unlink this copy.");
+  expect(
+    state.calls
+      .filter((call) => call.tag === "projectLink.unlink")
+      .map((call) => call.environmentId),
+  ).toEqual(["m1"]);
+});
+
+it("offers no Unlink on a side coordinator another copy works for, or one alone", async () => {
+  const roster = identity("logical:1", [ref("m3", "kept"), ref("m4", "joined"), ref("m1", "side")]);
+  const main = copy("m3", "kept", roster, "active");
+  const side = copy("m1", "side", roster, "active", { epoch: 2, operationId: "op-start" });
+  const under = copy("m4", "joined", roster, "transferred", {
+    successor: ref("m1", "side"),
+    operationId: "op-join",
+  });
+  state.projects = [main, under, side];
+  await render([main, under, side]);
+  const labels = () =>
+    [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .filter((node) => node.textContent?.trim() === "Unlink")
+      .map((node) => node.getAttribute("aria-label"));
+  expect(labels()).not.toContain("Unlink the copy on M1");
+  const alone = copy("m1", "side", identity("logical:1", [ref("m1", "side")]), "active", {
+    epoch: 2,
+  });
+  await render([main, copy("m4", "joined", roster, "transferred"), alone]);
+  expect(labels()).not.toContain("Unlink the copy on M1");
 });

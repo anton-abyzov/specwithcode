@@ -65,7 +65,9 @@ describe("SpecWithCode orchestration provider instructions", () => {
     // The needs sentence (about 45 tokens) sends simulator and Xcode work to a Mac
     // and points Linux and Windows callers at the build steps in `needs`.
     // The title line (about 35 tokens) keeps a thread's name about what it owns.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 3_050);
+    // The permission clause (about 15 tokens) turns a macOS "Operation not
+    // permitted" into the Full Disk Access card instead of a text blocker.
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 3_095);
   });
 
   it("asks for thread titles that name the lasting goal and follow a scope change", () => {
@@ -172,6 +174,38 @@ describe("SpecWithCode orchestration provider instructions", () => {
         state: { interactionMode: "default", hasStudioMcp: true },
       }),
       "STUDIO_ACP_MCP_NODE",
+    );
+  });
+
+  it("tells ACP agents a denied or blocked bridge call is never fixed by a restart", () => {
+    const injected = studioAcpPromptWithInstructions({
+      prompt: "Inspect the repository.",
+      state: { interactionMode: "default", hasStudioMcp: true },
+    });
+    const fallback = injected.slice(injected.indexOf("ACP fallback:"));
+    // The two denials an agent sees: the provider refusing the command, and its sandbox blocking it.
+    assert.include(fallback, "`approval prompts are disabled`");
+    assert.include(fallback, "`connect EPERM`");
+    assert.include(
+      fallback,
+      "restarting this session, the app or the machine does not fix it, so never ask for a restart",
+    );
+    assert.include(fallback, "quote the denial exactly");
+    assert.include(fallback, "the thread's access mode decides it");
+    // The same text is right on every release: it names no version and no update.
+    assert.notMatch(
+      fallback.slice(0, fallback.indexOf("</studio_code_instructions>")),
+      /\d+\.\d+\.\d+/,
+    );
+    assert.notMatch(fallback, /update SpecWithCode/i);
+    // Agents without the bridge are not told about it.
+    assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "approval prompts are disabled");
+    assert.notInclude(
+      studioAcpPromptWithInstructions({
+        prompt: "Inspect the repository.",
+        state: { interactionMode: "default", hasStudioMcp: false },
+      }),
+      "approval prompts are disabled",
     );
   });
 

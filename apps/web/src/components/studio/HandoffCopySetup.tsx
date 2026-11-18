@@ -9,10 +9,10 @@ import { HandoffCopyScope, type useCopyScope } from "./HandoffCopyScope";
 import { RemoteFolderBrowser } from "./RemoteFolderBrowser";
 import {
   AlongLine,
-  CoordinatorChoice,
   FilesTravelChoice,
   FolderField,
   MoreOptions,
+  SendSummary,
   useProjectMoveDialog,
   WhatComesAlong,
 } from "./ProjectMoveOptions";
@@ -58,8 +58,10 @@ export const copyMachineOptions = (machines: ReadonlyArray<CopyMachine>): Machin
   }));
 
 /**
- * Screen 1 of the copy: the machine, the folder there, what comes along, where the
- * coordinator runs, and Details for the paths and the rare file methods.
+ * Screen 1 of the copy: the machine, the folder there, what comes along, the plan in one
+ * sentence, and Details for the paths and the rare file methods. It asks nothing about
+ * Main: a copy keeps Main where it is. `mode` is `copy-and-move` only for a move asked for
+ * elsewhere ("Make X main") or one still in flight.
  */
 export function HandoffCopySetup({
   machines,
@@ -73,8 +75,6 @@ export function HandoffCopySetup({
   findingHome,
   projectRelativePath,
   mode,
-  onModeChange,
-  canMove,
   chooseFirst,
   onChooseFirstChange,
   disabled,
@@ -96,8 +96,6 @@ export function HandoffCopySetup({
   readonly findingHome: boolean;
   readonly projectRelativePath: string;
   readonly mode: FolderCopyMode;
-  readonly onModeChange: (mode: FolderCopyMode) => void;
-  readonly canMove: boolean;
   readonly chooseFirst: boolean;
   readonly onChooseFirstChange: (chooseFirst: boolean) => void;
   readonly disabled: boolean;
@@ -214,10 +212,8 @@ export function HandoffCopySetup({
           </AlongLine>
         </WhatComesAlong>
       )}
-      <CoordinatorChoice
-        value={mode === "copy-and-move" ? "move" : "copy"}
-        onChange={(intent) => onModeChange(intent === "move" ? "copy-and-move" : "copy-only")}
-        canMove={canMove}
+      <SendSummary
+        move={mode === "copy-and-move"}
         sourceLabel={sourceLabel}
         targetLabel={machine ? targetLabel : null}
         disabled={disabled}

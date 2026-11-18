@@ -4502,8 +4502,6 @@ export const zh: PhraseCatalog = {
     "这台 Mac 睡眠时，将工作交给离开目标。目标会先等待宽限时间，如果你提前回来，则不会转移任何工作。仅限 Mac。",
   "How long the target waits after the lid closes before it takes over.":
     "合上盖子后，目标等待多久再接手。",
-  "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.":
-    "它还会获得一把密钥，可在一年内管理这台电脑上的访问权限、更新和技能。现有的项目和登录限制仍然有效。",
   "Its app sees this machine": "它的应用能看到这台电脑",
   "Its work may use any sign-in on this machine.": "它的工作可以使用这台电脑上的任何登录。",
   "Its work may use no sign-in here, so every launch is refused.":
@@ -4541,7 +4539,6 @@ export const zh: PhraseCatalog = {
   "No sign-ins: every launch is refused": "没有登录：每次启动都会被拒绝",
   "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.":
     "否。要从 {machineLabel} 打开这台电脑的项目，请在这里生成一次性链接，然后在那里打开。",
-  "Not included. Each secret transfer still asks you.": "不包含。每次传输机密仍会询问你。",
   "Not set up yet.": "尚未设置。",
   "Nothing allowed yet: tick a project or pick All projects":
     "尚未允许任何内容：请勾选一个项目或选择“所有项目”",
@@ -5067,6 +5064,7 @@ export const zh: PhraseCatalog = {
     "{main} 已有 10 分钟或更久无法连接。{machine} 将成为主副本，并从共享的目标、记忆和计划开始。{main} 上的对话作为历史留在那里。在 {main} 恢复之前，它仍可在自己的机器上开始工作；恢复后它会让出主副本，并列出期间运行的内容。",
   "Switching…": "正在切换…",
   "Make {machine} main": "将 {machine} 设为主副本",
+  "Make {machine} main for {project}": "将 {machine} 设为 {project} 的主副本",
   "Main for {project} is {machine}. This copy takes work from there.":
     "{project} 的主副本是 {machine}。此副本从那里接收工作。",
   "Main for {project} is on another machine. This copy takes work from there.":
@@ -5115,4 +5113,161 @@ export const zh: PhraseCatalog = {
     "当你启动的线程结束，且其增量的所有任务都已完成或跳过时，另一系列的模型会在新线程中审查这些工作，每个增量一次。适用于本机的项目，除非某个项目单独设置。你或智能体请求的审查，以及关闭增量时的审查，都会照常进行。",
   "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
     "当你启动的线程结束，且其增量的所有任务都已完成或跳过时，另一系列的模型会在新线程中审查这些工作，每个增量一次。仅适用于此项目。你或智能体请求的审查，以及关闭增量时的审查，都会照常进行。",
+  "Copy {project} to {machine}": "将 {project} 复制到 {machine}",
+  "Move {project} to {machine}": "将 {project} 移到 {machine}",
+  "Copy {project} to another machine": "将 {project} 复制到另一台机器",
+  "Move {project} to another machine": "将 {project} 移到另一台机器",
+  "Nothing on {machine} is replaced without asking.": "{machine} 上的内容不会未经询问就被替换。",
+  "the other machine": "另一台机器",
+  "From {source}. Main stays on {main}.": "来自 {source}。主副本仍在 {main}。",
+  "From {source}. Main stays where it is.": "来自 {source}。主副本留在原处。",
+  "From {source}. Main moves to {machine}.": "来自 {source}。主副本移到 {machine}。",
+  "From {source}. Main moves to the machine you choose.": "来自 {source}。主副本移到你选择的机器。",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
+    "来自 {source}。{source} 的副本未关联到 {machine} 所属的项目(主副本:{main})。",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
+    "来自 {source}。{source} 的副本未关联到 {machine} 所属的项目。",
+  "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "只把文件复制到 {machine} 的副本。主副本仍在 {main},{source} 不会关联到该项目。若要合为一个项目,请在机器菜单中关联 {source}。",
+  "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "只把文件复制到 {machine} 的副本。它的主副本不变,{source} 不会关联到该项目。若要合为一个项目,请在机器菜单中关联 {source}。",
+  "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
+    "无法从这里把主副本移到 {machine}:{source} 未关联到 {machine} 所属的项目。请先在机器菜单中关联 {source},或改为复制文件。",
+  "Not available: that machine already has Main.": "不可用:那台机器已有主副本。",
+  "Not available: it would move Main into a project this copy is not linked to.":
+    "不可用:这会把主副本移入此副本未关联的项目。",
+  "{machine} has a copy. Main stays on {main}.": "{machine} 已有副本。主副本仍在 {main}。",
+  "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
+    "未关联:{machine} 上的副本属于主副本在 {main} 的项目,{source} 不在其中。未关联任何内容。",
+  "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
+    "未关联:{machine} 上的副本属于另一个项目,{source} 不在其中。未关联任何内容。",
+  "Link with a project on another machine": "与另一台机器上的项目关联",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
+    "选择另一台机器上的 {project} 副本。每个副本保留自己的协调器；主副本仍在 {main}，可以随时切换。",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
+    "选择另一台机器上的 {project} 副本。每个副本保留自己的协调器，主副本可以随时切换。",
+  "Other copy": "另一个副本",
+  "No project on another connected machine. Add the folder on that machine first, then link it here.":
+    "其他已连接的机器上没有项目。请先在那台机器上添加文件夹，然后在这里关联。",
+  "{project} on {machine}": "{machine} 上的 {project}",
+  "Not a copy:": "不是副本：",
+  "Compared when you review the link.": "检查关联时进行比较。",
+  "Reading folders…": "正在读取文件夹…",
+  "No copy of {project} was found on another machine.": "在其他机器上没有找到 {project} 的副本。",
+  "Other projects ({count})": "其他项目（{count}）",
+  "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
+    "从文件夹来看，它们不是 {project} 的副本。只有在它是重命名或重新克隆的副本时才选择。",
+  "Review link": "检查关联",
+  "Message {machine}'s coordinator for {project}.": "给 {machine} 上 {project} 的协调者发消息。",
+  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
+    "发送会把你的消息交给 {machine} 的协调者，并打开它的页面，回复会出现在那里。",
+  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
+    "发送会把你的消息交给主协调者，并打开它的页面，回复会出现在那里。",
+  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
+    "文件留在这台机器上。移除文件即可把文字发到主机器，或打开主机器的页面在那里附加。",
+  "1 device waiting": "1 台设备在等待",
+  "A Linux computer": "一台 Linux 电脑",
+  "A Mac": "一台 Mac",
+  "A Windows PC": "一台 Windows 电脑",
+  "A computer": "一台电脑",
+  "A device cannot approve itself. Type this code on another device or on the machine.":
+    "设备不能批准自己。请在另一台设备或该电脑上输入此代码。",
+  "A new device wants to use {machine}": "有新设备想使用 {machine}",
+  "A phone": "一部手机",
+  "A tablet": "一台平板",
+  "Allow {coordinatorLabel} to run work on {hereLabel}?":
+    "允许 {coordinatorLabel} 在 {hereLabel} 上运行工作？",
+  "Allowing…": "正在允许…",
+  "An Android phone": "一部 Android 手机",
+  "An Android tablet": "一台 Android 平板",
+  "An iPad": "一台 iPad",
+  "An iPhone": "一部 iPhone",
+  "Approve this device on the machine.": "请在电脑上批准此设备。",
+  "Approved {date} by {approver}": "{date} 由{approver}批准",
+  "Checking devices…": "正在检查设备…",
+  "Code shown on {device}": "{device} 上显示的代码",
+  "Could not reach this machine.": "无法连接到这台电脑。",
+  "Could not reach this machine. Try again.": "无法连接到这台电脑。请重试。",
+  "Could not remove {device}": "无法移除 {device}",
+  "Could not repair the list": "无法修复列表",
+  "Could not save the list": "无法保存列表",
+  "Could not turn that device away": "无法拒绝该设备",
+  "Deny turns it away for a day.": "拒绝后，它一天内无法连接。",
+  "Devices that can use this machine": "可以使用这台电脑的设备",
+  "First seen {date}": "首次出现于 {date}",
+  "It also gets a key to this machine for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Project limits stay in force.":
+    "它还会获得这台电脑的密钥，有效期一年：终端、文件、设置和登录，以及权限、更新和技能。项目限制仍然有效。",
+  "It stops using {machine} right away. To use it again, it asks with a new code.":
+    "它会立即停止使用 {machine}。要再次使用，它需要用新代码申请。",
+  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
+    "它的应用已在这里通过代码获得批准，因此它可以使用这台电脑，这台电脑上的智能体现在也可以在它上面运行工作。你可以在 设置 > 机器 中更改或移除它。",
+  "Kept by the update": "因更新而保留",
+  "Kept by the update. Check this list.": "因更新而保留。请检查此列表。",
+  Later: "稍后",
+  "New device approved on {machine} by {approver}": "新设备已在 {machine} 上由{approver}批准",
+  "No device is waiting with that code. Check the code shown on the device that asked for {machine}.":
+    "没有设备在用这个代码等待。请核对申请使用 {machine} 的设备上显示的代码。",
+  "No other devices yet. A phone or computer signed in to SpecWithCode Connect asks here first, with a code.":
+    "还没有其他设备。登录 SpecWithCode Connect 的手机或电脑会先在这里用代码申请。",
+  "Not sent on their own. Each secret transfer asks first, and that card appears on the machine that asks, not on this one.":
+    "不会自动发送。每次传输机密都会先询问，该卡片显示在发起请求的电脑上，而不是这台电脑上。",
+  "Open SpecWithCode on {machine} and type this code:":
+    "在 {machine} 上打开 SpecWithCode，然后输入此代码：",
+  "Remove {device}?": "移除 {device}？",
+  "Sign in to SpecWithCode Connect again on this device to ask {machine} for approval.":
+    "请在此设备上重新登录 SpecWithCode Connect，以向 {machine} 申请批准。",
+  "The device list on {machine} is damaged, so other devices are turned away until it is repaired. Repair starts an empty list; devices then ask again with a code.":
+    "{machine} 上的设备列表已损坏，修复前其他设备都会被拒绝。修复会新建一个空列表，之后设备需要重新用代码申请。",
+  "The device list on {machine} is damaged. Open SpecWithCode on {machine} to repair it.":
+    "{machine} 上的设备列表已损坏。请在 {machine} 上打开 SpecWithCode 进行修复。",
+  "The list is right": "列表没问题",
+  "These devices were in use when {machine} updated, so they were kept. Remove any you do not know.":
+    "{machine} 更新时这些设备正在使用，因此被保留。请移除你不认识的设备。",
+  "This device connects on its own once {machine} allows it.":
+    "{machine} 允许后，此设备会自动连接。",
+  "This machine cannot check new devices yet. Open SpecWithCode on it and update.":
+    "这台电脑还不能检查新设备。请在这台电脑上打开 SpecWithCode 并更新。",
+  "This machine does not ask before new devices connect yet. Update it to choose which devices can use it.":
+    "这台电脑在新设备连接前还不会询问。请更新它，以选择哪些设备可以使用它。",
+  "Too many wrong codes. Type the code on {machine} itself, or wait 10 minutes.":
+    "错误代码次数过多。请直接在 {machine} 上输入代码，或等待 10 分钟。",
+  "Try again.": "请重试。",
+  "Turning away…": "正在拒绝…",
+  "6 characters": "6 个字符",
+  "Type the code shown on {device}": "输入 {device} 上显示的代码",
+  "another device": "另一台设备",
+  "the update": "更新",
+  "{coordinatorLabel} receives a key to {hereLabel} for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Its work is capped at {cap}. Project limits stay in force. Each secret transfer asks first, on {coordinatorLabel}.":
+    "{coordinatorLabel} 会获得 {hereLabel} 的密钥，有效期一年：终端、文件、设置和登录，以及权限、更新和技能。它的工作上限为 {cap}。项目限制仍然有效。每次传输机密都会先在 {coordinatorLabel} 上询问。",
+  "{count} devices waiting": "{count} 台设备在等待",
+  "{device} can now use {machine}": "{device} 现在可以使用 {machine}",
+  "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
+    "{device} 正在申请。它以 {account} 登录了 SpecWithCode Connect。",
+  "{device} is asking. It signed in to your SpecWithCode Connect account.":
+    "{device} 正在申请。它已登录你的 SpecWithCode Connect 账户。",
+  "{device} is waiting to use {machine}.": "{device} 正在等待使用 {machine}。",
+  "{label} joined": "{label} 已加入",
+  "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
+    "{machine} 不再允许此设备连接。请在 {machine} 上的 SpecWithCode 中重新批准。",
+  "{position} of {total} waiting": "等待中：第 {position} 个，共 {total} 个",
+  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
+    "允许后，它可以像此应用一样使用 {machine} 上的终端、文件、设置和登录，并在那里开始工作。",
+  "Asked at {time}": "申请于 {time}",
+  "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
+    "名称是设备自己起的。只有代码能证明它就是你眼前的设备，所以只允许你能在它上面看到的代码。",
+  "Too many devices are waiting for approval on {machine}. Try again in a few minutes.":
+    "{machine} 上等待批准的设备太多。请几分钟后再试。",
+  "{device} is asking. It was paired through another of your machines.":
+    "{device} 正在申请。它是通过你的另一台电脑配对的。",
+  "{device} is asking. It was paired through {hub}.": "{device} 正在申请。它是通过 {hub} 配对的。",
+  "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
+    "{machine} 拒绝了此设备。请明天再申请，或在 {machine} 上的 SpecWithCode 中批准它。",
+  "Different machine at address": "该地址是另一台机器",
+  "{machine}'s address now answers as a different SpecWithCode":
+    "{machine} 的地址现在以另一个 SpecWithCode 的身份应答",
+  "This host's address now answers as a different SpecWithCode":
+    "此主机的地址现在以另一个 SpecWithCode 的身份应答",
+  "Open Settings > Machines to fix it.": "打开“设置 > 电脑”来修复。",
+  "Resolved history from {machines} could not be loaded.": "无法加载 {machines} 的已解决历史。",
+  "Resolved history from another machine could not be loaded.": "无法加载另一台机器的已解决历史。",
 };

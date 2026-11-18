@@ -7,6 +7,7 @@ import {
   CopyFixture,
   copyStatus,
   findButton,
+  MOVE,
   openMore,
   type FixtureOptions,
 } from "./HandoffFolderCopy.testkit";
@@ -115,7 +116,8 @@ const click = async (label: string) => {
   await act(async () => findButton(container, label).click());
   await settle();
 };
-const mount = async (overrides: FixtureOptions = {}) => {
+// Every case here moves Main; the copy flow is opened that way, it does not ask.
+const mount = async (overrides: FixtureOptions = MOVE) => {
   await act(async () => root.render(<CopyFixture {...overrides} />));
   await settle();
 };
@@ -136,11 +138,6 @@ const moveCopy = () => {
 };
 /** Measures, compares and copies with the coordinator moving; the move then runs. */
 const handOff = async () => {
-  await act(async () => {
-    [...container.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]')]
-      .find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!
-      .click();
-  });
   await click("Copy and move to M3");
   await click("Copy and move to M3");
 };

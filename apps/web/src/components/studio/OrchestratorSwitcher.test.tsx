@@ -631,3 +631,34 @@ it("opens linking on main's own copy, and never on a copy that takes work from a
   // A project on its own keeps itself.
   expect(linkKeeper(single!, [single!], [])).toBe(single);
 });
+
+it("names main on the chip of a copy whose coordinator runs there, and the copy in its menu", async () => {
+  await act(async () =>
+    root.render(
+      <OrchestratorSwitcher
+        label="M5"
+        connected
+        statusDetail=""
+        current="m5:p"
+        copies={[copy("m4:p", "M4"), copy("m5:p", "M5", "workers")]}
+        unknown={[]}
+        savedMachineMissing={false}
+        runsOn={{ label: "M4", connected: false, statusDetail: "Offline", identity: null }}
+        onMigrate={vi.fn()}
+        {...handlers()}
+      />,
+    ),
+  );
+  // The face: where the coordinator runs, in that machine's state.
+  expect([...container.querySelectorAll(".sws-host-name")].map((node) => node.textContent)).toEqual(
+    ["Runs on M4"],
+  );
+  expect(container.querySelector(".sws-dot")?.getAttribute("data-tone")).toBe("failed");
+  expect(container.querySelector("[data-orchestrator-status]")?.textContent).toBe(", Offline");
+  // The menu: the viewed copy's actions, under its own name.
+  const trigger = container.querySelector<HTMLButtonElement>("[data-coordinator-machine]")!;
+  expect(trigger.getAttribute("aria-label")).toBe("Viewing M5. Choose a machine to view");
+  await act(async () => trigger.click());
+  expect(document.body.textContent).toContain("On M5");
+  expect(document.body.textContent).not.toContain("On M4");
+});

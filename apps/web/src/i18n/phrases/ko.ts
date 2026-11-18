@@ -4632,8 +4632,6 @@ export const ko: PhraseCatalog = {
     "이 Mac이 잠자기 상태가 되면 작업을 자리 비움 대상에 넘깁니다. 대상은 먼저 유예 시간 동안 기다리며, 그 전에 돌아오면 아무것도 옮겨지지 않습니다. Mac 전용입니다.",
   "How long the target waits after the lid closes before it takes over.":
     "덮개를 닫은 후 대상이 작업을 넘겨받기 전까지 기다리는 시간입니다.",
-  "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.":
-    "또한 1년 동안 이 컴퓨터의 액세스, 업데이트, 스킬을 관리하는 키를 받습니다. 기존 프로젝트 및 로그인 제한은 계속 적용됩니다.",
   "Its app sees this machine": "해당 앱에서 이 컴퓨터가 보임",
   "Its work may use any sign-in on this machine.":
     "해당 작업은 이 컴퓨터의 모든 로그인을 사용할 수 있습니다.",
@@ -4672,8 +4670,6 @@ export const ko: PhraseCatalog = {
   "No sign-ins: every launch is refused": "로그인 없음: 모든 실행이 거부됩니다",
   "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.":
     "아니요. {machineLabel}에서 이 컴퓨터의 프로젝트를 열려면 여기서 일회용 링크를 만들어 그곳에서 여세요.",
-  "Not included. Each secret transfer still asks you.":
-    "포함되지 않습니다. 시크릿을 전송할 때마다 여전히 확인을 요청합니다.",
   "Not set up yet.": "아직 설정되지 않았습니다.",
   "Nothing allowed yet: tick a project or pick All projects":
     "아직 허용된 항목 없음: 프로젝트를 체크하거나 모든 프로젝트를 선택하세요",
@@ -5217,6 +5213,7 @@ export const ko: PhraseCatalog = {
     "{main}에 10분 이상 연결할 수 없습니다. {machine}이(가) 메인이 되어 공유된 목표, 메모리, 계획에서 시작합니다. {main}의 대화는 기록으로 거기에 남습니다. {main}은(는) 돌아올 때까지 자기 컴퓨터에서 작업을 시작할 수 있지만, 돌아오면 메인을 넘겨주고 그동안 실행한 작업을 보여 줍니다.",
   "Switching…": "전환 중…",
   "Make {machine} main": "{machine}을(를) 메인으로",
+  "Make {machine} main for {project}": "{project}의 메인을 {machine}(으)로",
   "Main for {project} is {machine}. This copy takes work from there.":
     "{project}의 메인은 {machine}입니다. 이 복사본은 거기서 작업을 받습니다.",
   "Main for {project} is on another machine. This copy takes work from there.":
@@ -5265,4 +5262,170 @@ export const ko: PhraseCatalog = {
     "직접 시작한 스레드가 끝나고 해당 인크리먼트의 모든 작업이 완료되거나 건너뛰어지면, 다른 계열의 모델이 새 스레드에서 작업을 리뷰합니다. 인크리먼트마다 한 번입니다. 프로젝트가 따로 정하지 않으면 이 머신의 프로젝트에 적용됩니다. 직접 또는 에이전트가 요청한 리뷰와 인크리먼트 종료 시 리뷰는 이 설정과 상관없이 실행됩니다.",
   "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
     "직접 시작한 스레드가 끝나고 해당 인크리먼트의 모든 작업이 완료되거나 건너뛰어지면, 다른 계열의 모델이 새 스레드에서 작업을 리뷰합니다. 인크리먼트마다 한 번입니다. 이 프로젝트에만 적용됩니다. 직접 또는 에이전트가 요청한 리뷰와 인크리먼트 종료 시 리뷰는 이 설정과 상관없이 실행됩니다.",
+  "Copy {project} to {machine}": "{project}을(를) {machine}(으)로 복사",
+  "Move {project} to {machine}": "{project}을(를) {machine}(으)로 이동",
+  "Copy {project} to another machine": "{project}을(를) 다른 기기로 복사",
+  "Move {project} to another machine": "{project}을(를) 다른 기기로 이동",
+  "Nothing on {machine} is replaced without asking.":
+    "{machine}에 있는 것은 묻지 않고 바꾸지 않습니다.",
+  "the other machine": "다른 기기",
+  "From {source}. Main stays on {main}.": "{source}에서. 메인은 {main}에 그대로 있습니다.",
+  "From {source}. Main stays where it is.": "{source}에서. 메인은 지금 있는 곳에 그대로 있습니다.",
+  "From {source}. Main moves to {machine}.": "{source}에서. 메인이 {machine}(으)로 옮겨집니다.",
+  "From {source}. Main moves to the machine you choose.":
+    "{source}에서. 메인이 선택한 기기로 옮겨집니다.",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
+    "{source}에서. {source}의 복사본은 {machine}이(가) 속한 프로젝트에 연결되어 있지 않습니다(메인: {main}).",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
+    "{source}에서. {source}의 복사본은 {machine}이(가) 속한 프로젝트에 연결되어 있지 않습니다.",
+  "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "{machine}의 복사본에는 파일만 복사됩니다. 메인은 {main}에 그대로 있고, {source}은(는) 그 프로젝트에 연결되지 않습니다. 하나의 프로젝트로 만들려면 기기 메뉴에서 {source}을(를) 연결하세요.",
+  "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "{machine}의 복사본에는 파일만 복사됩니다. 그 메인은 바뀌지 않고, {source}은(는) 그 프로젝트에 연결되지 않습니다. 하나의 프로젝트로 만들려면 기기 메뉴에서 {source}을(를) 연결하세요.",
+  "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
+    "여기서는 메인을 {machine}(으)로 옮길 수 없습니다. {source}은(는) {machine}이(가) 속한 프로젝트에 연결되어 있지 않습니다. 먼저 기기 메뉴에서 {source}을(를) 연결하거나 파일을 복사하세요.",
+  "Not available: that machine already has Main.":
+    "사용할 수 없음: 그 기기에 이미 메인이 있습니다.",
+  "Not available: it would move Main into a project this copy is not linked to.":
+    "사용할 수 없음: 이 복사본이 연결되지 않은 프로젝트로 메인이 옮겨집니다.",
+  "{machine} has a copy. Main stays on {main}.":
+    "{machine}에 복사본이 있습니다. 메인은 {main}에 그대로 있습니다.",
+  "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
+    "연결되지 않음: {machine}의 복사본은 메인이 {main}인 프로젝트에 속하며, {source}은(는) 그 일부가 아닙니다. 아무것도 연결되지 않았습니다.",
+  "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
+    "연결되지 않음: {machine}의 복사본은 다른 프로젝트에 속하며, {source}은(는) 그 일부가 아닙니다. 아무것도 연결되지 않았습니다.",
+  "Link with a project on another machine": "다른 머신의 프로젝트와 연결",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
+    "다른 머신에 있는 {project}의 복사본을 고르세요. 각 복사본은 자체 코디네이터를 유지합니다. 메인은 {main}에 그대로 있으며 언제든지 바꿀 수 있습니다.",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
+    "다른 머신에 있는 {project}의 복사본을 고르세요. 각 복사본은 자체 코디네이터를 유지하며, 메인은 언제든지 바꿀 수 있습니다.",
+  "Other copy": "다른 복사본",
+  "No project on another connected machine. Add the folder on that machine first, then link it here.":
+    "연결된 다른 머신에 프로젝트가 없습니다. 먼저 그 머신에서 폴더를 추가한 다음 여기에서 연결하세요.",
+  "{project} on {machine}": "{machine}의 {project}",
+  "Not a copy:": "복사본 아님:",
+  "Compared when you review the link.": "연결을 검토할 때 비교합니다.",
+  "Reading folders…": "폴더를 읽는 중…",
+  "No copy of {project} was found on another machine.":
+    "다른 머신에서 {project}의 복사본을 찾지 못했습니다.",
+  "Other projects ({count})": "다른 프로젝트 ({count})",
+  "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
+    "폴더로 보면 {project}의 복사본이 아닙니다. 이름을 바꿨거나 다시 클론한 복사본일 때만 고르세요.",
+  "Review link": "연결 검토",
+  "Message {machine}'s coordinator for {project}.":
+    "{project}의 {machine} 코디네이터에게 메시지를 보내세요.",
+  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
+    "보내기를 누르면 {machine}의 코디네이터에게 메시지가 전달되고, 답이 오는 그 페이지가 열립니다.",
+  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
+    "보내기를 누르면 메인 코디네이터에게 메시지가 전달되고, 답이 오는 그 페이지가 열립니다.",
+  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
+    "파일은 이 기기에 남습니다. 텍스트를 메인으로 보내려면 파일을 빼거나, 메인 페이지를 열어 그곳에서 첨부하세요.",
+  "1 device waiting": "기기 1대 대기 중",
+  "A Linux computer": "Linux 컴퓨터",
+  "A Mac": "Mac",
+  "A Windows PC": "Windows PC",
+  "A computer": "컴퓨터",
+  "A device cannot approve itself. Type this code on another device or on the machine.":
+    "기기는 스스로를 승인할 수 없습니다. 다른 기기나 컴퓨터에서 이 코드를 입력하세요.",
+  "A new device wants to use {machine}": "새 기기가 {machine}을(를) 사용하려고 합니다",
+  "A phone": "휴대폰",
+  "A tablet": "태블릿",
+  "Allow {coordinatorLabel} to run work on {hereLabel}?":
+    "{coordinatorLabel}이(가) {hereLabel}에서 작업을 실행하도록 허용할까요?",
+  "Allowing…": "허용 중…",
+  "An Android phone": "Android 휴대폰",
+  "An Android tablet": "Android 태블릿",
+  "An iPad": "iPad",
+  "An iPhone": "iPhone",
+  "Approve this device on the machine.": "컴퓨터에서 이 기기를 승인하세요.",
+  "Approved {date} by {approver}": "{date}에 승인됨 ({approver})",
+  "Checking devices…": "기기 확인 중…",
+  "Code shown on {device}": "{device}에 표시된 코드",
+  "Could not reach this machine.": "이 컴퓨터에 연결할 수 없습니다.",
+  "Could not reach this machine. Try again.": "이 컴퓨터에 연결할 수 없습니다. 다시 시도하세요.",
+  "Could not remove {device}": "{device}을(를) 제거하지 못했습니다",
+  "Could not repair the list": "목록을 복구하지 못했습니다",
+  "Could not save the list": "목록을 저장하지 못했습니다",
+  "Could not turn that device away": "해당 기기를 거부하지 못했습니다",
+  "Deny turns it away for a day.": "거부하면 하루 동안 연결할 수 없습니다.",
+  "Devices that can use this machine": "이 컴퓨터를 사용할 수 있는 기기",
+  "First seen {date}": "처음 확인: {date}",
+  "It also gets a key to this machine for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Project limits stay in force.":
+    "또한 이 컴퓨터의 키를 1년 동안 받습니다. 터미널, 파일, 설정, 로그인과 함께 권한, 업데이트, 스킬이 포함됩니다. 프로젝트 제한은 계속 적용됩니다.",
+  "It stops using {machine} right away. To use it again, it asks with a new code.":
+    "즉시 {machine}을(를) 사용할 수 없게 됩니다. 다시 사용하려면 새 코드로 요청해야 합니다.",
+  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
+    "해당 앱이 여기서 코드로 승인되어 이 컴퓨터를 사용할 수 있으며, 이제 이 컴퓨터의 에이전트도 그곳에서 작업을 실행할 수 있습니다. 설정 > 머신에서 변경하거나 제거할 수 있습니다.",
+  "Kept by the update": "업데이트로 유지됨",
+  "Kept by the update. Check this list.": "업데이트로 유지되었습니다. 이 목록을 확인하세요.",
+  Later: "나중에",
+  "New device approved on {machine} by {approver}": "{machine}에서 새 기기가 승인됨 ({approver})",
+  "No device is waiting with that code. Check the code shown on the device that asked for {machine}.":
+    "그 코드로 대기 중인 기기가 없습니다. {machine} 사용을 요청한 기기에 표시된 코드를 확인하세요.",
+  "No other devices yet. A phone or computer signed in to SpecWithCode Connect asks here first, with a code.":
+    "아직 다른 기기가 없습니다. SpecWithCode Connect에 로그인한 휴대폰이나 컴퓨터는 먼저 여기서 코드로 요청합니다.",
+  "Not sent on their own. Each secret transfer asks first, and that card appears on the machine that asks, not on this one.":
+    "자동으로 전송되지 않습니다. 비밀 전송은 매번 먼저 확인하며, 그 카드는 이 컴퓨터가 아니라 요청한 컴퓨터에 표시됩니다.",
+  "Open SpecWithCode on {machine} and type this code:":
+    "{machine}에서 SpecWithCode를 열고 이 코드를 입력하세요:",
+  "Remove {device}?": "{device}을(를) 제거할까요?",
+  "Sign in to SpecWithCode Connect again on this device to ask {machine} for approval.":
+    "{machine}에 승인을 요청하려면 이 기기에서 SpecWithCode Connect에 다시 로그인하세요.",
+  "The device list on {machine} is damaged, so other devices are turned away until it is repaired. Repair starts an empty list; devices then ask again with a code.":
+    "{machine}의 기기 목록이 손상되어 복구할 때까지 다른 기기는 거부됩니다. 복구하면 빈 목록에서 시작하며, 이후 기기는 코드로 다시 요청합니다.",
+  "The device list on {machine} is damaged. Open SpecWithCode on {machine} to repair it.":
+    "{machine}의 기기 목록이 손상되었습니다. 복구하려면 {machine}에서 SpecWithCode를 여세요.",
+  "The list is right": "목록이 맞습니다",
+  "These devices were in use when {machine} updated, so they were kept. Remove any you do not know.":
+    "{machine}이(가) 업데이트될 때 사용 중이던 기기라서 유지되었습니다. 모르는 기기는 제거하세요.",
+  "This device connects on its own once {machine} allows it.":
+    "{machine}이(가) 허용하면 이 기기가 자동으로 연결됩니다.",
+  "This machine cannot check new devices yet. Open SpecWithCode on it and update.":
+    "이 컴퓨터는 아직 새 기기를 확인할 수 없습니다. 이 컴퓨터에서 SpecWithCode를 열고 업데이트하세요.",
+  "This machine does not ask before new devices connect yet. Update it to choose which devices can use it.":
+    "이 컴퓨터는 아직 새 기기가 연결되기 전에 묻지 않습니다. 사용할 수 있는 기기를 선택하려면 업데이트하세요.",
+  "Too many wrong codes. Type the code on {machine} itself, or wait 10 minutes.":
+    "잘못된 코드를 너무 많이 입력했습니다. {machine}에서 직접 코드를 입력하거나 10분 기다리세요.",
+  "Try again.": "다시 시도하세요.",
+  "Turning away…": "거부 중…",
+  "6 characters": "6자",
+  "Type the code shown on {device}": "{device}에 표시된 코드를 입력하세요",
+  "another device": "다른 기기",
+  "the update": "업데이트",
+  "{coordinatorLabel} receives a key to {hereLabel} for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Its work is capped at {cap}. Project limits stay in force. Each secret transfer asks first, on {coordinatorLabel}.":
+    "{coordinatorLabel}은(는) {hereLabel}의 키를 1년 동안 받습니다. 터미널, 파일, 설정, 로그인과 함께 권한, 업데이트, 스킬이 포함됩니다. 작업 한도는 {cap}입니다. 프로젝트 제한은 계속 적용됩니다. 비밀 전송은 매번 먼저 {coordinatorLabel}에서 확인합니다.",
+  "{count} devices waiting": "기기 {count}대 대기 중",
+  "{device} can now use {machine}": "이제 {device}에서 {machine}을(를) 사용할 수 있습니다",
+  "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
+    "{device}에서 요청하고 있습니다. {account}(으)로 SpecWithCode Connect에 로그인했습니다.",
+  "{device} is asking. It signed in to your SpecWithCode Connect account.":
+    "{device}에서 요청하고 있습니다. 내 SpecWithCode Connect 계정에 로그인했습니다.",
+  "{device} is waiting to use {machine}.": "{device}이(가) {machine} 사용을 기다리고 있습니다.",
+  "{label} joined": "{label} 참여함",
+  "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
+    "{machine}에서 더 이상 이 기기의 연결을 허용하지 않습니다. {machine}의 SpecWithCode에서 다시 승인하세요.",
+  "{position} of {total} waiting": "대기 중 {position}/{total}",
+  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
+    "허용하면 이 앱처럼 {machine}의 터미널, 파일, 설정, 로그인을 사용하고 그곳에서 작업을 시작할 수 있습니다.",
+  "Asked at {time}": "{time}에 요청",
+  "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
+    "이름은 기기가 스스로 정한 것입니다. 눈앞의 기기임을 증명하는 것은 코드뿐이니, 그 기기에서 읽을 수 있는 코드만 허용하세요.",
+  "Too many devices are waiting for approval on {machine}. Try again in a few minutes.":
+    "{machine}에서 승인을 기다리는 기기가 너무 많습니다. 몇 분 후에 다시 시도하세요.",
+  "{device} is asking. It was paired through another of your machines.":
+    "{device}에서 요청하고 있습니다. 다른 컴퓨터를 통해 페어링되었습니다.",
+  "{device} is asking. It was paired through {hub}.":
+    "{device}에서 요청하고 있습니다. {hub}을(를) 통해 페어링되었습니다.",
+  "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
+    "{machine}이(가) 이 기기를 거부했습니다. 내일 다시 요청하거나 {machine}의 SpecWithCode에서 승인하세요.",
+  "Different machine at address": "주소에 다른 기기",
+  "{machine}'s address now answers as a different SpecWithCode":
+    "{machine}의 주소가 이제 다른 SpecWithCode로 응답합니다",
+  "This host's address now answers as a different SpecWithCode":
+    "이 호스트의 주소가 이제 다른 SpecWithCode로 응답합니다",
+  "Open Settings > Machines to fix it.": "해결하려면 설정 > 컴퓨터를 여세요.",
+  "Resolved history from {machines} could not be loaded.":
+    "{machines}의 해결된 기록을 불러올 수 없습니다.",
+  "Resolved history from another machine could not be loaded.":
+    "다른 기기의 해결된 기록을 불러올 수 없습니다.",
 };

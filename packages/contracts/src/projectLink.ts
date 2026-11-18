@@ -346,6 +346,8 @@ export const ProjectUnlinkInput = Schema.Union([
     projectId: ProjectId,
     notes: NoteWrites,
     changeAnyway: Schema.optional(Schema.Boolean),
+    /** It runs a coordinator beside main (`startCoordinator`) and leaves with it. */
+    leaveCoordinator: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     side: Schema.Literal("coordinator"),

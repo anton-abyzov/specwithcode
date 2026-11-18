@@ -48,6 +48,7 @@ import {
   CommandId,
   logicalProjectTitle,
   type ChatAttachment,
+  type EnvironmentId,
   type ModelSelection,
   type ProjectStarterSuggestion,
   type ThreadId,
@@ -202,6 +203,8 @@ import { CoordinatorConversation } from "./CoordinatorConversation";
 import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
 import { CoordinatorBlockedNotice, OfflineSwitchNotice } from "./CoordinatorBlockedNotice";
 import { useMakeMain } from "./useMakeMain";
+import { useRouteToMain } from "./useRouteToMain";
+import { composerMachines, ROUTED_FILES_MESSAGE } from "../../studio/routeToMain";
 import { ProjectComposerHostStatus } from "./ComposerHostStatus";
 import { useTx } from "../../i18n";
 import {
@@ -213,7 +216,13 @@ import { offlineSwitchPredecessor } from "../../studio/workersOnlyCopy";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { useHostReach, useUnreachableHosts } from "../../studio/unreachableHosts";
+import {
+  useHostIdentityMismatch,
+  useHostReach,
+  useHostReachStates,
+  useUnreachableHosts,
+} from "../../studio/unreachableHosts";
+import { archivedHistoryNotice } from "../../studio/archivedHistoryNotice";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import {
   environmentWaitsForReconnectGrace,
@@ -305,7 +314,12 @@ export function ProjectWorkspaceSurface({
   restoringThread?: boolean;
   ownershipProblem?: string | null;
   /** A workers-only copy's coordinator on another machine, where its work is started. */
-  coordinatorElsewhere?: { readonly key: string; readonly machine: string | null } | null;
+  coordinatorElsewhere?: {
+    readonly key: string;
+    readonly machine: string | null;
+    /** A live coordinator the resolver found (`followedMain`), so a send can route there. */
+    readonly live?: boolean;
+  } | null;
   setSelected: SelectProjectThread;
 }) {
   const projectTitle = logicalProjectTitle(project);
@@ -620,6 +634,7 @@ export function ProjectWorkspaceSurface({
       ? project.environmentId
       : null;
   const hostReach = useHostReach(project.environmentId);
+  const hostIdentityMismatch = useHostIdentityMismatch(project.environmentId);
   const [graceElapsedEnvironmentId, setGraceElapsedEnvironmentId] = useState<string | null>(null);
   useEffect(() => {
     setGraceElapsedEnvironmentId(null);
@@ -636,6 +651,7 @@ export function ProjectWorkspaceSurface({
   const admissionContext = {
     ...hostAdmission,
     ...(hostReach === undefined ? {} : { reach: hostReach }),
+    ...(hostIdentityMismatch ? { identityMismatch: true } : {}),
     accessPending: operateAccess === "unknown",
     ...(environment?.label || machineName !== project.environmentId
       ? { machineLabel: machineName }
@@ -666,6 +682,31 @@ export function ProjectWorkspaceSurface({
   const blocked = (connected ? null : admission) ?? workersOnly ?? ownershipProblem ?? admission;
   // A copy whose main is elsewhere: its message box is off and says where to write.
   const copyOff = blocked !== null && blocked === workersOnly;
+  // Main's machine is connected and may run work: what is typed here goes to main's coordinator.
+  const route = useRouteToMain({
+    mainKey: coordinatorElsewhere?.key ?? null,
+    copyOff,
+    mainLive: coordinatorElsewhere?.live === true,
+    onOpen: onCheckout,
+  });
+  const routes = route.ready;
+  // One rule names the machine on the chip under the box and on Send: on a copy whose main
+  // is elsewhere both say main, never the copy's machine beside main's.
+  const named = composerMachines({
+    viewed: project.environmentId,
+    mainKey: coordinatorElsewhere?.key ?? null,
+    routes,
+  });
+  const chipEnvironment = useEnvironment(named.chip as EnvironmentId);
+  // Main's name, one fallback chain for the chip and the header tag.
+  const mainName = chipEnvironment?.label ?? coordinatorElsewhere?.machine ?? named.chip;
+  // Files were attached on this machine; a routed message carries text only.
+  const draftHasFiles = useSyncExternalStore(
+    composer.subscribe,
+    () => composer.getSnapshot().attachments.length > 0,
+    () => false,
+  );
+  const routedFilesBlock = routes && draftHasFiles ? tx(ROUTED_FILES_MESSAGE) : null;
   // Memoized, not just computed: these feed memoized callbacks below, and the
   // React Compiler keeps those only for values it knows are not changed later.
   const coordinator = useMemo(
@@ -1665,6 +1706,16 @@ export function ProjectWorkspaceSurface({
     return ids;
   }, [paneScope]);
   const unreachableHosts = useUnreachableHosts();
+  const hostReachStates = useHostReachStates();
+  // A machine already shown as not connected says so itself; the rest are named.
+  const archivedNotice = archivedHistoryNotice({
+    failedEnvironmentIds: archived.failedEnvironmentIds,
+    reach: hostReachStates,
+    label: (environmentId) => {
+      const name = machineLabels.get(environmentId);
+      return name === undefined || name === environmentId ? null : name;
+    },
+  });
   const subagents = useThreadSubagents({
     thread: selectedThread,
     shells,
@@ -1805,8 +1856,15 @@ export function ProjectWorkspaceSurface({
                   <h1>{projectTitle}</h1>
                 </Tip>
                 {primaryEnvironmentId !== null && project.environmentId !== primaryEnvironmentId ? (
-                  // Another machine runs this project: its coordinator, workers and sign-ins.
-                  <Tip label={`Runs on ${machineName}, not this computer`}>
+                  // Another machine holds this copy: its workers and sign-ins. On a copy whose main
+                  // is elsewhere the coordinator runs on main, which the composer chip names.
+                  <Tip
+                    label={
+                      coordinatorElsewhere
+                        ? `Copy on ${machineName}, not this computer. Its coordinator runs on ${mainName}`
+                        : `Runs on ${machineName}, not this computer`
+                    }
+                  >
                     <span
                       className="sws-tag sws-project-machine machine-chip"
                       data-project-machine
@@ -1817,7 +1875,9 @@ export function ProjectWorkspaceSurface({
                       ) : (
                         <LaptopIcon aria-hidden />
                       )}
-                      <span className="sr-only">Runs on </span>
+                      <span className="sr-only">
+                        {coordinatorElsewhere ? "Copy on " : "Runs on "}
+                      </span>
                       {machineName}
                     </span>
                   </Tip>
@@ -1996,42 +2056,51 @@ export function ProjectWorkspaceSurface({
                 composer={composer}
                 // A viewer showing the coordinator borrows this composer.
                 threadRef={coordinatorRef}
-                environmentId={project.environmentId}
+                // Main's machine on a copy, so the box wears the machine the chip names.
+                environmentId={(named.send ?? named.chip) as EnvironmentId}
                 cwd={project.workspaceRoot}
                 sendBlocked={
-                  Boolean(blocked) ||
-                  Boolean(modelCompatibility) ||
-                  (!model && !coordinatorId) ||
-                  savingModel ||
-                  sending
+                  routes
+                    ? route.sending || sending || routedFilesBlock !== null
+                    : Boolean(blocked) ||
+                      Boolean(modelCompatibility) ||
+                      (!model && !coordinatorId) ||
+                      savingModel ||
+                      sending
                 }
                 missingModel={
-                  !blocked && !model && !coordinatorId
+                  routedFilesBlock ??
+                  (!blocked && !model && !coordinatorId
                     ? missingModelMessage(modelsLoading, machinePrivate)
-                    : null
+                    : null)
                 }
-                canAttach={canOperate && connected}
+                canAttach={canOperate && connected && named.send === project.environmentId}
                 uploadsSupported={uploadsSupported}
                 maxFileBytes={maxFileBytes}
                 sending={sending}
                 placeholder={
-                  copyOff
-                    ? coordinatorElsewhere?.machine
-                      ? tx("Work for {project} starts on {machine}.", {
-                          project: projectTitle,
-                          machine: coordinatorElsewhere.machine,
-                        })
-                      : tx("Work for {project} starts on another machine.", {
-                          project: projectTitle,
-                        })
-                    : coordinatorQuestion
-                      ? say("Answer the coordinator: type, paste or attach, then send")
-                      : hostStatus?.keepsDraft
-                        ? tx("Your draft stays here until it reconnects.")
-                        : promptPlaceholder
+                  routes && coordinatorElsewhere?.machine
+                    ? tx("Message {machine}'s coordinator for {project}.", {
+                        project: projectTitle,
+                        machine: coordinatorElsewhere.machine,
+                      })
+                    : copyOff
+                      ? coordinatorElsewhere?.machine
+                        ? tx("Work for {project} starts on {machine}.", {
+                            project: projectTitle,
+                            machine: coordinatorElsewhere.machine,
+                          })
+                        : tx("Work for {project} starts on another machine.", {
+                            project: projectTitle,
+                          })
+                      : coordinatorQuestion
+                        ? say("Answer the coordinator: type, paste or attach, then send")
+                        : hostStatus?.keepsDraft
+                          ? tx("Your draft stays here until it reconnects.")
+                          : promptPlaceholder
                 }
                 hostReachable={connected}
-                writesElsewhere={copyOff}
+                writesElsewhere={copyOff && !routes}
                 draftSentElsewhere={() =>
                   durableCoordinatorDraftSentElsewhere(project.environmentId, project.id)
                 }
@@ -2057,9 +2126,10 @@ export function ProjectWorkspaceSurface({
                 keybindings={keybindings}
                 isPhoneKeyboard={isPhoneKeyboard}
                 sendShortcut={sendShortcut}
-                onAppCommand={appCommandsOffered ? runAppCommand : null}
-                provider={model ? (providerEntries.get(model.instanceId) ?? null) : null}
-                onSend={sendFromComposer}
+                // A routed message goes to main as typed: commands and skills here act on this copy.
+                onAppCommand={appCommandsOffered && !routes ? runAppCommand : null}
+                provider={model && !routes ? (providerEntries.get(model.instanceId) ?? null) : null}
+                onSend={routes ? (text, files) => route.send(text, files) : sendFromComposer}
                 onError={setError}
                 status={
                   <>
@@ -2084,6 +2154,7 @@ export function ProjectWorkspaceSurface({
                           ) ?? null
                         }
                         onMakeMain={mainSwitch.run}
+                        routesToMain={routes}
                       />
                     )}
                     {switchedFrom && !blocked && !hostStatus ? (
@@ -2142,6 +2213,23 @@ export function ProjectWorkspaceSurface({
                         environment?.connection,
                         admissionContext,
                       )}
+                      // A copy whose main is elsewhere: its coordinator runs on main.
+                      runsOn={
+                        named.chip === project.environmentId
+                          ? null
+                          : {
+                              environmentId: named.chip as EnvironmentId,
+                              label: mainName,
+                              connected: chipEnvironment?.connection.phase === "connected",
+                              // Main's own connection, not this page's machine's context.
+                              disconnectedLabel: hostDisconnectedLabel(
+                                chipEnvironment?.connection,
+                                named.chip === primaryEnvironmentId
+                                  ? { isThisDevice: true, graceElapsed: true }
+                                  : undefined,
+                              ),
+                            }
+                      }
                       current={`${project.environmentId}:${project.id}`}
                       copies={checkouts}
                       unknown={unknownMachines}
@@ -2227,6 +2315,7 @@ export function ProjectWorkspaceSurface({
                         project={project}
                         coordinatorId={mainCoordinatorId}
                         requestedTarget={handoffTarget}
+                        mainSwitch={mainSwitch}
                         openRequest={handoff.request}
                         onRequestHandled={handoff.handled}
                         // The machine menu above opens it: one control for Add, Move and Leave.
@@ -2347,6 +2436,7 @@ export function ProjectWorkspaceSurface({
                     <ProjectSpecweaveSetting
                       project={project}
                       specweave={snapshot?.specweave}
+                      gitRepository={snapshot?.gitRepository}
                       disabled={!canOperate || !connected}
                       onChanged={query.refresh}
                     />
@@ -2495,9 +2585,9 @@ export function ProjectWorkspaceSurface({
                           machineFilter={machineFilter}
                         />
                       ) : null}
-                      {archived.error ? (
+                      {archivedNotice ? (
                         <p className="project-notice" role="alert">
-                          {say("Archived threads could not be loaded.")}{" "}
+                          {say(tx(archivedNotice.phrase, archivedNotice.params))}{" "}
                           <Button variant="outline" size="xs" onClick={archived.refresh}>
                             Retry resolved history
                           </Button>

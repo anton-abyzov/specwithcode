@@ -477,6 +477,10 @@ export const useAtomCommand =
 export const squashAtomCommandFailure = (value: any) => value.error;
 // Send to another machine… reads copy roles, whose module also reads interrupted commands.
 export const isAtomCommandInterrupted = () => false;
+// Shared UI (toasts) reaches modules that build their commands at import: inert here.
+export const createEnvironmentRpcCommand = () => ({});
+export const createEnvironmentRpcQueryAtomFamily = () => () => ({});
+export const runAtomCommand = async () => ({ _tag: "Success", value: undefined });
 export const MachineReadinessChecklist = () => (
   <p className="text-xs text-muted-foreground">
     Synthetic readiness fixture; no provider session started.

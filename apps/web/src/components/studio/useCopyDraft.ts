@@ -39,7 +39,6 @@ interface CopyForm {
 export function useCopyDraft({
   project,
   machines,
-  canMove,
   explicit,
   showFinished = false,
   form,
@@ -49,9 +48,8 @@ export function useCopyDraft({
 }: {
   readonly project: { readonly environmentId: string; readonly id: string };
   readonly machines: ReadonlyArray<CopyMachine>;
-  readonly canMove: boolean;
-  /** Choices the dialog was opened with (Move project, Move coordinator to X); they win over a draft. */
-  readonly explicit: { readonly mode: boolean; readonly machine: boolean };
+  /** The machine the dialog was opened for ("Make X main"); it wins over a draft's. */
+  readonly explicit: { readonly machine: boolean };
   /**
    * Opened plainly for a copy (no machine asked for, not a move): a finished copy is shown
    * as done, with the form one click away, instead of a form that reads as "copy again".
@@ -62,7 +60,6 @@ export function useCopyDraft({
   readonly setForm: {
     readonly machine: (id: EnvironmentId) => void;
     readonly folder: (value: string, environmentId: EnvironmentId, copyRoot?: string) => void;
-    readonly mode: (mode: FolderCopyMode) => void;
     readonly chooseFirst: (chooseFirst: boolean) => void;
     readonly secrets: (secrets: SecretsChoice) => void;
   };
@@ -82,7 +79,8 @@ export function useCopyDraft({
       // A requested machine keeps its own saved folder; a draft never retargets it.
       if (draft.folder && !explicit.machine) setForm.folder(draft.folder, known.id, draft.copyRoot);
     }
-    if (!explicit.mode && (draft.mode === "copy-only" || canMove)) setForm.mode(draft.mode);
+    // Never the draft's mode: the form no longer asks, so a move saved by an older form
+    // must not come back unseen. The dialog says how it was opened.
     setForm.chooseFirst(draft.chooseFirst);
     if (draft.secrets) setForm.secrets(draft.secrets);
   };

@@ -39,6 +39,7 @@ const state = vi.hoisted(() => ({
   prepare: vi.fn(),
   receive: vi.fn(),
   copyCapabilities: vi.fn(),
+  copyRelease: vi.fn(),
   navigate: vi.fn(),
   props: null as ComponentProps<typeof MachineHandoffDialog> | null,
   denied: new Set<string>(),
@@ -50,14 +51,19 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 vi.mock("../../studio/machineHandoff", () => ({
-  machineHandoff: { prepare: "prepare", receive: "receive", copyCapabilities: "copyCapabilities" },
+  machineHandoff: {
+    prepare: "prepare",
+    receive: "receive",
+    copyCapabilities: "copyCapabilities",
+    copyRelease: "copyRelease",
+  },
 }));
 vi.mock("../../studio/projectLink", () => ({
   projectLink: {},
   linkCopyAsWorkers: async () => ({ status: "linked" }),
 }));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (name: "prepare" | "receive" | "copyCapabilities") => state[name],
+  useAtomCommand: (name: "prepare" | "receive" | "copyCapabilities" | "copyRelease") => state[name],
 }));
 vi.mock("../../hooks/useScratchProject", () => ({
   useScratchProject: () => ({ scratchWorkspaceRootFor: () => null }),
@@ -971,23 +977,20 @@ it("remembers the copy flow's machine once its copy is done", async () => {
   });
 });
 
-it("opens as a move, and switching the Git move to files only uses the copy flow", async () => {
+it("moves Main with Git only, and a folder copy picked instead keeps Main where it is", async () => {
   state.environments = machineEnvironments;
   await mount();
   expect(props().intent).toBe("move");
   expect(props().method).toBe("folder");
+  // Nothing in the dialog asks Copy or move: the method alone decides.
+  expect("onIntentChange" in props()).toBe(false);
   await act(async () => props().onMethodChange!("copy"));
-  expect((props().copyFlow as { props: Record<string, unknown> }).props.defaultMode).toBe(
-    "copy-and-move",
-  );
-  await act(async () => props().onMethodChange!("folder"));
-  expect(props().intent).toBe("move");
-  await act(async () => props().onIntentChange!("copy"));
-  expect(props().method).toBe("clone");
   expect(props().intent).toBe("copy");
   expect((props().copyFlow as { props: Record<string, unknown> }).props.defaultMode).toBe(
     "copy-only",
   );
+  await act(async () => props().onMethodChange!("folder"));
+  expect(props().intent).toBe("move");
 });
 
 it("chooses a machine's saved folder, or the folder picker when it has none", async () => {
@@ -1518,4 +1521,151 @@ describe("Send to another machine", () => {
     );
     expect(props().send?.mainLabel).toBe("M4");
   });
+});
+
+it("only fast-forwards the copy there, and holds the move on its reason until the person says anyway", async () => {
+  const syncBundle = { ...bundle, destination: { ...bundle.destination, transport: "git-sync" } };
+  const diverged = {
+    reason: "local-commits",
+    message: "The copy there was not updated to this machine's commits.",
+    repository: "repositories/anton-abyzov/specwithcode",
+  };
+  const dirty = { reason: "dirty", message: "The copy there was not updated.", repository: "." };
+  state.prepare.mockImplementation(async ({ input }) => ({
+    _tag: "Success",
+    value: {
+      bundle: syncBundle,
+      publication: input.publish ? "published" : "unpublished",
+      messageCount: 5,
+    },
+  }));
+  let reason: typeof diverged | null = null;
+  state.receive.mockImplementation(async ({ input }) => {
+    if (input.mode === "preview")
+      return { _tag: "Success", value: reason ? { ...ready, updateSkipped: reason } : ready };
+    if (reason && input.staleCopy !== "accept")
+      return {
+        _tag: "Failure",
+        error: Object.assign(new Error(reason.message), {
+          code: "git_refused",
+          updateSkipped: reason,
+        }),
+      };
+    return { _tag: "Success", value: started };
+  });
+  const starts = () => state.receive.mock.calls.filter((call) => call[0].input.mode === "start");
+  const publishes = () => state.prepare.mock.calls.filter((call) => call[0].input.publish);
+  await mount();
+  await review();
+  await consent();
+  // The copy diverges after the review: the recheck finds it before anything is published.
+  reason = diverged;
+  await transfer();
+  expect(props().phase).toBe("review");
+  expect(props().staleCopy).toMatchObject({ skipped: diverged, accepted: false });
+  expect(props().staleCopy?.onKeepHere).toBeUndefined();
+  expect(publishes()).toHaveLength(0);
+  expect(starts()).toHaveLength(0);
+  // An "anyway" for one reason never covers another found on the recheck.
+  await act(async () => props().staleCopy!.onAccept(true));
+  reason = dirty;
+  const published = publishes().length;
+  await transfer();
+  expect(props().phase).toBe("review");
+  expect(props().staleCopy).toMatchObject({ skipped: dirty, accepted: false });
+  expect(publishes()).toHaveLength(published);
+  expect(starts()).toHaveLength(0);
+  // The same reason, accepted: the start says so.
+  await act(async () => props().staleCopy!.onAccept(true));
+  await transfer();
+  expect(starts().at(-1)?.[0].input.staleCopy).toBe("accept");
+  expect(props().phase).toBe("complete");
+});
+
+it("keeps Main here after a refused move, releasing the source", async () => {
+  const syncBundle = { ...bundle, destination: { ...bundle.destination, transport: "git-sync" } };
+  const diverged = { reason: "local-commits", message: "m", repository: "." };
+  state.prepare.mockImplementation(async ({ input }) => ({
+    _tag: "Success",
+    value: {
+      bundle: syncBundle,
+      publication: input.publish ? "published" : "unpublished",
+      messageCount: 5,
+    },
+  }));
+  state.receive.mockImplementation(async ({ input }) =>
+    input.mode === "preview"
+      ? { _tag: "Success", value: ready }
+      : {
+          _tag: "Failure",
+          error: Object.assign(new Error("m"), { code: "git_refused", updateSkipped: diverged }),
+        },
+  );
+  state.copyRelease.mockResolvedValue({ _tag: "Success", value: { released: true } });
+  await mount();
+  await review();
+  await consent();
+  await transfer();
+  await act(async () => props().staleCopy!.onKeepHere!());
+  expect(state.copyRelease).toHaveBeenCalledWith({
+    environmentId: "m4",
+    input: expect.objectContaining({ projectId: "source", operationId }),
+  });
+  expect(props().phase).toBe("choose");
+  expect(props().staleCopy).toBeNull();
+});
+
+it("says so when Keep Main finds the move already gone, keeping a newer pointer", async () => {
+  const syncBundle = { ...bundle, destination: { ...bundle.destination, transport: "git-sync" } };
+  const diverged = { reason: "local-commits", message: "m", repository: "." };
+  state.prepare.mockImplementation(async ({ input }) => ({
+    _tag: "Success",
+    value: {
+      bundle: syncBundle,
+      publication: input.publish ? "published" : "unpublished",
+      messageCount: 5,
+    },
+  }));
+  state.receive.mockImplementation(async ({ input }) =>
+    input.mode === "preview"
+      ? { _tag: "Success", value: ready }
+      : {
+          _tag: "Failure",
+          error: Object.assign(new Error("m"), { code: "git_refused", updateSkipped: diverged }),
+        },
+  );
+  state.copyRelease.mockResolvedValue({ _tag: "Success", value: { released: false } });
+  await mount();
+  await review();
+  await consent();
+  await transfer();
+  // Another window started a newer move meanwhile.
+  localStorage.setItem(
+    key,
+    JSON.stringify({ operationId: "newer-operation", targetKey: "m1:target" }),
+  );
+  await act(async () => props().staleCopy!.onKeepHere!());
+  expect(localStorage.getItem(key)).toContain("newer-operation");
+  expect(props().error).toContain("no longer waiting on this machine");
+  // The next move asks for consent again.
+  expect(props().consent).toBe(false);
+});
+
+it("offers Keep Main on a resumed move that was already published", async () => {
+  const syncBundle = { ...bundle, destination: { ...bundle.destination, transport: "git-sync" } };
+  const diverged = { reason: "local-commits", message: "m", repository: "." };
+  // The source already fenced before a reload: every prepare reports the saved publication.
+  state.prepare.mockImplementation(async () => ({
+    _tag: "Success",
+    value: { bundle: syncBundle, publication: "published", messageCount: 5 },
+  }));
+  state.receive.mockImplementation(async () => ({
+    _tag: "Success",
+    value: { ...ready, updateSkipped: diverged },
+  }));
+  await mount();
+  await review();
+  expect(props().phase).toBe("review");
+  expect(props().staleCopy).toMatchObject({ skipped: diverged, accepted: false });
+  expect(props().staleCopy?.onKeepHere).toBeDefined();
 });

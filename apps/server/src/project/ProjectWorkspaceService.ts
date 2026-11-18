@@ -69,7 +69,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectKnowledge from "./knowledge/ProjectKnowledge.ts";
 import { knowledgeSections } from "./knowledge/knowledgeSections.ts";
 import { fenceText } from "./promptFence.ts";
-import { isSpecweaveProject } from "./ThreadIncrementProgress.ts";
+import { insideGitWorkTree, isSpecweaveProject } from "./ThreadIncrementProgress.ts";
 import { INCREMENT_SIZING_RULE } from "./launchIncrement.ts";
 import * as SpecweaveSetup from "./SpecweaveSetup.ts";
 import { discoverProjectRepositories } from "./ProjectRepositoryDiscovery.ts";
@@ -361,10 +361,16 @@ const make = Effect.gen(function* () {
         ...(settings.kind === "personal"
           ? { specweave: false }
           : Option.match(
-              yield* Effect.promise(() => isSpecweaveProject(project.workspaceRoot)).pipe(
-                Effect.timeoutOption(Duration.seconds(3)),
-              ),
-              { onNone: () => ({}), onSome: (specweave) => ({ specweave }) },
+              yield* Effect.promise(() =>
+                Promise.all([
+                  isSpecweaveProject(project.workspaceRoot),
+                  insideGitWorkTree(project.workspaceRoot),
+                ]),
+              ).pipe(Effect.timeoutOption(Duration.seconds(3))),
+              {
+                onNone: () => ({}),
+                onSome: ([specweave, gitRepository]) => ({ specweave, gitRepository }),
+              },
             )),
       };
     }).pipe(mapProjectFailure(projectId, "workspace.read"));
@@ -636,7 +642,7 @@ const make = Effect.gen(function* () {
       ),
       Effect.mapError(libraryFailure(input.projectId)),
     );
-  const setUpSpecweave = ({ projectId }: ProjectSpecweaveSetUpInput) =>
+  const setUpSpecweave = ({ projectId, initGit }: ProjectSpecweaveSetUpInput) =>
     Effect.gen(function* () {
       const setupError = (
         reason: ProjectSpecweaveSetUpError["reason"],
@@ -664,10 +670,15 @@ const make = Effect.gen(function* () {
           "SpecWeave setup is not available on this machine.",
         );
       }
-      const result = yield* specweaveSetup.value.setUp(project.workspaceRoot);
+      const result = yield* specweaveSetup.value.setUp(project.workspaceRoot, {
+        initGit: initGit === true,
+      });
       if (!result.ok) return yield* setupError(result.reason, result.detail, result.needs);
       yield* knowledgeChanged(projectId);
-      return { alreadySetUp: result.alreadySetUp };
+      return {
+        alreadySetUp: result.alreadySetUp,
+        ...(result.gitInitialized ? { gitInitialized: true } : {}),
+      };
     });
   return ProjectWorkspaceService.of({
     readWorkspace,

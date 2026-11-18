@@ -4687,8 +4687,6 @@ export const ja: PhraseCatalog = {
     "この Mac がスリープすると、作業を不在時の移動先に渡します。移動先はまず猶予時間だけ待ち、それより早く戻れば何も移動しません。Mac のみ。",
   "How long the target waits after the lid closes before it takes over.":
     "蓋を閉じてから移動先が引き継ぐまでの待ち時間です。",
-  "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.":
-    "さらに、このマシンのアクセス、アップデート、スキルを 1 年間管理できるキーも受け取ります。既存のプロジェクトとサインインの制限は引き続き有効です。",
   "Its app sees this machine": "そのアプリからこのマシンが見える",
   "Its work may use any sign-in on this machine.":
     "その作業は、このマシンのどのサインインでも使えます。",
@@ -4727,8 +4725,6 @@ export const ja: PhraseCatalog = {
   "No sign-ins: every launch is refused": "サインインなし: すべての起動が拒否されます",
   "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.":
     "いいえ。{machineLabel} からこのマシンのプロジェクトを開くには、ここで 1 回限りのリンクを作成し、そちらで開いてください。",
-  "Not included. Each secret transfer still asks you.":
-    "含まれません。シークレットを転送するたびに確認します。",
   "Not set up yet.": "まだ設定されていません。",
   "Nothing allowed yet: tick a project or pick All projects":
     "まだ何も許可されていません: プロジェクトにチェックを入れるか、「すべてのプロジェクト」を選んでください",
@@ -5282,6 +5278,7 @@ export const ja: PhraseCatalog = {
     "{main} に 10 分以上接続できていません。{machine} がメインになり、共有の目標、メモリ、計画から始めます。{main} の会話は履歴としてそこに残ります。{main} は戻るまで自分のマシンで作業を開始できますが、戻るとメインを譲り、その間に実行したものを一覧で示します。",
   "Switching…": "切り替え中…",
   "Make {machine} main": "{machine} をメインにする",
+  "Make {machine} main for {project}": "{project} のメインを {machine} にする",
   "Main for {project} is {machine}. This copy takes work from there.":
     "{project} のメインは {machine} です。このコピーはそこから作業を受け取ります。",
   "Main for {project} is on another machine. This copy takes work from there.":
@@ -5330,4 +5327,173 @@ export const ja: PhraseCatalog = {
     "自分で始めたスレッドが終わり、そのインクリメントのタスクがすべて完了またはスキップになると、別ファミリーのモデルが新しいスレッドで作業をレビューします。インクリメントごとに 1 回です。プロジェクトが個別に設定しない限り、このマシンのプロジェクトに適用されます。あなたやエージェントが依頼するレビューと、インクリメント終了時のレビューは、この設定に関係なく実行されます。",
   "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
     "自分で始めたスレッドが終わり、そのインクリメントのタスクがすべて完了またはスキップになると、別ファミリーのモデルが新しいスレッドで作業をレビューします。インクリメントごとに 1 回です。このプロジェクトにのみ適用されます。あなたやエージェントが依頼するレビューと、インクリメント終了時のレビューは、この設定に関係なく実行されます。",
+  "Copy {project} to {machine}": "{project} を {machine} にコピー",
+  "Move {project} to {machine}": "{project} を {machine} に移動",
+  "Copy {project} to another machine": "{project} を別のマシンにコピー",
+  "Move {project} to another machine": "{project} を別のマシンに移動",
+  "Nothing on {machine} is replaced without asking.":
+    "{machine} 上のものが確認なしに置き換えられることはありません。",
+  "the other machine": "別のマシン",
+  "From {source}. Main stays on {main}.": "{source} から。メインは {main} のままです。",
+  "From {source}. Main stays where it is.": "{source} から。メインは今の場所のままです。",
+  "From {source}. Main moves to {machine}.": "{source} から。メインは {machine} に移ります。",
+  "From {source}. Main moves to the machine you choose.":
+    "{source} から。メインは選んだマシンに移ります。",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
+    "{source} から。{source} のコピーは、{machine} が属するプロジェクトにリンクされていません(メイン: {main})。",
+  "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
+    "{source} から。{source} のコピーは、{machine} が属するプロジェクトにリンクされていません。",
+  "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "{machine} のコピーにはファイルだけがコピーされます。メインは {main} のままで、{source} はそのプロジェクトにリンクされません。1 つのプロジェクトにするには、マシンメニューから {source} をリンクしてください。",
+  "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
+    "{machine} のコピーにはファイルだけがコピーされます。そのメインは変わらず、{source} はそのプロジェクトにリンクされません。1 つのプロジェクトにするには、マシンメニューから {source} をリンクしてください。",
+  "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
+    "ここからメインを {machine} に移すことはできません。{source} は {machine} が属するプロジェクトにリンクされていません。先にマシンメニューから {source} をリンクするか、ファイルをコピーしてください。",
+  "Not available: that machine already has Main.":
+    "利用できません: そのマシンにはすでにメインがあります。",
+  "Not available: it would move Main into a project this copy is not linked to.":
+    "利用できません: このコピーがリンクされていないプロジェクトにメインが移ってしまいます。",
+  "{machine} has a copy. Main stays on {main}.":
+    "{machine} にコピーがあります。メインは {main} のままです。",
+  "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
+    "リンクされていません: {machine} のコピーはメインが {main} のプロジェクトに属していて、{source} はその一員ではありません。何もリンクされませんでした。",
+  "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
+    "リンクされていません: {machine} のコピーは別のプロジェクトに属していて、{source} はその一員ではありません。何もリンクされませんでした。",
+  "Link with a project on another machine": "別のマシンのプロジェクトとリンク",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
+    "別のマシンにある {project} のコピーを選びます。各コピーは独自のコーディネーターを持ち続けます。メインは {main} のままで、いつでも切り替えられます。",
+  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
+    "別のマシンにある {project} のコピーを選びます。各コピーは独自のコーディネーターを持ち続け、メインはいつでも切り替えられます。",
+  "Other copy": "もう一方のコピー",
+  "No project on another connected machine. Add the folder on that machine first, then link it here.":
+    "接続中の他のマシンにプロジェクトがありません。先にそのマシンでフォルダーを追加してから、ここでリンクしてください。",
+  "{project} on {machine}": "{machine} の {project}",
+  "Not a copy:": "コピーではありません:",
+  "Compared when you review the link.": "リンクの確認時に比較します。",
+  "Reading folders…": "フォルダーを読み込んでいます…",
+  "No copy of {project} was found on another machine.":
+    "別のマシンに {project} のコピーは見つかりませんでした。",
+  "Other projects ({count})": "その他のプロジェクト ({count})",
+  "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
+    "フォルダーを見るかぎり、{project} のコピーではありません。名前を変えたコピーやクローンし直したコピーの場合だけ選んでください。",
+  "Review link": "リンクを確認",
+  "Message {machine}'s coordinator for {project}.":
+    "{project} の {machine} のコーディネーターにメッセージを送る。",
+  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
+    "送信すると {machine} のコーディネーターにメッセージが届き、返信が届くそのページが開きます。",
+  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
+    "送信するとメインのコーディネーターにメッセージが届き、返信が届くそのページが開きます。",
+  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
+    "ファイルはこのマシンに残ります。テキストをメインに送るにはファイルを外すか、メインのページを開いてそちらで添付してください。",
+  "1 device waiting": "1 台のデバイスが待機中",
+  "A Linux computer": "Linux コンピューター",
+  "A Mac": "Mac",
+  "A Windows PC": "Windows PC",
+  "A computer": "コンピューター",
+  "A device cannot approve itself. Type this code on another device or on the machine.":
+    "デバイスは自分自身を承認できません。このコードを別のデバイスかマシンで入力してください。",
+  "A new device wants to use {machine}": "新しいデバイスが {machine} の使用を求めています",
+  "A phone": "スマートフォン",
+  "A tablet": "タブレット",
+  "Allow {coordinatorLabel} to run work on {hereLabel}?":
+    "{coordinatorLabel} に {hereLabel} での作業の実行を許可しますか？",
+  "Allowing…": "許可しています…",
+  "An Android phone": "Android スマートフォン",
+  "An Android tablet": "Android タブレット",
+  "An iPad": "iPad",
+  "An iPhone": "iPhone",
+  "Approve this device on the machine.": "このデバイスをマシンで承認してください。",
+  "Approved {date} by {approver}": "{date} に {approver} が承認",
+  "Checking devices…": "デバイスを確認しています…",
+  "Code shown on {device}": "{device} に表示されたコード",
+  "Could not reach this machine.": "このマシンに接続できませんでした。",
+  "Could not reach this machine. Try again.":
+    "このマシンに接続できませんでした。もう一度お試しください。",
+  "Could not remove {device}": "{device} を削除できませんでした",
+  "Could not repair the list": "一覧を修復できませんでした",
+  "Could not save the list": "一覧を保存できませんでした",
+  "Could not turn that device away": "そのデバイスを拒否できませんでした",
+  "Deny turns it away for a day.": "拒否すると、1 日接続できなくなります。",
+  "Devices that can use this machine": "このマシンを使えるデバイス",
+  "First seen {date}": "初回検出 {date}",
+  "It also gets a key to this machine for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Project limits stay in force.":
+    "さらに、このマシンのキーを 1 年間受け取ります。対象はターミナル、ファイル、設定、サインインに加え、アクセス、アップデート、スキルです。プロジェクトの制限は引き続き適用されます。",
+  "It stops using {machine} right away. To use it again, it asks with a new code.":
+    "すぐに {machine} を使えなくなります。再び使うには、新しいコードで申請します。",
+  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
+    "そのアプリはここでコードによって承認されたため、このマシンを使えます。また、このマシンのエージェントもそちらで作業を実行できるようになりました。変更や削除は 設定 > マシン で行えます。",
+  "Kept by the update": "アップデートで保持",
+  "Kept by the update. Check this list.":
+    "アップデートで保持されました。この一覧を確認してください。",
+  Later: "あとで",
+  "New device approved on {machine} by {approver}":
+    "{approver} が {machine} で新しいデバイスを承認しました",
+  "No device is waiting with that code. Check the code shown on the device that asked for {machine}.":
+    "そのコードで待機中のデバイスはありません。{machine} の使用を求めたデバイスに表示されたコードを確認してください。",
+  "No other devices yet. A phone or computer signed in to SpecWithCode Connect asks here first, with a code.":
+    "ほかのデバイスはまだありません。SpecWithCode Connect にサインインしたスマートフォンやコンピューターは、まずここでコードを使って申請します。",
+  "Not sent on their own. Each secret transfer asks first, and that card appears on the machine that asks, not on this one.":
+    "自動では送信されません。シークレットの転送は毎回まず確認され、その確認カードはこのマシンではなく、要求したマシンに表示されます。",
+  "Open SpecWithCode on {machine} and type this code:":
+    "{machine} で SpecWithCode を開き、このコードを入力してください:",
+  "Remove {device}?": "{device} を削除しますか？",
+  "Sign in to SpecWithCode Connect again on this device to ask {machine} for approval.":
+    "{machine} に承認を求めるには、このデバイスで SpecWithCode Connect にもう一度サインインしてください。",
+  "The device list on {machine} is damaged, so other devices are turned away until it is repaired. Repair starts an empty list; devices then ask again with a code.":
+    "{machine} のデバイス一覧が破損しているため、修復するまでほかのデバイスは拒否されます。修復すると空の一覧から始まり、デバイスはもう一度コードで申請します。",
+  "The device list on {machine} is damaged. Open SpecWithCode on {machine} to repair it.":
+    "{machine} のデバイス一覧が破損しています。修復するには {machine} で SpecWithCode を開いてください。",
+  "The list is right": "一覧は正しい",
+  "These devices were in use when {machine} updated, so they were kept. Remove any you do not know.":
+    "これらのデバイスは {machine} のアップデート時に使用中だったため、保持されました。心当たりのないものは削除してください。",
+  "This device connects on its own once {machine} allows it.":
+    "{machine} が許可すると、このデバイスは自動で接続します。",
+  "This machine cannot check new devices yet. Open SpecWithCode on it and update.":
+    "このマシンはまだ新しいデバイスを確認できません。このマシンで SpecWithCode を開いてアップデートしてください。",
+  "This machine does not ask before new devices connect yet. Update it to choose which devices can use it.":
+    "このマシンはまだ、新しいデバイスが接続する前に確認しません。使えるデバイスを選ぶには、アップデートしてください。",
+  "Too many wrong codes. Type the code on {machine} itself, or wait 10 minutes.":
+    "間違ったコードが多すぎます。{machine} 本体でコードを入力するか、10 分待ってください。",
+  "Try again.": "もう一度お試しください。",
+  "Turning away…": "拒否しています…",
+  "6 characters": "6文字",
+  "Type the code shown on {device}": "{device} に表示されたコードを入力",
+  "another device": "別のデバイス",
+  "the update": "アップデート",
+  "{coordinatorLabel} receives a key to {hereLabel} for a year: terminals, files, settings and sign-ins, plus access, updates and skills. Its work is capped at {cap}. Project limits stay in force. Each secret transfer asks first, on {coordinatorLabel}.":
+    "{coordinatorLabel} は {hereLabel} のキーを 1 年間受け取ります。対象はターミナル、ファイル、設定、サインインに加え、アクセス、アップデート、スキルです。作業の上限は {cap} です。プロジェクトの制限は引き続き適用されます。シークレットの転送は毎回まず {coordinatorLabel} で確認されます。",
+  "{count} devices waiting": "{count} 台のデバイスが待機中",
+  "{device} can now use {machine}": "{device} が {machine} を使えるようになりました",
+  "{device} is asking. It signed in to SpecWithCode Connect as {account}.":
+    "{device} が申請しています。SpecWithCode Connect に {account} としてサインインしています。",
+  "{device} is asking. It signed in to your SpecWithCode Connect account.":
+    "{device} が申請しています。あなたの SpecWithCode Connect アカウントにサインインしています。",
+  "{device} is waiting to use {machine}.": "{device} が {machine} の使用を待っています。",
+  "{label} joined": "{label} が参加しました",
+  "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
+    "{machine} はこのデバイスの接続を許可しなくなりました。{machine} の SpecWithCode でもう一度承認してください。",
+  "{position} of {total} waiting": "待機中 {position}/{total}",
+  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
+    "許可すると、このアプリと同じように {machine} のターミナル、ファイル、設定、サインインを使い、そこで作業を始められるようになります。",
+  "Asked at {time}": "{time} に申請",
+  "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
+    "名前はデバイスが自分で付けたものです。目の前のデバイスであることを証明するのはコードだけなので、そのデバイスに表示されたコードだけを許可してください。",
+  "Too many devices are waiting for approval on {machine}. Try again in a few minutes.":
+    "{machine} で承認を待っているデバイスが多すぎます。数分後にもう一度お試しください。",
+  "{device} is asking. It was paired through another of your machines.":
+    "{device} が申請しています。別のマシン経由でペアリングされています。",
+  "{device} is asking. It was paired through {hub}.":
+    "{device} が申請しています。{hub} 経由でペアリングされています。",
+  "{machine} turned this device away. Ask again tomorrow, or approve it in SpecWithCode on {machine}.":
+    "{machine} がこのデバイスを拒否しました。明日もう一度申請するか、{machine} の SpecWithCode で承認してください。",
+  "Different machine at address": "アドレスに別のマシン",
+  "{machine}'s address now answers as a different SpecWithCode":
+    "{machine} のアドレスは現在、別の SpecWithCode として応答しています",
+  "This host's address now answers as a different SpecWithCode":
+    "このホストのアドレスは現在、別の SpecWithCode として応答しています",
+  "Open Settings > Machines to fix it.": "修正するには「設定 > マシン」を開いてください。",
+  "Resolved history from {machines} could not be loaded.":
+    "{machines} の解決済み履歴を読み込めませんでした。",
+  "Resolved history from another machine could not be loaded.":
+    "別のマシンの解決済み履歴を読み込めませんでした。",
 };

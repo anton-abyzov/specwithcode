@@ -15,6 +15,11 @@ const state = vi.hoisted(() => ({
   coordinatorProvider: null as string | null,
   coordinatorAsked: [] as Array<[unknown, unknown]>,
 }));
+// The Full Disk Access row and first-run item have their own test.
+vi.mock("../access/FullDiskAccess", () => ({
+  FullDiskAccessRow: () => null,
+  FirstRunFullDiskAccess: () => null,
+}));
 vi.mock("../../studio/useCoordinatorProvider", () => ({
   useCoordinatorProvider: (environmentId: unknown, projectId: unknown) => {
     state.coordinatorAsked.push([environmentId, projectId]);

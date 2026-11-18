@@ -43,7 +43,6 @@ function Fixture() {
         }}
         method="folder"
         onMethodChange={() => {}}
-        onIntentChange={() => {}}
         sourceChanges={{
           state: dirty ? "dirty" : "clean",
           fileCount: dirty ? 2 : 0,

@@ -17,6 +17,11 @@ const mocks = vi.hoisted(() => ({
   decline: vi.fn(),
   undo: vi.fn(),
 }));
+// The Full Disk Access row and first-run item have their own test.
+vi.mock("../access/FullDiskAccess", () => ({
+  FullDiskAccessRow: () => null,
+  FirstRunFullDiskAccess: () => null,
+}));
 vi.mock("../../onboarding/accessRecommendation", () => ({
   useFullAccessRecommendation: () => ({
     answer: mocks.answer,

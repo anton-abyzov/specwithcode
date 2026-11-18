@@ -99,7 +99,7 @@ try {
     NodeAssert.match(await popup.textContent(), /The last copy to .* on m5 finished\. View it/);
     NodeAssert.equal(
       (await popup.locator('[data-slot="dialog-title"], h2').first().textContent()).trim(),
-      "Send specweave to m5",
+      "Copy specweave to m5",
     );
     await shot("form-after-copy-changes-again");
     await context.close();

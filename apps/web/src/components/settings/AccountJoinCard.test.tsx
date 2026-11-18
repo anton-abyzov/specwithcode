@@ -356,7 +356,9 @@ describe("allowing the chosen machine", () => {
     expect(view.button("Allow M1")).toBeUndefined();
     expect(view.button("Allow M3")?.props.disabled).toBe(false);
     expect(view.text()).toContain("Until you stop it here or on M3. It renews by itself.");
-    expect(view.text()).toContain("Not included. Each secret transfer still asks you.");
+    expect(view.text()).toContain(
+      "Each secret transfer asks first, and that card appears on the machine that asks, not on this one.",
+    );
     await view.unmount();
   });
 
@@ -470,7 +472,7 @@ describe("allowing the chosen machine", () => {
     await act(async () => view.radio("m1").props.onChange());
     // The card states what the confirmation said, so the press is the decision.
     expect(view.text()).toContain(
-      "It also gets a key to manage access, updates and skills on this machine, for a year.",
+      "It also gets a key to this machine for a year: terminals, files, settings and sign-ins",
     );
     await act(async () => view.button("Allow M1")?.props.onClick());
     expect(requestConfirmDialog).not.toHaveBeenCalled();

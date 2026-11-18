@@ -47,6 +47,7 @@ import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { SubscriptionsView } from "./subscriptions/SubscriptionsView";
 import { environmentsNeedingChatSetup } from "./usageChatSetup";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+import { LIMITS_VIEW_KEY } from "./usageSheetStore";
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
   ahead: { label: "Ahead of pace: spending faster than the window elapses", icon: TrendingUpIcon },
@@ -368,7 +369,6 @@ export function ResetCredits({
 }
 
 type LimitsView = "machines" | "accounts" | "subscriptions";
-const LIMITS_VIEW_KEY = "specwithcode:usage-limits-view";
 
 function readLimitsView(): LimitsView {
   try {
