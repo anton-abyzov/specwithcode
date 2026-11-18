@@ -5603,4 +5603,11 @@ export const ko: PhraseCatalog = {
     "{machine}이(가) 아직 코디네이터의 위치를 확인하지 못했습니다. 메시지를 보내려면 다시 연결하세요.",
   "Coordinator conversations": "코디네이터 대화",
   Threads: "스레드",
+  "another machine": "다른 컴퓨터",
+  "Coordinator on {machine}": "코디네이터: {machine}",
+  "On {here} and {machines}": "{here} 및 {machines}에서",
+  "On {machines} and {last}": "{machines} 및 {last}에서",
+  "On {coordinator} (coordinator) and {last}": "{coordinator}(코디네이터) 및 {last}에서",
+  "On {coordinator} (coordinator), {machines} and {last}":
+    "{coordinator}(코디네이터), {machines} 및 {last}에서",
 };

@@ -48,7 +48,8 @@ export function linkedMachinesToConnect(input: {
 export interface SharedProjectBadge {
   /** coordinator: this copy runs the coordinator. workers: its coordinator is on another machine. */
   readonly role: "coordinator" | "workers";
-  readonly label: string;
+  /** An English phrase and its `{slot}` values; the sidebar translates it. */
+  readonly label: { readonly text: string; readonly values: Readonly<Record<string, string>> };
 }
 
 /**
@@ -75,10 +76,16 @@ export function sharedProjectBadge(
   if (coordinator)
     return {
       role: "workers",
-      label: `Coordinator on ${nameOf(coordinator.environmentId)}`,
+      label: {
+        text: "Coordinator on {machine}",
+        values: { machine: nameOf(coordinator.environmentId) },
+      },
     };
   return {
     role: "coordinator",
-    label: `On ${here} and ${others.map(nameOf).join(", ")}`,
+    label: {
+      text: "On {here} and {machines}",
+      values: { here, machines: others.map(nameOf).join(", ") },
+    },
   };
 }

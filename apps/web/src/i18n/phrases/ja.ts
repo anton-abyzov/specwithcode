@@ -5676,4 +5676,11 @@ export const ja: PhraseCatalog = {
     "{machine} はコーディネーターの場所をまだ確認していません。メッセージを送るには再接続してください。",
   "Coordinator conversations": "コーディネーターの会話",
   Threads: "スレッド",
+  "another machine": "別のマシン",
+  "Coordinator on {machine}": "コーディネーターは {machine} 上",
+  "On {here} and {machines}": "{here} と {machines} 上",
+  "On {machines} and {last}": "{machines} と {last} 上",
+  "On {coordinator} (coordinator) and {last}": "{coordinator}（コーディネーター）と {last} 上",
+  "On {coordinator} (coordinator), {machines} and {last}":
+    "{coordinator}（コーディネーター）、{machines}、{last} 上",
 };

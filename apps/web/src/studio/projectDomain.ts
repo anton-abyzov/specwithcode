@@ -340,9 +340,16 @@ export function requestExecutionLabel(
   return `${machine} · ${model}`;
 }
 
+/** Words with `{slot}` values: an English phrase the place that shows it translates. */
+export interface CopyRolesText {
+  readonly text: string;
+  readonly values: Readonly<Record<string, string>>;
+}
+
 /**
  * "On M4 (coordinator) and M3" for a project that is on several machines; null for a project
- * on one. The sidebar shows the project once and names each machine here.
+ * on one. The sidebar shows the project once and names each machine here. The coordinator's
+ * machine leads, so one phrase per shape carries the names and translates.
  */
 export function copyRolesSummary<
   T extends EnvironmentProject & { readonly environmentLabel?: string | null },
@@ -351,14 +358,20 @@ export function copyRolesSummary<
   nameOf: (member: T) => string = (member) =>
     shortMachineName(member.environmentLabel ?? "Machine"),
   retired?: { has(environmentId: string): boolean },
-): string | null {
+): CopyRolesText | null {
   const shared = members.filter((member) => member.workspaceSettings?.logicalProject);
   if (new Set(shared.map((member) => member.environmentId)).size < 2) return null;
   const roles = copyRoles(shared, retired);
-  const names = shared.map((member) =>
-    roles.get(memberKey(member))?.role === "main"
-      ? `${nameOf(member)} (coordinator)`
-      : nameOf(member),
-  );
-  return `On ${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  const main = shared.find((member) => roles.get(memberKey(member))?.role === "main");
+  const others = shared.filter((member) => member !== main).map(nameOf);
+  const last = others.at(-1) ?? "";
+  const machines = others.slice(0, -1).join(", ");
+  if (!main) return { text: "On {machines} and {last}", values: { machines, last } };
+  const coordinator = nameOf(main);
+  return machines
+    ? {
+        text: "On {coordinator} (coordinator), {machines} and {last}",
+        values: { coordinator, machines, last },
+      }
+    : { text: "On {coordinator} (coordinator) and {last}", values: { coordinator, last } };
 }

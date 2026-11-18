@@ -5673,4 +5673,11 @@ export const pt: PhraseCatalog = {
     "{machine} ainda não confirmou onde está o coordenador. Reconecte a máquina para enviar mensagens.",
   "Coordinator conversations": "Conversas do coordenador",
   Threads: "Threads",
+  "another machine": "outra máquina",
+  "Coordinator on {machine}": "Coordenador em {machine}",
+  "On {here} and {machines}": "Em {here} e {machines}",
+  "On {machines} and {last}": "Em {machines} e {last}",
+  "On {coordinator} (coordinator) and {last}": "Em {coordinator} (coordenador) e {last}",
+  "On {coordinator} (coordinator), {machines} and {last}":
+    "Em {coordinator} (coordenador), {machines} e {last}",
 };

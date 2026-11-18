@@ -618,22 +618,26 @@ export function ProjectRow(props: {
   const displayName = displayNameOf(group, props.displayedProject);
   const personal = isPersonalGroup(group);
   const nickname = useMachineNicknames();
-  const copies = copyRolesSummary(
+  const copiesText = copyRolesSummary(
     group.memberProjects,
     (member) => nickname(member.environmentId, member.environmentLabel),
     props.retired,
   );
+  const copies = copiesText ? tx(copiesText.text, copiesText.values) : null;
   // A project shared with or handed off from another machine wears a badge.
-  const shared = personal
+  const badge = personal
     ? null
     : sharedProjectBadge(
         props.displayedProject ?? group.memberProjects[0],
         group.memberProjects,
         (id) => {
           const name = nickname(id);
-          return name === id ? "another machine" : name;
+          return name === id ? tx("another machine") : name;
         },
       );
+  const shared = badge
+    ? { role: badge.role, label: tx(badge.label.text, badge.label.values) }
+    : null;
   // A folder copy to another machine running in the background: dimmed with its progress.
   const keyedCopy = useKeyedCopyActivity(group.memberProjects);
   const copying = keyedCopy?.activity ?? null;

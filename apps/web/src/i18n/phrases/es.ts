@@ -5700,4 +5700,11 @@ export const es: PhraseCatalog = {
     "{machine} aún no ha confirmado dónde está el coordinador. Vuelve a conectarla para enviar mensajes.",
   "Coordinator conversations": "Conversaciones del coordinador",
   Threads: "Hilos",
+  "another machine": "otra máquina",
+  "Coordinator on {machine}": "Coordinador en {machine}",
+  "On {here} and {machines}": "En {here} y {machines}",
+  "On {machines} and {last}": "En {machines} y {last}",
+  "On {coordinator} (coordinator) and {last}": "En {coordinator} (coordinador) y {last}",
+  "On {coordinator} (coordinator), {machines} and {last}":
+    "En {coordinator} (coordinador), {machines} y {last}",
 };

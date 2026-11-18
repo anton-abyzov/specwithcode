@@ -5667,4 +5667,11 @@ export const ru: PhraseCatalog = {
     "{machine} ещё не подтвердила, где координатор. Переподключите эту машину, чтобы отправлять сообщения.",
   "Coordinator conversations": "Разговоры координатора",
   Threads: "Треды",
+  "another machine": "другая машина",
+  "Coordinator on {machine}": "Координатор на {machine}",
+  "On {here} and {machines}": "На {here} и {machines}",
+  "On {machines} and {last}": "На {machines} и {last}",
+  "On {coordinator} (coordinator) and {last}": "На {coordinator} (координатор) и {last}",
+  "On {coordinator} (coordinator), {machines} and {last}":
+    "На {coordinator} (координатор), {machines} и {last}",
 };

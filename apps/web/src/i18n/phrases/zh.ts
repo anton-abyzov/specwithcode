@@ -5437,4 +5437,11 @@ export const zh: PhraseCatalog = {
     "{machine} 尚未确认协调者在哪里。请重新连接后再发送消息。",
   "Coordinator conversations": "协调者对话",
   Threads: "会话",
+  "another machine": "另一台电脑",
+  "Coordinator on {machine}": "协调者在 {machine} 上",
+  "On {here} and {machines}": "在 {here} 和 {machines} 上",
+  "On {machines} and {last}": "在 {machines} 和 {last} 上",
+  "On {coordinator} (coordinator) and {last}": "在 {coordinator}（协调者）和 {last} 上",
+  "On {coordinator} (coordinator), {machines} and {last}":
+    "在 {coordinator}（协调者）、{machines} 和 {last} 上",
 };
