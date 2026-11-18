@@ -117,6 +117,14 @@ export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlocked
      * credential refusal, which signing in does not fix.
      */
     connectSignInRequired: Schema.optionalKey(Schema.Boolean),
+    /**
+     * The relay refused this window's Connect sign-in itself: its session token
+     * was missing or no longer accepted, or this device was removed from the
+     * account. A new sign-in fixes it. Never set for a DPoP proof the relay
+     * rejected or one this device could not make, which a sign-in does not
+     * fix (1417, AC-13).
+     */
+    connectSessionRefused: Schema.optionalKey(Schema.Boolean),
   },
 ) {
   override get message(): string {

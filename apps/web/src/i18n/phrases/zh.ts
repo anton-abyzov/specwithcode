@@ -5518,4 +5518,12 @@ export const zh: PhraseCatalog = {
     "可以跳过。它也在 设置 › 机器 中，任务需要时智能体会询问。",
   "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
     "在终端中也可以使用 claude、codex 和 specweave。会在你的 shell 启动文件中添加一个带标记的块；随时可在 设置 > 通用 中关闭。",
+  "Your Connect sign-in ends at {time}": "你的 Connect 登录将于 {time} 结束",
+  "Sign in again to keep reaching {machines} from this window.":
+    "请重新登录，以便继续从此窗口访问 {machines}。",
+  "Sign in again now": "立即重新登录",
+  "SpecWithCode Connect did not accept this sign-in": "SpecWithCode Connect 未接受此次登录",
+  "Sign in again to reach your machines through SpecWithCode Connect.":
+    "请重新登录，以便通过 SpecWithCode Connect 访问你的机器。",
+  "Sign in again": "重新登录",
 };

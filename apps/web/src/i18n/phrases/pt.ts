@@ -5758,4 +5758,13 @@ export const pt: PhraseCatalog = {
     "Você pode pular isto. Também está em Configurações › Máquinas, e os agentes perguntam quando uma tarefa precisa.",
   "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
     "Use claude, codex e specweave no Terminal também. Adiciona um bloco marcado ao arquivo de inicialização do seu shell; desative quando quiser em Configurações > Geral.",
+  "Your Connect sign-in ends at {time}": "Seu login no Connect termina às {time}",
+  "Sign in again to keep reaching {machines} from this window.":
+    "Entre novamente para continuar acessando {machines} por esta janela.",
+  "Sign in again now": "Entrar novamente agora",
+  "SpecWithCode Connect did not accept this sign-in":
+    "O SpecWithCode Connect não aceitou este login",
+  "Sign in again to reach your machines through SpecWithCode Connect.":
+    "Entre novamente para acessar suas máquinas pelo SpecWithCode Connect.",
+  "Sign in again": "Entrar novamente",
 };

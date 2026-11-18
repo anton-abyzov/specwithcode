@@ -74,7 +74,7 @@ const RUNNING =
 const failures = [];
 const receipt = [];
 
-for (const account of ["signed-out", "signed-in"]) {
+for (const account of ["signed-out", "signed-in", "ending", "rejected"]) {
   for (const theme of ["light", "dark"]) {
     const page = await browser.newPage({
       viewport: { width: 820, height: 900 },
@@ -110,6 +110,30 @@ for (const account of ["signed-out", "signed-in"]) {
       }
       if (!/Needs sign-in/.test(officeRow)) fail(`Office Mac row reads: ${officeRow}`);
       if (!/Signed out/.test(account_)) fail(`account button reads: ${account_}`);
+    } else if (account === "ending") {
+      // AC-11: 100 minutes left, Office Mac and Build box reached only through Connect.
+      const ending = page.locator("[data-connect-session-ending]");
+      const text =
+        (await ending.count()) > 0 ? (await ending.innerText()).replace(/\s+/g, " ") : "";
+      if (!/Your Connect sign-in ends at \d/.test(text)) fail(`ending banner reads: ${text}`);
+      if (
+        !text.includes("Sign in again to keep reaching Office Mac and Build box from this window.")
+      )
+        fail(`ending banner body reads: ${text}`);
+      if (text.includes("Mac mini")) fail("a machine on a paired route is listed as depending");
+      if (!/Sign-in ends in 1h 40m/.test(account_)) fail(`account button reads: ${account_}`);
+      await ending.getByRole("button", { name: "Sign in again now" }).click();
+      const renewed = await page.evaluate(() => document.body.dataset.renewStarted === "true");
+      if (!renewed) fail("Sign in again now did not start a renew");
+    } else if (account === "rejected") {
+      // AC-13: the relay refuses the sign-in; the window asks, it never signs out.
+      const refused = page.locator("[data-connect-session-rejected]");
+      const text = (await refused.count()) > 0 ? await refused.innerText() : "";
+      if (!text.includes("SpecWithCode Connect did not accept this sign-in"))
+        fail(`rejected banner reads: ${text}`);
+      await refused.getByRole("button", { name: "Sign in again" }).click();
+      const renewed = await page.evaluate(() => document.body.dataset.renewStarted === "true");
+      if (!renewed) fail("Sign in again did not start a renew");
     } else {
       // The startup race: Clerk signed in, the relay client not yet handed the session.
       if (bannerShown) fail("a banner shows while Clerk says signed in");
