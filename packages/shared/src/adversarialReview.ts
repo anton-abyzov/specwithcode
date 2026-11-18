@@ -152,6 +152,8 @@ export function reviewerOrderGroups(input: {
       providers: input.providers,
       model: names,
       order: input.sourceOrder,
+      // The built-in order stands for each model's whole family; a listed reviewer for itself.
+      family: input.reviewers.length === 0,
     })) {
       if (provider.instanceId === entry.instanceId) continue;
       // The entry's effort goes with it, matched to the levels that source offers.

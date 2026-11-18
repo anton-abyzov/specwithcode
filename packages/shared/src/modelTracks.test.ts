@@ -651,3 +651,44 @@ describe("track effort", () => {
     });
   });
 });
+
+describe("GPT-6.2 in the built-in tracks", () => {
+  const codex61 = provider("codex", "codex", ["gpt-6.1-sol", "gpt-6-astra"], 10);
+  const codex62 = provider(
+    "codex",
+    "codex",
+    ["gpt-6.1-sol", "gpt-6.2-sol", "gpt-6-astra", "gpt-6.2-astra"],
+    10,
+  );
+
+  it("runs the 6.2 entries on 6.2 where a source lists it, else on the release it lists", () => {
+    expect(defaultTrackSelections("complex", [codex62]).map((entry) => entry.model)).toEqual([
+      "gpt-6.2-astra",
+    ]);
+    expect(defaultTrackSelections("complex", [codex61]).map((entry) => entry.model)).toEqual([
+      "gpt-6-astra",
+    ]);
+    expect(
+      defaultTrackSelections("daily", [codex61]).map((entry) => entry.model),
+    ).toContain("gpt-6.1-sol");
+    expect(tierModelFor(codex62, "regular")).toBe("gpt-6.2-sol");
+    expect(tierModelFor(codex61, "regular")).toBe("gpt-6.1-sol");
+    expect(tierModelFor(codex61, "frontier")).toBe("gpt-6-astra");
+  });
+
+  it("lets a saved 6.1 entry follow 6.2 once its source lists it", () => {
+    expect(followNewestReleases([sel("codex", "gpt-6.1-sol")], [codex62])).toEqual([
+      sel("codex", "gpt-6.2-sol"),
+      sel("codex", "gpt-6.1-sol"),
+    ]);
+  });
+
+  it("adds a source that lists only 6.2 as another account of a built-in entry", () => {
+    const copilot62 = provider("copilot", "acpRegistry", ["gpt-6.2-sol"], null, {
+      iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+    });
+    const routine = launchTrackLanes(null, [codex61, copilot62]).routine;
+    expect(routine).toContainEqual(sel("codex", "gpt-6.1-sol"));
+    expect(routine).toContainEqual(sel("copilot", "gpt-6.2-sol"));
+  });
+});

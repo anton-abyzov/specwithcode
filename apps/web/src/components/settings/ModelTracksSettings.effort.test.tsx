@@ -256,4 +256,25 @@ describe("ModelTracksSettings effort", () => {
       ),
     ).toHaveLength(0);
   });
+
+  it("names the GPT-6.2 release a row runs on once a source lists it", () => {
+    const codex62 = provider("codex", "codex", [
+      ...codex.models.map((model) => ({ ...model })),
+      { slug: "gpt-6.2-sol", name: "GPT-6.2-Sol", capabilities: CODEX_LEVELS },
+      { slug: "gpt-6.2-astra", name: "GPT-6.2-Astra", capabilities: CODEX_LEVELS },
+    ]);
+    state.providers = [claude, codex62, muse];
+    const root = render();
+    expect(rowNames(track(root, "Daily"))).toContain("GPT-6.2-Sol");
+    expect(rowNames(track(root, "Complex"))).toContain("GPT-6.2-Astra");
+    // A saved GPT-6.1 Sol entry says which release it follows.
+    state.settings = {
+      ...state.settings,
+      modelLanes: { routine: [{ instanceId: codex.instanceId, model: "gpt-6.1-sol" }], complex: [] },
+    };
+    act(() => renderer?.unmount());
+    const saved = render();
+    expect(JSON.stringify(track(saved, "Daily").findAll(() => true).length)).toBeTruthy();
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Follows newest: GPT-6.2-Sol");
+  });
 });

@@ -34,25 +34,27 @@ export interface DefaultTrackModel {
 }
 
 /**
- * The built-in order of each track. An entry no enabled provider lists is
- * skipped, so the defaults fit whatever a machine has signed in.
+ * The built-in order of each track. An entry runs on the release of its
+ * family a source lists (GPT-6.1 Sol where nothing lists GPT-6.2 Sol yet),
+ * the named one first, else the newest; an entry no enabled provider lists in
+ * any release is skipped, so the defaults fit whatever a machine has signed in.
  */
 export const DEFAULT_MODEL_TRACKS: Readonly<Record<ModelTrack, ReadonlyArray<DefaultTrackModel>>> =
   {
     daily: [
       { model: "claude-opus-5-5", name: "Claude Opus 5.5" },
       { model: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" },
-      { model: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+      { model: "gpt-6.2-sol", name: "GPT-6.2 Sol" },
       { model: "gpt-6-luna", name: "GPT-6 Luna", free: true },
     ],
     complex: [
       { model: "claude-fable-5-2", name: "Claude Fable 5.2" },
-      { model: "gpt-6-astra", name: "GPT-6 Astra" },
+      { model: "gpt-6.2-astra", name: "GPT-6.2 Astra" },
     ],
     review: [
       { model: "muse-wonder-full-1.0", name: "Muse Wonder Full 1.0", effort: "xhigh" },
       { model: "muse-wonder-1.0", name: "Muse Wonder 1.0", effort: "xhigh" },
-      { model: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+      { model: "gpt-6.2-sol", name: "GPT-6.2 Sol" },
       { model: "gemini-4-carbon", name: "Gemini 4 Carbon" },
     ],
   };

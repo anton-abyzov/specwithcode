@@ -32,6 +32,7 @@ import {
   formatCodexModelName,
   readCustomModelEntries,
 } from "@specweave-studio/shared/model";
+import { modelFamily } from "@specweave-studio/shared/modelTiers";
 import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
@@ -158,12 +159,17 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
   return account.email;
 }
 
+/** Any Astra release (`gpt-6-astra`, `gpt-6.2-astra`) starts at Medium, whatever Codex reports. */
+function isAstraLine(slug: string): boolean {
+  return modelFamily(codexModelFamily(slug))?.stem === "gpt-astra";
+}
+
 export function mapCodexModelCapabilities(
   model: CodexSchema.V2ModelListResponse__Model,
 ): ModelCapabilities {
   const reasoningOptions = model.supportedReasoningEfforts.map(({ reasoningEffort }) =>
     reasoningEffort ===
-    (codexModelFamily(model.model) === "gpt-6-astra" ? "medium" : model.defaultReasoningEffort)
+    (isAstraLine(model.model) ? "medium" : model.defaultReasoningEffort)
       ? {
           id: reasoningEffort,
           label: reasoningEffortLabel(reasoningEffort),

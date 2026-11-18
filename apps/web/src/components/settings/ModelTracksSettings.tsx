@@ -211,6 +211,13 @@ export function TrackEffortSelect(props: {
   );
 }
 
+/** The newer release a row runs on, as the source that lists it names it (GPT-6.2 Sol). */
+function followsName(row: TrackRow, providers: ReadonlyArray<ServerProvider>): string {
+  const slug = row.follows ?? row.model;
+  const source = providers.find((provider) => provider.instanceId === row.selection?.instanceId);
+  return describeModel(source, slug).name ?? slug;
+}
+
 /** A grip, a position and the row's content; the grip also reorders by keyboard. */
 function SortableRow(props: {
   readonly id: string;
@@ -407,7 +414,7 @@ function TrackCard(props: {
                 ) : null}
                 {row.follows !== null ? (
                   <Badge variant="outline" size="sm">
-                    {tx("Follows newest")}
+                    {`${tx("Follows newest")}: ${followsName(row, providers)}`}
                   </Badge>
                 ) : null}
               </div>

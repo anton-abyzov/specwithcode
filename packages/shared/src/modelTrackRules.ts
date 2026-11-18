@@ -230,6 +230,8 @@ export function describeTrack(input: {
         model: { slug },
         order: input.sourceOrder ?? undefined,
         preferFree: free,
+        // A built-in row runs on whichever release of its family a source lists.
+        family: named === undefined,
         ...(withRoom && input.track !== "review"
           ? {
               usedPercent: (provider: ServerProvider, served: string) =>

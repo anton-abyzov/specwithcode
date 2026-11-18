@@ -66,8 +66,14 @@ export function tierOfModel(
       if ((lanes?.[lane] ?? []).some((entry) => covers(entry.model))) return lane;
     }
   }
-  // A track the person never saved ranks the built-in models.
-  const builtIn = defaultLaneOfModel({ slug: model }, laneEntryCovers);
+  // A track the person never saved ranks the built-in models, each standing
+  // for every release of its family (the GPT-6.2 Sol entry runs GPT-6.1 Sol
+  // where that is what a source lists).
+  const builtIn = defaultLaneOfModel({ slug: model }, (entry, slug) => {
+    if (laneEntryCovers(entry, slug)) return true;
+    const [a, b] = [modelFamily(slug), modelFamily(entry)];
+    return a !== null && b !== null && a.stem === b.stem;
+  });
   return builtIn !== null && (lanes?.[builtIn] ?? []).length === 0 ? builtIn : null;
 }
 

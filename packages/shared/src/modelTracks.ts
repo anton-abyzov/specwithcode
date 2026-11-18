@@ -26,6 +26,7 @@ import {
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import { isSameModel, sameModelOn } from "./modelIdentity.ts";
+import { newestOfFamily } from "./modelTiers.ts";
 import {
   isGeminiSpendProvider,
   isPerTokenProvider,
@@ -103,6 +104,11 @@ export function providersForModel<P extends TrackProvider>(input: {
   readonly usedPercent?: ((provider: P, slug: string) => number | null) | undefined;
   /** A free-tail entry: an account on a free plan comes before the maker's paid one. */
   readonly preferFree?: boolean | undefined;
+  /**
+   * A built-in entry: a provider that lists another release of the model's
+   * family serves its newest one (GPT-6.1 Sol for a GPT-6.2 Sol entry).
+   */
+  readonly family?: boolean | undefined;
 }): ReadonlyArray<ModelProviderChoice<P>> {
   const personRank = (instanceId: ProviderInstanceId) => {
     const index = input.order?.indexOf(instanceId) ?? -1;
@@ -111,7 +117,9 @@ export function providersForModel<P extends TrackProvider>(input: {
   return input.providers
     .flatMap((provider, listed) => {
       if (!provider.enabled) return [];
-      const slug = sameModelOn(provider, input.model);
+      const slug =
+        sameModelOn(provider, input.model) ??
+        (input.family === true ? newestOfFamily(provider, input.model.slug) : undefined);
       if (slug === undefined) return [];
       const used = input.usedPercent?.(provider, slug) ?? null;
       return [
@@ -178,6 +186,7 @@ export function defaultTrackSelections(
       model: { slug: entry.model },
       order: order ?? undefined,
       preferFree: entry.free,
+      family: true,
     }).find(
       ({ provider, slug }) =>
         !isHeldSource(provider as Partial<ServerProvider> as ServerProvider, slug),
@@ -336,8 +345,12 @@ export function launchTrackLanes(
   /** With a time, accounts nobody ranked go by room, as the Models page lists them. */
   nowMs?: number,
 ): ModelLanes {
-  const fitted = effectiveModelLanes(lanes, providers, order).lanes;
-  const expand = (entries: ReadonlyArray<ModelSelection>): ReadonlyArray<ModelSelection> => {
+  const { lanes: fitted, builtIn } = effectiveModelLanes(lanes, providers, order);
+  // A built-in entry runs on any release of its family; a saved one on its own model.
+  const expand = (
+    entries: ReadonlyArray<ModelSelection>,
+    family: boolean,
+  ): ReadonlyArray<ModelSelection> => {
     const seen = new Set<string>();
     const out: ModelSelection[] = [];
     const push = (selection: ModelSelection) => {
@@ -353,6 +366,7 @@ export function launchTrackLanes(
         model: { slug: entry.model },
         order: order ?? undefined,
         preferFree: isFreeTrackModel({ slug: entry.model }),
+        family,
         ...(nowMs === undefined
           ? {}
           : {
@@ -367,7 +381,10 @@ export function launchTrackLanes(
     }
     return out;
   };
-  return { routine: expand(fitted.routine), complex: expand(fitted.complex) };
+  return {
+    routine: expand(fitted.routine, builtIn.routine),
+    complex: expand(fitted.complex, builtIn.complex),
+  };
 }
 
 /**
