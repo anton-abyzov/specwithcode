@@ -10,6 +10,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
+  latest: new Map<string, string>() as ReadonlyMap<string, string>,
   data: null as unknown,
   search: {} as Record<string, unknown>,
   canWrite: true,
@@ -56,6 +57,16 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => async () => ({ _tag: "Success", value: { _tag: "read", copies: [] } }),
+}));
+vi.mock("../skills/SkillsManagementSlot", () => ({
+  SkillsManagementSlot: (props: { machineName: string; userLevel: boolean }) => (
+    <div data-testid="skills-management-slot" data-machine={props.machineName}>
+      {String(props.userLevel)}
+    </div>
+  ),
+}));
+vi.mock("../skills/SkillUpdateLatest", () => ({
+  useSkillLatestVersions: () => state.latest,
 }));
 vi.mock("./settingsLayout", () => ({
   SettingsSection: (props: { children: unknown; headerAction?: unknown }) => (
@@ -152,6 +163,23 @@ const builtIn = (view: HTMLElement) =>
   );
 
 describe("the Skills page on one machine", () => {
+  it("mounts local management in its slot and shows each source's newer version", async () => {
+    state.latest = new Map([["notes", "2.0.0"]]);
+    try {
+      const versioned = row("notes", {
+        ...agent("codex", "Codex", "user", "/h/.agents/skills/notes/SKILL.md"),
+        fileVersion: "1.0.0",
+      } as never);
+      await render(snapshotOf([versioned], { Codex: 1 }));
+      const slot = host!.querySelector('[data-testid="skills-management-slot"]');
+      expect(slot?.getAttribute("data-machine")).toBe("Desk");
+      expect(slot?.textContent).toBe("true");
+      expect(host!.querySelector('[data-testid="version-update"]')?.textContent).toBe("↑2.0.0");
+    } finally {
+      state.latest = new Map();
+    }
+  });
+
   it("lists a home with only claude.ai-synced skills read-only, and names the empty agent", async () => {
     const view = await render(snapshotOf([synced("docx"), synced("pdf")], { Claude: 2, Codex: 0 }));
     expect(builtIn(view)).toEqual([

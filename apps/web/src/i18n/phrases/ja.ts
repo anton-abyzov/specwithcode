@@ -5551,4 +5551,62 @@ export const ja: PhraseCatalog = {
     "{machine} はオフラインです。再接続すると設定が表示されます。",
   "You can look at {machine}'s settings from this sign-in, but not change them.":
     "このサインインでは {machine} の設定を見られますが、変更はできません。",
+  "Needs permission to change files and run vskill here.":
+    "ここでファイルを変更して vskill を実行する権限が必要です。",
+  "Needs permission to change settings on this machine.":
+    "このマシンの設定を変更する権限が必要です。",
+  "Loaded now": "読み込み済み",
+  "Next message": "次のメッセージから",
+  "Next session": "次のセッションから",
+  "Update available": "更新があります",
+  "Changed at source": "ソース側で変更あり",
+  "Not updated from here": "ここからは更新しません",
+  "Needs GitHub sign-in": "GitHub へのサインインが必要",
+  "Name the repo as owner/repo or paste its GitHub link.":
+    "リポジトリを owner/repo の形で入力するか、GitHub のリンクを貼り付けてください。",
+  "Sign in to GitHub on {machine} to read {repo}":
+    "{repo} を読み込むには {machine} で GitHub にサインインしてください",
+  "GitHub has no {repo} for the account signed in on {machine}.":
+    "{machine} でサインイン中のアカウントでは、GitHub に {repo} が見つかりません。",
+  "GitHub is limiting reads from {machine}. Sign in to GitHub there or try again later.":
+    "GitHub が {machine} からの読み取りを制限しています。そのマシンで GitHub にサインインするか、後でもう一度お試しください。",
+  "GitHub could not be reached from {machine}.": "{machine} から GitHub に接続できませんでした。",
+  "Installed {skill} {version}": "{skill} {version} をインストールしました",
+  "Updated {skill} to {version}": "{skill} を {version} に更新しました",
+  "{skill} is already up to date": "{skill} はすでに最新です",
+  "Skipped {skill}": "{skill} をスキップしました",
+  "{skill} was not changed": "{skill} は変更されませんでした",
+  "Search skills and notes": "スキルとノートを検索",
+  "Search installed skills, connected repos and notes":
+    "インストール済みスキル、接続済みリポジトリ、ノートを検索",
+  "Installed on {machine}": "{machine} にインストール済み",
+  "No installed skill matches.": "一致するインストール済みスキルはありません。",
+  "Available in a connected repo": "接続済みリポジトリで利用可能",
+  "No skill in a connected repo matches.": "接続済みリポジトリに一致するスキルはありません。",
+  Private: "非公開",
+  Notes: "ノート",
+  "No Obsidian vault on {machine}.": "{machine} に Obsidian の保管庫がありません。",
+  "No note matches.": "一致するノートはありません。",
+  "Open in Obsidian": "Obsidian で開く",
+  "More notes may match. Narrow the search.":
+    "ほかにも一致するノートがあるかもしれません。検索を絞り込んでください。",
+  "Obsidian on {machine} did not open the note.":
+    "{machine} の Obsidian でノートを開けませんでした。",
+  "When each agent has it": "各エージェントで使えるタイミング",
+  "Versions and updates": "バージョンと更新",
+  "Update all ({count})": "すべて更新（{count}）",
+  "No skill on {machine} records a source yet.":
+    "{machine} にはソースが記録されたスキルがまだありません。",
+  "Skill repos": "スキルリポジトリ",
+  "Connected on {machine} only. A private repo is read with the GitHub sign-in on {machine} and is never sent to a registry.":
+    "{machine} でのみ接続されます。非公開リポジトリは {machine} の GitHub サインインで読み込まれ、レジストリには送信されません。",
+  "Skill repo": "スキルリポジトリ",
+  "owner/repo or a GitHub link": "owner/repo または GitHub のリンク",
+  Suggested: "おすすめ",
+  "Connect {repo}": "{repo} を接続",
+  Public: "公開",
+  "Skills: {count}": "スキル: {count}",
+  "No skills found in this repo.": "このリポジトリにスキルは見つかりませんでした。",
+  "This repo holds more skills than are listed here.":
+    "このリポジトリには、ここに表示されている以外のスキルもあります。",
 };

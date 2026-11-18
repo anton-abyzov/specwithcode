@@ -1,10 +1,20 @@
-import type { EnvironmentId, ProjectId, ProjectSkillsSnapshot } from "@specweave-studio/contracts";
+import type {
+  EnvironmentId,
+  ProjectId,
+  ProjectSkillsSnapshot,
+  ThreadId,
+} from "@specweave-studio/contracts";
+
+import { SkillUpdateCenter } from "./SkillUpdateCenter";
 
 export interface SkillsManagementSlotProps {
   /** The one machine the page is set up for. */
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly userLevel: boolean;
+  /** The thread's folder when the page was opened from a thread; installs and updates go there. */
+  readonly cwd?: string | undefined;
+  readonly threadId?: ThreadId | undefined;
   readonly machineName: string;
   /** That machine's skills, as the page shows them; null while it scans. */
   readonly snapshot: ProjectSkillsSnapshot | null;
@@ -20,6 +30,15 @@ export interface SkillsManagementSlotProps {
  * installed list. The page passes everything they need, so adding them does
  * not touch `ProjectSkillsSettings.tsx`.
  */
-export function SkillsManagementSlot(_props: SkillsManagementSlotProps) {
-  return null;
+export function SkillsManagementSlot(props: SkillsManagementSlotProps) {
+  return (
+    <SkillUpdateCenter
+      environmentId={props.environmentId}
+      projectId={props.projectId}
+      userLevel={props.userLevel}
+      cwd={props.cwd}
+      threadId={props.threadId}
+      onChanged={props.onChanged}
+    />
+  );
 }

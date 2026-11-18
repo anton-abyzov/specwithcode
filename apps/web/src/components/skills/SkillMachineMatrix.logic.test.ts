@@ -204,4 +204,21 @@ describe("buildSkillMatrix", () => {
     const same = buildSkillMatrix(machines, { latest: new Map([["notes", "1.2.0"]]) });
     expect(same.rows[1]?.cells[0]).not.toHaveProperty("update");
   });
+
+  it("never shows this machine's source update on another machine", () => {
+    const matrix = buildSkillMatrix(
+      [
+        machine("desk", {
+          current: true,
+          snapshot: snapshot([row("notes", {}, { fileVersion: "1.0.0" })]),
+        }),
+        machine("mini", { snapshot: snapshot([row("notes", {}, { fileVersion: "1.0.0" })]) }),
+      ],
+      { latest: new Map([["notes", "2.0.0"]]) },
+    );
+    expect(matrix.rows[0]?.cells).toEqual([
+      { kind: "installed", version: "1.0.0", differs: false, update: "2.0.0" },
+      { kind: "installed", version: "1.0.0", differs: false },
+    ]);
+  });
 });

@@ -119,6 +119,14 @@ import {
   ProjectSkillsVersions,
   ProjectSkillsVersionsInput,
 } from "./projectSkills.ts";
+import {
+  ProjectSkillReposInput,
+  ProjectSkillReposResult,
+  ProjectSkillsSearchInput,
+  ProjectSkillsSearchResult,
+  ProjectSkillsUpdateInput,
+  ProjectSkillsUpdateResult,
+} from "./projectSkillRepos.ts";
 export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsEnvironmentRead: "projects.environmentRead",
   projectsEnvironmentPrepare: "projects.environmentPrepare",
@@ -147,6 +155,9 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsSkillsFleetPush: "projects.skillsFleetPush",
   projectsSkillAuthoring: "projects.skillAuthoring",
   projectsSkillsStudioLink: "projects.skillsStudioLink",
+  projectsSkillRepos: "projects.skillRepos",
+  projectsSkillsSearch: "projects.skillsSearch",
+  projectsSkillsUpdate: "projects.skillsUpdate",
   projectsWorkspaceRead: "projects.workspaceRead",
   projectsSpecweaveSetUp: "projects.specweaveSetUp",
   projectsStarterSuggestions: "projects.starterSuggestions",
@@ -456,6 +467,21 @@ export const projectSkillsActionRpcs = [
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillsStudioLink, {
     payload: ProjectSkillsStudioLinkInput,
     success: ProjectSkillsStudioLink,
+    error: skillsActionError,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillRepos, {
+    payload: ProjectSkillReposInput,
+    success: ProjectSkillReposResult,
+    error: skillsActionError,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillsSearch, {
+    payload: ProjectSkillsSearchInput,
+    success: ProjectSkillsSearchResult,
+    error: skillsActionError,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillsUpdate, {
+    payload: ProjectSkillsUpdateInput,
+    success: ProjectSkillsUpdateResult,
     error: skillsActionError,
   }),
 ] as const;

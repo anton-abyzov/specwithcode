@@ -1,0 +1,262 @@
+/**
+ * The live wiring behind `projects.skillRepos`, `projects.skillsSearch` and
+ * `projects.skillsUpdate`: this machine's `gh`, an anonymous GitHub read,
+ * vskill, the Skills view's own read, and the agents' rescan.
+ *
+ * Every process starts through the platform runner with a fixed argv and no
+ * shell. The anonymous read asks only GitHub's API and raw-file hosts.
+ *
+ * @module project/SkillUpdateRpc
+ */
+import {
+  ProjectSkillsActionError,
+  WS_METHODS,
+  type ProjectId,
+  type ProjectSkillReposInput,
+  type ProjectSkillsReadError,
+  type ProjectSkillsSearchInput,
+  type ProjectSkillsUpdateInput,
+} from "@specweave-studio/contracts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import { FetchHttpClient } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Path from "effect/Path";
+
+import type * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import { findVskillBinary, makeRunCli, type CliRun } from "./ProjectSkillsActionsCommon.ts";
+import type * as ProjectSkillsService from "./ProjectSkillsService.ts";
+import { makeSkillRepoSources } from "./SkillRepoSources.ts";
+import { makeSkillSearch } from "./SkillSearch.ts";
+import { makeSkillUpdates } from "./SkillUpdate.ts";
+
+const GH_TIMEOUT = "25 seconds";
+const GH_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+const GET_TIMEOUT = "20 seconds";
+const GET_MAX_BYTES = 8 * 1024 * 1024;
+const OPEN_TIMEOUT = "10 seconds";
+/** Folders rescanned for each agent after a change, newest first. */
+const MAX_RESCANNED_FOLDERS = 12;
+const GITHUB_READ_HOSTS: ReadonlySet<string> = new Set([
+  "api.github.com",
+  "raw.githubusercontent.com",
+]);
+
+export interface SkillManagementDeps {
+  readonly home: string;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly platform: NodeJS.Platform;
+  readonly stateDir: string;
+  readonly skills: ProjectSkillsService.ProjectSkillsService["Service"];
+  readonly registry: Pick<
+    ProviderRegistry.ProviderRegistry["Service"],
+    "getProviders" | "refreshWorkspaceSnapshot"
+  >;
+}
+
+const fromReadError = (error: ProjectSkillsReadError) =>
+  new ProjectSkillsActionError({ projectId: error.projectId, reason: error.reason });
+
+/** Whether an anonymous read may ask this address: GitHub's API and raw-file hosts, over https. */
+export function isGitHubReadUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && GITHUB_READ_HOSTS.has(parsed.host);
+  } catch {
+    return false;
+  }
+}
+
+/** The program and argv that hand a link to the operating system. */
+export function openLinkCommand(
+  platform: NodeJS.Platform,
+  url: string,
+): { readonly command: string; readonly args: ReadonlyArray<string> } {
+  if (platform === "darwin") return { command: "open", args: [url] };
+  if (platform === "win32")
+    return { command: "rundll32", args: ["url.dll,FileProtocolHandler", url] };
+  return { command: "xdg-open", args: [url] };
+}
+
+export const makeSkillManagementHandlers = Effect.fn("SkillManagement.makeHandlers")(function* (
+  deps: SkillManagementDeps,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const runner = yield* ProcessRunner.ProcessRunner;
+  const run = yield* makeRunCli;
+  const http = yield* HttpClient.HttpClient.pipe(Effect.provide(FetchHttpClient.layer));
+
+  /** An anonymous GET; an address that is not GitHub's is never asked. */
+  const anonymousGet = (
+    url: string,
+    accept: string,
+  ): Effect.Effect<{ readonly status: number; readonly body: string }> =>
+    !isGitHubReadUrl(url)
+      ? Effect.succeed({ status: 0, body: "" })
+      : http
+          .execute(
+            HttpClientRequest.get(url).pipe(
+              HttpClientRequest.setHeaders({
+                Accept: accept,
+                "User-Agent": "skills-reader",
+                "X-GitHub-Api-Version": "2022-11-28",
+              }),
+            ),
+          )
+          .pipe(
+            Effect.flatMap((response) =>
+              response.text.pipe(
+                Effect.map((body) =>
+                  body.length > GET_MAX_BYTES
+                    ? { status: 0, body: "" }
+                    : { status: response.status, body },
+                ),
+              ),
+            ),
+            Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+            Effect.timeout(GET_TIMEOUT),
+            Effect.orElseSucceed(() => ({ status: 0, body: "" })),
+          );
+
+  const runPlain = (
+    command: string,
+    args: ReadonlyArray<string>,
+    timeout: string,
+    env: NodeJS.ProcessEnv,
+  ): Effect.Effect<CliRun> =>
+    runner
+      .run({
+        command,
+        args,
+        cwd: deps.home,
+        timeout: timeout as never,
+        timeoutBehavior: "timedOutResult",
+        maxOutputBytes: GH_MAX_OUTPUT_BYTES,
+        outputMode: "truncate",
+        env,
+      })
+      .pipe(
+        Effect.map((output): CliRun =>
+          // A cut-off answer is no answer: its text would hash and parse wrong.
+          output.stdoutTruncated
+            ? { exitCode: 1, stdout: "", stderr: "", timedOut: false }
+            : {
+                exitCode: output.code === null ? null : Number(output.code),
+                stdout: output.stdout,
+                stderr: output.stderr,
+                timedOut: output.timedOut,
+              },
+        ),
+        Effect.orElseSucceed((): CliRun => ({
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+        })),
+      );
+
+  const sources = yield* makeSkillRepoSources({
+    storePath: path.join(deps.stateDir, "skills", "connected-repos.json"),
+    gh: (args) =>
+      runPlain("gh", args, GH_TIMEOUT, {
+        PATH: deps.environment.PATH ?? "",
+        GH_PROMPT_DISABLED: "1",
+        GH_NO_UPDATE_NOTIFIER: "1",
+        NO_COLOR: "1",
+      }),
+    get: anonymousGet,
+  });
+
+  const readSnapshot = (input: Parameters<typeof deps.skills.read>[0]) =>
+    deps.skills.read(input).pipe(Effect.mapError(fromReadError));
+
+  const search = yield* makeSkillSearch({
+    home: deps.home,
+    platform: deps.platform,
+    environment: deps.environment,
+    readSnapshot,
+    sources,
+    openUrl: (url) => {
+      const { command, args } = openLinkCommand(deps.platform, url);
+      return runPlain(command, args, OPEN_TIMEOUT, { PATH: deps.environment.PATH ?? "" }).pipe(
+        Effect.map((result) => result.exitCode === 0),
+      );
+    },
+  });
+
+  const updates = yield* makeSkillUpdates({
+    home: deps.home,
+    environment: deps.environment,
+    readSnapshot,
+    resolveCwd: (input) => deps.skills.resolveCwd(input).pipe(Effect.mapError(fromReadError)),
+    invalidate: deps.skills.invalidate,
+    sources,
+    findVskill: findVskillBinary({
+      home: deps.home,
+      pathEnv: deps.environment.PATH,
+      platform: deps.platform,
+      appData: deps.environment.APPDATA,
+      pathExt: deps.environment.PATHEXT,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    ),
+    run,
+    // A thread's composer reads the scan of its own folder, so each folder an agent
+    // has scanned before is scanned again; otherwise it would offer the skill a minute late.
+    rescanOpenFolders: (instanceIds) =>
+      deps.registry.getProviders.pipe(
+        Effect.flatMap((providers) =>
+          Effect.forEach(
+            providers
+              .filter((provider) => instanceIds.includes(provider.instanceId))
+              .flatMap((provider) =>
+                (provider.workspaceSnapshots ?? [])
+                  .toSorted((left, right) => right.checkedAt.localeCompare(left.checkedAt))
+                  .slice(0, MAX_RESCANNED_FOLDERS)
+                  .map((snapshot) => ({ instanceId: provider.instanceId, cwd: snapshot.cwd })),
+              ),
+            (target) =>
+              deps.registry
+                .refreshWorkspaceSnapshot({ ...target, fresh: true })
+                .pipe(Effect.ignore),
+            { concurrency: 2, discard: true },
+          ),
+        ),
+        Effect.forkDetach,
+        Effect.asVoid,
+      ),
+  });
+
+  const answered =
+    <I extends { readonly projectId: ProjectId }, A>(
+      handler: (input: I) => Effect.Effect<A, ProjectSkillsActionError>,
+    ) =>
+    (input: I) =>
+      handler(input).pipe(
+        Effect.catchDefect((cause) =>
+          Effect.fail(
+            new ProjectSkillsActionError({
+              projectId: input.projectId,
+              reason: "read_failed",
+              cause,
+            }),
+          ),
+        ),
+      );
+
+  return {
+    [WS_METHODS.projectsSkillRepos]: answered((input: ProjectSkillReposInput) =>
+      sources.repos(input),
+    ),
+    [WS_METHODS.projectsSkillsSearch]: answered((input: ProjectSkillsSearchInput) =>
+      search.search(input),
+    ),
+    [WS_METHODS.projectsSkillsUpdate]: answered((input: ProjectSkillsUpdateInput) =>
+      updates.update(input),
+    ),
+  };
+});

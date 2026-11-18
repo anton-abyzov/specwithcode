@@ -5579,4 +5579,60 @@ export const es: PhraseCatalog = {
     "{machine} está sin conexión. Su configuración aparecerá cuando vuelva a conectarse.",
   "You can look at {machine}'s settings from this sign-in, but not change them.":
     "Con este inicio de sesión puedes ver la configuración de {machine}, pero no cambiarla.",
+  "Needs permission to change files and run vskill here.":
+    "Hace falta permiso para cambiar archivos y ejecutar vskill aquí.",
+  "Needs permission to change settings on this machine.":
+    "Hace falta permiso para cambiar los ajustes de esta máquina.",
+  "Loaded now": "Cargado ahora",
+  "Next message": "Próximo mensaje",
+  "Next session": "Próxima sesión",
+  "Update available": "Actualización disponible",
+  "Changed at source": "Cambió en el origen",
+  "Not updated from here": "No se actualiza desde aquí",
+  "Needs GitHub sign-in": "Requiere iniciar sesión en GitHub",
+  "Name the repo as owner/repo or paste its GitHub link.":
+    "Escribe el repositorio como owner/repo o pega su enlace de GitHub.",
+  "Sign in to GitHub on {machine} to read {repo}":
+    "Inicia sesión en GitHub en {machine} para leer {repo}",
+  "GitHub has no {repo} for the account signed in on {machine}.":
+    "GitHub no tiene {repo} para la cuenta con sesión iniciada en {machine}.",
+  "GitHub is limiting reads from {machine}. Sign in to GitHub there or try again later.":
+    "GitHub está limitando las lecturas desde {machine}. Inicia sesión en GitHub allí o inténtalo más tarde.",
+  "GitHub could not be reached from {machine}.": "No se pudo conectar con GitHub desde {machine}.",
+  "Installed {skill} {version}": "Instalado {skill} {version}",
+  "Updated {skill} to {version}": "{skill} actualizado a {version}",
+  "{skill} is already up to date": "{skill} ya está al día",
+  "Skipped {skill}": "Se omitió {skill}",
+  "{skill} was not changed": "{skill} no se cambió",
+  "Search skills and notes": "Buscar skills y notas",
+  "Search installed skills, connected repos and notes":
+    "Busca en skills instaladas, repositorios conectados y notas",
+  "Installed on {machine}": "Instaladas en {machine}",
+  "No installed skill matches.": "Ninguna skill instalada coincide.",
+  "Available in a connected repo": "Disponibles en un repositorio conectado",
+  "No skill in a connected repo matches.": "Ninguna skill de un repositorio conectado coincide.",
+  Private: "Privado",
+  Notes: "Notas",
+  "No Obsidian vault on {machine}.": "No hay bóveda de Obsidian en {machine}.",
+  "No note matches.": "Ninguna nota coincide.",
+  "Open in Obsidian": "Abrir en Obsidian",
+  "More notes may match. Narrow the search.": "Puede haber más notas. Acota la búsqueda.",
+  "Obsidian on {machine} did not open the note.": "Obsidian en {machine} no abrió la nota.",
+  "When each agent has it": "Cuándo la tiene cada agente",
+  "Versions and updates": "Versiones y actualizaciones",
+  "Update all ({count})": "Actualizar todo ({count})",
+  "No skill on {machine} records a source yet.":
+    "Ninguna skill de {machine} registra un origen todavía.",
+  "Skill repos": "Repositorios de skills",
+  "Connected on {machine} only. A private repo is read with the GitHub sign-in on {machine} and is never sent to a registry.":
+    "Conectados solo en {machine}. Un repositorio privado se lee con la sesión de GitHub de {machine} y nunca se envía a un registro.",
+  "Skill repo": "Repositorio de skills",
+  "owner/repo or a GitHub link": "owner/repo o un enlace de GitHub",
+  Suggested: "Sugeridos",
+  "Connect {repo}": "Conectar {repo}",
+  Public: "Público",
+  "Skills: {count}": "Skills: {count}",
+  "No skills found in this repo.": "No se encontraron skills en este repositorio.",
+  "This repo holds more skills than are listed here.":
+    "Este repositorio tiene más skills de las que se muestran aquí.",
 };
