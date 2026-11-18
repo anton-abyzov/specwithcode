@@ -429,6 +429,7 @@ const makeHarness = (
         }),
     }),
     Layer.succeed(HandoffGit.HandoffGit, {
+      discover: () => Effect.succeed(["."]),
       verifyWorkerCheckpoints: (input) =>
         Effect.suspend(() => {
           state.checkpointWorkers.push(input.workers.length);

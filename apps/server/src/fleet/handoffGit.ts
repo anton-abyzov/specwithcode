@@ -1446,6 +1446,10 @@ const make = Effect.gen(function* () {
         existingCopyFolders,
         "preflight",
       )(input).pipe(Effect.orElseSucceed(() => [input.workspaceRoot])),
+    discover: atRealRoot(
+      (input: { readonly workspaceRoot: string }) => discover(input.workspaceRoot, "inspect"),
+      "inspect",
+    ),
     verifyWorkerCheckpoints: atRealRoot(verifyWorkerCheckpoints, "inspect"),
     reportWorkerCheckpoints: atRealRoot(reportWorkerCheckpoints, "inspect"),
     publish: atRealRoot(publish, "publish"),

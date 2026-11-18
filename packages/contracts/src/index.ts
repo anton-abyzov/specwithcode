@@ -94,6 +94,7 @@ export * from "./resourceTelemetry.ts";
 export * from "./provision.ts";
 export * from "./machineTools.ts";
 export * from "./projectCredentials.ts";
+export * from "./projectSync.ts";
 export * from "./gitHubSignIn.ts";
 export * from "./gitHubCredentialCopy.ts";
 export * from "./rpc.ts";

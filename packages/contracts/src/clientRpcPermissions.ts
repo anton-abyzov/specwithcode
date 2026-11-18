@@ -17,6 +17,7 @@ import { WS_METHODS } from "./rpc.ts";
 import { PROVISION_RPC_METHODS } from "./provision.ts";
 import { MACHINE_TOOLS_RPC_METHODS } from "./machineTools.ts";
 import { PROJECT_CREDENTIALS_RPC_METHODS } from "./projectCredentials.ts";
+import { PROJECT_SYNC_RPC_METHODS } from "./projectSync.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
@@ -65,6 +66,15 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsSave]: AuthFilesystemWriteScope,
   // Sign-in state says which services a person uses and runs their tools: operate, not read.
   [PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsProbe]: AuthOrchestrationOperateScope,
+  // Project sync (1390). The status is a local Git read: path, branch, head commit, clean or not.
+  [PROJECT_SYNC_RPC_METHODS.projectSyncStatus]: AuthFilesystemReadScope,
+  // Names branches, counts and the files a snapshot would leave out.
+  [PROJECT_SYNC_RPC_METHODS.projectSyncInventory]: AuthOrchestrationOperateScope,
+  // `git fetch origin`, then a fast-forward or a clone, on this machine.
+  [PROJECT_SYNC_RPC_METHODS.projectSyncFetch]: AuthSourceControlWriteScope,
+  [PROJECT_SYNC_RPC_METHODS.projectSyncRun]: AuthSourceControlWriteScope,
+  // Writes hidden refs here and sends bundles to the other machine, like a checkpoint.
+  [PROJECT_SYNC_RPC_METHODS.projectSyncSendExtras]: AuthSourceControlWriteScope,
   // The cleanup list names folders and chats; running it removes folders, like the settings that switch it on.
   [WS_METHODS.serverGetStorageCleanupPlan]: AuthSettingsWriteScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
