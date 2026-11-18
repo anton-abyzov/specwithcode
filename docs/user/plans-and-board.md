@@ -39,9 +39,10 @@ project's work on a board.
   Board** on the card opens the Board tab.
 - **Plan without it** keeps the project as it is. The coordinator plans the
   work in its reply instead, before it changes any code. SpecWithCode
-  remembers the answer for the project on every device, so asking for a plan
-  there again does not bring the card back. The Board tab still offers setup
-  whenever you want a board.
+  remembers the answer for the project on every device, so work the
+  coordinator starts there plans in its reply and no longer brings the card
+  back. Ask for a plan or for SpecWeave itself and the coordinator can show
+  the card again. The Board tab still offers setup whenever you want a board.
 
 The card waits for you. Leaving it unanswered blocks nothing else in the
 thread, and you can answer it later.
@@ -79,8 +80,9 @@ example board beside it, marked **Example**, shows what the cards look like
 as work moves from Planned to Active, In review and Done. It is a picture: its
 cards do nothing.
 
-**Not now** is remembered the same way as **Plan without it**: asking for a
-plan no longer brings up the card. The Board keeps its offer and its button.
+**Not now** is remembered the same way as **Plan without it**: work the
+coordinator starts no longer brings up the card. The Board keeps its offer and
+its button.
 
 After setup the Board lists the project's plans as cards, without reloading
 the page. A plan written later shows at the Board's next refresh. A project

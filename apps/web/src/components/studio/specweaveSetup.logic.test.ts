@@ -223,6 +223,17 @@ describe("specweaveSnapshotToolKey", () => {
     ).toBe("2:c");
   });
 
+  it("reads the other spellings of a studio-code tool and no other server's", () => {
+    expect(
+      specweaveSnapshotToolKey([
+        tool("a", "studio_code:delegate_task"),
+        tool("b", "mcp__other__delegate_task"),
+        tool("c", "studio-code/create_threads"),
+        tool("d", "delegate_task"),
+      ]),
+    ).toBe("3:d");
+  });
+
   it("waits for a call that is still running", () => {
     expect(
       specweaveSnapshotToolKey([tool("a", "mcp__studio-code__delegate_task", "running")]),

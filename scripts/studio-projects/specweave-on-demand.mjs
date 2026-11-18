@@ -222,6 +222,7 @@ function runFakeSpecweave([log, real, ...args]) {
   appendJsonLine(log, { event: "specweave", argv: args, cwd: process.cwd(), real: real !== "-" });
   if (real !== "-") {
     const run = NodeChildProcess.spawnSync(real, args, { stdio: "inherit" });
+    appendJsonLine(log, { event: "specweave-exit", argv: args, code: run.status ?? 1 });
     process.exit(run.status ?? 1);
   }
   const result = fakeSpecweave(args, process.cwd());
@@ -729,37 +730,51 @@ export async function runScenario(options) {
     const coordinatorThreadId = `project-coordinator:${projectId}`;
     const ask = `${ASK_TOKEN} Create an increment for "${INCREMENT_TITLE}".`;
     const box = composer.first();
-    const asked = () => readJsonLines(logs.agent).some((e) => e.event === "prompt" && e.action === "ask");
-    for (let attempt = 0; attempt < 3 && !asked(); attempt++) {
-      if (!(await box.innerText().catch(() => "")).includes(ASK_TOKEN)) await box.fill(ask);
+    const asks = () => readJsonLines(logs.agent).filter((e) => e.event === "prompt" && e.action === "ask");
+    const boxHoldsAsk = async () => (await box.innerText().catch(() => "")).includes(ASK_TOKEN);
+    // Enter again only while the box still holds the ask, so a slow delivery is never sent twice.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (!(await boxHoldsAsk())) await box.fill(ask);
       await box.press("Enter");
-      await waitFor("the ask to reach the coordinator", asked, { timeout: 20_000 }).catch(() => {});
+      const taken = await waitFor("the composer to take the ask", async () => !(await boxHoldsAsk()), { timeout: 10_000 }).then(
+        () => true,
+        () => false,
+      );
+      if (taken) break;
     }
+    await waitFor("the ask to reach the coordinator", () => asks().length > 0);
     const firstLaunch = await waitFor("the coordinator's launch", () =>
       readJsonLines(logs.agent).find((e) => e.event === "tool" && e.name === "delegate_task"),
     );
     record(
       "launch-needs-specweave",
-      firstLaunch.value?.launched === false && firstLaunch.value?.needs === "specweave",
-      { result: firstLaunch.value },
+      asks().length === 1 && firstLaunch.value?.launched === false && firstLaunch.value?.needs === "specweave",
+      { asks: asks().length, result: firstLaunch.value },
     );
 
     // 3. The card shows in the coordinator thread, with nothing written yet.
-    const card = page.locator("[data-specweave-card]").first();
+    const cards = page.locator("[data-specweave-card]");
+    const card = cards.first();
     await card.waitFor({ state: "visible", timeout: 30_000 });
+    // A marker on the page's window: still there at the end means the page never reloaded.
+    await page.evaluate(() => {
+      window.__swc1396NoReload = true;
+    });
     const asking = await workspace();
     const pressLabel = "Set up Git and SpecWeave";
     const button = card.getByRole("button", { name: pressLabel, exact: true });
     await button.waitFor({ state: "visible", timeout: 10_000 });
     record(
       "card-shows",
-      (await card.getAttribute("data-state")) === "asking" &&
+      (await cards.count()) === 1 &&
+        (await card.getAttribute("data-state")) === "asking" &&
         asking.specweaveSetupRequest?.state === "asking" &&
         asking.specweaveSetupRequest?.threadId === coordinatorThreadId &&
         !onDisk().git &&
         !onDisk().specweave &&
         readJsonLines(logs.specweave).length === 0,
       {
+        cards: await cards.count(),
         cardState: await card.getAttribute("data-state"),
         request: asking.specweaveSetupRequest,
         onDisk: onDisk(),
@@ -768,30 +783,39 @@ export async function runScenario(options) {
       },
     );
 
-    // 4. One press.
+    // 4. One press. The snapshot is watched from the press on, so both it and the
+    // card are timed from the moment setup itself finished (the CLI's init exit).
     const pressedAt = Date.now();
-    await button.click();
-    await waitFor("setup to finish", async () => (await card.getAttribute("data-state")) === "on", { timeout: 120_000, interval: 250 });
-    const setUpAt = Date.now();
-    const on = await waitFor(
+    const snapshotOn = waitFor(
       "the snapshot to read on",
       async () => {
         const snapshot = await workspace();
-        return snapshot.specweaveState === "on" ? snapshot : null;
+        return snapshot.specweaveState === "on" ? { snapshot, at: Date.now() } : null;
       },
-      { timeout: STATE_ON_WITHIN_MS, interval: 250 },
+      { timeout: 120_000, interval: 250 },
     );
+    snapshotOn.catch(() => {});
+    await button.click();
+    await waitFor("setup to finish", async () => (await card.getAttribute("data-state")) === "on", { timeout: 120_000, interval: 100 });
+    const cardOnAt = Date.now();
+    const on = await snapshotOn;
+    const initExit = readJsonLines(logs.specweave).find((e) => e.event === "specweave-exit" && e.argv[0] === "init");
+    const setUpAt = initExit === undefined ? Number.NaN : Date.parse(initExit.at);
     const inits = readJsonLines(logs.specweave).filter((e) => e.event === "specweave" && e.argv[0] === "init");
     record(
       "set-up",
       onDisk().git &&
         NodeFS.existsSync(NodePath.join(paths.project, ".specweave", "config.json")) &&
         inits.length === 1 &&
-        NodeFS.realpathSync(inits[0].cwd) === paths.project,
+        initExit?.code === 0 &&
+        NodeFS.realpathSync(inits[0].cwd) === paths.project &&
+        cardOnAt - setUpAt <= STATE_ON_WITHIN_MS &&
+        on.at - setUpAt <= STATE_ON_WITHIN_MS,
       {
-        pressToOnMs: setUpAt - pressedAt,
-        stateOnMs: Date.now() - setUpAt,
-        specweaveState: on.specweaveState,
+        pressToOnMs: cardOnAt - pressedAt,
+        setUpToCardOnMs: cardOnAt - setUpAt,
+        setUpToSnapshotOnMs: on.at - setUpAt,
+        specweaveState: on.snapshot.specweaveState,
         init: inits.map((e) => ({ argv: e.argv, cwd: e.cwd })),
         onDisk: onDisk(),
         screenshot: await shot("02-card-on"),
@@ -800,7 +824,7 @@ export async function runScenario(options) {
 
     // 5. The wake relaunches the work, and a worker plans it with the CLI.
     const relaunch = await waitFor("the relaunch", () =>
-      readJsonLines(logs.agent).filter((e) => e.event === "tool" && e.name === "delegate_task")[1],
+      readJsonLines(logs.agent).find((e) => e.event === "tool" && e.name === "delegate_task" && Date.parse(e.at) >= pressedAt),
     );
     record("relaunch", relaunch.value?.needs === undefined && relaunch.isError === false, { result: relaunch.value });
     const planned = await waitFor("the worker's create-increment", () =>
@@ -825,8 +849,10 @@ export async function runScenario(options) {
     const openedBoardAt = Date.now();
     await boardCard.waitFor({ state: "visible", timeout: BOARD_REFRESH_MS + 15_000 });
     const board = await rpc("projects.board", { projectId });
-    record("board-lists-increment", (board.cards ?? []).some((c) => c.incrementId === incrementId), {
+    const neverReloaded = await page.evaluate(() => window.__swc1396NoReload === true);
+    record("board-lists-increment", neverReloaded && (board.cards ?? []).some((c) => c.incrementId === incrementId), {
       incrementId,
+      neverReloaded,
       visibleAfterMs: Date.now() - openedBoardAt,
       boardCards: (board.cards ?? []).map((c) => ({ id: c.incrementId, title: c.title })),
       screenshot: await shot("03-board"),

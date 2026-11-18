@@ -10,6 +10,7 @@ import type {
   SpecweaveSetupRequestState,
   SpecweaveState,
 } from "@specweave-studio/contracts";
+import { resolveStudioMcpToolId } from "@specweave-studio/shared/studioMcpToolPresentation";
 
 // ── Words ───────────────────────────────────────────────────────────────
 
@@ -224,9 +225,13 @@ const SNAPSHOT_TOOLS =
   /^(delegate_task|create_threads|studio_thread_launch|request_specweave_setup)$/;
 const SETTLED_ITEM = new Set(["completed", "failed", "cancelled", "interrupted"]);
 
-/** Claude names a tool `mcp__studio-code__x`; Codex and ACP agents name it `studio-code.x`. */
+/**
+ * The bare tool name of a studio-code tool, whatever spelling the provider uses
+ * (`mcp__studio-code__x` for Claude, `studio-code.x` for Codex and ACP agents,
+ * and the others the shared resolver knows); empty for any other tool.
+ */
 function bareToolName(name: string): string {
-  return name.replace(/^mcp__.+?__/, "").replace(/^studio[-_]code\./, "");
+  return resolveStudioMcpToolId(name) ?? "";
 }
 
 /**
