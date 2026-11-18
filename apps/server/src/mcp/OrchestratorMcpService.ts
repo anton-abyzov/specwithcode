@@ -2452,16 +2452,21 @@ const make = Effect.gen(function* () {
       // The child's own open question cards: its result may not name them,
       // and the app leaves them to this lead (see subagentQuestionWait). A
       // coordinator's worker asks the person, so the coordinator is not told.
-      // An unreadable project tells the lead nothing: the person keeps the cards.
-      const leadProject = yield* requireProject(parentProjection.thread.projectId).pipe(
-        Effect.option,
-      );
+      const childQuestions = scope.thread.threadId.startsWith("project-coordinator:")
+        ? []
+        : yield* openMessageQuestions(task.childThreadId).pipe(
+            Effect.orElseSucceed(() => [] as const),
+          );
+      // The project is read only for open cards; an unreadable one tells the
+      // lead nothing, so the person keeps the cards.
+      const leadProject =
+        childQuestions.length === 0
+          ? Option.none()
+          : yield* requireProject(parentProjection.thread.projectId).pipe(Effect.option);
       const openQuestions =
         Option.isSome(leadProject) &&
         childQuestionsGoToLead(scope.thread.threadId, leadProject.value)
-          ? yield* openMessageQuestions(task.childThreadId).pipe(
-              Effect.orElseSucceed(() => [] as const),
-            )
+          ? childQuestions
           : [];
       const response = {
         taskId: task.id,
