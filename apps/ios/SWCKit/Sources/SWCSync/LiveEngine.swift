@@ -588,6 +588,9 @@ public final class LiveEngine: AppEngine {
   func summary(_ entry: MachineEntry, nicknames: [String: String]? = nil, now: ContinuousClock.Instant? = nil) -> MachineSummary {
     let settling = entry.isSettling(at: now ?? options.now())
     var status: MachineStatus = entry.record.enabled ? (MachineStatus(rawValue: entry.status.state.rawValue) ?? .offline) : .offline
+    // Waiting for the owner to type the code: each retry, a return to the app
+    // or a Reconnect would otherwise flash "Connecting" over the code.
+    if case .awaitingApproval? = entry.status.lastError, status != .connected { status = .offline }
     // No attempt has answered yet: offline here only means "no socket yet",
     // and a dropped connection reads "Connecting" as at launch.
     if settling, status == .offline || status == .reconnecting { status = .connecting }

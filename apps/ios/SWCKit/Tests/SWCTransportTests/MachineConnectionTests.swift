@@ -132,6 +132,24 @@ import Testing
     await connection.setActive(false)
   }
 
+  /// The owner leaves the app to type the code, so the wait must survive a
+  /// trip to the background and still be there, code and all, on return.
+  @Test func aPhoneWaitingForItsCodeKeepsTheCodeInTheBackground() async throws {
+    let fake = http(Server(ticket: { (401, Self.waitingForCode) }))
+    var config = configuration()
+    config.approvalRetry = .milliseconds(7)
+    let connection = MachineConnection(record: record(), credentials: credentials(), http: MachineHTTP(transport: fake), connector: FakeConnector(), configuration: config)
+    let waiting = TransportError.awaitingApproval(code: "K7QX2M", message: "Open SpecWithCode on m4 and type this code: K7QX2M")
+    await connection.setActive(true)
+    #expect(await eventually { await connection.status.lastError == waiting })
+    await connection.setActive(false)
+    #expect(await connection.status.state == .offline)
+    #expect(await connection.status.lastError == waiting)
+    await connection.setActive(true)
+    #expect(await connection.status.lastError == waiting)
+    await connection.setActive(false)
+  }
+
   /// A socket closed by the rule comes back on a cached ticket, and the session
   /// endpoint says only "not authenticated". That must not read as a dead pairing.
   @Test func aRefusedUpgradeUnderTeamRulesIsNotARepair() async throws {
