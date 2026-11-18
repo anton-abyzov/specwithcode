@@ -15,7 +15,7 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ProjectSkillName } from "./projectSkills.ts";
 
 /** `owner/repo` on github.com. Never starts with a dash, so it cannot read as a flag. */
-export const SKILL_REPO_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$/;
+const SKILL_REPO_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$/;
 export const SkillRepoId = Schema.String.check(Schema.isPattern(SKILL_REPO_ID_PATTERN));
 export type SkillRepoId = typeof SkillRepoId.Type;
 
@@ -131,9 +131,7 @@ export const ProjectSkillReposResult = Schema.Struct({
   /** Repos to offer that are not connected yet. */
   suggestions: Schema.Array(SkillRepoId),
   /** Set when a connect was refused; the list is then unchanged. */
-  refusal: Schema.optional(
-    Schema.Struct({ reason: SkillRepoRefusalReason, repo: Schema.String }),
-  ),
+  refusal: Schema.optional(Schema.Struct({ reason: SkillRepoRefusalReason, repo: Schema.String })),
 });
 export type ProjectSkillReposResult = typeof ProjectSkillReposResult.Type;
 
@@ -246,7 +244,11 @@ export type ProjectSkillSourceStatus = typeof ProjectSkillSourceStatus.Type;
  * `next-message`: the agent's skill folders hold it and it scans them per message.
  * `next-session`: the agent reads its skills when a session starts, or did not confirm.
  */
-export const ProjectSkillReadiness = Schema.Literals(["loaded-now", "next-message", "next-session"]);
+export const ProjectSkillReadiness = Schema.Literals([
+  "loaded-now",
+  "next-message",
+  "next-session",
+]);
 export type ProjectSkillReadiness = typeof ProjectSkillReadiness.Type;
 
 export const ProjectSkillAgentReadiness = Schema.Struct({
