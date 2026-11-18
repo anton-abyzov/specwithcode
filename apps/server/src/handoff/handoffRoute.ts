@@ -20,12 +20,15 @@ import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
 import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
+import { ExtrasReceiver } from "./ExtrasReceiver.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import {
   COORDINATOR_REPLICA_MAX_BYTES,
   CoordinatorLeaseRequest,
   CoordinatorReplicaRequest,
   decodeFrame,
+  ExtrasNegotiateRequest,
+  ExtrasReplicateMeta,
   HANDOFF_FRAME_META_MAX_BYTES,
   HANDOFF_JSON_MAX_BYTES,
   HANDOFF_PEER_PREFIX,
@@ -55,6 +58,7 @@ import {
 } from "@specweave-studio/contracts";
 
 const decodeMeta = Schema.decodeUnknownOption(ReplicateMeta);
+const decodeExtrasMeta = Schema.decodeUnknownOption(ExtrasReplicateMeta);
 const MAX_BODY_BYTES = HANDOFF_MAX_BUNDLE_BYTES + HANDOFF_FRAME_META_MAX_BYTES + 4;
 
 const refusal = (status: number, error: string, extra: Record<string, unknown> = {}) =>
@@ -132,7 +136,7 @@ export const layer = HttpRouter.add(
     };
 
     const limit =
-      path === "replicate"
+      path === "replicate" || path === "extras-replicate"
         ? MAX_BODY_BYTES
         : path === "coordinator-replica"
           ? COORDINATOR_REPLICA_MAX_BYTES
@@ -251,6 +255,24 @@ export const layer = HttpRouter.add(
         return Option.isNone(input)
           ? invalid
           : yield* answer((yield* LinkedPeerReceiver).planMerge(caller, input.value));
+      }
+      case "extras-negotiate": {
+        const input = decodeJson(ExtrasNegotiateRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer((yield* ExtrasReceiver).negotiate(caller, input.value));
+      }
+      case "extras-replicate": {
+        let frame: { meta: unknown; bundle: Uint8Array };
+        try {
+          frame = decodeFrame(body.value);
+        } catch {
+          return invalid;
+        }
+        const meta = decodeExtrasMeta(frame.meta);
+        return Option.isNone(meta)
+          ? invalid
+          : yield* answer((yield* ExtrasReceiver).replicate(caller, meta.value, frame.bundle));
       }
       case "replicate": {
         let frame: { meta: unknown; bundle: Uint8Array };

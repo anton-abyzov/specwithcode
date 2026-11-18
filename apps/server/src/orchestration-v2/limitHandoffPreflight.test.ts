@@ -286,6 +286,8 @@ const scenario = (options: { readonly modeOn: boolean }) =>
       reachable: () => Effect.die("unused"),
       planExport: () => Effect.die("unused"),
       planMerge: () => Effect.die("unused"),
+      extrasNegotiate: () => Effect.die("unused"),
+      extrasReplicate: () => Effect.die("unused"),
     });
     const moves = yield* Effect.gen(function* () {
       const receiver = yield* HandoffReceiver.make;
