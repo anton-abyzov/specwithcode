@@ -250,6 +250,27 @@ it.effect("a device that keeps asking keeps its request and its code, for 30 min
   ),
 );
 
+it.effect("the code a device kept past ten minutes still allows it", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const code = refusedCode(yield* trust.check(connect("k1")));
+      for (const minutes of [6, 6, 6]) {
+        yield* TestClock.adjust(`${minutes} minutes`);
+        expect(refusedCode(yield* trust.check(connect("k1")))).toBe(code);
+      }
+      // 18 minutes in, past the ten a request lived before: the owner types it now.
+      const approved = yield* trust.approve({
+        code,
+        approvedBy: "this machine",
+        approverKey: null,
+      });
+      expect(approved.status).toBe("approved");
+      expect(yield* trust.check(connect("k1"))).toEqual({ _tag: "allowed" });
+    }),
+  ),
+);
+
 it.effect("a device that stops asking still runs out, and its old code allows nothing", () =>
   withMachine(
     Effect.gen(function* () {
@@ -278,7 +299,7 @@ it.effect("a device that stops asking still runs out, and its old code allows no
   ),
 );
 
-it.effect("keeping one device waiting never extends another, a denial or the caps", () =>
+it.effect("keeping one device waiting never extends another, and Deny still ends it", () =>
   withMachine(
     Effect.gen(function* () {
       const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;

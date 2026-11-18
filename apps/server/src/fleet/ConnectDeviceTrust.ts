@@ -696,10 +696,11 @@ export const makeWith = (options: MakeOptions = {}) =>
           const base = pruned(loaded.file, now);
           const [result, next] = change(base, now);
           const toWrite = next ?? (changed(loaded.file, base) ? base : undefined);
-          // A plain code goes when its request does (ran out, allowed or turned away).
+          if (toWrite !== undefined) yield* write(toWrite);
+          // A plain code goes when its request does (ran out, allowed or turned away),
+          // once the file says so.
           const waiting = new Set((next ?? base).pending.map((entry) => entry.key));
           for (const key of codes.keys()) if (!waiting.has(key)) codes.delete(key);
-          if (toWrite !== undefined) yield* write(toWrite);
           return result;
         }),
       );
