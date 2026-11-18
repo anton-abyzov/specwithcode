@@ -70,8 +70,13 @@ vi.mock("../ui/button", () => ({
   ),
 }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
+vi.mock("../devices/ownDeviceId", () => ({ useOwnDeviceShortId: () => "R2DK" }));
 
-import { CloudEnvironmentConnectRows } from "./CloudEnvironmentConnectList";
+import { inlineCodeShown } from "../devices/inlineApprovalCode";
+import {
+  CloudEnvironmentConnectRows,
+  type SavedCloudEnvironmentConnection,
+} from "./CloudEnvironmentConnectList";
 
 const newMachineId = EnvironmentId.make("new-computer");
 const linkedMachines: DiscoveredEnvironments = new Map([
@@ -104,12 +109,15 @@ function publish(state: Discovery.RelayEnvironmentDiscoveryState) {
   for (const listener of discovery.listeners) listener();
 }
 
-async function mount(refreshWhileEmpty = true) {
+async function mount(
+  refreshWhileEmpty = true,
+  savedEnvironments: ReadonlyArray<SavedCloudEnvironmentConnection> = [],
+) {
   await act(async () => {
     renderer = create(
       <CloudEnvironmentConnectRows
         primaryEnvironmentId={null}
-        savedEnvironments={[]}
+        savedEnvironments={savedEnvironments}
         showSavedEnvironments
         refreshWhileEmpty={refreshWhileEmpty}
         empty={<p>Waiting for your computer to connect.</p>}
@@ -436,5 +444,80 @@ describe("cloud onboarding discovery", () => {
     await mount(false);
     await advance(30_000);
     expect(discovery.listEnvironments).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a machine waiting to approve this device (1416)", () => {
+  const waitingOn = (
+    connection: SavedCloudEnvironmentConnection["connection"],
+  ): SavedCloudEnvironmentConnection => ({
+    environmentId: newMachineId,
+    relayManaged: true,
+    connection,
+  });
+  const text = () => JSON.stringify(renderer!.toJSON());
+  const paragraphs = () =>
+    renderer!.root.findAllByType("p").flatMap((paragraph) => paragraph.children);
+
+  it("shows the code, the machine and this device's ID instead of Reconnecting", async () => {
+    discovery.listEnvironments.mockResolvedValue(linkedMachines);
+    await mount(true, [
+      waitingOn({
+        phase: "reconnecting",
+        error: "Open SpecWithCode on Work laptop and type this code: ABC234",
+        traceId: null,
+        deviceApprovalCode: "ABC234",
+      }),
+    ]);
+    expect(paragraphs()).toContain("Waiting for approval");
+    expect(text()).not.toContain("Reconnecting");
+    expect(text()).toContain("ABC234");
+    expect(text()).toContain(
+      "Open SpecWithCode on {machine} and type this code:".replace("{machine}", "Work laptop"),
+    );
+    expect(text()).toContain("R2DK");
+    const buttons = renderer!.root.findAllByType("button").map((button) => button.props.children);
+    expect(buttons).toContain("Waiting for approval");
+    // The floating card leaves this machine out while the row shows its code.
+    expect(inlineCodeShown(newMachineId)).toBe(true);
+    await act(async () => renderer!.unmount());
+    renderer = null;
+    expect(inlineCodeShown(newMachineId)).toBe(false);
+  });
+
+  it("shows the code under a checkbox row too", async () => {
+    discovery.listEnvironments.mockResolvedValue(linkedMachines);
+    await act(async () => {
+      renderer = create(
+        <CloudEnvironmentConnectRows
+          primaryEnvironmentId={null}
+          savedEnvironments={[
+            waitingOn({
+              phase: "reconnecting",
+              error: "Open SpecWithCode on Work laptop and type this code: XYZ789",
+              traceId: null,
+              deviceApprovalCode: "XYZ789",
+            }),
+          ]}
+          showSavedEnvironments
+          refreshWhileEmpty
+          selection={{ selectedIds: new Set([newMachineId]), onChange: () => undefined }}
+        />,
+      );
+    });
+    expect(text()).toContain("XYZ789");
+    expect(text()).toContain("Waiting for approval");
+    expect(text()).not.toContain("Reconnecting");
+  });
+
+  it("shows no code when the machine turned this device away, and names the refusal", async () => {
+    discovery.listEnvironments.mockResolvedValue(linkedMachines);
+    const refusal =
+      "Work laptop turned this device away. Ask again tomorrow, or approve it in SpecWithCode on Work laptop.";
+    await mount(true, [waitingOn({ phase: "reconnecting", error: refusal, traceId: null })]);
+    expect(text()).not.toContain("Waiting for approval");
+    expect(text()).not.toContain("data-device-waiting-code");
+    expect(inlineCodeShown(newMachineId)).toBe(false);
+    expect(paragraphs().join(" ")).toContain(refusal);
   });
 });

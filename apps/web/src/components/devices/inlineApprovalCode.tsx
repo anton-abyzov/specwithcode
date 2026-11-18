@@ -82,6 +82,13 @@ export function DeviceApprovalCode({
   );
 }
 
+/**
+ * The floating card's layer: above dialogs and their backdrop (z-50) and media
+ * (z-[60]), below toasts, so the code stays readable while a dialog is open (1416).
+ */
+export const FLOATING_CODE_LAYER_CLASS =
+  "pointer-events-none fixed inset-x-0 top-3 z-[70] flex flex-col items-center gap-2";
+
 /** Machines whose code a join or first-run card already shows, so the floating card stays away. */
 const inlineCodes = new Map<string, number>();
 const inlineListeners = new Set<() => void>();

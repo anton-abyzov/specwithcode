@@ -13,6 +13,19 @@ import {
   DeviceApprovalPrompt,
   DeviceWaitingList,
 } from "../../src/components/devices/ConnectDeviceViews";
+import {
+  FLOATING_CODE_LAYER_CLASS,
+  InlineDeviceApprovalCode,
+} from "../../src/components/devices/inlineApprovalCode";
+import { Button } from "../../src/components/ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../../src/components/ui/dialog";
 import { TooltipProvider } from "../../src/components/ui/tooltip";
 import "./fixture.css";
 
@@ -136,6 +149,70 @@ const snapshot: ConnectDevicesSnapshot = {
   canRepair: true,
 };
 
+/**
+ * The joining Mac's setup dialog (1416): the machine it waits on shows its code,
+ * the machine and this device's ID in its row. With `floating=1` another machine
+ * also waits, and its floating card sits above the dialog and its backdrop.
+ */
+function JoinDialog() {
+  const floating = params.get("floating") === "1";
+  // `layer=old` draws the card in the dialog's own layer, as before 1416, so the check can see it covered.
+  const layer =
+    params.get("layer") === "old"
+      ? "pointer-events-none fixed inset-x-0 top-3 z-50 flex flex-col items-center gap-2"
+      : FLOATING_CODE_LAYER_CLASS;
+  return (
+    <div className="fixture-shell">
+      <div className="fixture-bar">SpecWithCode · Laptop</div>
+      <div className="fixture-page">
+        <div className="fixture-thread">Ship the device approval pop-up</div>
+      </div>
+      {floating ? (
+        <div className={layer} data-fixture-floating>
+          <div className="pointer-events-auto">
+            <DeviceWaitingList
+              deviceId="R2DK"
+              waiting={[{ id: "env-studio", machine: "Studio Mac", code: "D8HJ3N" }]}
+            />
+          </div>
+        </div>
+      ) : null}
+      <Dialog open>
+        <DialogPopup showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Set up SpecWithCode Connect</DialogTitle>
+            <DialogDescription>Connect your other machines to this one.</DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <div className="rounded-xl border border-border" data-fixture-row="m4">
+              <div className="px-3 py-3 sm:px-4">
+                <div className="flex items-center gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">Work Mac</p>
+                    <p className="text-xs text-muted-foreground" data-fixture-status>
+                      Waiting for approval
+                    </p>
+                  </div>
+                  <Button size="sm" variant="outline" disabled>
+                    Waiting for approval
+                  </Button>
+                </div>
+                <div className="mt-3">
+                  <InlineDeviceApprovalCode
+                    environmentId={"env-m4" as never}
+                    machine="Work Mac"
+                    code="K7QX2M"
+                  />
+                </div>
+              </div>
+            </div>
+          </DialogPanel>
+        </DialogPopup>
+      </Dialog>
+    </div>
+  );
+}
+
 function Fixture() {
   const [log, setLog] = useState<Array<string>>([]);
   const note = (line: string) => setLog((current) => [...current, line]);
@@ -156,6 +233,7 @@ function Fixture() {
       {log.join("|")}
     </output>
   );
+  if (scene === "join-dialog") return <JoinDialog />;
   if (scene === "waiting")
     return (
       <div className="fixture-shell">
