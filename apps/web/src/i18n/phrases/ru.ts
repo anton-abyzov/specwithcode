@@ -5765,7 +5765,7 @@ export const ru: PhraseCatalog = {
     "Войдите снова, чтобы открывать свои машины через SpecWithCode Connect.",
   "Sign in again": "Войти снова",
   // First-run setup: the Models block under each machine's agents.
-  first: "первый",
+  first: "первая",
   "None of the ready agents runs a model on this list.":
     "Ни один из готовых агентов не использует модель из этого списка.",
   "No reviewer yet.": "Ревьюера пока нет.",

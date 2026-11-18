@@ -5824,6 +5824,6 @@ export const fr: PhraseCatalog = {
   "A review needs a model from a second family, such as {first} or {second}.":
     "Une relecture demande un modèle d'une deuxième famille, comme {first} ou {second}.",
   "Add one": "En ajouter un",
-  "+{n} more": "+{n} autres",
+  "+{n} more": "+{n} de plus",
   "Ready once an agent is signed in.": "Prêt dès qu'un agent est connecté.",
 };
