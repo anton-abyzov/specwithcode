@@ -69,7 +69,7 @@ export function AccountMenuView({
   /** Opens the add dialog: a phone or a computer, each with its code. */
   readonly onAddDevice: () => void;
 }) {
-  const { name, header, signIn, tone } = accountMenuPresentation(
+  const { name, header, signIn, tone, avatarName } = accountMenuPresentation(
     connect?.account ?? { status: "unavailable" },
     machine,
   );
@@ -80,7 +80,7 @@ export function AccountMenuView({
       aria-hidden="true"
       className="flex size-6 shrink-0 items-center justify-center rounded-full bg-sidebar-control-surface font-medium text-2xs text-sidebar-foreground ring-1 ring-sidebar-border"
     >
-      {accountInitial(name)}
+      {accountInitial(avatarName ?? name)}
     </span>
   );
 

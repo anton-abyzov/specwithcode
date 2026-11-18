@@ -100,6 +100,7 @@ describe("accountMenuPresentation", () => {
       MACHINE,
     );
     expect(view.name).toBe("Sign-in ends in 1h 40m");
+    expect(view.avatarName).toBe("Ada Lovelace");
     expect(view.header).toBe(`ada@example.com · ${MACHINE}`);
     expect(view.tone).toBe("warning");
     expect(view.signIn?.label).toBe("Sign in again now");

@@ -37,6 +37,8 @@ export interface AccountMenuPresentation {
   readonly signIn: { readonly label: string; readonly hint: string } | null;
   /** "warning" while being signed out cuts this window off from a machine. */
   readonly tone?: "warning";
+  /** The name the avatar's initial comes from when the button shows a warning instead. */
+  readonly avatarName?: string;
 }
 
 export function accountMenuPresentation(
@@ -92,9 +94,11 @@ export function accountMenuPresentation(
     case "signedIn": {
       const label = account.email ?? account.name;
       const header = label ? `${label} · ${machine}` : machine;
+      const name = account.name ?? account.email ?? "SpecWithCode account";
       if (account.sessionEndsIn !== undefined)
         return {
           name: `Sign-in ends in ${account.sessionEndsIn}`,
+          avatarName: name,
           header,
           tone: "warning",
           signIn: {
@@ -102,11 +106,7 @@ export function accountMenuPresentation(
             hint: "SpecWithCode Connect ends every sign-in after 7 days. Signing in again now starts a new one, and this window keeps your machines.",
           },
         };
-      return {
-        name: account.name ?? account.email ?? "SpecWithCode account",
-        header,
-        signIn: null,
-      };
+      return { name, header, signIn: null };
     }
   }
 }

@@ -7,7 +7,9 @@
  *
  * `?account=signed-in` is the startup race: Clerk says signed in while the
  * relay client is still being handed the session, so the gated projection has
- * no sign-in mark. `?theme=dark` the theme.
+ * no sign-in mark. `?account=ending` is signed in with 100 minutes left
+ * (AC-11); `?account=rejected` is signed in while the relay refuses the
+ * sign-in (AC-13). `?theme=dark` the theme.
  */
 import { useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -35,7 +37,8 @@ import "./fixture.css";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.classList.toggle("dark", params.get("theme") === "dark");
-const signedOut = params.get("account") !== "signed-in";
+const accountState = params.get("account") ?? "signed-out";
+const signedOut = accountState === "signed-out";
 
 const opus = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -153,6 +156,7 @@ function Harness() {
                                 status: "signedIn",
                                 name: "Ada Lovelace",
                                 email: "ada@example.com",
+                                ...(accountState === "ending" ? { sessionEndsIn: "1h 40m" } : {}),
                               },
                           onSignIn: noop,
                           onManage: noop,
