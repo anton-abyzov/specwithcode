@@ -5736,7 +5736,6 @@ export const ko: PhraseCatalog = {
   "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
     "리뷰가 실행되지 않았습니다. 리뷰에는 {codex}나 {muse}처럼 다른 계열의 모델이 필요합니다.",
   "No review is recorded for this feature.": "이 기능에 기록된 리뷰가 없습니다.",
-  "Add one": "추가하기",
   "Skip this step": "이 단계 건너뛰기",
   "Leave the guide": "가이드 닫기",
   "Waiting on this step. The Board tab says what went wrong.":

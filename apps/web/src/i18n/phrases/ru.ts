@@ -5801,7 +5801,6 @@ export const ru: PhraseCatalog = {
   "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
     "Ревью не запускалось. Для ревью нужна модель из второго семейства, например {codex} или {muse}.",
   "No review is recorded for this feature.": "Для этой функции не записано ни одного ревью.",
-  "Add one": "Добавить",
   "Skip this step": "Пропустить шаг",
   "Leave the guide": "Выйти из руководства",
   "Waiting on this step. The Board tab says what went wrong.":

@@ -5808,7 +5808,6 @@ export const ja: PhraseCatalog = {
   "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
     "レビューは行われていません。レビューには {codex} や {muse} など、別のファミリーのモデルが必要です。",
   "No review is recorded for this feature.": "この機能のレビュー記録はありません。",
-  "Add one": "追加する",
   "Skip this step": "このステップを飛ばす",
   "Leave the guide": "ガイドを閉じる",
   "Waiting on this step. The Board tab says what went wrong.":

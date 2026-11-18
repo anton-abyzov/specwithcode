@@ -5805,7 +5805,6 @@ export const pt: PhraseCatalog = {
     "Nenhuma revisão foi feita. Uma revisão precisa de um modelo de uma segunda família, como {codex} ou {muse}.",
   "No review is recorded for this feature.":
     "Nenhuma revisão está registrada para esta funcionalidade.",
-  "Add one": "Adicionar um",
   "Skip this step": "Pular esta etapa",
   "Leave the guide": "Sair do guia",
   "Waiting on this step. The Board tab says what went wrong.":

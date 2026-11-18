@@ -5844,7 +5844,6 @@ export const de: PhraseCatalog = {
   "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
     "Es lief kein Review. Ein Review braucht ein Modell aus einer zweiten Familie, etwa {codex} oder {muse}.",
   "No review is recorded for this feature.": "Für diese Funktion ist kein Review erfasst.",
-  "Add one": "Eins hinzufügen",
   "Skip this step": "Schritt überspringen",
   "Leave the guide": "Anleitung verlassen",
   "Waiting on this step. The Board tab says what went wrong.":

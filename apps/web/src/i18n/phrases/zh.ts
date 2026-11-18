@@ -5563,7 +5563,6 @@ export const zh: PhraseCatalog = {
   "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
     "没有进行评审。评审需要另一系列的模型，例如 {codex} 或 {muse}。",
   "No review is recorded for this feature.": "这个功能没有评审记录。",
-  "Add one": "添加一个",
   "Skip this step": "跳过这一步",
   "Leave the guide": "退出指南",
   "Waiting on this step. The Board tab says what went wrong.":
