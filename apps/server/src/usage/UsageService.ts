@@ -217,6 +217,8 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
   const platform = yield* HostProcessPlatform;
+  // Read here, not in a scan: scans run detached and would see the default access.
+  const cursorAccess = yield* CursorAccess;
 
   const fileCache: ScanCache = new Map();
   const sourceCache = new Map<string, typeof CachedSource.Type>();
@@ -762,7 +764,6 @@ export const make = Effect.gen(function* () {
     const loginUnavailable =
       Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) ||
       Boolean(hostEnvironment["CURSOR_API_KEY"]?.trim());
-    const cursorAccess = yield* CursorAccess;
     const cursorUntilMs = yield* Clock.currentTimeMillis;
     const account = loginUnavailable
       ? {
