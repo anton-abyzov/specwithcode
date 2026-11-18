@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
+import { BROWSER_EXTENSION_STORE_ID } from "@specweave-studio/contracts";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -119,9 +120,15 @@ describe("pairing", () => {
 });
 
 describe("relayRequestAllowed", () => {
-  const ok = { remoteAddress: "127.0.0.1", origin: "chrome-extension://abc", headers: {} };
+  const ok = {
+    remoteAddress: "127.0.0.1",
+    origin: `chrome-extension://${BROWSER_EXTENSION_STORE_ID}`,
+    headers: {},
+  };
   it("accepts the extension from loopback", () => expect(relayRequestAllowed(ok)).toBe(true));
   it("refuses other machines, web pages and proxied requests", () => {
+    // Any other extension origin is refused now; only the store copy may connect.
+    expect(relayRequestAllowed({ ...ok, origin: "chrome-extension://abc" })).toBe(false);
     expect(relayRequestAllowed({ ...ok, remoteAddress: "192.168.1.5" })).toBe(false);
     expect(relayRequestAllowed({ ...ok, origin: "https://evil.example" })).toBe(false);
     expect(relayRequestAllowed({ ...ok, origin: undefined })).toBe(false);
