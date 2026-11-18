@@ -5530,6 +5530,7 @@ export const zh: PhraseCatalog = {
   "Anyone with this code can pair a browser with this computer.":
     "任何拥有此代码的人都能将浏览器与这台电脑配对。",
   "Chrome profile": "Chrome 配置文件",
+  "Pick a profile above first.": "请先在上方选择一个配置文件。",
   "Opens the store page in {profile}.": "在 {profile} 中打开商店页面。",
   "Opens the store page in Chrome.": "在 Chrome 中打开商店页面。",
   "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":

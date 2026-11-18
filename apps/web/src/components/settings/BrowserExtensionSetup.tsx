@@ -143,6 +143,12 @@ export function BrowserExtensionSteps({
                 <ExternalLinkIcon />
                 {tx("Add to Chrome")}
               </Button>
+            ) : onAddToChrome && list ? (
+              // Several profiles and none picked: no store link that would open in another one.
+              <Button size="sm" variant="outline" disabled data-chrome-add-waits-for-pick="">
+                <ExternalLinkIcon />
+                {tx("Add to Chrome")}
+              </Button>
             ) : (
               <Button
                 size="sm"
@@ -157,9 +163,11 @@ export function BrowserExtensionSteps({
             <span className="text-muted-foreground">
               {onAddToChrome && picked !== undefined
                 ? tx("Opens the store page in {profile}.", { profile: picked.name })
-                : onAddToChrome && !list && profiles?.length === 1
-                  ? tx("Opens the store page in Chrome.")
-                  : why.lastUsed}
+                : onAddToChrome && list
+                  ? tx("Pick a profile above first.")
+                  : onAddToChrome && !list && profiles?.length === 1
+                    ? tx("Opens the store page in Chrome.")
+                    : why.lastUsed}
             </span>
           </div>
         </li>

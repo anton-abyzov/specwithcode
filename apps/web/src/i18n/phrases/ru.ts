@@ -5762,6 +5762,7 @@ export const ru: PhraseCatalog = {
   "Anyone with this code can pair a browser with this computer.":
     "Любой, у кого есть этот код, может связать браузер с этим компьютером.",
   "Chrome profile": "Профиль Chrome",
+  "Pick a profile above first.": "Сначала выберите профиль выше.",
   "Opens the store page in {profile}.": "Открывает страницу магазина в профиле {profile}.",
   "Opens the store page in Chrome.": "Открывает страницу магазина в Chrome.",
   "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":

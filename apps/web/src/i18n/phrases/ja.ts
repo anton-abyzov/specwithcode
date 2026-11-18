@@ -5772,6 +5772,7 @@ export const ja: PhraseCatalog = {
   "Anyone with this code can pair a browser with this computer.":
     "このコードを持つ人は誰でも、ブラウザをこのコンピュータとペアリングできます。",
   "Chrome profile": "Chrome プロファイル",
+  "Pick a profile above first.": "先に上でプロファイルを選んでください。",
   "Opens the store page in {profile}.": "{profile} でストアのページを開きます。",
   "Opens the store page in Chrome.": "Chrome でストアのページを開きます。",
   "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":

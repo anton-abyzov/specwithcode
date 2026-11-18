@@ -5699,6 +5699,7 @@ export const ko: PhraseCatalog = {
   "Anyone with this code can pair a browser with this computer.":
     "이 코드가 있으면 누구나 브라우저를 이 컴퓨터와 페어링할 수 있습니다.",
   "Chrome profile": "Chrome 프로필",
+  "Pick a profile above first.": "먼저 위에서 프로필을 선택하세요.",
   "Opens the store page in {profile}.": "{profile}에서 스토어 페이지를 엽니다.",
   "Opens the store page in Chrome.": "Chrome에서 스토어 페이지를 엽니다.",
   "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":

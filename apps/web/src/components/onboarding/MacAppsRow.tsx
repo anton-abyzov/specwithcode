@@ -84,8 +84,10 @@ export function MacAppsRowView({
       <AccessRowAction onClick={onRetry}>{tx("Retry")}</AccessRowAction>
     ) : (
       <>
-        {/* The closed row says its state in words, not only through its button. */}
-        {state.kind === "not-allowed" ? <AccessRowChip>{tx("Not allowed")}</AccessRowChip> : null}
+        {/* The closed row says its state in words; open, the checklist says it. */}
+        {state.kind === "not-allowed" && !open ? (
+          <AccessRowChip>{tx("Not allowed")}</AccessRowChip>
+        ) : null}
         <AccessRowAction
           expands={{ row: "mac-apps", open }}
           onClick={() => onOpenChange(!open)}

@@ -459,6 +459,17 @@ describe("ChromeAccessRow", () => {
     expect(state.profiles).not.toHaveBeenCalled();
     await act(() => button("Set up").props.onClick());
     expect(state.profiles).toHaveBeenCalledTimes(1);
+    // None starts picked, and Add to Chrome waits for a pick, with no store link to fall back on.
+    const radios = renderer.root.findAll(
+      (node) => node.type === "button" && node.props.role === "radio",
+    );
+    expect(radios.map((radio) => radio.props["aria-checked"])).toEqual([false, false]);
+    const waiting = renderer.root.find(
+      (node) => node.props["data-chrome-add-waits-for-pick"] === "" && !node.props.render,
+    );
+    expect(waiting.props.disabled).toBe(true);
+    expect(text()).toContain("Pick a profile above first.");
+    expect(renderer.root.findAll((node) => node.type === "a" && node.props.href)).toEqual([]);
     await act(() =>
       renderer.root
         .find((node) => node.props["data-chrome-profile"] === "Profile 1" && node.type === "button")

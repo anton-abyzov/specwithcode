@@ -150,10 +150,12 @@ export function ChromeAccessRowView({
   const actions: ReactNode =
     state.kind === "not-set-up" || state.kind === "waiting" ? (
       <>
-        {/* The closed row says its state in words, not only through its button. */}
-        <AccessRowChip>
-          {state.kind === "waiting" ? tx("Waiting for Chrome…") : tx("Not set up")}
-        </AccessRowChip>
+        {/* The closed row says its state in words; open, the steps say it. */}
+        {open ? null : (
+          <AccessRowChip>
+            {state.kind === "waiting" ? tx("Waiting for Chrome…") : tx("Not set up")}
+          </AccessRowChip>
+        )}
         {toggle(tx("Set up"))}
       </>
     ) : state.kind === "approval" && canAnswer ? (
@@ -288,7 +290,9 @@ export function ChromeAccessRow({
     listed.current = true;
     void readChromeProfiles().then((found) => {
       setProfiles(found);
-      setChosen((current) => current ?? found?.[0]?.directory ?? null);
+      // With several, none starts picked: the person picks where the accounts are (D-15).
+      // With one there is no list, so that one is the profile.
+      setChosen((current) => current ?? (found?.length === 1 ? found[0]!.directory : null));
     });
   }, [open]);
   const storeUrl = status?.storeUrl ?? BROWSER_EXTENSION_STORE_URL;

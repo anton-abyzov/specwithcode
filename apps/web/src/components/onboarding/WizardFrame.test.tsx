@@ -175,6 +175,9 @@ it("says in the footer why its actions are off", async () => {
     "Setup can be closed once the import finishes.",
   );
   expect(buttons().every((b) => b.disabled)).toBe(true);
+  // A busy primary does not take Enter either, so it shows no Enter hint.
+  expect(button("Importing…")!.querySelector("kbd")).toBeNull();
+  expect(button("Importing…")!.hasAttribute("aria-keyshortcuts")).toBe(false);
 });
 
 function Frame({ onPrimary, disabled = false }: { onPrimary: () => void; disabled?: boolean }) {

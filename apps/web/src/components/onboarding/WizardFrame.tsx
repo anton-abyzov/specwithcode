@@ -279,8 +279,8 @@ export function WizardStepFooter({
             ref={primaryRef}
             data-wizard-primary=""
             {...(primary.neutral ? WIZARD_NEUTRAL : {})}
-            // A disabled primary does not take Enter, so it shows no Enter hint either.
-            aria-keyshortcuts={primary.disabled ? undefined : "Enter"}
+            // A primary that is off (disabled or busy) does not take Enter, so it shows no Enter hint.
+            aria-keyshortcuts={primary.disabled || primary.busy ? undefined : "Enter"}
             // Not before the footer is in its slot: focus inside the panel would scroll the step.
             autoFocus={slot !== null && (primary.autoFocus ?? true)}
             variant={primary.variant ?? "default"}
@@ -289,7 +289,7 @@ export function WizardStepFooter({
           >
             {primary.label}
             {/* A hint for the eye, drawn by CSS: the button's name and text stay its label. */}
-            {primary.disabled ? null : (
+            {primary.disabled || primary.busy ? null : (
               <kbd
                 aria-hidden
                 data-slot="kbd"

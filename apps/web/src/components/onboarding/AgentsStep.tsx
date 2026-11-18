@@ -52,7 +52,6 @@ import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.log
 import { OpenAI } from "../Icons";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { ScrollArea } from "../ui/scroll-area";
 import { useT, useTx } from "../../i18n";
 import { AgentCommand, AgentRow, AgentRowStatus } from "./AgentRow";
 import { FoundAgentRow, GitRow, InstallAgentRow, ProviderAgentRow } from "./AgentRows";
@@ -146,19 +145,19 @@ export function AgentsStep({
   useEffect(() => onReadyChange?.(ready), [ready, onReadyChange]);
   return (
     <StepShell title={t("wizard.agents.title")} description={t("wizard.agents.description")}>
-      <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
-        <div className="space-y-5 pr-3">
-          {machines.map(({ environmentId, label }) => (
-            <ConnectedAgentsStep
-              key={environmentId}
-              environmentId={environmentId}
-              machineLabel={label}
-              onInstalling={onInstalling}
-              onSigningIn={onSigningIn}
-            />
-          ))}
-        </div>
-      </ScrollArea>
+      {/* No scroll region of its own: the wizard panel is the one thing that scrolls,
+          so the Models block is never cut by an inner fold. */}
+      <div className="mt-5 space-y-5">
+        {machines.map(({ environmentId, label }) => (
+          <ConnectedAgentsStep
+            key={environmentId}
+            environmentId={environmentId}
+            machineLabel={label}
+            onInstalling={onInstalling}
+            onSigningIn={onSigningIn}
+          />
+        ))}
+      </div>
       <WizardStepFooter
         back={onBack ? { onClick: onBack, disabled: busy } : undefined}
         // In the footer, so the gate's own line is in view without scrolling past the agents.
