@@ -144,7 +144,7 @@ export function FullDiskAccessExplanation({
       {host ? (
         <p>
           {host.kind === "app"
-            ? tx("In System Settings › Privacy & Security › Full Disk Access, turn on SpecWithCode.")
+            ? `${tx("In System Settings › Privacy & Security › Full Disk Access, turn on")} ${host.name}.`
             : `${tx("Agents here run under a background service, so macOS asks about it, not the app. In System Settings › Privacy & Security › Full Disk Access, add")} ${host.path}.`}
         </p>
       ) : null}

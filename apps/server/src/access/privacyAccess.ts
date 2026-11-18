@@ -133,7 +133,13 @@ export interface PrivacyAccessOptions {
 
 // The service's ancestry never changes while it runs; walk it once, not every recheck.
 let cachedAncestors: ReadonlyArray<string> | null = null;
-const serviceAncestors = () => (cachedAncestors ??= readAncestorExecutables());
+const serviceAncestors = () => {
+  if (cachedAncestors !== null) return cachedAncestors;
+  const found = readAncestorExecutables();
+  // A walk that found nothing may have failed; ask again next time.
+  if (found.length > 0) cachedAncestors = found;
+  return found;
+};
 
 export async function checkPrivacyAccess(options: PrivacyAccessOptions = {}): Promise<PrivacyAccess> {
   const platform = options.platform ?? process.platform;

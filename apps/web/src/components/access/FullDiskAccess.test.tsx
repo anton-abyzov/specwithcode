@@ -133,6 +133,16 @@ it("says running threads need a restart when only new runs have it", async () =>
   expect(container.textContent).toContain("allowed, restart running threads");
 });
 
+it("names the app macOS asks about when another app started the service", async () => {
+  state.access = access({
+    agentHost: { kind: "app", path: "/System/Applications/Utilities/Terminal.app", name: "Terminal" },
+  });
+  await render(<FullDiskAccessRow environmentId={"env-local" as never} environmentLabel="M5" />);
+  const what = [...container.querySelectorAll("button")].find((b) => b.textContent === "What this allows");
+  if (what) await act(async () => what.click());
+  expect(container.textContent).toContain("Full Disk Access, turn on Terminal.");
+});
+
 it("renders nothing off macOS", async () => {
   state.access = access({ fullDiskAccess: "not-applicable", agentHost: null });
   await render(<FullDiskAccessRow environmentId={"env-local" as never} environmentLabel="L" />);
