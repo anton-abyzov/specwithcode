@@ -100,6 +100,9 @@ public struct MachineSummary: Identifiable, Hashable, Sendable {
   public var teamRulesRefusal: String? = nil
   /// The code this machine waits for before this phone may use it (1327).
   public var deviceApprovalCode: String? = nil
+  /// False while the code above is only remembered: the last attempt did not
+  /// reach the machine, so typing it there may not work yet (1408).
+  public var approvalReachable: Bool = true
 
   public init(id: String, label: String, displayName: String? = nil, status: MachineStatus, platform: String? = nil, serverVersion: String? = nil, address: String? = nil, tokenDaysLeft: Int? = nil, isStale: Bool = false, viaConnect: Bool = false, needsSignIn: Bool = false, checkedAt: Date? = nil, hasDirectPairing: Bool? = nil) {
     self.displayName = displayName ?? MachineNickname.shortName(label)

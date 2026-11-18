@@ -108,6 +108,8 @@ import SWCWire
     #expect(machine.approvalProgress == "Connects on its own once m1 allows it.")
     #expect(machine.approvalComposerLine == "Waiting for m1 to allow this phone. Your draft is kept.")
     #expect(machine.approvalBanner(code: "6X9SF6") == "Waiting for approval. Type 6X9SF6 on m1.")
+    #expect(MachineSummary.approvalOthersHeader == "Also waiting for this phone. Type each code on its own machine.")
+    #expect(machine.approvalUnreachableNote == "m1 isn't reachable right now.")
     for line in [machine.approvalTitle, machine.approvalProgress, machine.approvalComposerLine] {
       #expect(!line.contains("unavailable") && !line.contains("offline"))
     }

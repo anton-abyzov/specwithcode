@@ -168,6 +168,7 @@ final class AttemptGate: Sendable {
       return machine.deviceApprovalCode == "K7QX2M" && machine.status == .offline && !machine.isSettling
     }
     #expect(await until { waiting() })
+    #expect(h.model.machine(env)?.approvalReachable == true)
     var flashed = false
     func record() { if !waiting() { flashed = true } }
 
@@ -202,6 +203,8 @@ final class AttemptGate: Sendable {
     #expect(await until { if case .unreachable? = h.engine.machines[env]?.status.lastError { return true } else { return false } })
     h.engine.publishNow()
     #expect(waiting())
+    // Remembered, not live: the screen says the machine can't be reached now.
+    #expect(h.model.machine(env)?.approvalReachable == false)
 
     // Approved: the next attempt connects and the code goes away.
     h.gate.set(.answer)

@@ -215,6 +215,8 @@ public final class FixtureEngine: AppEngine {
       for i in model.machines.indices {
         model.machines[i].status = .offline
         model.machines[i].deviceApprovalCode = codes[i % codes.count]
+        // The last one shows a code remembered from before it went quiet.
+        model.machines[i].approvalReachable = i != model.machines.count - 1
         unreachable.insert(model.machines[i].id)
       }
       model.thisPhoneName = "iPhone 16 Pro"
