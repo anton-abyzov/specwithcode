@@ -1023,23 +1023,16 @@ export const zh: PhraseCatalog = {
     "使用 feature/，后接问题 ID 和简短描述。",
   Copy: "复制",
   "This device cannot read that machine's settings.": "此设备无法读取那台电脑的设置。",
-  "1. Install the SpecWithCode Browser extension": "1. 安装 SpecWithCode Browser 扩展",
   "Add to Chrome": "添加到 Chrome",
   "(opens the Chrome Web Store)": "（打开 Chrome 应用商店）",
   "Chrome Web Store link": "Chrome 应用商店链接",
   "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.":
     "在 {machine} 的 Chrome 中安装：复制链接并在那里打开，使用智能体应使用的配置文件。",
-  "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.":
-    "在智能体应使用的 Chrome 配置文件中打开链接。Chrome 会自动更新扩展。",
-  "2. Pair it with {machine}": "2. 与 {machine} 配对",
   "This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.":
     "此代码只在 {machine} 的 Chrome 中有效，在 {thisComputer} 的 Chrome 中无效。",
-  "Show pairing code": "显示配对码",
   "Pairing code": "配对码",
   "pairing code": "配对码",
   "Reset code": "重置代码",
-  "The code lets a Chrome profile act for agents on {machine}. Keep it private.":
-    "此代码让 Chrome 配置文件可以代表 {machine} 上的智能体操作。请妥善保密。",
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "你当前在 {b} 上。这里设置的是另一台电脑 {b2} 上的 Chrome；它的配对码在这里的 Chrome 中无效。",
   "Set up Chrome on {thisComputer}": "在 {thisComputer} 上设置 Chrome",
@@ -2971,6 +2964,10 @@ export const zh: PhraseCatalog = {
   "Supplied patch": "提供的补丁",
   "Previous file path": "原文件路径",
   "Show the question and its options": "显示问题及其选项",
+  "Question:": "问题：",
+  "Can't steer now": "暂时无法引导",
+  "Show the full description": "显示完整说明",
+  "Hide the full description": "隐藏完整说明",
   "Hide the question and its options": "隐藏问题及其选项",
   "+{waitingCount} more": "还有 {waitingCount} 个",
   "Dismiss question without answering": "不回答并关闭问题",
@@ -3505,10 +3502,6 @@ export const zh: PhraseCatalog = {
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
     "你自己的规则，会随协调者和 worker 的每个请求发送，适用于每个提供方、每个所选环境中的每个项目。默认为空。",
   "Effective instructions for {label}": "{label} 的生效指令",
-  "Click the SpecWithCode icon in Chrome's toolbar.": "点击 Chrome 工具栏中的 SpecWithCode 图标。",
-  "Paste the pairing code.": "粘贴配对码。",
-  "Name the profile, for example Work or Marketing.": "为配置文件命名，例如“工作”或“营销”。",
-  "Click Pair.": "点击“配对”。",
   "Ask Google for {service}": "向 Google 请求：{service}",
   "Edit shortcut for {command}: {shortcut}": "编辑 {command} 的快捷键：{shortcut}",
   "Edit when clause for {command}": "编辑 {command} 的条件",
@@ -5407,4 +5400,5 @@ export const zh: PhraseCatalog = {
     "{machine} 正在运行，但登录前此窗口无法访问它。",
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} 正在运行，但登录前此窗口无法访问它们。",
+  "Sign in to reach this machine": "登录以访问此电脑",
 };

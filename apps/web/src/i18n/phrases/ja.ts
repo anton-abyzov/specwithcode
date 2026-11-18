@@ -1057,23 +1057,16 @@ export const ja: PhraseCatalog = {
   Copy: "コピー",
   "This device cannot read that machine's settings.":
     "このデバイスからは、そのマシンの設定を読み取れません。",
-  "1. Install the SpecWithCode Browser extension": "1. SpecWithCode Browser 拡張機能をインストール",
   "Add to Chrome": "Chrome に追加",
   "(opens the Chrome Web Store)": "（Chrome ウェブストアを開きます）",
   "Chrome Web Store link": "Chrome ウェブストアのリンク",
   "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.":
     "{machine} の Chrome にインストールしてください。リンクをコピーして、エージェントが使うプロファイルで開きます。",
-  "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.":
-    "エージェントが使う Chrome プロファイルでリンクを開いてください。拡張機能は Chrome が自動で更新します。",
-  "2. Pair it with {machine}": "2. {machine} とペアリング",
   "This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.":
     "このコードは {machine} の Chrome でのみ有効で、{thisComputer} の Chrome では使えません。",
-  "Show pairing code": "ペアリングコードを表示",
   "Pairing code": "ペアリングコード",
   "pairing code": "ペアリングコード",
   "Reset code": "コードをリセット",
-  "The code lets a Chrome profile act for agents on {machine}. Keep it private.":
-    "このコードにより、Chrome プロファイルが {machine} のエージェントの代わりに操作できるようになります。他人に教えないでください。",
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "現在 {b} にいます。ここでは別のコンピューター {b2} の Chrome を設定します。そのペアリングコードはこの Chrome では使えません。",
   "Set up Chrome on {thisComputer}": "{thisComputer} の Chrome を設定",
@@ -3078,6 +3071,10 @@ export const ja: PhraseCatalog = {
   "Supplied patch": "提供されたパッチ",
   "Previous file path": "以前のファイルパス",
   "Show the question and its options": "質問と選択肢を表示",
+  "Question:": "質問:",
+  "Can't steer now": "今は誘導できません",
+  "Show the full description": "説明をすべて表示",
+  "Hide the full description": "説明を隠す",
   "Hide the question and its options": "質問と選択肢を隠す",
   "+{waitingCount} more": "ほか {waitingCount} 件",
   "Dismiss question without answering": "回答せずに質問を閉じる",
@@ -3629,12 +3626,6 @@ export const ja: PhraseCatalog = {
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
     "あなた自身のルール。コーディネーターとワーカーのすべてのリクエストに付けて、すべてのプロバイダー、選択した各環境のすべてのプロジェクトで送信されます。既定では空です。",
   "Effective instructions for {label}": "{label} の有効な指示",
-  "Click the SpecWithCode icon in Chrome's toolbar.":
-    "Chrome のツールバーにある SpecWithCode アイコンをクリックします。",
-  "Paste the pairing code.": "ペアリングコードを貼り付けます。",
-  "Name the profile, for example Work or Marketing.":
-    "プロファイルに名前を付けます（例: 仕事、マーケティング）。",
-  "Click Pair.": "「ペアリング」をクリックします。",
   "Ask Google for {service}": "Google に依頼: {service}",
   "Edit shortcut for {command}: {shortcut}": "{command} のショートカットを編集: {shortcut}",
   "Edit when clause for {command}": "{command} の条件を編集",
@@ -5644,4 +5635,5 @@ export const ja: PhraseCatalog = {
     "{machine} は動作中ですが、サインインするまでこのウィンドウから接続できません。",
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} は動作中ですが、サインインするまでこのウィンドウから接続できません。",
+  "Sign in to reach this machine": "サインインしてこのマシンに接続",
 };

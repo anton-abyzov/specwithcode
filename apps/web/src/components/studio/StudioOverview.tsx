@@ -19,7 +19,7 @@ import { assistantGroupsOf, assistantMembersOf, sortAssistantGroups } from "./as
 import { isExtraAssistant } from "../../studio/personalAssistant";
 import { useMachineIdentities } from "../../studio/machineIdentity";
 import { machineActivity, overviewMachineState } from "../../studio/overviewMachines";
-import { hostReachOr, useHostReachStates } from "../../studio/unreachableHosts";
+import { hostReachOr, useHostDownNotes, useHostReachStates } from "../../studio/unreachableHosts";
 import { machineVersionState } from "../settings/machineNextStep.logic";
 import { newestPlainRelease, resolveServerConfigVersionMismatch } from "../../versionSkew";
 import {
@@ -426,6 +426,7 @@ export function StudioOverview() {
   );
   const registry = useContext(RegistryContext);
   const reachStates = useHostReachStates();
+  const hostNotes = useHostDownNotes();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, {
     reportFailure: false,
   });
@@ -454,6 +455,7 @@ export function StudioOverview() {
         config !== null ||
         projects.some((project) => project.environmentId === environmentId),
       stale: staleMachines.includes(environment),
+      note: hostNotes.get(environmentId) ?? null,
     });
     return {
       ...machineOf(environmentId),

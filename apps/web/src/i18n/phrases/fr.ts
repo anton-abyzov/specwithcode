@@ -1062,23 +1062,16 @@ export const fr: PhraseCatalog = {
   Copy: "Copier",
   "This device cannot read that machine's settings.":
     "Cet appareil ne peut pas lire les paramètres de cette machine.",
-  "1. Install the SpecWithCode Browser extension": "1. Installer l'extension SpecWithCode Browser",
   "Add to Chrome": "Ajouter à Chrome",
   "(opens the Chrome Web Store)": "(ouvre le Chrome Web Store)",
   "Chrome Web Store link": "Lien vers le Chrome Web Store",
   "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.":
     "Installez-la dans Chrome sur {machine} : copiez le lien et ouvrez-le là-bas, dans le profil que les agents doivent utiliser.",
-  "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.":
-    "Ouvrez le lien dans le profil Chrome que les agents doivent utiliser. Chrome maintient l'extension à jour.",
-  "2. Pair it with {machine}": "2. L'associer à {machine}",
   "This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.":
     "Ce code ne fonctionne que dans Chrome sur {machine}, pas dans Chrome sur {thisComputer}.",
-  "Show pairing code": "Afficher le code d'association",
   "Pairing code": "Code d'association",
   "pairing code": "code d'association",
   "Reset code": "Réinitialiser le code",
-  "The code lets a Chrome profile act for agents on {machine}. Keep it private.":
-    "Le code permet à un profil Chrome d'agir pour les agents sur {machine}. Gardez-le privé.",
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "Vous êtes sur {b}. Ceci configure Chrome sur {b2}, un autre ordinateur ; son code d'association ne fonctionne pas dans le Chrome d'ici.",
   "Set up Chrome on {thisComputer}": "Configurer Chrome sur {thisComputer}",
@@ -3103,6 +3096,10 @@ export const fr: PhraseCatalog = {
   "Supplied patch": "Patch fourni",
   "Previous file path": "Ancien chemin du fichier",
   "Show the question and its options": "Afficher la question et ses options",
+  "Question:": "Question :",
+  "Can't steer now": "Impossible d'orienter maintenant",
+  "Show the full description": "Afficher la description complète",
+  "Hide the full description": "Masquer la description complète",
   "Hide the question and its options": "Masquer la question et ses options",
   "+{waitingCount} more": "+{waitingCount} de plus",
   "Dismiss question without answering": "Fermer la question sans répondre",
@@ -3657,12 +3654,6 @@ export const fr: PhraseCatalog = {
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
     "Vos propres règles, envoyées avec chaque requête du coordinateur et des workers, chez chaque fournisseur, dans chaque projet de chaque environnement sélectionné. Vide par défaut.",
   "Effective instructions for {label}": "Instructions effectives pour {label}",
-  "Click the SpecWithCode icon in Chrome's toolbar.":
-    "Cliquez sur l’icône SpecWithCode dans la barre d’outils de Chrome.",
-  "Paste the pairing code.": "Collez le code d’appairage.",
-  "Name the profile, for example Work or Marketing.":
-    "Nommez le profil, par exemple Travail ou Marketing.",
-  "Click Pair.": "Cliquez sur Appairer.",
   "Ask Google for {service}": "Demander à Google : {service}",
   "Edit shortcut for {command}: {shortcut}": "Modifier le raccourci de {command} : {shortcut}",
   "Edit when clause for {command}": "Modifier la condition de {command}",
@@ -5688,4 +5679,5 @@ export const fr: PhraseCatalog = {
     "{machine} fonctionne, mais cette fenêtre ne peut pas y accéder tant que vous n'êtes pas connecté.",
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} fonctionnent, mais cette fenêtre ne peut pas y accéder tant que vous n'êtes pas connecté.",
+  "Sign in to reach this machine": "Connectez-vous pour accéder à cet ordinateur",
 };

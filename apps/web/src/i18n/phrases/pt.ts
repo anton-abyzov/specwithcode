@@ -1062,23 +1062,16 @@ export const pt: PhraseCatalog = {
   Copy: "Copiar",
   "This device cannot read that machine's settings.":
     "Este dispositivo não pode ler as configurações daquela máquina.",
-  "1. Install the SpecWithCode Browser extension": "1. Instale a extensão SpecWithCode Browser",
   "Add to Chrome": "Adicionar ao Chrome",
   "(opens the Chrome Web Store)": "(abre a Chrome Web Store)",
   "Chrome Web Store link": "Link da Chrome Web Store",
   "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.":
     "Instale no Chrome em {machine}: copie o link e abra lá, no perfil que os agentes devem usar.",
-  "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.":
-    "Abra o link no perfil do Chrome que os agentes devem usar. O Chrome mantém a extensão atualizada.",
-  "2. Pair it with {machine}": "2. Pareie com {machine}",
   "This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.":
     "Este código só funciona no Chrome em {machine}, não no Chrome em {thisComputer}.",
-  "Show pairing code": "Mostrar código de pareamento",
   "Pairing code": "Código de pareamento",
   "pairing code": "código de pareamento",
   "Reset code": "Redefinir código",
-  "The code lets a Chrome profile act for agents on {machine}. Keep it private.":
-    "O código permite que um perfil do Chrome aja pelos agentes em {machine}. Mantenha-o privado.",
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "Você está em {b}. Isto configura o Chrome em {b2}, outro computador; o código de pareamento dele não funciona no Chrome daqui.",
   "Set up Chrome on {thisComputer}": "Configurar o Chrome em {thisComputer}",
@@ -3084,6 +3077,10 @@ export const pt: PhraseCatalog = {
   "Supplied patch": "Patch fornecido",
   "Previous file path": "Caminho anterior do arquivo",
   "Show the question and its options": "Mostrar a pergunta e as opções",
+  "Question:": "Pergunta:",
+  "Can't steer now": "Não dá para direcionar agora",
+  "Show the full description": "Mostrar a descrição completa",
+  "Hide the full description": "Ocultar a descrição completa",
   "Hide the question and its options": "Ocultar a pergunta e as opções",
   "+{waitingCount} more": "+{waitingCount} mais",
   "Dismiss question without answering": "Dispensar a pergunta sem responder",
@@ -3636,12 +3633,6 @@ export const pt: PhraseCatalog = {
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
     "Suas próprias regras, enviadas com cada solicitação do coordenador e dos workers, em todos os provedores, em todos os projetos de cada ambiente selecionado. Vazio por padrão.",
   "Effective instructions for {label}": "Instruções efetivas para {label}",
-  "Click the SpecWithCode icon in Chrome's toolbar.":
-    "Clique no ícone do SpecWithCode na barra de ferramentas do Chrome.",
-  "Paste the pairing code.": "Cole o código de pareamento.",
-  "Name the profile, for example Work or Marketing.":
-    "Dê um nome ao perfil, por exemplo Trabalho ou Marketing.",
-  "Click Pair.": "Clique em Parear.",
   "Ask Google for {service}": "Pedir ao Google: {service}",
   "Edit shortcut for {command}: {shortcut}": "Editar atalho de {command}: {shortcut}",
   "Edit when clause for {command}": "Editar condição de {command}",
@@ -5641,4 +5632,5 @@ export const pt: PhraseCatalog = {
     "{machine} está ligado, mas esta janela não consegue acessá-lo até você entrar.",
   "{machines} are running, but this window can't reach them until you sign in.":
     "{machines} estão ligados, mas esta janela não consegue acessá-los até você entrar.",
+  "Sign in to reach this machine": "Entre para acessar este computador",
 };

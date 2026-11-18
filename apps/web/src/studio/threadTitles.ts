@@ -29,7 +29,12 @@ export function canRenameChat(thread: TitleOwnerFields, canOperate: boolean): bo
 export function threadRenameBlockedReason(input: {
   readonly canOperate: boolean;
   readonly connection:
-    | { readonly phase: string; readonly blockedReason?: string | undefined }
+    | {
+        readonly phase: string;
+        readonly blockedReason?: string | undefined;
+        /** Refused because this window has no SpecWithCode Connect sign-in (1417). */
+        readonly connectSignInRequired?: boolean | undefined;
+      }
     | null
     | undefined;
   readonly environmentId: string;
@@ -38,6 +43,9 @@ export function threadRenameBlockedReason(input: {
   const { canOperate, connection, environmentId, machineLabel } = input;
   // A label can fall back to the ID, which stays out of sight.
   const label = machineLabel && machineLabel !== environmentId ? machineLabel : null;
+  if (connection?.connectSignInRequired === true) {
+    return `This window is signed out of SpecWithCode Connect. Sign in to reach ${label ?? "that machine"} and rename this thread.`;
+  }
   if (connection?.blockedReason === "authentication") {
     return `This browser is signed out of ${label ?? "that machine"}. Sign in to it again to rename this thread.`;
   }

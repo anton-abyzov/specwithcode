@@ -32,14 +32,22 @@ const SETUP_LABELS = [
   "Continue without an agent",
 ];
 /** Pieces of the old regex forms of those labels. */
-const SETUP_FRAGMENTS = ["without an account", "import projects", "Keep (Supervised", "without an agent"];
+const SETUP_FRAGMENTS = [
+  "without an account",
+  "import projects",
+  "Keep (Supervised",
+  "without an agent",
+];
 
 /**
  * A page whose setup is a list of steps. Each step: `{ id, neutral, waits, moves }`:
  * `neutral` enabled neutral controls once `waits` reads have passed, `moves`
  * false for a step that stays open after its press.
  */
-function fakePage(steps, { readyAfter = null, buttons = ["Back", "Install"], clickFails = 0 } = {}) {
+function fakePage(
+  steps,
+  { readyAfter = null, buttons = ["Back", "Install"], clickFails = 0, readErrors = [] } = {},
+) {
   const state = { index: 0, reads: 0, presses: [], selectors: [], clickFails };
   const current = () => steps[state.index];
   return {
@@ -47,6 +55,8 @@ function fakePage(steps, { readyAfter = null, buttons = ["Back", "Install"], cli
     page: {
       evaluate: async () => {
         state.reads++;
+        const error = readErrors.shift();
+        if (error) throw new Error(error);
         const step = current();
         if (!step) return { step: null, neutral: 0, buttons: [] };
         const waiting = (step.waits ?? 0) > 0;
@@ -97,6 +107,37 @@ test("fails when neither setup nor the ready app shows", async () => {
   await assert.rejects(walkFirstRun(page, { ...quick, until }), /neither setup nor the ready app/);
 });
 
+test("a read cut off by a navigation is read again", async () => {
+  const { page, state } = fakePage([{ id: "connection" }, { id: "agents" }], {
+    readErrors: [
+      "page.evaluate: Execution context was destroyed, most likely because of a navigation",
+      "page.evaluate: Execution context was destroyed, most likely because of a navigation",
+    ],
+  });
+  assert.deepEqual(await walkFirstRun(page, quick), ["connection", "agents"]);
+  assert.deepEqual(state.presses, ["connection", "agents"]);
+});
+
+test("any other read error ends the walk", async () => {
+  const { page } = fakePage([{ id: "connection" }], {
+    readErrors: ["page.evaluate: Target page, context or browser has been closed"],
+  });
+  await assert.rejects(walkFirstRun(page, quick), /has been closed/);
+});
+
+test("a ready check that keeps flipping still ends at the deadline", async () => {
+  const { page } = fakePage([]);
+  let calls = 0;
+  // True, then false on the confirming read, again and again.
+  const until = async () => calls++ % 2 === 0;
+  const started = Date.now();
+  await assert.rejects(
+    walkFirstRun(page, { ...quick, appearTimeoutMs: 30, until }),
+    /neither setup nor the ready app/,
+  );
+  assert.ok(Date.now() - started < 1_000, "the flipping check outlasted the deadline");
+});
+
 test("a step that offers no neutral control fails naming the step and the enabled buttons", async () => {
   const { page } = fakePage([{ id: "connection" }, { id: "agents", waits: 1_000 }]);
   await assert.rejects(walkFirstRun(page, quick), (error) => {
@@ -132,7 +173,10 @@ test("a press that misses because the step moved on reads the step again", async
 test("a press that fails on the same step fails naming the step", async () => {
   const { page } = fakePage([{ id: "access" }], { clickFails: 1 });
   await assert.rejects(walkFirstRun(page, quick), (error) => {
-    assert.match(error.message, /could not press the neutral control of step "access": locator.click/);
+    assert.match(
+      error.message,
+      /could not press the neutral control of step "access": locator.click/,
+    );
     assert.deepEqual(error.firstRunSteps, ["access"]);
     return true;
   });

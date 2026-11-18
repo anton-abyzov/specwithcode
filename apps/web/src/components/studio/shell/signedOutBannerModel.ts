@@ -48,7 +48,10 @@ export function signedOutBanner(
   join: JoinNames = joinNames,
 ): SignedOutBannerContent | null {
   if (!input.signedOut) return null;
-  const cut = input.machines.filter((machine) => machine.needsSignIn && !machine.isThisMachine);
+  // A machine with a live session is never cut off, whatever its mark says.
+  const cut = input.machines.filter(
+    (machine) => machine.needsSignIn && !machine.isThisMachine && !machine.connected,
+  );
   if (cut.length === 0) return null;
   const running = cut.filter((machine) => machine.reachableFromMachine).map(({ name }) => name);
   const unknown = cut.filter((machine) => !machine.reachableFromMachine).map(({ name }) => name);
