@@ -395,7 +395,8 @@
 .studio-policy {
   padding: 12px 0;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  /* The select keeps a field's width; stretched across the card, its list opened 1,000px wide. */
+  grid-template-columns: auto minmax(0, 16rem) 1fr;
   gap: 4px 10px;
   align-items: center;
 }
