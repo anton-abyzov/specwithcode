@@ -5,6 +5,7 @@
 // Usage (from the repository root):
 //   node apps/web/tests/popup-standard/capture-app.mjs /absolute/out-dir \
 //     [--dist apps/server/dist] [--label before|after] [--views name,name] [--sizes 840,2000]
+//     [--list 1]   (print the triggers each view would click, click nothing)
 // Playwright comes from STUDIO_PLAYWRIGHT_MODULE, else apps/server's playwright-core;
 // STUDIO_CHROMIUM_EXECUTABLE picks a browser binary. Writes <out>/<label>/capture.json and
 // shots named <label>/<view>__<trigger>__<width>-<theme>.png. CAPTURE_DUMP=1 logs each
@@ -37,6 +38,8 @@ assert.ok(existsSync(join(dist, "bin.mjs")), `No bin.mjs in ${dist}`);
 assert.ok(positional[0], "Pass an absolute output directory");
 const outRoot = resolve(positional[0]);
 const out = join(outRoot, label);
+// The label folder is this script's own output: a rerun replaces it whole.
+rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 const ONLY_VIEWS = (opts.views ?? "").split(",").filter(Boolean);
 const SIZE_FILTER = (opts.sizes ?? "").split(",").filter(Boolean);
@@ -62,7 +65,7 @@ const PROBE =
   /^(add|new|edit|choose|pick|change|configure|customi[sz]e|rename|manage|filter|sort|search|find|project settings|show where|more)\b/i;
 // Probes that could start work, spawn a login, touch the file system or leave the app.
 const PROBE_UNSAFE =
-  /connect|sign ?in|log ?in|install|open|reveal|launch|run|start|test|retry|refresh|sync|import|export|copy|download|upload|pair|approve|allow|deny|enable|disable|restart|attach|new chat|new thread|new session/i;
+  /connect|sign ?in|log ?in|install|open|reveal|launch|run|start|test|retry|refresh|sync|import|export|copy|download|upload|pair|approve|allow|deny|enable|disable|restart|attach|new chat|new thread|new session|copilot|github|find agents|detect|scan/i;
 const SETTINGS = [
   "general",
   "appearance",
@@ -138,6 +141,14 @@ const child = spawn(
   },
 );
 
+// Interrupted: stop the private server and drop the scratch folder anyway.
+for (const signal of ["SIGINT", "SIGTERM"])
+  process.once(signal, () => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+    rmSync(scratch, { recursive: true, force: true });
+    process.exit(130);
+  });
+
 const slug = (text) =>
   String(text)
     .toLowerCase()
@@ -146,8 +157,9 @@ const slug = (text) =>
     .slice(0, 60) || "unnamed";
 
 // In-page: find visible popup triggers outside open menus, tag them, return their signatures.
-function findTriggers({ unsafeSource, probeSource, probeUnsafeSource, scope }) {
+function findTriggers({ unsafeSource, probeSource, probeUnsafeSource, probeAllowSource, scope }) {
   const unsafe = new RegExp(unsafeSource, "i");
+  const probeAllow = probeAllowSource ? new RegExp(probeAllowSource) : null;
   const probe = new RegExp(probeSource, "i");
   const probeUnsafe = new RegExp(probeUnsafeSource, "i");
   const menuish =
@@ -186,16 +198,21 @@ function findTriggers({ unsafeSource, probeSource, probeUnsafeSource, scope }) {
   document.querySelectorAll("[data-cap-id]").forEach((el) => el.removeAttribute("data-cap-id"));
   const found = [];
   const seen = new Set();
+  // Rows of the same control (a shortcut list): at most two per stem, such as "Edit shortcut".
+  const stems = new Map();
   for (const el of root.querySelectorAll(selector)) {
     if (el.closest(menuish)) continue;
     if (el.closest('[aria-hidden="true"], [inert]')) continue;
     if (el.getAttribute("role") === "tab") continue;
+    // Text fields with role=combobox (search, composer) open on typing, not on a click.
+    if (el.matches("input, textarea, [contenteditable=true]")) continue;
     const rect = el.getBoundingClientRect();
+    // Below the fold counts too: the click scrolls the trigger into view.
     if (rect.width < 2 || rect.height < 2) continue;
-    if (rect.bottom < 0 || rect.top > innerHeight || rect.right < 0 || rect.left > innerWidth)
-      continue;
     const style = getComputedStyle(el);
     if (style.visibility === "hidden" || style.display === "none" || style.pointerEvents === "none")
+      continue;
+    if (el.checkVisibility && !el.checkVisibility({ checkOpacity: true, visibilityProperty: true }))
       continue;
     if (el.disabled || el.getAttribute("aria-disabled") === "true") continue;
     const name = nameOf(el);
@@ -205,15 +222,24 @@ function findTriggers({ unsafeSource, probeSource, probeUnsafeSource, scope }) {
     const marked =
       (haspopup && haspopup !== "false") ||
       /^(menu|popover|select|combobox)-trigger$/.test(dataSlot) ||
-      el.getAttribute("role") === "combobox" ||
-      /(…|\.\.\.)$/.test(name) ||
-      /\bMore\b/.test(name);
-    const isProbe = !marked && probe.test(name) && !probeUnsafe.test(name);
-    if (!marked && !isProbe) continue;
+      el.getAttribute("role") === "combobox";
+    // Matched by name only: the probe safety list applies, as it does to probes.
+    const named = !marked && (/(…|\.\.\.)$/.test(name) || /\bMore\b/.test(name));
+    if (named && probeUnsafe.test(name)) continue;
+    const isProbe =
+      !marked &&
+      !named &&
+      probe.test(name) &&
+      !probeUnsafe.test(name) &&
+      (!probeAllow || probeAllow.test(name));
+    if (!marked && !named && !isProbe) continue;
     const role = el.getAttribute("role") || el.tagName.toLowerCase();
     const sig = `${role}|${name}`;
     if (seen.has(sig)) continue;
     seen.add(sig);
+    const stem = name.split(/ for |:/)[0].trim().toLowerCase();
+    if ((stems.get(stem) ?? 0) >= 2) continue;
+    stems.set(stem, (stems.get(stem) ?? 0) + 1);
     const id = String(found.length);
     el.setAttribute("data-cap-id", id);
     const shell = Boolean(el.closest('[data-sidebar="sidebar"], .sws-sidebar'));
@@ -260,6 +286,13 @@ function newPopup({ popupSelector }) {
   };
 }
 
+// The first line of a Playwright error plus the line that says what blocked the click.
+const whyFailed = (error) => {
+  const lines = String(error?.message ?? error).split("\n");
+  const cause = lines.find((l) => /intercepts pointer|not visible|outside of the viewport|not stable|detached/.test(l));
+  return [lines[0], cause?.trim()].filter(Boolean).join(" / ").slice(0, 300);
+};
+
 const kindOf = (popup) => {
   if (popup.slot) return popup.slot.replace(/-popup$/, "");
   return (
@@ -273,7 +306,28 @@ const capOf = (kind) => (/dialog|alert|sheet|command/.test(kind) ? 512 : 320);
 const results = [];
 const failed = [];
 const probesWithoutPopup = [];
-const skipped = [];
+const skipped = [
+  {
+    view: "thread",
+    combo: "all",
+    reason:
+      "A real thread needs thread.create over the WebSocket RPC with a provider model, and its timeline needs a provider turn; providers are disabled, so draft-thread (/draft/...) stands in.",
+  },
+];
+// One file name per (view, role, trigger); a slug clash (long or same-name labels) gets -2, -3.
+const shotBases = new Map();
+const shotBase = (view, trigger) => {
+  const key = `${view}|${trigger.sig}`;
+  if (!shotBases.has(key)) {
+    const taken = new Set(shotBases.values());
+    let base = `${view}__${slug(trigger.name)}`;
+    for (let n = 2; taken.has(base); n += 1) base = `${view}__${slug(trigger.name)}-${n}`;
+    shotBases.set(key, base);
+  }
+  return shotBases.get(key);
+};
+// Native <select> menus are drawn by the OS, so no screenshot can show them: listed, not opened.
+const nativeSelects = new Map();
 let browser;
 try {
   const credential = await new Promise((done, reject) => {
@@ -404,6 +458,7 @@ try {
     },
     ...[null, "Memory", "Environment", "Usage", "Routines"].map((tab) => ({
       name: tab ? `project-settings-${tab.toLowerCase()}` : "project-settings",
+      family: "project-settings",
       open: settingsTab(tab),
       scope: DIALOG,
       ready: dialogReady,
@@ -420,6 +475,11 @@ try {
     ...[...SETTINGS, ...EXTRA_SETTINGS].map((s) => ({
       name: `settings-${s}`,
       open: (page) => goto(page, `/settings/${s}`),
+      // Featured providers' "Add <name>" and "Manage <name>" install or configure an agent:
+      // on this page only the probes known to open a dialog are clicked.
+      ...(s === "providers"
+        ? { probeAllow: /^(Add provider|Add variable|Add custom model|Add hub)$/ }
+        : {}),
     })),
     { name: "usage", open: (page) => goto(page, "/usage") },
     { name: "pull-requests", open: (page) => goto(page, "/pull-requests") },
@@ -463,9 +523,18 @@ try {
       const shellDone = new Set();
       // Triggers already shot on an earlier view of the same family (the shared project header).
       const familyDone = new Map();
+      // A route that redirects to one already crawled (settings/machines → connections).
+      const crawledPaths = new Map();
       for (const view of VIEWS) {
         const openView = async () => {
           await view.open(page);
+          // Collapsed sections (<details>, as in Settings) hide their controls: open them all.
+          const opened = await page.evaluate(() => {
+            const closed = [...document.querySelectorAll("details:not([open])")];
+            closed.forEach((d) => (d.open = true));
+            return closed.length;
+          });
+          if (opened) await page.waitForTimeout(400);
           await page.evaluate(markPopups, { popupSelector: POPUP });
           return new URL(page.url()).pathname;
         };
@@ -476,11 +545,17 @@ try {
           skipped.push({ view: view.name, combo, reason: String(error.message ?? error).split("\n")[0] });
           continue;
         }
+        if (!view.scope && !view.family && crawledPaths.has(viewPath)) {
+          skipped.push({ view: view.name, combo, reason: `same page as ${crawledPaths.get(viewPath)} (${viewPath})` });
+          continue;
+        }
+        if (!view.scope && !view.family) crawledPaths.set(viewPath, view.name);
         const finder = {
           unsafeSource: UNSAFE.source,
           probeSource: PROBE.source,
           probeUnsafeSource: PROBE_UNSAFE.source,
           scope: view.scope ?? null,
+          probeAllowSource: view.probeAllow?.source ?? null,
         };
         if (process.env.CAPTURE_DUMP)
           console.log(
@@ -500,7 +575,25 @@ try {
         triggers.forEach((t) => family.add(t.sig));
         familyDone.set(view.family ?? view.name, family);
         triggers.filter((t) => t.shell).forEach((t) => shellDone.add(t.sig));
+        for (const name of await page.evaluate((scope) => {
+          const root = scope ? (document.querySelector(scope) ?? document) : document;
+          return [...root.querySelectorAll("select")]
+            .filter((el) => el.getBoundingClientRect().width > 0)
+            .map(
+              (el) =>
+                el.getAttribute("aria-label") ||
+                el.labels?.[0]?.textContent?.replace(/\s+/g, " ").trim() ||
+                el.name ||
+                "unnamed select",
+            );
+        }, view.scope ?? null))
+          nativeSelects.set(`${view.name} | ${name}`, true);
         let shots = 0;
+        // --list: print what would be clicked and click nothing (vets names before a run).
+        if (opts.list !== undefined) {
+          console.log(`${combo} ${view.name}: ${triggers.map((t) => `${t.probe ? "?" : ""}${t.name}`).join(" | ")}`);
+          continue;
+        }
         for (const trigger of triggers) {
           const record = { view: view.name, trigger: trigger.name, width: size.width, theme };
           try {
@@ -533,7 +626,8 @@ try {
                 box.y >= MARGIN &&
                 box.x + box.width <= size.width - MARGIN &&
                 box.y + box.height <= size.height - MARGIN;
-              const shot = join(label, `${view.name}__${slug(trigger.name)}__${combo}.png`);
+              const base = shotBase(view.name, trigger);
+              const shot = join(label, `${base}__${combo}.png`);
               await page.screenshot({ path: join(outRoot, shot), animations: "disabled" });
               shots += 1;
               results.push({
@@ -553,7 +647,7 @@ try {
               });
             }
           } catch (error) {
-            failed.push({ ...record, reason: String(error.message ?? error).split("\n")[0] });
+            failed.push({ ...record, reason: whyFailed(error) });
           }
           // Reset: close what opened, then make sure the view is still the same.
           const closed = await closePopups(page);
@@ -617,6 +711,7 @@ try {
     ],
     widestAt2000: widest,
     failedToOpen: unique(failed),
+    nativeSelects: [...nativeSelects.keys()],
     probesWithoutPopup: unique(probesWithoutPopup),
     skippedViews: [...new Map(skipped.map((s) => [`${s.view}|${s.reason}`, s])).values()],
     failures: failed,
