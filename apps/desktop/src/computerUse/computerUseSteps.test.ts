@@ -436,6 +436,9 @@ describe("iPhone Mirroring", () => {
     // After the guard passes, every later event checks the app is still in front.
     expect(JXA_INPUT_SCRIPT).toContain("guarded !== null && frontBundleId() !== guarded");
     expect(JXA_INPUT_SCRIPT).toContain("left-front");
+    // A stop releases what the replay pressed, and a pointer move alone is not "part sent".
+    expect(JXA_INPUT_SCRIPT).toContain("for (var name in held)");
+    expect(JXA_INPUT_SCRIPT).toContain("if (step.event !== 5) posted++");
     expect(JXA_MIRRORING_SCRIPT).toContain("visibleFrame");
     expect(JXA_INPUT_SCRIPT).toContain("CGEventSourceCreate(1)");
     expect(JXA_MIRRORING_SCRIPT).toContain("runningApplicationsWithBundleIdentifier");

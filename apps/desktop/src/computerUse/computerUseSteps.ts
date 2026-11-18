@@ -428,12 +428,27 @@ function frontBundleId() {
   var id = front.bundleIdentifier;
   return id && typeof id.isNil === "function" && !id.isNil() ? id.js : null;
 }
+// Mouse button down event types and the up that releases each.
+var MOUSE_UPS = { 1: 2, 3: 4, 25: 26 };
 function run(argv) {
   var steps = JSON.parse(argv[0]);
   var hid = null;
   // Once an awaitFront step passes, every later event first checks that its app is still in front.
   var guarded = null;
+  // Events that reach an app (pointer moves do not), and the presses not yet released.
   var posted = 0;
+  var held = {};
+  function stop(bundleId) {
+    // Never leave a button or key down: release what this replay pressed, then stop.
+    for (var name in held) {
+      var press = held[name];
+      var release = press.type === "mouse"
+        ? $.CGEventCreateMouseEvent(null, MOUSE_UPS[press.event], { x: press.x, y: press.y }, press.button)
+        : $.CGEventCreateKeyboardEvent(press.source === "hid" ? hid : null, press.keyCode, false);
+      $.CGEventPost(0, release);
+    }
+    throw new Error((posted === 0 ? "not-frontmost: " : "left-front: ") + bundleId);
+  }
   for (var i = 0; i < steps.length; i++) {
     var step = steps[i];
     var event = null;
@@ -441,16 +456,14 @@ function run(argv) {
     if (step.type === "awaitFront") {
       var waited = 0;
       while (frontBundleId() !== step.bundleId) {
-        if (waited >= step.ms) throw new Error((posted === 0 ? "not-frontmost: " : "left-front: ") + step.bundleId);
+        if (waited >= step.ms) stop(step.bundleId);
         delay(0.05);
         waited += 50;
       }
       guarded = step.bundleId;
       continue;
     }
-    if (guarded !== null && frontBundleId() !== guarded) {
-      throw new Error((posted === 0 ? "not-frontmost: " : "left-front: ") + guarded);
-    }
+    if (guarded !== null && frontBundleId() !== guarded) stop(guarded);
     if (step.type === "mouse") {
       event = $.CGEventCreateMouseEvent(null, step.event, { x: step.x, y: step.y }, step.button);
       if (step.clickState > 0) $.CGEventSetIntegerValueField(event, 1, step.clickState);
@@ -463,7 +476,17 @@ function run(argv) {
     if (event === null) continue;
     if (step.flags !== undefined) $.CGEventSetFlags(event, step.flags);
     $.CGEventPost(0, event);
-    posted++;
+    if (step.type === "mouse") {
+      if (MOUSE_UPS[step.event] !== undefined) held["mouse" + step.button] = step;
+      else if (step.event !== 5) delete held["mouse" + step.button];
+      if (step.event !== 5) posted++;
+    } else {
+      if (step.type === "key") {
+        if (step.down) held["key" + step.keyCode] = step;
+        else delete held["key" + step.keyCode];
+      }
+      posted++;
+    }
   }
   var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   return JSON.stringify({ frontmostApplication: front.isNil() ? null : front.localizedName.js });

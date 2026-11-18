@@ -95,6 +95,21 @@ describe("dry run", () => {
     expect(result.lines).toContain("Clicks landed: 0 of 20");
   });
 
+  it("refuses the Timers page in the Stopwatch slot", async () => {
+    // A horizontal offset lands Stopwatch taps on Timers, which also shows Start.
+    const phone = simulatedPhone({
+      pages: {
+        "World Clock": ["World Clock", "Edit", "Cupertino", "Today, +0HRS"],
+        Stopwatch: ["Timers", "When Timer Ends", "Cancel", "Start"],
+      },
+    });
+    const result = await runCheck(phone.deps);
+    expect(result.pass).toBe(false);
+    expect(result.lines.some((entry) => entry.startsWith("FAIL click 1/20"))).toBe(true);
+    // Every Stopwatch tap fails; only the World Clock taps count.
+    expect(result.lines).toContain("Clicks landed: 10 of 20");
+  });
+
   it("fails a tap whose page shows the other tab's words", async () => {
     const phone = simulatedPhone({
       pages: { "World Clock": ["World Clock", "Edit"], Stopwatch: ["Lap", "World Clock"] },
@@ -198,7 +213,7 @@ describe("judging the screen", () => {
     expect(anchorIn(["world clock"], ["world clock"])).toBe("world clock");
     expect(tabAnchors({ tabs: ["Alarms", "Stopwatch"] })).toEqual({
       Alarms: ["alarms"],
-      Stopwatch: ["lap", "start", "stop", "reset"],
+      Stopwatch: ["lap", "reset"],
     });
   });
 

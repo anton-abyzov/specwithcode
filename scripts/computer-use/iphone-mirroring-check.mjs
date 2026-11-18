@@ -90,7 +90,8 @@ export function pageSignature(lines, window) {
 /** Words that only that tab's page shows, by tab: what proves a tap landed on the named tab. */
 export const DEFAULT_ANCHORS = {
   "World Clock": ["world clock"],
-  Stopwatch: ["lap", "start", "stop", "reset"],
+  // Not "start" or "stop": the Timers page shows those too.
+  Stopwatch: ["lap", "reset"],
 };
 
 /** The anchor words per tab: --anchors, else the defaults, else the tab's own name. */
@@ -384,13 +385,17 @@ export async function runCheck(deps, options = {}) {
       const changed = jaccard(page, result.pageBefore) < 0.5;
       const anchor = anchorOf(target, page);
       const foreign = anchorOf(other, page);
-      const same = refs[target] === undefined ? 1 : jaccard(page, refs[target]);
-      const ok = changed && anchor !== undefined && foreign === undefined && same >= 0.6;
+      const same = refs[target] === undefined ? undefined : jaccard(page, refs[target]);
+      const ok =
+        changed &&
+        anchor !== undefined &&
+        foreign === undefined &&
+        (same === undefined || same >= 0.6);
       if (ok && refs[target] === undefined) refs[target] = page;
       check(
         name,
         ok,
-        `${where}; ${changed ? "page changed" : "page did not change"}, ${anchor === undefined ? "no" : `"${anchor}"`} ${target} word${foreign === undefined ? "" : `, but shows "${foreign}" from ${other}`}, matched ${same.toFixed(2)}`,
+        `${where}; ${changed ? "page changed" : "page did not change"}, ${anchor === undefined ? "no" : `"${anchor}"`} ${target} word${foreign === undefined ? "" : `, but shows "${foreign}" from ${other}`}, ${same === undefined ? "first view of this page" : `matched ${same.toFixed(2)}`}`,
       );
     } catch (error) {
       check(name, false, `failed: ${error.message}`);
