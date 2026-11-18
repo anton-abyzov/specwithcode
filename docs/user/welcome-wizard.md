@@ -3,9 +3,36 @@
 SpecWithCode shows a setup flow when you open a new installation or connect to the
 hosted app for the first time. Existing workspaces skip this flow.
 
-## Connect your computers
+Setup has at most four stages, in this order:
 
-Select one or more computers to set up. If you opened SpecWithCode directly from a
+| Stage                          | Required?                                                                                | What it settles                                                                |
+| ------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| **Sign in** (or **Computers**) | Optional, recommended                                                                    | Your SpecWithCode Connect account, this machine's link and your other machines |
+| **Agents**                     | The one stage that asks for something: one agent ready, or **Continue without an agent** | Installing and signing in to an agent                                          |
+| **Access**                     | Optional                                                                                 | What agents can use: files and commands, your browser, the Mac's apps          |
+| **Projects**                   | Optional                                                                                 | Importing projects and their conversations                                     |
+
+Every other stage is passed with one press that changes nothing: **Use without
+an account**, **Continue**, or **Do not import projects**. Nothing is granted,
+paired or turned on unless you press that row's own button. You can go back to
+an earlier stage from the progress bar or with **Back**.
+
+## Sign in
+
+In the desktop app, setup starts with **Sign in to SpecWithCode Connect**. One
+account links all your machines and your phone. Once you are signed in, this
+machine links by itself, and **Choose your main machine** lists your other
+machines: pick the one that should start work here and press **Allow**. If this
+is your first machine there is nothing to choose, so continue. See
+[Add a machine](./add-a-machine.md) for what a main machine does.
+
+**Use without an account** skips this stage. You can sign in later from the
+account button.
+
+## Computers
+
+When there is no Connect sign-in, for example in the hosted app, the first
+stage is **Computers** instead. Select one or more computers to set up. If you opened SpecWithCode directly from a
 server or the desktop app, that computer is already connected and selected.
 It is identified by its name, which may differ from the device running your
 browser.
@@ -37,7 +64,7 @@ If SpecWithCode cannot read your saved settings, it shows **Could not read setti
 Select **Retry** after storage becomes available. Setup does not replace
 unreadable settings with defaults.
 
-## Check your agents
+## Agents
 
 SpecWithCode checks each selected computer for Claude Code and Codex. If an agent is
 not installed or signed in, select its action to open a terminal with the
@@ -49,7 +76,41 @@ The setup terminal uses the home directory and environment configured for the
 selected provider instance. Sensitive values remain redacted in Settings and
 terminal metadata while the terminal process can use them.
 
-## Import your projects
+**Continue** is the filled button once one agent is ready. With none ready it
+reads **Continue without an agent**: setup goes on, and you can add an agent
+later in Settings > Providers.
+
+## Access
+
+The Access stage, titled **What agents can use**, is a list. Each row says
+what it allows, shows its current state, and has its own button. One row is
+open at a time. **Continue** and Enter change nothing, so you can leave every
+row as it is. The stage appears only when at least one row applies.
+
+- **Files and commands.** Shown when Full access is recommended for a machine
+  you are setting up. **Use Full access** lets agents edit files and run
+  commands without asking each time. **Keep Supervised** (or **Keep current
+  access**) leaves new chats as they are. **What it allows** explains it.
+  Answering stays on this stage; the row then shows your answer with
+  **Change**. With several machines, the row names them. See
+  [Permission modes](./permission-modes.md).
+- **Your browser.** Pairs a Chrome profile so agents can work in your
+  signed-in browser. Press **Set up**, add the extension, press **Copy code**
+  and paste the code in the extension's page. See [Chrome for agents](./chrome.md).
+- **Mac apps.** Screen Recording and Accessibility, which agents need to see
+  the screen and click and type in any app. **Allow** opens the checklist.
+  Screen Recording takes effect after SpecWithCode reopens: press **Quit &
+  Reopen** and setup opens again on Access for the same machines. See
+  [Computer use](./computer-use.md).
+- **Full Disk Access for agents (optional).** Last on a Mac. It explains the
+  macOS switch and opens System Settings. See
+  [Full Disk Access](./full-disk-access.md).
+
+**Your browser** and **Mac apps** act on the computer the desktop app runs on,
+so they appear only in the desktop app. A browser tab, even one on the same
+computer, shows only **Files and commands**.
+
+## Projects
 
 SpecWithCode finds directories that Claude Code or Codex has used. Git repositories
 are listed first, newest activity on top. When the remote is on GitHub, the
@@ -82,5 +143,22 @@ with up to 100,000 input records. Run import again to continue a large batch.
 Completed conversations are not imported again. You can continue without the
 remaining history.
 
-You can continue without configuring agents or importing projects, or return to an earlier step
-using the setup progress bar. Navigation pauses while an import is running.
+**Do not import projects** finishes setup without importing. Navigation pauses
+while an import is running.
+
+## Nothing you skip is lost
+
+Everything setup offers is also somewhere else:
+
+- **Chrome:** Settings > Chrome, and the **Connect Chrome** card a thread shows
+  when an agent needs Chrome and no profile is paired.
+- **Mac permissions:** the computer-use card a thread shows when an agent
+  needs Screen Recording or Accessibility, and Settings > Integrations > Agent
+  computer access.
+- **Full access:** the access picker in the composer, and Settings > General.
+- **Full Disk Access:** Settings > Machines, and the card an agent raises
+  when macOS refuses it a file.
+- **Agents:** Settings > Providers.
+- **Projects:** add or import a project from the sidebar at any time.
+
+Setup does not remind you about anything you skipped.

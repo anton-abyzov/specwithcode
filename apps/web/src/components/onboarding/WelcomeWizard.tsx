@@ -471,7 +471,9 @@ export function WelcomeWizard({
                     primaryEnvironmentId,
                     setupIds.length > 0 ? setupIds : [primaryEnvironmentId],
                     Date.now(),
-                    accessAnswer !== null || resumedFilesIds.length > 0 ? filesMachineIds : [],
+                    accessAnswer !== null || resumedFilesIds.length > 0
+                      ? [...new Set([...filesMachineIds, ...resumedFilesIds])]
+                      : [],
                   )
                 }
               />

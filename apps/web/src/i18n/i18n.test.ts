@@ -263,3 +263,33 @@ describe.each(Object.entries(PHRASE_CATALOGS))("%s sidebar labels", (_locale, ca
     expect(Object.hasOwn(catalog, english)).toBe(true);
   });
 });
+
+// First-run setup and the shared screens it shows: every literal phrase in a
+// `tx(...)` call there must have a translation in every phrase catalog.
+const FIRST_RUN_PHRASE_FILES = [
+  ...NodeFS.readdirSync(NodePath.join(SRC_DIR, "components", "onboarding"))
+    .filter((file) => /\.tsx?$/.test(file) && !file.includes(".test."))
+    .map((file) => NodePath.join("components", "onboarding", file)),
+  NodePath.join("components", "settings", "BrowserExtensionSetup.tsx"),
+  NodePath.join("components", "access", "FullDiskAccess.tsx"),
+];
+const FIRST_RUN_PHRASES = [
+  ...new Set(
+    FIRST_RUN_PHRASE_FILES.flatMap((file) =>
+      [
+        ...NodeFS.readFileSync(NodePath.join(SRC_DIR, file), "utf8").matchAll(
+          /\btx\(\s*("(?:[^"\\]|\\.)*")/g,
+        ),
+      ].map((match) => JSON.parse(match[1]!) as string),
+    ),
+  ),
+];
+
+describe.each(Object.entries(PHRASE_CATALOGS))("%s first-run phrases", (_locale, catalog) => {
+  it("finds the first-run phrases", () => {
+    expect(FIRST_RUN_PHRASES.length).toBeGreaterThan(50);
+  });
+  it("translates every one", () => {
+    expect(FIRST_RUN_PHRASES.filter((english) => !Object.hasOwn(catalog, english))).toEqual([]);
+  });
+});
