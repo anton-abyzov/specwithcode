@@ -38,6 +38,7 @@ it.effect("an agent cannot replace a project's saved models, only ask the user",
     const emptyProjectId = ProjectId.make("new-project");
     const overriddenProjectId = ProjectId.make("settings-project");
     const noModelProjectId = ProjectId.make("no-model-project");
+    const tracksProjectId = ProjectId.make("tracks-project");
     const providerInstanceId = ProviderInstanceId.make("claudeAgent");
     const caller = {
       id: sourceThreadId,
@@ -128,6 +129,7 @@ it.effect("an agent cannot replace a project's saved models, only ask the user",
         projectSettingsOverrides: {
           [overriddenProjectId]: { defaultModelSelection: threadsModel },
           [noModelProjectId]: { defaultModelSelection: null },
+          [tracksProjectId]: { threadModelMode: "tracks" },
         },
       }),
       Layer.mock(ProjectActionRequests.ProjectActionRequests)({
@@ -212,6 +214,10 @@ it.effect("an agent cannot replace a project's saved models, only ask the user",
       );
     }
     yield* update({ projectId: overriddenProjectId, defaultModelSelection: threadsModel });
+    // On Tracks no single model applies, so there is none to set and no card to ask with.
+    const onTracks = yield* update({ projectId: tracksProjectId, defaultModelSelection: opus });
+    expect(JSON.stringify(onTracks)).toContain("start from its model tracks");
+    expect(JSON.stringify(onTracks)).not.toContain("change_model");
     // A first model names each option once: a repeated one would save an unclear choice.
     const repeated = yield* update({
       projectId: emptyProjectId,
@@ -246,7 +252,7 @@ it.effect("an agent cannot replace a project's saved models, only ask the user",
     const titleOnly = yield* toolkit
       .handle("studio_project_create", { title: "Gadgets", defaultModelSelection: opus } as never)
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies), Effect.exit);
-    expect(JSON.stringify(titleOnly)).toContain("studio_project_request action change_model");
+    expect(JSON.stringify(titleOnly)).toContain("workspaceRoot and defaultModelSelection");
     expect(creates).toHaveLength(1);
 
     // The way to change it: the request reaches the approval service with the exact selection.

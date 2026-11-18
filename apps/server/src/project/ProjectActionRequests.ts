@@ -281,8 +281,35 @@ export const make = Effect.gen(function* () {
   const readSettings = Effect.gen(function* () {
     const service = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
     if (Option.isNone(service)) return null;
-    return Option.getOrNull(yield* service.value.getSettings.pipe(Effect.option));
+    // Unreadable settings could hide an override, so nothing is asked or saved on a guess.
+    return yield* service.value.getSettings.pipe(
+      Effect.mapError(() => failure("This machine's settings could not be read. Try again.")),
+    );
   });
+
+  /**
+   * A Project settings override outranks the project's own thread model, and
+   * the project service removes one only when the field itself changes. An
+   * approved model must be the one threads start on, so what is left goes here.
+   */
+  const clearThreadModelOverride = (projectId: ProjectId, name: string) =>
+    Effect.gen(function* () {
+      const service = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+      if (Option.isNone(service)) return;
+      const stuck = failure(
+        `New threads in ${name} still start on its older Project settings override, which could not be removed. Remove it in Settings, scoped to the project.`,
+      );
+      const settings = yield* service.value.getSettings.pipe(Effect.mapError(() => stuck));
+      if (
+        !Object.hasOwn(settings.projectSettingsOverrides[projectId] ?? {}, "defaultModelSelection")
+      )
+        return;
+      yield* service.value
+        .updateSettings({
+          projectSettingsOverrideChanges: { [projectId]: { clear: ["defaultModelSelection"] } },
+        })
+        .pipe(Effect.mapError(() => stuck));
+    });
 
   const countThreads = (projectId: ProjectId) =>
     threads.getShellSnapshot().pipe(
@@ -702,6 +729,7 @@ export const make = Effect.gen(function* () {
                 expectedDefaultModelSelection: project.value.defaultModelSelection,
               },
         );
+        if (role === "threads") yield* clearThreadModelOverride(projectId, name);
         const what =
           role === "coordinator" ? "The coordinator model" : "The model new threads start on";
         return `${what} of ${name} is now ${params.modelText ?? describeModelSelection(selection, [])}.`;

@@ -1081,6 +1081,13 @@ it.effect("a Project settings override is the saved thread model the card and ap
       // The write is refused when the field moved since it was read.
       expectedDefaultModelSelection: opusHigh,
     });
+    // The project's field already said Opus, so the service removes no override for
+    // an unchanged field: the approval removes it, or threads would stay on Fable.
+    const settings = yield* ServerSettings.ServerSettingsService.pipe(
+      Effect.flatMap((service) => service.getSettings),
+    );
+    expect(settings.projectSettingsOverrides[projectId]?.defaultModelSelection).toBeUndefined();
+    expect(lastAnswer(world)).toContain("is now Claude Opus 5.5 on Claude Code");
   }).pipe(
     Effect.provide(
       layerFor(world, {

@@ -47,6 +47,7 @@ import {
   describeModelSelection,
   duplicateOptionIds,
   type ProjectModelRole,
+  projectThreadsUseTracks,
   sameModelSelection,
   savedProjectModel,
 } from "../../../project/projectModelChange.ts";
@@ -1011,7 +1012,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
               message:
-                "A project started from its title takes only a title and starts on this machine's default model. Set scripts afterwards with studio_project_update; to give it another model, ask the user with studio_project_request action change_model.",
+                "A project started from its title takes only a title, and its threads start from this machine's model tracks. Set scripts afterwards with studio_project_update. To start a project on one model, register its folder with workspaceRoot and defaultModelSelection; later the user picks one in project settings.",
             });
           // A title-only project is a new repository for the person; a check brings its own folder.
           if (input.origin === "automated")
@@ -1203,14 +1204,26 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // A Project settings override is the person's saved thread model too, and a
         // write to the project's field would remove it.
         const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+        // Unreadable settings could hide one, so nothing is written on a guess.
         const settings = Option.isNone(settingsService)
           ? null
-          : Option.getOrNull(yield* settingsService.value.getSettings.pipe(Effect.option));
+          : yield* settingsService.value.getSettings.pipe(Effect.mapError(unavailable));
         for (const [role, next] of [
           ["threads", input.defaultModelSelection],
           ["coordinator", coordinatorModel],
         ] as const) {
           if (next === undefined || project === undefined) continue;
+          // On Tracks the track for the task picks the model: a model written to the
+          // project would do nothing now and take over unasked if Tracks were turned off.
+          if (
+            role === "threads" &&
+            projectThreadsUseTracks(project, settings) &&
+            !sameModelSelection(project.defaultModelSelection, next)
+          )
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: `New threads in "${project.title}" start from its model tracks, so no single saved model applies and an agent cannot set one. The user edits the tracks, or picks one model, in project settings. To start a thread on a model, pass modelSelection when you launch it.`,
+            });
           const current = savedProjectModel(project, role, settings);
           if (current.saved && !sameModelSelection(current.model, next)) {
             const what =
