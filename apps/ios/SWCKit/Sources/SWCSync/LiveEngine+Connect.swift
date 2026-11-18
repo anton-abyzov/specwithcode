@@ -41,6 +41,19 @@ public final class ConnectRuntime {
   /// retried; such retries run at most once per `rejectionRetryInterval`.
   var lastRejectionRetry: Date?
   var rejectionRetryTask: Task<Void, Never>?
+  /// When Clerk last kept a session the relay refused, and under which
+  /// sign-in; inside `rejectionRetryInterval` Clerk is not asked again.
+  var lastUnconfirmed: (at: Date, generation: Int)?
+  var rejectionRetryInterval: TimeInterval = 30
+
+  /// Stops refusal handling: a sign-out or sign-in makes pending checks stale.
+  func endRejectionHandling() {
+    signInGeneration += 1
+    rejectionRetryTask?.cancel()
+    rejectionRetryTask = nil
+    lastRejectionRetry = nil
+    lastUnconfirmed = nil
+  }
 
   /// The relay said this phone was removed from the account; cleared by the
   /// next successful sign-in.
@@ -116,7 +129,7 @@ extension LiveEngine {
       updateConnect { $0.lastError = error.localizedDescription }
       throw error
     }
-    connect.signInGeneration += 1
+    connect.endRejectionHandling()
     connect.wasRemoved = false
     connect.wasSignedIn = true
     connect.sessionEndedElsewhere = false
@@ -136,8 +149,7 @@ extension LiveEngine {
     updateConnect { $0.isBusy = true }
     connect.signingOut = true
     defer { connect.signingOut = false }
-    connect.rejectionRetryTask?.cancel()
-    connect.rejectionRetryTask = nil
+    connect.endRejectionHandling()
     connect.wasSignedIn = false
     connect.sessionEndedElsewhere = false
     if unregister {
@@ -250,15 +262,24 @@ extension LiveEngine {
     connect.rejectingSession = true
     defer { connect.rejectingSession = false }
     let generation = connect.signInGeneration
+    // Clerk kept this session moments ago: retry on schedule without asking again.
+    if let last = connect.lastUnconfirmed, last.generation == generation,
+       Date().timeIntervalSince(last.at) < connect.rejectionRetryInterval {
+      await retryRejectedMachines(connect)
+      return
+    }
     let ended = await connect.account.confirmSessionEnded()
     // A sign-in that finished meanwhile is newer than the refusal.
     guard generation == connect.signInGeneration, !connect.signingOut, !connect.handlingRemoval, !connect.wasRemoved else { return }
     guard ended else {
       Self.log.info("Connect refused a session Clerk still holds; staying signed in")
+      connect.lastUnconfirmed = (Date(), generation)
+      updateConnect { $0.lastError = ConnectState.relayRefusedMessage }
       await retryRejectedMachines(connect)
       return
     }
     Self.log.info("Connect session ended; showing signed out")
+    connect.endRejectionHandling()
     connect.wasSignedIn = true
     connect.lastRefresh = Date()
     updateConnect { $0.user = nil; $0.lastError = nil }
@@ -272,19 +293,17 @@ extension LiveEngine {
     await connectSessionEnded()
   }
 
-  static let rejectionRetryInterval: TimeInterval = 30
-
   /// Drops the relay tokens and tries again the computers that stopped on
   /// "signed out", at most once per `rejectionRetryInterval`; a refusal
   /// inside the window waits for its end instead of looping.
   func retryRejectedMachines(_ connect: ConnectRuntime) async {
     if let last = connect.lastRejectionRetry {
-      let wait = Self.rejectionRetryInterval - Date().timeIntervalSince(last)
+      let wait = connect.rejectionRetryInterval - Date().timeIntervalSince(last)
       if wait > 0 {
         guard connect.rejectionRetryTask == nil else { return }
         connect.rejectionRetryTask = Task { [weak self] in
-          try? await Task.sleep(for: .seconds(wait))
-          guard let self, let connect = self.connect else { return }
+          do { try await Task.sleep(for: .seconds(wait)) } catch { return }
+          guard !Task.isCancelled, let self, let connect = self.connect else { return }
           connect.rejectionRetryTask = nil
           await self.retryRejectedMachines(connect)
         }
@@ -312,6 +331,7 @@ extension LiveEngine {
       throw error
     }
     connect.registeredPush = nil
+    connect.endRejectionHandling()
     connect.wasSignedIn = false
     connect.sessionEndedElsewhere = false
     connect.signingOut = true

@@ -81,6 +81,9 @@ public struct ConnectState: Sendable, Hashable {
 
   public var isSignedIn: Bool { user != nil }
 
+  /// Shown while the relay refuses a sign-in Clerk still holds.
+  public static let relayRefusedMessage = "SpecWithCode Connect couldn't check your sign-in. Retrying."
+
   /// The Connect row on a machine's screen. Someone signed in is not told to sign in.
   public var machineRowSubtitle: String {
     guard let user else { return "Primary connection · sign in to reach your computers" }

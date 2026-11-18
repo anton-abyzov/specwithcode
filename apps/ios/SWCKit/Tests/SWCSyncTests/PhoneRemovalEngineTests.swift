@@ -170,6 +170,47 @@ import SWCWire
     #expect(h.relay.requests(path: "/v1/client/removal-status").isEmpty)
   }
 
+  /// A computer refused for a session Clerk keeps is retried on a schedule:
+  /// Clerk is asked once per window, nothing signs out, and the computer
+  /// connects once the relay accepts the session again.
+  @Test func aComputerRefusedForAKeptSessionRetriesWithoutLooping() async throws {
+    let h = try await harness()
+    #expect(await until { h.model.machines.first?.status == .connected })
+    h.engine.connect?.rejectionRetryInterval = 0.3
+    h.rules.refusal = .sessionRejected
+    // The machine token has run out, so the next attempt asks the relay.
+    await h.engine.connect?.authorizer.forget(["env-1"])
+    h.engine.reconnect(machineId: "env-1")
+    #expect(await until { h.model.connect?.lastError == ConnectState.relayRefusedMessage })
+    try await Task.sleep(for: .milliseconds(150))
+    #expect(h.account.confirmCount == 1, "inside the window Clerk is not asked again")
+    #expect(h.account.signOutCount == 0)
+    #expect(h.model.connect?.isSignedIn == true)
+    h.rules.refusal = .none
+    #expect(await until { h.model.machines.first?.status == .connected })
+    #expect(h.model.connect?.lastError == nil)
+    #expect(h.account.signOutCount == 0)
+  }
+
+  /// Signing out while Clerk is being asked about a refusal stays a plain
+  /// sign-out: no "ended elsewhere", no removal check, no retry after it.
+  @Test func signingOutDuringARefusalCheckStaysAPlainSignOut() async throws {
+    let h = try await harness()
+    #expect(await until { h.model.machines.first?.status == .connected })
+    h.rules.refusal = .sessionRejected
+    h.account.serverSessionAlive = false
+    h.account.duringConfirm = { [engine = h.engine, account = h.account] in
+      account.duringConfirm = nil
+      await engine.connectSignOut()
+    }
+    await h.engine.connectRefresh()
+    #expect(h.account.signOutCount == 1)
+    #expect(h.model.connect?.isSignedIn == false)
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(h.relay.requests(path: "/v1/client/removal-status").isEmpty)
+    #expect(h.engine.connect?.rejectionRetryTask == nil)
+  }
+
   /// A refusal raised under the old session cannot end a sign-in that
   /// finished while Clerk was being asked.
   @Test func aStaleRefusalDoesNotEndANewerSignIn() async throws {
