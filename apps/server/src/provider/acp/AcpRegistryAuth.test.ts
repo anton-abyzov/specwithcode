@@ -825,6 +825,115 @@ it.effect("shows existing sign-ins and signs in against the one enterprise gh ho
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+const hostHelp = "  --host <host>  GitHub host\n  --device-code  Use device authorization\n";
+// Exact `copilot --version` output of @github/copilot 1.0.104 (November 18, 2026).
+const copilot104 = "GitHub Copilot CLI 1.0.104.\nRun 'copilot update' to check for updates.\n";
+
+it.effect("signs in with Copilot CLI 1.0.104, whose version line ends with a period", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(copilotMethod, false, copilotSettings, instanceId, {
+      version: copilot104,
+    });
+    yield* h.controller.start("owner");
+    yield* h.phase("waiting");
+    assert.deepEqual(h.terminalSpawn()?.args, ["--no-auto-update", "login", "--device-code"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("signs in to the host picked in the sign-in step over gh's hosts", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(
+      copilotMethod,
+      false,
+      copilotSettings,
+      instanceId,
+      { help: hostHelp, version: copilot104 },
+      false,
+      {
+        existing: {
+          vscodeCopilot: false,
+          ghAccounts: [
+            { host: "github.com", account: "anton-abyzov" },
+            { host: "aaby.ghe.com", account: "anton_aaby" },
+          ],
+        },
+      },
+    );
+    yield* h.controller.start("owner", Effect.void, undefined, undefined, undefined, "acme.ghe.com");
+    yield* h.phase("waiting");
+    assert.deepEqual(h.terminalSpawn()?.args, [
+      "--no-auto-update",
+      "login",
+      "--host",
+      "acme.ghe.com",
+      "--device-code",
+    ]);
+    h.data(devicePrompt("BBBB-2222").replace("github.com", "acme.ghe.com"));
+    const code = yield* h.state(
+      (s) => s.interaction?.type === "terminal" && !!s.interaction.deviceCode,
+    );
+    assert.strictEqual(
+      code.interaction?.type === "terminal" ? code.interaction.deviceCode?.url : null,
+      "https://acme.ghe.com/login/device",
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps github.com on the CLI default when picked, even with one gh enterprise host", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(
+      copilotMethod,
+      false,
+      copilotSettings,
+      instanceId,
+      { help: hostHelp },
+      false,
+      { existing: { vscodeCopilot: false, ghAccounts: [{ host: "aaby.ghe.com", account: "a" }] } },
+    );
+    yield* h.controller.start("owner", Effect.void, undefined, undefined, undefined, "github.com");
+    yield* h.phase("waiting");
+    assert.deepEqual(h.terminalSpawn()?.args, ["--no-auto-update", "login", "--device-code"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("uses COPILOT_GH_HOST from the instance before gh's one enterprise host", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(
+      copilotMethod,
+      false,
+      copilotSettings,
+      instanceId,
+      { help: hostHelp },
+      false,
+      {
+        environment: { COPILOT_GH_HOST: "https://env.ghe.com" },
+        existing: { vscodeCopilot: false, ghAccounts: [{ host: "aaby.ghe.com", account: "a" }] },
+      },
+    );
+    yield* h.controller.start("owner");
+    yield* h.phase("waiting");
+    assert.deepEqual(h.terminalSpawn()?.args, [
+      "--no-auto-update",
+      "login",
+      "--host",
+      "env.ghe.com",
+      "--device-code",
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("refuses an invalid picked host before opening a terminal", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(copilotMethod, false, copilotSettings, instanceId, {
+      help: hostHelp,
+    });
+    yield* h.controller.start("owner", Effect.void, undefined, undefined, undefined, "bad host");
+    const failed = yield* h.phase("failed");
+    assert.include(failed.message ?? "", "That GitHub host is not valid");
+    assert.isUndefined(h.terminalSpawn());
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("keeps login args when Copilot's help has no --host option", () =>
   Effect.gen(function* () {
     const h = yield* makeHarness(copilotMethod, false, copilotSettings, instanceId, {}, false, {
