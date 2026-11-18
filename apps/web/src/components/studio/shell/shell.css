@@ -3959,3 +3959,29 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   width: auto;
   max-width: 15rem;
 }
+/* With no machine menu to offer (Percy, a single-machine project) the chip is a plain
+   span, not the xs Button the menu chip is. It takes that Button's shape, so the tint
+   reads as the same rounded chip on every machine, not a square box. */
+.sws-host.sws-execution-control.machine-chip {
+  box-sizing: border-box;
+  height: calc(var(--spacing) * 7);
+  padding-inline: calc(var(--spacing) * 2 - 1px);
+  gap: var(--spacing);
+  border-width: 1px;
+  border-style: solid;
+  border-radius: var(--control-radius);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+  font-weight: 500;
+}
+/* No machine color: no box, as the menu chip's ghost Button. */
+.sws-host.sws-execution-control.machine-chip:not([data-machine-color]) {
+  border-color: transparent;
+}
+@media (width >= 40rem) {
+  .sws-host.sws-execution-control.machine-chip {
+    height: calc(var(--spacing) * 6);
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+  }
+}

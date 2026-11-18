@@ -30,6 +30,7 @@ import { findVskillBinary, makeRunCli, type CliRun } from "./ProjectSkillsAction
 import type * as ProjectSkillsService from "./ProjectSkillsService.ts";
 import { makeSkillRepoSources } from "./SkillRepoSources.ts";
 import { makeSkillSearch } from "./SkillSearch.ts";
+import { makeSkillRolloutHandlers } from "./SkillRolloutRpc.ts";
 import { makeSkillUpdates } from "./SkillUpdate.ts";
 
 const GH_TIMEOUT = "25 seconds";
@@ -54,6 +55,8 @@ export interface SkillManagementDeps {
     ProviderRegistry.ProviderRegistry["Service"],
     "getProviders" | "refreshWorkspaceSnapshot"
   >;
+  /** This machine's own name, for the generated catalog note. */
+  readonly machineName: Effect.Effect<string>;
 }
 
 const fromReadError = (error: ProjectSkillsReadError) =>
@@ -80,13 +83,16 @@ export function openLinkCommand(
   return { command: "xdg-open", args: [url] };
 }
 
-export const makeSkillManagementHandlers = Effect.fn("SkillManagement.makeHandlers")(function* (
-  deps: SkillManagementDeps,
+/**
+ * This machine's connected skill repos with its own GitHub reads (`gh`, else an
+ * anonymous read of GitHub's own hosts), and the plain process runner behind them.
+ * The fleet worker uses the same reads to check a GitHub source (fleetSkillsGithubSource.ts).
+ */
+export const makeLiveSkillRepoSources = Effect.fn("SkillManagement.makeLiveSources")(function* (
+  deps: Pick<SkillManagementDeps, "home" | "environment" | "stateDir">,
 ) {
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
-  const run = yield* makeRunCli;
   const http = yield* HttpClient.HttpClient.pipe(Effect.provide(FetchHttpClient.layer));
 
   /** An anonymous GET; an address that is not GitHub's is never asked. */
@@ -169,6 +175,16 @@ export const makeSkillManagementHandlers = Effect.fn("SkillManagement.makeHandle
       }),
     get: anonymousGet,
   });
+  return { sources, runPlain };
+});
+
+export const makeSkillManagementHandlers = Effect.fn("SkillManagement.makeHandlers")(function* (
+  deps: SkillManagementDeps,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const run = yield* makeRunCli;
+  const { sources, runPlain } = yield* makeLiveSkillRepoSources(deps);
 
   const readSnapshot = (input: Parameters<typeof deps.skills.read>[0]) =>
     deps.skills.read(input).pipe(Effect.mapError(fromReadError));
@@ -248,7 +264,17 @@ export const makeSkillManagementHandlers = Effect.fn("SkillManagement.makeHandle
         ),
       );
 
-  return {
+  const rollout = yield* makeSkillRolloutHandlers({
+    home: deps.home,
+    environment: deps.environment,
+    stateDir: deps.stateDir,
+    sources,
+    search,
+    readUserSkills: (projectId) => readSnapshot({ projectId, userLevel: true }),
+    machineName: deps.machineName,
+  });
+
+  const handlers = {
     [WS_METHODS.projectsSkillRepos]: answered((input: ProjectSkillReposInput) =>
       sources.repos(input),
     ),
@@ -256,7 +282,23 @@ export const makeSkillManagementHandlers = Effect.fn("SkillManagement.makeHandle
       search.search(input),
     ),
     [WS_METHODS.projectsSkillsUpdate]: answered((input: ProjectSkillsUpdateInput) =>
-      updates.update(input),
+      updates.update(input).pipe(
+        // The catalog note follows every change, in the background.
+        Effect.tap(() =>
+          input.operation === "status"
+            ? Effect.void
+            : rollout.regenerateCatalog(input.projectId).pipe(Effect.forkDetach, Effect.asVoid),
+        ),
+      ),
     ),
+    [WS_METHODS.projectsSkillsRolloutKeep]: answered(
+      rollout.handlers[WS_METHODS.projectsSkillsRolloutKeep],
+    ),
+    [WS_METHODS.projectsSkillsAdopt]: answered(rollout.handlers[WS_METHODS.projectsSkillsAdopt]),
+  };
+  return {
+    handlers,
+    verifyGithubSource: rollout.verifyGithubSource,
+    afterPush: rollout.afterPush,
   };
 });

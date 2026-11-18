@@ -540,6 +540,11 @@ function CheckResult({ check }: { check: BrowserExtensionCheck }) {
   );
 }
 
+/** A profile still called by a default name ("Chrome", numbered by the relay when repeated). */
+export function profileNeedsName(label: string): boolean {
+  return /^(Chrome|Unnamed profile)( \(\d+\))?$/.test(label.trim());
+}
+
 /** Threads acting in a profile; servers before per-tab ownership report one lease. */
 function threadsOf(profile: BrowserExtensionProfile): ReadonlyArray<BrowserExtensionThreadUse> {
   if (profile.threads) return profile.threads;
@@ -735,6 +740,11 @@ function ConnectedProfiles({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0 space-y-0.5">
                   <p className="font-medium">{profile.label}</p>
+                  {profileNeedsName(profile.label) && (
+                    <p className="text-xs text-warning-foreground">
+                      {tx("Give it a name agents can tell apart")}
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     {renderRich(
                       tx("{browser} · extension {extensionVersion} · connected {value} · {value2}"),

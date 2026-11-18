@@ -379,6 +379,11 @@ it("shows a nickname as typed, never trimming its owner", async () => {
     ),
   );
   expect(container.querySelector(".sws-host-name")?.textContent).toBe("Runs on Anna's Air");
+  // No native tooltip floats over the message box; the computer's name is read out instead.
+  expect(container.querySelector(".sws-host-name")?.hasAttribute("title")).toBe(false);
+  expect(container.querySelector("[data-orchestrator-host]")?.textContent).toBe(
+    " (Anna's MacBook Air)",
+  );
 });
 
 it("runs one coordinator start at a time across the switcher and the composer notice", async () => {

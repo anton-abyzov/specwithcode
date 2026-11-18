@@ -78,6 +78,10 @@ export function providerSkillsForCwd(
   const label = providerSkillsLabel(provider);
   const workspace = provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
   const skills = workspace?.skills ?? (scan === "timeout" ? [] : provider.skills);
+  // Whichever list the skills came from says whether it missed folders it could not read.
+  const incomplete = workspace
+    ? workspace.skillsIncomplete === true
+    : scan !== "timeout" && provider.skillsIncomplete === true;
   const state: ProjectSkillsProviderState["state"] =
     workspace?.skillsDiscovery === "machine"
       ? "unsupported"
@@ -109,6 +113,7 @@ export function providerSkillsForCwd(
       state,
       skills: skills.length,
       ...(message ? { message } : {}),
+      ...(incomplete ? { incomplete: true } : {}),
     },
   };
 }

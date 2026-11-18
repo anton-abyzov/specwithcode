@@ -363,6 +363,11 @@ const make = Effect.gen(function* () {
               branch: worktree.worktree.refName,
               worktreePath,
               expectedWorktreePath: null,
+              // The continuation is queued right after this commits; the stopped
+              // turn is then a pause, and a delegated task's parent waits for it.
+              ...(input.continuationPrompt === undefined
+                ? {}
+                : { continuesInWorktree: true as const }),
             })
             .pipe(
               Effect.catchCause((cause) =>

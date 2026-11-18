@@ -31,6 +31,7 @@ import {
 } from "../studio/coordinatorContinuation";
 import { latestWorkStep } from "../studio/coordinatorProgress";
 import {
+  useHostDownNote,
   useHostIdentityMismatch,
   useHostReach,
   useUnreachableHosts,
@@ -3325,6 +3326,7 @@ function useChatViewState(props: ChatViewProps) {
   const activeEnvironmentIdentityMismatch = useHostIdentityMismatch(
     activeEnvironment?.environmentId,
   );
+  const activeEnvironmentNote = useHostDownNote(activeEnvironment?.environmentId);
   const [reconnectWarningGraceElapsedEnvironmentId, setReconnectWarningGraceElapsedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const reconnectWarningGraceElapsed = hasEnvironmentReconnectWarningGraceElapsed(
@@ -3827,6 +3829,7 @@ function useChatViewState(props: ChatViewProps) {
             isThisMachine: activeEnvironmentUnavailableState.isThisMachine,
             reach: activeEnvironmentReach,
             identityMismatch: activeEnvironmentIdentityMismatch,
+            note: activeEnvironmentNote,
           })
         : null;
     const unavailableStatus = unavailableBanner?.status ?? null;
@@ -3970,6 +3973,7 @@ function useChatViewState(props: ChatViewProps) {
     automaticEnvironment,
     activeEnvironmentReach,
     activeEnvironmentIdentityMismatch,
+    activeEnvironmentNote,
     activeEnvironmentUnavailableState,
     handleReconnectActiveEnvironment,
     canDisconnectActiveEnvironment,

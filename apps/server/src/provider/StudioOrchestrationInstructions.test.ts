@@ -67,7 +67,9 @@ describe("SpecWithCode orchestration provider instructions", () => {
     // The title line (about 35 tokens) keeps a thread's name about what it owns.
     // The permission clause (about 15 tokens) turns a macOS "Operation not
     // permitted" into the Full Disk Access card instead of a text blocker.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 3_095);
+    // The SpecWeave setup sentence (about 25 tokens) raises the setup card
+    // instead of planting an increment where SpecWeave is not set up (1396).
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 3_205);
   });
 
   it("asks for thread titles that name the lasting goal and follow a scope change", () => {
@@ -278,8 +280,14 @@ describe("SpecWithCode orchestration provider instructions", () => {
   });
 
   it("keeps the worker subagent line for non-coordinator threads", () => {
-    assert.equal(studioOrchestrationInstructionsForRole(false), STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS);
-    assert.equal(studioOrchestrationInstructionsForRole(undefined), STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS);
+    assert.equal(
+      studioOrchestrationInstructionsForRole(false),
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+    );
+    assert.equal(
+      studioOrchestrationInstructionsForRole(undefined),
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+    );
     assert.equal(studioOrchestrationSystemPrompt(true), STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS);
   });
 

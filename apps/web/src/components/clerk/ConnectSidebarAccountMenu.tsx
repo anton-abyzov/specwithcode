@@ -2,6 +2,7 @@ import { useAuth, useClerk, useUser } from "@clerk/react";
 import { useEffect, useState } from "react";
 
 import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
+import { useHostDownNotes } from "../../studio/unreachableHosts";
 import { isElectron } from "../../env";
 import { AccountMenu } from "../account/AccountMenu";
 import type { ConnectAccount } from "../account/accountMenuModel";
@@ -34,6 +35,8 @@ export default function ConnectSidebarAccountMenu({ compact }: { readonly compac
   }, [isLoaded]);
 
   const linked = link.data?.linked === true;
+  const notes = useHostDownNotes();
+  const cutsOff = [...notes.values()].some((note) => note === "needs-sign-in");
   const account: ConnectAccount = !isLoaded
     ? loadStalled
       ? { status: "notLoaded", linked }
@@ -44,7 +47,7 @@ export default function ConnectSidebarAccountMenu({ compact }: { readonly compac
           name: user?.fullName ?? null,
           email: user?.primaryEmailAddress?.emailAddress ?? null,
         }
-      : { status: "signedOut", linked };
+      : { status: "signedOut", linked, ...(cutsOff ? { cutsOff: true } : {}) };
 
   const signOut = () => {
     void clerk

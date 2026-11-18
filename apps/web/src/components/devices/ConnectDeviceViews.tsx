@@ -92,7 +92,8 @@ function CodeForm({
           size={compact ? "sm" : "lg"}
           maxLength={9}
           onChange={(event) => {
-            setCode(event.target.value);
+            // In capitals, like the code on the device; the machine accepts any case (1416).
+            setCode(event.target.value.toUpperCase());
             setError(null);
           }}
           placeholder={tx("6 characters")}

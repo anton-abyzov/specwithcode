@@ -20,6 +20,9 @@ export const CLOSE_REPLACED = 4409;
 export const CLOSE_BAD_HELLO = 4400;
 /** This extension id may not connect (a hand-loaded copy while the developer switch is off). */
 export const CLOSE_NOT_ALLOWED = 4403;
+/** The name a profile gets when its extension sent none. "Chrome" was the old default. */
+export const UNNAMED_PROFILE = "Unnamed profile";
+
 /** The close reason the extension sends when the user clicks Unpair in its popup. */
 export const CLOSE_REASON_UNPAIRED = "unpaired";
 
@@ -185,7 +188,8 @@ export function parseHello(text: string): RelayHello | null {
   return {
     protocol: typeof p.protocol === "number" ? p.protocol : 0,
     token: typeof p.token === "string" ? p.token : "",
-    label: str(p.label, 60) || "Chrome",
+    // Extensions from 1.0.7 never pair without a name; this only covers a missing one.
+    label: str(p.label, 60) || UNNAMED_PROFILE,
     extensionVersion: str(p.extensionVersion, 20) || "unknown",
     extensionId: str(p.extensionId, 64),
     instanceId: str(p.instanceId, 64),

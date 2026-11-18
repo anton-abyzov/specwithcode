@@ -12,6 +12,8 @@ import * as NodePath from "node:path";
 import * as ProcessRunner from "../processRunner.ts";
 import { writeFakeCli } from "../testUtils/fakeCli.ts";
 import * as SpecweaveSetup from "./SpecweaveSetup.ts";
+import * as SpecweaveSetupRequests from "./SpecweaveSetupRequests.ts";
+import { listProjectIncrements, specweaveState } from "./ThreadIncrementProgress.ts";
 
 const tempDir = (prefix: string) => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), prefix));
 /** A project folder that is the top of its own Git repository. */
@@ -43,6 +45,93 @@ const setupWith = (bin: string) =>
   );
 
 describe("SpecweaveSetup", () => {
+  it.live("keeps the increments of an unfinished folder, which then reads as on (1396 AC-08)", () =>
+    Effect.gen(function* () {
+      const bin = yield* Effect.promise(() => tempDir("specweave-setup-bin-"));
+      const project = yield* Effect.promise(() => repoDir("specweave-setup-half-"));
+      const folder = NodePath.join(project, ".specweave/increments/0001-simple-website");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(folder, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(folder, "metadata.json"),
+          JSON.stringify({ title: "Simple website", status: "planned" }),
+        );
+        await NodeFSP.writeFile(NodePath.join(folder, "spec.md"), "# Simple website\n");
+      });
+      expect(yield* Effect.promise(() => specweaveState(project))).toBe("unfinished");
+      // Like the real init: writes the config and leaves increments alone.
+      writeFakeCli({
+        directory: bin,
+        name: "specweave",
+        source: [
+          'import { mkdirSync, writeFileSync } from "node:fs";',
+          'mkdirSync(".specweave", { recursive: true });',
+          'writeFileSync(".specweave/config.json", "{}");',
+        ].join("\n"),
+      });
+      const setup = yield* setupWith(bin);
+
+      expect(yield* setup.setUp(project)).toEqual({ ok: true, alreadySetUp: false });
+      expect(yield* Effect.promise(() => specweaveState(project))).toBe("on");
+      const listed = yield* Effect.promise(() => listProjectIncrements(project, null));
+      expect(listed.map((entry) => [entry.incrementId, entry.title])).toEqual([
+        ["0001-simple-website", "Simple website"],
+      ]);
+      expect(
+        yield* Effect.promise(() => NodeFSP.readFile(NodePath.join(folder, "spec.md"), "utf8")),
+      ).toBe("# Simple website\n");
+    }),
+  );
+
+  it.live(
+    "remembers a failure with its reason and Node.js missing, until a success (1396 AC-08)",
+    () =>
+      Effect.gen(function* () {
+        const bin = yield* Effect.promise(() => tempDir("specweave-setup-bin-"));
+        const project = yield* Effect.promise(() => repoDir("specweave-setup-fail-"));
+        const state = yield* Effect.promise(() => tempDir("specweave-setup-state-"));
+        const file = SpecweaveSetupRequests.specweaveSetupFile(state);
+        writeFakeCli({
+          directory: bin,
+          name: "specweave",
+          source: 'console.error("disk full"); process.exit(4);',
+        });
+        const failed = yield* (yield* setupWith(bin)).setUp(project);
+        expect(failed.ok).toBe(false);
+        if (failed.ok) return;
+        yield* Effect.promise(() =>
+          SpecweaveSetupRequests.recordSetupFailure(file, "project-1", {
+            detail: failed.detail,
+            needsNode: failed.needs === "node",
+          }),
+        );
+        yield* Effect.promise(() => SpecweaveSetupRequests.recordDeclined(file, "project-1"));
+        const stored = yield* Effect.promise(() =>
+          SpecweaveSetupRequests.readProjectFacts(file, "project-1"),
+        );
+        expect(stored.failure?.detail).toContain("disk full");
+        expect(stored.failure?.needsNode).toBeUndefined();
+        expect(stored.declined).toBe(true);
+        // A missing Node.js is stored as such, so the Board offers to install it.
+        yield* Effect.promise(() =>
+          SpecweaveSetupRequests.recordSetupFailure(file, "project-1", {
+            detail: SpecweaveSetup.specweaveUnavailableDetail("darwin"),
+            needsNode: true,
+          }),
+        );
+        expect(
+          (yield* Effect.promise(() => SpecweaveSetupRequests.readProjectFacts(file, "project-1")))
+            .failure?.needsNode,
+        ).toBe(true);
+        // The next success clears the failure and the decline, and nothing else.
+        yield* Effect.promise(() => SpecweaveSetupRequests.recordAdviceSeen(file, "project-1"));
+        yield* Effect.promise(() => SpecweaveSetupRequests.recordSetupSuccess(file, "project-1"));
+        expect(
+          yield* Effect.promise(() => SpecweaveSetupRequests.readProjectFacts(file, "project-1")),
+        ).toEqual({ adviceSeen: true });
+      }),
+  );
+
   it.live("runs specweave init in the folder and reports success once the config exists", () =>
     Effect.gen(function* () {
       const bin = yield* Effect.promise(() => tempDir("specweave-setup-bin-"));
