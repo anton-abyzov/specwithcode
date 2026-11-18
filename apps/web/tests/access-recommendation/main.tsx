@@ -3,13 +3,32 @@
 //   ?view=wizard|composer   which surface
 //   ?theme=light|dark
 //   ?save=fails             saving Full access fails after a moment
+//   ?files=unanswered|before-accepted|before-declined   the Files and commands row
+//   ?chrome=<kind>          the Your browser row: a `chromeRowState` kind, or paired-many
+//   ?mac=<kind>             the Mac apps row: a `macAppsRowState` kind
+//   ?profiles=0|1|3         Chrome profiles the desktop app could list
+//   ?fda=0                  leave out the Full Disk Access row
+import type { ComputerUsePermissions } from "@specweave-studio/contracts";
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AccessStep } from "../../src/components/onboarding/AccessStep";
+import { ChromeAccessRowView } from "../../src/components/onboarding/ChromeAccessRow";
+import {
+  macAppsRowState,
+  MacAppsRowView,
+  type MacAppsRowStateKind,
+} from "../../src/components/onboarding/MacAppsRow";
+import { ComputerUsePermissionChecklist } from "../../src/components/computerUse/ComputerUsePermissions";
+import {
+  BrowserExtensionSteps,
+  type PairingCodeState,
+} from "../../src/components/settings/BrowserExtensionSetup";
 import { FirstRunFrame, shownStages } from "../../src/components/onboarding/WizardFrame";
 import { AccessRecommendationAnchor } from "../../src/components/chat/AccessRecommendation";
 import { FullAccessGlyph, SupervisedAccessGlyph } from "../../src/components/chat/AccessGlyph";
 import { en } from "../../src/i18n/messages/en";
+import { chromeRowState, type ChromeRowInput } from "../../src/onboarding/chromeRowState.logic";
+import type { AccessRowPlan } from "../../src/onboarding/accessRows.logic";
 import "./fixture.css";
 
 const params = new URLSearchParams(location.search);
@@ -23,6 +42,142 @@ const save = async (what: string) => {
   return fails ? en["wizard.access.saveFailed"] : null;
 };
 
+const STORE_URL = "https://chromewebstore.google.com/detail/specwithcode-browser/fixture";
+const work = { id: "p1", label: "Work", extensionVersion: "1.4.0", fromStore: true };
+const CHROME: Record<string, ChromeRowInput> = (() => {
+  const base: ChromeRowInput = {
+    online: true,
+    teamRulesLocked: false,
+    allowed: true,
+    status: { bundledVersion: "1.4.0", profiles: [] },
+    codeHandedOut: false,
+  };
+  return {
+    "not-set-up": base,
+    loading: { ...base, status: null },
+    offline: { ...base, online: false, status: null },
+    "team-rules": { ...base, teamRulesLocked: true },
+    "not-allowed": { ...base, allowed: false },
+    "chrome-missing": { ...base, status: { bundledVersion: "1.4.0", profiles: [], chromeInstalled: false } },
+    waiting: { ...base, codeHandedOut: true },
+    paired: { ...base, status: { bundledVersion: "1.4.0", profiles: [work] } },
+    "paired-many": {
+      ...base,
+      status: {
+        bundledVersion: "1.4.0",
+        profiles: [
+          work,
+          { id: "p2", label: "Chrome (2)", extensionVersion: "1.3.0", fromStore: false },
+        ],
+      },
+    },
+    "not-answering": { ...base, status: { bundledVersion: "1.4.0", profiles: [], paired: true } },
+    approval: {
+      ...base,
+      status: {
+        bundledVersion: "1.4.0",
+        profiles: [work],
+        peers: [{ id: "g1", machine: "Studio", state: "pending" }],
+      },
+    },
+  };
+})();
+const MAC: Record<
+  MacAppsRowStateKind,
+  { status: ComputerUsePermissions; error: string | null; requested: boolean }
+> = {
+  allowed: { status: { screenRecording: true, accessibility: true }, error: null, requested: false },
+  partly: { status: { screenRecording: true, accessibility: false }, error: null, requested: false },
+  "not-allowed": {
+    status: { screenRecording: false, accessibility: false },
+    error: null,
+    requested: false,
+  },
+  "needs-reopening": {
+    status: { screenRecording: false, accessibility: true },
+    error: null,
+    requested: true,
+  },
+  "could-not-check": {
+    status: { screenRecording: false, accessibility: false },
+    error: "Could not check permissions. Trying again automatically.",
+    requested: false,
+  },
+};
+const PROFILES = [
+  { directory: "Default", name: "Personal" },
+  { directory: "Profile 1", name: "Work" },
+  { directory: "Profile 2", name: "Brand" },
+];
+
+function ChromeRow({ open }: { open: { open: boolean; onOpenChange: (open: boolean) => void } }) {
+  const given = CHROME[params.get("chrome") ?? "not-set-up"] ?? CHROME["not-set-up"]!;
+  const [code, setCode] = useState<PairingCodeState>({ kind: "idle" });
+  const [chosen, setChosen] = useState<string | null>("Default");
+  const count = Number(params.get("profiles") ?? "0");
+  const profiles = count > 0 ? PROFILES.slice(0, count) : null;
+  const handedOut = code.kind === "copied" || code.kind === "shown";
+  const state = chromeRowState({ ...given, codeHandedOut: given.codeHandedOut || handedOut });
+  return (
+    <ChromeAccessRowView
+      state={state}
+      machine="M4 Max"
+      {...open}
+      storeUrl={STORE_URL}
+      onReconnect={() => calls.push(["reconnect"])}
+      onAnswer={(allow) => calls.push([allow ? "allow" : "decline-peer"])}
+      steps={
+        <BrowserExtensionSteps
+          profiles={profiles}
+          chosen={chosen}
+          onChoose={setChosen}
+          storeUrl={STORE_URL}
+          onAddToChrome={profiles ? () => calls.push(["add-to-chrome", chosen]) : undefined}
+          code={code}
+          onCopyCode={() => {
+            calls.push(["copy"]);
+            setCode({ kind: "copied" });
+          }}
+          onShowCode={() => setCode({ kind: "shown", code: "K7QX-2MZD-94HF" })}
+          onHideCode={() => setCode({ kind: "idle" })}
+          canPair
+          waiting={handedOut || given.codeHandedOut}
+        />
+      }
+    />
+  );
+}
+
+function MacRow({ open }: { open: { open: boolean; onOpenChange: (open: boolean) => void } }) {
+  const kind = (params.get("mac") ?? "not-allowed") as MacAppsRowStateKind;
+  const given = MAC[kind] ?? MAC["not-allowed"];
+  const state = macAppsRowState({
+    status: given.status,
+    error: given.error,
+    screenRecordingRequested: given.requested,
+  });
+  const checklistState = {
+    available: true,
+    status: given.status,
+    error: given.error,
+    requested: new Set(given.requested ? (["screen-recording"] as const) : []),
+    request: (permission: string) => calls.push(["request", permission]),
+    resetDone: new Set(),
+    resetError: null,
+    reset: (permission: string) => calls.push(["reset", permission]),
+    relaunch: () => calls.push(["relaunch"]),
+    retry: () => calls.push(["retry"]),
+  } as unknown as Parameters<typeof ComputerUsePermissionChecklist>[0]["state"];
+  return (
+    <MacAppsRowView
+      state={state}
+      {...open}
+      onRetry={() => calls.push(["retry"])}
+      checklist={<ComputerUsePermissionChecklist state={checklistState} />}
+    />
+  );
+}
+
 function Wizard() {
   const stages = shownStages([
     { id: "connect", label: "Sign in" },
@@ -30,9 +185,20 @@ function Wizard() {
     { id: "access", label: "Access" },
     { id: "projects", label: "Projects" },
   ]);
-  const [done, setDone] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const [answer, setAnswer] = useState<"accepted" | "declined" | null>(null);
+  const filesParam = params.get("files") ?? "unanswered";
+  const rows: AccessRowPlan[] = [
+    { id: "files", machineIds: ["m4"] },
+    { id: "browser", machineIds: ["m4"] },
+    { id: "mac-apps", machineIds: ["m4"] },
+    ...(params.get("fda") === "0"
+      ? []
+      : [{ id: "full-disk-access" as const, machineIds: ["m4"] }]),
+  ];
   return (
     <FirstRunFrame
+      stepId={done ? "import" : "access"}
       stages={stages}
       currentStage={done ? 3 : 2}
       onStageChange={(stage) => calls.push(["stage", stage.id])}
@@ -40,20 +206,42 @@ function Wizard() {
       onLeave={() => calls.push(["leave"])}
     >
       {done ? (
-        <p data-fixture-done={done}>Projects</p>
+        <p data-fixture-done={answer ?? "none"}>Projects</p>
       ) : (
         <AccessStep
-          keepsSupervised
-          onBack={() => calls.push(["back"])}
-          onAccept={async () => {
-            const error = await save("accept");
-            if (error === null) setDone("accepted");
-            return error;
+          title="What agents can use on this Mac"
+          rows={rows}
+          files={{
+            machineNames: ["M4 Max"],
+            keepsSupervised: true,
+            answer,
+            ...(filesParam === "before-accepted"
+              ? { answeredBefore: "accepted" as const }
+              : filesParam === "before-declined"
+                ? { answeredBefore: "declined" as const }
+                : {}),
+            onAccept: async () => {
+              const error = await save("accept");
+              if (error === null) setAnswer("accepted");
+              return error;
+            },
+            onKeep: async () => {
+              calls.push(["keep"]);
+              setAnswer("declined");
+              return null;
+            },
           }}
-          onDecline={async () => {
-            calls.push(["decline"]);
-            setDone("declined");
-            return null;
+          renderRow={(id, open) =>
+            id === "browser" ? (
+              <ChromeRow open={open} />
+            ) : id === "mac-apps" ? (
+              <MacRow open={open} />
+            ) : null
+          }
+          onBack={() => calls.push(["back"])}
+          onContinue={() => {
+            calls.push(["continue"]);
+            setDone(true);
           }}
         />
       )}
