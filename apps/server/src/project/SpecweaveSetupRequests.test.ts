@@ -5,14 +5,20 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
+import { SPECWEAVE_DECLINED_WAKE, SPECWEAVE_SET_UP_WAKE } from "@specweave-studio/contracts";
+
 import {
+  answerSpecweave,
   isOpenRequest,
+  markSettingUp,
   openSetupRequest,
   readProjectFacts,
   recordDeclined,
   recordSetupSuccess,
   setRequestState,
+  settleAfterSetup,
   specweaveSetupFile,
+  specweaveWakeMessage,
 } from "./SpecweaveSetupRequests.ts";
 
 const roots: string[] = [];
@@ -119,5 +125,101 @@ describe("SpecweaveSetupRequests (1396 AC-05, AC-07)", () => {
     expect(await readProjectFacts(file, "p1")).toEqual({});
     await recordDeclined(file, "p1");
     expect((await readProjectFacts(file, "p1")).declined).toBe(true);
+  });
+
+  it("a card's setup moves it to setting up, then on, and wakes its thread once", async () => {
+    const file = await stateFile();
+    const { request } = await openSetupRequest(file, {
+      projectId: "p1",
+      threadId: "thread-a",
+      gitRepository: true,
+    });
+    expect((await markSettingUp(file, "p1", request.requestId))?.state).toBe("setting_up");
+    const settled = await settleAfterSetup(file, {
+      projectId: "p1",
+      requestId: request.requestId,
+      result: { ok: true },
+    });
+    expect(settled.request?.state).toBe("on");
+    expect(settled.wake).toEqual({
+      threadId: "thread-a",
+      requestId: request.requestId,
+      outcome: "set_up",
+    });
+    expect(specweaveWakeMessage(settled.wake!)).toEqual({
+      id: `specweave-setup:${request.requestId}:set_up`,
+      text: SPECWEAVE_SET_UP_WAKE,
+    });
+    // The card is settled: a second setup wakes nothing.
+    expect(await settleAfterSetup(file, { projectId: "p1", result: { ok: true } })).toEqual({});
+  });
+
+  it("a Board setup settles the open card too; a Board failure leaves it alone", async () => {
+    const file = await stateFile();
+    await openSetupRequest(file, { projectId: "p1", threadId: "thread-a", gitRepository: true });
+    const failed = await settleAfterSetup(file, {
+      projectId: "p1",
+      result: { ok: false, detail: "npm failed", needsNode: false },
+    });
+    expect(failed).toEqual({});
+    expect((await readProjectFacts(file, "p1")).request?.state).toBe("asking");
+    const settled = await settleAfterSetup(file, { projectId: "p1", result: { ok: true } });
+    expect(settled.wake?.outcome).toBe("set_up");
+  });
+
+  it.each([
+    [false, "failed"],
+    [true, "node_missing"],
+  ] as const)(
+    "a card's failed setup (needsNode %s) reads %s with the reason",
+    async (needsNode, state) => {
+      const file = await stateFile();
+      const { request } = await openSetupRequest(file, {
+        projectId: "p1",
+        threadId: "thread-a",
+        gitRepository: true,
+      });
+      const settled = await settleAfterSetup(file, {
+        projectId: "p1",
+        requestId: request.requestId,
+        result: { ok: false, detail: "Node.js is missing", needsNode },
+      });
+      expect(settled.request).toMatchObject({ state, detail: "Node.js is missing" });
+      expect(settled.wake).toBeUndefined();
+      expect(isOpenRequest(settled.request)).toBe(true);
+    },
+  );
+
+  it("Plan without it declines the project, closes the card and wakes its thread", async () => {
+    const file = await stateFile();
+    const { request } = await openSetupRequest(file, {
+      projectId: "p1",
+      threadId: "thread-a",
+      gitRepository: true,
+    });
+    const answered = await answerSpecweave(file, {
+      projectId: "p1",
+      answer: "plan_without",
+      requestId: request.requestId,
+    });
+    expect(answered.facts.declined).toBe(true);
+    expect(answered.request?.state).toBe("declined");
+    expect(specweaveWakeMessage(answered.wake!).text).toBe(SPECWEAVE_DECLINED_WAKE);
+    const again = await answerSpecweave(file, { projectId: "p1", answer: "plan_without" });
+    expect(again.wake).toBeUndefined();
+  });
+
+  it.each([
+    ["not_now", true, false],
+    ["advice_dismissed", true, true],
+    ["advice_seen", false, true],
+  ] as const)("%s: declined %s, advice seen %s, no wake", async (answer, declined, seen) => {
+    const file = await stateFile();
+    await openSetupRequest(file, { projectId: "p1", threadId: "thread-a", gitRepository: true });
+    const answered = await answerSpecweave(file, { projectId: "p1", answer });
+    expect(answered.facts.declined === true).toBe(declined);
+    expect(answered.facts.adviceSeen === true).toBe(seen);
+    expect(answered.wake).toBeUndefined();
+    expect(answered.facts.request?.state).toBe("asking");
   });
 });

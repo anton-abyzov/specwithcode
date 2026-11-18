@@ -22,6 +22,8 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 
 import {
+  SPECWEAVE_DECLINED_WAKE,
+  SPECWEAVE_SET_UP_WAKE,
   ThreadId,
   type SpecweaveSetupFailure,
   type SpecweaveSetupRequest,
@@ -223,4 +225,120 @@ export async function setRequestState(
     return { ...facts, request: moved };
   });
   return moved;
+}
+
+/** A thread to wake with an AC-07 sentence, once per card and outcome. */
+export interface SpecweaveWake {
+  readonly threadId: string;
+  readonly requestId: string;
+  readonly outcome: "set_up" | "declined";
+}
+
+/** The card a press answers: the named one, else the project's open one. */
+function answeredRequest(
+  facts: ProjectSpecweaveFacts,
+  requestId: string | undefined,
+): SpecweaveSetupRequest | undefined {
+  const request = facts.request;
+  if (request === undefined) return undefined;
+  if (requestId !== undefined) return request.requestId === requestId ? request : undefined;
+  return isOpenRequest(request) ? request : undefined;
+}
+
+/** A press on the card starts setup: the card reads Setting up on every device. */
+export async function markSettingUp(file: string, projectId: string, requestId: string) {
+  return setRequestState(file, { projectId, requestId, state: "setting_up" });
+}
+
+/**
+ * After any setup of the project (the card, the Board, Project settings): a
+ * success settles the open card as On and wakes its thread; a failure moves
+ * the card it answered to Failed or Node.js missing, with the reason.
+ */
+export async function settleAfterSetup(
+  file: string,
+  input: {
+    readonly projectId: string;
+    readonly requestId?: string | undefined;
+    readonly result:
+      | { readonly ok: true }
+      | { readonly ok: false; readonly detail: string; readonly needsNode: boolean };
+    readonly now?: Date;
+  },
+): Promise<{ readonly request?: SpecweaveSetupRequest; readonly wake?: SpecweaveWake }> {
+  const request = answeredRequest(await readProjectFacts(file, input.projectId), input.requestId);
+  if (request === undefined) return {};
+  if (!input.result.ok && input.requestId === undefined) return {};
+  const moved = await setRequestState(file, {
+    projectId: input.projectId,
+    requestId: request.requestId,
+    ...(input.result.ok
+      ? { state: "on" as const }
+      : {
+          state: input.result.needsNode ? ("node_missing" as const) : ("failed" as const),
+          detail: input.result.detail,
+        }),
+    ...(input.now === undefined ? {} : { now: input.now }),
+  });
+  if (moved === null) return {};
+  return input.result.ok
+    ? {
+        request: moved,
+        wake: { threadId: moved.threadId, requestId: moved.requestId, outcome: "set_up" },
+      }
+    : { request: moved };
+}
+
+/** "Plan without it", "Not now" and the composer line (AC-07). */
+export async function answerSpecweave(
+  file: string,
+  input: {
+    readonly projectId: string;
+    readonly answer: "plan_without" | "not_now" | "advice_dismissed" | "advice_seen";
+    readonly requestId?: string | undefined;
+  },
+): Promise<{
+  readonly facts: ProjectSpecweaveFacts;
+  readonly request?: SpecweaveSetupRequest;
+  readonly wake?: SpecweaveWake;
+}> {
+  const declines = input.answer !== "advice_seen";
+  const seen = input.answer === "advice_dismissed" || input.answer === "advice_seen";
+  await updateProjectFacts(file, input.projectId, (facts) => ({
+    ...facts,
+    ...(declines ? { declined: true as const } : {}),
+    ...(seen ? { adviceSeen: true as const } : {}),
+  }));
+  let request: SpecweaveSetupRequest | undefined;
+  let wake: SpecweaveWake | undefined;
+  if (input.answer === "plan_without") {
+    const open = answeredRequest(await readProjectFacts(file, input.projectId), input.requestId);
+    if (open !== undefined && isOpenRequest(open)) {
+      const moved = await setRequestState(file, {
+        projectId: input.projectId,
+        requestId: open.requestId,
+        state: "declined",
+      });
+      if (moved !== null) {
+        request = moved;
+        wake = { threadId: moved.threadId, requestId: moved.requestId, outcome: "declined" };
+      }
+    }
+  }
+  return {
+    facts: await readProjectFacts(file, input.projectId),
+    ...(request === undefined ? {} : { request }),
+    ...(wake === undefined ? {} : { wake }),
+  };
+}
+
+/** The wake's text and its ids: one command per card and outcome, so a repeat is ignored. */
+export function specweaveWakeMessage(wake: SpecweaveWake): {
+  readonly id: string;
+  readonly text: string;
+} {
+  return {
+    id: `specweave-setup:${wake.requestId}:${wake.outcome}`,
+    text: wake.outcome === "set_up" ? SPECWEAVE_SET_UP_WAKE : SPECWEAVE_DECLINED_WAKE,
+  };
 }

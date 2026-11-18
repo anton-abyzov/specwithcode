@@ -260,6 +260,11 @@ export const ProjectSpecweaveSetUpInput = Schema.Struct({
    * `git init` runs first. Without it such a folder is refused, as older servers do.
    */
   initGit: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The "Set up SpecWeave" card this press answers (1396). Its thread is woken
+   * once setup succeeds; any successful setup also settles the project's open card.
+   */
+  requestId: Schema.optionalKey(Schema.String),
 });
 export type ProjectSpecweaveSetUpInput = typeof ProjectSpecweaveSetUpInput.Type;
 export const ProjectSpecweaveSetUpResult = Schema.Struct({
@@ -287,6 +292,32 @@ export class ProjectSpecweaveSetUpError extends Schema.TaggedError<ProjectSpecwe
       : "SpecWeave could not be set up in this folder.";
   }
 }
+/**
+ * The answers that are not a setup (1396 AC-07): the card's "Plan without it"
+ * (with its requestId), the Board's "Not now", and the line above the
+ * composer: its dismiss, or "Set up SpecWeave" / "See the board" (seen).
+ */
+export const ProjectSpecweaveAnswer = Schema.Literals([
+  "plan_without",
+  "not_now",
+  "advice_dismissed",
+  "advice_seen",
+]);
+export type ProjectSpecweaveAnswer = typeof ProjectSpecweaveAnswer.Type;
+export const ProjectSpecweaveAnswerInput = Schema.Struct({
+  projectId: ProjectId,
+  answer: ProjectSpecweaveAnswer,
+  /** With "plan_without": the card it answers; its thread is woken. */
+  requestId: Schema.optionalKey(Schema.String),
+});
+export type ProjectSpecweaveAnswerInput = typeof ProjectSpecweaveAnswerInput.Type;
+export const ProjectSpecweaveAnswerResult = Schema.Struct({
+  specweaveDeclined: Schema.Boolean,
+  specweaveAdviceSeen: Schema.Boolean,
+  /** The card after the answer, when it named one. */
+  specweaveSetupRequest: Schema.optionalKey(SpecweaveSetupRequest),
+});
+export type ProjectSpecweaveAnswerResult = typeof ProjectSpecweaveAnswerResult.Type;
 export const ProjectMemoryReadInput = Schema.Struct({
   projectId: ProjectId,
   name: ProjectMemoryName,
