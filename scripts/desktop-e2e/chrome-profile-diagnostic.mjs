@@ -26,18 +26,31 @@ const { chromium } = NodeModule.createRequire(NodePath.resolve("apps/server/pack
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const run = (cmd, args, options = {}) => {
-  const result = NodeChildProcess.spawnSync(cmd, args, { encoding: "utf8", ...options });
-  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+  // Nothing here may hang the step: every command ends within two minutes.
+  const result = NodeChildProcess.spawnSync(cmd, args, {
+    encoding: "utf8",
+    timeout: 120_000,
+    maxBuffer: 256 * 1024 * 1024,
+    ...options,
+  });
+  return {
+    status: result.status,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    ...(result.error ? { error: String(result.error) } : {}),
+  };
 };
 const stamp = () => run("date", ["+%Y-%m-%d %H:%M:%S"]).stdout.trim();
 const result = { steps: [] };
+const save = () =>
+  NodeFS.writeFileSync(NodePath.join(outDir, "result.json"), `${JSON.stringify(result, null, 2)}\n`);
+// Saved after every step, so a step that stops the run still leaves what came before.
 const note = (what, data = {}) => {
   const entry = { at: new Date().toISOString(), what, ...data };
   result.steps.push(entry);
   console.log(JSON.stringify(entry));
+  save();
 };
-const save = () =>
-  NodeFS.writeFileSync(NodePath.join(outDir, "result.json"), `${JSON.stringify(result, null, 2)}\n`);
 
 /** Every TCC line in the window, and the ones that name the app, Chrome or App Data. */
 function tccWindow(name, start, end) {
@@ -62,7 +75,17 @@ function tccWindow(name, start, end) {
     ),
   );
   NodeFS.writeFileSync(NodePath.join(outDir, `tcc-${name}-relevant.log`), relevant.join("\n"));
-  return { start, end, lines: lines.length, relevant: relevant.length, sample: relevant.slice(0, 40) };
+  const summary = {
+    start,
+    end,
+    status: log.status,
+    ...(log.error ? { error: log.error } : {}),
+    lines: lines.length,
+    relevant: relevant.length,
+    sample: relevant.slice(0, 40),
+  };
+  note(`tcc ${name}`, { lines: summary.lines, relevant: summary.relevant, error: log.error ?? null });
+  return summary;
 }
 
 const home = NodeOS.homedir();
@@ -129,15 +152,19 @@ const opened = run("open", [
 note("open app", opened);
 let page = null;
 let browser = null;
-for (let i = 0; i < 120 && page === null; i++) {
+const appDeadline = Date.now() + 180_000;
+for (let i = 0; Date.now() < appDeadline && page === null; i++) {
   await sleep(1000);
   try {
     browser ??= await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 5000 });
     for (const context of browser.contexts()) {
       for (const candidate of context.pages()) {
-        const has = await candidate
-          .evaluate(() => typeof window.desktopBridge?.listExternalBrowsers === "function")
-          .catch(() => false);
+        const has = await Promise.race([
+          candidate
+            .evaluate(() => typeof window.desktopBridge?.listExternalBrowsers === "function")
+            .catch(() => false),
+          sleep(5000).then(() => false),
+        ]);
         if (has) page = candidate;
       }
     }
@@ -156,15 +183,17 @@ result.tccIdle = tccWindow("idle", idleStart, stamp());
 const listStart = stamp();
 if (page) {
   const began = Date.now();
-  result.list = await page
-    .evaluate(
-      () =>
+  result.list = await Promise.race([
+    page
+      .evaluate(() =>
         Promise.race([
           window.desktopBridge.listExternalBrowsers().then((value) => ({ value })),
           new Promise((done) => setTimeout(() => done({ timedOut: true }), 30_000)),
         ]),
-    )
-    .catch((error) => ({ error: String(error) }));
+      )
+      .catch((error) => ({ error: String(error) })),
+    sleep(45_000).then(() => ({ timedOut: true, where: "page.evaluate" })),
+  ]);
   result.list.ms = Date.now() - began;
 } else {
   result.list = { error: "no app window with the desktop bridge" };
@@ -178,6 +207,6 @@ for (const pid of appPids) {
     process.kill(Number(pid), "SIGTERM");
   } catch {}
 }
-await browser?.close().catch(() => {});
+await Promise.race([browser?.close().catch(() => {}), sleep(10_000)]);
 save();
 console.log(`Chrome profile diagnostic written to ${outDir}`);

@@ -490,6 +490,7 @@ jobs:
       - name: Chrome profile list on a fresh account
         if: ${{ success() || failure() }}
         continue-on-error: true
+        timeout-minutes: 20
         run: node scripts/desktop-e2e/chrome-profile-diagnostic.mjs "$RUNNER_TEMP/macos-app/SpecWithCode.app" "$RUNNER_TEMP/macos-chrome-profiles"
 
       - name: Upload the app and results
