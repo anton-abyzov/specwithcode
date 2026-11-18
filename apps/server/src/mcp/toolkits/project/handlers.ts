@@ -12,6 +12,7 @@ import {
   type ProjectRepository,
   type ProviderInstanceId,
   type ProviderModelTier,
+  type ServerProvider,
   type ThreadEnvMode,
 } from "@specweave-studio/contracts";
 import { launchTier, launchTierModel } from "../../launchTier.ts";
@@ -42,6 +43,14 @@ import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
+import {
+  describeModelSelection,
+  duplicateOptionIds,
+  type ProjectModelRole,
+  projectThreadsUseTracks,
+  sameModelSelection,
+  savedProjectModel,
+} from "../../../project/projectModelChange.ts";
 import * as ProjectLink from "../../../project/ProjectLink.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -131,6 +140,8 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
   readonly projectId?: ProjectId | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly folder?: string | undefined;
+  readonly role?: ProjectModelRole | undefined;
+  readonly modelSelection?: ModelSelection | undefined;
   readonly reason?: string | undefined;
 }) {
   const context = yield* readCaller();
@@ -142,6 +153,19 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
         "Only an agent in a SpecWithCode thread can ask for this. Ask the user to do it in the project's settings.",
     });
   const projectId = yield* resolveProjectId(context, input.projectId);
+  // Another machine's work asks only about projects its grant covers, as when it
+  // reads or updates one; this does nothing for this machine's own threads.
+  yield* assertProjectReadable(context, projectId);
+  // The card names models the way this machine lists them, and a model it does
+  // not list is refused before the user is asked. Another machine's work asks
+  // only for a sign-in its grant allows, as when it sets a thread's model.
+  let providers: ReadonlyArray<ServerProvider> = [];
+  if (input.action === "change_model") {
+    if (input.modelSelection !== undefined)
+      yield* assertAccountInGrant(yield* workGrantOf(context), input.modelSelection.instanceId);
+    const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+    if (Option.isSome(registry)) providers = yield* registry.value.getProviders;
+  }
   const requests = yield* ProjectActionRequests.ProjectActionRequests;
   const { requestId } = yield* requests
     .request({
@@ -151,6 +175,9 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
       reason: input.reason ?? "No reason given.",
       ...(input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot }),
       ...(input.folder === undefined ? {} : { folder: input.folder }),
+      ...(input.role === undefined ? {} : { modelRole: input.role }),
+      ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...(input.action === "change_model" ? { providers } : {}),
     })
     .pipe(
       Effect.mapError(
@@ -985,7 +1012,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
               message:
-                "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with studio_project_update.",
+                "A project started from its title takes only a title, and its threads start from this machine's model tracks. Set scripts afterwards with studio_project_update. To start a project on one model, register its folder with workspaceRoot and defaultModelSelection; later the user picks one in project settings.",
             });
           // A title-only project is a new repository for the person; a check brings its own folder.
           if (input.origin === "automated")
@@ -1054,7 +1081,17 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           });
         const commandId = yield* newCommandId();
         return yield* projects
-          .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
+          .create({
+            ...input,
+            workspaceRoot,
+            commandId,
+            projectId: ProjectId.make(commandId),
+            // The model the caller named is the new project's own: saved with the
+            // creation, so no default is seeded over it and no later update is needed.
+            ...(input.defaultModelSelection == null
+              ? {}
+              : { initialWorkerModelSelection: input.defaultModelSelection }),
+          })
           .pipe(
             // A folder that is already a project returns that project; nothing is made.
             Effect.catch((error) =>
@@ -1155,6 +1192,57 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ? "A project's kind is fixed when it is created; make a new project of the kind you need."
                 : "Agents cannot change approved folders or repositories themselves; the user decides what agents here can reach. To add a folder, call studio_project_request with action add_folder and folder: the user approves it in a card. Repositories and removing a folder are the user's to change in project settings.",
           });
+      }
+      // The model new threads start on and the coordinator's model, with their effort,
+      // Ultracode and context window, are what the person saved. An agent sets one only
+      // where none is saved; replacing or clearing a saved one is theirs to approve.
+      const coordinatorModel = lifecycle?.coordinatorModelSelection;
+      if (input.defaultModelSelection !== undefined || coordinatorModel !== undefined) {
+        const project = Option.getOrUndefined(
+          yield* projects.getById(input.projectId).pipe(Effect.mapError(unavailable)),
+        );
+        // A Project settings override is the person's saved thread model too, and a
+        // write to the project's field would remove it.
+        const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+        // Unreadable settings could hide one, so nothing is written on a guess.
+        const settings = Option.isNone(settingsService)
+          ? null
+          : yield* settingsService.value.getSettings.pipe(Effect.mapError(unavailable));
+        for (const [role, next] of [
+          ["threads", input.defaultModelSelection],
+          ["coordinator", coordinatorModel],
+        ] as const) {
+          if (next === undefined || project === undefined) continue;
+          // On Tracks the track for the task picks the model: a model written to the
+          // project would do nothing now and take over unasked if Tracks were turned off.
+          if (
+            role === "threads" &&
+            projectThreadsUseTracks(project, settings) &&
+            !sameModelSelection(project.defaultModelSelection, next)
+          )
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: `New threads in "${project.title}" start from its model tracks, so no single saved model applies and an agent cannot set one. The user edits the tracks, or picks one model, in project settings. To start a thread on a model, pass modelSelection when you launch it.`,
+            });
+          const current = savedProjectModel(project, role, settings);
+          if (current.saved && !sameModelSelection(current.model, next)) {
+            const what =
+              role === "coordinator" ? "The coordinator model" : "The model new threads start on";
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: `${what} of "${project.title}" is the user's saved choice (${describeModelSelection(current.model, [])}), so an agent cannot replace or clear it. To change it, call studio_project_request with action change_model, role "${role}" and modelSelection, naming every option to keep (effort, Ultracode, context window): the user approves it in a card. Clearing it is the user's to do in project settings.`,
+            });
+          }
+          if (next === null) continue;
+          // A first model: on a sign-in the caller's grant allows, one value per option.
+          if (work !== undefined) yield* assertAccountInGrant(work, next.instanceId);
+          const repeated = duplicateOptionIds(next);
+          if (repeated.length > 0)
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: `Name each model option once; ${repeated.join(", ")} is repeated.`,
+            });
+        }
       }
       return yield* projects
         .update({ ...input, commandId: yield* newCommandId() })

@@ -133,6 +133,40 @@ describe("planProjectCommand", () => {
     );
   });
 
+  it("applies an approved model replacement only to the model it was read against", () => {
+    const codex = ProviderInstanceId.make("codex");
+    const saved: ModelSelection = {
+      instanceId: codex,
+      model: "gpt-5.6-sol",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    const next: ModelSelection = { instanceId: codex, model: "gpt-5.6-luna" };
+    const replace = (expected: ModelSelection | null, current: ModelSelection | null) =>
+      plan(
+        {
+          type: "project.meta.update",
+          commandId: CommandId.make("cmd-replace"),
+          projectId,
+          defaultModelSelection: next,
+          expectedDefaultModelSelection: expected,
+        },
+        { project: row({ defaultModelSelection: current }) },
+      );
+    assert.deepEqual(payloadOf(replace(saved, { ...saved })).defaultModelSelection, next);
+    assert.deepEqual(payloadOf(replace(null, null)).defaultModelSelection, next);
+    // A save that landed after the read wins: another effort, another model, or none.
+    for (const current of [
+      { ...saved, options: [{ id: "reasoningEffort", value: "medium" }] },
+      next,
+      null,
+    ])
+      assert.strictEqual(
+        failureOf(replace(saved, current))._tag,
+        "ProjectDefaultModelConflictError",
+      );
+    assert.strictEqual(failureOf(replace(null, saved))._tag, "ProjectDefaultModelConflictError");
+  });
+
   it("carries an internal worker seed, including options, in the creation event", () => {
     const selection: ModelSelection = {
       instanceId: ProviderInstanceId.make("codex"),
