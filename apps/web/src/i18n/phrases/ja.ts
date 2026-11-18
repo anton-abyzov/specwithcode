@@ -5624,4 +5624,20 @@ export const ja: PhraseCatalog = {
   "Manage profiles": "プロファイルを管理",
   "Profiles: {count}": "プロファイル: {count}",
   "Device hosts: {count}": "デバイスホスト: {count}",
+  "Not reachable from here": "ここからは接続できません",
+  "Sign in to reach {machine}": "サインインして {machine} に接続",
+  "Can't reach {machine} from this window": "このウィンドウから {machine} に接続できません",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to open it here.":
+    "このウィンドウは SpecWithCode Connect 経由で接続しますが、サインインしていません。サインインするとここで開けます。",
+  "Signed out of SpecWithCode Connect": "SpecWithCode Connect からサインアウトしました",
+  "{machines} can't be opened from this window until you sign in.":
+    "{machines} はサインインするまでこのウィンドウから開けません。",
+  "This machine is not affected.": "このマシンには影響ありません。",
+  "This machine and {machines} are not affected.": "このマシンと {machines} には影響ありません。",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "サインインが必要です。SpecWithCode Connect にサインインすると、このウィンドウから接続できます",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "SpecWithCode Connect にサインインすると、このウィンドウから接続できます。",
+  "Some of your machines can't be opened from this window until you sign in. Work on this machine is not affected.":
+    "一部のマシンはサインインするまでこのウィンドウから開けません。このマシンには影響ありません。",
 };

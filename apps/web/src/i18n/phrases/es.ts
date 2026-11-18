@@ -5650,4 +5650,20 @@ export const es: PhraseCatalog = {
   "Manage profiles": "Gestionar perfiles",
   "Profiles: {count}": "Perfiles: {count}",
   "Device hosts: {count}": "Hosts de dispositivos: {count}",
+  "Not reachable from here": "No accesible desde aquí",
+  "Sign in to reach {machine}": "Inicia sesión para acceder a {machine}",
+  "Can't reach {machine} from this window": "No se puede acceder a {machine} desde esta ventana",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to open it here.":
+    "Esta ventana accede a ella mediante SpecWithCode Connect y no tiene la sesión iniciada. Inicia sesión para abrirla aquí.",
+  "Signed out of SpecWithCode Connect": "Sesión cerrada en SpecWithCode Connect",
+  "{machines} can't be opened from this window until you sign in.":
+    "{machines}: no se puede abrir desde esta ventana hasta que inicies sesión.",
+  "This machine is not affected.": "Este equipo no se ve afectado.",
+  "This machine and {machines} are not affected.": "Este equipo y {machines} no se ven afectados.",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "Requiere iniciar sesión. Inicia sesión en SpecWithCode Connect para acceder desde esta ventana",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "Inicia sesión en SpecWithCode Connect para acceder desde esta ventana.",
+  "Some of your machines can't be opened from this window until you sign in. Work on this machine is not affected.":
+    "Algunos de tus equipos no se pueden abrir desde esta ventana hasta que inicies sesión. Este equipo no se ve afectado.",
 };

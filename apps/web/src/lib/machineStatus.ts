@@ -115,8 +115,7 @@ export function machineReachWords(
   note: HostDownNote | null = null,
 ): MachineReachWords {
   if (identityMismatchShown(state, identityMismatch)) return IDENTITY_MISMATCH;
-  const words =
-    state === "stopped" && phase === "unsupported" ? NEEDS_UPDATE : REACH_WORDS[state];
+  const words = state === "stopped" && phase === "unsupported" ? NEEDS_UPDATE : REACH_WORDS[state];
   return hostDownNoteShown(state, note) ? { ...words, ...HOST_DOWN_NOTE_WORDS[note] } : words;
 }
 

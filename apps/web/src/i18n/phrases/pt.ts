@@ -5621,4 +5621,20 @@ export const pt: PhraseCatalog = {
   "Manage profiles": "Gerenciar perfis",
   "Profiles: {count}": "Perfis: {count}",
   "Device hosts: {count}": "Hosts de dispositivos: {count}",
+  "Not reachable from here": "Inacessível daqui",
+  "Sign in to reach {machine}": "Entre para acessar {machine}",
+  "Can't reach {machine} from this window": "Não é possível acessar {machine} por esta janela",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to open it here.":
+    "Esta janela acessa por meio do SpecWithCode Connect e está sem login. Entre para abrir aqui.",
+  "Signed out of SpecWithCode Connect": "Você saiu do SpecWithCode Connect",
+  "{machines} can't be opened from this window until you sign in.":
+    "{machines}: não abre nesta janela até você entrar.",
+  "This machine is not affected.": "Este computador não é afetado.",
+  "This machine and {machines} are not affected.": "Este computador e {machines} não são afetados.",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "Precisa entrar. Entre no SpecWithCode Connect para acessar por esta janela",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "Entre no SpecWithCode Connect para acessar por esta janela.",
+  "Some of your machines can't be opened from this window until you sign in. Work on this machine is not affected.":
+    "Alguns dos seus computadores não abrem nesta janela até você entrar. Este computador não é afetado.",
 };

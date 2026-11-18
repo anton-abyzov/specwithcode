@@ -71,4 +71,21 @@ describe("accountMenuPresentation", () => {
       accountMenuPresentation({ status: "signedIn", name: null, email: null }, MACHINE),
     ).toEqual({ name: "SpecWithCode account", header: MACHINE, signIn: null });
   });
+
+  it("says Signed out, as a warning, while being signed out cuts this window off a machine", () => {
+    const view = accountMenuPresentation(
+      { status: "signedOut", linked: true, cutsOff: true },
+      MACHINE,
+    );
+    expect(view.name).toBe("Signed out");
+    expect(view.tone).toBe("warning");
+    expect(view.header).toBe(`${MACHINE} · Signed out of SpecWithCode Connect`);
+    expect(view.signIn?.label).toBe("Sign in");
+  });
+
+  it("keeps the quiet Not signed in when nothing depends on the sign-in", () => {
+    const view = accountMenuPresentation({ status: "signedOut", linked: true }, MACHINE);
+    expect(view.name).toBe("Not signed in");
+    expect(view.tone).toBeUndefined();
+  });
 });

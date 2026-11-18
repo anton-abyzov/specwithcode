@@ -133,7 +133,12 @@ describe("a machine this machine's server reaches and this window does not", () 
     expect(hostDownWord("offline", false, "reachable-from-machine")).toBe(
       "Not reachable from here",
     );
-    const words = machineReachWords("not-answering", "reconnecting", false, "reachable-from-machine");
+    const words = machineReachWords(
+      "not-answering",
+      "reconnecting",
+      false,
+      "reachable-from-machine",
+    );
     expect(words.headline).toBe("Can't reach {machine} from this window");
     expect(words.next).toBe("Retrying by itself");
   });
@@ -175,8 +180,9 @@ describe("the machine picker, Settings > Machines and the chat banner", () => {
     expect(banner.describe(null, 0)).toBe(
       "This window reaches it through SpecWithCode Connect and is signed out. Sign in to open it here",
     );
-    expect(machineReachDetail(machineReachWords("stopped", "error", false, "needs-sign-in"), null, 0))
-      .toContain("Sign in to open it here");
+    expect(
+      machineReachDetail(machineReachWords("stopped", "error", false, "needs-sign-in"), null, 0),
+    ).toContain("Sign in to open it here");
   });
 });
 

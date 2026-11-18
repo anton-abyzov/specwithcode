@@ -100,6 +100,7 @@ import { UnplannedThreadChip, UnplannedThreadsFilter } from "./UnplannedThreads"
 import { useUnplannedNotice } from "../../../studio/unplannedNotice";
 import { HandoffRowAction, HandoffRowBadge } from "../../handoff/HandoffBadge";
 import { designRoute } from "../../design/gallery/designLinks";
+import { SignedOutBanner } from "./SignedOutBanner";
 import {
   useHostReachStates,
   useHostDownNotes,
@@ -886,6 +887,7 @@ export function ThreadsPane({
           ) : null}
         </header>
         {props.shelf}
+        <SignedOutBanner />
         {props.renderNotice?.({ machineFilter })}
         <div id="sws-threads-find">
           {findShown ? (

@@ -12,7 +12,12 @@ export type ConnectAccount =
   | { readonly status: "loading" }
   /** Clerk did not start, so this window cannot tell whether it is signed in. */
   | { readonly status: "notLoaded"; readonly linked: boolean }
-  | { readonly status: "signedOut"; readonly linked: boolean }
+  | {
+      readonly status: "signedOut";
+      readonly linked: boolean;
+      /** A saved machine can't be opened from this window until it signs in (1417). */
+      readonly cutsOff?: boolean;
+    }
   | {
       readonly status: "signedIn";
       readonly name: string | null;
@@ -25,6 +30,8 @@ export interface AccountMenuPresentation {
   readonly header: string;
   /** Null when this window cannot sign in, or already has. */
   readonly signIn: { readonly label: string; readonly hint: string } | null;
+  /** "warning" while being signed out cuts this window off from a machine. */
+  readonly tone?: "warning";
 }
 
 export function accountMenuPresentation(
@@ -50,6 +57,16 @@ export function accountMenuPresentation(
         },
       };
     case "signedOut":
+      if (account.cutsOff === true)
+        return {
+          name: "Signed out",
+          header: `${machine} · Signed out of SpecWithCode Connect`,
+          tone: "warning",
+          signIn: {
+            label: "Sign in",
+            hint: "Some of your machines can't be opened from this window until you sign in. Work on this machine is not affected.",
+          },
+        };
       return account.linked
         ? {
             name: "Not signed in",

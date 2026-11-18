@@ -5387,4 +5387,20 @@ export const zh: PhraseCatalog = {
   "Manage profiles": "管理配置文件",
   "Profiles: {count}": "配置文件：{count}",
   "Device hosts: {count}": "设备主机：{count}",
+  "Not reachable from here": "无法从此处访问",
+  "Sign in to reach {machine}": "登录以访问 {machine}",
+  "Can't reach {machine} from this window": "无法从此窗口访问 {machine}",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to open it here.":
+    "此窗口通过 SpecWithCode Connect 访问它，但尚未登录。登录后即可在此打开。",
+  "Signed out of SpecWithCode Connect": "已退出 SpecWithCode Connect",
+  "{machines} can't be opened from this window until you sign in.":
+    "登录前无法从此窗口打开 {machines}。",
+  "This machine is not affected.": "此电脑不受影响。",
+  "This machine and {machines} are not affected.": "此电脑和 {machines} 不受影响。",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "需要登录。登录 SpecWithCode Connect 后即可从此窗口访问",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "登录 SpecWithCode Connect 后即可从此窗口访问。",
+  "Some of your machines can't be opened from this window until you sign in. Work on this machine is not affected.":
+    "登录前无法从此窗口打开你的部分电脑。此电脑不受影响。",
 };

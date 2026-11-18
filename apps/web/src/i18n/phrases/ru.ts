@@ -5619,4 +5619,21 @@ export const ru: PhraseCatalog = {
   "Manage profiles": "Управлять профилями",
   "Profiles: {count}": "Профили: {count}",
   "Device hosts: {count}": "Хосты устройств: {count}",
+  "Not reachable from here": "Недоступно отсюда",
+  "Sign in to reach {machine}": "Войдите, чтобы открыть {machine}",
+  "Can't reach {machine} from this window": "{machine} недоступен из этого окна",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to open it here.":
+    "Это окно подключается к нему через SpecWithCode Connect, а вход не выполнен. Войдите, чтобы открыть его здесь.",
+  "Signed out of SpecWithCode Connect": "Вы вышли из SpecWithCode Connect",
+  "{machines} can't be opened from this window until you sign in.":
+    "{machines}: не открыть из этого окна, пока вы не войдёте.",
+  "This machine is not affected.": "Этот компьютер работает как обычно.",
+  "This machine and {machines} are not affected.":
+    "Этот компьютер и {machines} работают как обычно.",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "Нужен вход. Войдите в SpecWithCode Connect, чтобы открыть его из этого окна",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "Войдите в SpecWithCode Connect, чтобы открыть его из этого окна.",
+  "Some of your machines can't be opened from this window until you sign in. Work on this machine is not affected.":
+    "Некоторые ваши компьютеры не открыть из этого окна, пока вы не войдёте. Этот компьютер работает как обычно.",
 };
