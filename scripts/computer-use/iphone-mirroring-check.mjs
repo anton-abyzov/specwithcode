@@ -129,42 +129,45 @@ const sameChar = (typed, read) =>
     SAME_SHAPE.has(typed.toLowerCase()) &&
     typed.toLowerCase() === read.toLowerCase());
 // What may follow the typed text in the field: nothing, the cursor, or
-// Spotlight's inline suggestion: a dash, a space and capitalized words ("- Ask Siri").
-const NOTHING_AFTER = /^\s*\|?\s*$/;
-const SUGGESTION_AFTER = /^\s*\|?\s*-\s+[A-Z][A-Za-z .']*$/;
+// Spotlight's inline suggestion as the run's pictures show it
+// ("zQ4207- Ask Siri", "ZQZXV - Ask Siri"). Anything else may be typed text.
+const NOTHING_AFTER = /^\|?$/;
+const KNOWN_SUGGESTION = /^\|? ?-\s+Ask Siri$/;
 
-/** The field reading split at the typed text: base, digits after it, and the rest. */
-function splitTyped(reading, base, digits) {
-  const read = Array.from(readAs(reading).trim());
+/**
+ * A field reading against typed text: undefined when it does not start with
+ * exactly `base`; else how many digits follow (with `digits`) and what comes
+ * after them: "none", "suggestion", or "other" (possibly more typed text).
+ */
+export function readField(reading, base, digits = false) {
+  const read = Array.from(readAs(reading));
   const want = Array.from(base);
   for (let index = 0; index < want.length; index++) {
     if (!sameChar(want[index], read[index])) return undefined;
   }
   let count = 0;
   if (digits) while (/[0-9]/.test(read[want.length + count] ?? "")) count++;
-  return { count, rest: read.slice(want.length + count).join("") };
+  const rest = read.slice(want.length + count).join("");
+  const after = NOTHING_AFTER.test(rest)
+    ? "none"
+    : KNOWN_SUGGESTION.test(rest)
+      ? "suggestion"
+      : "other";
+  return { count, after };
 }
 
-/**
- * How many digits follow `base` at the start of a reading (with `digits`), or
- * 0 when none may; undefined when the reading does not start with exactly
- * `base`, spaces included, or anything but the cursor or a suggestion follows.
- */
+/** How many digits follow `base`, when only the cursor or a known suggestion follows them. */
 export function typedTail(reading, base, digits = false) {
-  const split = splitTyped(reading, base, digits);
-  if (split === undefined) return undefined;
-  return NOTHING_AFTER.test(split.rest) || SUGGESTION_AFTER.test(split.rest)
-    ? split.count
-    : undefined;
+  const field = readField(reading, base, digits);
+  return field === undefined || field.after === "other" ? undefined : field.count;
 }
 
-/** Whether a reading starts with exactly the typed text. */
+/** Whether a reading is exactly the typed text, with only the cursor or a known suggestion after it. */
 export const startsWithTyped = (reading, typed) => typedTail(reading, typed) === 0;
 
-/** Whether a reading shows a suggestion after the typed text, such as "- Ask Siri". */
+/** Whether a reading shows Spotlight's inline suggestion after the typed text. */
 export function showsSuggestion(reading, base) {
-  const split = splitTyped(reading, base, true);
-  return split !== undefined && SUGGESTION_AFTER.test(split.rest);
+  return readField(reading, base, true)?.after === "suggestion";
 }
 /** Clock readings change between screenshots, so they never decide a match. */
 const isReading = (text) => /^[\d\s:.,]+(am|pm)?$/i.test(text.trim());
@@ -186,7 +189,12 @@ export function jaccard(a, b) {
 /** Whether a line sits in the tab bar's row or column. */
 export function inBar(line, bar) {
   const point = center(line);
-  return Math.abs((bar.axis === "row" ? point.y : point.x) - bar.at) <= bar.half;
+  const across = bar.axis === "row" ? point.y : point.x;
+  const along = bar.axis === "row" ? point.x : point.y;
+  return (
+    Math.abs(across - bar.at) <= bar.half &&
+    (bar.from === undefined || (along >= bar.from && along <= bar.to))
+  );
 }
 
 /**
@@ -238,16 +246,19 @@ export function anchorIn(page, words) {
 /**
  * The two tab labels where they line up as a tab bar does: side by side in a
  * row (at the bottom, or on top in a wider layout) or one above the other in a
- * sidebar. A bar must also hold a third of `barLabels` (Clock shows four
- * tabs), so a page title and one tab never pass for a bar. Returns
- * { tabs: {label: line}, bar }, { ambiguous: true } when two different bars
- * hold as many labels, or undefined.
+ * sidebar. A bar must also hold a third of `barLabels` (Clock shows four tabs)
+ * in line with them, so a page title and one tab never pass for a bar; of two
+ * readings of the same label in line, the one closer to the others is the tab.
+ * The bar ends just past its outer labels, so a page title further along the
+ * same line stays page text. Returns { tabs: {label: line}, bar },
+ * { ambiguous: true } when two different bars fit as well, or undefined.
  */
 export function locateTabs(lines, labels, barLabels = labels) {
-  const known = [...new Set(barLabels.map(normalize))];
+  const pair = labels.map(normalize);
+  const known = [...new Set([...barLabels.map(normalize), ...pair])];
   const needed = Math.min(3, known.length);
-  const [first, second] = labels.map((label) =>
-    lines.filter((line) => normalize(line.text) === normalize(label)),
+  const [first, second] = pair.map((label) =>
+    lines.filter((line) => normalize(line.text) === label),
   );
   const candidates = [];
   for (const a of first) {
@@ -269,21 +280,44 @@ export function locateTabs(lines, labels, barLabels = labels) {
         rank = -bar.at;
       }
       if (bar === undefined) continue;
-      const held = new Set(
-        lines
-          .filter((line) => known.includes(normalize(line.text)) && inBar(line, bar))
-          .map((line) => normalize(line.text)),
-      ).size;
-      if (held < needed) continue;
-      candidates.push({ held, rank, tabs: { [labels[0]]: a, [labels[1]]: b }, bar });
+      const along = (line) => (bar.axis === "row" ? center(line).x : center(line).y);
+      const middle = (along(a) + along(b)) / 2;
+      const members = [a, b];
+      for (const label of known) {
+        if (pair.includes(label)) continue;
+        const inLine = lines
+          .filter((line) => normalize(line.text) === label && inBar(line, bar))
+          .sort((x, y) => Math.abs(along(x) - middle) - Math.abs(along(y) - middle));
+        if (inLine.length > 0) members.push(inLine[0]);
+      }
+      if (members.length < needed) continue;
+      const starts = members.map((line) => (bar.axis === "row" ? line.x : line.y));
+      const ends = members.map((line) =>
+        bar.axis === "row" ? line.x + line.width : line.y + line.height,
+      );
+      const from = Math.min(...starts) - size;
+      const to = Math.max(...ends) + size;
+      candidates.push({
+        held: members.length,
+        span: to - from,
+        rank,
+        tabs: { [labels[0]]: a, [labels[1]]: b },
+        bar: { ...bar, from, to },
+      });
     }
   }
   if (candidates.length === 0) return undefined;
-  const most = Math.max(...candidates.map((entry) => entry.held));
-  const top = candidates.filter((entry) => entry.held === most);
-  const bars = new Set(top.map((entry) => `${entry.bar.axis}:${Math.round(entry.bar.at / 10)}`));
-  if (bars.size > 1) return { ambiguous: true };
-  const best = top.sort((x, y) => y.rank - x.rank)[0];
+  candidates.sort((x, y) => y.held - x.held || x.span - y.span || y.rank - x.rank);
+  const [best, next] = candidates;
+  const sameBar = (x, y) => x.axis === y.axis && Math.abs(x.at - y.at) <= x.half;
+  if (
+    next !== undefined &&
+    next.held === best.held &&
+    Math.abs(next.span - best.span) <= best.bar.half &&
+    !sameBar(best.bar, next.bar)
+  ) {
+    return { ambiguous: true };
+  }
   return { tabs: best.tabs, bar: best.bar };
 }
 
@@ -554,24 +588,36 @@ export async function runCheck(deps, options = {}) {
       await call("computer_type", { text: sample });
       await deps.sleep(config.settleMs);
       seen = await look();
-      const found = seen.lines.some((line) => startsWithTyped(line.text, sample));
-      check(
-        `type "${sample}"`,
-        found,
-        found
-          ? `shown on the phone; ${front()}`
-          : `not shown as typed; read ${describeLines(seen.lines.slice(0, 12))}; ${front()}`,
-      );
+      const fields = seen.lines
+        .map((line) => ({ line, field: readField(line.text, sample) }))
+        .filter((entry) => entry.field !== undefined && entry.field.count === 0);
+      const found = fields.some((entry) => entry.field.after !== "other");
+      const unclear = fields.find((entry) => entry.field.after === "other");
+      if (!found && unclear !== undefined) {
+        unsure(
+          `type "${sample}"`,
+          `the field reads ${JSON.stringify(unclear.line.text)}: the text then more that is neither the cursor nor a known suggestion, so it cannot be told whether more was typed; ${front()}`,
+        );
+      } else {
+        check(
+          `type "${sample}"`,
+          found,
+          found
+            ? `shown on the phone; ${front()}`
+            : `not shown as typed; read ${describeLines(seen.lines.slice(0, 12))}; ${front()}`,
+        );
+      }
     } catch (error) {
       check(`type "${sample}"`, false, `failed: ${error.message}`);
     }
   }
 
-  // One backspace and a repeated backspace, each after the text changed and
-  // Spotlight's suggestions settled. An inline suggestion ("- Ask Siri") takes
-  // the first press of a key call, so the same call removes one character fewer
-  // while it shows; comparing the two calls cancels it. A repeat that delivers
-  // every press removes REPEAT_PRESSES - 1 more characters than one press.
+  // One backspace, then a repeated backspace, each judged by exactly what it
+  // removed, read after Spotlight settled and with no other input since.
+  // Spotlight's inline suggestion ("- Ask Siri") may take a press without
+  // removing text; a call is never passed on that guess. A press that removed
+  // nothing passes only if the suggestion is seen gone after it, and a repeat
+  // that removed one fewer than asked while a suggestion showed is UNSURE.
   try {
     await freshSearch();
     await call("computer_type", { text: REPEAT_BASE + REPEAT_TAIL });
@@ -579,58 +625,67 @@ export async function runCheck(deps, options = {}) {
     const read = async (waitMs = config.suggestMs) => {
       await deps.sleep(waitMs);
       seen = await look();
-      const line = fieldLine(seen, REPEAT_BASE);
+      const line = seen.lines.find((entry) => readField(entry.text, REPEAT_BASE, true));
       reads.push(line?.text);
-      return line === undefined
+      const field = line === undefined ? undefined : readField(line.text, REPEAT_BASE, true);
+      return field === undefined
         ? undefined
         : {
-            tail: typedTail(line.text, REPEAT_BASE, true),
-            suggestion: showsSuggestion(line.text, REPEAT_BASE),
+            tail: field.count,
+            suggestion: field.after === "suggestion",
+            other: field.after === "other",
           };
     };
     const typed = await read();
     await call("computer_key", { keys: "backspace" });
-    // Read soon, before Spotlight could search again and bring a suggestion back.
+    // Read soon, before Spotlight could search again.
     const afterOne = await read(config.settleMs);
-    // New text, so Spotlight searches again, as it did before the single press.
-    await call("computer_type", { text: "5" });
-    const retyped = await read();
+    // No input since: what shows now is what the repeat meets.
+    const before = await read();
     await call("computer_key", { keys: "backspace", repeat: REPEAT_PRESSES });
-    await deps.sleep(300);
-    const afterRepeat = await read();
+    const afterRepeat = await read(config.settleMs);
     const shown = reads.map((text) => (text === undefined ? "nothing" : JSON.stringify(text)));
-    if ([typed, afterOne, retyped, afterRepeat].some((entry) => entry === undefined)) {
+    const all = [typed, afterOne, before, afterRepeat];
+    const yes = (flag) => (flag ? "yes" : "no");
+    if (all.some((entry) => entry === undefined)) {
       check("key repeat", false, `the search field could not be read; read ${shown.join(" -> ")}`);
+    } else if (all.some((entry) => entry.other) || typed.tail !== REPEAT_TAIL.length) {
+      unsure(
+        "key repeat",
+        `field read ${shown.join(" -> ")}; the field shows more than the typed digits and a known suggestion, so what a press removed cannot be counted`,
+      );
     } else {
-      const one = typed.tail - afterOne.tail;
-      const repeated = retyped.tail - afterRepeat.tail;
-      const detail = `field read ${shown.join(" -> ")}; one backspace removed ${one}, backspace repeat ${REPEAT_PRESSES} removed ${repeated}; inline suggestion before each: ${typed.suggestion ? "yes" : "no"}, ${retyped.suggestion ? "yes" : "no"}`;
-      // A single press that removed no text must be seen taking the suggestion
-      // away; one that left text and suggestion as they were was lost or hidden.
-      const tookSuggestion = one === 0 && typed.suggestion && !afterOne.suggestion;
-      if (
-        typed.tail !== REPEAT_TAIL.length ||
-        retyped.tail !== afterOne.tail + 1 ||
-        (one !== 1 && !tookSuggestion && !(one === 0 && typed.suggestion))
-      ) {
-        check("key repeat", false, detail);
-      } else if (one === 0 && !tookSuggestion) {
+      // "arrived", "lost" or "unsure" for one key call of `presses` presses.
+      const judge = (presses, from, to) => {
+        const removed = from.tail - to.tail;
+        if (removed === presses) return "arrived";
+        if (presses === 1 && removed === 0 && from.suggestion && !to.suggestion) return "arrived";
+        if (removed === presses - 1 && from.suggestion) return "unsure";
+        return "lost";
+      };
+      const single = judge(1, typed, afterOne);
+      const repeat =
+        before.tail === afterOne.tail ? judge(REPEAT_PRESSES, before, afterRepeat) : "unsure";
+      const detail = `field read ${shown.join(" -> ")}; one backspace removed ${typed.tail - afterOne.tail} (suggestion before ${yes(typed.suggestion)}, after ${yes(afterOne.suggestion)}), backspace repeat ${REPEAT_PRESSES} removed ${before.tail - afterRepeat.tail} (suggestion before ${yes(before.suggestion)})`;
+      if (single === "lost" || repeat === "lost") {
+        check("key repeat", false, `${detail}; a press did not arrive`);
+      } else if (single === "unsure" || repeat === "unsure") {
+        const why = [
+          single === "unsure"
+            ? "the single press changed nothing on screen while a suggestion showed"
+            : undefined,
+          repeat === "unsure"
+            ? before.tail === afterOne.tail
+              ? "the repeat removed one fewer than asked while a suggestion showed"
+              : "the field changed with no key pressed"
+            : undefined,
+        ].filter(Boolean);
         unsure(
           "key repeat",
-          `${detail}; the single press changed nothing on screen while a suggestion showed, so it cannot be told whether it arrived`,
-        );
-      } else if (typed.suggestion !== retyped.suggestion) {
-        unsure(
-          "key repeat",
-          `${detail}; a suggestion showed before one call and not the other, so the two calls are not comparable`,
+          `${detail}; ${why.join(", and ")}, so it cannot be told whether every press arrived`,
         );
       } else {
-        const ok = repeated - one === REPEAT_PRESSES - 1;
-        check(
-          "key repeat",
-          ok,
-          `${detail}${ok ? `; ${REPEAT_PRESSES - 1} more than one press, so every press arrived${tookSuggestion ? " (the suggestion took the first press of each call)" : ""}` : ""}`,
-        );
+        check("key repeat", true, `${detail}; every press arrived`);
       }
     }
   } catch (error) {
