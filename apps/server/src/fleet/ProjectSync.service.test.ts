@@ -246,6 +246,46 @@ describe("the project sync service (1390 AC-10, AC-11)", () => {
     }).pipe(Effect.provide(syncLayer([project(projectA, f.a)])));
   });
 
+  it.effect(
+    "removes what a dead clone left behind at the next run, and moves the repository above it (P2-19)",
+    () => {
+      const f = twoMachines();
+      // A server stopped mid-clone: the folder it was filling stayed, here and one level down.
+      const leftovers = [".swc-clone-lib-Ab12Cd", "packages/.swc-clone-ui-Zz99Zz"];
+      for (const leftover of leftovers) {
+        git(f.a, "init", "-q", NodePath.join(f.a, leftover));
+        write(NodePath.join(f.a, leftover), "half.ts", "export const half = 1;\n");
+      }
+      write(f.b, "app.ts", "export const a = 2;\n");
+      git(f.b, "commit", "-q", "-am", "ahead");
+      git(f.b, "push", "-q", "origin", "HEAD:main");
+      const head = git(f.b, "rev-parse", "HEAD");
+      return Effect.gen(function* () {
+        const sync = yield* ProjectSync.ProjectSync;
+        // Never a repository of the project, and never work of the repository above it.
+        expect((yield* sync.status(input)).repositories).toMatchObject([
+          { path: ".", clean: true },
+        ]);
+        const fetched = yield* sync.fetch(input);
+        expect(fetched.repositories.map((entry) => entry.path)).toEqual(["."]);
+        expect(fetched.repositories[0]).toMatchObject({ behind: 1, uncommitted: 0 });
+        // Reading leaves the leftovers where they are; the next run removes them.
+        for (const leftover of leftovers)
+          expect(NodeFS.existsSync(NodePath.join(f.a, leftover))).toBe(true);
+        const run = yield* sync.run({
+          ...input,
+          fastForward: [{ path: ".", otherBranch: "main" }],
+          clone: [],
+        });
+        expect(run.repositories).toMatchObject([{ path: ".", action: "fast-forward", moved: 1 }]);
+        expect(git(f.a, "rev-parse", "HEAD")).toBe(head);
+        for (const leftover of leftovers)
+          expect(NodeFS.existsSync(NodePath.join(f.a, leftover))).toBe(false);
+        expect(NodeFS.existsSync(NodePath.join(f.a, "packages"))).toBe(true);
+      }).pipe(Effect.provide(syncLayer([project(projectA, f.a)])));
+    },
+  );
+
   it.effect("lists the root alone when the folder cannot be scanned in full", () => {
     const f = umbrella();
     // A nested folder whose Git data is gone, as a removed worktree leaves behind.
@@ -436,6 +476,15 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
           ".swc-clone-slow-",
         ]);
         expect(NodeFS.existsSync(target)).toBe(false);
+        // Status takes no lock: it runs now, and does not list the folder being filled (P2-19).
+        const staging = `repositories/${NodeFS.readdirSync(parent)[0]!}`;
+        expect(NodeFS.existsSync(NodePath.join(f.a, staging, ".git"))).toBe(true);
+        expect((yield* sync.status(input)).repositories.map((entry) => entry.path)).toEqual(["."]);
+        // A clone that is still running keeps its folder when leftovers are swept.
+        expect(
+          yield* Effect.promise(() => ProjectSync.sweepCloneLeftovers(f.a, [staging])),
+        ).toEqual([]);
+        expect(NodeFS.existsSync(NodePath.join(f.a, staging, ".git"))).toBe(true);
         // A second call waits for the lock the clone holds.
         const seen: Array<boolean> = [];
         const next = yield* Effect.forkChild(
@@ -693,6 +742,27 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
       );
     },
   );
+
+  it.effect("never offers a clone's staging folder as work to send (P2-19)", () => {
+    const f = twoMachines();
+    git(f.a, "init", "-q", NodePath.join(f.a, ".swc-clone-lib-Ab12Cd"));
+    write(NodePath.join(f.a, ".swc-clone-lib-Ab12Cd"), "half.ts", "export const half = 1;\n");
+    return withMachines(f, unscopedGrant(m4), (extras) =>
+      Effect.gen(function* () {
+        const inventory = yield* extras.inventory({ projectId: projectA });
+        expect(inventory.repositories).toMatchObject([
+          { path: ".", changedFiles: 0, untrackedFiles: 0, leftOut: [] },
+        ]);
+        const sent = yield* extras.sendExtras({
+          projectId: projectA,
+          targetEnvironmentId: m5,
+          operationId: OPERATION,
+          items: [{ kind: "branch", path: ".swc-clone-lib-Ab12Cd", branch: "main" }],
+        });
+        expect(sent.items[0]).toMatchObject({ status: "stays", stays: "failed" });
+      }),
+    );
+  });
 
   it.effect("keeps an extra when the other machine's grant does not cover the project", () => {
     const f = twoMachines();

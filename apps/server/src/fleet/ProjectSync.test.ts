@@ -17,6 +17,7 @@ import {
   isLinkedWorktree,
   runSync,
   statusOf,
+  sweepCloneLeftovers,
   type SyncContext,
   type SyncGit,
   syncRepositories,
@@ -1086,11 +1087,154 @@ describe("project sync: review round 2 follow-ups", () => {
   });
 });
 
+describe("project sync: review round 3 follow-ups", () => {
+  it("never lists a clone's staging folder, or anything in it, as a repository (P2-19)", async () => {
+    const f = fixture();
+    const listed = await syncRepositories(recording().run, f.a, [
+      ".",
+      ".swc-clone-lib-Ab12Cd",
+      "repositories/.swc-clone-lib-Ab12Cd",
+      "repositories/.swc-clone-lib-Ab12Cd/vendor/dep",
+    ]);
+    expect(listed.map((repository) => repository.path)).toEqual(["."]);
+  });
+
+  it("does not count a clone's staging folder as uncommitted work of the repository above (P2-19)", async () => {
+    const f = fixture();
+    for (const staging of [".swc-clone-lib-Ab12Cd", "packages/.swc-clone-ui-Zz99Zz"]) {
+      git(f.a, "init", "-q", NodePath.join(f.a, staging));
+      write(NodePath.join(f.a, staging), "half.ts", "export const half = 1;\n");
+    }
+    const head = f.publish();
+    const { step, facts, result } = await sync(f.a, f.b);
+    expect(facts.uncommitted).toBe(0);
+    expect(say(step)).toBe("fast-forward:behind");
+    expect(result).toMatchObject({ action: "fast-forward", moved: 1 });
+    expect(git(f.a, "rev-parse", "HEAD")).toBe(head);
+    // Work of the person's own beside it still counts.
+    write(f.a, "packages/mine.ts", "export const mine = 1;\n");
+    f.publish();
+    expect((await sync(f.a, f.b)).step).toMatchObject({ reason: "uncommitted", uncommitted: 1 });
+  });
+
+  it("removes a dead clone's folder and says which one it could not remove (P2-19)", async () => {
+    const f = fixture();
+    const make = (path: string) => {
+      git(f.a, "init", "-q", NodePath.join(f.a, path));
+      write(NodePath.join(f.a, path), "half.ts", "export const half = 1;\n");
+    };
+    make(".swc-clone-lib-Ab12Cd");
+    make("locked/.swc-clone-ui-Zz99Zz");
+    write(f.a, "kept/.swc-clone-notes.txt", "a file of the person's own\n");
+    NodeFS.mkdirSync(NodePath.join(f.a, "kept", "swc-clone-lib"));
+    NodeFS.chmodSync(NodePath.join(f.a, "locked"), 0o555);
+    try {
+      const failed = await sweepCloneLeftovers(f.a, [
+        ".swc-clone-lib-Ab12Cd",
+        "locked/.swc-clone-ui-Zz99Zz",
+        // Never anything that is not a staging folder inside the project, whatever is asked.
+        "kept/.swc-clone-notes.txt",
+        "kept/swc-clone-lib",
+        "../outside/.swc-clone-x-Ab12Cd",
+      ]);
+      expect(NodeFS.existsSync(NodePath.join(f.a, ".swc-clone-lib-Ab12Cd"))).toBe(false);
+      expect(NodeFS.existsSync(NodePath.join(f.a, "kept", ".swc-clone-notes.txt"))).toBe(true);
+      expect(NodeFS.existsSync(NodePath.join(f.a, "kept", "swc-clone-lib"))).toBe(true);
+      // Where this process may write into any folder (an administrator), nothing is left to report.
+      if (NodeFS.existsSync(NodePath.join(f.a, "locked", ".swc-clone-ui-Zz99Zz")))
+        expect(failed).toEqual(["locked/.swc-clone-ui-Zz99Zz"]);
+    } finally {
+      NodeFS.chmodSync(NodePath.join(f.a, "locked"), 0o755);
+    }
+  });
+
+  /** Both machines on `feature`, machine A one commit behind it; then the branch goes from origin. */
+  const deletedUpstream = () => {
+    const f = fixture();
+    git(f.publisher, "checkout", "-q", "-b", "feature");
+    commit(f.publisher, "feature.ts", "export const feature = 1;\n");
+    git(f.publisher, "push", "-q", "-u", "origin", "feature");
+    for (const machine of [f.a, f.b]) {
+      git(machine, "fetch", "-q", "origin");
+      git(machine, "checkout", "-q", "feature");
+    }
+    commit(f.publisher, "feature.ts", "export const feature = 2;\n");
+    git(f.publisher, "push", "-q", "origin", "feature");
+    git(f.a, "fetch", "-q", "origin");
+    return f;
+  };
+
+  it("does not move a checkout forward to a branch that is gone from origin (P2-20)", async () => {
+    const f = deletedUpstream();
+    git(f.publisher, "push", "-q", "origin", "--delete", "feature");
+    const before = snapshot(f.a);
+    const { step, facts, result, commands } = await sync(f.a, f.b, { force: true });
+    // The fetch does not prune: the tracking ref still reads one commit behind.
+    expect(facts).toMatchObject({ upstream: "origin/feature", behind: 1, upstreamGone: true });
+    expect(say(step)).toBe("none:no-upstream");
+    expect(step.detail).toBe("The branch origin/feature is no longer on origin.");
+    expect(result).toMatchObject({ action: "none", reason: "no-upstream", moved: 0 });
+    expect(commands.some((args) => args[0] === "merge")).toBe(false);
+    expect(snapshot(f.a)).toEqual(before);
+  });
+
+  it("asks origin once more before the move: a branch deleted after the fetch stays (P2-20)", async () => {
+    const f = deletedUpstream();
+    const { run, commands } = recording();
+    const here = await fetchAll(context(run), [root(f.a)]);
+    expect(here[0]!.upstreamGone ?? false).toBe(false);
+    expect(say(planProjectSync(here, [])[0]!)).toBe("fast-forward:behind");
+    git(f.publisher, "push", "-q", "origin", "--delete", "feature");
+    const before = snapshot(f.a);
+    const results = await runSync(context(run), f.a, [root(f.a)], {
+      fastForward: [{ path: ".", otherBranch: null }],
+      clone: [],
+    });
+    expect(results[0]).toMatchObject({
+      action: "none",
+      reason: "no-upstream",
+      detail: "The branch origin/feature is no longer on origin.",
+      moved: 0,
+      downgraded: true,
+    });
+    expect(commands.some((args) => args[0] === "merge")).toBe(false);
+    expect(snapshot(f.a)).toEqual(before);
+  });
+
+  it("keeps an empty folder that appears at the target of a finished clone (P2-21)", async () => {
+    const f = fixture();
+    const target = NodePath.join(f.b, "repositories", "lib");
+    const { run } = recording();
+    const racing: SyncGit = async (cwd, args, options) => {
+      const done = await run(cwd, args, options);
+      if (args[0] === "clone") NodeFS.mkdirSync(target, { recursive: true });
+      return done;
+    };
+    const identity = () => NodeFS.statSync(target).ino;
+    const result = await cloneRepository(context(racing), f.b, {
+      path: "repositories/lib",
+      remote: addressable(f.base)("remote"),
+    });
+    expect(result).toMatchObject({ action: "none", reason: "refused" });
+    expect(NodeFS.readdirSync(target)).toEqual([]);
+    expect(identity()).toBeGreaterThan(0);
+    expect(NodeFS.readdirSync(NodePath.join(f.b, "repositories"))).toEqual(["lib"]);
+  });
+});
+
 describe("project sync: the Git commands it runs (1390 AC-11)", () => {
   // Runs last: every test above recorded what the module ran.
   it("never runs a command that resets, rebases, stashes, switches, deletes, pushes or commits", () => {
     expect(everyCommand.length).toBeGreaterThan(100);
-    const READS = new Set(["config", "symbolic-ref", "rev-parse", "rev-list", "status"]);
+    const READS = new Set([
+      "config",
+      "symbolic-ref",
+      "rev-parse",
+      "rev-list",
+      "status",
+      "ls-remote",
+      "ls-files",
+    ]);
     const WRITES = new Set(["fetch", "merge", "clone"]);
     const verbs = new Set(everyCommand.map((args) => args[0]!));
     expect([...verbs].filter((verb) => !READS.has(verb) && !WRITES.has(verb))).toEqual([]);

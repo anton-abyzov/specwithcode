@@ -51,7 +51,7 @@ export const ProjectSyncReason = Schema.Literals([
   "detached",
   /**
    * The branch has no upstream on `origin`. When it follows a local branch or a branch of
-   * another remote instead, `detail` names it.
+   * another remote instead, or its branch is gone from `origin`, `detail` says so.
    */
   "no-upstream",
   /** The fetch failed; `detail` is Git's reason. The other repositories continue. */
@@ -114,6 +114,13 @@ export const ProjectSyncRepositoryFacts = Schema.Struct({
    * version.
    */
   otherUpstream: Schema.optional(Schema.NullOr(bounded(512))),
+  /**
+   * True when this machine's fetch found the upstream's branch gone from `origin`. The fetch
+   * never prunes, so `upstream` and `behind` still read as they last did; such a checkout is
+   * planned as having no upstream and is never moved. Absent when the branch is there, when
+   * nothing was behind, and from a machine on an older version.
+   */
+  upstreamGone: Schema.optional(Schema.Boolean),
   ahead: NonNegativeInt,
   behind: NonNegativeInt,
   /** Changed and untracked files, as `git status` counts them. */
@@ -165,6 +172,10 @@ export const ProjectSyncStep = Schema.Struct({
 });
 export type ProjectSyncStep = typeof ProjectSyncStep.Type;
 
+/** The `detail` of a step whose upstream branch is gone from `origin`. */
+export const projectSyncUpstreamGoneDetail = (upstream: string) =>
+  `The branch ${upstream} is no longer on origin.`;
+
 /**
  * The one action for a repository that exists on this machine. States overlap,
  * so the first that matches wins: a failed fetch, no remote, not on a branch,
@@ -207,6 +218,8 @@ export function planProjectSyncRepository(
         ? null
         : `The branch follows ${facts.otherUpstream}, which is not a branch of origin.`,
     );
+  if (facts.upstreamGone === true)
+    return step("none", "no-upstream", projectSyncUpstreamGoneDetail(facts.upstream));
   if (facts.behind === 0) return step("none", facts.ahead > 0 ? "not-pushed" : "up-to-date");
   if (facts.ahead > 0) return step("fetch", "diverged");
   if (facts.uncommitted > 0) return step("fetch", "uncommitted");

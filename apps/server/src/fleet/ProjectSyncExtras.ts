@@ -90,7 +90,10 @@ export async function snapshotLeftOut(root: string): Promise<Array<ProjectSyncLe
     runGit(root, ["diff", "--name-only", "-z", "--no-renames", "HEAD"], { allowFailure: true }),
     runGit(root, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]),
   ]);
-  const untrackedPaths = untracked.stdout.split("\0").filter(Boolean).toSorted();
+  const untrackedPaths = untracked.stdout
+    .split("\0")
+    .filter((path) => path.length > 0 && !ProjectSync.inCloneStaging(path))
+    .toSorted();
   const out: Array<Omit<ProjectSyncLeftOutFile, "modifiedAtMs">> = [];
   const toCheck: Array<string> = [];
   for (const path of changed.stdout.split("\0").filter(Boolean).toSorted()) {
@@ -180,7 +183,10 @@ export async function inventoryRepository(
     else notPushed.push({ branch, head, commits });
   }
   const status = await runGit(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
-  const entries = lines(status.stdout);
+  // A folder a clone is being made in is no work of this repository.
+  const entries = lines(status.stdout).filter(
+    (entry) => !(entry.startsWith("??") && ProjectSync.inCloneStaging(entry.slice(3))),
+  );
   const untrackedFiles = entries.filter((entry) => entry.startsWith("??")).length;
   const stashes = await runGit(root, ["stash", "list"], { allowFailure: true });
   const leftOut = capped(await snapshotLeftOut(root));
