@@ -462,7 +462,8 @@ it.effect("Codex first native goal carries project context and keeps the objecti
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
-it.effect(
+// Live clock: the second turn is given real time to reach turn/start if it would.
+it.live(
   "Codex starts the next turn only after a compaction's project context restore is injected",
   () =>
     Effect.gen(function* () {
@@ -567,7 +568,7 @@ it.effect(
       const next = yield* harness.runtime
         .startTurn(turn("restore-order-2", "next"))
         .pipe(Effect.forkScoped);
-      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)));
+      yield* Effect.sleep("50 millis");
       assert.equal(methods.filter((method) => method === "turn/start").length, 1);
       yield* Deferred.succeed(releaseRestore, undefined);
       yield* Fiber.join(next);
