@@ -13,18 +13,6 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import {
-  planProjectSyncRepository,
-  projectSyncUpstreamGoneDetail,
-  PROJECT_SYNC_CHANGED_BRANCH_DETAIL,
-  PROJECT_SYNC_CHANGED_FILES_DETAIL,
-  PROJECT_SYNC_CHANGED_HEAD_DETAIL,
-  PROJECT_SYNC_CHANGED_UPSTREAM_DETAIL,
-  PROJECT_SYNC_MOVED_UNASKED_DETAIL,
-  PROJECT_SYNC_NOT_LISTED_DETAIL,
-  PROJECT_SYNC_ORIGIN_MOVED_DETAIL,
-  PROJECT_SYNC_REFUSED_UNASKED_DETAIL,
-  PROJECT_SYNC_STATE_UNREAD_DETAIL,
-  PROJECT_SYNC_UNVERIFIED_DETAIL,
   type ProjectId,
   ProjectSyncError,
   type ProjectSyncFetchResult,
@@ -46,7 +34,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { UNFINISHED_OPERATION_MARKS } from "../handoff/bundleGit.ts";
 import {
   CLONE_STAGING_CLONE,
   CLONE_STAGING_PREFIX,
@@ -54,146 +41,34 @@ import {
   markCloneStaging,
   namedLikeCloneStaging,
 } from "./cloneStaging.ts";
-import { type GitResult, runGit } from "./folderTransfer/git.ts";
+import { runGit } from "./folderTransfer/git.ts";
 import * as HandoffGit from "./handoffGit.ts";
-import { canonicalOrigin, safeRelativePath } from "./handoffGitTypes.ts";
+import { safeRelativePath } from "./handoffGitTypes.ts";
+import { cloneAddress, readRepositoryFacts, readRepositoryStatus } from "./projectSyncFacts.ts";
 import {
-  type AskBudget,
-  askBudget,
-  dropOrigin,
-  listOrigin,
-  noteOrigin,
-  originHost,
-  originRecord,
-  type OriginRecords,
-  originRecordsOf,
-} from "./projectSyncOrigin.ts";
+  branchAndHead,
+  didNotFinish,
+  gitReason,
+  isLinkedWorktree,
+  read,
+  type SyncContext,
+  type SyncGit,
+  type SyncRepository,
+} from "./projectSyncGit.ts";
+import { type AskBudget, askBudget, dropOrigin, originRecordsOf } from "./projectSyncOrigin.ts";
+import { fastForwardRepository } from "./projectSyncRun.ts";
 
-const LOCAL_MS = 30_000;
-const FETCH_MS = 5 * 60_000;
+export {
+  readRepositoryFacts,
+  readRepositoryStatus,
+  unusualFetchConfig,
+} from "./projectSyncFacts.ts";
+export { isLinkedWorktree } from "./projectSyncGit.ts";
+export type { SyncContext, SyncGit, SyncRepository } from "./projectSyncGit.ts";
+export { fastForwardRepository } from "./projectSyncRun.ts";
+
 const CLONE_MS = 30 * 60_000;
 const PARALLEL = 4;
-const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
-
-/** How Sync runs Git. Tests pass a recording runner to assert on every command. */
-export type SyncGit = (
-  cwd: string,
-  args: ReadonlyArray<string>,
-  options?: {
-    readonly allowFailure?: boolean;
-    readonly timeoutMs?: number;
-    readonly signal?: AbortSignal;
-  },
-) => Promise<GitResult>;
-
-export interface SyncContext {
-  readonly git: SyncGit;
-  /**
-   * The title of a running thread that works in this very checkout, or null.
-   * Asked each time it matters, never remembered: a thread may start between
-   * two reads.
-   */
-  readonly inUse: (checkout: string) => Promise<string | null>;
-  /** Stops a fetch or a clone that is under way when the call is cancelled. A merge is never stopped. */
-  readonly signal?: AbortSignal;
-  /**
-   * What `origin` listed to this project's Sync fetches, by checkout: every
-   * branch and the commit it was listed at. The plan and the move go by it,
-   * and a fast-forward that cannot ask `origin` once more goes by it alone.
-   */
-  readonly origin?: OriginRecords;
-  /** The hosts this call found silent: a host that did not answer one ask is not asked again. */
-  readonly asks?: AskBudget;
-}
-
-/** What Sync fetches, and where to: `origin`'s branches into its remote-tracking refs. */
-const FETCH_REFSPEC = "+refs/heads/*:refs/remotes/origin/*";
-/**
- * The fetch names its own destinations (`--refmap=` switches the configured
- * ones off) and never prunes, whatever `fetch.prune`, `fetch.pruneTags` or
- * `remote.origin.prune` say. Tags come as Git brings them by default: new ones
- * that point into the fetched history, and none that would replace a tag here.
- */
-const FETCH_ARGS = [
-  "fetch",
-  "--quiet",
-  "--no-prune",
-  "--no-prune-tags",
-  "--no-recurse-submodules",
-  "--refmap=",
-  "origin",
-  FETCH_REFSPEC,
-];
-
-/**
- * Why `origin` is not fetched, or null: it is a mirror, or one of its fetch
- * lines writes outside `refs/remotes/`. Such a repository keeps its own
- * branches where a fetch writes, so Sync leaves it alone and says so.
- */
-export function unusualFetchConfig(input: {
-  /** `remote.origin.mirror` as Git reads it; a value Git cannot read as true or false counts as set. */
-  readonly mirror: boolean;
-  readonly refspecs: ReadonlyArray<string>;
-}): string | null {
-  if (input.mirror) return "origin is set up as a mirror (remote.origin.mirror).";
-  for (const line of input.refspecs) {
-    const refspec = line.trim();
-    // `^refs/…` leaves refs out and has no destination.
-    if (refspec.length === 0 || refspec.startsWith("^")) continue;
-    const colon = refspec.indexOf(":");
-    if (colon < 0) continue;
-    const destination = refspec.slice(colon + 1);
-    if (destination.length > 0 && !destination.startsWith("refs/remotes/"))
-      return `origin fetches into refs outside refs/remotes/ (remote.origin.fetch ${refspec}).`.slice(
-        0,
-        1900,
-      );
-  }
-  return null;
-}
-
-/**
- * A folder or `file://` address, or one whose host is the machine itself
- * (`localhost`, a loopback address), names a place on one machine only.
- */
-const isLocalAddress = (canonical: string) => {
-  if (canonical.startsWith("file://")) return true;
-  const host = normalHost(
-    (canonical.split("/")[0] ?? "").replace(/:\d+$/, "").replace(/^\[|\]$/g, ""),
-  );
-  return (
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    // 127.0.0.0/8 and 0.0.0.0/8, which a machine reads as itself.
-    /^(127|0)(\.\d{1,3}){3}$/.test(host) ||
-    // `::1`, `::`, and an IPv4 loopback address written inside an IPv6 one.
-    /^::(1|(ffff:)?(7f[0-9a-f]{2}:[0-9a-f]{1,4}|0:0)|ffff:0:0)?$/.test(host)
-  );
-};
-
-/**
- * A host as the network reads it: lower case, no trailing dot, and an address
- * in its one usual spelling, so `127.1`, `2130706433`, `0x7f000001` and
- * `0177.0.0.1` all read `127.0.0.1` and `0:0:0:0:0:0:0:1` reads `::1`.
- */
-function normalHost(written: string): string {
-  const host = written.toLowerCase().replace(/\.+$/, "");
-  try {
-    return new URL(`http://${host.includes(":") ? `[${host}]` : host}/`).hostname.replace(
-      /^\[|\]$|\.+$/g,
-      "",
-    );
-  } catch {
-    return host;
-  }
-}
-
-/**
- * The marks of an unfinished operation, plus the one Git keeps while a
- * cherry-pick or revert of several commits is part way through with nothing
- * left to resolve: no head mark, a clean tree, and commits still to pick.
- */
-const UNFINISHED_MARKS = [...UNFINISHED_OPERATION_MARKS, "sequencer"];
 
 /** The staging folders of the clones under way in this server, by absolute path. */
 const liveCloneStaging = new Set<string>();
@@ -249,38 +124,6 @@ export async function cloneStagingBeside(
   return out;
 }
 
-export interface SyncRepository {
-  /** Relative to the project folder with `/` separators; "." is the folder itself. */
-  readonly path: string;
-  readonly cwd: string;
-}
-
-const read = async (git: SyncGit, cwd: string, args: ReadonlyArray<string>) => {
-  const result = await git(cwd, args, { allowFailure: true, timeoutMs: LOCAL_MS });
-  return { ok: result.code === 0, text: result.stdout.trim(), stderr: result.stderr.trim() };
-};
-
-const gitReason = (stderr: string) =>
-  (
-    stderr
-      .split("\n")
-      .map((line) => line.replace(/^(fatal|error):\s*/u, "").trim())
-      .filter((line) => line.length > 0)
-      .join(" ") || "Git gave no reason."
-  ).slice(0, 1900);
-
-/** A linked worktree: its Git directory differs from the repository's common one. */
-export async function isLinkedWorktree(git: SyncGit, cwd: string): Promise<boolean> {
-  const dirs = await read(git, cwd, [
-    "rev-parse",
-    "--path-format=absolute",
-    "--git-dir",
-    "--git-common-dir",
-  ]);
-  const [gitDir, common] = dirs.text.split("\n");
-  return dirs.ok && gitDir !== undefined && common !== undefined && gitDir !== common;
-}
-
 /**
  * The repositories Sync lists: the scan's, minus every clone staging folder
  * (and what lies in one) and every linked worktree inside the project folder. Such a folder is a thread's checkout of a repository
@@ -302,447 +145,6 @@ export async function syncRepositories(
     out.push({ path, cwd });
   }
   return out;
-}
-
-async function branchAndHead(git: SyncGit, cwd: string) {
-  const [symbolic, head] = await Promise.all([
-    read(git, cwd, ["symbolic-ref", "-q", "--short", "HEAD"]),
-    read(git, cwd, ["rev-parse", "-q", "--verify", "HEAD^{commit}"]),
-  ]);
-  return {
-    branch: symbolic.ok && symbolic.text.length > 0 ? symbolic.text : null,
-    head: head.ok && SHA.test(head.text) ? head.text : null,
-  };
-}
-
-/**
- * How many files keep the checkout from being clean, or null when Git could
- * not say: a status that exits with an error, and one that never comes back
- * (it ran out of time, Git could not be started).
- */
-async function uncommittedCount(git: SyncGit, cwd: string): Promise<number | null> {
-  return countUncommitted(git, cwd).catch(() => null);
-}
-
-async function countUncommitted(git: SyncGit, cwd: string): Promise<number | null> {
-  const status = await git(
-    cwd,
-    ["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=none"],
-    { allowFailure: true, timeoutMs: LOCAL_MS },
-  );
-  if (status.code !== 0) return null;
-  const fields = status.stdout.split("\0");
-  const entries: Array<string> = [];
-  for (let index = 0; index < fields.length; index += 1) {
-    const entry = fields[index]!;
-    if (entry.length < 4) continue;
-    entries.push(entry);
-    // A rename or a copy, in either column, is followed by the name it came from.
-    if (/[RC]/.test(entry.slice(0, 2))) index += 1;
-  }
-  const files = (await withoutCloneStaging(git, cwd, entries)).length;
-  // An unfinished merge, rebase, cherry-pick, revert or bisect is not clean, also with no file changed.
-  return files === 0 && (await operationUnfinished(git, cwd)) ? 1 : files;
-}
-
-/**
- * Status entries without what is only a clone's staging folder (one that
- * carries the clone step's mark): the folder itself, and an untracked folder
- * that holds nothing else. Such a folder is
- * not this repository's work, while a clone runs and after one that never
- * finished. Nothing is written to the repository's ignore files.
- */
-async function withoutCloneStaging(
-  git: SyncGit,
-  cwd: string,
-  entries: ReadonlyArray<string>,
-): Promise<Array<string>> {
-  const staging = cloneStagingIn(cwd);
-  const untracked = (entry: string) => entry.startsWith("?? ");
-  const kept: Array<string> = [];
-  for (const entry of entries)
-    if (!(untracked(entry) && (await staging.has(entry.slice(3))))) kept.push(entry);
-  // Git names an untracked folder once, whatever it holds: its files are listed to see
-  // whether a staging folder is all there is in it.
-  const folders = kept
-    .filter((entry) => entry.startsWith("?? ") && entry.endsWith("/"))
-    .map((entry) => entry.slice(3));
-  if (folders.length === 0 || folders.length > 200) return kept;
-  const listed = await git(
-    cwd,
-    ["ls-files", "-z", "--others", "--exclude-standard", "--", ...folders],
-    { allowFailure: true, timeoutMs: LOCAL_MS },
-  );
-  if (listed.code !== 0) return kept;
-  const files = listed.stdout.split("\0").filter((file) => file.length > 0);
-  const onlyStaging = new Set<string>();
-  for (const folder of folders) {
-    const inside = files.filter((file) => file.startsWith(folder));
-    let all = inside.length > 0;
-    for (const file of inside) all = all && (await staging.has(file));
-    if (all) onlyStaging.add(folder);
-  }
-  return kept.filter((entry) => !(untracked(entry) && onlyStaging.has(entry.slice(3))));
-}
-
-async function operationUnfinished(git: SyncGit, cwd: string): Promise<boolean> {
-  const gitDir = await read(git, cwd, ["rev-parse", "--absolute-git-dir"]);
-  // A Git folder that cannot be found is never taken for a finished state.
-  if (!gitDir.ok || gitDir.text.length === 0) return true;
-  for (const mark of UNFINISHED_MARKS) {
-    if ((await NodeFSP.lstat(NodePath.join(gitDir.text, mark)).catch(() => null)) !== null)
-      return true;
-  }
-  return false;
-}
-
-/** Path, branch, head commit, clean or not: a local Git read, no network. */
-export async function readRepositoryStatus(
-  git: SyncGit,
-  repository: SyncRepository,
-): Promise<ProjectSyncRepositoryStatus> {
-  const [{ branch, head }, uncommitted] = await Promise.all([
-    branchAndHead(git, repository.cwd),
-    uncommittedCount(git, repository.cwd),
-  ]);
-  return { path: repository.path, branch, head, clean: uncommitted === 0 };
-}
-
-/**
- * A repository as the plan needs it. `fetch: true` fetches `origin` first; the
- * recheck before a fast-forward passes false and reads local Git. Either way
- * `origin`'s fetch settings are read, and a repository they make unsafe to
- * fetch is reported as `unusual-config` and never fetched.
- */
-export async function readRepositoryFacts(
-  context: SyncContext,
-  repository: SyncRepository,
-  options: { readonly fetch: boolean },
-): Promise<ProjectSyncRepositoryFacts> {
-  const { git } = context;
-  const { cwd, path } = repository;
-  // The address as written: another machine applies its own rewrites to it.
-  const urls = await read(git, cwd, ["config", "--get-all", "remote.origin.url"]);
-  const address = urls.ok ? (urls.text.split("\n")[0] ?? "").trim() : "";
-  const hasOrigin = address.length > 0;
-  let fetch: ProjectSyncRepositoryFacts["fetch"] = hasOrigin ? "not-run" : "no-remote";
-  let fetchError: string | null = null;
-  if (hasOrigin) {
-    const [refspecs, mirror] = await Promise.all([
-      read(git, cwd, ["config", "--get-all", "remote.origin.fetch"]),
-      // As Git reads it: any true value, also a bare key. Exit 1 means it is not set.
-      git(cwd, ["config", "--get-all", "--bool", "remote.origin.mirror"], {
-        allowFailure: true,
-        timeoutMs: LOCAL_MS,
-      }),
-    ]);
-    const unusual = unusualFetchConfig({
-      mirror:
-        mirror.code === 0 ? mirror.stdout.trim().split("\n").at(-1) !== "false" : mirror.code !== 1,
-      refspecs: refspecs.ok ? refspecs.text.split("\n") : [],
-    });
-    if (unusual !== null) {
-      fetch = "unusual-config";
-      fetchError = unusual;
-    }
-  }
-  /** What origin listed to this very call. */
-  let fresh: ReadonlyMap<string, string> | undefined;
-  // What origin lists is asked first, once, for all its branches: the fetch that follows is
-  // planned and moved by that list. An origin that does not answer the ask is not fetched,
-  // so it holds the call for the ask's short limit and not for a fetch's long one.
-  if (fetch === "not-run" && options.fetch) {
-    const listed = await listOrigin(git, cwd, {
-      host: originHost(address),
-      ...(context.asks === undefined ? {} : { budget: context.asks }),
-      ...(context.signal === undefined ? {} : { signal: context.signal }),
-    });
-    if (listed.ok) {
-      fresh = listed.heads;
-      await noteOrigin(context.origin, git, cwd, address, listed.heads);
-    } else {
-      fetch = "failed";
-      fetchError =
-        listed.reason === null ? PROJECT_SYNC_NOT_LISTED_DETAIL : gitReason(listed.reason);
-    }
-  }
-  if (fetch === "not-run" && options.fetch) {
-    const fetched = await git(cwd, FETCH_ARGS, {
-      allowFailure: true,
-      timeoutMs: FETCH_MS,
-      ...(context.signal === undefined ? {} : { signal: context.signal }),
-    }).catch((cause: unknown) => ({
-      code: -1,
-      stdout: "",
-      stderr: cause instanceof Error ? cause.message : "The fetch did not finish.",
-    }));
-    fetch = fetched.code === 0 ? "ok" : "failed";
-    if (fetched.code !== 0) fetchError = gitReason(fetched.stderr);
-  }
-  // A fetch that did not go through leaves nothing to go by.
-  if (options.fetch && fetch !== "ok") await dropOrigin(context.origin, cwd);
-  // This call's own list, or what an earlier fetch of this project kept for this checkout.
-  const heads =
-    fetch === "ok" && fresh !== undefined
-      ? fresh
-      : hasOrigin && !(options.fetch && fetch !== "ok")
-        ? (await originRecord(context.origin, git, cwd, address))?.heads
-        : undefined;
-  const { branch, head } = await branchAndHead(git, cwd);
-  const upstream = branch === null ? null : await originUpstream(git, cwd);
-  let ahead = 0;
-  let behind = 0;
-  let upstreamName: string | null = null;
-  if (upstream?.commit != null && head !== null) {
-    // Counted against the commit `origin`'s branch is at, by its hash.
-    const counted = await read(git, cwd, [
-      "rev-list",
-      "--left-right",
-      "--count",
-      `${head}...${upstream.commit}`,
-    ]);
-    const [left, right] = counted.text.split(/\s+/).map(Number);
-    if (counted.ok && Number.isInteger(left) && Number.isInteger(right)) {
-      upstreamName = upstream.name.slice(0, 512);
-      ahead = left!;
-      behind = right!;
-    }
-  }
-  // The fetch never prunes, so a branch deleted on `origin` still reads as it last did,
-  // behind or level: it is gone when origin's list does not name it, so nothing is
-  // planned to move to it and it is never called up to date. A tracking ref that is not
-  // at the commit origin listed (the branch moved right after, or something else fetched)
-  // is not what this Sync fetched, and is not moved to either.
-  const listedAt =
-    heads === undefined || upstream?.ref == null ? undefined : heads.get(upstream.ref);
-  const gone = heads !== undefined && upstream?.ref != null && listedAt === undefined;
-  const movedSince = listedAt !== undefined && listedAt !== upstream?.commit;
-  const uncommitted = await uncommittedCount(git, cwd);
-  return {
-    path,
-    branch,
-    head,
-    upstream: upstreamName,
-    otherUpstream: upstream?.commit === null ? upstream.name.slice(0, 512) : null,
-    ...(gone ? { upstreamGone: true } : {}),
-    ...(movedSince ? { upstreamMoved: true } : {}),
-    ahead,
-    behind,
-    // A status Git could not read is never treated as clean, and never given a count
-    // of files nobody saw: the plan holds the checkout on `stateUnread`.
-    uncommitted: uncommitted ?? 0,
-    ...(uncommitted === null ? { stateUnread: true } : {}),
-    // Read last, after the status read above.
-    inUseBy: await context.inUse(cwd),
-    remote: cloneAddress(address),
-    fetch,
-    fetchError,
-  };
-}
-
-const ORIGIN_REFS = "refs/remotes/origin/";
-
-/**
- * The branch's upstream, only when it is a branch of `origin`: the one remote
- * Sync fetches. `commit` is where that branch is now. An upstream that is a
- * local branch (`branch.x.remote=.`) or a branch of another remote was not
- * fetched by Sync, so it has no `commit` here and is never moved forward to;
- * its name is kept for the step's reason.
- */
-async function originUpstream(
-  git: SyncGit,
-  cwd: string,
-): Promise<{
-  readonly name: string;
-  readonly commit: string | null;
-  /** The branch's name on `origin`, as `refs/heads/…`; null when the upstream is not origin's. */
-  readonly ref: string | null;
-} | null> {
-  const full = await read(git, cwd, ["rev-parse", "--symbolic-full-name", "@{upstream}"]);
-  if (!full.ok || !full.text.startsWith("refs/") || full.text.includes("\n")) return null;
-  if (!full.text.startsWith(ORIGIN_REFS))
-    return { name: full.text.replace(/^refs\/(heads|remotes)\//, ""), commit: null, ref: null };
-  const commit = await read(git, cwd, ["rev-parse", "-q", "--verify", `${full.text}^{commit}`]);
-  return commit.ok && SHA.test(commit.text)
-    ? {
-        name: full.text.slice("refs/remotes/".length),
-        commit: commit.text,
-        ref: `refs/heads/${full.text.slice(ORIGIN_REFS.length)}`,
-      }
-    : null;
-}
-
-/** The address when another machine can clone from it: no credential, no folder of this machine. */
-function cloneAddress(address: string): string | null {
-  if (address.length === 0 || address.startsWith("-")) return null;
-  const canonical = canonicalOrigin(address);
-  return canonical === null || isLocalAddress(canonical) ? null : address;
-}
-
-const result = (
-  facts: ProjectSyncRepositoryFacts,
-  otherBranch: string | null | undefined,
-  change: Partial<ProjectSyncStepResult> = {},
-): ProjectSyncStepResult => ({
-  ...planProjectSyncRepository(facts, otherBranch === undefined ? null : { branch: otherBranch }),
-  moved: 0,
-  downgraded: false,
-  ...change,
-});
-
-/**
- * Moves one checkout forward. The plan was a proposal: the repository is read
- * again here, immediately before the merge, and when it is no longer clean,
- * only behind, on its branch and free of running work, nothing moves and the
- * result carries the reason.
- */
-export async function fastForwardRepository(
-  context: SyncContext,
-  repository: SyncRepository,
-  otherBranch: string | null,
-): Promise<ProjectSyncStepResult> {
-  const { git } = context;
-  if (repository.path !== "." && (await isLinkedWorktree(git, repository.cwd))) {
-    const facts = await readRepositoryFacts(context, repository, { fetch: false });
-    return result(facts, otherBranch, {
-      action: "none",
-      reason: "refused",
-      detail: "A thread's worktree is never moved by Sync.",
-      downgraded: true,
-    });
-  }
-  const facts = await readRepositoryFacts(context, repository, { fetch: false });
-  const planned = result(facts, otherBranch);
-  const { cwd } = repository;
-  // A tracking ref that left the commit this Sync fetched takes the record with it.
-  if (facts.upstreamMoved === true) await dropOrigin(context.origin, cwd);
-  if (planned.action !== "fast-forward") return { ...planned, downgraded: true };
-  // The commit `origin`'s branch is at, by its hash: never whatever `@{upstream}` names.
-  const upstream = await originUpstream(git, cwd);
-  const target = upstream?.commit ?? null;
-  if (upstream == null || target === null || upstream.ref === null) {
-    return { ...planned, action: "fetch", reason: "no-upstream", downgraded: true };
-  }
-  const ref = upstream.ref;
-  const refuse = (detail: string): ProjectSyncStepResult => ({
-    ...planned,
-    action: "none",
-    reason: "refused",
-    detail,
-    downgraded: true,
-  });
-  // origin is asked once more where the branch is, by its commit: only that very commit
-  // is moved to. A branch deleted there since the fetch keeps its tracking ref here, and
-  // one force-pushed keeps its name; neither is what this Sync was asked to bring in.
-  const urls = await read(git, cwd, ["config", "--get-all", "remote.origin.url"]);
-  const address = urls.ok ? (urls.text.split("\n")[0] ?? "").trim() : "";
-  const asked = await listOrigin(git, cwd, {
-    ref,
-    host: originHost(address),
-    ...(context.asks === undefined ? {} : { budget: context.asks }),
-    ...(context.signal === undefined ? {} : { signal: context.signal }),
-  });
-  if (asked.ok) {
-    const now = asked.heads.get(ref);
-    if (now !== target) {
-      // Learned for certain: what was kept of the fetch is not gone by again, also not
-      // by a later try with no connection.
-      await dropOrigin(context.origin, cwd);
-      return now === undefined
-        ? {
-            ...planned,
-            action: "none",
-            reason: "no-upstream",
-            detail: projectSyncUpstreamGoneDetail(upstream.name),
-            downgraded: true,
-          }
-        : refuse(PROJECT_SYNC_ORIGIN_MOVED_DETAIL);
-    }
-  } else {
-    // origin could not be asked (no connection): the move still goes to the commit origin
-    // listed for this very branch to this project's own Sync fetch of this very checkout
-    // and origin, and to nothing else. Without such a record nothing moves; it is kept.
-    const record =
-      address.length > 0 ? await originRecord(context.origin, git, cwd, address) : undefined;
-    if (record?.heads.get(ref) !== target) return refuse(PROJECT_SYNC_REFUSED_UNASKED_DETAIL);
-  }
-  const unasked = !asked.ok;
-  // Asked once more, with nothing but the merge left to run: a thread that started
-  // working here during the reads above keeps the checkout as it is.
-  const startedHere = await context.inUse(cwd);
-  if (startedHere !== null) {
-    return {
-      ...planned,
-      action: "fetch",
-      reason: "in-use",
-      inUseBy: startedHere,
-      downgraded: true,
-    };
-  }
-  // The checkout as it is now, after the wait for origin: on the planned branch, at the
-  // planned commit, following the same branch of origin at the same commit, and clean.
-  // Anything else and it is left as it is, with what changed.
-  const [now, upstreamNow, uncommittedNow] = await Promise.all([
-    branchAndHead(git, cwd),
-    originUpstream(git, cwd),
-    uncommittedCount(git, cwd),
-  ]);
-  if (now.branch !== facts.branch) return refuse(PROJECT_SYNC_CHANGED_BRANCH_DETAIL);
-  if (now.head !== facts.head) return refuse(PROJECT_SYNC_CHANGED_HEAD_DETAIL);
-  if (upstreamNow?.ref !== ref || upstreamNow.commit !== target)
-    return refuse(PROJECT_SYNC_CHANGED_UPSTREAM_DETAIL);
-  if (uncommittedNow !== 0)
-    return {
-      ...planned,
-      action: "fetch",
-      reason: "uncommitted",
-      uncommitted: uncommittedNow ?? 0,
-      detail:
-        uncommittedNow === null
-          ? PROJECT_SYNC_STATE_UNREAD_DETAIL
-          : PROJECT_SYNC_CHANGED_FILES_DETAIL,
-      downgraded: true,
-    };
-  const merged = await git(
-    cwd,
-    // Ignored files in the way stop the merge instead of being written over, and nothing
-    // is stashed for it, whatever `merge.autoStash` says.
-    [
-      "merge",
-      "--ff-only",
-      "--no-edit",
-      "--no-autostash",
-      "--no-overwrite-ignore",
-      "--quiet",
-      target,
-    ],
-    { allowFailure: true, timeoutMs: FETCH_MS },
-  ).catch((cause: unknown) => ({
-    code: -1,
-    stdout: "",
-    stderr: `Git did not finish: ${cause instanceof Error ? cause.message : "no reason given"}`,
-  }));
-  // What happened is read from the checkout, not taken from how the command ended: a
-  // merge that went through is reported as one also when a read after it failed, and
-  // "refused" is said only once the checkout was read and nothing had moved.
-  let after = await branchAndHead(git, cwd).catch(() => null);
-  if (after === null || after.head === null)
-    after = await branchAndHead(git, cwd).catch(() => null);
-  if (after !== null && after.head === target && after.branch === facts.branch)
-    return {
-      ...planned,
-      moved: facts.behind,
-      ...(unasked ? { detail: PROJECT_SYNC_MOVED_UNASKED_DETAIL } : {}),
-    };
-  if (after !== null && after.head === facts.head && after.branch === facts.branch)
-    return {
-      ...planned,
-      action: "fetch",
-      reason: "refused",
-      detail: gitReason(merged.stderr),
-      downgraded: true,
-    };
-  return { ...planned, detail: PROJECT_SYNC_UNVERIFIED_DETAIL, downgraded: true };
 }
 
 /**
@@ -1063,11 +465,6 @@ export async function runSync(
     );
   return out;
 }
-
-const didNotFinish = (cause: unknown) =>
-  `Git did not finish: ${
-    cause instanceof Error && cause.message.length > 0 ? cause.message : "no reason given"
-  }`.slice(0, 1900);
 
 /** The result of a repository whose step did not end: nothing is claimed about it but that. */
 const failedStep = (
