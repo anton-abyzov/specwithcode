@@ -84,6 +84,12 @@ export interface Machine {
     listFails: boolean;
     /** Machines this one's project is no longer linked with. */
     unlinked: Set<string>;
+    /**
+     * Runs once, just before this machine's scheduler next reads every
+     * routine's revision count: where a change saved by another request lands
+     * between two reads of one pass.
+     */
+    beforeRevisionsRead: Effect.Effect<void> | null;
   };
   readonly sql: SqlClient.SqlClient;
   readonly service: Service.ScheduledTaskService["Service"];
@@ -217,6 +223,7 @@ export const fleet = (
           beside: false,
           listFails: false,
           unlinked: new Set(),
+          beforeRevisionsRead: null,
         };
         // The binding this copy's project row carries, as the release before wrote it.
         const binding = () =>
@@ -326,16 +333,31 @@ export const fleet = (
           }),
         );
         const sqlRef: { current: SqlClient.SqlClient | null } = { current: null };
+        const database = yield* Layer.build(Layer.fresh(Sqlite.layerMemory));
+        const sql = Context.get(database, SqlClient.SqlClient);
+        sqlRef.current = sql;
+        // The scheduler's own client: the same database, with the one seam above.
+        const watched = new Proxy(sql, {
+          apply: (target, self, args: Array<unknown>) => {
+            const statement = Reflect.apply(target as never, self, args) as Effect.Effect<unknown>;
+            const text = Array.isArray(args[0]) ? args[0].join("?") : "";
+            if (!/SELECT task_id, revision FROM scheduled_task_revisions\s*$/.test(text))
+              return statement;
+            return Effect.suspend(() => {
+              const hook = state.beforeRevisionsRead ?? Effect.void;
+              state.beforeRevisionsRead = null;
+              return hook;
+            }).pipe(Effect.andThen(statement));
+          },
+        });
         const context = yield* Layer.build(
           Layer.fresh(
             Service.layer.pipe(
               Layer.provide(dependencies),
-              Layer.provideMerge(Layer.fresh(Sqlite.layerMemory)),
+              Layer.provide(Layer.succeed(SqlClient.SqlClient, watched)),
             ),
           ),
         );
-        const sql = Context.get(context, SqlClient.SqlClient);
-        sqlRef.current = sql;
         const old = options.release?.[name] === "1.0.377";
         const projects = Effect.sync(() => {
           const row = projectRow();
@@ -376,7 +398,7 @@ export const fleet = (
             Layer.fresh(
               Service.layer.pipe(
                 Layer.provide(dependencies),
-                Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
+                Layer.provide(Layer.succeed(SqlClient.SqlClient, watched)),
               ),
             ),
             scope,

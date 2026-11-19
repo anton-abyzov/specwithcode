@@ -8,8 +8,12 @@
  * - what its scheduler would start on a due pass (`wouldFire379`): its due
  *   query and its coordinator gate, which know nothing of a runner record.
  *
- * A machine in a test that moves or fires through these is a machine that
- * was not updated, or was downgraded.
+ * - what it does with the routines and run states a coordinator sends it
+ *   (`receiver379`): its replica writer (ScheduledTaskCopies.release379.testkit.ts)
+ *   and the run-state write of its handover.
+ *
+ * A machine in a test that moves, fires or receives through these is a machine
+ * that was not updated, or was downgraded.
  */
 import {
   AWAY_ROUTINES_PATH,
@@ -25,6 +29,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
+import { SqlClient as SqlClientTag } from "effect/sql/SqlClient";
 
 import { AwayPeerError, type AwayPeerPost } from "../away/awayPeerCall.ts";
 import { parseJson } from "../json.ts";
@@ -35,6 +40,10 @@ import {
   coordinatorRoleOf,
 } from "../project/CoordinatorRole.ts";
 import type { CoordinatorWakeGateShape } from "../project/CoordinatorWakeGate.ts";
+import {
+  makeRoutineCopies379,
+  type RoutineCopiesDeps,
+} from "./ScheduledTaskCopies.release379.testkit.ts";
 import { nextRunAt } from "./ScheduledTaskStorage.ts";
 import {
   ROUTINE_TRANSFER_PROTOCOL_VERSION,
@@ -370,4 +379,67 @@ export const wouldFire379 = (
       if (held === null) fired.push(row.task_id);
     }
     return fired;
+  });
+
+// --- CoordinatorPlannedHandover.ts `writeRunStates`, and the receive step over it ----------
+
+interface RoutineRunState379 {
+  readonly id: string;
+  readonly nextRunAt: string | null;
+  readonly lastRunAt: string | null;
+  readonly runCount: number;
+  readonly onceGeneration: number;
+}
+
+const writeRunStates379 = (
+  sql: SqlClient.SqlClient,
+  projectId: ProjectId,
+  states: ReadonlyArray<RoutineRunState379>,
+) =>
+  Effect.forEach(
+    states,
+    (state) =>
+      state.onceGeneration > 0
+        ? sql`
+              UPDATE scheduled_tasks
+              SET next_run_at = ${state.nextRunAt}, last_run_at = ${state.lastRunAt},
+                run_count = ${state.runCount},
+                run_policy_json = json_set(COALESCE(run_policy_json, '{}'), '$.onceGeneration', ${state.onceGeneration})
+              WHERE task_id = ${state.id} AND project_id = ${projectId}
+                AND last_run_status <> 'running'
+            `
+        : sql`
+              UPDATE scheduled_tasks
+              SET next_run_at = ${state.nextRunAt}, last_run_at = ${state.lastRunAt},
+                run_count = ${state.runCount}
+              WHERE task_id = ${state.id} AND project_id = ${projectId}
+                AND last_run_status <> 'running'
+            `,
+    { concurrency: 1, discard: true },
+  );
+
+/**
+ * What the release does on this database with what a coordinator sends it.
+ * `replica` is a lease's routines; `handover` is the receive step of a planned
+ * handover before it takes over: the routines, then their run states.
+ * `store` is the scheduler's own reads and saves, which that release had too.
+ */
+export const receiver379 = (
+  sql: SqlClient.SqlClient,
+  projectId: ProjectId,
+  store: Pick<RoutineCopiesDeps, "listTasks" | "findTask" | "upsert" | "remove">,
+) =>
+  Effect.gen(function* () {
+    const copies = yield* makeRoutineCopies379({ ...store, generation: Effect.succeed(0) }).pipe(
+      Effect.provideService(SqlClientTag, sql),
+    );
+    const replica = (routines: ReadonlyArray<CoordinatorRoutineCopy>) =>
+      copies.replace({ projectId, logicalProjectId: "logical-a", routines });
+    return {
+      replica,
+      handover: (
+        routines: ReadonlyArray<CoordinatorRoutineCopy>,
+        runStates: ReadonlyArray<RoutineRunState379>,
+      ) => replica(routines).pipe(Effect.andThen(writeRunStates379(sql, projectId, runStates))),
+    };
   });
