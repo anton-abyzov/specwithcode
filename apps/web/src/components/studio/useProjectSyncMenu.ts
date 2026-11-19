@@ -48,26 +48,39 @@ export interface SyncMenuRow {
   readonly needsUpdate?: { readonly version: string | null } | null;
 }
 
-/** Why Sync cannot run on a machine, or null when it can. The first that matches. */
-export function syncBlockedOn(input: {
-  readonly machine: string;
-  readonly reach: MachineReach;
-  readonly read: SyncStatusRead | undefined;
-  readonly version: string | null;
-  readonly access: EnvironmentScopeAccess | undefined;
-}): MachineRowText | null {
+/**
+ * Why Sync cannot run on a machine, or null when it can. The first that matches. `named`
+ * false is for a row that already shows the machine's name: a reason whose subject is the
+ * machine is then said without it.
+ */
+export function syncBlockedOn(
+  input: {
+    readonly machine: string;
+    readonly reach: MachineReach;
+    readonly read: SyncStatusRead | undefined;
+    readonly version: string | null;
+    readonly access: EnvironmentScopeAccess | undefined;
+  },
+  named = true,
+): MachineRowText | null {
   const { machine } = input;
-  if (input.reach === "offline") return { text: "{machine} offline", values: { machine } };
+  if (input.reach === "offline")
+    return named ? { text: "{machine} offline", values: { machine } } : { text: "Offline" };
   // Never loaded here, or it refuses this window: the words its row uses.
   if (input.reach !== "open")
     return { text: "This window cannot open {machine}", values: { machine } };
-  if (input.read?.kind === "needs-update")
+  if (input.read?.kind === "needs-update") {
+    if (!named)
+      return input.version
+        ? { text: "Needs update · {version}", values: { version: input.version } }
+        : { text: "Needs update" };
     return input.version
       ? {
           text: "{machine}: Needs update · {version}",
           values: { machine, version: input.version },
         }
       : { text: "{machine}: Needs update", values: { machine } };
+  }
   // A grant that has not loaded is not a refusal: the call says so if it is one.
   if (input.access === "denied")
     return { text: "This window can only read {machine}", values: { machine } };
@@ -87,17 +100,23 @@ export function syncRowFact(input: {
   const { shown, other } = input;
   const status = (read: SyncStatusRead | undefined) =>
     read?.kind === "status" ? read.status : null;
+  const now = input.now ?? Date.now();
+  // A comparison is as old as its older side: the time said is that side's.
+  const sides = [shown, other].filter((read) => read?.kind === "status");
+  const dated =
+    sides.length === 2 && (input.offline || sides.some((read) => syncReadIsOld(read!, now)));
+  const oldest = Math.min(...sides.map((read) => read!.at));
   return {
     sync: machineSyncFact({
       shown: status(shown),
       other: status(other),
       shownName: input.shownName,
-      // Its time is said whenever the status is not a current one: the machine is offline,
-      // the read is older than a minute, or the last time it was asked it did not answer.
-      asOf:
-        other?.kind === "status" && (input.offline || syncReadIsOld(other, input.now ?? Date.now()))
-          ? new Date(other.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-          : null,
+      // Its time is said whenever either status is not a current one: the machine is
+      // offline, a read is older than a minute, or the last time a machine was asked it did
+      // not answer.
+      asOf: dated
+        ? new Date(oldest).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        : null,
     }),
     needsUpdate: other?.kind === "needs-update" ? { version: input.version } : null,
   };
@@ -137,13 +156,16 @@ export function useProjectSyncMenu(input: {
     label: input.label,
   };
   // A second folder of the project on the machine shown is not another machine.
-  const others = input.copies
-    .filter(
-      (copy) =>
-        isProjectFolder(copy.folder) &&
-        copy.key !== current &&
-        checkoutKeyEnvironmentId(copy.key) !== project.environmentId,
-    )
+  const elsewhere = input.copies.filter(
+    (copy) =>
+      isProjectFolder(copy.folder) &&
+      copy.key !== current &&
+      checkoutKeyEnvironmentId(copy.key) !== project.environmentId,
+  );
+  // Sync is between the linked machines of one project. A machine that has the repository
+  // as a project of its own cannot receive extras: it is listed, greyed, until it is linked.
+  const others = elsewhere
+    .filter((copy) => copy.role !== "independent")
     .map((copy) => ({
       key: copy.key,
       machine: {
@@ -156,21 +178,36 @@ export function useProjectSyncMenu(input: {
     [shown.environmentId, ...others.map((item) => item.machine.environmentId)],
     AuthSourceControlWriteScope,
   );
-  const blockedOn = (machine: SyncMachine, key: string) =>
-    syncBlockedOn({
-      machine: machine.label,
-      reach: input.reachOf(key),
-      read: readOf(syncMachineKey(machine)),
-      version: input.versionOf(machine.environmentId),
-      access: access.get(machine.environmentId),
-    });
+  const blockedOn = (machine: SyncMachine, key: string, named = true) =>
+    syncBlockedOn(
+      {
+        machine: machine.label,
+        reach: input.reachOf(key),
+        read: readOf(syncMachineKey(machine)),
+        version: input.versionOf(machine.environmentId),
+        access: access.get(machine.environmentId),
+      },
+      named,
+    );
   const targets: SyncTarget[] = others.map((item) => ({
     machine: item.machine,
     blocked: blockedOn(item.machine, item.key),
+    note: blockedOn(item.machine, item.key, false),
   }));
+  const separate: SyncTarget[] = elsewhere
+    .filter((copy) => copy.role === "independent")
+    .map((copy) => ({
+      machine: {
+        environmentId: environmentIdOf(copy.key),
+        projectId: projectIdOf(copy.key),
+        label: copy.machine,
+      },
+      blocked: { text: "Separate project" },
+    }));
+  const shownBlocked = blockedOn(shown, current);
   // Greyed when the machine shown cannot sync, or when no other machine can.
   const syncBlocked: MachineRowText | null =
-    blockedOn(shown, current) ??
+    shownBlocked ??
     // A window that may not operate the machine shown can read it, and no more.
     (ask === null
       ? { text: "This window can only read {machine}", values: { machine: input.label } }
@@ -227,7 +264,9 @@ export function useProjectSyncMenu(input: {
       open && ask !== null
         ? {
             shown,
-            targets,
+            // Live: the dialog stops a plan when either machine can no longer sync.
+            shownBlocked,
+            targets: [...targets, ...separate],
             onClose: () => setOpen(false),
             onCompare: ask
               ? (target: SyncMachine) => ask("sync", syncMachineKey(target), "copy")

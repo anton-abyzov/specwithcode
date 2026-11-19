@@ -12,6 +12,7 @@ import {
 import type { OrchestratorCopy } from "../../studio/projectCoordinatorMachine";
 
 const runAtomCommand = vi.hoisted(() => vi.fn());
+const grants = vi.hoisted(() => ({ current: new Map<string, string>() }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
   createEnvironmentRpcCommand: (_runtime: unknown, options: { tag: string }) => options.tag,
   runAtomCommand,
@@ -19,7 +20,7 @@ vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
 }));
 vi.mock("../../connection/runtime", () => ({ connectionAtomRuntime: {} }));
 vi.mock("../../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
-vi.mock("../../state/session", () => ({ useEnvironmentsScopeAccess: () => new Map() }));
+vi.mock("../../state/session", () => ({ useEnvironmentsScopeAccess: () => grants.current }));
 vi.mock("../settings/useReplacedMachineRecords", () => ({
   useRetiredMachineRecords: () => new Map(),
 }));
@@ -38,8 +39,12 @@ const project = (environmentId: string, id: string) =>
     repositoryIdentity: { canonicalKey: "example.com/acme/atlas", rootPath: "/work/atlas" },
     workspaceSettings: null,
   }) as never;
-const copy = (key: string, machine: string): OrchestratorCopy =>
-  ({ key, machine, folder: "/work/atlas", role: "workers", main: false }) as OrchestratorCopy;
+const copy = (
+  key: string,
+  machine: string,
+  role: OrchestratorCopy["role"] = "workers",
+): OrchestratorCopy =>
+  ({ key, machine, folder: "/work/atlas", role, main: false }) as OrchestratorCopy;
 const on = (environmentId: string, label: string): SyncMachine => ({
   environmentId: environmentId as never,
   projectId: "p" as never,
@@ -55,6 +60,7 @@ beforeEach(() => {
   document.body.append(container);
   root = createRoot(container);
   runAtomCommand.mockReset();
+  grants.current = new Map();
 });
 afterEach(async () => {
   await act(async () => root.unmount());
@@ -62,12 +68,17 @@ afterEach(async () => {
   resetSyncStatusForTest();
 });
 
-function Probe(props: { ask: SyncAsk | null; readOnly: boolean; third?: boolean }) {
+function Probe(props: {
+  ask: SyncAsk | null;
+  readOnly: boolean;
+  third?: boolean;
+  copies?: readonly OrchestratorCopy[];
+}) {
   menu = useProjectSyncMenu({
     project: project("m4", "p"),
     label: "m4",
     current: "m4:p",
-    copies: [copy("m4:p", "m4"), copy("m5:p", "m5")],
+    copies: props.copies ?? [copy("m4:p", "m4"), copy("m5:p", "m5")],
     unknown: [],
     environments: [
       { environmentId: "m4" as never },
@@ -135,4 +146,56 @@ it("offers Add by the dialog's rule, and Sync with a dialog, to a window that ca
   expect(ask).toHaveBeenCalledWith("add");
   await act(async () => menu.onSync?.());
   expect(menu.dialog?.targets.map((target) => target.machine.label)).toEqual(["m5"]);
+});
+
+it("offers Sync between linked machines only, and lists a separate project greyed", async () => {
+  const ask = vi.fn<SyncAsk>();
+  const copies = [copy("m4:p", "m4"), copy("m5:p", "m5"), copy("m1:q", "m1", "independent")];
+  await render({ ask, readOnly: false, copies });
+  await act(async () => menu.onSync?.());
+  expect(
+    menu.dialog?.targets.map((target) => [target.machine.label, target.blocked?.text ?? null]),
+  ).toEqual([
+    ["m5", null],
+    ["m1", "Separate project"],
+  ]);
+  // Opening the menu never asks a machine that is not a member for its status.
+  runAtomCommand.mockResolvedValue({ _tag: "Success", value: status("a".repeat(40)) });
+  await act(async () => menu.onMenuOpenChange(true));
+  expect(runAtomCommand).toHaveBeenCalledTimes(2);
+});
+
+it("has no Sync where the only other machine has the repository as a separate project", async () => {
+  const ask = vi.fn<SyncAsk>();
+  await render({
+    ask,
+    readOnly: false,
+    copies: [copy("m4:p", "m4"), copy("m1:q", "m1", "independent")],
+  });
+  expect(menu.onSync).toBeNull();
+  expect(menu.syncBlocked).toBeNull();
+});
+
+it("tells the open dialog when a grant changes on either machine", async () => {
+  const ask = vi.fn<SyncAsk>();
+  await render({ ask, readOnly: false });
+  await act(async () => menu.onSync?.());
+  expect(menu.dialog?.shownBlocked).toBeNull();
+  expect(menu.dialog?.targets[0]).toMatchObject({ blocked: null, note: null });
+
+  grants.current = new Map([["m5", "denied"]]);
+  await render({ ask, readOnly: false });
+  expect(menu.dialog?.shownBlocked).toBeNull();
+  expect(menu.dialog?.targets[0]?.blocked).toEqual({
+    text: "This window can only read {machine}",
+    values: { machine: "m5" },
+  });
+
+  grants.current = new Map([["m4", "denied"]]);
+  await render({ ask, readOnly: false });
+  expect(menu.dialog?.shownBlocked).toEqual({
+    text: "This window can only read {machine}",
+    values: { machine: "m4" },
+  });
+  expect(menu.dialog?.targets[0]?.blocked).toBeNull();
 });

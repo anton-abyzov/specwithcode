@@ -77,6 +77,32 @@ describe("syncBlockedOn", () => {
   });
 });
 
+describe("syncBlockedOn under a row that already names the machine", () => {
+  const base = { machine: "M5", reach: "open", read: undefined, version: null } as const;
+
+  it("says the reason without its subject", () => {
+    expect(syncBlockedOn({ ...base, reach: "offline", access: "granted" }, false)).toEqual({
+      text: "Offline",
+    });
+    expect(
+      syncBlockedOn(
+        { ...base, read: { kind: "needs-update", at: 1 }, version: "1.0.360", access: "granted" },
+        false,
+      ),
+    ).toEqual({ text: "Needs update · {version}", values: { version: "1.0.360" } });
+    expect(
+      syncBlockedOn({ ...base, read: { kind: "needs-update", at: 1 }, access: "granted" }, false),
+    ).toEqual({ text: "Needs update" });
+  });
+
+  it("keeps a sentence whose subject is this window", () => {
+    expect(syncBlockedOn({ ...base, access: "denied" }, false)).toEqual({
+      text: "This window can only read {machine}",
+      values: { machine: "M5" },
+    });
+  });
+});
+
 describe("syncRowFact", () => {
   const base = { shownName: "M5", offline: false, version: null, now: 1_000 } as const;
 
@@ -132,6 +158,43 @@ describe("syncRowFact", () => {
       other: { ...read(status("b".repeat(40))), stale: true },
     });
     expect(unconfirmed.sync?.text).toBe("{k} of {n} repositories differ · as of {time}");
+  });
+});
+
+describe("syncRowFact with a side that was not confirmed", () => {
+  const base = { shownName: "M5", offline: false, version: null } as const;
+  const time = (at: number) =>
+    new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  it("dates the comparison when the shown machine's refresh failed and the peer's did not", () => {
+    const early = 3_600_000;
+    const late = early + 30 * 60_000;
+    const fact = syncRowFact({
+      ...base,
+      shown: { ...read(status(), early), stale: true },
+      other: read(status(), late),
+      now: late + 1,
+    });
+    expect(fact.sync?.text).toBe("Same as {shown} · as of {time}");
+    // The older side's time: the comparison is no newer than that.
+    expect(fact.sync?.values?.time).toBe(time(early));
+    expect(time(early)).not.toBe(time(late));
+  });
+
+  it("dates it by the shown machine's read when that one is the old one", () => {
+    const fact = syncRowFact({
+      ...base,
+      shown: read(status(), 3_600_000),
+      other: read(status("b".repeat(40)), 3_600_000 + 30 * 60_000),
+      now: 3_600_000 + 30 * 60_000 + 1,
+    });
+    expect(fact.sync?.text).toBe("{k} of {n} repositories differ · as of {time}");
+    expect(fact.sync?.values?.time).toBe(time(3_600_000));
+  });
+
+  it("says no time when both reads are current", () => {
+    const fact = syncRowFact({ ...base, shown: read(), other: read(), now: 1_000 });
+    expect(fact.sync?.text).toBe("Same as {shown}");
   });
 });
 
