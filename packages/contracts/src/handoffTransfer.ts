@@ -95,6 +95,14 @@ export const HandoffTransferCandidate = Schema.Struct({
 });
 export type HandoffTransferCandidate = typeof HandoffTransferCandidate.Type;
 
+/** The machine where a thread waits for the moved work's result, and the machines it can ask. */
+export const HandoffTransferLauncher = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: text(120),
+  reachable: Schema.Array(EnvironmentId),
+});
+export type HandoffTransferLauncher = typeof HandoffTransferLauncher.Type;
+
 /** The source's record of one thread's move. */
 export const HandoffTransferRecord = Schema.Struct({
   operationId: HandoffTransferOperationId,
@@ -119,6 +127,12 @@ export const HandoffTransferRecord = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   sentAt: Schema.NullOr(IsoDateTime),
+  /**
+   * Who the takeover names as waiting for the result, written with "sent" so a
+   * repeat names the same machine. Null: nobody waits. Absent: not recorded
+   * (the record was sent by a build from before this field).
+   */
+  launcher: Schema.optionalKey(Schema.NullOr(HandoffTransferLauncher)),
 });
 export type HandoffTransferRecord = typeof HandoffTransferRecord.Type;
 

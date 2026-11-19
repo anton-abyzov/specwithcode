@@ -152,52 +152,61 @@ describe("the transfer record of a handoff", () => {
     }),
   );
 
-  it.effect("names the waiting machine again when a takeover cut right after sent is replayed", () =>
-    Effect.gen(function* () {
-      const rig = yield* makeRig(temporary, three);
-      const [a, b, c] = rig.machines as [RigMachine, RigMachine, RigMachine];
-      rig.addThread(b, t1);
-      // The thread arrived on B from A, where a thread waits for its result. A can ask C.
-      const waiting = { environmentId: a.environmentId, label: "A", reachable: [c.environmentId] };
-      b.document = {
-        ...b.document,
-        threads: { ...b.document.threads, [t1]: { ...b.document.threads[t1]!, launcher: waiting } },
-      };
-      rig.network.rule = (call) => (call.path === "takeover" ? "lose-request" : undefined);
-      yield* handOff(b, t1, c).pipe(Effect.flip);
-      expect(transferOf(b, t1)?.state).toBe("unknown");
-      // B stopped right after it wrote "sent": the note beside the thread never landed.
-      b.document = {
-        ...b.document,
-        threads: {
-          ...b.document.threads,
-          [t1]: { ...b.document.threads[t1]!, pendingTakeover: null },
-        },
-      };
-      rig.network.rule = null;
-      yield* rig.restart(b);
+  it.effect(
+    "names the waiting machine again when a takeover cut right after sent is replayed",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* makeRig(temporary, three);
+        const [a, b, c] = rig.machines as [RigMachine, RigMachine, RigMachine];
+        rig.addThread(b, t1);
+        // The thread arrived on B from A, where a thread waits for its result. A can ask C.
+        const waiting = {
+          environmentId: a.environmentId,
+          label: "A",
+          reachable: [c.environmentId],
+        };
+        b.document = {
+          ...b.document,
+          threads: {
+            ...b.document.threads,
+            [t1]: { ...b.document.threads[t1]!, launcher: waiting },
+          },
+        };
+        rig.network.rule = (call) => (call.path === "takeover" ? "lose-request" : undefined);
+        yield* handOff(b, t1, c).pipe(Effect.flip);
+        expect(transferOf(b, t1)?.state).toBe("unknown");
+        // B stopped right after it wrote "sent": the note beside the thread never landed.
+        b.document = {
+          ...b.document,
+          threads: {
+            ...b.document.threads,
+            [t1]: { ...b.document.threads[t1]!, pendingTakeover: null },
+          },
+        };
+        rig.network.rule = null;
+        yield* rig.restart(b);
 
-      yield* b.moves.tick;
+        yield* b.moves.tick;
 
-      const sent = takeovers(rig, c);
-      expect(sent).toHaveLength(2);
-      expect(sent[1]?.operationId).toBe(sent[0]?.operationId);
-      expect(sent[0]?.launcher).toEqual(waiting);
-      expect(sent[1]?.launcher).toEqual(waiting);
-      const continued = c.launches[0]!.threadId!;
-      expect(c.document.threads[continued]?.launcher).toEqual(waiting);
+        const sent = takeovers(rig, c);
+        expect(sent).toHaveLength(2);
+        expect(sent[1]?.operationId).toBe(sent[0]?.operationId);
+        expect(sent[0]?.launcher).toEqual(waiting);
+        expect(sent[1]?.launcher).toEqual(waiting);
+        const continued = c.launches[0]!.threadId!;
+        expect(c.document.threads[continued]?.launcher).toEqual(waiting);
 
-      // So C keeps the work where A can ask for it: a move to B is declined before
-      // anything is prepared or held.
-      const before = rig.network.calls.length;
-      const declined = yield* c.moves
-        .handOff({ threadId: continued, destinationEnvironmentId: b.environmentId })
-        .pipe(Effect.flip);
-      expect(declined.code).toBe("unreachable");
-      expect(rig.network.calls).toHaveLength(before);
-      expect(c.document.threads[continued]?.lease?.state).toBe("active");
-      expect(transfersOf(c, continued)).toHaveLength(0);
-    }),
+        // So C keeps the work where A can ask for it: a move to B is declined before
+        // anything is prepared or held.
+        const before = rig.network.calls.length;
+        const declined = yield* c.moves
+          .handOff({ threadId: continued, destinationEnvironmentId: b.environmentId })
+          .pipe(Effect.flip);
+        expect(declined.code).toBe("unreachable");
+        expect(rig.network.calls).toHaveLength(before);
+        expect(c.document.threads[continued]?.lease?.state).toBe("active");
+        expect(transfersOf(c, continued)).toHaveLength(0);
+      }),
   );
 
   it.effect("moves two threads that cross between two machines, each once", () =>
