@@ -5875,4 +5875,8 @@ export const ko: PhraseCatalog = {
     "이것은 증분의 최신 사본입니다. 프로젝트 폴더의 사본은 더 오래되었거나 없습니다.",
   "This copy's files could not be read on this machine.":
     "이 사본의 파일을 이 컴퓨터에서 읽을 수 없습니다.",
+  "Review stays here: no permitted reviewer on {machine}":
+    "리뷰는 여기에 남습니다: {machine}에 허용된 리뷰어가 없음",
+  "Review stays here: update SpecWithCode on {machine}":
+    "리뷰는 여기에 남습니다: {machine}의 SpecWithCode를 업데이트하세요",
 };

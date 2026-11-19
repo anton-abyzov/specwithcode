@@ -42,6 +42,7 @@ import {
   TakeoverRequest,
   TakeoverResponse,
 } from "./handoffWire.ts";
+import { HandoffReviewLock } from "./handoffReviewLock.ts";
 
 export const HANDOFF_SIDE_EFFECT_JOURNAL_MAX = 200;
 
@@ -111,6 +112,8 @@ export const HandoffIncomingDetail = Schema.Struct({
   execution: Schema.NullOr(ThreadExecutionRecord),
   /** The ceiling the thread carries; absent from copies sent before it existed. */
   carried: Schema.optional(TeamRulesCarried),
+  /** The reviewer lock as the source sent it (`ReplicateMeta.reviewLock`). */
+  reviewLock: Schema.optional(Schema.NullOr(HandoffReviewLock)),
   /** The epoch this machine continued the thread at, and what it answered. */
   takeoverEpoch: Schema.NullOr(NonNegativeInt),
   takeover: Schema.NullOr(TakeoverResponse),
@@ -583,6 +586,7 @@ export function upsertIncoming(
     transcript: meta.transcript,
     execution: meta.execution,
     ...(meta.carried === undefined ? {} : { carried: meta.carried }),
+    ...(meta.reviewLock === undefined ? {} : { reviewLock: meta.reviewLock }),
     takeoverEpoch: null,
     takeover: null,
     // A newer checkpoint keeps the designation the latest heartbeat gave.

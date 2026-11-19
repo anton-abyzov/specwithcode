@@ -35,6 +35,7 @@ import {
 
 import packageJson from "../../package.json" with { type: "json" };
 import { CoordinatorStandbyShadowWorker } from "../project/CoordinatorStandbyStore.ts";
+import { HandoffReviewLock } from "./handoffReviewLock.ts";
 
 export const HANDOFF_PEER_PREFIX = "/api/handoff/v1";
 /**
@@ -118,6 +119,12 @@ export const ReplicateMeta = Schema.Struct({
   appVersion: Schema.optional(text(40)),
   /** The ceiling the thread carries. The sender refuses a machine too old to hold it. */
   carried: Schema.optional(TeamRulesCarried),
+  /**
+   * A review thread's reviewer lock; null for a thread that is no review, and
+   * absent from a sender older than the lock. Sent only to a machine with the
+   * `handoffReviewLock` capability.
+   */
+  reviewLock: Schema.optional(Schema.NullOr(HandoffReviewLock)),
 });
 export type ReplicateMeta = typeof ReplicateMeta.Type;
 export const ReplicateResponse = Schema.Struct({ sequence: NonNegativeInt });

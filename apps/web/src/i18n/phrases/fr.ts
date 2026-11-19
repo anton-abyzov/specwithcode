@@ -5995,4 +5995,8 @@ export const fr: PhraseCatalog = {
     "C'est la copie la plus récente de l'incrément. La copie du dossier du projet est plus ancienne ou absente.",
   "This copy's files could not be read on this machine.":
     "Les fichiers de cette copie n'ont pas pu être lus sur cette machine.",
+  "Review stays here: no permitted reviewer on {machine}":
+    "La revue reste ici : aucun réviseur autorisé sur {machine}",
+  "Review stays here: update SpecWithCode on {machine}":
+    "La revue reste ici : mettez à jour SpecWithCode sur {machine}",
 };

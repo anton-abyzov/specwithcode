@@ -433,6 +433,21 @@ export const make = Effect.gen(function* () {
       });
     });
 
+  /** A machine that does not keep a reviewer lock would continue the review on any model. */
+  const refuseUnlocked = (environmentId: EnvironmentId) =>
+    Effect.gen(function* () {
+      const target = yield* findTarget(environmentId);
+      const credential = yield* credentialFor(target);
+      yield* reachPeer(target, credential.accessToken);
+      if (link.book.peerRules?.(fleetMachineKey(target))?.reviewLock === true) return;
+      return yield* new HandoffPeerError({
+        code: "invalid",
+        message: `${reviewStaysText("update_needed", target.label)}.`,
+        uncertain: false,
+        local: true,
+      });
+    });
+
   const post = <A>(
     environmentId: EnvironmentId,
     path: PeerPath,
@@ -560,6 +575,7 @@ export const make = Effect.gen(function* () {
         Effect.tap(() =>
           meta.carried === undefined ? Effect.void : refuseUncarried(environmentId),
         ),
+        Effect.tap(() => (meta.reviewLock == null ? Effect.void : refuseUnlocked(environmentId))),
         Effect.flatMap((frame) =>
           post(environmentId, "replicate", frame, "application/octet-stream", decodeReplicate),
         ),

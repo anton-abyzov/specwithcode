@@ -34,6 +34,12 @@ export function limitHandoffOrderTip(result: LimitHandoffCandidatesResult): stri
   ].join("\n");
 }
 
+/** Why a review thread stays, per machine: the lock travels only where it is kept. */
+const REVIEW_STAYS = {
+  no_reviewer: "Review stays here: no permitted reviewer on {machine}",
+  update_needed: "Review stays here: update SpecWithCode on {machine}",
+} as const;
+
 /**
  * The limit banner's machine target: one "Move to {machine}" button for the
  * first machine that can take the thread, which opens the thread's move
@@ -62,15 +68,22 @@ export function LimitHandoffCandidateList({
   if (!best) {
     return (
       <div className="flex basis-full flex-col gap-1 text-xs" aria-label={tx("Other machines")}>
-        <p role="status" className="text-muted-foreground">
-          {result.waiting ?? tx("No other machine can take this thread now.")}
-        </p>
+        {/* A review that stays says so once, in its own row. */}
+        {result.candidates.every((candidate) => candidate.review !== undefined) ? null : (
+          <p role="status" className="text-muted-foreground">
+            {result.waiting ?? tx("No other machine can take this thread now.")}
+          </p>
+        )}
         <ul
           className="flex flex-col gap-0.5 text-muted-foreground"
           data-slot="limit-handoff-verdicts"
         >
           {result.candidates.map((candidate) => (
-            <li key={candidate.environmentId}>{candidate.text}</li>
+            <li key={candidate.environmentId}>
+              {candidate.review === undefined
+                ? candidate.text
+                : tx(REVIEW_STAYS[candidate.review], { machine: candidate.machineLabel })}
+            </li>
           ))}
         </ul>
       </div>
