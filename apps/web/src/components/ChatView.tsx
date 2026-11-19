@@ -1,5 +1,9 @@
 import { renderRich } from "../i18n/rich";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
+import {
+  effectiveClaudeUltracodeDefault,
+  ultracodeChatKind,
+} from "@specweave-studio/shared/ultracodeDefault";
 import { modelLabel as threadIdentityLabel } from "../studio/shellModel";
 import { registerChatViewWindowInput } from "./chat/chatViewWindowInput";
 import { latestRunPromptSuggestion } from "./chat/composerGhostSuggestion";
@@ -497,6 +501,7 @@ import { useRemoveClonedProject } from "../hooks/useRemoveClonedProject";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import {
+  type ComposerUltracodeDefaultContext,
   getComposerPromptInjectionState,
   getComposerProviderState,
 } from "./chat/composerProviderState";
@@ -3111,6 +3116,56 @@ function useChatViewState(props: ChatViewProps) {
   const activeProjectSettings = useMemo(
     () => resolveProjectSettings(settings, activeProject?.id ?? null, activeProject ?? undefined),
     [activeProject, settings],
+  );
+  // What the composer needs for the Ultracode default: this chat's kind under its project's
+  // settings. The composer adds the instance and model; the server applies the default.
+  const ultracodeWorkflowMode = activeProjectSettings.settings.claudeWorkflowMode;
+  const ultracodeDefaultSetting = activeProjectSettings.settings.claudeUltracodeDefault;
+  const ultracodeKindInput = useMemo(
+    () =>
+      activeThread
+        ? { threadId: activeThread.id, project: activeProject ?? null, lineage: activeThread.lineage }
+        : null,
+    [activeProject, activeThread?.id, activeThread?.lineage],
+  );
+  const ultracodeKindBeforeRoutine = ultracodeKindInput
+    ? ultracodeChatKind({ ...ultracodeKindInput, routine: false })
+    : "thread";
+  // A routine's chat carries no marker of its own; its routine names it. Asked only when the
+  // answer changes the default: a thread under "Threads".
+  const ultracodeRoutineQuery = useEnvironmentQuery(
+    isServerThread &&
+      activeThread &&
+      ultracodeKindBeforeRoutine === "thread" &&
+      ultracodeWorkflowMode !== "disabled" &&
+      effectiveClaudeUltracodeDefault(ultracodeWorkflowMode, ultracodeDefaultSetting) === "threads"
+      ? serverEnvironment.scheduledTasksLive({
+          environmentId: activeThread.environmentId,
+          input: {},
+        })
+      : null,
+  );
+  const ultracodeRoutineChat =
+    activeThread !== undefined &&
+    (ultracodeRoutineQuery.data?.tasks ?? []).some((task) => task.threadId === activeThread.id);
+  const ultracodeDefaultContext = useMemo<ComposerUltracodeDefaultContext>(
+    () => ({
+      settings: {
+        claudeWorkflowMode: ultracodeWorkflowMode,
+        claudeUltracodeDefault: ultracodeDefaultSetting,
+      },
+      chatKind:
+        ultracodeKindInput && ultracodeRoutineChat
+          ? ultracodeChatKind({ ...ultracodeKindInput, routine: true })
+          : ultracodeKindBeforeRoutine,
+    }),
+    [
+      ultracodeDefaultSetting,
+      ultracodeKindBeforeRoutine,
+      ultracodeKindInput,
+      ultracodeRoutineChat,
+      ultracodeWorkflowMode,
+    ],
   );
   const activeProjectScripts = useMemo(
     () => (activeProject ? resolveProjectScripts(settings, activeProject) : []),
@@ -16073,6 +16128,7 @@ export default function ChatView(props: ChatViewProps) {
                                 activeThread={activeThread}
                                 activeThreadShell={activeThreadShell}
                                 teamRulesSummary={teamRulesSummary}
+                                ultracodeDefaultContext={ultracodeDefaultContext}
                                 accessRecommendation={composerAccessRecommendation}
                                 promptHistoryMessages={timelineMessages}
                                 sessionSkillUses={sessionSkillUses}

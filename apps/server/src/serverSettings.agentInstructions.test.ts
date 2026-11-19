@@ -46,4 +46,29 @@ it.layer(layerTest)("agent instruction persistence", (it) => {
       assert.isUndefined(reset.projectSettingsOverrides[projectId]);
     }),
   );
+
+  it.effect("defaults Ultracode to threads and saves a project override beside the mode", () =>
+    Effect.gen(function* () {
+      const service = yield* Settings.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const projectId = ProjectId.make("ultracode-default-test");
+      assert.equal((yield* service.getSettings).claudeUltracodeDefault, "threads");
+      yield* service.updateSettings({
+        claudeUltracodeDefault: "all",
+        projectSettingsOverrides: { [projectId]: { claudeUltracodeDefault: "off" } },
+      });
+      const saved = yield* Schema.decodeEffect(Schema.fromJsonString(ServerSettings))(
+        yield* fs.readFileString(config.settingsPath),
+      );
+      assert.equal(saved.claudeUltracodeDefault, "all");
+      assert.equal(saved.projectSettingsOverrides[projectId]?.claudeUltracodeDefault, "off");
+      const reset = yield* service.updateSettings({
+        claudeUltracodeDefault: "threads",
+        projectSettingsOverrides: { [projectId]: null },
+      });
+      assert.equal(reset.claudeUltracodeDefault, "threads");
+      assert.isUndefined(reset.projectSettingsOverrides[projectId]);
+    }),
+  );
 });

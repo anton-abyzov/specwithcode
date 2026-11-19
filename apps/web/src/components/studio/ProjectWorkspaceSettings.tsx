@@ -254,6 +254,10 @@ export function ProjectWorkspaceSettings({
       : null,
     providers: hostConfig?.providers,
   });
+  // Threads here start under the project's own Ultracode default, which the model chip shows.
+  const projectUltracodeSettings = hostConfig?.settings
+    ? resolveProjectSettings(hostConfig.settings, project.id, project).settings
+    : undefined;
   const update = useAtomCommand(projectEnvironment.update);
   const remove = useAtomCommand(projectEnvironment.delete);
   const {
@@ -566,6 +570,7 @@ export function ProjectWorkspaceSettings({
                     environmentId={project.environmentId}
                     label={say("Recommended model for threads")}
                     title={say("Model for new threads")}
+                    ultracodeSettings={projectUltracodeSettings}
                     value={worker}
                     onChange={(v) => change(setWorker, v)}
                     disabled={disabled}

@@ -230,6 +230,93 @@ describe("Claude workflow policy", () => {
   });
 });
 
+describe("Claude Ultracode default", () => {
+  const ultracode = (input: {
+    readonly mode?: "disabled" | "on-request" | "automatic";
+    readonly toggle?: boolean;
+    readonly ultracodeDefault?: "on" | "off" | "paused";
+    readonly modelOffersUltracode?: boolean;
+    readonly effort?: string;
+  }) =>
+    compileClaudeWorkflowPolicy({
+      mode: input.mode ?? "on-request",
+      ultracode: input.toggle,
+      ultracodeDefault: input.ultracodeDefault,
+      modelOffersUltracode: input.modelOffersUltracode,
+      ...(input.effort === undefined ? {} : { extraArgs: { effort: input.effort } }),
+      environment: {},
+    }).settings.ultracode;
+
+  it("turns an unset toggle on when the default is on and the model offers it", () => {
+    assert.isTrue(ultracode({ ultracodeDefault: "on", modelOffersUltracode: true }));
+    assert.deepEqual(
+      compileClaudeWorkflowPolicy({
+        mode: "on-request",
+        ultracodeDefault: "on",
+        modelOffersUltracode: true,
+        environment: {},
+      }).settings,
+      { enableWorkflows: true, ultracode: true },
+    );
+  });
+
+  it("keeps a paused or off default off", () => {
+    assert.isFalse(ultracode({ ultracodeDefault: "paused", modelOffersUltracode: true }));
+    assert.isFalse(ultracode({ ultracodeDefault: "off", modelOffersUltracode: true }));
+  });
+
+  it("lets the chat's toggle win over the default both ways", () => {
+    assert.isFalse(
+      ultracode({ toggle: false, ultracodeDefault: "on", modelOffersUltracode: true }),
+    );
+    assert.isTrue(ultracode({ toggle: true, ultracodeDefault: "off", modelOffersUltracode: true }));
+    assert.isTrue(
+      ultracode({ toggle: true, ultracodeDefault: "paused", modelOffersUltracode: true }),
+    );
+  });
+
+  it("gives a model without the toggle nothing from the default", () => {
+    assert.isFalse(ultracode({ ultracodeDefault: "on", modelOffersUltracode: false }));
+    assert.isFalse(ultracode({ ultracodeDefault: "on" }));
+    assert.deepEqual(
+      compileClaudeWorkflowPolicy({
+        mode: "on-request",
+        ultracodeDefault: "on",
+        modelOffersUltracode: false,
+        environment: {},
+      }).settings,
+      compileClaudeWorkflowPolicy({ mode: "on-request", environment: {} }).settings,
+    );
+  });
+
+  it("keeps Disabled off whatever the toggle or default says", () => {
+    for (const toggle of [undefined, true, false]) {
+      assert.isFalse(
+        ultracode({
+          mode: "disabled",
+          ...(toggle === undefined ? {} : { toggle }),
+          ultracodeDefault: "on",
+          modelOffersUltracode: true,
+        }),
+      );
+    }
+  });
+
+  it("keeps the --effort ultracode launch alias asking for ultracode", () => {
+    assert.isTrue(
+      ultracode({ effort: "ultracode", ultracodeDefault: "off", modelOffersUltracode: true }),
+    );
+    assert.isFalse(
+      ultracode({ effort: "ultracode", toggle: false, ultracodeDefault: "on", modelOffersUltracode: true }),
+    );
+  });
+
+  it("keeps the mode-only rule when no default was resolved", () => {
+    assert.isTrue(ultracode({ mode: "automatic", modelOffersUltracode: false }));
+    assert.isFalse(ultracode({ mode: "on-request", modelOffersUltracode: true }));
+  });
+});
+
 describe("Claude provider-hosted documents", () => {
   it("never lets a session publish a document to a provider's site", () => {
     for (const mode of ["disabled", "on-request", "automatic"] as const) {

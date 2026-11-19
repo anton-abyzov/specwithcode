@@ -1,5 +1,9 @@
 import type { Settings as ClaudeSdkSettings, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@specweave-studio/shared/cliArgs";
+import {
+  resolveUltracode,
+  type UltracodeDefaultState,
+} from "@specweave-studio/shared/ultracodeDefault";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -119,15 +123,30 @@ export function mergeClaudeWorkflowSettings(
 
 /**
  * What reaches Claude Code for ultracode: Disabled always wins (the CLI needs
- * workflows for it), then the thread's toggle, then the launch alias or mode.
+ * workflows for it), then the thread's toggle or the launch alias, then the
+ * Ultracode default on a model that offers the toggle. Without a resolved
+ * default (older callers, hand-built policies) only the Automatic mode turns
+ * an unset toggle on.
  */
-export function resolveClaudeUltracode(
-  mode: ClaudeWorkflowMode | undefined,
-  toggle: boolean | undefined,
-  launchUltracode = false,
-): boolean {
-  const effective = mode ?? "on-request";
-  return effective !== "disabled" && (toggle ?? (launchUltracode || effective === "automatic"));
+export function resolveClaudeUltracode(input: {
+  readonly mode: ClaudeWorkflowMode | undefined;
+  readonly toggle: boolean | undefined;
+  readonly launchUltracode?: boolean | undefined;
+  readonly ultracodeDefault?: UltracodeDefaultState | undefined;
+  readonly modelOffersUltracode?: boolean | undefined;
+}): boolean {
+  const mode = input.mode ?? "on-request";
+  // The `--effort ultracode` launch alias asks for ultracode like a set toggle.
+  const toggle = input.toggle ?? (input.launchUltracode === true ? true : undefined);
+  if (input.ultracodeDefault === undefined) {
+    return mode !== "disabled" && (toggle ?? mode === "automatic");
+  }
+  return resolveUltracode({
+    workflowMode: mode,
+    toggle,
+    modelOffersUltracode: input.modelOffersUltracode === true,
+    defaultState: input.ultracodeDefault,
+  }).enabled;
 }
 
 /**
@@ -149,8 +168,12 @@ export const CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS = [
 /** Native orchestration and reasoning effort are independent session choices. */
 export function compileClaudeWorkflowPolicy(input: {
   readonly mode?: ClaudeWorkflowMode | undefined;
-  /** The thread's Ultracode toggle; unset follows the mode. */
+  /** The thread's Ultracode toggle; unset follows the Ultracode default. */
   readonly ultracode?: boolean | undefined;
+  /** The Ultracode default resolved for this chat; absent keeps the mode-only rule. */
+  readonly ultracodeDefault?: UltracodeDefaultState | undefined;
+  /** The selected model lists an Ultracode toggle. */
+  readonly modelOffersUltracode?: boolean | undefined;
   readonly agentInstructions?: string | undefined;
   readonly responseStyle?: ResponseStyle | undefined;
   readonly orchestrationInstructions?: string | undefined;
@@ -191,7 +214,13 @@ export function compileClaudeWorkflowPolicy(input: {
   extraArgs["append-subagent-system-prompt"] = instructions;
   const settings = {
     enableWorkflows: mode !== "disabled",
-    ultracode: resolveClaudeUltracode(mode, input.ultracode, launchUltracode),
+    ultracode: resolveClaudeUltracode({
+      mode,
+      toggle: input.ultracode,
+      launchUltracode,
+      ultracodeDefault: input.ultracodeDefault,
+      modelOffersUltracode: input.modelOffersUltracode,
+    }),
   } satisfies ClaudeSdkSettings;
   const environment = { ...input.environment };
   if (mode === "disabled") environment.CLAUDE_CODE_DISABLE_WORKFLOWS = "1";

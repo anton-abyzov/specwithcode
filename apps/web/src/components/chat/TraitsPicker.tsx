@@ -20,6 +20,11 @@ import {
   normalizeModelSlug,
 } from "@specweave-studio/shared/model";
 import { findEffortDescriptor } from "@specweave-studio/shared/effortLevel";
+import {
+  resolveUltracode,
+  type UltracodeDefaultReason,
+  type UltracodeDefaultState,
+} from "@specweave-studio/shared/ultracodeDefault";
 import { Fragment, memo, useCallback } from "react";
 import {
   Menu,
@@ -101,6 +106,34 @@ type TraitsPersistence =
     };
 
 const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
+
+/**
+ * What the "Ultracode by default" setting gives this chat while its own toggle
+ * is unset, from `ultracodeDefaultForChat`. Display only: it never enters the
+ * saved selection or the options a turn dispatches, so the server stays the one
+ * that applies it. Without it the chip and menu read as they always have.
+ */
+export interface TraitsUltracodeDefault {
+  readonly state: UltracodeDefaultState;
+  readonly reason: UltracodeDefaultReason;
+  /** The default in force for the chat's project: "threads" or "all" ("off" when it is off). */
+  readonly scope: "off" | "threads" | "all";
+}
+
+/** Ultracode as this chat runs it: the chat's own toggle, else the default shown beside it. */
+export function effectiveUltracodeState(
+  toggle: boolean | undefined,
+  ultracodeDefault: TraitsUltracodeDefault | undefined,
+): "on" | "off" | "paused" {
+  const resolved = resolveUltracode({
+    // Workflows Disabled already reads as an off default; an explicit toggle keeps its old chip.
+    workflowMode: undefined,
+    toggle,
+    modelOffersUltracode: true,
+    defaultState: ultracodeDefault?.state,
+  });
+  return resolved.enabled ? "on" : resolved.paused ? "paused" : "off";
+}
 
 function DefaultBadge() {
   const tx = useTx();
@@ -456,6 +489,30 @@ export interface TraitsMenuContentProps {
   isComposerOwned?: boolean;
   /** Option id advised per descriptor id, shown with a Recommended badge. */
   recommendedOptionValues?: Readonly<Record<string, string>> | undefined;
+  /** The Ultracode default for this chat; absent keeps the "follows the workflow mode" reading. */
+  ultracodeDefault?: TraitsUltracodeDefault | undefined;
+}
+
+/** The line under the Ultracode heading while the chat's toggle is unset. */
+export function ultracodeUnsetNote(
+  ultracodeDefault: TraitsUltracodeDefault | undefined,
+): string | null {
+  if (!ultracodeDefault) return "Not set: follows the Claude workflow mode";
+  switch (ultracodeDefault.state) {
+    case "on":
+      return ultracodeDefault.scope === "all"
+        ? "Not set here: on by default for all chats. Uses more of your Claude limit."
+        : "Not set here: on by default for threads. Uses more of your Claude limit.";
+    case "paused":
+      return "Not set here: the default is paused until your Claude limit resets.";
+    case "off":
+      // Only the reasons a person would not guess from the chat itself.
+      return ultracodeDefault.reason === "workflows-disabled"
+        ? "Not set here: off because Claude workflows are disabled."
+        : ultracodeDefault.reason === "api-key"
+          ? "Not set here: off by default when Claude bills an API key."
+          : null;
+  }
 }
 
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
@@ -470,6 +527,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   allowPromptInjectedEffort = true,
   planModeEnabled,
   recommendedOptionValues,
+  ultracodeDefault,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const tx = useTx();
@@ -661,13 +719,31 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
         );
       })}
       {booleanDescriptors.map((descriptor, index) => {
-        // An unset Ultracode follows the Claude workflow mode, so neither choice is marked.
+        const ultracodeUnset = descriptor.id === "ultracode" && descriptor.currentValue === undefined;
+        // An unset Ultracode follows the default. Without one to show, neither choice is marked;
+        // a paused default marks neither either, since the chat runs without it until the reset.
+        const unsetState = ultracodeUnset
+          ? ultracodeDefault
+            ? effectiveUltracodeState(undefined, ultracodeDefault)
+            : null
+          : undefined;
         const selectedValue =
           descriptor.currentValue === true
             ? "on"
-            : descriptor.id === "ultracode" && descriptor.currentValue === undefined
-              ? ""
-              : "off";
+            : unsetState === "on"
+              ? "on"
+              : unsetState === "off"
+                ? "off"
+                : ultracodeUnset
+                  ? ""
+                  : "off";
+        // The choice the default makes carries the badge, as a select option's default does.
+        const defaultValue = unsetState === "on" || unsetState === "off" ? unsetState : null;
+        const unsetNote = ultracodeUnset ? ultracodeUnsetNote(ultracodeDefault) : null;
+        const write = (value: string) =>
+          updateDescriptors(
+            replaceDescriptorCurrentValue(descriptors, descriptor.id, value === "on"),
+          );
 
         return (
           <div key={descriptor.id}>
@@ -678,22 +754,25 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                 {descriptor.id === "ultracode" && descriptor.description ? (
                   <div className="font-normal">{descriptor.description}</div>
                 ) : null}
-                {selectedValue === "" ? (
-                  <div className="font-normal">
-                    {tx("Not set: follows the Claude workflow mode")}
+                {unsetNote ? (
+                  <div className="font-normal" data-ultracode-unset-note>
+                    {tx(unsetNote)}
                   </div>
                 ) : null}
               </div>
-              <MenuRadioGroup
-                value={selectedValue}
-                onValueChange={(value) => {
-                  updateDescriptors(
-                    replaceDescriptorCurrentValue(descriptors, descriptor.id, value === "on"),
-                  );
-                }}
-              >
+              <MenuRadioGroup value={selectedValue} onValueChange={write}>
                 {(["on", "off"] as const).map((value) => (
-                  <MenuRadioItem key={value} value={value} hideIndicator closeOnClick>
+                  <MenuRadioItem
+                    key={value}
+                    value={value}
+                    hideIndicator
+                    closeOnClick
+                    // Picking the choice the default already marks still saves it on the chat;
+                    // the radio group reports only a change.
+                    {...(ultracodeUnset && value === selectedValue
+                      ? { onClick: () => write(value) }
+                      : {})}
+                  >
                     <span className="flex w-full min-w-0 items-center gap-2">
                       {descriptor.id === "fastMode" ? (
                         value === "on" ? (
@@ -711,6 +790,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                         )
                       ) : null}
                       <span>{value === "on" ? tx("On") : tx("Off")}</span>
+                      {defaultValue === value ? <DefaultBadge /> : null}
                     </span>
                   </MenuRadioItem>
                 ))}
@@ -731,6 +811,8 @@ export function buildTraitsTriggerDisplay(input: {
   ultrathinkPromptControlled: boolean;
   modelSelection?: ModelSelection | null;
   reportedModelSelection?: ModelSelection | null | undefined;
+  /** Shown for an unset Ultracode toggle; absent reads an unset toggle as off. */
+  ultracodeDefault?: TraitsUltracodeDefault | undefined;
 }): { label: string } {
   let fastModeFallbackLabel: string | null = null;
   let speedLabel: string | null = null;
@@ -770,9 +852,9 @@ export function buildTraitsTriggerDisplay(input: {
       input.ultrathinkPromptControlled && descriptor.id === input.primarySelectDescriptorId
         ? "Ultrathink"
         : descriptor.id === "ultracode" && descriptor.type === "boolean"
-          ? descriptor.currentValue === true
-            ? "Ultracode"
-            : null
+          ? ultracodeTriggerLabel(
+              effectiveUltracodeState(descriptor.currentValue, input.ultracodeDefault),
+            )
           : descriptor.type === "boolean"
             ? `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
             : getProviderOptionCurrentLabel(
@@ -809,6 +891,10 @@ export function buildTraitsTriggerDisplay(input: {
   return { label: labels.join(" · ") };
 }
 
+function ultracodeTriggerLabel(state: "on" | "off" | "paused"): string | null {
+  return state === "on" ? "Ultracode" : state === "paused" ? "Ultracode paused" : null;
+}
+
 export interface TraitsTriggerParts {
   /** The full trait summary, for the tooltip and accessible name. */
   readonly label: string;
@@ -818,8 +904,10 @@ export interface TraitsTriggerParts {
   readonly details: string;
   /** A faster speed than standard, drawn as a bolt; its words go in the tooltip and name. */
   readonly speed: { readonly icon: "fast" | "ultrafast"; readonly label: string } | null;
-  /** Claude's Ultracode toggle is on; named beside the effort, not folded into it. */
+  /** Claude's Ultracode is on, set or by default; named beside the effort, not folded into it. */
   readonly ultracode: boolean;
+  /** The default would turn Ultracode on and high usage holds it back; present only then. */
+  readonly ultracodePaused?: true;
 }
 
 /** The selected faster speed, named the way the menu names it. */
@@ -844,7 +932,7 @@ export function traitsTriggerDescription(parts: TraitsTriggerParts): string {
   if (!parts.effort) return parts.label;
   return [
     `${parts.effort.label} effort`,
-    parts.ultracode ? "Ultracode" : null,
+    parts.ultracode ? "Ultracode" : parts.ultracodePaused ? "Ultracode paused" : null,
     parts.details,
     parts.speed?.label,
   ]
@@ -858,12 +946,21 @@ export function buildTraitsTriggerParts(
 ): TraitsTriggerParts {
   const { label } = buildTraitsTriggerDisplay(input);
   const speed = triggerSpeed(input.provider, input.descriptors);
-  const ultracode = input.descriptors.some(
-    (candidate) =>
-      candidate.id === "ultracode" &&
-      candidate.type === "boolean" &&
-      candidate.currentValue === true,
+  const ultracodeDescriptor = input.descriptors.find(
+    (candidate) => candidate.id === "ultracode" && candidate.type === "boolean",
   );
+  const ultracodeState = ultracodeDescriptor
+    ? effectiveUltracodeState(
+        ultracodeDescriptor.currentValue === true
+          ? true
+          : ultracodeDescriptor.currentValue === false
+            ? false
+            : undefined,
+        input.ultracodeDefault,
+      )
+    : "off";
+  const ultracode = ultracodeState === "on";
+  const paused = ultracodeState === "paused" ? ({ ultracodePaused: true } as const) : {};
   const descriptor = findEffortDescriptor(input.descriptors);
   const ultrathink =
     input.ultrathinkPromptControlled && descriptor?.id === input.primarySelectDescriptorId;
@@ -886,7 +983,7 @@ export function buildTraitsTriggerParts(
           input.reportedModelSelection,
         );
   if (!descriptor || typeof value !== "string" || !effortLabel || !effortGlyphLevel(value)) {
-    return { label, effort: null, details: "", speed, ultracode };
+    return { label, effort: null, details: "", speed, ultracode, ...paused };
   }
   const details: Array<string> = [];
   for (const other of input.descriptors) {
@@ -932,6 +1029,7 @@ export function buildTraitsTriggerParts(
     details: details.join(" · "),
     speed,
     ultracode,
+    ...paused,
   };
 }
 
@@ -952,6 +1050,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   size = "sm",
   hidden = false,
   disabled = false,
+  ultracodeDefault,
   ...persistence
 }: TraitsMenuContentProps &
   TraitsPersistence & {
@@ -994,6 +1093,7 @@ export const TraitsPicker = memo(function TraitsPicker({
     ultrathinkPromptControlled,
     modelSelection: instanceId && model ? { instanceId, model, options: modelOptions ?? [] } : null,
     reportedModelSelection,
+    ultracodeDefault,
   });
   const {
     label: triggerLabel,
@@ -1001,6 +1101,7 @@ export const TraitsPicker = memo(function TraitsPicker({
     details: triggerDetails,
     speed: triggerSpeedPart,
     ultracode: triggerUltracode,
+    ultracodePaused: triggerUltracodePaused,
   } = triggerParts;
   const triggerDescription = traitsTriggerDescription(triggerParts);
   const speedIcon = triggerSpeedPart ? (
@@ -1025,9 +1126,24 @@ export const TraitsPicker = memo(function TraitsPicker({
         data-composer-control-ultracode
         className="inline-flex shrink-0 items-center gap-1 font-normal"
       >
+        {/* Set apart from the effort as the menu sets them apart; folds away with the word. */}
+        <span data-composer-control-label aria-hidden className="text-muted-foreground">
+          ·
+        </span>
         {/* The mark carries the accent; the word stays in the text color, which keeps contrast. */}
         <Code2Icon className="size-3.5 text-primary" aria-hidden data-composer-control-icon />
         <span data-composer-control-label>Ultracode</span>
+      </span>
+    ) : triggerEffort && triggerUltracodePaused ? (
+      <span
+        data-composer-control-ultracode="paused"
+        className="inline-flex shrink-0 items-center gap-1 font-normal text-warning-foreground"
+      >
+        <span data-composer-control-label aria-hidden>
+          ·
+        </span>
+        <Code2Icon className="size-3.5" aria-hidden data-composer-control-icon />
+        <span data-composer-control-label>Ultracode paused</span>
       </span>
     ) : null;
   const isCodexStyle = provider === "codex";
@@ -1159,6 +1275,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           reportedModelSelection={reportedModelSelection}
           allowPromptInjectedEffort={allowPromptInjectedEffort}
           planModeEnabled={planModeEnabled}
+          ultracodeDefault={ultracodeDefault}
           {...persistence}
         />
       </MenuPopup>

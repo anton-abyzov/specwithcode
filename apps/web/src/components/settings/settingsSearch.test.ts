@@ -423,7 +423,9 @@ describe("searchSettings", () => {
     ["actions", "project-actions", "/settings/projects"],
     ["project overview", "project-overview", "/settings/projects"],
     ["global instructions", "agent-instructions", "/settings/agents"],
-    ["ultracode", "claude-workflow-mode", "/settings/agents"],
+    ["claude workflow", "claude-workflow-mode", "/settings/agents"],
+    ["ultracode", "claude-ultracode-default", "/settings/agents"],
+    ["ultracode by default", "claude-ultracode-default", "/settings/agents"],
     ["response style", "response-style", "/settings/agents"],
     ["worker reports", "response-style", "/settings/agents"],
   ])("routes %s to its owning category", (query, id, to) => {

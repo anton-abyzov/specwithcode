@@ -21,6 +21,10 @@ import {
 } from "../../providerInstances";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import {
+  type UltracodeDefaultSettings,
+  useThreadUltracodeDefault,
+} from "../chat/composerProviderState";
 
 /** Choose from this host's actual model catalog; never invent a coordinator default. */
 export function ProjectModels({
@@ -32,6 +36,7 @@ export function ProjectModels({
   recommendedTraits,
   title,
   coordinator = false,
+  ultracodeSettings,
 }: {
   environmentId: EnvironmentId;
   value: ModelSelection | null;
@@ -47,6 +52,8 @@ export function ProjectModels({
    * Medium, and Advanced offers Low, Medium and High, the levels it may run at.
    */
   coordinator?: boolean;
+  /** The project's resolved settings for the Ultracode default; absent reads this host's. */
+  ultracodeSettings?: UltracodeDefaultSettings | undefined;
 }) {
   const environment = useEnvironment(environmentId);
   const settings = useEnvironmentSettings(environmentId);
@@ -61,6 +68,12 @@ export function ProjectModels({
     value?.model,
   );
   const active = entries.find((p) => p.instanceId === value?.instanceId);
+  // Threads show the Ultracode default their chats start with; the coordinator shows no effort here.
+  const ultracodeDefault = useThreadUltracodeDefault({
+    settings: coordinator ? null : (ultracodeSettings ?? settings),
+    provider: active?.snapshot,
+    model: value?.model,
+  });
   // The searchable list only fills for a ready provider; the plain list below covers the rest.
   const firstAvailable = entries.find(isProviderInstancePickerReady);
   const traits = (
@@ -78,6 +91,7 @@ export function ProjectModels({
         allowPromptInjectedEffort={false}
         planModeEnabled={settings.planModeEnabled}
         recommendedOptionValues={recommendedTraits}
+        ultracodeDefault={ultracodeDefault}
         onModelOptionsChange={(o) =>
           onChange(createModelSelection(value.instanceId, value.model, o))
         }

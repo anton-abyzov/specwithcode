@@ -17,6 +17,7 @@ import {
 } from "@specweave-studio/shared/coordinatorDefault";
 import { modelSelectionEffortValue } from "@specweave-studio/shared/effortLevel";
 import { createModelSelection } from "@specweave-studio/shared/model";
+import { resolveUltracode } from "@specweave-studio/shared/ultracodeDefault";
 import { ChevronRightIcon, Code2Icon, ZapIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -28,7 +29,7 @@ import { effortLevelLabel } from "../../chat/EffortGlyph";
 import { ProviderInstanceIcon } from "../../chat/ProviderInstanceIcon";
 import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
 import type { ModelEsque } from "../../chat/providerIconUtils";
-import { useTraitsEffortControl } from "../../chat/TraitsPicker";
+import { type TraitsUltracodeDefault, useTraitsEffortControl } from "../../chat/TraitsPicker";
 import { MachineChip } from "../../MachineChip";
 
 /** The model new threads start on, as the project saves it. */
@@ -94,6 +95,8 @@ export function ProjectModelsPopover(props: {
   readonly disabled: boolean;
   readonly onOpenSettings: () => void;
   readonly onClose: () => void;
+  /** The Ultracode default a new thread starts with; absent reads an unset toggle as off. */
+  readonly ultracodeDefault?: TraitsUltracodeDefault | undefined;
 }) {
   const { threads } = props;
   const entryOf = (selection: ModelSelection | null) =>
@@ -138,8 +141,16 @@ export function ProjectModelsPopover(props: {
       : null,
   );
   const offersUltracode = hasBoolean(threadEntry, thread?.model, "ultracode");
-  const ultracodeOn =
-    thread?.options?.some((option) => option.id === "ultracode" && option.value === true) === true;
+  const ultracodeSaved = thread?.options?.find((option) => option.id === "ultracode")?.value;
+  // A new thread follows the default while the project leaves the toggle unset, so the
+  // button shows what threads start with and a click saves the opposite.
+  const ultracode = resolveUltracode({
+    workflowMode: undefined,
+    toggle: typeof ultracodeSaved === "boolean" ? ultracodeSaved : undefined,
+    modelOffersUltracode: true,
+    defaultState: props.ultracodeDefault?.state,
+  });
+  const ultracodeOn = ultracode.enabled;
   const identityOf = useMachineIdentities();
   const firstReady = props.entries.find((entry) => entry.enabled && entry.isAvailable);
 
@@ -307,7 +318,9 @@ export function ProjectModelsPopover(props: {
                 TOGGLE,
                 ultracodeOn
                   ? "border-primary/45 bg-primary/12 text-foreground"
-                  : "border-border text-muted-foreground hover:text-foreground",
+                  : ultracode.paused
+                    ? "border-border text-warning-foreground"
+                    : "border-border text-muted-foreground hover:text-foreground",
               )}
               onClick={() =>
                 saveThread(
@@ -318,9 +331,10 @@ export function ProjectModelsPopover(props: {
                 )
               }
               data-project-models-ultracode=""
+              data-ultracode-source={ultracode.source}
             >
               <Code2Icon className="size-3" aria-hidden />
-              Ultracode
+              {ultracode.paused ? "Ultracode paused" : "Ultracode"}
             </button>
           ) : null}
         </Row>

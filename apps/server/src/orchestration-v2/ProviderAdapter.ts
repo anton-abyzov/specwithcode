@@ -59,6 +59,12 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   reasoningEffort: Schema.optional(Schema.String),
   agentInstructions: Schema.optional(Schema.String),
   claudeWorkflowMode: Schema.optional(ClaudeWorkflowMode),
+  /**
+   * What "Ultracode by default" gives this chat when its toggle is unset, as
+   * resolved for this turn (chat kind, billing, usage), not the stored
+   * setting. Absent keeps the older rule: only the Automatic mode turns it on.
+   */
+  claudeUltracodeDefault: Schema.optional(Schema.Literals(["on", "off", "paused"])),
   /** Absent means concise, the default response style. */
   responseStyle: Schema.optional(ResponseStyle),
   /**

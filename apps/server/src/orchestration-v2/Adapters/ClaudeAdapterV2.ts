@@ -48,6 +48,7 @@ import type {
   WebSearchOutput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import { parseCliArgs } from "@specweave-studio/shared/cliArgs";
+import type { UltracodeDefaultState } from "@specweave-studio/shared/ultracodeDefault";
 import { isApiCreditExhaustedMessage } from "@specweave-studio/shared/providerFallback";
 import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
 import { applyClaudePromptEffortPrefix } from "@specweave-studio/shared/model";
@@ -986,6 +987,8 @@ export function makeClaudeQueryOptions(input: {
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly agentInstructions?: string | undefined;
   readonly claudeWorkflowMode?: ClaudeWorkflowMode | undefined;
+  /** What "Ultracode by default" gives this chat; absent keeps the mode-only rule. */
+  readonly claudeUltracodeDefault?: UltracodeDefaultState | undefined;
   readonly responseStyle?: ResponseStyle | undefined;
   readonly subagentPromptFileContents?: string | undefined;
   /** Ask the SDK for a suggested next prompt after each reply. */
@@ -1070,6 +1073,8 @@ export function makeClaudeQueryOptions(input: {
   const workflowPolicy = compileClaudeWorkflowPolicy({
     mode: input.claudeWorkflowMode,
     ultracode: compiledSelection.settings.ultracode,
+    ultracodeDefault: input.claudeUltracodeDefault,
+    modelOffersUltracode: compiledSelection.supportsUltracode,
     agentInstructions: input.agentInstructions,
     responseStyle: input.responseStyle,
     subagentPromptFileContents: input.subagentPromptFileContents,
@@ -8234,12 +8239,19 @@ export function makeClaudeAdapterV2(
               ...turnInput.runtimePolicy,
               subagentPromptFileContents,
             }),
-            // The thread's Ultracode toggle is launch context with the workflow
-            // mode: a running background workflow keeps the value it started with.
-            resolveClaudeUltracode(
-              turnInput.runtimePolicy.claudeWorkflowMode,
-              compiledSelection.settings.ultracode,
-            ),
+            // The effective Ultracode value is launch context with the workflow
+            // mode: a running background workflow keeps the value it started
+            // with, and an idle chat reopens with resume when it changes. Same
+            // inputs as the query options below, launch alias included.
+            resolveClaudeUltracode({
+              mode: turnInput.runtimePolicy.claudeWorkflowMode,
+              toggle: compiledSelection.settings.ultracode,
+              launchUltracode:
+                adapterOptions.settings !== undefined &&
+                parseCliArgs(adapterOptions.settings.launchArgs).flags.effort === "ultracode",
+              ultracodeDefault: turnInput.runtimePolicy.claudeUltracodeDefault,
+              modelOffersUltracode: compiledSelection.supportsUltracode,
+            }),
             turnInput.projectAdditionalDirectories ?? [],
             claudeInChromeDefault,
             hideClaudeInChrome,
@@ -8403,6 +8415,7 @@ export function makeClaudeAdapterV2(
               : { projectAdditionalDirectories: turnInput.projectAdditionalDirectories }),
             agentInstructions: turnInput.runtimePolicy.agentInstructions,
             claudeWorkflowMode: turnInput.runtimePolicy.claudeWorkflowMode,
+            claudeUltracodeDefault: turnInput.runtimePolicy.claudeUltracodeDefault,
             responseStyle: turnInput.runtimePolicy.responseStyle,
             subagentPromptFileContents,
             promptSuggestions: yield* (

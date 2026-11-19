@@ -1,4 +1,8 @@
-import type { ServerSettings, WorktreeSubmodules } from "@specweave-studio/contracts";
+import type {
+  ClaudeUltracodeDefault,
+  ServerSettings,
+  WorktreeSubmodules,
+} from "@specweave-studio/contracts";
 
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
@@ -15,6 +19,13 @@ const WORKTREE_LOCATION_LABELS: Record<string, string> = {
   project: "Inside project",
   custom: "Custom folder",
 };
+
+/** "Ultracode by default" choices, as the Agents page names them. */
+export const ULTRACODE_DEFAULT_LABELS = {
+  off: "Off",
+  threads: "Threads",
+  all: "All chats",
+} as const satisfies Record<ClaudeUltracodeDefault, string>;
 
 /** Enum values shared by several keys (runtime modes, limit actions, streaming). */
 const VALUE_LABELS: Readonly<Record<string, string>> = {
@@ -99,6 +110,9 @@ export function formatSettingValueFor(
     }
     if (key === "worktreeSubmodules" && value in WORKTREE_SUBMODULES_LABELS) {
       return WORKTREE_SUBMODULES_LABELS[value as WorktreeSubmodules];
+    }
+    if (key === "claudeUltracodeDefault" && value in ULTRACODE_DEFAULT_LABELS) {
+      return ULTRACODE_DEFAULT_LABELS[value as ClaudeUltracodeDefault];
     }
     if (key === "worktreeLocationMode") return WORKTREE_LOCATION_LABELS[value] ?? value;
     if (key === "threadFinishAction" && value in THREAD_FINISH_ACTION_LABELS) {

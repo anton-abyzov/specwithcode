@@ -3,6 +3,8 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
   type ProviderOptionDescriptor,
+  type ServerProvider,
+  type ServerProviderModel,
 } from "@specweave-studio/contracts";
 import { COORDINATOR_RECOMMENDED_TRAITS } from "../../studio/shellModel";
 import {
@@ -11,7 +13,11 @@ import {
   traitsTriggerDescription,
   buildUnavailableModelOptionDescriptors,
   traitOptionBadges,
+  effectiveUltracodeState,
+  type TraitsUltracodeDefault,
+  ultracodeUnsetNote,
 } from "./TraitsPicker";
+import { getComposerProviderState, traitsUltracodeDefault } from "./composerProviderState";
 
 function selectDescriptor(
   id: string,
@@ -488,5 +494,176 @@ describe("buildTraitsTriggerParts", () => {
       speed: { icon: "fast", label: "Fast mode" },
       ultracode: false,
     });
+  });
+});
+
+describe("the Ultracode default on the chip and menu", () => {
+  const CLAUDE = ProviderDriverKind.make("claudeAgent");
+  const high = selectDescriptor(
+    "effort",
+    [
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+      { id: "xhigh", label: "Extra High" },
+    ],
+    "high",
+  );
+  const toggle = (currentValue?: boolean): ProviderOptionDescriptor => ({
+    id: "ultracode",
+    label: "Ultracode",
+    type: "boolean",
+    ...(currentValue === undefined ? {} : { currentValue }),
+  });
+  const ON: TraitsUltracodeDefault = { state: "on", reason: "default", scope: "threads" };
+  const PAUSED: TraitsUltracodeDefault = { state: "paused", reason: "usage", scope: "threads" };
+  const COORDINATOR: TraitsUltracodeDefault = {
+    state: "off",
+    reason: "chat-kind",
+    scope: "threads",
+  };
+  const parts = (
+    descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+    ultracodeDefault?: TraitsUltracodeDefault,
+  ) =>
+    buildTraitsTriggerParts({
+      provider: CLAUDE,
+      descriptors,
+      primarySelectDescriptorId: "effort",
+      ultrathinkPromptControlled: false,
+      ...(ultracodeDefault ? { ultracodeDefault } : {}),
+    });
+
+  it("reads an unset toggle as off without the default, as before", () => {
+    const result = parts([high, toggle()]);
+    expect(result.ultracode).toBe(false);
+    expect(result).not.toHaveProperty("ultracodePaused");
+    expect(result.label).toBe("High");
+    expect(traitsTriggerDescription(result)).toBe("High effort");
+  });
+
+  it("reads an unset toggle like an explicit On while the default is on", () => {
+    const result = parts([high, toggle()], ON);
+    expect(result.ultracode).toBe(true);
+    expect(result.label).toBe("High · Ultracode");
+    expect(traitsTriggerDescription(result)).toBe("High effort · Ultracode");
+    expect(traitsTriggerDescription(result)).toBe(traitsTriggerDescription(parts([high, toggle(true)])));
+  });
+
+  it("names a paused default, and only for an unset toggle", () => {
+    const result = parts([high, toggle()], PAUSED);
+    expect(result).toMatchObject({ ultracode: false, ultracodePaused: true });
+    expect(result.label).toBe("High · Ultracode paused");
+    expect(traitsTriggerDescription(result)).toBe("High effort · Ultracode paused");
+    // On set in the chat still runs while the default is paused.
+    expect(parts([high, toggle(true)], PAUSED)).toMatchObject({ ultracode: true });
+    expect(parts([high, toggle(true)], PAUSED)).not.toHaveProperty("ultracodePaused");
+  });
+
+  it("shows effort alone for a coordinator, a toggle set Off and a model without the toggle", () => {
+    for (const result of [
+      parts([high, toggle()], COORDINATOR),
+      parts([high, toggle(false)], ON),
+      parts([high, toggle(false)], PAUSED),
+      parts([high], ON),
+      parts([high], PAUSED),
+    ]) {
+      expect(result.ultracode).toBe(false);
+      expect(result).not.toHaveProperty("ultracodePaused");
+      expect(result.label).toBe("High");
+    }
+  });
+
+  it("resolves the effective state: the chat's toggle wins over the default", () => {
+    expect(effectiveUltracodeState(undefined, undefined)).toBe("off");
+    expect(effectiveUltracodeState(undefined, ON)).toBe("on");
+    expect(effectiveUltracodeState(undefined, PAUSED)).toBe("paused");
+    expect(effectiveUltracodeState(false, ON)).toBe("off");
+    expect(effectiveUltracodeState(true, COORDINATOR)).toBe("on");
+  });
+
+  it("says why an unset toggle reads the way it does", () => {
+    expect(ultracodeUnsetNote(undefined)).toBe("Not set: follows the Claude workflow mode");
+    expect(ultracodeUnsetNote(ON)).toBe(
+      "Not set here: on by default for threads. Uses more of your Claude limit.",
+    );
+    expect(ultracodeUnsetNote({ ...ON, scope: "all" })).toBe(
+      "Not set here: on by default for all chats. Uses more of your Claude limit.",
+    );
+    expect(ultracodeUnsetNote(PAUSED)).toBe(
+      "Not set here: the default is paused until your Claude limit resets.",
+    );
+    expect(ultracodeUnsetNote({ state: "off", reason: "workflows-disabled", scope: "threads" })).toBe(
+      "Not set here: off because Claude workflows are disabled.",
+    );
+    expect(ultracodeUnsetNote({ state: "off", reason: "api-key", scope: "threads" })).toBe(
+      "Not set here: off by default when Claude bills an API key.",
+    );
+    expect(ultracodeUnsetNote(COORDINATOR)).toBeNull();
+    expect(ultracodeUnsetNote({ state: "off", reason: "default-off", scope: "off" })).toBeNull();
+  });
+
+  const nowMs = Date.parse("2026-11-14T12:00:00.000Z");
+  const claude = (patch: Partial<ServerProvider> = {}) =>
+    ({
+      driver: ProviderDriverKind.make("claudeAgent"),
+      auth: { status: "authenticated" },
+      ...patch,
+    }) as unknown as ServerProvider;
+  const weekly = (usedPercent: number, resetsAt = "2026-11-15T00:00:00.000Z") =>
+    claude({
+      usageLimits: {
+        windows: [{ id: "seven_day", kind: "weekly", usedPercent, resetsAt }],
+      },
+    } as unknown as Partial<ServerProvider>);
+  const resolve = (provider: ServerProvider | undefined, chatKind: "thread" | "coordinator") =>
+    traitsUltracodeDefault({
+      settings: { claudeWorkflowMode: "on-request", claudeUltracodeDefault: "threads" },
+      chatKind,
+      provider,
+      model: "claude-opus-5-5",
+      nowMs,
+    });
+
+  it("reads the chat's instance: API keys stay off, high usage pauses, unknown usage does not", () => {
+    expect(resolve(undefined, "thread")).toEqual(ON);
+    expect(resolve(claude(), "thread")).toEqual(ON);
+    expect(resolve(weekly(79), "thread")).toEqual(ON);
+    expect(resolve(weekly(82), "thread")).toEqual(PAUSED);
+    // The pause ends at the reset.
+    expect(resolve(weekly(82, "2026-11-14T11:00:00.000Z"), "thread")).toEqual(ON);
+    expect(
+      resolve(claude({ auth: { status: "authenticated", apiKeyBilling: true } } as never), "thread"),
+    ).toEqual({ state: "off", reason: "api-key", scope: "threads" });
+    expect(resolve(claude(), "coordinator")).toEqual(COORDINATOR);
+    expect(
+      traitsUltracodeDefault({
+        settings: { claudeWorkflowMode: "automatic", claudeUltracodeDefault: "threads" },
+        chatKind: "coordinator",
+        provider: claude(),
+        model: "claude-opus-5-5",
+        nowMs,
+      }),
+    ).toEqual({ state: "on", reason: "default", scope: "all" });
+  });
+
+  it("never dispatches the default: an unset toggle sends no Ultracode option", () => {
+    const models: ReadonlyArray<ServerProviderModel> = [
+      {
+        slug: "claude-opus-5-5",
+        name: "Opus 5.5",
+        isCustom: false,
+        capabilities: { optionDescriptors: [high, toggle()] },
+      } as ServerProviderModel,
+    ];
+    const state = getComposerProviderState({
+      provider: CLAUDE,
+      model: "claude-opus-5-5",
+      models,
+      modelOptions: [{ id: "effort", value: "high" }],
+      planModeEnabled: false,
+    });
+    expect(state.modelOptionsForDispatch?.some((option) => option.id === "ultracode") ?? false).toBe(
+      false,
+    );
   });
 });

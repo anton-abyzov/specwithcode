@@ -38,6 +38,7 @@ import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import { THREAD_FINISH_ACTION_LABELS } from "./threadFinishAction";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { useThreadUltracodeDefault } from "../chat/composerProviderState";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { useBrowserDefaults } from "../../browser/browserDefaults";
@@ -132,6 +133,12 @@ export function ProjectDefaultsSettings({
     selection?.model,
   );
   const activeEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
+  // The chip reads as a new thread's would: Ultracode on by default unless set here.
+  const ultracodeDefault = useThreadUltracodeDefault({
+    settings,
+    provider: activeEntry?.snapshot,
+    model: selection?.model,
+  });
   const mixedModel = useScopedSettingsMixed(["defaultModelSelection"]);
   const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
@@ -327,6 +334,7 @@ export function ProjectDefaultsSettings({
                 allowPromptInjectedEffort={false}
                 planModeEnabled={settings.planModeEnabled}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                ultracodeDefault={ultracodeDefault}
                 onModelOptionsChange={(options) =>
                   setModel(createModelSelection(selection.instanceId, selection.model, options))
                 }

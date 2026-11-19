@@ -21,6 +21,12 @@ export interface CompiledClaudeModelSelection {
   readonly effort: string | undefined;
   readonly promptEffort: string | undefined;
   readonly settings: Readonly<Record<string, boolean>>;
+  /**
+   * The model lists an Ultracode toggle. `settings` has no `ultracode` key both
+   * when the chat never chose and when the model has no toggle; the default
+   * applies only to the first.
+   */
+  readonly supportsUltracode: boolean;
   readonly queryIdentity: string;
 }
 
@@ -131,14 +137,15 @@ export function compileClaudeModelSelection(
   const thinking = supportsBoolean("thinking")
     ? getModelSelectionBooleanOptionValue(selection, "thinking")
     : undefined;
-  // Unset follows the Claude workflow mode; the policy decides what reaches the CLI.
+  // Unset follows the workflow mode and the Ultracode default; the policy decides what reaches the CLI.
   const ultracode =
     getModelSelectionBooleanOptionValue(selection, "ultracode") ??
     (legacyUltracode ? true : undefined);
+  const supportsUltracode = supportsBoolean("ultracode");
   const settings = {
     ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
     ...(typeof fastMode === "boolean" ? { fastMode } : {}),
-    ...(supportsBoolean("ultracode") && typeof ultracode === "boolean" ? { ultracode } : {}),
+    ...(supportsUltracode && typeof ultracode === "boolean" ? { ultracode } : {}),
   };
   const apiModelId = resolveClaudeCatalogApiModelId(catalog, selection);
   const promptEffort = resolvePromptInjectedEffort(capabilities, rawEffort) ?? undefined;
@@ -147,6 +154,7 @@ export function compileClaudeModelSelection(
     effort,
     promptEffort,
     settings,
+    supportsUltracode,
     // Ultracode is launch context like the workflow mode it merges with; the
     // adapter keys the process on the value that reaches the CLI instead.
     queryIdentity: JSON.stringify({

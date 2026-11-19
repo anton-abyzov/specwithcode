@@ -1,8 +1,14 @@
 /*
  * Synthetic data only: the production ChatComposer with an Opus 5.5 thread whose
  * Claude model offers Ultracode as its own toggle beside reasoning effort.
- * `?case=on` Medium with Ultracode on; `?case=off` Medium alone;
+ * `?case=on` Medium with Ultracode set on; `?case=off` the toggle unset and no
+ * Ultracode default passed (the reading before the default existed);
  * `?case=legacy` a selection saved when Ultracode was an effort level.
+ * With the Ultracode default ("Threads"): `?case=default-on` a thread with the
+ * toggle unset; `?case=paused` the same at 85% of the weekly limit;
+ * `?case=coordinator` the project coordinator; `?case=set-off` a thread with
+ * the toggle set Off; `?case=no-toggle` Sonnet 4.6, which has no toggle;
+ * `?case=all` a coordinator under "All chats".
  * `?theme=dark` the theme.
  */
 import { useEffect, useRef } from "react";
@@ -26,6 +32,7 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@specweave-studio/shared/keybindin
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { useComposerDraftStore } from "../../src/composerDraftStore";
 import { ChatComposer, type ChatComposerHandle } from "../../src/components/chat/ChatComposer";
+import type { ComposerUltracodeDefaultContext } from "../../src/components/chat/composerProviderState";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../src/composerDraftStore";
 import type { TerminalContextDraft } from "../../src/lib/terminalContext";
 import { TooltipProvider } from "../../src/components/ui/tooltip";
@@ -66,6 +73,9 @@ const capabilities = {
     },
   ],
 };
+const scenario = params.get("case") ?? "on";
+// Sonnet 4.6 has no Extra High effort, so Claude Code offers it no Ultracode.
+const sonnetCapabilities = { optionDescriptors: [capabilities.optionDescriptors[0]] };
 const providers = [
   {
     enabled: true,
@@ -78,7 +88,30 @@ const providers = [
     skills: [],
     instanceId: claude,
     driver: ProviderDriverKind.make("claudeAgent"),
-    models: [{ slug: "claude-opus-5-5", name: "Opus 5.5", isCustom: false, capabilities }],
+    models: [
+      { slug: "claude-opus-5-5", name: "Opus 5.5", isCustom: false, capabilities },
+      {
+        slug: "claude-sonnet-4-6",
+        name: "Sonnet 4.6",
+        isCustom: false,
+        capabilities: sonnetCapabilities,
+      },
+    ],
+    ...(scenario === "paused"
+      ? {
+          // A weekly window at 85% that resets well after the capture.
+          usageLimits: {
+            windows: [
+              {
+                id: "seven_day",
+                kind: "weekly",
+                usedPercent: 85,
+                resetsAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+              },
+            ],
+          },
+        }
+      : {}),
   },
 ] as unknown as ServerProvider[];
 const settings = DEFAULT_UNIFIED_SETTINGS;
@@ -89,13 +122,28 @@ const OPTIONS: Record<string, ModelSelection["options"]> = {
   ],
   off: [{ id: "effort", value: "medium" }],
   legacy: [{ id: "effort", value: "ultracode" }],
+  "set-off": [
+    { id: "effort", value: "medium" },
+    { id: "ultracode", value: false },
+  ],
 };
 const thread = {
   instanceId: claude,
-  model: "claude-opus-5-5",
-  options: OPTIONS[params.get("case") ?? "on"] ?? OPTIONS.on,
+  model: scenario === "no-toggle" ? "claude-sonnet-4-6" : "claude-opus-5-5",
+  options: OPTIONS[scenario] ?? OPTIONS.off,
 } as ModelSelection;
 useComposerDraftStore.getState().setModelSelection(threadRef, thread, { explicit: true });
+// What ChatView passes for the chat: its kind and the project's resolved settings.
+const ultracodeDefaultContext: ComposerUltracodeDefaultContext | undefined =
+  scenario === "off" || scenario === "legacy"
+    ? undefined
+    : {
+        settings: {
+          claudeWorkflowMode: "on-request",
+          claudeUltracodeDefault: scenario === "all" ? "all" : "threads",
+        },
+        chatKind: scenario === "coordinator" || scenario === "all" ? "coordinator" : "thread",
+      };
 
 function Harness() {
   const promptRef = useRef("");
@@ -131,6 +179,7 @@ function Harness() {
         activeThreadEnvironmentId={environmentId}
         activeThread={undefined}
         activeThreadShell={null}
+        ultracodeDefaultContext={ultracodeDefaultContext}
         promptHistoryMessages={[]}
         isServerThread
         isLocalDraftThread={false}

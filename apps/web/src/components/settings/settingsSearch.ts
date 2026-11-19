@@ -282,6 +282,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["ultracode workflows disabled on request automatic multi agent orchestration"],
   },
   {
+    id: "claude-ultracode-default",
+    title: "Ultracode by default",
+    to: "/settings/agents",
+    scope: "project-defaults",
+    searchTerms: [
+      "ultracode default threads all chats coordinators routines subagents off multi agent workflow tokens usage limit",
+    ],
+  },
+  {
     id: "storage-worktrees",
     title: "Worktree cleanup",
     to: "/settings/storage",

@@ -15,6 +15,7 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
 > = {
   agentInstructions: { label: "Agent instructions", page: "Agents" },
   claudeWorkflowMode: { label: "Claude workflow mode", page: "Agents" },
+  claudeUltracodeDefault: { label: "Ultracode by default", page: "Agents" },
   responseStyle: { label: "Response style", page: "Agents" },
   worktreeCleanup: { label: "Worktree cleanup", page: "Storage" },
   worktreeLocationMode: { label: "Worktree storage", page: "Storage" },

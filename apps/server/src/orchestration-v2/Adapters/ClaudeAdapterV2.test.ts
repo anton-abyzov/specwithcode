@@ -247,6 +247,77 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     });
   });
 
+  it("makeClaudeQueryOptions applies the resolved Ultracode default to an unset toggle", () => {
+    const options = (input: {
+      readonly model?: string;
+      readonly options?: NonNullable<ModelSelection["options"]>;
+      readonly claudeWorkflowMode?: "disabled" | "on-request" | "automatic";
+      readonly claudeUltracodeDefault?: "on" | "off" | "paused";
+    }) =>
+      ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: {
+          ...CLAUDE_TEST_MODEL_SELECTION,
+          model: input.model ?? "claude-opus-5-5",
+          options: input.options ?? [{ id: "effort", value: "high" }],
+        },
+        nativeThreadId: "ultracode-default",
+        resume: false,
+        cwd: "/workspace",
+        claudeWorkflowMode: input.claudeWorkflowMode ?? "on-request",
+        ...(input.claudeUltracodeDefault === undefined
+          ? {}
+          : { claudeUltracodeDefault: input.claudeUltracodeDefault }),
+      });
+    // A project thread on a model with the toggle, never set.
+    assert.include(options({ claudeUltracodeDefault: "on" }).settings, {
+      enableWorkflows: true,
+      ultracode: true,
+    });
+    assert.include(options({ claudeUltracodeDefault: "paused" }).settings, { ultracode: false });
+    assert.include(options({ claudeUltracodeDefault: "off" }).settings, { ultracode: false });
+    // The chat's own toggle wins both ways.
+    assert.include(
+      options({
+        claudeUltracodeDefault: "on",
+        options: [{ id: "ultracode", value: false }],
+      }).settings,
+      { ultracode: false },
+    );
+    assert.include(
+      options({
+        claudeUltracodeDefault: "off",
+        options: [{ id: "ultracode", value: true }],
+      }).settings,
+      { ultracode: true },
+    );
+    assert.include(
+      options({ claudeWorkflowMode: "disabled", claudeUltracodeDefault: "on" }).settings,
+      { enableWorkflows: false, ultracode: false },
+    );
+    // Models without the toggle start exactly as before.
+    for (const model of ["claude-haiku-4-5", "claude-opus-4-6"]) {
+      const withDefault = options({ model, options: [], claudeUltracodeDefault: "on" });
+      const before = options({ model, options: [] });
+      assert.deepEqual(withDefault.settings, before.settings);
+      assert.include(withDefault.settings, { ultracode: false });
+      assert.deepEqual(withDefault.extraArgs, before.extraArgs);
+    }
+  });
+
+  it("makeClaudeQueryOptions keeps the launch alias asking for ultracode under the default", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model: "claude-opus-5-5" },
+      nativeThreadId: "ultracode-alias",
+      resume: false,
+      cwd: "/workspace",
+      claudeWorkflowMode: "on-request",
+      claudeUltracodeDefault: "off",
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs: "--effort ultracode" },
+    });
+    assert.include(options.settings, { ultracode: true });
+    assert.equal(options.extraArgs?.effort, "xhigh");
+  });
+
   it("makeClaudeQueryOptions enforces disabled workflow despite advanced native launch flags", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,
@@ -3429,6 +3500,92 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.strictEqual(harness.getOpenedOptions(), originalOptions);
         assert.lengthOf(harness.offeredMessages, 3);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("reopens an idle chat with resume when its effective Ultracode changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const opus = {
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          model: "claude-opus-5-5",
+        } satisfies ModelSelection;
+        const turn = (
+          ordinal: number,
+          claudeUltracodeDefault: "on" | "off" | "paused",
+          modelSelection: ModelSelection = opus,
+        ) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-ultracode-default:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            modelSelection,
+            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, claudeUltracodeDefault },
+          });
+        const finish = Effect.gen(function* () {
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+        });
+        yield* harness.runtime.startTurn(turn(1, "on"));
+        const onOptions = harness.getOpenedOptions();
+        assert.include(onOptions?.settings, { enableWorkflows: true, ultracode: true });
+        yield* finish;
+
+        // A set toggle keeps the same effective value, so the process stays.
+        yield* harness.runtime.startTurn(
+          turn(2, "paused", { ...opus, options: [{ id: "ultracode", value: true }] }),
+        );
+        assert.strictEqual(harness.getOpenedOptions(), onOptions);
+        yield* finish;
+
+        // The default paused (usage crossed 80 percent): the idle chat reopens once.
+        yield* harness.runtime.startTurn(turn(3, "paused"));
+        const pausedOptions = harness.getOpenedOptions();
+        assert.notStrictEqual(pausedOptions, onOptions);
+        assert.include(pausedOptions?.settings, { ultracode: false });
+        assert.isString(pausedOptions?.resume);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("keeps a running workflow's Ultracode when the default changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, claudeUltracodeDefault: "on" | "paused") =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-ultracode-running:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            modelSelection: {
+              instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+              model: "claude-opus-5-5",
+            },
+            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, claudeUltracodeDefault },
+          });
+        yield* harness.runtime.startTurn(turn(1, "on"));
+        const originalOptions = harness.getOpenedOptions();
+        assert.include(originalOptions?.settings, { ultracode: true });
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        yield* harness.runtime.startTurn(turn(2, "paused"));
+        assert.strictEqual(harness.getOpenedOptions(), originalOptions);
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),

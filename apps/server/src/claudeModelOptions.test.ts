@@ -57,6 +57,19 @@ describe("compileClaudeModelSelection", () => {
     ).not.toHaveProperty("ultracode");
   });
 
+  it("tells an unset toggle apart from a model without one", () => {
+    const unset = compileClaudeModelSelection(
+      selection("claude-opus-5-5", [{ id: "effort", value: "high" }]),
+    );
+    expect(unset.settings).not.toHaveProperty("ultracode");
+    expect(unset.supportsUltracode).toBe(true);
+    for (const model of ["claude-haiku-4-5", "claude-opus-4-6", "claude-sonnet-4-6"]) {
+      const compiled = compileClaudeModelSelection(selection(model, []));
+      expect(compiled.settings).not.toHaveProperty("ultracode");
+      expect(compiled.supportsUltracode).toBe(false);
+    }
+  });
+
   it("leaves Ultracode out of the selection identity; the adapter keys it with the mode", () => {
     const identity = (options: NonNullable<ModelSelection["options"]>) =>
       compileClaudeModelSelection(selection("claude-opus-5-5", options)).queryIdentity;

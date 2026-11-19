@@ -1,6 +1,7 @@
 import { useTx } from "../../i18n";
 import {
   AuthSettingsWriteScope,
+  ClaudeUltracodeDefault,
   type EnvironmentId,
   ProviderLimitAction,
   PullRequestMergeMethod,
@@ -46,6 +47,7 @@ const ENUM_OPTIONS: Partial<Record<ProjectScopedServerSettingKey, readonly strin
   defaultThreadEnvMode: ThreadEnvMode.literals,
   pullRequestMergeMethod: [NULL_OPTION, ...PullRequestMergeMethod.literals],
   responseStreamingMode: ResponseStreamingMode.literals,
+  claudeUltracodeDefault: ClaudeUltracodeDefault.literals,
 };
 
 const optionValue = (value: unknown) => (value === null ? NULL_OPTION : String(value));

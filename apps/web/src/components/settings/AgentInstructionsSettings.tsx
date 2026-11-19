@@ -2,17 +2,27 @@ import { useTx } from "../../i18n";
 import { useId, useRef, useState } from "react";
 import {
   AGENT_INSTRUCTIONS_MAX_LENGTH,
-  ClaudeWorkflowMode,
+  ClaudeUltracodeDefault,
+  type ClaudeWorkflowMode,
   DEFAULT_SERVER_SETTINGS,
   ResponseStyle,
 } from "@specweave-studio/contracts";
+import {
+  effectiveClaudeUltracodeDefault,
+  effectiveClaudeWorkflowMode,
+} from "@specweave-studio/shared/ultracodeDefault";
+import { GaugeIcon } from "lucide-react";
 
 import { RESPONSE_STYLE_LABELS } from "../../responseStyle";
+import { Alert, AlertDescription } from "../ui/alert";
+import { Badge } from "../ui/badge";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { CharacterCount } from "../ui/character-count";
 import { Textarea } from "../ui/textarea";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting } from "./settingsSearch";
+import { ULTRACODE_DEFAULT_LABELS } from "./settingValueLabels";
 import {
   SettingResetButton,
   SettingsPageContainer,
@@ -37,6 +47,9 @@ const WORKFLOW_MODES = {
   "on-request": "On request",
   automatic: "Automatic",
 } satisfies Record<ClaudeWorkflowMode, string>;
+
+// Automatic stays a stored value; it reads as On request plus "All chats".
+const SELECTABLE_WORKFLOW_MODES = ["disabled", "on-request"] as const;
 
 function ResponseStyleSettings() {
   const tx = useTx();
@@ -92,56 +105,146 @@ function ResponseStyleSettings() {
   );
 }
 
+/** Workflow mode and Ultracode default as each selected target reads them. */
+function useClaudeWorkflowTargets() {
+  const { targets } = useSettingsScope();
+  return targets.map((target) => ({
+    stored: target.settings.claudeWorkflowMode,
+    mode: effectiveClaudeWorkflowMode(target.settings.claudeWorkflowMode),
+    ultracodeDefault: effectiveClaudeUltracodeDefault(
+      target.settings.claudeWorkflowMode,
+      target.settings.claudeUltracodeDefault,
+    ),
+  }));
+}
+
 function ClaudeWorkflowSettings() {
   const tx = useTx();
   const settings = useScopedSettings();
   const update = useUpdateScopedSettings();
-  const mixed = useScopedSettingsMixed(["claudeWorkflowMode"]);
+  const targets = useClaudeWorkflowTargets();
+  const mode = effectiveClaudeWorkflowMode(settings.claudeWorkflowMode);
+  const ultracodeDefault = effectiveClaudeUltracodeDefault(
+    settings.claudeWorkflowMode,
+    settings.claudeUltracodeDefault,
+  );
+  // Mixed compares what each target does, so a stored Automatic beside On request is not mixed.
+  const modeMixed = new Set(targets.map((target) => target.mode)).size > 1;
+  const defaultMixed = new Set(targets.map((target) => target.ultracodeDefault)).size > 1;
+  const anyAutomatic = targets.some((target) => target.stored === "automatic");
+  // A stored Automatic is On request plus All chats. Leaving it writes the other key too, but
+  // only when that key already reads the same on every target, so no target changes unasked.
+  const setMode = (next: "disabled" | "on-request") =>
+    update(
+      anyAutomatic && !defaultMixed && ultracodeDefault === "all"
+        ? { claudeWorkflowMode: next, claudeUltracodeDefault: "all" }
+        : { claudeWorkflowMode: next },
+    );
+  const setUltracodeDefault = (next: ClaudeUltracodeDefault) =>
+    update(
+      anyAutomatic && !modeMixed && mode === "on-request"
+        ? { claudeWorkflowMode: "on-request", claudeUltracodeDefault: next }
+        : { claudeUltracodeDefault: next },
+    );
   return (
     <SettingsSection title="Claude workflows">
       <SettingsRow
         serverScoped
         settingKeys={["claudeWorkflowMode"]}
         {...searchableSetting("claude-workflow-mode")}
-        description="Disabled prevents native workflows and Ultracode. On request starts them when you ask. Automatic turns Ultracode on for threads that leave it unset. A model's own Ultracode toggle and its reasoning effort are set in the model picker."
+        title="Workflows"
+        mixed={modeMixed}
+        description="Disabled prevents native workflows and Ultracode. On request starts a workflow when you ask for one."
         resetAction={
-          mixed || settings.claudeWorkflowMode !== DEFAULT_SERVER_SETTINGS.claudeWorkflowMode ? (
+          modeMixed || mode !== DEFAULT_SERVER_SETTINGS.claudeWorkflowMode ? (
             <SettingResetButton
               label={tx("Claude workflow mode")}
               onClick={() =>
-                update({ claudeWorkflowMode: DEFAULT_SERVER_SETTINGS.claudeWorkflowMode })
+                setMode(effectiveClaudeWorkflowMode(DEFAULT_SERVER_SETTINGS.claudeWorkflowMode))
               }
             />
           ) : null
         }
         control={
           <Select
-            value={mixed ? null : settings.claudeWorkflowMode}
+            value={modeMixed ? null : mode}
             onValueChange={(value) => {
-              if (ClaudeWorkflowMode.literals.includes(value as ClaudeWorkflowMode))
-                update({ claudeWorkflowMode: value as ClaudeWorkflowMode });
+              if (value === "disabled" || value === "on-request") setMode(value);
             }}
           >
             <SelectTrigger size="sm" aria-label={tx("Claude workflow mode")}>
               <SelectValue>
                 {(value: ClaudeWorkflowMode | null) =>
-                  value === null ? tx("Mixed") : tx(WORKFLOW_MODES[value])
+                  value === null
+                    ? tx("Mixed")
+                    : tx(WORKFLOW_MODES[effectiveClaudeWorkflowMode(value)])
                 }
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              {ClaudeWorkflowMode.literals.map((mode) => (
-                <SelectItem key={mode} value={mode}>
-                  {tx(WORKFLOW_MODES[mode])}
+              {SELECTABLE_WORKFLOW_MODES.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {tx(WORKFLOW_MODES[option])}
                 </SelectItem>
               ))}
             </SelectPopup>
           </Select>
         }
       />
+      <SettingsRow
+        serverScoped
+        settingKeys={["claudeUltracodeDefault"]}
+        {...searchableSetting("claude-ultracode-default")}
+        title={
+          <span className="inline-flex items-center gap-2">
+            {tx("Ultracode by default")}
+            <Badge size="sm" variant="info">
+              {tx("New")}
+            </Badge>
+          </span>
+        }
+        mixed={defaultMixed}
+        description="Claude Code plans a multi-agent workflow for each substantive task. Threads are the chats you start in a project and the workers a coordinator starts. All chats adds coordinators, routines and a thread's own subagents. Any chat can switch it in its model menu."
+        status={
+          <Alert variant="warning" role="note" controlAlignment="first-line" className="mt-1.5">
+            <GaugeIcon aria-hidden />
+            <AlertDescription className="text-xs">
+              {tx(
+                "Uses more tokens per task, so you reach your Claude session and weekly limits sooner. Pauses by itself above 80% of a limit.",
+              )}
+            </AlertDescription>
+          </Alert>
+        }
+        resetAction={
+          defaultMixed || ultracodeDefault !== DEFAULT_SERVER_SETTINGS.claudeUltracodeDefault ? (
+            <SettingResetButton
+              label={tx("Ultracode by default")}
+              onClick={() => setUltracodeDefault(DEFAULT_SERVER_SETTINGS.claudeUltracodeDefault)}
+            />
+          ) : null
+        }
+        control={
+          <ToggleGroup
+            aria-label={tx("Ultracode by default")}
+            variant="segmented"
+            value={defaultMixed ? [] : [ultracodeDefault]}
+            onValueChange={(next) => {
+              const value = next[0];
+              if (ClaudeUltracodeDefault.literals.includes(value as ClaudeUltracodeDefault))
+                setUltracodeDefault(value as ClaudeUltracodeDefault);
+            }}
+          >
+            {ClaudeUltracodeDefault.literals.map((option) => (
+              <Toggle key={option} value={option}>
+                {tx(ULTRACODE_DEFAULT_LABELS[option])}
+              </Toggle>
+            ))}
+          </ToggleGroup>
+        }
+      />
       <p className="px-3 pb-3 text-sm text-muted-foreground sm:px-4">
         {tx(
-          "Applies to Claude Code providers with native workflow support. Workers already running keep their launch settings.",
+          "Applies to Claude Code models with Extra High effort, on a subscription sign-in. GitHub Copilot, Cursor and Devin run Claude models without Ultracode: they do not offer it.",
         )}
       </p>
     </SettingsSection>

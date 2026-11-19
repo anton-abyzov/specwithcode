@@ -6,7 +6,7 @@ import {
   type ServerSettings,
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { groupProjectSettingOverrides } from "./projectOverrideRows";
+import { groupProjectSettingOverrides, PROJECT_OVERRIDE_LABELS } from "./projectOverrideRows";
 import { formatSettingValueFor } from "./settingValueLabels";
 
 const m1 = EnvironmentId.make("m1");
@@ -132,5 +132,17 @@ describe("formatSettingValueFor", () => {
     expect(formatSettingValueFor("providerLimitSwitchAtPercent", 100)).toBe("At 0% left");
     // A null threshold never switches early; it is a choice, not a missing value.
     expect(formatSettingValueFor("providerLimitSwitchAtPercent", null)).toBe("Only when it stops");
+    expect(formatSettingValueFor("claudeUltracodeDefault", "off")).toBe("Off");
+    expect(formatSettingValueFor("claudeUltracodeDefault", "threads")).toBe("Threads");
+    expect(formatSettingValueFor("claudeUltracodeDefault", "all")).toBe("All chats");
+    // The shared "all" means something else for other keys; only this key reads "All chats".
+    expect(formatSettingValueFor("responseStyle", "all")).toBe("all");
+  });
+
+  it("names the Ultracode default on the Agents page", () => {
+    expect(PROJECT_OVERRIDE_LABELS.claudeUltracodeDefault).toEqual({
+      label: "Ultracode by default",
+      page: "Agents",
+    });
   });
 });

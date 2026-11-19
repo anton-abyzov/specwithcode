@@ -40,7 +40,7 @@ PROOF_LIMIT = 20000
 # Storage values are scoped within one machine's settings file. Including them
 # here verifies same-machine update continuity; it never copies paths to a peer.
 PROJECT_SCOPED_KEYS = frozenset((
-    'agentInstructions', 'claudeWorkflowMode', 'responseStyle', 'worktreeCleanup', 'defaultModelSelection',
+    'agentInstructions', 'claudeWorkflowMode', 'claudeUltracodeDefault', 'responseStyle', 'worktreeCleanup', 'defaultModelSelection',
     'worktreeLocationMode', 'worktreesDirectory',
     'defaultModelProviders',
     'defaultRuntimeMode', 'defaultThreadEnvMode', 'newWorktreesStartFromOrigin', 'worktreeSubmodules',

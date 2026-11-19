@@ -339,10 +339,12 @@ import {
   slashCommandItemsForPromptPosition,
 } from "./composerSlashCommandSearch";
 import {
+  type ComposerUltracodeDefaultContext,
   getComposerPromptInjectionState,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
+  useComposerUltracodeDefault,
   useProviderEffortControl,
 } from "./composerProviderState";
 import { ContextWindowMeter, ContextWindowMeterPlaceholder } from "./ContextWindowMeter";
@@ -1636,6 +1638,11 @@ export interface ChatComposerProps {
   activeThreadShell: ThreadShell | null;
   /** The rules for this thread's folder, not only the machine's. */
   teamRulesSummary: TeamRulesSummary | undefined;
+  /**
+   * The chat's kind and project-resolved settings for the Ultracode default. The
+   * composer adds its selected instance and model; absent shows no default.
+   */
+  ultracodeDefaultContext?: ComposerUltracodeDefaultContext | null | undefined;
   /** The one-time Full access recommendation for this chat; absent where it never applies. */
   accessRecommendation?: ComposerAccessRecommendation | undefined;
   /** Timeline messages including optimistic sends, for ArrowUp prompt recall. */
@@ -3369,6 +3376,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
 
+  // Shown on the chip and menu only; the server applies the default when a turn starts.
+  const ultracodeDefault = useComposerUltracodeDefault({
+    context: props.ultracodeDefaultContext,
+    provider: selectedProviderStatus,
+    model: selectedModel,
+  });
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
@@ -3381,6 +3394,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     prompt,
     onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
+    ultracodeDefault,
   });
   const providerTraitsPickerInput = {
     provider: selectedProvider,
@@ -3395,6 +3409,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
     isComposerOwned: true,
+    ultracodeDefault,
   } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
   const providerTraitsPicker = renderProviderTraitsPicker(providerTraitsPickerInput);
   // The model picker sets the same effort from its strip, beside the model it belongs to.

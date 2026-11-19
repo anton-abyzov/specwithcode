@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   LIVE_DATABASE_INSTRUCTIONS,
   type ModelSelection,
   type OrchestrationV2AppThread,
@@ -14,8 +15,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
@@ -349,6 +352,315 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
       assert.equal(yield* modeFor(grokInstanceId, "full-access"), "full-access");
       // A provider that advertises no restriction runs every mode as stored.
       assert.equal(yield* modeFor(providerInstanceId, "auto-accept-edits"), "auto-accept-edits");
+    }),
+  );
+});
+
+// Ultracode by default: a Claude instance whose sign-in and usage each case
+// sets, a project whose kind each case sets, and a real routine table.
+const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+const claudeSelection = {
+  instanceId: claudeInstanceId,
+  model: "claude-opus-5-5",
+} satisfies ModelSelection;
+const coordinatorThreadId = ThreadId.make(`project-coordinator:${projectId}`);
+let claudeSnapshot: ServerProvider | undefined;
+let projectKind: "code" | "personal" = "code";
+
+function claudeProvider(input: {
+  readonly apiKeyBilling?: boolean;
+  readonly windows?: ReadonlyArray<{
+    readonly kind: "session" | "weekly" | "monthly";
+    readonly usedPercent: number;
+  }>;
+}): ServerProvider {
+  return {
+    driver: "claudeAgent",
+    auth: {
+      status: "authenticated",
+      ...(input.apiKeyBilling === undefined ? {} : { apiKeyBilling: input.apiKeyBilling }),
+    },
+    ...(input.windows === undefined
+      ? {}
+      : {
+          usageLimits: {
+            windows: input.windows.map((window, index) => ({
+              id: `window-${index}`,
+              label: window.kind,
+              ...window,
+            })),
+          },
+        }),
+  } as unknown as ServerProvider;
+}
+
+function claudeThread(input: {
+  readonly now: DateTime.Utc;
+  readonly id?: string;
+  readonly parentThreadId?: string;
+}): OrchestrationV2AppThread {
+  const base = makeThread({ now: input.now, worktreePath: null });
+  const id = ThreadId.make(input.id ?? "thread:ultracode");
+  return {
+    ...base,
+    id,
+    providerInstanceId: claudeInstanceId,
+    modelSelection: claudeSelection,
+    lineage:
+      input.parentThreadId === undefined
+        ? { parentThreadId: null, relationshipToParent: null, rootThreadId: id }
+        : {
+            parentThreadId: ThreadId.make(input.parentThreadId),
+            relationshipToParent: "subagent",
+            rootThreadId: ThreadId.make(input.parentThreadId),
+          },
+  };
+}
+
+const layerUltracode = RuntimePolicy.layerFromProjectStore.pipe(
+  Layer.provideMerge(ServerSettings.layerTest({ claudeWorkflowMode: "on-request" })),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+  Layer.provide(
+    Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+      getInstance: (instanceId) =>
+        Effect.succeed(
+          instanceId !== claudeInstanceId
+            ? providerInstanceFor(instanceId)
+            : claudeSnapshot === undefined
+              ? undefined
+              : ({
+                  driverKind: "claudeAgent",
+                  snapshot: { getSnapshot: Effect.sync(() => claudeSnapshot!) },
+                } as unknown as ProviderInstance),
+        ),
+      listInstances: Effect.succeed([]),
+      listUnavailable: Effect.succeed([]),
+      streamChanges: Stream.empty,
+      subscribeChanges: Effect.never,
+    }),
+  ),
+  Layer.provide(
+    Layer.mock(ProjectStore.ProjectStoreV2)({
+      get: () =>
+        Effect.sync(() =>
+          Option.some({
+            projectId,
+            title: "Project",
+            workspaceRoot: "/project-root",
+            defaultModelSelection: null,
+            defaultThreadEnvMode: null,
+            autoPull: false,
+            faviconPath: null,
+            projectIcon: null,
+            scripts: [],
+            workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, kind: projectKind },
+            createdAt: "2026-06-21T00:00:00.000Z",
+            updatedAt: "2026-06-21T00:00:00.000Z",
+            deletedAt: null,
+          }),
+        ),
+    }),
+  ),
+);
+
+it.layer(layerUltracode)("RuntimePolicyV2 Ultracode default", (it) => {
+  const resolveDefault = (thread: OrchestrationV2AppThread, modelSelection = claudeSelection) =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      return (yield* policy.resolve({ thread, modelSelection })).claudeUltracodeDefault;
+    });
+  const withSettings = <A, E, R>(
+    patch: Parameters<ServerSettings.ServerSettingsService["Service"]["updateSettings"]>[0],
+    effect: Effect.Effect<A, E, R>,
+  ) =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* settings.updateSettings(patch);
+      return yield* effect.pipe(
+        Effect.ensuring(
+          settings
+            .updateSettings({
+              claudeWorkflowMode: "on-request",
+              claudeUltracodeDefault: "threads",
+              projectSettingsOverrides: { [projectId]: null },
+            })
+            .pipe(Effect.orDie),
+        ),
+      );
+    });
+  const kinds = (now: DateTime.Utc) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM scheduled_tasks`;
+      yield* sql`INSERT INTO scheduled_tasks (task_id,title,prompt,enabled,schedule_json,project_id,thread_id,workspace_strategy_json,model_selection_json,runtime_mode,interaction_mode,created_by,creation_source,created_at,updated_at,last_run_status,run_count)
+        VALUES ('routine','Nightly','Nightly',1,'{}',${projectId},'thread:routine','{}','{}','full-access','default','user','web','1970-01-01','1970-01-01','never',0)`;
+      return {
+        thread: yield* resolveDefault(claudeThread({ now })),
+        worker: yield* resolveDefault(
+          claudeThread({ now, id: "thread:worker", parentThreadId: coordinatorThreadId }),
+        ),
+        coordinator: yield* resolveDefault(claudeThread({ now, id: coordinatorThreadId })),
+        routine: yield* resolveDefault(claudeThread({ now, id: "thread:routine" })),
+        nested: yield* resolveDefault(
+          claudeThread({ now, id: "thread:nested", parentThreadId: "thread:worker" }),
+        ),
+      };
+    });
+
+  it.effect("turns the default on for a project thread on a subscription", () =>
+    Effect.gen(function* () {
+      claudeSnapshot = claudeProvider({});
+      const now = yield* DateTime.now;
+      assert.equal(yield* resolveDefault(claudeThread({ now })), "on");
+    }),
+  );
+
+  it.effect("keeps coordinators, routines and nested subagents off under Threads", () =>
+    Effect.gen(function* () {
+      claudeSnapshot = claudeProvider({});
+      const now = yield* DateTime.now;
+      assert.deepEqual(yield* kinds(now), {
+        thread: "on",
+        worker: "on",
+        coordinator: "off",
+        routine: "off",
+        nested: "off",
+      });
+    }),
+  );
+
+  it.effect("turns every chat on under All chats", () =>
+    Effect.gen(function* () {
+      claudeSnapshot = claudeProvider({});
+      const now = yield* DateTime.now;
+      assert.deepEqual(yield* withSettings({ claudeUltracodeDefault: "all" }, kinds(now)), {
+        thread: "on",
+        worker: "on",
+        coordinator: "on",
+        routine: "on",
+        nested: "on",
+      });
+    }),
+  );
+
+  it.effect("keeps every chat in a personal assistant project off under Threads", () =>
+    Effect.gen(function* () {
+      claudeSnapshot = claudeProvider({});
+      projectKind = "personal";
+      const now = yield* DateTime.now;
+      const state = yield* resolveDefault(claudeThread({ now })).pipe(
+        Effect.ensuring(Effect.sync(() => (projectKind = "code"))),
+      );
+      assert.equal(state, "off");
+    }),
+  );
+
+  it.effect("honours Off and Disabled, also as a project override", () =>
+    Effect.gen(function* () {
+      claudeSnapshot = claudeProvider({});
+      const now = yield* DateTime.now;
+      const thread = claudeThread({ now });
+      assert.equal(
+        yield* withSettings({ claudeUltracodeDefault: "off" }, resolveDefault(thread)),
+        "off",
+      );
+      assert.equal(
+        yield* withSettings(
+          { projectSettingsOverrides: { [projectId]: { claudeUltracodeDefault: "off" } } },
+          resolveDefault(thread),
+        ),
+        "off",
+      );
+      assert.equal(
+        yield* withSettings(
+          {
+            claudeUltracodeDefault: "off",
+            projectSettingsOverrides: { [projectId]: { claudeUltracodeDefault: "threads" } },
+          },
+          resolveDefault(thread),
+        ),
+        "on",
+      );
+      assert.equal(
+        yield* withSettings(
+          { projectSettingsOverrides: { [projectId]: { claudeWorkflowMode: "disabled" } } },
+          resolveDefault(thread),
+        ),
+        "off",
+      );
+    }),
+  );
+
+  it.effect("keeps a stored Automatic mode on for every unset chat", () =>
+    Effect.gen(function* () {
+      claudeSnapshot = claudeProvider({});
+      const now = yield* DateTime.now;
+      assert.deepEqual(
+        yield* withSettings(
+          { claudeWorkflowMode: "automatic", claudeUltracodeDefault: "off" },
+          kinds(now),
+        ),
+        { thread: "on", worker: "on", coordinator: "on", routine: "on", nested: "on" },
+      );
+    }),
+  );
+
+  it.effect("keeps an API-key instance off", () =>
+    Effect.gen(function* () {
+      claudeSnapshot = claudeProvider({ apiKeyBilling: true });
+      const now = yield* DateTime.now;
+      assert.equal(yield* resolveDefault(claudeThread({ now })), "off");
+    }),
+  );
+
+  it.effect("pauses at 80 percent of a session or weekly limit, not on unknown usage", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const thread = claudeThread({ now });
+      const stateAt = (windows: Parameters<typeof claudeProvider>[0]["windows"]) => {
+        claudeSnapshot = claudeProvider(windows === undefined ? {} : { windows });
+        return resolveDefault(thread);
+      };
+      assert.equal(yield* stateAt([{ kind: "session", usedPercent: 80 }]), "paused");
+      assert.equal(yield* stateAt([{ kind: "weekly", usedPercent: 93 }]), "paused");
+      assert.equal(yield* stateAt([{ kind: "session", usedPercent: 79 }]), "on");
+      assert.equal(yield* stateAt([{ kind: "monthly", usedPercent: 99 }]), "on");
+      assert.equal(yield* stateAt([]), "on");
+      assert.equal(yield* stateAt(undefined), "on");
+    }),
+  );
+
+  it.effect("reads a missing instance as a subscription with unknown usage", () =>
+    Effect.gen(function* () {
+      claudeSnapshot = undefined;
+      const now = yield* DateTime.now;
+      // The registry has no instance; the id still names the Claude driver.
+      const state = yield* resolveDefault(claudeThread({ now }));
+      assert.equal(state, "on");
+    }),
+  );
+
+  it.effect("leaves other providers' policies without the field", () =>
+    Effect.gen(function* () {
+      claudeSnapshot = claudeProvider({});
+      const now = yield* DateTime.now;
+      assert.isUndefined(yield* resolveDefault(claudeThread({ now }), modelSelection));
+    }),
+  );
+
+  it.effect("treats a chat as a routine's when the routine lookup fails", () =>
+    Effect.gen(function* () {
+      claudeSnapshot = claudeProvider({});
+      const now = yield* DateTime.now;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`ALTER TABLE scheduled_tasks RENAME TO scheduled_tasks_moved`;
+      const state = yield* resolveDefault(claudeThread({ now })).pipe(
+        Effect.ensuring(
+          sql`ALTER TABLE scheduled_tasks_moved RENAME TO scheduled_tasks`.pipe(Effect.orDie),
+        ),
+      );
+      assert.equal(state, "off");
+      assert.equal(yield* resolveDefault(claudeThread({ now })), "on");
     }),
   );
 });

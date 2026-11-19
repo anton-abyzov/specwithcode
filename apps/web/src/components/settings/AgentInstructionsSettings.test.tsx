@@ -21,6 +21,9 @@ const state = vi.hoisted(() => ({
   projectRules: ["Run project tests.", "Run project tests."],
   canWrite: true,
   workflowMode: "on-request" as "disabled" | "on-request" | "automatic",
+  ultracodeDefault: "threads" as "off" | "threads" | "all",
+  /** Per-target workflow modes; null gives every target `workflowMode`. */
+  targetModes: null as ReadonlyArray<"disabled" | "on-request" | "automatic"> | null,
   responseStyle: "concise" as "concise" | "detailed",
   mixedWorkflow: false,
   update: vi.fn<(patch: ScopedSettingsPatch) => void>(),
@@ -41,10 +44,15 @@ function environments() {
 }
 
 function targets() {
-  return environments().map((environment) => ({
+  return environments().map((environment, index) => ({
     environmentId: environment.environmentId,
     label: environment.label,
     projectId: state.project ? ProjectId.make("project-1") : null,
+    settings: {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      claudeWorkflowMode: state.targetModes?.[index] ?? state.workflowMode,
+      claudeUltracodeDefault: state.ultracodeDefault,
+    },
   }));
 }
 
@@ -54,7 +62,8 @@ vi.mock("./SettingsScopeContext", () => ({
 vi.mock("./useScopedSettings", () => ({
   useScopedSettings: () => ({
     ...DEFAULT_UNIFIED_SETTINGS,
-    claudeWorkflowMode: state.workflowMode,
+    claudeWorkflowMode: state.targetModes?.[0] ?? state.workflowMode,
+    claudeUltracodeDefault: state.ultracodeDefault,
     responseStyle: state.responseStyle,
   }),
   useScopedSettingsMixed: () => state.mixedWorkflow,
@@ -85,6 +94,32 @@ vi.mock("./settingsLayout", () => ({
   ),
 }));
 vi.mock("../ui/textarea", () => ({ Textarea: "textarea" }));
+vi.mock("../ui/toggle-group", () => ({
+  ToggleGroup: ({
+    children,
+    onValueChange,
+    value,
+  }: {
+    children: ReactNode;
+    onValueChange: (value: string[]) => void;
+    value: string[];
+  }) => (
+    <fieldset data-value={value.join(",")}>
+      {Array.isArray(children)
+        ? children.map((child: { key: string; props: { value: string; children: ReactNode } }) => (
+            <button
+              key={child.key}
+              data-option={child.props.value}
+              onClick={() => onValueChange([child.props.value])}
+            >
+              {child.props.children}
+            </button>
+          ))
+        : null}
+    </fieldset>
+  ),
+  Toggle: () => null,
+}));
 vi.mock("../ui/select", () => ({
   Select: ({
     children,
@@ -130,6 +165,22 @@ function picker(option: string) {
     .findAllByType("select")
     .find((select) => select.findAllByType("option").some((item) => item.props.value === option))!;
 }
+function segmented() {
+  return renderer!.root.findByType("fieldset");
+}
+function choose(option: string) {
+  act(() =>
+    segmented()
+      .findAllByType("button")
+      .find((button) => button.props["data-option"] === option)!
+      .props.onClick(),
+  );
+}
+function resetButton(label: string) {
+  return renderer!.root
+    .findAllByType("button")
+    .find((button) => button.children.join("").includes(`Reset ${label}`))!;
+}
 function previews() {
   return renderer!.root.findAllByType("pre").map((item) => item.children.join(""));
 }
@@ -141,6 +192,8 @@ beforeEach(() => {
   state.projectRules = ["Run project tests.", "Run project tests."];
   state.canWrite = true;
   state.workflowMode = "on-request";
+  state.ultracodeDefault = "threads";
+  state.targetModes = null;
   state.responseStyle = "concise";
   state.mixedWorkflow = false;
   state.update.mockReset();
@@ -196,10 +249,86 @@ describe("agent instruction settings", () => {
     expect(state.update).not.toHaveBeenCalled();
   });
 
-  it("sets workflow mode without changing reasoning effort or instructions", () => {
+  it("offers Disabled and On request, and sets the mode without touching instructions", () => {
     render();
-    act(() => picker("automatic").props.onChange({ target: { value: "automatic" } }));
-    expect(state.update).toHaveBeenCalledExactlyOnceWith({ claudeWorkflowMode: "automatic" });
+    const options = picker("disabled")
+      .findAllByType("option")
+      .map((item) => item.props.value);
+    expect(options).toEqual(["disabled", "on-request"]);
+    act(() => picker("disabled").props.onChange({ target: { value: "disabled" } }));
+    expect(state.update).toHaveBeenCalledExactlyOnceWith({ claudeWorkflowMode: "disabled" });
+  });
+
+  it("reads a stored Automatic mode as On request plus All chats", () => {
+    state.workflowMode = "automatic";
+    render();
+    expect(picker("disabled").props.value).toBe("on-request");
+    expect(segmented().props["data-value"]).toBe("all");
+  });
+
+  it("writes both keys when the default changes on an Automatic machine", () => {
+    state.workflowMode = "automatic";
+    render();
+    choose("threads");
+    expect(state.update).toHaveBeenCalledExactlyOnceWith({
+      claudeWorkflowMode: "on-request",
+      claudeUltracodeDefault: "threads",
+    });
+  });
+
+  it("keeps All chats when an Automatic machine turns workflows off", () => {
+    state.workflowMode = "automatic";
+    render();
+    act(() => picker("disabled").props.onChange({ target: { value: "disabled" } }));
+    expect(state.update).toHaveBeenCalledExactlyOnceWith({
+      claudeWorkflowMode: "disabled",
+      claudeUltracodeDefault: "all",
+    });
+  });
+
+  it("writes only the default when Off is picked", () => {
+    render();
+    expect(segmented().props["data-value"]).toBe("threads");
+    choose("off");
+    expect(state.update).toHaveBeenCalledExactlyOnceWith({ claudeUltracodeDefault: "off" });
+  });
+
+  it("resets the default to Threads once another value is saved", () => {
+    state.ultracodeDefault = "off";
+    render();
+    act(() => resetButton("Ultracode by default").props.onClick());
+    expect(state.update).toHaveBeenCalledExactlyOnceWith({ claudeUltracodeDefault: "threads" });
+  });
+
+  it("shows no reset while the default is Threads", () => {
+    render();
+    expect(
+      renderer!.root
+        .findAllByType("button")
+        .some((button) => button.children.join("").includes("Ultracode by default")),
+    ).toBe(false);
+  });
+
+  it("does not count a stored Automatic beside On request plus All chats as mixed", () => {
+    state.targetModes = ["automatic", "on-request"];
+    state.ultracodeDefault = "all";
+    render();
+    expect(picker("disabled").props.value).toBe("on-request");
+    expect(segmented().props["data-value"]).toBe("all");
+    // Writing the mode is a no-op for the On request target, so both keys go together.
+    choose("off");
+    expect(state.update).toHaveBeenCalledExactlyOnceWith({
+      claudeWorkflowMode: "on-request",
+      claudeUltracodeDefault: "off",
+    });
+  });
+
+  it("never turns workflows on for a Disabled target when the default changes", () => {
+    state.targetModes = ["automatic", "disabled"];
+    render();
+    expect(picker("disabled").props.value).toBeNull();
+    choose("off");
+    expect(state.update).toHaveBeenCalledExactlyOnceWith({ claudeUltracodeDefault: "off" });
   });
 
   it("defaults the response style to concise and switches it to detailed", () => {

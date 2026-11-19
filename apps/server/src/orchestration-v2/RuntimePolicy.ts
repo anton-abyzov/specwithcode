@@ -7,19 +7,29 @@ import {
 import { currentTeamRules, teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
+  effectiveClaudeUltracodeDefault,
+  ultracodeChatKind,
+  ultracodeDefaultForChat,
+} from "@specweave-studio/shared/ultracodeDefault";
+import {
+  type ClaudeUltracodeDefault,
+  type ClaudeWorkflowMode,
   ModelSelection,
   OrchestrationV2AppThread,
   ProjectId,
   ProviderInstanceId,
   resolveAgentInstructions,
   type RuntimeMode,
+  type ServerProvider,
   withServiceInstructions,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import {
@@ -111,6 +121,70 @@ export const layerFromProjectStore: Layer.Layer<
     const projects = yield* ProjectStore.ProjectStoreV2;
     const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
+    // Optional so hosts without the store (some tests) still resolve; there no
+    // thread is a routine's.
+    const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
+    // A routine's chat carries no marker of its own; the routine row names it.
+    // Best effort: a store that cannot answer counts the chat as a routine's,
+    // which keeps the Ultracode default off rather than failing the turn.
+    const isRoutineThread = (threadId: string) =>
+      Option.match(sql, {
+        onNone: () => Effect.succeed(false),
+        onSome: (client) =>
+          client<{ readonly found: number }>`
+            SELECT 1 AS found FROM scheduled_tasks WHERE thread_id = ${threadId} LIMIT 1
+          `.pipe(
+            Effect.map((rows) => rows.length > 0),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("routine lookup for the Ultracode default failed", {
+                threadId,
+                cause,
+              }).pipe(Effect.as(true)),
+            ),
+          ),
+      });
+    /**
+     * What "Ultracode by default" gives this chat if its toggle is unset. The
+     * routine lookup runs only when its answer could change the result.
+     */
+    function resolveUltracodeDefault(input: {
+      readonly thread: OrchestrationV2AppThread;
+      readonly project: ProjectStore.ProjectRow | null;
+      readonly workflowMode: ClaudeWorkflowMode | undefined;
+      readonly ultracodeDefault: ClaudeUltracodeDefault | undefined;
+      readonly provider: ServerProvider | undefined;
+      readonly model: string;
+    }) {
+      return Effect.gen(function* () {
+        const project =
+          input.project === null
+            ? null
+            : {
+                id: input.project.projectId,
+                workspaceSettings: input.project.workspaceSettings ?? null,
+              };
+        const kindInput = { threadId: input.thread.id, project, lineage: input.thread.lineage };
+        let chatKind = ultracodeChatKind({ ...kindInput, routine: false });
+        if (
+          chatKind === "thread" &&
+          input.workflowMode !== "disabled" &&
+          effectiveClaudeUltracodeDefault(input.workflowMode, input.ultracodeDefault) ===
+            "threads" &&
+          (yield* isRoutineThread(input.thread.id))
+        ) {
+          chatKind = ultracodeChatKind({ ...kindInput, routine: true });
+        }
+        return ultracodeDefaultForChat({
+          workflowMode: input.workflowMode,
+          ultracodeDefault: input.ultracodeDefault,
+          chatKind,
+          provider: input.provider,
+          model: input.model,
+          nowMs: yield* Clock.currentTimeMillis,
+        }).state;
+      });
+    }
+
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
         const settings = yield* serverSettings.getSettings.pipe(
@@ -185,10 +259,9 @@ export const layerFromProjectStore: Layer.Layer<
             cause: teamRulesRefusal.message,
           });
         }
-        const supportedRuntimeModes =
-          instance === undefined
-            ? undefined
-            : (yield* instance.snapshot.getSnapshot).supportedRuntimeModes;
+        // Read once: runtime modes here, sign-in and usage for the Ultracode default.
+        const snapshot = instance === undefined ? undefined : yield* instance.snapshot.getSnapshot;
+        const supportedRuntimeModes = snapshot?.supportedRuntimeModes;
         // A thread in the project's own checkout may not add a worktree while
         // the project's Use worktrees switch is off; with it on (an umbrella
         // folder, a coordinator) the agent may still make one itself.
@@ -212,6 +285,20 @@ export const layerFromProjectStore: Layer.Layer<
                 !isInsideFolder(threadFolderProject.workspaceRoot, worktreePath)
               ? threadFolderProject.workspaceRoot
               : false;
+        const claudeWorkflowMode =
+          projectOverrides?.claudeWorkflowMode ?? settings.claudeWorkflowMode;
+        const claudeUltracodeDefault =
+          driver === "claudeAgent"
+            ? yield* resolveUltracodeDefault({
+                thread: input.thread,
+                project: localProject ?? threadFolderProject,
+                workflowMode: claudeWorkflowMode,
+                ultracodeDefault:
+                  projectOverrides?.claudeUltracodeDefault ?? settings.claudeUltracodeDefault,
+                provider: snapshot,
+                model: input.modelSelection.model,
+              })
+            : undefined;
         return ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
@@ -222,7 +309,8 @@ export const layerFromProjectStore: Layer.Layer<
               projectInstructions: projectOverrides?.agentInstructions,
             }),
           ),
-          claudeWorkflowMode: projectOverrides?.claudeWorkflowMode ?? settings.claudeWorkflowMode,
+          claudeWorkflowMode,
+          ...(claudeUltracodeDefault === undefined ? {} : { claudeUltracodeDefault }),
           responseStyle: projectOverrides?.responseStyle ?? settings.responseStyle,
           preferSpecWithCodeBrowser: settings.preferSpecWithCodeBrowser,
           manualWorktreesBlocked,

@@ -166,6 +166,7 @@ export function useProjectCoordinatorModelControls(input: {
       ...(input.threads ? { threads: input.threads } : {}),
       ...(input.machines ? { machines: input.machines } : {}),
       ...(input.projectTitle ? { projectTitle: input.projectTitle } : {}),
+      ...(defaults ? { ultracodeSettings: defaults } : {}),
     }),
   };
 }

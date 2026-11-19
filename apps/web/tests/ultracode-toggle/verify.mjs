@@ -47,86 +47,168 @@ const shot = async (page, name) => {
   await page.screenshot({ path: file, fullPage: true });
   receipt.screenshots.push(file);
 };
+// What each chat's chip says, its accessible name, and how the open menu reads.
+const NOT_SET_THREADS = "Not set here: on by default for threads. Uses more of your Claude limit.";
+const CASES = {
+  on: { chip: "Medium · Ultracode", name: "Medium effort · Ultracode", checked: "On", badge: null },
+  off: {
+    chip: "Medium",
+    name: "Medium effort",
+    checked: null,
+    badge: null,
+    note: /Not set: follows the Claude workflow mode/,
+  },
+  legacy: { chip: "Extra High · Ultracode", name: "Extra High effort · Ultracode" },
+  "default-on": {
+    chip: "Medium · Ultracode",
+    name: "Medium effort · Ultracode",
+    checked: "On",
+    badge: "On",
+    note: NOT_SET_THREADS,
+  },
+  paused: {
+    chip: "Medium · Ultracode paused",
+    name: "Medium effort · Ultracode paused",
+    checked: null,
+    badge: null,
+    note: "Not set here: the default is paused until your Claude limit resets.",
+  },
+  coordinator: { chip: "Medium", name: "Medium effort", checked: "Off", badge: "Off", note: null },
+  "set-off": { chip: "Medium", name: "Medium effort", checked: "Off", badge: null, note: null },
+  "no-toggle": { chip: "Medium", name: "Medium effort", group: false },
+  all: {
+    chip: "Medium · Ultracode",
+    name: "Medium effort · Ultracode",
+    checked: "On",
+    badge: "On",
+    note: "Not set here: on by default for all chats. Uses more of your Claude limit.",
+  },
+};
+const WIDTHS = [
+  { width: 1440, height: 760 },
+  { width: 390, height: 760 },
+];
+const ultracodeGroup = (menu) => menu.locator("[role=group]").filter({ hasText: "Ultracode" });
 try {
   for (const theme of ["light", "dark"]) {
-    for (const scenario of ["on", "off", "legacy"]) {
-      const page = await browser.newPage({ viewport: { width: 900, height: 520 } });
-      await page.goto(`${origin}/?case=${scenario}&theme=${theme}`);
-      await page.waitForSelector("body[data-fixture-ready]");
-      const trigger = page.locator('[data-composer-shortcut="composer.effort"]').first();
-      await trigger.waitFor();
-      const chip = async () => (await trigger.innerText()).replace(/\s+/g, " ").trim();
-      const name = async () => (await trigger.getAttribute("aria-label")) ?? "";
-      if (scenario === "on")
-        await check(`${theme} on: chip reads Medium · Ultracode`, async () => {
-          NodeAssert.equal(await chip(), "Medium · Ultracode");
-          NodeAssert.equal(await name(), "Medium effort · Ultracode");
+    for (const viewport of WIDTHS) {
+      const wide = viewport.width >= 900;
+      for (const [scenario, want] of Object.entries(CASES)) {
+        const label = `${theme} ${viewport.width} ${scenario}`;
+        const page = await browser.newPage({ viewport });
+        await page.goto(`${origin}/?case=${scenario}&theme=${theme}`);
+        await page.waitForSelector("body[data-fixture-ready]");
+        const trigger = page.locator('[data-composer-shortcut="composer.effort"]').first();
+        await trigger.waitFor();
+        const chip = async () => (await trigger.innerText()).replace(/\s+/g, " ").trim();
+        const name = async () => (await trigger.getAttribute("aria-label")) ?? "";
+        await check(`${label}: chip is named "${want.name}"`, async () => {
+          NodeAssert.equal(await name(), want.name);
         });
-      if (scenario === "off")
-        await check(`${theme} off: chip reads Medium alone`, async () => {
-          NodeAssert.equal(await chip(), "Medium");
-        });
-      if (scenario === "legacy")
-        await check(
-          `${theme} legacy: saved Ultracode effort reads Extra High · Ultracode`,
-          async () => {
-            NodeAssert.equal(await chip(), "Extra High · Ultracode");
-          },
-        );
-      await settle();
-      await shot(page, `composer-${scenario}-${theme}.png`);
-      if (scenario === "off") {
+        // A narrow composer folds the chip's words away; the name above still carries them.
+        if (wide)
+          await check(`${label}: chip reads "${want.chip}"`, async () => {
+            NodeAssert.equal(await chip(), want.chip);
+          });
+        if (scenario === "paused")
+          await check(`${label}: the paused word uses the warning text token`, async () => {
+            const mark = trigger.locator('[data-composer-control-ultracode="paused"]');
+            NodeAssert.equal(await mark.count(), 1);
+            NodeAssert.match((await mark.getAttribute("class")) ?? "", /text-warning-foreground/);
+          });
+        await settle();
+        await shot(page, `composer-${scenario}-${theme}-${viewport.width}.png`);
+        if (want.checked === undefined && want.group === undefined) {
+          await page.close();
+          continue;
+        }
         await trigger.click();
         const menu = page.getByRole("menu");
         await menu.waitFor();
-        await check(`${theme} off: an unset toggle marks neither choice and says why`, async () => {
-          NodeAssert.match(await menu.innerText(), /Not set: follows the Claude workflow mode/);
-          const group = menu.locator("[role=group]").filter({ hasText: "Ultracode" });
-          NodeAssert.equal(await group.locator("[data-checked]").count(), 0);
-        });
+        if (want.group === false) {
+          await check(`${label}: a model without the toggle shows no Ultracode choice`, async () => {
+            NodeAssert.equal(await ultracodeGroup(menu).count(), 0);
+            NodeAssert.doesNotMatch(await menu.innerText(), /Ultracode/);
+          });
+        } else {
+          const group = ultracodeGroup(menu);
+          await check(`${label}: menu marks ${want.checked ?? "neither choice"}`, async () => {
+            const checked = group.locator("[role=menuitemradio][data-checked]");
+            NodeAssert.equal(await checked.count(), want.checked ? 1 : 0);
+            if (want.checked)
+              NodeAssert.match(await checked.innerText(), new RegExp(`^${want.checked}\\b`));
+          });
+          await check(`${label}: Default badge on ${want.badge ?? "neither choice"}`, async () => {
+            const badged = group
+              .locator("[role=menuitemradio]")
+              .filter({ hasText: /Default$/ });
+            NodeAssert.equal(await badged.count(), want.badge ? 1 : 0);
+            if (want.badge)
+              NodeAssert.match(await badged.innerText(), new RegExp(`^${want.badge}\\s+Default$`));
+          });
+          if (want.note !== undefined)
+            await check(`${label}: the menu says why`, async () => {
+              const note = group.locator("[data-ultracode-unset-note]");
+              if (want.note === null) NodeAssert.equal(await note.count(), 0);
+              else if (want.note instanceof RegExp) NodeAssert.match(await note.innerText(), want.note);
+              else NodeAssert.equal((await note.innerText()).replace(/\s+/g, " ").trim(), want.note);
+            });
+        }
         await settle();
-        await shot(page, `menu-unset-${theme}.png`);
-      }
-      if (scenario === "on") {
-        await trigger.click();
-        const menu = page.getByRole("menu");
-        await menu.waitFor();
-        await check(`${theme}: menu offers Ultracode beside effort, not inside it`, async () => {
-          const text = (await menu.innerText()).replace(/\s+/g, " ");
-          NodeAssert.match(text, /Ultracode Multi-agent workflows on every task, at any effort/);
-          NodeAssert.equal(await menu.getByRole("menuitemradio", { name: "Ultracode" }).count(), 0);
-        });
-        await settle();
-        await shot(page, `menu-${theme}.png`);
-        const group = menu.locator("[role=group]").filter({ hasText: "Ultracode" });
-        await group.getByRole("menuitemradio", { name: "Off" }).click();
-        await check(`${theme}: turning Ultracode off keeps Medium`, async () => {
-          await page.waitForFunction(
-            () =>
-              !document
+        await shot(page, `menu-${scenario}-${theme}-${viewport.width}.png`);
+        if (scenario === "default-on" && wide) {
+          // Picking the On the default already marks saves it on the chat; the chip keeps its word.
+          await ultracodeGroup(menu).getByRole("menuitemradio", { name: /^On/ }).click();
+          await trigger.click();
+          await page.getByRole("menu").waitFor();
+          await check(`${label}: picking On saves it, so the badge leaves`, async () => {
+            const group = ultracodeGroup(page.getByRole("menu"));
+            NodeAssert.equal(await group.locator("[data-ultracode-unset-note]").count(), 0);
+            NodeAssert.equal(
+              await group.locator("[role=menuitemradio]").filter({ hasText: /Default$/ }).count(),
+              0,
+            );
+          });
+          await ultracodeGroup(page.getByRole("menu"))
+            .getByRole("menuitemradio", { name: /^Off/ })
+            .click();
+          await check(`${label}: picking Off writes the toggle and the chip drops the word`, async () => {
+            await page.waitForFunction(
+              () =>
+                !document
+                  .querySelector('[data-composer-shortcut="composer.effort"]')
+                  ?.textContent?.includes("Ultracode"),
+            );
+            NodeAssert.equal(await chip(), "Medium");
+          });
+        }
+        if (scenario === "on" && wide) {
+          await ultracodeGroup(menu).getByRole("menuitemradio", { name: /^Off/ }).click();
+          await check(`${label}: turning Ultracode off keeps Medium`, async () => {
+            await page.waitForFunction(
+              () =>
+                !document
+                  .querySelector('[data-composer-shortcut="composer.effort"]')
+                  ?.textContent?.includes("Ultracode"),
+            );
+            NodeAssert.equal(await chip(), "Medium");
+          });
+          await trigger.click();
+          await page.getByRole("menu").waitFor();
+          await ultracodeGroup(page.getByRole("menu"))
+            .getByRole("menuitemradio", { name: /^On/ })
+            .click();
+          await check(`${label}: turning it back on returns the word`, async () => {
+            await page.waitForFunction(() =>
+              document
                 .querySelector('[data-composer-shortcut="composer.effort"]')
                 ?.textContent?.includes("Ultracode"),
-          );
-          NodeAssert.equal(await chip(), "Medium");
-        });
-        await trigger.click();
-        await page.getByRole("menu").waitFor();
-        await page
-          .getByRole("menu")
-          .locator("[role=group]")
-          .filter({ hasText: "Ultracode" })
-          .getByRole("menuitemradio", { name: "On" })
-          .click();
-        await check(`${theme}: turning it back on returns the word`, async () => {
-          await page.waitForFunction(() =>
-            document
-              .querySelector('[data-composer-shortcut="composer.effort"]')
-              ?.textContent?.includes("Ultracode"),
-          );
-          NodeAssert.equal(await chip(), "Medium · Ultracode");
-        });
+            );
+            NodeAssert.equal(await chip(), "Medium · Ultracode");
+          });
+        }
+        await page.close();
       }
-      await page.close();
     }
   }
   await NodeFSP.writeFile(NodePath.join(output, "receipt.json"), JSON.stringify(receipt, null, 2));

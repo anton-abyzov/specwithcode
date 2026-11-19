@@ -34,6 +34,10 @@ import { useMachineNickname } from "../../../studio/machineNickname";
 import { modelLabel } from "../../../studio/shellModel";
 import { fallbackModelState, modelStateText, type ModelState } from "../../chat/ModelStateTag";
 import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
+import {
+  type UltracodeDefaultSettings,
+  useThreadUltracodeDefault,
+} from "../../chat/composerProviderState";
 import { MachineLimitsButton, MachineLimitsPanel } from "./ProjectUsageIndicator";
 import { ProjectModelsPopover, type ProjectThreadModel } from "./ProjectModelsPopover";
 import { ModelBadge } from "./ModelBadge";
@@ -146,6 +150,8 @@ export function CoordinatorModelPicker(props: {
   machines?: ReadonlyArray<{ readonly environmentId: string; readonly label?: string }>;
   /** The project's name, beside the choice a picker names. */
   projectTitle?: string;
+  /** The project's resolved settings for the Ultracode default new threads get; absent reads this host's. */
+  ultracodeSettings?: UltracodeDefaultSettings | undefined;
 }) {
   const navigate = useNavigate();
   const environment = useEnvironment(props.environmentId);
@@ -154,6 +160,15 @@ export function CoordinatorModelPicker(props: {
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
   );
+  // New threads start under the Ultracode default; the coordinator itself is off under "Threads".
+  const newThreadModel = props.threads ? (props.threads.value ?? props.threads.inherited) : null;
+  const threadUltracodeDefault = useThreadUltracodeDefault({
+    settings: props.threads ? (props.ultracodeSettings ?? settings) : null,
+    provider: newThreadModel
+      ? entries.find((entry) => entry.instanceId === newThreadModel.instanceId)?.snapshot
+      : undefined,
+    model: newThreadModel?.model,
+  });
   const value = props.value;
   // Display follows the admitted turn; choices still compare against the saved model.
   const running = props.running ?? null;
@@ -448,6 +463,7 @@ export function CoordinatorModelPicker(props: {
                       threads={props.threads!}
                       machines={props.machines ?? []}
                       planModeEnabled={settings.planModeEnabled}
+                      ultracodeDefault={threadUltracodeDefault}
                       disabled={props.saving}
                       onOpenSettings={props.onOpenSettings}
                       onClose={close}

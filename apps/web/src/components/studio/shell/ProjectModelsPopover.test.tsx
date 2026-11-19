@@ -202,6 +202,60 @@ describe("ProjectModelsPopover", () => {
     });
   });
 
+  it("shows the Ultracode default new threads get and saves the opposite on click", async () => {
+    state.effort = { options: [], value: null, locked: null, select: vi.fn(), fast: null };
+    const button = () =>
+      row("effort").querySelector<HTMLButtonElement>("[data-project-models-ultracode]")!;
+    const on = { state: "on", reason: "default", scope: "threads" };
+
+    const onChange = vi.fn();
+    await mount({
+      threads: { value: opus("high"), inherited: null, saving: false, onChange },
+      ultracodeDefault: on,
+    });
+    expect(button().getAttribute("aria-pressed")).toBe("true");
+    expect(button().getAttribute("data-ultracode-source")).toBe("default");
+    await act(async () => button().click());
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({
+      instanceId: "claudeAgent",
+      model: "claude-opus-5-5",
+      options: [
+        { id: "effort", value: "high" },
+        { id: "ultracode", value: false },
+      ],
+    });
+
+    // A saved choice wins over the default.
+    const savedOff = vi.fn();
+    await mount({
+      threads: {
+        value: { ...opus("high"), options: [...opus("high").options, { id: "ultracode", value: false }] },
+        inherited: null,
+        saving: false,
+        onChange: savedOff,
+      },
+      ultracodeDefault: on,
+    });
+    expect(button().getAttribute("aria-pressed")).toBe("false");
+    expect(button().getAttribute("data-ultracode-source")).toBe("toggle");
+    await act(async () => button().click());
+    expect(savedOff.mock.calls[0]![0].options).toEqual([
+      { id: "effort", value: "high" },
+      { id: "ultracode", value: true },
+    ]);
+
+    // Paused: not pressed, named, and a click turns it on for new threads.
+    const paused = vi.fn();
+    await mount({
+      threads: { value: opus("high"), inherited: null, saving: false, onChange: paused },
+      ultracodeDefault: { state: "paused", reason: "usage", scope: "threads" },
+    });
+    expect(button().getAttribute("aria-pressed")).toBe("false");
+    expect(button().textContent).toBe("Ultracode paused");
+    await act(async () => button().click());
+    expect(paused.mock.calls[0]![0].options).toContainEqual({ id: "ultracode", value: true });
+  });
+
   it("says once that a saved coordinator effort above High is capped", async () => {
     await mount({ coordinator: opus("max") });
     const notes = container.querySelectorAll("[data-coordinator-effort-note]");

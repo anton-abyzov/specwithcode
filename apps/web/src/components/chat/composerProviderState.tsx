@@ -1,10 +1,13 @@
 import {
+  type ClaudeUltracodeDefault,
+  type ClaudeWorkflowMode,
   type ModelCapabilities,
   type ModelSelection,
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderOptionSelection,
   type ScopedThreadRef,
+  type ServerProvider,
   type ServerProviderModel,
 } from "@specweave-studio/contracts";
 import {
@@ -14,9 +17,16 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
 } from "@specweave-studio/shared/model";
-import type { ReactNode } from "react";
+import {
+  claudeUsagePausesUltracodeDefault,
+  effectiveClaudeUltracodeDefault,
+  type UltracodeChatKind,
+  ultracodeDefaultForChat,
+} from "@specweave-studio/shared/ultracodeDefault";
+import { type ReactNode, useMemo } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
+import { useClockWhile } from "../../hooks/useClockWhile";
 import { getProviderModelCapabilities } from "../../providerModels";
 import type { ComposerControlSize } from "./ComposerControl";
 import type { ModelPickerEffort } from "./ModelPickerEffortStrip";
@@ -24,6 +34,7 @@ import {
   shouldRenderTraitsControls,
   TraitsMenuContent,
   TraitsPicker,
+  type TraitsUltracodeDefault,
   useTraitsEffortControl,
 } from "./TraitsPicker";
 
@@ -63,7 +74,112 @@ type TraitsRenderInput = {
   hidden?: boolean;
   triggerClassName?: string;
   isComposerOwned?: boolean;
+  /** Opt-in: the chat's Ultracode default, shown while its toggle is unset. Display only. */
+  ultracodeDefault?: TraitsUltracodeDefault | undefined;
 };
+
+/** The settings the Ultracode default reads, already resolved for the chat's project. */
+export interface UltracodeDefaultSettings {
+  readonly claudeWorkflowMode?: ClaudeWorkflowMode | undefined;
+  readonly claudeUltracodeDefault?: ClaudeUltracodeDefault | undefined;
+}
+
+/**
+ * The Ultracode default a picker shows for one chat, by the same rule the
+ * server applies at launch. `provider` is the chat's instance snapshot; without
+ * one it reads as a subscription with unknown usage, which never pauses.
+ */
+export function traitsUltracodeDefault(input: {
+  readonly settings: UltracodeDefaultSettings;
+  readonly chatKind: UltracodeChatKind;
+  readonly provider: ServerProvider | null | undefined;
+  readonly model: string | null | undefined;
+  readonly nowMs: number;
+}): TraitsUltracodeDefault {
+  const { state, reason } = ultracodeDefaultForChat({
+    workflowMode: input.settings.claudeWorkflowMode,
+    ultracodeDefault: input.settings.claudeUltracodeDefault,
+    chatKind: input.chatKind,
+    provider: input.provider ?? undefined,
+    model: input.model,
+    nowMs: input.nowMs,
+  });
+  return {
+    state,
+    reason,
+    scope: effectiveClaudeUltracodeDefault(
+      input.settings.claudeWorkflowMode,
+      input.settings.claudeUltracodeDefault,
+    ),
+  };
+}
+
+/** What a chat view knows about the chat for its Ultracode default; the composer adds the model. */
+export interface ComposerUltracodeDefaultContext {
+  readonly settings: UltracodeDefaultSettings;
+  readonly chatKind: UltracodeChatKind;
+}
+
+/**
+ * The composer's Ultracode default for its selected instance and model. A usage
+ * reading that crosses the pause share arrives as a new snapshot; while the
+ * default is paused a minute clock lets it come back at the reset, and no clock
+ * runs otherwise.
+ */
+export function useComposerUltracodeDefault(input: {
+  readonly context: ComposerUltracodeDefaultContext | null | undefined;
+  readonly provider: ServerProvider | null | undefined;
+  readonly model: string | null | undefined;
+}): TraitsUltracodeDefault | undefined {
+  const { context, provider, model } = input;
+  const reading = useMemo(() => {
+    const at = Date.now();
+    return {
+      at,
+      paused: context ? claudeUsagePausesUltracodeDefault(provider ?? undefined, at, model) : false,
+    };
+  }, [context, provider, model]);
+  const clockMs = useClockWhile(reading.paused, 60_000);
+  const nowMs = reading.paused ? Math.max(clockMs, reading.at) : reading.at;
+  return useMemo(
+    () =>
+      context
+        ? traitsUltracodeDefault({
+            settings: context.settings,
+            chatKind: context.chatKind,
+            provider,
+            model,
+            nowMs,
+          })
+        : undefined,
+    [context, model, nowMs, provider],
+  );
+}
+
+/**
+ * The Ultracode default a model picker for new threads shows: the chat kind is
+ * "thread", read under `settings` (environment or project resolved).
+ */
+export function useThreadUltracodeDefault(input: {
+  readonly settings: UltracodeDefaultSettings | null | undefined;
+  readonly provider: ServerProvider | null | undefined;
+  readonly model: string | null | undefined;
+}): TraitsUltracodeDefault | undefined {
+  const workflowMode = input.settings?.claudeWorkflowMode;
+  const ultracodeDefault = input.settings?.claudeUltracodeDefault;
+  const known = input.settings !== null && input.settings !== undefined;
+  const context = useMemo<ComposerUltracodeDefaultContext | null>(
+    () =>
+      known
+        ? {
+            settings: { claudeWorkflowMode: workflowMode, claudeUltracodeDefault: ultracodeDefault },
+            chatKind: "thread",
+          }
+        : null,
+    [known, ultracodeDefault, workflowMode],
+  );
+  return useComposerUltracodeDefault({ context, provider: input.provider, model: input.model });
+}
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
   return isClaudeUltrathinkPrompt(prompt) ? "ultrathink" : "none";
@@ -186,6 +302,7 @@ function renderTraitsControl(
     hidden,
     triggerClassName,
     isComposerOwned,
+    ultracodeDefault,
   } = input;
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   const { selections: resolvedModelOptions } = resolveComposerOptionSelections(
@@ -225,6 +342,7 @@ function renderTraitsControl(
       {...(hidden !== undefined ? { hidden } : {})}
       {...(triggerClassName !== undefined ? { triggerClassName } : {})}
       {...(isComposerOwned ? { isComposerOwned } : {})}
+      {...(ultracodeDefault ? { ultracodeDefault } : {})}
     />
   );
 }
