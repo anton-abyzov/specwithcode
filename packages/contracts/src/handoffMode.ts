@@ -23,6 +23,7 @@ import {
   DEFAULT_AWAY_GRACE_MINUTES,
   DEFAULT_AWAY_SLEEP_TRIGGER,
 } from "./away.ts";
+import { HandoffTransferTrigger } from "./handoffTransfer.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import type {
   OrchestrationV2ProviderFailureClass,
@@ -475,6 +476,8 @@ export const HandOffInput = Schema.Struct({
   /** This machine's own id continues the same thread with another model. */
   destinationEnvironmentId: EnvironmentId,
   modelSelection: Schema.optional(ModelSelection),
+  /** Who asked; absent means a person did. The usage-limit rule names itself here. */
+  trigger: Schema.optional(HandoffTransferTrigger),
 });
 export type HandOffInput = typeof HandOffInput.Type;
 
