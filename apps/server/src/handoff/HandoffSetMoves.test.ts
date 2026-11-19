@@ -31,6 +31,7 @@ import {
   checkArrivedSet,
   checkpointFolder,
   checkpointSetMembers,
+  makeSetOffers,
   materializeSet,
   type PreparedMember,
   readSourceSet,
@@ -234,7 +235,7 @@ describe("a thread in a worktree set", () => {
       expect(last.set?.members.map((member) => member.repositoryPath)).toEqual(["", LIB]);
       const frames = replicated(rig, b);
       const part = frames.find((frame) => frame.setPart !== undefined);
-      expect(part?.repositoryPath).toBe(LIB);
+      expect(part?.setPart?.repositoryPath).toBe(LIB);
       expect(part?.setPart?.commit).toBe(last.set?.members[1]?.commit);
       expect(frames.indexOf(part!)).toBeLessThan(frames.lastIndexOf(last));
       // Both kinds of frame survive the wire as they are.
@@ -884,6 +885,7 @@ describe("the members of a set, each measured on its own", () => {
       const { there, set, folder, build } = await arrived();
       git(there, "branch", "keep-me");
       const broken: ReplicateSet = {
+        offer: "offer-1",
         members: [set.members[0]!, { ...set.members[1]!, commit: "0".repeat(40) }],
       };
 
@@ -910,8 +912,10 @@ describe("the members of a set, each measured on its own", () => {
 
     it("builds again over an attempt that was cut before the set was whole", async () => {
       const { there, set, folder, build } = await arrived();
-      // What a cut attempt leaves: the first member, and no manifest.
-      git(there, "worktree", "add", "-q", "-b", "work", folder, set.members[0]!.baseCommit);
+      await build();
+      // What a cut attempt leaves: its members, its owner record, and no manifest.
+      NodeFS.rmSync(worktreeSetManifestPath(folder, NodePath));
+      git(NodePath.join(there, LIB), "worktree", "remove", "--force", NodePath.join(folder, LIB));
       expect(await startedSetFolder({ projectRoot: there, set, name: "work-handoff" })).toBe(
         folder,
       );
@@ -926,7 +930,7 @@ describe("the members of a set, each measured on its own", () => {
 
     it("builds a set that has no member at the folder itself, and finds it on a repeat", async () => {
       const { there, set, folder, build } = await arrived();
-      const nested: ReplicateSet = { members: [set.members[1]!] };
+      const nested: ReplicateSet = { offer: "offer-1", members: [set.members[1]!] };
 
       const built = await build(nested);
 
@@ -987,6 +991,59 @@ describe("the members of a set, each measured on its own", () => {
       expect(read(folder, "app.ts")).toBe("export const one = 2;\n");
     });
 
+    const TARGET = "refs/specwithcode/incoming/source-1/thread-1";
+    const landed = (root: string) => git(root, "for-each-ref", "--format=%(refname)", TARGET);
+    const frame = (there: string, set: ReplicateSet) => ({
+      sourceEnvironmentId: "source-1",
+      sourceThreadId: "thread-1",
+      self: false,
+      projectRoot: there,
+      targetRef: TARGET,
+      commit: set.members[0]!.commit,
+      part: undefined,
+      set: undefined,
+      bundle: null,
+    });
+
+    it("drops what an earlier offer for the thread kept when a later one replaces it", async () => {
+      const { there, set } = await arrived();
+      const lib = set.members[1]!;
+      const offers = makeSetOffers();
+      await offers.open("source-1", "thread-1", "offer-1");
+      const part = { offer: "offer-1", repositoryPath: LIB, commit: lib.commit };
+      expect(await offers.take({ ...frame(there, set), part })).toBeNull();
+      // Nothing of the member is in its repository while the set is not whole.
+      expect(landed(NodePath.join(there, LIB))).toBe("");
+
+      await offers.open("source-1", "thread-1", "offer-2");
+
+      expect(offers.size()).toBe(1);
+      await expect(offers.take({ ...frame(there, set), set })).rejects.toThrow(/did not agree/);
+      // The later offer has none of the earlier one's members.
+      await expect(
+        offers.take({ ...frame(there, set), set: { ...set, offer: "offer-2" } }),
+      ).rejects.toThrow(/^packages\/lib: its work did not arrive here/);
+      expect(landed(there)).toBe("");
+      expect(offers.size()).toBe(0);
+    });
+
+    it("takes every member's ref back when the thread is refused after they were written", async () => {
+      const { there, set } = await arrived();
+      const lib = set.members[1]!;
+      const offers = makeSetOffers();
+      await offers.open("source-1", "thread-1", "offer-1");
+      const part = { offer: "offer-1", repositoryPath: LIB, commit: lib.commit };
+      await offers.take({ ...frame(there, set), part });
+
+      const whole = await offers.take({ ...frame(there, set), set });
+
+      expect(landed(there)).toBe(TARGET);
+      expect(landed(NodePath.join(there, LIB))).toBe(TARGET);
+      await whole!.undo();
+      expect(landed(there)).toBe("");
+      expect(landed(NodePath.join(there, LIB))).toBe("");
+    });
+
     it("keeps no copy of the thread while one member's work is missing", async () => {
       const { there, set } = await arrived();
       const first = set.members[0]!;
@@ -1000,12 +1057,12 @@ describe("the members of a set, each measured on its own", () => {
 
       await expect(check(set)).resolves.toBeUndefined();
       await expect(
-        check({ members: [first, { ...set.members[1]!, commit: "0".repeat(40) }] }),
+        check({ ...set, members: [first, { ...set.members[1]!, commit: "0".repeat(40) }] }),
       ).rejects.toThrow(/^packages\/lib: its work did not arrive here/);
       await expect(
-        check({ members: [first, { ...set.members[1]!, repositoryPath: "../elsewhere" }] }),
+        check({ ...set, members: [first, { ...set.members[1]!, repositoryPath: "../elsewhere" }] }),
       ).rejects.toThrow(/outside the project folder/);
-      await expect(check({ members: [set.members[1]!, first] })).rejects.toThrow(
+      await expect(check({ ...set, members: [set.members[1]!, first] })).rejects.toThrow(
         /does not start with the thread's own checkpoint/,
       );
     });

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - members are plain Git worktrees and bundle files.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - members are plain Git worktrees and bundle files.
 /**
  * Handing off a thread that works in a worktree set (1390): one thread folder
  * with a worktree of each repository it changes. The set moves whole or the
@@ -17,7 +17,9 @@
  * built takes the ones before it down again, so the folder holds every member
  * or does not exist.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
@@ -27,12 +29,12 @@ import {
   type HandoffCheckpoint,
   type HandoffSkippedFile,
 } from "@specweave-studio/contracts";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 
 import { FolderGitError, runGit } from "../fleet/folderTransfer/git.ts";
 import { worktreeSetManifestPath } from "../worktreeSet.ts";
 import {
+  applyBundle,
   applyCheckpointToWorktree,
   availableBranch,
   type BundleFile,
@@ -43,6 +45,7 @@ import {
   measureCommitRange,
   missingFiles,
   negotiationCandidates,
+  pinCommit,
   refCommit,
   repositoryPathFor,
   resolveRepositoryPath,
@@ -54,6 +57,7 @@ import {
   HANDOFF_APP_VERSION,
   HANDOFF_CAPABILITIES,
   HANDOFF_PROTOCOL_VERSION,
+  HANDOFF_SET_FRAME_PATH,
   HANDOFF_SET_MAX_MEMBERS,
   hasWorktreeSets,
   type ReplicateMeta,
@@ -83,7 +87,9 @@ export const SET_COPY_ON_HANDOFF =
   "This thread works in a worktree set. Its repositories are copied to another machine together, when the thread is handed off.";
 
 /** How long a machine that named the capability is not asked again. */
-const CAPABILITY_FRESH_MS = 10 * 60_000;
+/** How long a destination keeps an offered set's members before it drops them. */
+export const SET_OFFER_TTL_MS = 10 * 60_000;
+const SET_OFFERS_MAX = 64;
 
 /** Why the set does not travel. The message starts with the member it is about. */
 class SetMoveError extends Error {
@@ -219,8 +225,23 @@ export async function checkpointSetMembers(input: {
       throw new SetMoveError("invalid", `${name}: the set holds this repository twice.`);
     }
     if (index === 0) {
-      const left = input.checkpoint.skipped.find((file) => file.reason !== "submodule");
-      if (left !== undefined) throw overLimit(name, left, limits);
+      // The stored checkpoint lists only the first of what it left out, so the
+      // writer is asked again and its own verdict is the one that counts.
+      const probe = `refs/specwithcode/handoff-limits/${NodeCrypto.randomUUID()}`;
+      const measured = await writeCheckpoint({
+        cwd: member.path,
+        threadId: input.threadId,
+        ref: probe,
+      })
+        .finally(() =>
+          runGit(member.path, ["update-ref", "-d", probe], { allowFailure: true }).catch(
+            () => undefined,
+          ),
+        )
+        .catch((cause) => {
+          throw new SetMoveError("failed", `${name}: ${describe(cause)}`);
+        });
+      if (measured.overLimit !== null) throw overLimit(name, measured.overLimit, limits);
       prepared.push({
         repositoryPath,
         commit: input.checkpoint.commit,
@@ -328,9 +349,8 @@ const shipSet = (input: {
   readonly projectRoot: string;
   readonly members: ReadonlyArray<{ readonly relativePath: string; readonly path: string }>;
   readonly meta: ReplicateMeta;
-  /** Machines that named the capability, and until when that is believed. */
-  readonly capable: Map<string, number>;
-  readonly capabilities: Effect.Effect<ReadonlyArray<string> | undefined, PeerFailure>;
+  /** Offers this set to the destination and returns what it says it can take. */
+  readonly offer: (id: string) => Effect.Effect<ReadonlyArray<string> | undefined, PeerFailure>;
   readonly negotiate: (
     repositoryPath: string,
     candidates: ReadonlyArray<string>,
@@ -354,10 +374,11 @@ const shipSet = (input: {
         }),
       catch: local,
     });
-    const now = yield* Clock.currentTimeMillis;
-    if (!input.self && (input.capable.get(input.destination) ?? 0) <= now) {
-      // Asked before anything is offered: a machine that keeps one repository gets none.
-      if (!hasWorktreeSets(yield* input.capabilities)) {
+    // Asked every time, for this set alone: what the machine answered a minute
+    // ago says nothing about the build it runs now.
+    const offer = NodeCrypto.randomUUID();
+    if (!input.self) {
+      if (!hasWorktreeSets(yield* input.offer(offer))) {
         return yield* new HandoffPeerError({
           code: "invalid",
           check: "version",
@@ -366,7 +387,6 @@ const shipSet = (input: {
           needsUpdate: true,
         });
       }
-      input.capable.set(input.destination, now + CAPABILITY_FRESH_MS);
     }
     // Every bundle is built and measured before the first one leaves.
     const bundles: Array<BundleFile | null> = [];
@@ -405,8 +425,8 @@ const shipSet = (input: {
         .replicate(
           {
             ...input.meta,
-            repositoryPath: member.repositoryPath,
-            setPart: { commit: member.commit },
+            repositoryPath: HANDOFF_SET_FRAME_PATH,
+            setPart: { offer, repositoryPath: member.repositoryPath, commit: member.commit },
           },
           yield* bytesOf(index),
         )
@@ -416,6 +436,7 @@ const shipSet = (input: {
     return yield* input.replicate(
       {
         ...input.meta,
+        repositoryPath: HANDOFF_SET_FRAME_PATH,
         // A member's folder inside the project's own worktree is not something left behind.
         checkpoint: {
           ...checkpoint,
@@ -424,6 +445,7 @@ const shipSet = (input: {
           ),
         },
         set: {
+          offer,
           members: members.map(({ root: _root, ref: _ref, ...member }) => member),
         },
       },
@@ -437,7 +459,6 @@ export const shipSetTo = (
     readonly peers: HandoffPeers["Service"];
     readonly receiver: HandoffReceiver["Service"];
     readonly selfCaller: ReceiverCaller;
-    readonly capable: Map<string, number>;
   },
   destination: ReplicateMeta["sourceEnvironmentId"],
   input: Pick<
@@ -450,16 +471,17 @@ export const shipSetTo = (
     ...input,
     self: destination === self,
     destination,
-    capable: via.capable,
-    capabilities: via.peers
-      .preflight(destination, {
-        sourceEnvironmentId: self,
-        protocolVersion: HANDOFF_PROTOCOL_VERSION,
-        appVersion: HANDOFF_APP_VERSION,
-        capabilities: HANDOFF_CAPABILITIES,
-        threads: [],
-      })
-      .pipe(Effect.map((answer) => answer.capabilities)),
+    offer: (id) =>
+      via.peers
+        .preflight(destination, {
+          sourceEnvironmentId: self,
+          protocolVersion: HANDOFF_PROTOCOL_VERSION,
+          appVersion: HANDOFF_APP_VERSION,
+          capabilities: HANDOFF_CAPABILITIES,
+          setOffer: { id, sourceThreadId: input.meta.sourceThreadId },
+          threads: [],
+        })
+        .pipe(Effect.map((answer) => answer.capabilities)),
     negotiate: (repositoryPath, candidates) =>
       via.peers
         .negotiate(destination, {
@@ -483,9 +505,12 @@ const invalid = (member: Pick<ReplicateSetMember, "repositoryPath">, message: st
   new BundleError("invalid", `${memberName(member.repositoryPath)}: ${message}`);
 
 /** Each member's repository on this machine, or the first that does not map to one. */
-async function memberRoots(projectRoot: string, set: ReplicateSet) {
+async function memberRoots<Member extends Pick<ReplicateSetMember, "repositoryPath">>(
+  projectRoot: string,
+  set: { readonly members: ReadonlyArray<Member> },
+) {
   const seen = new Set<string>();
-  const out: Array<{ readonly member: ReplicateSetMember; readonly root: string }> = [];
+  const out: Array<{ readonly member: Member; readonly root: string }> = [];
   for (const member of set.members) {
     if (member.repositoryPath.split("/").includes("..") || seen.has(member.repositoryPath)) {
       throw invalid(member, "the set names this repository twice or outside the project folder.");
@@ -497,6 +522,156 @@ async function memberRoots(projectRoot: string, set: ReplicateSet) {
     out.push({ member, root });
   }
   return out;
+}
+
+interface SetOffer {
+  /** The source machine and thread the offer was opened for. */
+  readonly key: string;
+  readonly timer: ReturnType<typeof setTimeout>;
+  /** Where the members' bundles wait: a private folder, outside every repository. */
+  directory: string | null;
+  readonly parts: Map<string, { readonly commit: string; readonly file: string | null }>;
+}
+
+const notOffered = () =>
+  new BundleError(
+    "invalid",
+    "This machine did not agree to take a worktree set in this handoff, so nothing of it was kept. Hand off again.",
+  );
+
+/**
+ * The sets a destination has agreed to take. A member's frame is kept as a
+ * file under its offer and reaches no repository until the thread's own frame
+ * arrives; then every member's ref is written, or none is. An offer that is
+ * refused, replaced by a later one for the same thread, or older than
+ * `SET_OFFER_TTL_MS` is dropped with its files.
+ */
+export function makeSetOffers(ttlMs: number = SET_OFFER_TTL_MS) {
+  const offers = new Map<string, SetOffer>();
+  const keyOf = (sourceEnvironmentId: string, sourceThreadId: string) =>
+    `${sourceEnvironmentId}\0${sourceThreadId}`;
+  const drop = async (id: string) => {
+    const offer = offers.get(id);
+    if (offer === undefined) return;
+    offers.delete(id);
+    clearTimeout(offer.timer);
+    if (offer.directory !== null) {
+      await NodeFSP.rm(offer.directory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  };
+  const open = async (sourceEnvironmentId: string, sourceThreadId: string, id: string) => {
+    const key = keyOf(sourceEnvironmentId, sourceThreadId);
+    // A later offer for the thread replaces the earlier one: that send was given up.
+    for (const [other, offer] of [...offers]) if (offer.key === key) await drop(other);
+    while (offers.size >= SET_OFFERS_MAX) await drop(offers.keys().next().value!);
+    const timer = setTimeout(() => void drop(id), ttlMs);
+    timer.unref?.();
+    const offer: SetOffer = { key, timer, directory: null, parts: new Map() };
+    offers.set(id, offer);
+    return offer;
+  };
+  const save = async (offer: SetOffer, bundle: Uint8Array | null) => {
+    if (bundle === null || bundle.byteLength === 0) return null;
+    offer.directory ??= await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "swc-handoff-set-"));
+    const file = NodePath.join(offer.directory, `${NodeCrypto.randomUUID()}.bundle`);
+    await NodeFSP.writeFile(file, bundle, { mode: 0o600 });
+    return file;
+  };
+  /**
+   * One frame of a set. A member's frame is kept and answers `null`. The
+   * thread's own frame writes every member's ref and answers the set with a
+   * way to take those refs back, for a caller that then refuses the thread.
+   */
+  const take = async (input: {
+    readonly sourceEnvironmentId: string;
+    readonly sourceThreadId: string;
+    /** This machine asking itself: it never offers, and is taken at its word. */
+    readonly self: boolean;
+    readonly projectRoot: string;
+    readonly targetRef: string;
+    readonly commit: string;
+    readonly part: ReplicateMeta["setPart"];
+    readonly set: ReplicateSet | undefined;
+    readonly bundle: Uint8Array | null;
+  }): Promise<{ readonly set: ReplicateSet; readonly undo: () => Promise<void> } | null> => {
+    const id = input.part?.offer ?? input.set?.offer;
+    if (id === undefined) throw notOffered();
+    const offer =
+      offers.get(id) ??
+      (input.self ? await open(input.sourceEnvironmentId, input.sourceThreadId, id) : undefined);
+    if (
+      offer === undefined ||
+      offer.key !== keyOf(input.sourceEnvironmentId, input.sourceThreadId)
+    ) {
+      throw notOffered();
+    }
+    const { part, set } = input;
+    if (part !== undefined) {
+      if (offer.parts.size >= HANDOFF_SET_MAX_MEMBERS) throw notOffered();
+      await memberRoots(input.projectRoot, { members: [part] });
+      offer.parts.set(part.repositoryPath, {
+        commit: part.commit,
+        file: await save(offer, input.bundle),
+      });
+      return null;
+    }
+    if (set === undefined) throw notOffered();
+    const written: Array<() => Promise<unknown>> = [];
+    const undo = async () => {
+      for (const back of written.toReversed()) await back().catch(() => undefined);
+      written.length = 0;
+    };
+    try {
+      const first = set.members[0];
+      if (first === undefined) {
+        throw new BundleError("invalid", "The set names no repository.");
+      }
+      offer.parts.set(first.repositoryPath, {
+        commit: input.commit,
+        file: await save(offer, input.bundle),
+      });
+      for (const { member, root } of await memberRoots(input.projectRoot, set)) {
+        const held = offer.parts.get(member.repositoryPath);
+        if (held === undefined || held.commit !== member.commit) {
+          throw invalid(member, "its work did not arrive here, so nothing of the thread is kept.");
+        }
+        const before = await refCommit(root, input.targetRef);
+        written.push(() =>
+          runGit(
+            root,
+            before === null
+              ? ["update-ref", "-d", input.targetRef]
+              : ["update-ref", input.targetRef, before],
+            { allowFailure: true },
+          ),
+        );
+        await (
+          held.file === null
+            ? pinCommit({ root, commit: member.commit, targetRef: input.targetRef })
+            : applyBundle({
+                root,
+                bundlePath: held.file,
+                commit: member.commit,
+                targetRef: input.targetRef,
+              })
+        ).catch((cause) => {
+          throw member === first
+            ? cause
+            : new BundleError(
+                cause instanceof BundleError ? cause.code : "failed",
+                `${memberName(member.repositoryPath)}: ${describe(cause)}`,
+              );
+        });
+      }
+    } catch (cause) {
+      await undo();
+      throw cause;
+    } finally {
+      await drop(id);
+    }
+    return { set, undo };
+  };
+  return { open, take, drop, size: () => offers.size };
 }
 
 /**
@@ -546,7 +721,8 @@ export async function missingSetSecrets(
 
 /**
  * The thread folder an earlier attempt at this takeover began, found through
- * Git's own list of the first member's worktrees, or null.
+ * Git's own list of the first member's worktrees, or null. The name only finds
+ * the folder; `materializeSet` decides from its owner record whose it is.
  */
 export async function startedSetFolder(input: {
   readonly projectRoot: string;
@@ -572,6 +748,10 @@ export async function startedSetFolder(input: {
   return null;
 }
 
+/** The part of a set's folder name that tells one handoff's folder from another's. */
+export const setOwnerTag = (owner: string) =>
+  NodeCrypto.createHash("sha256").update(owner).digest("hex").slice(0, 8);
+
 interface BuiltMember {
   readonly root: string;
   readonly path: string;
@@ -587,6 +767,11 @@ const branchOf = async (path: string) => {
   return result.code === 0 && branch.length > 0 ? branch : null;
 };
 
+const gitTree = async (root: string, commit: string) =>
+  (
+    await runGit(root, ["rev-parse", "--verify", "-q", `${commit}^{tree}`], { allowFailure: true })
+  ).stdout.trim();
+
 /** Takes built members down, deepest first: the worktree, then the branch made for it. */
 async function removeBuilt(built: ReadonlyArray<BuiltMember>): Promise<void> {
   for (const member of built.toReversed()) {
@@ -600,16 +785,108 @@ async function removeBuilt(built: ReadonlyArray<BuiltMember>): Promise<void> {
   }
 }
 
+/** Which handoff a set's folder was built for, and what it put there. Beside the manifest. */
+interface OwnerRecord {
+  readonly version: 1;
+  readonly owner: string;
+  readonly members: ReadonlyArray<{
+    readonly repositoryPath: string;
+    readonly branch: string;
+    readonly commit: string;
+    readonly baseCommit: string;
+  }>;
+}
+
+const ownerRecordPath = (folder: string) =>
+  NodePath.join(NodePath.dirname(folder), `.${NodePath.basename(folder)}.handoff-set.json`);
+
+async function readOwnerRecord(folder: string): Promise<OwnerRecord | null> {
+  try {
+    const record = JSON.parse(
+      await NodeFSP.readFile(ownerRecordPath(folder), "utf8"),
+    ) as OwnerRecord;
+    const sound =
+      typeof record?.owner === "string" &&
+      Array.isArray(record.members) &&
+      record.members.every(
+        (member) =>
+          typeof member?.repositoryPath === "string" &&
+          typeof member.branch === "string" &&
+          typeof member.commit === "string" &&
+          typeof member.baseCommit === "string",
+      );
+    return sound ? record : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when `path` is the top of a checkout of its own, on `branch`. */
+async function isCheckoutOn(path: string, branch: string): Promise<boolean> {
+  if (!(await exists(path))) return false;
+  const top = await runGit(path, ["rev-parse", "--show-toplevel"], { allowFailure: true }).catch(
+    () => null,
+  );
+  if (top === null || top.code !== 0) return false;
+  const [real, expected] = await Promise.all(
+    [top.stdout.trim(), path].map((each) => NodeFSP.realpath(each).catch(() => each)),
+  );
+  return real === expected && (await branchOf(path)) === branch;
+}
+
+/** The tree a commit of everything in the checkout would have, less `except`. */
+async function checkoutTree(path: string, except: ReadonlyArray<string>): Promise<string> {
+  const scratch = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "swc-handoff-tree-"));
+  const env = { GIT_INDEX_FILE: NodePath.join(scratch, "index") };
+  try {
+    await runGit(path, ["read-tree", "HEAD"], { env });
+    await runGit(path, ["add", "-A"], { env });
+    // Left out after the fact: a path that is ignored or absent fails as a pathspec.
+    if (except.length > 0) {
+      await runGit(
+        path,
+        ["rm", "-r", "-f", "-q", "--cached", "--ignore-unmatch", "--", ...except],
+        {
+          env,
+        },
+      );
+    }
+    return (await runGit(path, ["write-tree"], { env })).stdout.trim();
+  } finally {
+    await NodeFSP.rm(scratch, { recursive: true, force: true });
+  }
+}
+
+/** Removes `folder` and the folders in it when not one of them holds a file. */
+async function removeEmptyFolders(folder: string): Promise<void> {
+  const entries = await NodeFSP.readdir(folder, { withFileTypes: true }).catch(() => null);
+  if (entries === null) return;
+  for (const entry of entries) {
+    if (entry.isDirectory()) await removeEmptyFolders(NodePath.join(folder, entry.name));
+  }
+  await NodeFSP.rmdir(folder).catch(() => undefined);
+}
+
 /**
- * Builds the set in `folder`: each member a worktree at its base commit with
- * the checkpoint's files as uncommitted changes, on the source's branch where
- * that name is free. The manifest is written last and is what says the set is
- * whole: a repeat that finds it changes nothing, and one that finds members
- * without it (an attempt that was cut) takes them down and builds again.
+ * Builds the set in `folder` for the handoff `owner` (source machine, thread
+ * and epoch): each member a worktree at its base commit with the checkpoint's
+ * files as uncommitted changes, on the source's branch where that name is
+ * free. Before anything is built, a record beside the folder says whose it is
+ * and which branches it makes; the manifest is written last and says the set
+ * is whole.
+ *
+ * A repeat trusts only that record. A whole set is returned when every member
+ * is still checked out on its branch, and refused when one is not. An attempt
+ * that was cut is taken down and built again only when each member it left
+ * holds exactly what this handoff put there. A folder with no record, another
+ * handoff's record or a member someone has worked in since is left as it is,
+ * and the answer says so.
  */
 export async function materializeSet(input: {
   readonly projectRoot: string;
   readonly folder: string;
+  /** The handoff this build belongs to: source machine, thread and epoch. */
+  readonly owner: string;
   readonly set: ReplicateSet;
   readonly sourceLabel: string;
   readonly sourceThreadId: string;
@@ -621,52 +898,127 @@ export async function materializeSet(input: {
     .map((entry) => ({ ...entry, path: NodePath.join(folder, ...depth(entry.member)) }))
     .toSorted((left, right) => depth(left.member).length - depth(right.member).length);
   const first = ordered.find((entry) => entry.member === input.set.members[0]) ?? ordered[0]!;
-  if (await exists(manifest)) {
-    const branch = await branchOf(first.path);
-    if (branch === null) {
-      throw new BundleError("failed", `${first.path} exists and is not on a branch.`);
+  const taken = (why: string) =>
+    new BundleError("failed", `${folder} ${why} Move it away and hand off again.`);
+  const record = await readOwnerRecord(folder);
+  if (record !== null && record.owner !== input.owner) {
+    throw taken("holds the work of another handoff.");
+  }
+  if (record !== null) {
+    const recorded = (entry: (typeof ordered)[number]) =>
+      record.members.find((member) => member.repositoryPath === entry.member.repositoryPath);
+    const same =
+      record.members.length === ordered.length &&
+      ordered.every((entry) => {
+        const member = recorded(entry);
+        return (
+          member !== undefined &&
+          member.commit === entry.member.commit &&
+          member.baseCommit === entry.member.baseCommit
+        );
+      });
+    if (same && (await exists(manifest))) {
+      for (const entry of ordered) {
+        if (!(await isCheckoutOn(entry.path, recorded(entry)!.branch))) {
+          throw new BundleError(
+            "failed",
+            `${memberName(entry.member.repositoryPath)}: its checkout in ${folder} is gone or was moved to another branch since the thread arrived, so the thread is not started with part of its work. Move ${folder} away and hand off again.`,
+          );
+        }
+      }
+      return { worktreePath: folder, branch: recorded(first)!.branch };
     }
-    return { worktreePath: folder, branch };
+    // An attempt that was cut, or one for an earlier checkpoint. Every member
+    // it left is checked before the first is removed.
+    const leftover: Array<BuiltMember> = [];
+    const paths = record.members.map((member) => member.repositoryPath);
+    for (const member of record.members) {
+      const segments = member.repositoryPath.split("/").filter(Boolean);
+      const path = NodePath.join(folder, ...segments);
+      if (!(await exists(path))) continue;
+      const name = memberName(member.repositoryPath);
+      const root = await resolveRepositoryPath(input.projectRoot, member.repositoryPath).catch(
+        (cause) => {
+          throw new BundleError("failed", `${name}: ${describe(cause)}`);
+        },
+      );
+      // Another member checked out inside this one is that member's to answer for.
+      const prefix = segments.length === 0 ? "" : `${segments.join("/")}/`;
+      const inside = paths
+        .map((other) => other.split("/").filter(Boolean).join("/"))
+        .filter((other) => other.length > prefix.length && other.startsWith(prefix))
+        .map((other) => other.slice(prefix.length));
+      const secrets =
+        ordered.find((entry) => entry.path === path)?.member.requiredSecretPaths ?? [];
+      const untouched =
+        (await isCheckoutOn(path, member.branch)) &&
+        (await refCommit(path, "HEAD")) === member.baseCommit &&
+        (await Promise.all([
+          checkoutTree(path, [...inside, ...secrets]),
+          gitTree(root, member.commit),
+          gitTree(root, member.baseCommit),
+        ]).then(([now, checkpoint, base]) => now === checkpoint || now === base));
+      if (!untouched) {
+        throw new BundleError(
+          "failed",
+          `${name}: its checkout in ${folder} was left by an earlier attempt and has been changed since, so it is not removed. Move ${folder} away and hand off again.`,
+        );
+      }
+      leftover.push({ root, path, branch: member.branch });
+    }
+    await removeBuilt(leftover);
+    await NodeFSP.rm(manifest, { force: true });
+    await NodeFSP.rm(ownerRecordPath(folder), { force: true });
+    await removeEmptyFolders(folder);
   }
-  // Members without a manifest are an attempt that was cut. Its branches hold
-  // nothing but the base commit, so they go with it; any other branch stays.
-  const leftover: Array<BuiltMember> = [];
-  for (const entry of ordered) {
-    if (!(await exists(entry.path))) continue;
-    const top = await runGit(entry.path, ["rev-parse", "--show-toplevel"], { allowFailure: true });
-    const [real, expected] = await Promise.all(
-      [top.stdout.trim(), entry.path].map((path) => NodeFSP.realpath(path).catch(() => path)),
-    );
-    if (top.code !== 0 || real !== expected) continue;
-    const branch = await branchOf(entry.path);
-    const untouched =
-      branch !== null && (await refCommit(entry.path, "HEAD")) === entry.member.baseCommit;
-    leftover.push({ root: entry.root, path: entry.path, branch: untouched ? branch : null });
-  }
-  await removeBuilt(leftover);
   await NodeFSP.rmdir(folder).catch(() => undefined);
-  if (await exists(folder)) {
-    throw new BundleError(
-      "failed",
-      `${folder} already exists and is not this handoff's. Move it away and hand off again.`,
-    );
-  }
+  if (await exists(folder)) throw taken("already exists and is not this handoff's.");
   const built: Array<BuiltMember> = [];
   let branchOfFirst: string | null = null;
   try {
-    for (const entry of ordered) {
-      const { member, root, path } = entry;
+    const branches = new Map<string, string>();
+    for (const { member, root } of ordered) {
       try {
         const held = await knownCommits(root, [member.commit, member.baseCommit]);
         if (!held.includes(member.commit) || !held.includes(member.baseCommit)) {
           throw new BundleError("missing_prerequisites", "its work is not on this machine.");
         }
-        const branch = await availableBranch({
-          root,
-          branch: member.branch,
-          sourceLabel: input.sourceLabel,
-          sourceThreadId: input.sourceThreadId,
-        });
+        branches.set(
+          member.repositoryPath,
+          await availableBranch({
+            root,
+            branch: member.branch,
+            sourceLabel: input.sourceLabel,
+            sourceThreadId: input.sourceThreadId,
+          }),
+        );
+      } catch (cause) {
+        throw new BundleError(
+          cause instanceof BundleError ? cause.code : "failed",
+          `${memberName(member.repositoryPath)}: ${describe(cause)}`,
+        );
+      }
+    }
+    // Whose folder this is, and what is about to be made in it, before any of it exists.
+    await NodeFSP.mkdir(NodePath.dirname(folder), { recursive: true, mode: 0o700 });
+    await NodeFSP.writeFile(
+      ownerRecordPath(folder),
+      JSON.stringify({
+        version: 1,
+        owner: input.owner,
+        members: ordered.map(({ member }) => ({
+          repositoryPath: member.repositoryPath,
+          branch: branches.get(member.repositoryPath)!,
+          commit: member.commit,
+          baseCommit: member.baseCommit,
+        })),
+      } satisfies OwnerRecord),
+      { mode: 0o600 },
+    );
+    for (const entry of ordered) {
+      const { member, root, path } = entry;
+      try {
+        const branch = branches.get(member.repositoryPath)!;
         await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true, mode: 0o700 });
         await runGit(root, ["worktree", "add", "-q", "-b", branch, path, member.baseCommit]);
         built.push({ root, path, branch });
@@ -701,6 +1053,7 @@ export async function materializeSet(input: {
   } catch (cause) {
     await removeBuilt(built);
     await NodeFSP.rm(folder, { recursive: true, force: true });
+    await NodeFSP.rm(ownerRecordPath(folder), { force: true });
     throw cause;
   }
   return { worktreePath: folder, branch: branchOfFirst! };

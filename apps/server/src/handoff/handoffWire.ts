@@ -167,7 +167,17 @@ export const ReplicateSetMember = Schema.Struct({
 export type ReplicateSetMember = typeof ReplicateSetMember.Type;
 
 /** Every member of the thread's worktree set, the thread's own checkpoint first. */
+/**
+ * `repositoryPath` of every frame of a set. A build that moves one repository
+ * per thread reads only that field, and refuses this path wherever it runs
+ * (`resolveRepositoryPath`): it cannot take one member for the whole thread.
+ * The member's own path is in `setPart.repositoryPath` and `set.members`.
+ */
+export const HANDOFF_SET_FRAME_PATH = "../worktree-set";
+
 export const ReplicateSet = Schema.Struct({
+  /** The offer this machine opened for the set in its check (`PeerPreflightRequest.setOffer`). */
+  offer: text(64),
   members: Schema.Array(ReplicateSetMember).check(Schema.isMaxLength(HANDOFF_SET_MAX_MEMBERS)),
 });
 export type ReplicateSet = typeof ReplicateSet.Type;
@@ -202,13 +212,14 @@ export const ReplicateMeta = Schema.Struct({
    */
   reviewLock: Schema.optional(Schema.NullOr(HandoffReviewLock)),
   /**
-   * Worktree sets (`handoff.worktree-set`), sent only to a machine that names
-   * the capability. `setPart`: this frame is one other member's bundle, for the
-   * repository at `repositoryPath`; nothing of the thread is stored for it.
-   * `set`: the thread's own frame, sent last, naming every member's commit; it
-   * is refused unless each one is already there.
+   * Worktree sets (`handoff.worktree-set`), sent only to a machine that named
+   * the capability when this set was offered to it. `setPart`: one other
+   * member's bundle, kept outside every repository until the set is whole.
+   * `set`: the thread's own frame, sent last, naming every member's commit;
+   * only with it does any member reach its repository, all of them or none.
+   * A frame whose offer the destination did not take is refused unread.
    */
-  setPart: Schema.optional(Schema.Struct({ commit: sha })),
+  setPart: Schema.optional(Schema.Struct({ offer: text(64), repositoryPath, commit: sha })),
   set: Schema.optional(ReplicateSet),
 });
 export type ReplicateMeta = typeof ReplicateMeta.Type;
@@ -254,6 +265,12 @@ export const PeerPreflightRequest = Schema.Struct({
   appVersion: Schema.optional(text(40)),
   /** Absent from a machine that keeps no transfer records. */
   capabilities: Schema.optional(HandoffCapabilities),
+  /**
+   * A worktree set this source is about to send for one thread. A machine that
+   * answers with `handoff.worktree-set` has agreed to take the frames that
+   * carry this id, and no others.
+   */
+  setOffer: Schema.optional(Schema.Struct({ id: text(64), sourceThreadId: ThreadId })),
   threads: Schema.Array(
     Schema.Struct({
       sourceThreadId: ThreadId,

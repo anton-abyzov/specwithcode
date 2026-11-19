@@ -232,7 +232,6 @@ export const make = Effect.gen(function* () {
   /** Per thread and destination: failed replications in a row and when to try again. */
   const replicateBackoff = new Map<string, { failures: number; retryAt: number }>();
   /** Machines that named the worktree set capability (HandoffSetMoves.shipSet). */
-  const setCapable = new Map<string, number>();
   const backoffKey = (threadId: ThreadId, destination: EnvironmentId) =>
     `${threadId}\u0000${destination}`;
 
@@ -406,7 +405,7 @@ export const make = Effect.gen(function* () {
       const whole =
         set === null
           ? shipped
-          : shipSetTo({ peers, receiver, selfCaller, capable: setCapable }, destination, {
+          : shipSetTo({ peers, receiver, selfCaller }, destination, {
               destinationLabel: label,
               projectRoot: project.workspaceRoot,
               members: set,
