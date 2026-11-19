@@ -5105,10 +5105,13 @@ export const ru: PhraseCatalog = {
   "Use the default advisor order": "Использовать порядок советников по умолчанию",
   "The Complex track": "Трек Complex",
   "Advisor: {model}": "Advisor: {model}",
-  "Advisor: {model}, same model as this thread": "Advisor: {model}, та же модель, что у этого треда",
+  "Advisor: {model}, same model as this thread":
+    "Advisor: {model}, та же модель, что у этого треда",
   "Past {limit} tokens: {model}": "Больше {limit} токенов: {model}",
-  "No model can advise this thread right now.": "Сейчас ни одна модель не может консультировать этот тред.",
-  "Claude's own advisor setting answered here: {model}": "Здесь ответила собственная настройка advisor в Claude: {model}",
+  "No model can advise this thread right now.":
+    "Сейчас ни одна модель не может консультировать этот тред.",
+  "Claude's own advisor setting answered here: {model}":
+    "Здесь ответила собственная настройка advisor в Claude: {model}",
   "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
     "В тредах Claude встроенный советник Claude перечитывает весь разговор при каждой консультации. Советник Fable оплачивается кредитами использования Claude.",
   "Claude's own advisor": "собственный советник Claude",

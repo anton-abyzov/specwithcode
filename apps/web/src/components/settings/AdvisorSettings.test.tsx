@@ -301,9 +301,7 @@ describe("AdvisorSettings", () => {
   it("names the default model and returns to it", () => {
     withAdvisor({ enabled: true });
     render();
-    expect(byLabel("Advisor model").props["data-trigger-label"]).toBe(
-      "The Complex track",
-    );
+    expect(byLabel("Advisor model").props["data-trigger-label"]).toBe("The Complex track");
     act(() => byLabel("Advisor model").props.onClick());
     expect(state.update).toHaveBeenLastCalledWith({
       advisor: { model: { instanceId: "codex", model: "gpt-6.1-sol" } },

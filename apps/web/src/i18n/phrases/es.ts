@@ -5137,7 +5137,8 @@ export const es: PhraseCatalog = {
   "Advisor: {model}, same model as this thread": "Advisor: {model}, el mismo modelo que este hilo",
   "Past {limit} tokens: {model}": "Más de {limit} tokens: {model}",
   "No model can advise this thread right now.": "Ahora ningún modelo puede asesorar este hilo.",
-  "Claude's own advisor setting answered here: {model}": "Aquí respondió el ajuste de advisor propio de Claude: {model}",
+  "Claude's own advisor setting answered here: {model}":
+    "Aquí respondió el ajuste de advisor propio de Claude: {model}",
   "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
     "En los hilos de Claude, el asesor integrado de Claude lee toda la conversación en cada consulta. Un asesor Fable se cobra de los créditos de uso de Claude.",
   "Claude's own advisor": "asesor propio de Claude",

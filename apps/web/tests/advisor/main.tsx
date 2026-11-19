@@ -25,13 +25,7 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { TooltipProvider } from "~/components/ui/tooltip";
-import {
-  ENVIRONMENT_ID,
-  ENVIRONMENT_LABEL,
-  fixtureState,
-  fixtureThread,
-  providers,
-} from "./mocks";
+import { ENVIRONMENT_ID, ENVIRONMENT_LABEL, fixtureState, fixtureThread, providers } from "./mocks";
 import "./fixture.css";
 
 const params = new URLSearchParams(location.search);
