@@ -67,6 +67,10 @@ const layoutOf = () => {
   const scroller = card?.closest("[data-slot='scroll-area-viewport']") ?? card?.parentElement;
   return {
     card: card ? Math.round(card.getBoundingClientRect().height) : null,
+    mode: card?.getAttribute("data-question-options") ?? null,
+    clipped: [...document.querySelectorAll("[data-question-option-description]")].filter(
+      (el) => el.scrollWidth > el.clientWidth + 1,
+    ).length,
     scrollTop: scroller ? Math.round(scroller.scrollTop) : null,
     options: [...document.querySelectorAll("[data-question-option]")].map((el) => {
       const r = el.getBoundingClientRect();
@@ -118,7 +122,14 @@ try {
       results.push({ id, largestIcon: largest, rest, hovered, moved });
       if (!before) {
         check(largest <= ICON_MAX, `${id}: an option icon is ${largest} px, over ${ICON_MAX}`);
-        if (panel.room) check(!moved, `${id}: the card moved on hover ${JSON.stringify({ rest, hovered })}`);
+        if (panel.room) {
+          check(rest.mode === "all", `${id}: options layout ${rest.mode}, expected all`);
+          check(rest.clipped === 0, `${id}: ${rest.clipped} descriptions clipped with room for them`);
+          check(!moved, `${id}: the card moved on hover ${JSON.stringify({ rest, hovered })}`);
+        } else {
+          check(rest.mode === "compact", `${id}: options layout ${rest.mode}, expected compact`);
+          check(moved, `${id}: hover did not open the option's description on a short panel`);
+        }
       }
       await page.close();
     }
@@ -132,7 +143,9 @@ await fs.writeFile(
   JSON.stringify({ before, results, failures }, null, 2),
 );
 for (const row of results)
-  console.log(`${row.id.padEnd(20)} icon ${String(row.largestIcon).padStart(4)} px  moved on hover: ${row.moved}`);
+  console.log(
+    `${row.id.padEnd(20)} ${String(row.rest.mode).padEnd(8)} icon ${String(row.largestIcon).padStart(4)} px  moved on hover: ${row.moved}`,
+  );
 if (failures.length) {
   console.log(`failures (${failures.length}):\n  ${failures.join("\n  ")}`);
   if (!before) process.exit(1);

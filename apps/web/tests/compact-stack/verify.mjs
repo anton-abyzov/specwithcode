@@ -124,21 +124,33 @@ try {
           `${viewport.name} ${theme}: stack ${metrics.stackShare}`,
         );
         assert.ok(!metrics.pillOverlapsStack, `${viewport.name} ${theme}: Jump to latest overlaps`);
-        // One line per option until hovered or focused.
-        for (const height of metrics.optionHeights) assert.ok(height <= 36, `option ${height}px`);
+        // With room for every description the card shows them all and stays
+        // still on hover; otherwise one line per option until hovered or focused.
+        const optionsLayout = await page
+          .locator("[data-question-card]")
+          .getAttribute("data-question-options");
+        entry.optionsLayout = optionsLayout;
+        const compact = optionsLayout === "compact";
+        if (compact) {
+          for (const height of metrics.optionHeights) assert.ok(height <= 36, `option ${height}px`);
+        } else {
+          assert.equal(optionsLayout, "all", `options layout ${optionsLayout}`);
+        }
         assert.equal(await page.locator("[data-question-recommended]").count(), 1);
         // The queue is one line, its list folded away.
         assert.equal(metrics.queueListHidden, true, "queue list folded by default");
         assert.equal(await page.locator("[data-queue-reason]").count(), 0, "no steer paragraph");
 
-        // Hover expands an option's description; leaving folds it again.
+        // Compact: hover expands an option's description; leaving folds it
+        // again. All open: hover changes nothing.
         const optionB = page.locator('[data-question-option="B"]');
         const before = (await optionB.boundingBox()).height;
         await optionB.hover();
         await page.waitForTimeout(400);
         const hovered = (await optionB.boundingBox()).height;
         entry.hoverExpands = hovered > before;
-        if (viewport.width < 1000) assert.ok(hovered > before, "hover shows the full description");
+        if (!compact) assert.equal(hovered, before, "hover leaves an open card still");
+        else if (viewport.width < 1000) assert.ok(hovered > before, "hover shows the full description");
         await page.screenshot({
           path: path.join(output, `${label}-${viewport.name}-${theme}-hover.png`),
         });
@@ -150,12 +162,16 @@ try {
           .locator('[data-question-option="C"][data-expanded="true"]')
           .waitFor({ timeout: 2000 });
         assert.equal(await page.locator("[data-fixture-result]").innerText(), "waiting");
-        // The details toggle pins one open for touch, again without picking it.
-        await page.locator('[data-question-option="A"] [data-question-option-details]').click();
-        await page
-          .locator('[data-question-option="A"][data-expanded="true"]')
-          .waitFor({ timeout: 2000 });
-        assert.equal(await page.locator("[data-fixture-result]").innerText(), "waiting");
+        if (compact) {
+          // The details toggle pins one open for touch, again without picking it.
+          await page.locator('[data-question-option="A"] [data-question-option-details]').click();
+          await page
+            .locator('[data-question-option="A"][data-expanded="true"]')
+            .waitFor({ timeout: 2000 });
+          assert.equal(await page.locator("[data-fixture-result]").innerText(), "waiting");
+        } else {
+          assert.equal(await page.locator("[data-question-option-details]").count(), 0);
+        }
 
         // Collapse to one line; the thread remembers it across a reload.
         await page.locator("[data-pending-user-input-toggle]").click();
