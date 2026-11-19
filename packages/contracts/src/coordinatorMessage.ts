@@ -151,10 +151,12 @@ export function coordinatorMessageDedupeKey(
  * (inside the settle window), held (the project is paused or archived),
  * folded (over the hourly cap, waits for the digest), delivered (queued on
  * the coordinator thread), quiet (kept and shown, wakes no model), revoked
- * (the sender's access ended before delivery). Outgoing: queued, delivered,
- * read, answered, not_delivered.
+ * (the sender's access ended before delivery), refused (the authority it was
+ * admitted under no longer holds; kept and shown, never given to the agent).
+ * Outgoing: queued, delivered, read, answered, not_delivered.
  */
 export const CoordinatorMessageState = Schema.Literals([
+  "refused",
   "settling",
   "held",
   "folded",

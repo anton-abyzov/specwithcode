@@ -313,7 +313,12 @@ export const layer = HttpRouter.add(
           ? invalid
           : Option.isNone(messages)
             ? refusal(404, "not_found", { code: "not_found" })
-            : yield* answer(messages.value.deliver(caller, input.value));
+            : yield* answer(
+                messages.value.deliver(caller, input.value, {
+                  // A problem or a request needs a credential that may operate here.
+                  operate: client.value.access !== "read-only",
+                }),
+              );
       }
       case "linked-digest": {
         const input = decodeJson(LinkedDigestRequest, body.value);

@@ -25,19 +25,30 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
+import { stringifyJson } from "../json.ts";
+import { sha256 } from "../nodeCrypto.ts";
 
 const FILE_NAME = "coordinator-messages.json";
 /** How long a settled record is kept. */
 export const COORDINATOR_MESSAGE_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+/** At most this many records, whatever their state. */
+export const COORDINATOR_MESSAGE_MAX_ROWS = 2000;
+/** At most this many bytes on disk; a larger file is refused before it is parsed. */
+export const COORDINATOR_MESSAGE_MAX_FILE_BYTES = 4 * 1024 * 1024;
+const READ_CHUNK_BYTES = 65_536;
 
 export const CoordinatorMessageRecord = Schema.Struct({
-  id: CoordinatorMessageId,
+  /** This machine's own id for the record (`coordinatorMessageRowId`); never the peer's. */
+  id: Schema.String,
+  /** The id the message travels under: the sender's for an incoming one, this machine's for an outgoing one. */
+  externalId: CoordinatorMessageId,
   direction: Schema.Literals(["incoming", "outgoing"]),
   /** The other machine: the sender of an incoming message, the recipient of an outgoing one. */
   peerEnvironmentId: EnvironmentId,
@@ -59,6 +70,20 @@ export const CoordinatorMessageRecord = Schema.Struct({
   updatedAt: Schema.Number,
   /** Incoming: not delivered before this (the settle window, or the digest's hour). */
   deliverAfter: Schema.optional(Schema.Number),
+  /**
+   * Incoming: the authority it was admitted under, checked again before it
+   * reaches the agent. The grant policy's identity (created and last changed),
+   * whether the sender's credential could operate, and what it advertised.
+   */
+  admittedUnder: Schema.optional(
+    Schema.Struct({
+      grantStamp: Schema.String,
+      operate: Schema.Boolean,
+      capabilities: Schema.Array(Schema.String),
+    }),
+  ),
+  /** Incoming: thread refs left out because this machine could not place them in the project. */
+  droppedRefs: Schema.optional(NonNegativeInt),
 });
 export type CoordinatorMessageRecord = typeof CoordinatorMessageRecord.Type;
 
@@ -72,12 +97,27 @@ const encodeStoreFile = Schema.encodeEffect(StoreFileJson);
 
 export class CoordinatorMessageStoreError extends Schema.TaggedError<CoordinatorMessageStoreError>()(
   "CoordinatorMessageStoreError",
-  { operation: Schema.Literals(["read", "write"]), cause: Schema.Defect() },
+  { operation: Schema.Literals(["read", "write", "full"]), cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `Could not ${this.operation} the coordinator messages kept on this machine.`;
+    return this.operation === "full"
+      ? "This machine keeps as many coordinator messages as it can."
+      : `Could not ${this.operation} the coordinator messages kept on this machine.`;
   }
 }
+
+/**
+ * This machine's id for a message: the authenticated peer, the direction,
+ * the project and the id it travels under, so two peers (or two projects)
+ * that choose the same id never share a record.
+ */
+export const coordinatorMessageRowId = (input: {
+  readonly peerEnvironmentId: string;
+  readonly direction: "incoming" | "outgoing";
+  readonly projectId: string;
+  readonly externalId: string;
+}) =>
+  `cm-${sha256([input.peerEnvironmentId, "\u0000", input.direction, "\u0000", input.projectId, "\u0000", input.externalId]).toString("hex").slice(0, 40)}`;
 
 type Records = ReadonlyArray<CoordinatorMessageRecord>;
 
@@ -98,7 +138,14 @@ export class CoordinatorMessageStore extends Context.Service<
   CoordinatorMessageStoreShape
 >()("specweave-studio/project/CoordinatorMessageStore") {}
 
-const pending = new Set<CoordinatorMessageRecord["state"]>(["settling", "held", "folded", "queued"]);
+/** Records still waiting to go out; never pruned. */
+export const COORDINATOR_MESSAGE_PENDING_STATES: ReadonlySet<CoordinatorMessageRecord["state"]> = new Set([
+  "settling",
+  "held",
+  "folded",
+  "queued",
+]);
+const pending = COORDINATOR_MESSAGE_PENDING_STATES;
 
 /** Drops records that settled more than a week ago; nothing still waiting is dropped. */
 export const pruneRecords = (records: Records, now: number): Records =>
@@ -119,7 +166,17 @@ const makeWith = (
           Effect.gen(function* () {
             const before = yield* read;
             const { records, result } = change(before);
-            if (records !== before) yield* write(pruneRecords(records, now));
+            if (records !== before) {
+              const kept = pruneRecords(records, now);
+              // Budgets before the write, whatever the records' states.
+              const bytes = new TextEncoder().encode(stringifyJson({ version: 1, messages: kept })).byteLength;
+              if (kept.length > COORDINATOR_MESSAGE_MAX_ROWS || bytes > COORDINATOR_MESSAGE_MAX_FILE_BYTES)
+                return yield* new CoordinatorMessageStoreError({
+                  operation: "full",
+                  cause: new Error(`${kept.length} records, ${bytes} bytes`),
+                });
+              yield* write(kept);
+            }
             return result;
           }),
         ),
@@ -145,9 +202,37 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     const filePath = path.join(config.stateDir, FILE_NAME);
 
+    /** The file's text, refused by the size on its open handle before anything is parsed. */
+    const readBounded = Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* fileSystem.open(filePath, { flag: "r" });
+        const info = yield* file.stat;
+        if (info.type !== "File" || info.size > BigInt(COORDINATOR_MESSAGE_MAX_FILE_BYTES))
+          return yield* Effect.fail(new Error(`The file is ${info.size} bytes.`));
+        const chunks: Array<Uint8Array> = [];
+        let total = 0;
+        while (total <= COORDINATOR_MESSAGE_MAX_FILE_BYTES) {
+          const next = yield* file.readAlloc(READ_CHUNK_BYTES);
+          if (Option.isNone(next) || next.value.byteLength === 0) break;
+          chunks.push(next.value);
+          total += next.value.byteLength;
+        }
+        // The file grew after the size was read.
+        if (total > COORDINATOR_MESSAGE_MAX_FILE_BYTES)
+          return yield* Effect.fail(new Error("The file grew past its budget."));
+        const bytes = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return new TextDecoder().decode(bytes);
+      }),
+    );
+
     const read = Effect.gen(function* () {
       if (!(yield* fileSystem.exists(filePath))) return [] as Records;
-      return (yield* decodeStoreFile(yield* fileSystem.readFileString(filePath))).messages;
+      return (yield* decodeStoreFile(yield* readBounded)).messages;
     }).pipe(
       Effect.mapError((cause) => new CoordinatorMessageStoreError({ operation: "read", cause })),
     );
