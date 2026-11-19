@@ -689,7 +689,7 @@ describe("ProjectSkillsActions with a stand-in vskill", () => {
 });
 
 it.layer(live)("managed Skills dependency fallback", (it) => {
-  it.live.each([false, true])("uses the fallback only when vskill is missing: %s", (managed) =>
+  it.effect.each([false, true])("uses the fallback only when vskill is missing: %s", (managed) =>
     Effect.gen(function* () {
       let prepared = 0;
       const fx = yield* fixture({ managed, onPrepare: () => { prepared++; } });
