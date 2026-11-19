@@ -172,6 +172,19 @@ export const ProjectSyncStep = Schema.Struct({
 });
 export type ProjectSyncStep = typeof ProjectSyncStep.Type;
 
+/**
+ * The `detail` of a fast-forward that went through although `origin` could not be asked
+ * once more: the checkout moved to the commit this server's own Sync fetch brought.
+ */
+export const PROJECT_SYNC_MOVED_UNASKED_DETAIL =
+  "origin could not be reached. Moved forward to the commit this Sync fetched.";
+/**
+ * The `detail` of a fast-forward refused because `origin` could not be asked and no
+ * Sync fetch of this server brought the commit the branch's tracking ref is at.
+ */
+export const PROJECT_SYNC_REFUSED_UNASKED_DETAIL =
+  "origin could not be reached, and this Sync has not fetched this commit of the branch. Sync again when origin can be reached.";
+
 /** The `detail` of a step whose upstream branch is gone from `origin`. */
 export const projectSyncUpstreamGoneDetail = (upstream: string) =>
   `The branch ${upstream} is no longer on origin.`;

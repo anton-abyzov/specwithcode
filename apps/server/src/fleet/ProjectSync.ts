@@ -15,6 +15,8 @@ import * as NodePath from "node:path";
 import {
   planProjectSyncRepository,
   projectSyncUpstreamGoneDetail,
+  PROJECT_SYNC_MOVED_UNASKED_DETAIL,
+  PROJECT_SYNC_REFUSED_UNASKED_DETAIL,
   type ProjectId,
   ProjectSyncError,
   type ProjectSyncFetchResult,
@@ -37,6 +39,13 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { UNFINISHED_OPERATION_MARKS } from "../handoff/bundleGit.ts";
+import {
+  CLONE_STAGING_CLONE,
+  CLONE_STAGING_PREFIX,
+  cloneStagingIn,
+  markCloneStaging,
+  namedLikeCloneStaging,
+} from "./cloneStaging.ts";
 import { type GitResult, runGit } from "./folderTransfer/git.ts";
 import * as HandoffGit from "./handoffGit.ts";
 import { canonicalOrigin, safeRelativePath } from "./handoffGitTypes.ts";
@@ -44,6 +53,8 @@ import { canonicalOrigin, safeRelativePath } from "./handoffGitTypes.ts";
 const LOCAL_MS = 30_000;
 const FETCH_MS = 5 * 60_000;
 const CLONE_MS = 30 * 60_000;
+/** How long the ask before a move waits for `origin`; past it, the move goes by the fetch's record. */
+const ASK_AGAIN_MS = 30_000;
 const PARALLEL = 4;
 const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
@@ -68,6 +79,12 @@ export interface SyncContext {
   readonly inUse: (checkout: string) => Promise<string | null>;
   /** Stops a fetch or a clone that is under way when the call is cancelled. A merge is never stopped. */
   readonly signal?: AbortSignal;
+  /**
+   * What this server's own Sync fetches brought, by checkout: the branch of
+   * `origin` and the commit its tracking ref was at when the fetch ended. A
+   * fast-forward that cannot ask `origin` once more goes by it, and only by it.
+   */
+  readonly fetched?: Map<string, { readonly ref: string; readonly commit: string }>;
 }
 
 /** What Sync fetches, and where to: `origin`'s branches into its remote-tracking refs. */
@@ -159,18 +176,6 @@ function normalHost(written: string): string {
  */
 const UNFINISHED_MARKS = [...UNFINISHED_OPERATION_MARKS, "sequencer"];
 
-/**
- * A clone is made in a folder of this name beside its target and moved into
- * place when it is whole (`cloneRepository`). Until then, and after a server
- * that stopped mid-clone, the folder is no repository of the project and no
- * work of the repository above it.
- */
-const CLONE_STAGING_PREFIX = ".swc-clone-";
-/** The prefix, the target's name, and the six characters `mkdtemp` adds. */
-const CLONE_STAGING_NAME = /^\.swc-clone-.+-[A-Za-z0-9]{6}$/;
-/** Whether a path is a clone's staging folder or lies inside one. */
-export const inCloneStaging = (path: string) =>
-  path.split("/").some((part) => part.startsWith(CLONE_STAGING_PREFIX));
 /** The staging folders of the clones under way in this server, by absolute path. */
 const liveCloneStaging = new Set<string>();
 
@@ -178,8 +183,9 @@ const liveCloneStaging = new Set<string>();
  * Removes the staging folders that clones which never finished left behind
  * (the server stopped mid-way). `paths` are relative to the project folder; of
  * each, the staging folder it names or lies in is removed, unless a clone of
- * this server is filling it. Nothing else is touched: not a folder of another
- * name, not a file, nothing reached through a link or outside the project.
+ * this server is filling it. Nothing else is touched: not a folder without the
+ * clone step's mark (whatever its name), not a file, nothing reached through a
+ * link or outside the project.
  * Returns the folders that could not be removed.
  */
 export async function sweepCloneLeftovers(
@@ -188,20 +194,20 @@ export async function sweepCloneLeftovers(
 ): Promise<Array<string>> {
   const realRoot = await NodeFSP.realpath(root).catch(() => null);
   if (realRoot === null) return [];
+  const staging = cloneStagingIn(realRoot);
   const seen = new Set<string>();
   const failed: Array<string> = [];
   for (const path of paths) {
-    const parts = path.split("/");
-    const at = parts.findIndex((part) => part.startsWith(CLONE_STAGING_PREFIX));
-    if (at < 0 || !CLONE_STAGING_NAME.test(parts[at]!)) continue;
-    const top = parts.slice(0, at + 1).join("/");
-    if (seen.has(top) || !safeRelativePath(top)) continue;
+    if (!safeRelativePath(path)) continue;
+    // Only a folder that carries the mark this server's clone step writes: a folder a
+    // person merely named this way is theirs, and stays.
+    const top = await staging.top(path);
+    if (top === null || seen.has(top)) continue;
     seen.add(top);
     const folder = NodePath.join(realRoot, ...top.split("/"));
     if (liveCloneStaging.has(folder)) continue;
     // Only a real folder at that very place: nothing behind a link.
     if ((await NodeFSP.realpath(folder).catch(() => null)) !== folder) continue;
-    if (!(await NodeFSP.lstat(folder)).isDirectory()) continue;
     await NodeFSP.rm(folder, { recursive: true, force: true }).catch(() => undefined);
     if ((await NodeFSP.lstat(folder).catch(() => null)) !== null) failed.push(top);
   }
@@ -268,7 +274,9 @@ export async function syncRepositories(
   relativePaths: ReadonlyArray<string>,
 ): Promise<Array<SyncRepository>> {
   const out: Array<SyncRepository> = [];
-  const listed = relativePaths.filter((path) => !inCloneStaging(path));
+  const staging = cloneStagingIn(root);
+  const listed: Array<string> = [];
+  for (const path of relativePaths) if (!(await staging.has(path))) listed.push(path);
   for (const path of listed.slice(0, PROJECT_SYNC_MAX_REPOSITORIES)) {
     const cwd = path === "." ? root : NodePath.join(root, ...path.split("/"));
     if (path !== "." && (await isLinkedWorktree(git, cwd))) continue;
@@ -310,8 +318,9 @@ async function uncommittedCount(git: SyncGit, cwd: string): Promise<number | nul
 }
 
 /**
- * Status entries without what is only a clone's staging folder: the folder
- * itself, and an untracked folder that holds nothing else. Such a folder is
+ * Status entries without what is only a clone's staging folder (one that
+ * carries the clone step's mark): the folder itself, and an untracked folder
+ * that holds nothing else. Such a folder is
  * not this repository's work, while a clone runs and after one that never
  * finished. Nothing is written to the repository's ignore files.
  */
@@ -320,9 +329,11 @@ async function withoutCloneStaging(
   cwd: string,
   entries: ReadonlyArray<string>,
 ): Promise<Array<string>> {
-  const kept = entries.filter(
-    (entry) => !(entry.startsWith("?? ") && inCloneStaging(entry.slice(3).replace(/\/$/, ""))),
-  );
+  const staging = cloneStagingIn(cwd);
+  const untracked = (entry: string) => entry.startsWith("?? ");
+  const kept: Array<string> = [];
+  for (const entry of entries)
+    if (!(untracked(entry) && (await staging.has(entry.slice(3))))) kept.push(entry);
   // Git names an untracked folder once, whatever it holds: its files are listed to see
   // whether a staging folder is all there is in it.
   const folders = kept
@@ -336,13 +347,14 @@ async function withoutCloneStaging(
   );
   if (listed.code !== 0) return kept;
   const files = listed.stdout.split("\0").filter((file) => file.length > 0);
-  const onlyStaging = new Set(
-    folders.filter((folder) => {
-      const inside = files.filter((file) => file.startsWith(folder));
-      return inside.length > 0 && inside.every(inCloneStaging);
-    }),
-  );
-  return kept.filter((entry) => !(entry.startsWith("?? ") && onlyStaging.has(entry.slice(3))));
+  const onlyStaging = new Set<string>();
+  for (const folder of folders) {
+    const inside = files.filter((file) => file.startsWith(folder));
+    let all = inside.length > 0;
+    for (const file of inside) all = all && (await staging.has(file));
+    if (all) onlyStaging.add(folder);
+  }
+  return kept.filter((entry) => !(untracked(entry) && onlyStaging.has(entry.slice(3))));
 }
 
 async function operationUnfinished(git: SyncGit, cwd: string): Promise<boolean> {
@@ -442,12 +454,23 @@ export async function readRepositoryFacts(
   // The fetch never prunes, so a branch deleted on `origin` still reads as behind its
   // last fetched commit: origin is asked whether the branch is there before anything
   // is planned to move to it.
-  const gone =
-    options.fetch &&
-    fetch === "ok" &&
-    behind > 0 &&
-    upstream?.ref != null &&
-    (await branchOnOrigin(context, cwd, upstream.ref)) === false;
+  const asked =
+    options.fetch && fetch === "ok" && behind > 0 && upstream?.ref != null
+      ? await branchOnOrigin(context, cwd, upstream.ref)
+      : null;
+  const gone = asked === false;
+  if (options.fetch) {
+    // What this fetch brought, for a move that cannot ask origin once more: only a
+    // branch origin has, at the commit its tracking ref is at now.
+    if (
+      fetch === "ok" &&
+      upstream?.ref != null &&
+      upstream.commit !== null &&
+      (behind === 0 || asked === true)
+    )
+      context.fetched?.set(cwd, { ref: upstream.ref, commit: upstream.commit });
+    else context.fetched?.delete(cwd);
+  }
   const uncommitted = await uncommittedCount(git, cwd);
   return {
     path,
@@ -509,11 +532,12 @@ async function branchOnOrigin(
   context: SyncContext,
   cwd: string,
   ref: string,
+  timeoutMs: number = FETCH_MS,
 ): Promise<boolean | null> {
   const listed = await context
     .git(cwd, ["ls-remote", "--heads", "origin", ref], {
       allowFailure: true,
-      timeoutMs: FETCH_MS,
+      timeoutMs,
       ...(context.signal === undefined ? {} : { signal: context.signal }),
     })
     .catch(() => null);
@@ -571,16 +595,30 @@ export async function fastForwardRepository(
   }
   // Only to a branch origin has now: one deleted there since the fetch keeps its
   // tracking ref here, and is not what this Sync was asked to bring in.
-  const there = await branchOnOrigin(context, repository.cwd, upstream.ref);
-  if (there !== true) {
+  const there = await branchOnOrigin(context, repository.cwd, upstream.ref, ASK_AGAIN_MS);
+  if (there === false) {
     return {
       ...planned,
       action: "none",
-      reason: there === false ? "no-upstream" : "refused",
-      detail:
-        there === false
-          ? projectSyncUpstreamGoneDetail(upstream.name)
-          : "origin could not be asked whether the branch is still there.",
+      reason: "no-upstream",
+      detail: projectSyncUpstreamGoneDetail(upstream.name),
+      downgraded: true,
+    };
+  }
+  // origin could not be asked (no connection): the move still goes to the commit this
+  // server's own Sync fetch brought for this very branch, and to nothing else. Without
+  // such a fetch, or with the tracking ref somewhere else since, nothing moves.
+  const brought = context.fetched?.get(repository.cwd);
+  const unasked = there === null;
+  if (
+    unasked &&
+    !(brought !== undefined && brought.ref === upstream.ref && brought.commit === target)
+  ) {
+    return {
+      ...planned,
+      action: "none",
+      reason: "refused",
+      detail: PROJECT_SYNC_REFUSED_UNASKED_DETAIL,
       downgraded: true,
     };
   }
@@ -612,7 +650,11 @@ export async function fastForwardRepository(
       downgraded: true,
     };
   }
-  return { ...planned, moved: facts.behind };
+  return {
+    ...planned,
+    moved: facts.behind,
+    ...(unasked ? { detail: PROJECT_SYNC_MOVED_UNASKED_DETAIL } : {}),
+  };
 }
 
 /**
@@ -686,9 +728,18 @@ export async function cloneRepository(
     // The clone is made beside its place, in a folder only this call knows, and moved
     // in when it is whole: nothing a person puts at the target meanwhile is ever touched.
     staging = await NodeFSP.mkdtemp(
-      NodePath.join(NodePath.dirname(target), `.swc-clone-${NodePath.basename(target)}-`),
+      NodePath.join(
+        NodePath.dirname(target),
+        `${CLONE_STAGING_PREFIX}${NodePath.basename(target)}-`,
+      ),
     );
+    // Marked before anything else goes in: the mark is what makes the folder Sync's.
+    await markCloneStaging(staging);
+    await NodeFSP.mkdir(NodePath.join(staging, CLONE_STAGING_CLONE));
   } catch {
+    // A folder that got no further than its name holds nothing and goes again.
+    if (staging.length > 0)
+      await NodeFSP.rm(staging, { recursive: true, force: true }).catch(() => undefined);
     await undo();
     return refuse("The folder could not be created.");
   }
@@ -699,6 +750,7 @@ export async function cloneRepository(
     liveCloneStaging.delete(staging);
   }
   async function fill(): Promise<ProjectSyncStepResult> {
+    const clone = NodePath.join(staging, CLONE_STAGING_CLONE);
     const discard = async () => {
       await NodeFSP.rm(staging, { recursive: true, force: true }).catch(() => undefined);
       await undo();
@@ -706,7 +758,7 @@ export async function cloneRepository(
     const cloned = await context
       // The remote is always named origin, whatever `clone.defaultRemoteName` says.
       .git(
-        staging,
+        clone,
         [
           "clone",
           "--quiet",
@@ -740,7 +792,7 @@ export async function cloneRepository(
     // open: someone removing that folder and making an empty one of their own between
     // these two steps; an empty folder is all that could be replaced.
     const rename = () =>
-      NodeFSP.rename(staging, target).then(
+      NodeFSP.rename(clone, target).then(
         () => true,
         () => false,
       );
@@ -760,6 +812,8 @@ export async function cloneRepository(
       await discard();
       return refuse('A folder is already there. Use "Compare all files…".');
     }
+    // The clone is in its place: what is left of the staging folder is its mark.
+    await NodeFSP.rm(staging, { recursive: true, force: true }).catch(() => undefined);
     const { branch } = await branchAndHead(context.git, target);
     return step({ branch });
   }
@@ -879,7 +933,7 @@ export class ProjectSync extends Context.Service<
       {
         readonly root: string;
         readonly repositories: ReadonlyArray<SyncRepository>;
-        /** Paths the scan found in a clone's staging folder; never repositories of the project. */
+        /** Paths the scan found under a folder named like a clone's staging folder; the sweep checks its mark. */
         readonly cloneStaging: ReadonlyArray<string>;
         readonly scanLimited: boolean;
       },
@@ -983,7 +1037,7 @@ const make = Effect.gen(function* () {
     return {
       root,
       repositories: yield* attempt(() => syncRepositories(defaultGit, root, scanned.paths)),
-      cloneStaging: scanned.paths.filter(inCloneStaging),
+      cloneStaging: scanned.paths.filter((path) => path.split("/").some(namedLikeCloneStaging)),
       scanLimited: scanned.scanLimited,
     };
   });
@@ -1030,9 +1084,12 @@ const make = Effect.gen(function* () {
     }
     return null;
   };
+  /** What this server's Sync fetches brought, kept for as long as the server runs. */
+  const fetched: NonNullable<SyncContext["fetched"]> = new Map();
   const syncContext = (signal?: AbortSignal): SyncContext => ({
     git: defaultGit,
     inUse,
+    fetched,
     ...(signal === undefined ? {} : { signal }),
   });
 

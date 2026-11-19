@@ -11,6 +11,7 @@ import {
   type HandoffSkippedFile,
 } from "@specweave-studio/contracts";
 
+import { cloneStagingIn } from "../fleet/cloneStaging.ts";
 import { gitText, runGit } from "../fleet/folderTransfer/git.ts";
 import {
   isSecretLikeProjectPath,
@@ -165,9 +166,14 @@ export async function writeCheckpoint(input: {
         secretPaths.add(entry);
     }
     const candidates = new Set<string>();
-    const untrackedPaths = new Set(untracked.stdout.split("\0").filter(Boolean));
+    // A folder a Sync clone is being made in (it carries the clone step's mark) is not
+    // this checkout's work: neither its mark nor the half-made clone is ever carried.
+    const staging = cloneStagingIn(root);
+    const untrackedPaths = new Set<string>();
+    for (const entry of untracked.stdout.split("\0"))
+      if (entry && !(await staging.has(entry))) untrackedPaths.add(entry);
     for (const entry of changed.stdout.split("\0")) if (entry) candidates.add(entry);
-    for (const entry of untracked.stdout.split("\0")) if (entry) candidates.add(entry);
+    for (const entry of untrackedPaths) candidates.add(entry);
 
     const skipped: Array<HandoffSkippedFile> = [];
     let overLimit: HandoffSkippedFile | null = null;

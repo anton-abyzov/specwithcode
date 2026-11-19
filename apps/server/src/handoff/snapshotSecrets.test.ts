@@ -16,6 +16,7 @@ import {
   isolateGit,
   restoreGit,
   snapshot,
+  stagingFolder,
   twoMachines,
   write,
 } from "./extrasTestKit.ts";
@@ -382,6 +383,29 @@ describe("a snapshot with the content check (1390 AC-14, AC-31)", () => {
     },
     10_000,
   );
+
+  it("never carries a clone's staging folder, with or without its Git data (P2-24)", async () => {
+    const a = dirtyRepository();
+    // A clone stopped before Git made its data, and one stopped later.
+    stagingFolder(a, ".swc-clone-lib-Ab12Cd", { repository: false });
+    stagingFolder(a, "packages/.swc-clone-ui-Zz99Zz");
+    // A folder of the person's own that only has such a name travels like any other.
+    stagingFolder(a, ".swc-clone-mine-Ab12Cd", { mark: false, repository: false });
+    for (const contentCheck of [undefined, { pastLimit: "leave-out" as const }]) {
+      const written = await writeCheckpoint({
+        cwd: a,
+        threadId: "sync-test",
+        ...(contentCheck === undefined
+          ? {}
+          : { ref: "refs/specwithcode/extras/test/4", contentCheck }),
+      });
+      const carried = filesOf(a, written.commit);
+      expect(carried.filter((path) => path.includes(".swc-clone-"))).toEqual([
+        ".swc-clone-mine-Ab12Cd/clone/half.ts",
+      ]);
+      expect(written.skipped.filter((file) => file.path.includes(".swc-clone-"))).toEqual([]);
+    }
+  });
 
   it("leaves a thread's checkpoint as it is today: no content check unless asked for", async () => {
     const a = dirtyRepository();

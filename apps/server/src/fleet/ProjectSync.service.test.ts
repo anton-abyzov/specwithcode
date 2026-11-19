@@ -33,6 +33,7 @@ import {
   isolateGit,
   restoreGit,
   snapshot,
+  stagingFolder,
   twoMachines,
   write,
 } from "../handoff/extrasTestKit.ts";
@@ -252,10 +253,7 @@ describe("the project sync service (1390 AC-10, AC-11)", () => {
       const f = twoMachines();
       // A server stopped mid-clone: the folder it was filling stayed, here and one level down.
       const leftovers = [".swc-clone-lib-Ab12Cd", "packages/.swc-clone-ui-Zz99Zz"];
-      for (const leftover of leftovers) {
-        git(f.a, "init", "-q", NodePath.join(f.a, leftover));
-        write(NodePath.join(f.a, leftover), "half.ts", "export const half = 1;\n");
-      }
+      for (const leftover of leftovers) stagingFolder(f.a, leftover);
       write(f.b, "app.ts", "export const a = 2;\n");
       git(f.b, "commit", "-q", "-am", "ahead");
       git(f.b, "push", "-q", "origin", "HEAD:main");
@@ -478,13 +476,13 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
         expect(NodeFS.existsSync(target)).toBe(false);
         // Status takes no lock: it runs now, and does not list the folder being filled (P2-19).
         const staging = `repositories/${NodeFS.readdirSync(parent)[0]!}`;
-        expect(NodeFS.existsSync(NodePath.join(f.a, staging, ".git"))).toBe(true);
+        expect(NodeFS.existsSync(NodePath.join(f.a, staging, "clone", ".git"))).toBe(true);
         expect((yield* sync.status(input)).repositories.map((entry) => entry.path)).toEqual(["."]);
         // A clone that is still running keeps its folder when leftovers are swept.
         expect(
           yield* Effect.promise(() => ProjectSync.sweepCloneLeftovers(f.a, [staging])),
         ).toEqual([]);
-        expect(NodeFS.existsSync(NodePath.join(f.a, staging, ".git"))).toBe(true);
+        expect(NodeFS.existsSync(NodePath.join(f.a, staging, "clone", ".git"))).toBe(true);
         // A second call waits for the lock the clone holds.
         const seen: Array<boolean> = [];
         const next = yield* Effect.forkChild(
@@ -745,8 +743,7 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
 
   it.effect("never offers a clone's staging folder as work to send (P2-19)", () => {
     const f = twoMachines();
-    git(f.a, "init", "-q", NodePath.join(f.a, ".swc-clone-lib-Ab12Cd"));
-    write(NodePath.join(f.a, ".swc-clone-lib-Ab12Cd"), "half.ts", "export const half = 1;\n");
+    stagingFolder(f.a, ".swc-clone-lib-Ab12Cd");
     return withMachines(f, unscopedGrant(m4), (extras) =>
       Effect.gen(function* () {
         const inventory = yield* extras.inventory({ projectId: projectA });
@@ -757,7 +754,7 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
           projectId: projectA,
           targetEnvironmentId: m5,
           operationId: OPERATION,
-          items: [{ kind: "branch", path: ".swc-clone-lib-Ab12Cd", branch: "main" }],
+          items: [{ kind: "branch", path: ".swc-clone-lib-Ab12Cd/clone", branch: "main" }],
         });
         expect(sent.items[0]).toMatchObject({ status: "stays", stays: "failed" });
       }),

@@ -56,6 +56,7 @@ import {
   isUntrackedSecretConfigPath,
 } from "../workspace/WorkspaceSensitivePaths.ts";
 import { runGit } from "./folderTransfer/git.ts";
+import { cloneStagingIn } from "./cloneStaging.ts";
 import * as ProjectSync from "./ProjectSync.ts";
 
 const EXTRAS_REF_PREFIX = "refs/specwithcode/extras/";
@@ -90,10 +91,12 @@ export async function snapshotLeftOut(root: string): Promise<Array<ProjectSyncLe
     runGit(root, ["diff", "--name-only", "-z", "--no-renames", "HEAD"], { allowFailure: true }),
     runGit(root, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]),
   ]);
-  const untrackedPaths = untracked.stdout
-    .split("\0")
-    .filter((path) => path.length > 0 && !ProjectSync.inCloneStaging(path))
-    .toSorted();
+  // A folder a clone is being made in (it carries the clone step's mark) is no work of
+  // this repository.
+  const staging = cloneStagingIn(root);
+  const untrackedPaths: Array<string> = [];
+  for (const path of untracked.stdout.split("\0").filter(Boolean).toSorted())
+    if (!(await staging.has(path))) untrackedPaths.push(path);
   const out: Array<Omit<ProjectSyncLeftOutFile, "modifiedAtMs">> = [];
   const toCheck: Array<string> = [];
   for (const path of changed.stdout.split("\0").filter(Boolean).toSorted()) {
@@ -184,9 +187,10 @@ export async function inventoryRepository(
   }
   const status = await runGit(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
   // A folder a clone is being made in is no work of this repository.
-  const entries = lines(status.stdout).filter(
-    (entry) => !(entry.startsWith("??") && ProjectSync.inCloneStaging(entry.slice(3))),
-  );
+  const staging = cloneStagingIn(root);
+  const entries: Array<string> = [];
+  for (const entry of lines(status.stdout))
+    if (!(entry.startsWith("??") && (await staging.has(entry.slice(3))))) entries.push(entry);
   const untrackedFiles = entries.filter((entry) => entry.startsWith("??")).length;
   const stashes = await runGit(root, ["stash", "list"], { allowFailure: true });
   const leftOut = capped(await snapshotLeftOut(root));

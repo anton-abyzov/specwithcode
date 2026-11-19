@@ -171,6 +171,31 @@ export const fakeToken = () => ["gh", "p_", "A1b2C3d4E5f6".repeat(3)].join("");
 export const fakeKeyHeader = () => ["-----BEGIN ", "PRIVATE KEY-----"].join("");
 
 const temporary: Array<string> = [];
+/**
+ * A clone's staging folder as a server that stopped mid-clone leaves it: the
+ * mark, and the half-made clone. `mark: false` makes a person's own folder
+ * that merely has such a name; `repository: false` leaves the clone without
+ * its `.git` (stopped before Git made it, or half removed).
+ */
+export function stagingFolder(
+  root: string,
+  relative: string,
+  options: { readonly mark?: boolean; readonly repository?: boolean } = {},
+): string {
+  const folder = NodePath.join(root, ...relative.split("/"));
+  const clone = NodePath.join(folder, "clone");
+  NodeFS.mkdirSync(clone, { recursive: true });
+  if (options.mark !== false)
+    NodeFS.writeFileSync(
+      NodePath.join(folder, "swc-clone-staging"),
+      "SpecWithCode is cloning a repository into this folder and moves it into place when it is whole.\n" +
+        "If no Sync is running, the clone was stopped and this folder can be deleted.\n",
+    );
+  if (options.repository !== false) git(root, "init", "-q", clone);
+  NodeFS.writeFileSync(NodePath.join(clone, "half.ts"), "export const half = 1;\n");
+  return folder;
+}
+
 export function cleanUp(): void {
   gitHooks.before = null;
   gitHooks.after = null;
