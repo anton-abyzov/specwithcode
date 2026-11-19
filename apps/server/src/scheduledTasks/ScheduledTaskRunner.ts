@@ -1176,23 +1176,18 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           .pipe(
             Effect.mapError(() => refuseTransfer(409, "That routine's grant could not be read.")),
           );
-        // The owner's own machines change the routine they all hold; another person's
-        // machine changes only what its own work set up here.
-        const others =
-          grant.owner === "self"
-            ? null
-            : othersRoutineRefusal(
-                {
-                  coordinatorLabel: "that machine",
-                  grant: {
-                    coordinatorEnvironmentId: grant.coordinatorEnvironmentId,
-                    ...(grant.kind === undefined ? {} : { kind: grant.kind }),
-                  },
-                },
-                task,
-                grantedBy,
-                request.edit.kind === "delete" ? "delete" : "change",
-              );
+        const others = othersRoutineRefusal(
+          {
+            coordinatorLabel: "that machine",
+            grant: {
+              coordinatorEnvironmentId: grant.coordinatorEnvironmentId,
+              ...(grant.kind === undefined ? {} : { kind: grant.kind }),
+            },
+          },
+          task,
+          grantedBy,
+          request.edit.kind === "delete" ? "delete" : "change",
+        );
         if (others !== null) return yield* refuseTransfer(403, others);
         const failed = (error: ScheduledTaskError) =>
           refuseTransfer(409, `Not changed: ${error.message}`);

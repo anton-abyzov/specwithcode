@@ -2,7 +2,7 @@
  * The routines route of release 1.0.377, the release before runner records
  * (1390 EC2-09): its request and answer shapes and the steps its target ran,
  * copied as they shipped and never edited to follow the code beside it
- * (1.0.378 left the route as it was). A
+ * (1.0.378 and 1.0.379 left the route as it was). A
  * machine in a test that answers through `receive377` is a machine that was
  * not updated.
  */
