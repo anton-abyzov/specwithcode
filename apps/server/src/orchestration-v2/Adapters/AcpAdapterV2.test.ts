@@ -1298,6 +1298,109 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("stores the increase of an agent's session totals as each turn's usage", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-session-total-usage");
+      // GitHub Copilot's shape: every prompt answers with the session's running
+      // totals, so the second turn used 400 input and 15 output, not 1,400.
+      const reported = [
+        { inputTokens: 1000, outputTokens: 10, cachedReadTokens: 900, totalTokens: 1010 },
+        { inputTokens: 1400, outputTokens: 25, cachedReadTokens: 1250, totalTokens: 1425 },
+      ];
+      let prompts = 0;
+      const adapter = makeAcpAdapterV2({
+        instanceId,
+        crypto: yield* Crypto.Crypto,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          promptUsageIsSessionTotal: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: () =>
+                Effect.sync(() => ({
+                  stopReason: "end_turn" as const,
+                  usage: reported[Math.min(prompts++, reported.length - 1)]!,
+                })),
+            }),
+          }),
+        },
+      });
+      const threadId = ThreadId.make("acp-session-total-usage-thread");
+      const modelSelection = { instanceId, model: "default" };
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("acp-session-total-usage-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const runTurn = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal,
+            }),
+          );
+          const events = Array.from(
+            yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
+          );
+          return events
+            .flatMap((event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.turnTokenUsage
+                ? [event.providerTurn.turnTokenUsage]
+                : [],
+            )
+            .at(-1);
+        });
+      assert.deepEqual(yield* runTurn(1), {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        inputTokens: 1000,
+        outputTokens: 10,
+        cachedInputTokens: 900,
+        hasSubagents: false,
+      });
+      assert.deepEqual(yield* runTurn(2), {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        inputTokens: 400,
+        outputTokens: 15,
+        cachedInputTokens: 350,
+        hasSubagents: false,
+      });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("keeps Devin parent paragraphs intact while projecting native child work", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

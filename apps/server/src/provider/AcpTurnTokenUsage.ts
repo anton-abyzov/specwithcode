@@ -112,6 +112,53 @@ export function addAcpTurnUsage(
   };
 }
 
+/**
+ * GitHub Copilot answers each `session/prompt` with the running totals of its
+ * live session, not what that prompt used: consecutive prompts of one process
+ * only ever rise, and the counters start again in a new process. Given the
+ * previous totals of the same live session, this returns what the prompt
+ * itself used. Without a baseline (first prompt of the process), or when any
+ * count fell (the counters were reset), the reported totals are the usage.
+ * A category the previous prompt did not report cannot be subtracted, so it
+ * becomes unknown rather than counting the whole session again.
+ */
+export function acpSessionUsageIncrease(
+  baseline: AcpTurnUsageCounts | undefined,
+  totals: AcpTurnUsageCounts,
+): AcpTurnUsageCounts {
+  if (!baseline) return totals;
+  const keys = [
+    "inputTokens",
+    "outputTokens",
+    "cachedInputTokens",
+    "cacheCreationTokens",
+    "reasoningTokens",
+  ] as const;
+  const fell = keys.some((key) => {
+    const before = baseline[key];
+    const now = totals[key];
+    return before !== undefined && now !== undefined && now < before;
+  });
+  if (fell) return totals;
+  const increase = (key: (typeof keys)[number]) => {
+    const before = baseline[key];
+    const now = totals[key];
+    return now === undefined || before === undefined ? undefined : now - before;
+  };
+  const outputTokens = increase("outputTokens");
+  const reasoning = increase("reasoningTokens");
+  return {
+    inputTokens: increase("inputTokens"),
+    outputTokens,
+    cachedInputTokens: increase("cachedInputTokens"),
+    cacheCreationTokens: increase("cacheCreationTokens"),
+    reasoningTokens:
+      reasoning !== undefined && outputTokens !== undefined
+        ? Math.min(outputTokens, reasoning)
+        : reasoning,
+  };
+}
+
 /** The persisted form. Only a completed turn with both totals counts as complete. */
 export function normalizeAcpTurnTokenUsage(
   counts: AcpTurnUsageCounts,

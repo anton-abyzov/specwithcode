@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  acpSessionUsageIncrease,
   addAcpTurnUsage,
   normalizeAcpTurnTokenUsage,
   readAcpPromptUsage,
@@ -158,5 +159,60 @@ describe("normalizeAcpTurnTokenUsage", () => {
       cacheCreationTokens: undefined,
       reasoningTokens: 6,
     });
+  });
+});
+
+describe("acpSessionUsageIncrease", () => {
+  const totals = (inputTokens: number, outputTokens: number, cachedInputTokens?: number) => ({
+    inputTokens,
+    outputTokens,
+    cachedInputTokens,
+    cacheCreationTokens: undefined,
+    reasoningTokens: undefined,
+  });
+
+  it("keeps the first prompt of a live session as reported", () => {
+    expect(acpSessionUsageIncrease(undefined, totals(5000, 40, 4500))).toEqual(
+      totals(5000, 40, 4500),
+    );
+  });
+
+  it("returns what a prompt added to the session's running totals", () => {
+    expect(acpSessionUsageIncrease(totals(5000, 40, 4500), totals(7200, 95, 6600))).toEqual(
+      totals(2200, 55, 2100),
+    );
+  });
+
+  it("counts an unchanged repeat once, as nothing used", () => {
+    // October 21, 2026: ten turns of one Copilot thread all reported 526,009,087.
+    let baseline: ReturnType<typeof totals> | undefined;
+    let stored = 0;
+    for (let turn = 0; turn < 10; turn++) {
+      const reported = totals(526_009_087, 1_200);
+      stored += acpSessionUsageIncrease(baseline, reported).inputTokens ?? 0;
+      baseline = reported;
+    }
+    expect(stored).toBe(526_009_087);
+  });
+
+  it("starts again when a count falls, as after a reset", () => {
+    expect(acpSessionUsageIncrease(totals(9000, 300), totals(1200, 20))).toEqual(
+      totals(1200, 20),
+    );
+  });
+
+  it("leaves a category unknown when the previous prompt did not report it", () => {
+    expect(acpSessionUsageIncrease(totals(1000, 10), totals(1500, 20, 1400))).toEqual(
+      totals(500, 10, undefined),
+    );
+  });
+
+  it("never reports reasoning above the prompt's own output", () => {
+    expect(
+      acpSessionUsageIncrease(
+        { ...totals(100, 50), reasoningTokens: 10 },
+        { ...totals(200, 60), reasoningTokens: 40 },
+      ),
+    ).toEqual({ ...totals(100, 10), reasoningTokens: 10 });
   });
 });

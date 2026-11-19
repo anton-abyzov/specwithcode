@@ -65,6 +65,7 @@ import {
   type AcpMcpOverAcpBridge,
 } from "../../mcp/AcpMcpOverAcpBridge.ts";
 import {
+  acpSessionUsageIncrease,
   addAcpTurnUsage,
   normalizeAcpTurnTokenUsage,
   readAcpPromptUsage,
@@ -261,6 +262,11 @@ export interface AcpAdapterV2Flavor {
   readonly driver: ProviderDriverKind;
   /** SpecWeave's tool slug for SPECWEAVE_TOOL; the driver kind when omitted. */
   readonly specweaveTool?: string;
+  /**
+   * The agent's `session/prompt` usage is the running total of its live
+   * session (GitHub Copilot), so each turn stores the increase instead.
+   */
+  readonly promptUsageIsSessionTotal?: boolean;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly clientCapabilitiesMeta?: Record<string, boolean>;
   readonly normalizeSessionUpdate?: (
@@ -1981,6 +1987,10 @@ export function makeAcpAdapterV2(
         const promptInstructionStates = yield* Ref.make(
           new Map<string, StudioAcpInstructionState>(),
         );
+        // Last session totals per live runtime and session, for an agent whose
+        // prompt usage is a session total. Keyed by the runtime object, so a
+        // new or replacement process, whose counters start again, has none.
+        const sessionUsageTotals = new WeakMap<object, Map<string, AcpTurnUsageCounts>>();
         const runtimeRestartRequired = yield* Ref.make(false);
         // Native sessions whose restored history the model rejected (for
         // example a missing Gemini thought signature). Loading one again
@@ -7570,6 +7580,8 @@ export function makeAcpAdapterV2(
               projectAdditionalDirectories === undefined
                 ? undefined
                 : { projectAdditionalDirectories };
+            const promptRuntime = runtime;
+            const promptSessionId = (yield* Ref.get(activeSessionId)) ?? requestedSessionId;
             yield* runtime.prompt({ prompt: promptParts!.prompt }, promptOptions).pipe(
               Effect.tap(() =>
                 Ref.update(promptInstructionStates, (current) => {
@@ -7589,8 +7601,23 @@ export function makeAcpAdapterV2(
                 runRuntimeCallbackAtGeneration(
                   promptGeneration,
                   Effect.gen(function* () {
+                    const reportedUsage = readAcpPromptUsage(result);
+                    let promptUsage = reportedUsage;
+                    if (reportedUsage !== undefined && flavor.promptUsageIsSessionTotal === true) {
+                      let totals = sessionUsageTotals.get(promptRuntime);
+                      if (totals === undefined) {
+                        totals = new Map();
+                        sessionUsageTotals.set(promptRuntime, totals);
+                      }
+                      promptUsage = acpSessionUsageIncrease(
+                        totals.get(promptSessionId),
+                        reportedUsage,
+                      );
+                      totals.set(promptSessionId, reportedUsage);
+                    }
+                    // The totals advance even when the turn already ended, so
+                    // the next turn's increase never counts this prompt again.
                     if (context.finalized) return;
-                    const promptUsage = readAcpPromptUsage(result);
                     if (promptUsage !== undefined) {
                       context.promptUsage = addAcpTurnUsage(context.promptUsage, promptUsage);
                     }
