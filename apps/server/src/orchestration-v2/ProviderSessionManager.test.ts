@@ -4314,6 +4314,219 @@ it.effect("ProviderSessionManagerV2 marks pending runtime requests non-live on r
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
   }),
 );
+it.effect(
+  "ProviderSessionManagerV2 marks the detached thread's pending requests non-live when detach releases the session",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-detach-request");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        // A request on a session that the detach does not release.
+        const otherSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const pendingRequest = yield* makePendingRuntimeRequestEvents({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+          now,
+        });
+        yield* eventSink.write({ events: pendingRequest.events });
+        const otherRequest = yield* makePendingRuntimeRequestEvents({
+          idAllocator,
+          threadId,
+          providerSessionId: otherSessionId,
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId: otherSessionId,
+            now,
+          }),
+          now,
+        });
+        yield* eventSink.write({ events: otherRequest.events });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* manager.detach({
+          providerSessionId,
+          threadId,
+          detail: "Provider or model selection changed.",
+        });
+
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        const request = projection.runtimeRequests.find(
+          (candidate) => candidate.id === pendingRequest.requestId,
+        );
+        const requestNode = projection.nodes.find((node) => node.id === request?.nodeId);
+        const requestTurnItem = projection.turnItems.find(
+          (item) => item.type === "approval_request" && item.requestId === request?.id,
+        );
+        assert.equal(request?.status, "cancelled");
+        assert.equal(request?.responseCapability.type, "not_resumable");
+        assert.equal(requestNode?.status, "cancelled");
+        assert.equal(requestTurnItem?.status, "cancelled");
+        const other = projection.runtimeRequests.find(
+          (candidate) => candidate.id === otherRequest.requestId,
+        );
+        assert.equal(other?.status, "pending");
+        assert.equal(other?.responseCapability.type, "live");
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 1000, capabilities: ExclusiveCapabilities }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 detach release retries settle the detached thread and spare a replacement",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const flaky: FlakyReleaseWrites = {
+        failing: yield* Ref.make<"none" | "session" | "session-and-requests">("none"),
+        failures: yield* Queue.unbounded<void>(),
+      };
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = ThreadId.make("thread-provider-session-manager-detach-replacement");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const writePendingRequest = Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          const request = yield* makePendingRuntimeRequestEvents({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+            now,
+          });
+          yield* eventSink.write({ events: request.events });
+          return request.requestId;
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+          ],
+        });
+        const oldRequestId = yield* writePendingRequest;
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        // The detached thread is no longer attached, so the only release
+        // write is its request settlement; it fails once.
+        yield* Ref.set(flaky.failing, "session-and-requests");
+        assert.isTrue(
+          Exit.isFailure(yield* Effect.exit(manager.detach({ providerSessionId, threadId }))),
+        );
+        yield* Queue.take(flaky.failures);
+        yield* Ref.set(flaky.failing, "none");
+
+        // A replacement opens with the same id and asks before the retry runs.
+        yield* TestClock.adjust("500 millis");
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const newRequestId = yield* writePendingRequest;
+        const settled = yield* eventSink
+          .stream({
+            threadId,
+            afterSequence: yield* eventSink.latestSequence({ threadId }),
+            eventType: "runtime-request.updated",
+          })
+          .pipe(Stream.runHead, Effect.forkScoped);
+        yield* TestClock.adjust("500 millis");
+        yield* Fiber.join(settled);
+
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        const request = (id: typeof oldRequestId) =>
+          projection.runtimeRequests.find((candidate) => candidate.id === id);
+        assert.equal(request(oldRequestId)?.responseCapability.type, "not_resumable");
+        assert.equal(request(newRequestId)?.status, "pending");
+        assert.equal(request(newRequestId)?.responseCapability.type, "live");
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            capabilities: ExclusiveCapabilities,
+            flakyReleaseWrites: flaky,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 detach from a shared session leaves other threads' requests live",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const firstThreadId = ThreadId.make("thread-provider-session-manager-detach-shared-a");
+        const secondThreadId = ThreadId.make("thread-provider-session-manager-detach-shared-b");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: firstThreadId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: firstThreadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: secondThreadId, now }),
+          ],
+        });
+        const secondRequest = yield* makePendingRuntimeRequestEvents({
+          idAllocator,
+          threadId: secondThreadId,
+          providerSessionId,
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId: secondThreadId,
+            providerSessionId,
+            now,
+          }),
+          now,
+        });
+        yield* eventSink.write({ events: secondRequest.events });
+        for (const threadId of [firstThreadId, secondThreadId]) {
+          yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        }
+        yield* manager.detach({ providerSessionId, threadId: firstThreadId });
+
+        const projection = yield* projectionStore.getThreadProjection(secondThreadId);
+        const request = projection.runtimeRequests.find(
+          (candidate) => candidate.id === secondRequest.requestId,
+        );
+        assert.equal(request?.status, "pending");
+        assert.equal(request?.responseCapability.type, "live");
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    }),
+);
 it.effect("ProviderSessionManagerV2 retries release records that failed to persist", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
