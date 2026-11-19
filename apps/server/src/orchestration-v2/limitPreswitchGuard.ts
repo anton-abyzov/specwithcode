@@ -1,5 +1,6 @@
 import type { OrchestrationV2Run } from "@specweave-studio/contracts";
 import { latestExecutedRun } from "@specweave-studio/shared/orchestrationV2ThreadError";
+import { preswitchWindowResetAt } from "@specweave-studio/shared/threadModelIdentity";
 
 /**
  * The refusal of a move that a turn started after the plan beat. It is not
@@ -38,4 +39,25 @@ export function preswitchMoveRefusal(runs: ReadonlyArray<OrchestrationV2Run>): {
   if (latest.status === "completed") return { refusal: null, latest };
   const ended = ENDED_STATUSES.has(latest.status);
   return { refusal: ended ? PRESWITCH_TURN_UNFINISHED : PRESWITCH_TURN_STARTED, latest };
+}
+
+/**
+ * Whether an idle move already sent for this thread off `instanceId` still
+ * holds: its window, named by the id, has not reset. Another window becoming
+ * the fullest gives a new id, but a hand switch back is kept until the window
+ * the move went out for resets.
+ */
+export function preswitchWindowHeld(
+  sentIds: Iterable<string>,
+  threadId: string,
+  instanceId: string,
+  nowMs: number,
+): boolean {
+  const prefix = `limit-preswitch:${threadId}:${instanceId}:`;
+  for (const id of sentIds) {
+    if (!id.startsWith(prefix)) continue;
+    const resetMs = Date.parse(preswitchWindowResetAt(id) ?? "");
+    if (Number.isFinite(resetMs) && resetMs > nowMs) return true;
+  }
+  return false;
 }

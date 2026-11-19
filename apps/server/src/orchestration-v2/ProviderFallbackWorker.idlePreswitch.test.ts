@@ -390,6 +390,25 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
     }),
   );
 
+  it.effect("keeps a hand switch back when another window becomes the fullest", () =>
+    Effect.gen(function* () {
+      const state = world();
+      yield* sweeps(state, (sweep) =>
+        Effect.gen(function* () {
+          yield* sweep();
+          state.threads[0]!.selection = onClaude;
+          state.threads[0]!.preswitch = null;
+          // Another window, resetting later, is now the fullest: a new id,
+          // but the window the move went out for has not reset.
+          state.claudeResetAt = "2026-11-19T20:00:00.000Z";
+          yield* nextSweep();
+          yield* sweep();
+        }),
+      );
+      expect(ids(state)).toEqual([preswitchId]);
+    }),
+  );
+
   it.effect("does the round trip beside a thread stopped on the limit", () =>
     Effect.gen(function* () {
       // A sibling's limit stop makes the sweep read completed runs too.
@@ -458,9 +477,10 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
           yield* sweep();
           expect(thread.selection).toEqual(onClaude);
           // Claude passes the threshold in its next window: the move comes again.
+          yield* TestClock.setTime(Date.parse(resetAt) + 60_000);
           state.claudeUsed = 92;
           state.claudeResetAt = nextReset;
-          yield* nextSweep();
+          yield* sweep();
           yield* sweep();
         }),
       );

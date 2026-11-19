@@ -98,7 +98,7 @@ import {
 } from "./providerOpenFailure.ts";
 import { UnopenableHolds, UsageLimitHolds } from "./UnopenableHolds.ts";
 import { contextOverflowStop } from "./contextOverflowFallback.ts";
-import { PRESWITCH_TURN_STARTED } from "./limitPreswitchGuard.ts";
+import { PRESWITCH_TURN_STARTED, preswitchWindowHeld } from "./limitPreswitchGuard.ts";
 import { contextRecoveryStep, isContextOverflowFailure } from "./ContextOverflowRecoveryWorker.ts";
 import { latestRootProviderFailure } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { isClaudePlanLimitStop } from "../provider/claudeLimitReset.ts";
@@ -1866,11 +1866,16 @@ export const makeSweep = Effect.gen(function* () {
       // An idle move already sent this window leaves the thread as one with no
       // step: no Stop read or handoff each sweep, and its way back still runs.
       const sentIds = yield* Ref.get(sent);
+      // A move sent for an earlier window that has not reset holds too, so a
+      // hand switch back stays when another window becomes the fullest.
+      const idleHeld = (current: FallbackThread, commandId: string) =>
+        sentIds.has(commandId) ||
+        preswitchWindowHeld(sentIds, current.id, current.providerInstanceId, now);
       const stepFor = (current: FallbackThread) => {
         const next = providerLimitStep(current, providersFor(current), resolved, now, options);
         return next?.type === "switch" &&
           next.command.type === "thread.model-selection.set" &&
-          sentIds.has(next.command.commandId)
+          idleHeld(current, next.command.commandId)
           ? null
           : next;
       };
@@ -1932,7 +1937,7 @@ export const makeSweep = Effect.gen(function* () {
       // fallbacks' readings may only be old. One whose move already went out
       // this window has a target, so it reads nothing.
       const idleId = idlePreswitchId(thread, providersFor(thread), resolved, now);
-      const idleWithoutTarget = idleId !== null && step === null && !sentIds.has(idleId);
+      const idleWithoutTarget = idleId !== null && step === null && !idleHeld(thread, idleId);
       // A context stop reads stale providers before it moves, even when a
       // target is found: home with an old reading may have room again.
       if (

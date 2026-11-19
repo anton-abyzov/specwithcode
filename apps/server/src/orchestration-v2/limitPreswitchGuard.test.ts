@@ -6,6 +6,7 @@ import {
   PRESWITCH_TURN_STARTED,
   PRESWITCH_TURN_UNFINISHED,
   preswitchMoveRefusal,
+  preswitchWindowHeld,
 } from "./limitPreswitchGuard.ts";
 
 // 1089: the orchestrator judges a pre-switch again when it lands, so a turn
@@ -42,5 +43,18 @@ describe("preswitchMoveRefusal", () => {
     expect(preswitchMoveRefusal([run("completed"), run("starting", 1)]).refusal).toBe(
       PRESWITCH_TURN_STARTED,
     );
+  });
+});
+
+describe("preswitchWindowHeld", () => {
+  const reset = "2026-11-19T15:00:00.000Z";
+  const sent = [`limit-preswitch:t1:claudeAgent:${reset}`, "limit-fallback:t1:r1"];
+  it("holds while the window a move went out for has not reset", () => {
+    expect(preswitchWindowHeld(sent, "t1", "claudeAgent", at)).toBe(true);
+    expect(preswitchWindowHeld(sent, "t1", "claudeAgent", Date.parse(reset))).toBe(false);
+    expect(preswitchWindowHeld(sent, "t2", "claudeAgent", at)).toBe(false);
+    expect(preswitchWindowHeld(sent, "t1", "codex", at)).toBe(false);
+    const open = ["limit-preswitch:t1:claudeAgent:open"];
+    expect(preswitchWindowHeld(open, "t1", "claudeAgent", at)).toBe(false);
   });
 });
