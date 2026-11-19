@@ -162,7 +162,11 @@ try {
     await deskB.press("ArrowDown");
     NodeAssert.equal(await kioskD.isChecked(), true, "radio keyboard navigation picks Kiosk D");
     await kioskD.press("ArrowDown");
-    NodeAssert.equal(await deskB.isChecked(), true, "radio keyboard navigation skips offline target");
+    NodeAssert.equal(
+      await deskB.isChecked(),
+      true,
+      "radio keyboard navigation skips offline target",
+    );
     await kioskD.check();
     NodeAssert.equal(await kioskD.isChecked(), true);
     const folder = dialog.getByRole("textbox", { name: "Folder on Kiosk D" });
@@ -220,9 +224,7 @@ try {
       "cccccccccccc",
     ]);
     NodeAssert.ok(
-      await details
-        .getByText("repositories/acme/atlas-site", { exact: true })
-        .isVisible(),
+      await details.getByText("repositories/acme/atlas-site", { exact: true }).isVisible(),
     );
     layouts.expanded = await layout(page, dialog, "expanded");
     await details.scrollIntoViewIfNeeded();
@@ -256,9 +258,7 @@ try {
     await continuation.focus();
     await page.keyboard.press("Enter");
     await dialog.getByRole("heading", { name: "Atlas is on Kiosk D" }).waitFor();
-    NodeAssert.ok(
-      await dialog.getByText("The coordinator continues on Kiosk D.").isVisible(),
-    );
+    NodeAssert.ok(await dialog.getByText("The coordinator continues on Kiosk D.").isVisible());
     NodeAssert.ok(await dialog.getByRole("status").isVisible());
     NodeAssert.equal(
       await dialog.locator('[data-slot="handoff-remember-machine"]').count(),

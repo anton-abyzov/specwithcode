@@ -87,7 +87,10 @@ it.each(["worktree", "local"] as const)(
     expect(text).toContain("+bad()");
     expect(text).toContain(mode === "worktree" ? "own worktree" : "this checkout");
     expect(runtime.navigate).toHaveBeenCalledWith(
-      expect.objectContaining({ to: "/projects/$projectKey", search: { checkout: "deskB:project" } }),
+      expect.objectContaining({
+        to: "/projects/$projectKey",
+        search: { checkout: "deskB:project" },
+      }),
     );
   },
 );

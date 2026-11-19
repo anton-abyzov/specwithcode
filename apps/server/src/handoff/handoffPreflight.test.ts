@@ -199,7 +199,9 @@ describe("turnRefusal", () => {
   });
 
   it("allows the lease holder", () => {
-    expect(turnRefusal(withRecord({ lease: lease(laptopE, "active") }), threadId, laptopE)).toBeNull();
+    expect(
+      turnRefusal(withRecord({ lease: lease(laptopE, "active") }), threadId, laptopE),
+    ).toBeNull();
   });
 
   it("refuses a fenced copy, another holder and a handoff in flight", () => {
@@ -217,15 +219,15 @@ describe("turnRefusal", () => {
         laptopE,
       ),
     ).toContain("continues on Tower H");
-    expect(turnRefusal(withRecord({ lease: lease(towerH, "active") }), threadId, laptopE)).toContain(
-      "Another machine (Tower H)",
-    );
-    expect(turnRefusal(withRecord({ lease: lease(laptopE, "fenced") }), threadId, laptopE)).toContain(
-      "read-only",
-    );
-    expect(turnRefusal(withRecord({ lease: lease(laptopE, "handing-off") }), threadId, laptopE)).toContain(
-      "being handed off",
-    );
+    expect(
+      turnRefusal(withRecord({ lease: lease(towerH, "active") }), threadId, laptopE),
+    ).toContain("Another machine (Tower H)");
+    expect(
+      turnRefusal(withRecord({ lease: lease(laptopE, "fenced") }), threadId, laptopE),
+    ).toContain("read-only");
+    expect(
+      turnRefusal(withRecord({ lease: lease(laptopE, "handing-off") }), threadId, laptopE),
+    ).toContain("being handed off");
   });
 
   it("pauses a machine that lost its network with replicated leases until it is back", () => {

@@ -158,7 +158,9 @@ describe("one-click approval", () => {
     // The option that stops after measuring never chose secrets: no text names it.
     for (const sender of ["here", "source-only", "unconfirmed", null] as const) {
       expect(secretsLeftText(0, "Laptop E", sender)).toBeNull();
-      expect(secretsLeftText(3, "Laptop E", sender)).not.toContain("Let me choose file types first");
+      expect(secretsLeftText(3, "Laptop E", sender)).not.toContain(
+        "Let me choose file types first",
+      );
     }
   });
 
@@ -529,9 +531,7 @@ describe("steps and what happens next", () => {
       }),
     ).toBe("Copying 1.2 GB…");
     expect(workingLine({ ...working, stage: "copying" })).toBe("Copying…");
-    expect(workingLine({ ...working, stage: "moving" })).toBe(
-      "Starting the coordinator on box-a…",
-    );
+    expect(workingLine({ ...working, stage: "moving" })).toBe("Starting the coordinator on box-a…");
     for (const stage of ["setup", "select", "preview", "done", "failed", "undone"] as const)
       expect(workingLine({ ...working, stage })).toBeNull();
   });

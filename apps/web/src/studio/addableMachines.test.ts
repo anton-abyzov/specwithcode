@@ -41,7 +41,11 @@ describe("addableMachineIds", () => {
 
   it("offers only a machine with no folder of the project and no membership", () => {
     expect(
-      addableMachineIds({ project: shown, machineIds: ["laptopE", "rackF", "shelfG", "deskB", "kioskD"], projects }),
+      addableMachineIds({
+        project: shown,
+        machineIds: ["laptopE", "rackF", "shelfG", "deskB", "kioskD"],
+        projects,
+      }),
     ).toEqual(["deskB"]);
   });
 

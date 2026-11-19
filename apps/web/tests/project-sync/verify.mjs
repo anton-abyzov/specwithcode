@@ -305,7 +305,10 @@ try {
       assert.equal((await said(page, "apps/web", "b")).sentence, "Moves forward 12 commits");
       await page.locator("[data-sync-run]").click();
       await waitStage(page, "running");
-      assert.equal(await page.locator("[data-sync-progress]").textContent(), "Syncing laptopE and rackF…");
+      assert.equal(
+        await page.locator("[data-sync-progress]").textContent(),
+        "Syncing laptopE and rackF…",
+      );
       assert.equal(await page.locator("[data-sync-run]").isDisabled(), true);
       assert.equal(await page.locator("[data-sync-run]").textContent(), "Syncing…");
       await page.keyboard.press("Escape");
@@ -385,7 +388,10 @@ try {
       // 7. The fetch has not answered.
       page = await at("case=dialog&state=checking");
       await waitStage(page, "checking");
-      assert.equal(await page.locator("[data-sync-live]").textContent(), "Fetching on laptopE and rackF…");
+      assert.equal(
+        await page.locator("[data-sync-live]").textContent(),
+        "Fetching on laptopE and rackF…",
+      );
       // One live region that stays: the visible line is not a second one.
       assert.equal(await page.locator(`${DIALOG} p[role="status"]`).count(), 1);
       assert.equal(await page.locator("[data-sync-run]").isDisabled(), true);
@@ -500,7 +506,11 @@ try {
       await page.locator("[data-sync-run]").click();
       await waitStage(page, "result");
       for (const [repo, sentence] of Object.entries(UPSTREAM_RESULT))
-        assert.equal((await said(page, repo, "a")).sentence, sentence, `${repo} on laptopE, result`);
+        assert.equal(
+          (await said(page, repo, "a")).sentence,
+          sentence,
+          `${repo} on laptopE, result`,
+        );
       assert.equal(
         await cell(page, "tools/cli", "a").locator("[data-sync-detail]").textContent(),
         "Its state could not be read, so it was not moved.",
@@ -591,7 +601,10 @@ try {
       await waitStage(page, "plan");
       await page.locator("[data-sync-run]").click();
       await waitStage(page, "result");
-      assert.equal(await page.locator("h2").textContent(), "Sync finished for Atlas: laptopE and rackF");
+      assert.equal(
+        await page.locator("h2").textContent(),
+        "Sync finished for Atlas: laptopE and rackF",
+      );
       taken = await shot(page, `result-not-proven-${tag}`);
       results.push({ theme, width, case: "result, not proven in sync", ...taken });
       await page.close();
@@ -634,7 +647,10 @@ try {
       await tick(page, "a", "only-here");
       await page.locator("[data-sync-run]").click();
       await waitStage(page, "result");
-      assert.equal(await page.locator("h2").textContent(), "Sync finished for Atlas: laptopE and rackF");
+      assert.equal(
+        await page.locator("h2").textContent(),
+        "Sync finished for Atlas: laptopE and rackF",
+      );
       const wholeLongResult = await longShot(page, `result-long-whole-${tag}`);
       results.push({
         theme,

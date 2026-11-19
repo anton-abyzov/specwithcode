@@ -189,7 +189,12 @@ describe("machine handoff dialog", () => {
       ...retention,
       machines: [
         { environmentId: "laptopE", totalThreads: 0, omittedThreads: 0, omittedMessages: 0 },
-        { environmentId: "kioskD", totalThreads: 1628, omittedThreads: 1428, omittedMessages: 9418 },
+        {
+          environmentId: "kioskD",
+          totalThreads: 1628,
+          omittedThreads: 1428,
+          omittedMessages: 9418,
+        },
       ],
     } as unknown as typeof retention;
     await handoff({
@@ -759,9 +764,7 @@ describe("handoff file method and intent", () => {
       copyDoneOn: "box-a",
       copyDoneAt,
     });
-    expect(document.querySelector("h2")?.textContent).toBe(
-      "Product is on box-a (added 2h ago)",
-    );
+    expect(document.querySelector("h2")?.textContent).toBe("Product is on box-a (added 2h ago)");
     await handoff({
       method: "copy",
       intent: "move",

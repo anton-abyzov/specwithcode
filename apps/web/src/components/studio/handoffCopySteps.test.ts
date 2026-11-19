@@ -58,10 +58,20 @@ describe("transferRefusal", () => {
 
   it("leaves busy and destination refusals as they were", () => {
     expect(
-      transferRefusal(Object.assign(new Error("busy"), { code: "busy" }), false, "Kiosk D", "Laptop E"),
+      transferRefusal(
+        Object.assign(new Error("busy"), { code: "busy" }),
+        false,
+        "Kiosk D",
+        "Laptop E",
+      ),
     ).toMatchObject({ recovery: false, copyAgain: null });
     expect(
-      transferRefusal(new DestinationContextPreviewError(new Error("No.")), false, "Kiosk D", "Laptop E"),
+      transferRefusal(
+        new DestinationContextPreviewError(new Error("No.")),
+        false,
+        "Kiosk D",
+        "Laptop E",
+      ),
     ).toMatchObject({ recovery: false, copyAgain: null });
   });
 

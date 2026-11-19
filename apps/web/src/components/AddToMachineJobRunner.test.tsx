@@ -232,7 +232,10 @@ it("asks for a review when linking needs one", async () => {
 });
 
 it("keeps why linking failed when the link throws and is not tried again", async () => {
-  state.linkFails = new Error("The two notes could not be merged.") as never as Record<string, unknown>;
+  state.linkFails = new Error("The two notes could not be merged.") as never as Record<
+    string,
+    unknown
+  >;
   await run("clone-f", "done");
   expect(listAddToMachineJobs()).toEqual([]);
   expect(refusalsKept()).toEqual([{ text: "The two notes could not be merged.", verbatim: true }]);

@@ -263,7 +263,8 @@ const scenario = (options: { readonly modeOn: boolean }) =>
         ),
       );
     const peers = HandoffPeers.of({
-      target: () => Effect.succeed({ machineId: "towerH", environmentId: towerH, label: "Tower H" }),
+      target: () =>
+        Effect.succeed({ machineId: "towerH", environmentId: towerH, label: "Tower H" }),
       targets: Effect.succeed([{ machineId: "towerH", environmentId: towerH, label: "Tower H" }]),
       negotiate: (_, request) => viaNetwork(destinationReceiver.negotiate(asSource, request)),
       replicate: (_, meta, bundle) =>
@@ -403,9 +404,9 @@ describe("a limit handoff whose preflight fails", () => {
           expect(takeovers).toEqual([]);
           expect(destination.launches).toEqual([]);
           expect(destination.dispatched).toEqual([]);
-          expect(findIncoming(destination.document, laptopE, threadId)?.continuedThreadId ?? null).toBe(
-            null,
-          );
+          expect(
+            findIncoming(destination.document, laptopE, threadId)?.continuedThreadId ?? null,
+          ).toBe(null);
           expect(
             Object.values(destination.document.threads).filter((record) => record.lease !== null),
           ).toEqual([]);

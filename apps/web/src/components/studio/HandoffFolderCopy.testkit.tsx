@@ -214,7 +214,11 @@ export function CopyFixture(overrides: FixtureOptions) {
       sourceLabel="Laptop E"
       method={overrides.method ?? "copy"}
       machines={[
-        { id: "kioskD" as never, label: "Kiosk D", unavailable: overrides.kioskDUnavailable ?? null },
+        {
+          id: "kioskD" as never,
+          label: "Kiosk D",
+          unavailable: overrides.kioskDUnavailable ?? null,
+        },
         {
           id: "deskB" as never,
           label: "Desk B",

@@ -439,10 +439,7 @@ const choosing = async (page, w) => {
     primary: null,
     steps: bar(["done", "done", "current", "next", "next"]),
   });
-  NodeAssert.match(
-    await body(),
-    /Checking the copy to \/home\/sam\/projects\/atlas on box-a…/,
-  );
+  NodeAssert.match(await body(), /Checking the copy to \/home\/sam\/projects\/atlas on box-a…/);
   await release("copyStatus");
   await check("restored", {
     primary: "Copy to box-a",
@@ -860,10 +857,7 @@ try {
         await page.goto(`http://127.0.0.1:${server.address().port}/?theme=${theme}`);
         await page.waitForLoadState("networkidle");
         await folderBox(page).waitFor();
-        NodeAssert.equal(
-          await folderBox(page).inputValue(),
-          "/home/sam/projects/atlas",
-        );
+        NodeAssert.equal(await folderBox(page).inputValue(), "/home/sam/projects/atlas");
         const w = walker(page, label, flow, viewport);
         try {
           await walk(page, w);
