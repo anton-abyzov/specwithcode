@@ -64,6 +64,33 @@ describe("a handed-off worker that moves again", () => {
   );
 
   it.live(
+    "is not handed off while the source cannot read which machines it can ask: an unread fleet is not an empty one",
+    () => {
+      const s = stage();
+      s.network.fleetUnread = true;
+      const life = s.boot();
+      return Effect.gen(function* () {
+        const { handOff } = yield* begin(life);
+        const outcome = yield* Effect.result(handOff);
+        // Sent with an empty list, the target would decline every later move for good.
+        expect(s.network.takeovers).toEqual([]);
+        expect(s.launches).toEqual([]);
+        expect(outcome._tag).toBe("Failure");
+        const record = s.documents.source.threads[worker];
+        expect(record?.lease).toMatchObject({ state: "active", epoch: 1 });
+        expect(record?.continuedOn).toBeNull();
+        // Read again, the same move is made and names the machine it went to.
+        s.network.fleetUnread = false;
+        yield* handOff;
+        expect((s.network.takeovers[0] as { launcher?: unknown }).launcher).toMatchObject({
+          reachable: [target.environmentId],
+        });
+      }).pipe(Effect.provide(life.layer));
+    },
+    LIVE,
+  );
+
+  it.live(
     "is not handed to a machine its launcher cannot ask: declined before the thread is held, with the reason",
     () => {
       const s = stage();

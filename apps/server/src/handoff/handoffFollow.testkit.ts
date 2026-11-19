@@ -145,6 +145,8 @@ export function stage(
     dropTakeoverAnswer: false,
     dropTakeoverRequest: false,
     refuseTakeover: false,
+    /** The source's fleet file cannot be read: it lists no machine. */
+    fleetUnread: false,
     /** Takeovers that left the source, whatever became of them. */
     takeovers: [] as Array<TakeoverRequest>,
   };
@@ -315,7 +317,7 @@ export function stage(
   const there = { machineId: target.id, environmentId: target.environmentId, label: "Target" };
   const peers = {
     target: () => Effect.succeed(there),
-    targets: Effect.succeed([there]),
+    targets: Effect.sync(() => (network.fleetUnread ? [] : [there])),
     negotiate: (_: unknown, request: never) =>
       asked((built) => built.negotiate(asSource, request)),
     replicate: (_: unknown, meta: never, bundle: never) =>
