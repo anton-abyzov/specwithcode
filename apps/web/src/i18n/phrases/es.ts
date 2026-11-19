@@ -722,6 +722,7 @@ export const es: PhraseCatalog = {
   "Its machine": "Su máquina",
   Machine: "Máquina",
   "Move to project…": "Mover a un proyecto…",
+  "Chat settings": "Ajustes del chat",
   "New chat": "Nuevo chat",
   "New project": "Nuevo proyecto",
   "No chats on {machine} match this filter.": "Ningún chat en {machine} coincide con este filtro.",

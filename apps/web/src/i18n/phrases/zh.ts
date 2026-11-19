@@ -689,6 +689,7 @@ export const zh: PhraseCatalog = {
   "Its machine": "其所在电脑",
   Machine: "电脑",
   "Move to project…": "移到项目…",
+  "Chat settings": "聊天设置",
   "New chat": "新对话",
   "New project": "新项目",
   "No chats on {machine} match this filter.": "{machine} 上没有符合此筛选条件的对话。",

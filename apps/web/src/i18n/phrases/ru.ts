@@ -712,6 +712,7 @@ export const ru: PhraseCatalog = {
   "Its machine": "Его машина",
   Machine: "Машина",
   "Move to project…": "Переместить в проект…",
+  "Chat settings": "Настройки чата",
   "New chat": "Новый чат",
   "New project": "Новый проект",
   "No chats on {machine} match this filter.": "Нет чатов на {machine}, подходящих под фильтр.",

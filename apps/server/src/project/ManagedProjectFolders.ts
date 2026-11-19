@@ -47,6 +47,7 @@ import * as ProjectService from "./ProjectService.ts";
 import * as SpecweaveSetup from "./SpecweaveSetup.ts";
 import * as SpecweaveSetupRequests from "./SpecweaveSetupRequests.ts";
 import * as WorkspaceSensitivePaths from "../workspace/WorkspaceSensitivePaths.ts";
+import { SCRATCH_FOLDER } from "./scratchProject.ts";
 import {
   isGitSpawnFailure,
   namedProjectFailureMessage,
@@ -175,8 +176,6 @@ export const withCreateOutcome = <
             Option.isSome(outcome) ? { ...result, outcome: outcome.value } : result,
           ),
         );
-
-const SCRATCH_FOLDER = "scratch";
 
 /**
  * Whether a project root is the data folder's Scratch ("No project") folder, also under a
