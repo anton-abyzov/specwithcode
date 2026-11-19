@@ -63,6 +63,7 @@ import {
 import { projectWorkspace } from "../../../studio/projectWorkspace";
 import { compactAge, nowFromMinute } from "../../../studio/shellModel";
 import { useTx } from "../../../i18n";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { Button } from "../../ui/button";
 import { BOARD_EMPTY_ACTION, BOARD_EMPTY_PROMPT, BOARD_EMPTY_TEXT } from "../specweaveSetup.logic";
 import { BoardCard } from "./BoardCard";
@@ -739,9 +740,12 @@ function BoardSummary(props: {
         {tx("{count} not done", { count: props.notDone })}
       </span>
       {behind ? (
-        <span className="sws-board-behind" title={behind.title}>
-          {behind.text}
-        </span>
+        <Tooltip>
+          <TooltipTrigger render={<span className="sws-board-behind" />}>
+            {behind.text}
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">{behind.title}</TooltipPopup>
+        </Tooltip>
       ) : null}
     </p>
   );

@@ -817,9 +817,6 @@ describe("BoardIncrementView", () => {
       await render({ card });
       const line = container.querySelector<HTMLElement>(".sws-board-view-source");
       expect(line?.textContent).toBe("From origin/main, fetched 2h ago");
-      expect(line?.title).toBe(
-        "This is the newest copy of the increment. The project folder's copy is older or missing.",
-      );
     });
 
     it("names a worktree, and says nothing for the project folder's own copy", async () => {

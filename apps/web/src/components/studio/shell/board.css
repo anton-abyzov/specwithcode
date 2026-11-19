@@ -236,6 +236,10 @@ button.sws-board-card-open {
 .sws-board-not-done {
   color: var(--foreground);
 }
+.sws-board-behind {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 /* The copy a card was read from, when it is not the project folder's. */
 .sws-board-card-source {
   margin: 0;

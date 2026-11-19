@@ -61,6 +61,7 @@ import {
 } from "../../../studio/projectBoardModel";
 import { projectWorkspace } from "../../../studio/projectWorkspace";
 import { useTx } from "../../../i18n";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { THREAD_TONE_LABELS, compactAge } from "../../../studio/shellModel";
 import { PullRequestGlyph } from "../../pullRequest/pullRequestIcons";
 import { BoardMachineMark, type BoardThread } from "./BoardThreads";
@@ -292,9 +293,12 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
           ) : null}
           {stateLine ? <span className="sws-board-view-age">{stateLine}</span> : null}
           {sourceLine ? (
-            <span className="sws-board-view-source" title={boardSourceTitle(tx)}>
-              {sourceLine}
-            </span>
+            <Tooltip>
+              <TooltipTrigger render={<span className="sws-board-view-source" />}>
+                {sourceLine}
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">{boardSourceTitle(tx)}</TooltipPopup>
+            </Tooltip>
           ) : null}
           <span className="sws-board-view-nav">
             <button

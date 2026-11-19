@@ -226,9 +226,12 @@ export function BoardCard({
         </div>
       ) : null}
       {card.source ? (
-        <p className="sws-board-card-source" title={boardSourceTitle(tx)}>
-          {boardSourceLine(card.source, tx)}
-        </p>
+        <Tooltip>
+          <TooltipTrigger render={<p className="sws-board-card-source" />}>
+            {boardSourceLine(card.source, tx)}
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">{boardSourceTitle(tx)}</TooltipPopup>
+        </Tooltip>
       ) : null}
       {stuck !== null || shownReasons.length > 0 ? (
         <ul className="sws-board-reasons" aria-label="Why it is blocked">

@@ -323,9 +323,6 @@ describe("BoardPane", () => {
     expect(summary?.querySelector(".sws-board-not-done")?.textContent).toBe("12 not done");
     const behind = summary?.querySelector<HTMLElement>(".sws-board-behind");
     expect(behind?.textContent).toBe("Project folder is 61 commits behind origin/main");
-    expect(behind?.title).toBe(
-      "Project folder is 61 commits behind origin/main. Last fetched 3h ago.",
-    );
     // The column counts stay plain numbers.
     expect(headings()).toContain("Planned1 increment");
     expect(article("0002-build").querySelector(".sws-board-card-source")?.textContent).toBe(
