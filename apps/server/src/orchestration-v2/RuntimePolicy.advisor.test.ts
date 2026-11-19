@@ -169,18 +169,28 @@ it.layer(layerTest)("RuntimePolicyV2 advisor", (it) => {
     }),
   );
 
-  it.effect("switches Claude's advisor off when the thread uses the studio-code tool", () =>
+  it.effect("a Fable thread is advised by Fable through Claude's own advisor", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;
       const now = yield* DateTime.now;
-      // A Fable thread is advised by another family, never by itself.
-      yield* setAdvisor({ enabled: true });
+      yield* setAdvisor({ enabled: true, builtInContextLimit: 150_000 });
       const onFable = yield* policy.resolve({
         thread: makeThread({ now, modelSelection: fable }),
         modelSelection: fable,
       });
-      assert.deepEqual(onFable.claudeAdvisor, { kind: "disable" });
+      assert.deepEqual(onFable.claudeAdvisor, {
+        kind: "model",
+        model: "claude-fable-5-2",
+        contextLimit: 150_000,
+      });
       assert.equal(onFable.advisorGuidance, ADVISOR_GUIDANCE);
+    }),
+  );
+
+  it.effect("switches Claude's advisor off when the thread uses the studio-code tool", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
       yield* setAdvisor({ enabled: true, claudeBuiltIn: false });
       const builtInOff = yield* policy.resolve({
         thread: makeThread({ now, modelSelection: opus }),
