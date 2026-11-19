@@ -275,6 +275,11 @@ export function createProjectWorkspaceAtoms<R, E>(
       label: "project-workspace:specweave-answer",
       tag: WS_METHODS.projectsSpecweaveAnswer,
     }),
+    /** The first feature guide's marks: started again, left, finished (1398). */
+    firstFeatureGuide: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:first-feature-guide",
+      tag: WS_METHODS.projectsFirstFeatureGuide,
+    }),
     threadReports: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-workspace:thread-reports",
       tag: WS_METHODS.projectsThreadReportsRead,

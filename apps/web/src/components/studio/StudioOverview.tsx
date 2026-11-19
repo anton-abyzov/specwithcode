@@ -45,6 +45,7 @@ import {
   type ReactNode,
 } from "react";
 import { openCommandPalette } from "../../commandPaletteBus";
+import { FirstFeatureOffer } from "./firstFeature/FirstFeatureOffer";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { isElectron } from "../../env";
 import { useNewChatDestination } from "../../hooks/useNewChatDestination";
@@ -705,6 +706,7 @@ export function StudioOverview() {
             hasOtherMachine={environments.length > 1}
             onNewSession={() => openDraftChooser()}
           />
+          <FirstFeatureOffer />
 
           {request !== null && (
             <section className="studio-draft-chooser" aria-labelledby="studio-draft-title">

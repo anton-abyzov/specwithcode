@@ -89,6 +89,24 @@ describe("activeFirstFeatureSample", () => {
   });
 });
 
+describe("firstFeatureGuideFinishedIn", () => {
+  it("is true for a finished sample, removed or not, and for nothing else", () => {
+    const finished = { sample: "first-feature", firstFeatureGuide: { ended: "finished" } };
+    const finishedIn = FirstFeatureSample.firstFeatureGuideFinishedIn;
+    assert.isTrue(finishedIn([candidate("removed", finished, NOW)]));
+    assert.isTrue(finishedIn([candidate("plain", {}), candidate("live", finished)]));
+    assert.isFalse(
+      finishedIn([
+        candidate("left", { sample: "first-feature", firstFeatureGuide: { ended: "left" } }),
+        candidate("running", { sample: "first-feature", firstFeatureGuide: { started: NOW } }),
+        candidate("not-a-sample", { firstFeatureGuide: { ended: "finished" } }),
+        candidate("unknown-end", { sample: "first-feature", firstFeatureGuide: { ended: "x" } }),
+      ]),
+    );
+    assert.isFalse(finishedIn([]));
+  });
+});
+
 describe("firstFeatureGuideAfterMark", () => {
   const after = FirstFeatureSample.firstFeatureGuideAfterMark;
   it("ends the guide as left or finished and keeps its start", () => {

@@ -5596,6 +5596,75 @@ export const zh: PhraseCatalog = {
   "Add one": "添加一个",
   "+{n} more": "另外 {n} 个",
   "Ready once an agent is signed in.": "智能体登录后即可使用。",
+  // 1398: the first feature guide and its offer.
+  "Your first feature": "你的第一个功能",
+  "Turn SpecWeave on": "开启 SpecWeave",
+  "Ask for it whole": "一次提出完整需求",
+  "Read the review": "阅读评审",
+  "This project has no plans or board yet. Turn SpecWeave on.":
+    "这个项目还没有计划和看板。请开启 SpecWeave。",
+  "Show me": "带我去",
+  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.":
+    "用一次请求提出整个功能。你的智能体会规划、实现、评审并完成它。",
+  "Ask for the whole feature in one request. Your agents plan it, build it and close it.":
+    "用一次请求提出整个功能。你的智能体会规划、实现并完成它。",
+  "Write it for me": "帮我写好",
+  "Open the thread": "打开会话",
+  Planning: "规划中",
+  "Working: {done} of {total} tasks": "进行中：{done}/{total} 个任务",
+  "In review": "评审中",
+  "Fixing what the review found": "正在修复评审发现的问题",
+  "When the card is in Done, open it and read what the review found.":
+    "卡片进入“已完成”后，打开它并阅读评审发现的问题。",
+  "Open the review": "打开评审",
+  Ship: "可以发布",
+  "Fix first": "先修复",
+  "No verdict": "无结论",
+  "A reviewer": "一位评审者",
+  "Reviewed by {model}, the same family that built it.":
+    "由 {model} 评审，与实现它的模型属于同一系列。",
+  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
+    "没有进行评审。评审需要另一系列的模型，例如 {codex} 或 {muse}。",
+  "No review is recorded for this feature.": "这个功能没有评审记录。",
+  "Skip this step": "跳过这一步",
+  "Leave the guide": "退出指南",
+  "Waiting on this step. The Board tab says what went wrong.":
+    "这一步在等待。看板标签页会说明出了什么问题。",
+  "Waiting on this step. The coordinator's last message says why.":
+    "这一步在等待。协调者的最后一条消息说明了原因。",
+  "That is the loop: plan, board, work, review, done.":
+    "这就是完整流程：计划、看板、工作、评审、完成。",
+  "Review finished features in all projects on this Mac": "评审这台 Mac 上所有项目中完成的功能",
+  "Each review uses the reviewer's plan.": "每次评审使用评审者的套餐。",
+  "On for all projects on this Mac. Each review uses the reviewer's plan.":
+    "已为这台 Mac 上的所有项目开启。每次评审使用评审者的套餐。",
+  "Remove the sample project": "移除示例项目",
+  "Remove {name} from SpecWithCode? Its folder and files stay on disk.":
+    "要从 SpecWithCode 中移除 {name} 吗？它的文件夹和文件会保留在磁盘上。",
+  "Build a first feature": "构建第一个功能",
+  "Your agents plan and build one small feature and another model reviews it, on your own plans.":
+    "你的智能体规划并实现一个小功能，再由另一个模型评审，全部使用你自己的套餐。",
+  "Try a first feature": "试做第一个功能",
+  "Sign in an agent first": "请先登录一个智能体",
+  "Continue your first feature": "继续你的第一个功能",
+  "Your sample project is where you left it.": "示例项目停在你离开的地方。",
+  "Open it": "打开",
+  "Dismiss Build a first feature": "关闭“构建第一个功能”",
+  "First feature guide": "第一个功能指南",
+  "Automatic review is still on for the sample": "示例项目的自动评审仍处于开启状态",
+  done: "已完成",
+  skipped: "已跳过",
+  Reviews: "评审",
+  "Removed {name}": "已移除 {name}",
+  "Its folder and files stay on disk.": "它的文件夹和文件保留在磁盘上。",
+  "The guide could not be updated. Try again.": "无法更新指南。请重试。",
+  "The setting was not saved. Try again.": "设置未保存。请重试。",
+  "The sample project was not removed. Try again.": "示例项目未被移除。请重试。",
+  "Could not make the sample project": "无法创建示例项目",
+  "The sample project has no first commit": "示例项目没有首次提交",
+  "The sample project is ready": "示例项目已就绪",
+  "It appears in the sidebar once this window catches up.": "窗口更新后，它会出现在侧边栏中。",
+  "This connection cannot change the settings of this Mac.": "此连接无法更改这台 Mac 的设置。",
   "How much longer work takes with {setting}": "开启“{setting}”后工作会多花多少时间",
   "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
     "可能让工作耗时大幅增加：实测中，经过审查的工作耗时中位数是审查前同样工作的 2.6 倍（一半的运行在 1.6 到 3.6 倍之间），因为每轮审查及其修复都会增加时间。",
