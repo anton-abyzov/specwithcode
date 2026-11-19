@@ -15,7 +15,8 @@ import * as FleetTargets from "../fleet/FleetTargets.ts";
 import { makeFleetLink } from "../fleet/fleetTransport.ts";
 import * as FleetWorkerGrants from "../fleet/FleetWorkerGrants.ts";
 import { nodePath as NodePath } from "../nodePath.ts";
-import { HANDOFF_PEER_PREFIX } from "./handoffWire.ts";
+import * as PreviousRelease from "./handoffReviewLock.previousRelease.test.fixture.ts";
+import { HANDOFF_PEER_PREFIX, type ReplicateMeta } from "./handoffWire.ts";
 import { HandoffPeers, layer as handoffPeersLayer } from "./handoffPeers.ts";
 
 const machine = { ...target, connectUrl: CONNECT_ORIGIN };
@@ -34,7 +35,12 @@ interface Sent {
 /** The worker on both addresses, the tailnet one down; peer calls need a valid proof. */
 function worker(
   grant: string,
-  options: { readonly offline: Set<string>; readonly refuse?: boolean | undefined },
+  options: {
+    readonly offline: Set<string>;
+    readonly refuse?: boolean | undefined;
+    /** What the machine answers its identity check with; a bare older one by default. */
+    readonly descriptor?: unknown;
+  },
 ) {
   const sent: Sent[] = [];
   const fetcher = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
@@ -47,13 +53,15 @@ function worker(
     });
     if (options.offline.has(url.origin)) throw new TypeError("fetch failed");
     if (url.pathname === "/.well-known/studio/environment")
-      return Response.json({
-        environmentId: "env-m1",
-        label: "M1",
-        platform: { os: "darwin", arch: "arm64" },
-        serverVersion: "0.2.11",
-        capabilities: { repositoryIdentity: true },
-      });
+      return Response.json(
+        options.descriptor ?? {
+          environmentId: "env-m1",
+          label: "M1",
+          platform: { os: "darwin", arch: "arm64" },
+          serverVersion: "0.2.11",
+          capabilities: { repositoryIdentity: true },
+        },
+      );
     const proven =
       options.refuse !== true &&
       headers.get("authorization") === `DPoP ${grant}` &&
@@ -69,6 +77,7 @@ function worker(
     // This worker is from before Sync extras: it has no such path.
     if (url.pathname.includes("/extras-"))
       return Response.json({ error: "not_found", code: "not_found" }, { status: 404 });
+    if (url.pathname.endsWith("/replicate")) return Response.json({ sequence: 1 });
     return Response.json({ machineLabel: "M1", continued: [] });
   }) as typeof fetch;
   return { fetcher, sent };
@@ -79,6 +88,7 @@ const withPeers = <A, E>(
     readonly grant: (thumbprint: string) => string;
     readonly offline: Set<string>;
     readonly refuse?: boolean;
+    readonly descriptor?: unknown;
   },
   body: (
     peers: HandoffPeers["Service"],
@@ -89,7 +99,11 @@ const withPeers = <A, E>(
     const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-peers-connect-"));
     const key = yield* Effect.promise(() => loadOrCreateFleetProofKey(baseDir));
     const grant = input.grant(key.thumbprint);
-    const remote = worker(grant, { offline: input.offline, refuse: input.refuse });
+    const remote = worker(grant, {
+      offline: input.offline,
+      refuse: input.refuse,
+      descriptor: input.descriptor,
+    });
     const rejected: string[] = [];
     const layer = handoffPeersLayer.pipe(
       Layer.provide(
@@ -243,6 +257,103 @@ describe("handoff peers over SpecWithCode Connect", () => {
           const result = yield* Effect.result(peers.heartbeat(machine.environmentId, heartbeat));
           expect(Result.isFailure(result) && result.failure.code).toBe("needs_grant");
           expect(rejected).toHaveLength(1);
+        }),
+    ),
+  );
+});
+
+/** A checkpoint message for one thread, with or without a reviewer lock. */
+const checkpointMessage = (reviewLock: ReplicateMeta["reviewLock"]): ReplicateMeta =>
+  ({
+    sourceEnvironmentId: EnvironmentId.make("env-m4"),
+    sourceLabel: "M4",
+    sourceProjectId: ProjectId.make("project-m4"),
+    sourceThreadId: "thread-1",
+    repositoryPath: "",
+    title: "Review the fix",
+    modelSelection: { instanceId: "codex", model: "gpt-5.5" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    checkpoint: {
+      sequence: 1,
+      commit: "a".repeat(40),
+      baseCommit: "b".repeat(40),
+      branch: "feat/x",
+      ref: "refs/specwithcode/handoff/thread-1",
+      createdAt: "2026-10-20T14:00:00.000Z",
+      reason: "turn-end",
+      skipped: [],
+      excludedSecretCount: 0,
+      transcriptMessageCount: 0,
+      note: null,
+      pushedToOrigin: false,
+      epoch: 1,
+      latestRunId: null,
+      turnKey: "thread-1/run-1",
+      runEnding: "usage-limit",
+      sideEffects: [],
+      sourceRoot: {
+        environmentId: EnvironmentId.make("env-m4"),
+        projectId: ProjectId.make("project-m4"),
+        threadId: "thread-1",
+        workspaceRoot: "/repo",
+        branch: "feat/x",
+      },
+    },
+    lease: null,
+    transcript: [],
+    execution: null,
+    reviewLock,
+  }) as unknown as ReplicateMeta;
+
+const openaiLock = {
+  marker: "routing" as const,
+  families: ["openai" as const],
+  policy: {},
+};
+
+describe("a reviewer lock and the machine it is sent to (1390 AC-40)", () => {
+  const replicatePosts = (sent: ReadonlyArray<Sent>) =>
+    sent.filter((call) => call.url.endsWith(`${HANDOFF_PEER_PREFIX}/replicate`));
+
+  it.effect(
+    `a machine on the previous release (${PreviousRelease.PREVIOUS_RELEASE}) is never sent a review: nothing is posted`,
+    () =>
+      withPeers(
+        {
+          grant: (jkt) => studioToken({ sid: "grant", jkt }),
+          offline: new Set([ORIGIN]),
+          descriptor: PreviousRelease.descriptor("env-m1", "M1"),
+        },
+        (peers, { sent }) =>
+          Effect.gen(function* () {
+            const refused = yield* Effect.flip(
+              peers.replicate(machine.environmentId, checkpointMessage(openaiLock), null),
+            );
+            expect(refused).toMatchObject({ code: "invalid", uncertain: false, local: true });
+            expect(refused.message).toBe("Review stays here: update SpecWithCode on M1.");
+            expect(replicatePosts(sent)).toHaveLength(0);
+            // A thread that is no review still goes to that machine.
+            yield* peers.replicate(machine.environmentId, checkpointMessage(null), null);
+            expect(replicatePosts(sent)).toHaveLength(1);
+          }),
+      ),
+  );
+
+  it.effect("a machine that says it keeps the lock is sent the review", () =>
+    withPeers(
+      {
+        grant: (jkt) => studioToken({ sid: "grant", jkt }),
+        offline: new Set([ORIGIN]),
+        descriptor: {
+          ...PreviousRelease.descriptor("env-m1", "M1"),
+          capabilities: { ...PreviousRelease.descriptorCapabilities, handoffReviewLock: true },
+        },
+      },
+      (peers, { sent }) =>
+        Effect.gen(function* () {
+          yield* peers.replicate(machine.environmentId, checkpointMessage(openaiLock), null);
+          expect(replicatePosts(sent)).toHaveLength(1);
         }),
     ),
   );
