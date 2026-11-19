@@ -139,8 +139,9 @@ export const make = Effect.gen(function* () {
       writeFileStringAtomically({ filePath, contents: `${JSON.stringify(state, null, 2)}\n` }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
+        Effect.as(true),
         Effect.catchCause((cause) =>
-          Effect.logWarning("could not save team usage state", { cause }),
+          Effect.logWarning("could not save team usage state", { cause }).pipe(Effect.as(false)),
         ),
       ),
     buildSummary: (teamConfig) =>

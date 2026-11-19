@@ -62,7 +62,8 @@ export const initialTeamUsageState: TeamUsageState = {
 
 export interface TeamUsageDeps {
   readonly loadState: Effect.Effect<TeamUsageState>;
-  readonly saveState: (state: TeamUsageState) => Effect.Effect<void>;
+  /** Writes the state file; false when it could not be written. */
+  readonly saveState: (state: TeamUsageState) => Effect.Effect<boolean>;
   readonly buildSummary: (config: TeamUsageConfig) => Effect.Effect<TeamUsageSummary>;
   readonly readHostedToken: Effect.Effect<string | undefined>;
   /** The bearer saved for this self-hosted endpoint address, and only for it. */
@@ -122,11 +123,18 @@ export const makeTeamUsageReporter = (deps: TeamUsageDeps) => {
     if (state === undefined) state = yield* deps.loadState;
     return state;
   });
+  // Memory always takes the change; a state the file does not hold yet is
+  // written again on the next step, so an opt-out survives a restart.
+  let unsaved = false;
   const commit = (next: TeamUsageState) =>
     Effect.gen(function* () {
       state = next;
-      yield* deps.saveState(next);
+      const saved = yield* deps.saveState(next);
+      unsaved = !saved;
+      return saved;
     });
+  const SAVE_FAILED =
+    "This machine could not save the change. It is retried; nothing is sent until it is saved.";
 
   const credentials = (endpoint: TeamUsageEndpoint) =>
     Effect.gen(function* () {
@@ -227,11 +235,17 @@ export const makeTeamUsageReporter = (deps: TeamUsageDeps) => {
         yield* commit({ ...now, lastError: request.reason });
         return;
       }
+      // Recorded before it is sent: a summary the team kept although its answer
+      // never arrived is still removed on opt-out or rename.
+      const sent = { endpoint: config.endpoint, machineLabel: summary.machineLabel };
+      if (!(yield* commit({ ...now, reported: addRemovals(now.reported ?? [], [sent]) }))) {
+        yield* commit({ ...(yield* current), lastError: SAVE_FAILED });
+        return;
+      }
       const status = yield* deps.send(request.request);
       const latest = yield* current;
       if (status >= 200 && status < 300) {
         const { lastError: _dropped, ...rest } = latest;
-        const sent = { endpoint: config.endpoint, machineLabel: summary.machineLabel };
         const reported = latest.reported ?? [];
         // The machine was renamed since: its history under the old name goes.
         const renamed = reported.filter(
@@ -264,6 +278,7 @@ export const makeTeamUsageReporter = (deps: TeamUsageDeps) => {
   /** One timer step: finish removals, then send if due. */
   const tick = serial(
     Effect.gen(function* () {
+      if (unsaved && !(yield* commit(yield* current))) return;
       yield* runRemovals;
       yield* sendIfDue(false);
     }),
@@ -326,13 +341,16 @@ export const makeTeamUsageReporter = (deps: TeamUsageDeps) => {
         }
         const restarted = moved || !wasSending;
         const { lastSentAt: _a, lastSentBody: _b, lastError: _c, ...rest } = before;
-        yield* commit({
+        const saved = yield* commit({
           ...(restarted ? rest : before),
           config,
           removals,
           reported,
         });
         yield* runRemovals;
+        // Not saved: this machine already stopped, but says so instead of
+        // reporting success, and sends nothing until the file holds the change.
+        if (!saved) return { ok: false as const, reason: SAVE_FAILED };
         if (config.enabled) yield* sendIfDue(true);
         return { ok: true as const };
       }),

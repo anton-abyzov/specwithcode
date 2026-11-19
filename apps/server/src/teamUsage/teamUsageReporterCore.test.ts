@@ -32,11 +32,14 @@ function harness(options: { statuses?: number[]; token?: string | undefined } = 
   let machineName = "M4";
   const secrets = new Map<string, string>();
   let gate: Promise<void> | undefined;
+  let diskFull = false;
   const reporter = makeTeamUsageReporter({
     loadState: Effect.sync(() => saved),
     saveState: (state) =>
       Effect.sync(() => {
+        if (diskFull) return false;
         saved = state;
+        return true;
       }),
     buildSummary: (config: TeamUsageConfig) =>
       Effect.sync((): TeamUsageSummary => ({
@@ -80,6 +83,9 @@ function harness(options: { statuses?: number[]; token?: string | undefined } = 
     secrets,
     rename: (name: string) => {
       machineName = name;
+    },
+    setDiskFull: (value: boolean) => {
+      diskFull = value;
     },
     hold: () => {
       let release = () => {};
@@ -281,6 +287,34 @@ describe("team usage review round 1 (0898)", () => {
     await run(h.reporter.tick);
     expect(h.sent.map((request) => request.method)).toEqual(["POST", "DELETE", "DELETE"]);
     expect((await run(h.reporter.status)).removalPending).toBeUndefined();
+  });
+
+  it("a summary whose answer never came is still removed after a rename and opt-out", async () => {
+    const h = harness({ statuses: [0, 200, 200] });
+    await run(h.reporter.update({ config: { enabled: true, endpoint: hosted } }));
+    h.rename("New name");
+    await run(h.reporter.update({ config: { enabled: false, endpoint: hosted } }));
+    const deleted = h.sent
+      .filter((request) => request.method === "DELETE")
+      .map((request) => new URL(request.url).searchParams.get("machineLabel"));
+    expect(deleted.toSorted()).toEqual(["M4", "New name"]);
+  });
+
+  it("an opt-out the machine could not save is not reported as done, and is saved later", async () => {
+    const h = harness();
+    await run(h.reporter.update({ config: { enabled: true, endpoint: hosted } }));
+    h.setDiskFull(true);
+    const result = await run(h.reporter.update({ config: { enabled: false, endpoint: hosted } }));
+    expect(result.ok).toBe(false);
+    expect(h.state.config.enabled).toBe(true);
+    // Stopped in memory already: nothing more is sent.
+    h.advance(2 * 60 * 60_000);
+    h.use(70);
+    await run(h.reporter.tick);
+    expect(h.sent.filter((request) => request.method === "POST")).toHaveLength(1);
+    h.setDiskFull(false);
+    await run(h.reporter.tick);
+    expect(h.state.config.enabled).toBe(false);
   });
 
   it("a renamed machine's history under the old name is removed, even after opt-out", async () => {
