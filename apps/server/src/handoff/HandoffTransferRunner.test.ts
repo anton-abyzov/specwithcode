@@ -34,7 +34,7 @@ import { previousMarkContinued } from "./previousRelease383.test.fixture.ts";
 
 const temporary: Array<string> = [];
 afterEach(() => {
-  for (const path of temporary.splice(0)) NodeFS.rmSync(path, { recursive: true, force: true });
+  for (const path of temporary.splice(0)) NodeFS.rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 class LaunchFailed extends Data.TaggedError("LaunchFailed")<{ readonly message: string }> {}
