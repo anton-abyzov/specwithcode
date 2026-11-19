@@ -562,6 +562,58 @@ describe("a machine that stopped taking batches is not asked and not sent to (EC
       }),
   );
 
+  it.effect(
+    "accepted and not launched yet, and the machine names no handoff capability at all: nothing is asked, and the record keeps its revision",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* makeRig(temporary);
+        const [a, b] = two(rig);
+        rig.addThread(a, t1);
+        a.runEnding = "usage-limit";
+        const launching = yield* Deferred.make<void>();
+        b.onLaunch = () => signal(launching).pipe(Effect.andThen(Effect.never));
+        const window = yield* a.moves.handOffBatch(ready(b)).pipe(Effect.forkChild);
+        yield* Deferred.await(launching);
+        const sequence = recordOf(a)?.sequence;
+        expect(sequence).not.toBeNull();
+
+        // Both servers stop. The destination first answers as a build that keeps no transfer records.
+        b.onLaunch = null;
+        downgrade(b);
+        b.capabilities = [];
+        yield* rig.restart(b);
+        yield* rig.restart(a);
+        yield* Fiber.interrupt(window);
+        yield* a.moves.tick;
+        yield* a.moves.tick;
+
+        expect(recordOf(a)).toMatchObject({ state: "unknown", sequence, candidates: [] });
+        expect(recordOf(a)?.detail).toContain("Needs update");
+        expect(statusCalls(rig)).toHaveLength(0);
+        expect(b.launches).toHaveLength(0);
+
+        // Then it comes back on the build that keeps records and takes no batch.
+        b.capabilities = BEFORE_BATCHES;
+        yield* a.moves.tick;
+        yield* a.moves.tick;
+
+        expect(statusCalls(rig)).toHaveLength(0);
+        expect(takeovers(rig)).toHaveLength(1);
+        expect(b.launches).toHaveLength(0);
+        expect(recordOf(a)).toMatchObject({ state: "unknown", sequence });
+        expect(leaseOf(a, t1)?.state).toBe("handing-off");
+
+        // Updated to a build that takes batches: the same operation arrives Ready.
+        b.capabilities = null;
+        yield* a.moves.tick;
+
+        expect(takeovers(rig)).toHaveLength(2);
+        expect(b.launches).toHaveLength(1);
+        expect(b.launches[0]?.initialMessage).toBeUndefined();
+        expect(recordOf(a)).toMatchObject({ state: "ready", disposition: "ready" });
+      }),
+  );
+
   it.effect("a send that never arrived stays held, and goes again once it takes batches", () =>
     Effect.gen(function* () {
       const rig = yield* makeRig(temporary);
