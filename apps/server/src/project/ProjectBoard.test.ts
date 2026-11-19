@@ -7,9 +7,11 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   boardColumn,
+  boardCopiesFor,
   boardPlacement,
   boardStatus,
   ledgerPullRequests,
+  ledgerLastAt,
   readBoardCard,
   readProjectBoard,
 } from "./ProjectBoard.ts";
@@ -20,6 +22,9 @@ const NOW = Date.parse("2026-11-14T12:00:00Z");
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true })));
 });
+
+const cardAt = async (root: string, id: string, now: number) =>
+  (await readBoardCard(await boardCopiesFor(root), id, now))?.card ?? null;
 
 async function project(): Promise<string> {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "project-board-"));
@@ -254,12 +259,15 @@ describe("readProjectBoard", () => {
       finished: 0,
     });
 
+    // The card's time is the last ledger event's, not the file's: a checkout
+    // stamps every file as new.
+    const later = new Date(NOW + 60_000);
     await NodeFSP.appendFile(
       NodePath.join(folder, "ledger.jsonl"),
-      `${event("T-01", "done", { evidence: "abc1234" })}\n`,
+      `${event("T-01", "done", { evidence: "abc1234", at: later.toISOString() })}\n`,
     );
-    const later = new Date(NOW + 60_000);
-    await NodeFSP.utimes(NodePath.join(folder, "ledger.jsonl"), later, later);
+    const stamped = new Date(NOW + 3_600_000);
+    await NodeFSP.utimes(NodePath.join(folder, "ledger.jsonl"), stamped, stamped);
     expect((await readProjectBoard(root, { now: NOW })).cards[0]).toMatchObject({
       tasks: { total: 2, done: 1, finished: 1 },
       updatedAt: later.toISOString(),
@@ -273,6 +281,7 @@ describe("readProjectBoard", () => {
       cards: [],
       counts: { planned: 0, active: 0, review: 0, done: 0 },
       detail: true,
+      notDone: 0,
     });
   });
 
@@ -520,13 +529,13 @@ describe("readProjectBoard", () => {
     await increment(root, "0002-abandoned", { status: "abandoned", tasks: 1 });
 
     const board = await readProjectBoard(root, { now: NOW });
-    expect(await readBoardCard(root, "0001-live", NOW)).toEqual(
+    expect(await cardAt(root, "0001-live", NOW)).toEqual(
       board.cards.find((entry) => entry.incrementId === "0001-live"),
     );
-    expect(await readBoardCard(root, "0009-missing", NOW)).toBeNull();
-    expect(await readBoardCard(root, "../0001-live", NOW)).toBeNull();
+    expect(await cardAt(root, "0009-missing", NOW)).toBeNull();
+    expect(await cardAt(root, "../0001-live", NOW)).toBeNull();
     expect(board.cards.some((entry) => entry.incrementId === "0002-abandoned")).toBe(false);
-    expect(await readBoardCard(root, "0002-abandoned", NOW)).toMatchObject({
+    expect(await cardAt(root, "0002-abandoned", NOW)).toMatchObject({
       incrementId: "0002-abandoned",
       status: "abandoned",
       column: "done",
@@ -549,9 +558,9 @@ describe("readProjectBoard", () => {
     const board = await readProjectBoard(root, { now: NOW });
     expect(board.cards.map((entry) => entry.incrementId)).toEqual(["0001-live"]);
     // The increments folder itself, a folder that is not an increment, and a link out of the root.
-    expect(await readBoardCard(root, "", NOW)).toBeNull();
-    expect(await readBoardCard(root, "notes", NOW)).toBeNull();
-    expect(await readBoardCard(root, "0002-elsewhere", NOW)).toBeNull();
+    expect(await cardAt(root, "", NOW)).toBeNull();
+    expect(await cardAt(root, "notes", NOW)).toBeNull();
+    expect(await cardAt(root, "0002-elsewhere", NOW)).toBeNull();
   });
 });
 
@@ -608,7 +617,7 @@ describe("recorded reviews on a card", () => {
     ]);
     // No reviews: the field is left out, as older servers do.
     expect(card("0002-unreviewed")).not.toHaveProperty("reviews");
-    expect(await readBoardCard(root, "0001-feature", NOW)).toEqual(card("0001-feature"));
+    expect(await cardAt(root, "0001-feature", NOW)).toEqual(card("0001-feature"));
   });
 
   it("shows a review recorded after the board was first read", async () => {

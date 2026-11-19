@@ -1,9 +1,16 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off - Plain promises over the project's SpecWeave folder, like ThreadIncrementProgress.
 /**
  * The project's increments as a board (`projects.board`): one card per
- * increment folder in the planning root, in the column its files put it in.
+ * increment, in the column its files put it in.
  *
- * Files only: no CLI, no Git, no network. Folder names come from one readdir.
+ * Each increment is read from its newest copy: the project folder (the
+ * planning root), a linked worktree of its repository, or the remote's
+ * default branch as last fetched (IncrementCopies.ts holds the rule and the
+ * cost). A card built from another copy than the project folder's says so in
+ * `source`.
+ *
+ * No CLI and no network; Git runs only when the remote branch's commit
+ * changes. Folder names come from one readdir per checkout.
  * Each `metadata.json` is parsed once until its mtime or size changes. The
  * spec and ledger are read only for increments that are still open and for
  * the Done cards actually returned, and folded once until one of them changes
@@ -34,26 +41,31 @@ import {
 } from "../mods/SpecweaveProgress.ts";
 import { nodePath as NodePath } from "../nodePath.ts";
 import { ledgerAuthorFamily, readIncrementReviews } from "../review/incrementReview.ts";
-import { incrementIds, incrementRootFor, readBounded } from "./ThreadIncrementProgress.ts";
+import {
+  boardStatus,
+  chooseCopy,
+  copyIds,
+  copyRoot,
+  copyWithSpec,
+  inBatches,
+  openBoardCopies,
+  readCopyMeta,
+  type BoardCopies,
+  type BoardCopyOptions,
+  type CopyMeta,
+  type IncrementCopy,
+} from "./IncrementCopies.ts";
+import { incrementRootFor, readBounded } from "./ThreadIncrementProgress.ts";
 import { INCREMENTS_DIR } from "./ThreadReports.ts";
 
 const SPEC_BYTES = 262_144;
 const LEDGER_BYTES = 1_048_576;
-const SMALL_BYTES = 524_288;
-const PAUSED_REASON_CHARS = 300;
-const READ_BATCH = 64;
 const CACHE_ENTRIES = 20_000;
 const CLOSED_TASK_STATES = new Set(["done", "skipped"]);
 /** The folder names incrementIds lists, so a single read answers for the same set. */
 const INCREMENT_FOLDER = /^\d{4,}[A-Z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
 const PULL_REQUEST = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/gu;
 
-interface Meta {
-  readonly title: string | null;
-  readonly status: string;
-  readonly updatedAt: string | null;
-  readonly pausedReason: string | null;
-}
 interface Detail {
   readonly total: number;
   /** Done or skipped. */
@@ -67,7 +79,10 @@ interface Detail {
   readonly blockers: ReadonlyArray<ProjectBoardBlocker>;
   readonly pullRequests: ReadonlyArray<string>;
   readonly hasSpec: boolean;
-  /** The ledger's last write, which is newer than metadata.json while work runs. */
+  /**
+   * The ledger's last event, which is newer than metadata.json while work
+   * runs. Not the file's time: a checkout stamps every file as new.
+   */
   readonly ledgerAt: string | null;
   /** The family that did most of the work by the ledger, for reviews that name no author. */
   readonly authorFamily: string | null;
@@ -80,7 +95,6 @@ interface Detail {
 }
 
 /** Parsed files by path, valid while the signature (mtime and size of what they read) holds. */
-const metaCache = new Map<string, { signature: string; value: Meta }>();
 const detailCache = new Map<string, { signature: string; value: Detail }>();
 
 function remember<V>(
@@ -102,35 +116,26 @@ async function signatureOf(file: string): Promise<{ signature: string; mtimeMs: 
     : { signature: `${stat.mtimeMs}:${stat.size}`, mtimeMs: stat.mtimeMs };
 }
 
-const isoOrNull = (value: unknown): string | null => {
-  if (typeof value !== "string" || !value.trim()) return null;
-  const time = Date.parse(value);
-  return Number.isNaN(time) ? null : new Date(time).toISOString();
-};
-
-async function readMeta(root: string, folder: string): Promise<Meta> {
-  const file = NodePath.join(folder, "metadata.json");
-  const { signature } = await signatureOf(file);
-  const cached = metaCache.get(file);
-  if (cached?.signature === signature) return cached.value;
-  const metadata =
-    signature === "-" ? {} : parseIncrementMetadata(await readBounded(root, file, SMALL_BYTES));
-  return remember(metaCache, file, signature, {
-    title:
-      typeof metadata.title === "string" && metadata.title.trim() ? metadata.title.trim() : null,
-    status:
-      typeof metadata.status === "string" && metadata.status.trim()
-        ? metadata.status.trim().toLowerCase()
-        : "unknown",
-    updatedAt:
-      isoOrNull(metadata.lastActivity) ??
-      isoOrNull(metadata.updated) ??
-      isoOrNull(metadata.created),
-    pausedReason:
-      typeof metadata.pausedReason === "string" && metadata.pausedReason.trim()
-        ? metadata.pausedReason.trim().slice(0, PAUSED_REASON_CHARS)
-        : null,
-  });
+/** The time of the last ledger line that carries one, as an ISO time. */
+export function ledgerLastAt(ledger: string): string | null {
+  let end = ledger.length;
+  for (let scanned = 0; end > 0 && scanned < 20; scanned += 1) {
+    const start = ledger.lastIndexOf("\n", end - 1);
+    const line = ledger.slice(start + 1, end).trim();
+    end = start;
+    if (line === "") {
+      scanned -= 1;
+      continue;
+    }
+    try {
+      const at = (JSON.parse(line) as { at?: unknown } | null)?.at;
+      const time = typeof at === "string" ? Date.parse(at) : Number.NaN;
+      if (!Number.isNaN(time)) return new Date(time).toISOString();
+    } catch {
+      // A torn or foreign line: the one before it may still tell.
+    }
+  }
+  return null;
 }
 
 /** GitHub pull requests a ledger names, the last mentioned first, each once. */
@@ -208,54 +213,13 @@ async function readDetail(root: string, folder: string, now: number): Promise<De
     }),
     pullRequests: ledgerText === null ? [] : ledgerPullRequests(ledgerText),
     hasSpec: specText !== null,
-    ledgerAt: ledger.mtimeMs === null ? null : new Date(ledger.mtimeMs).toISOString(),
+    ledgerAt: ledgerText === null ? null : ledgerLastAt(ledgerText),
     authorFamily: ledgerAuthorFamily(ledgerText),
     leaseEndsAt,
   });
 }
 
-async function inBatches<A, B>(items: ReadonlyArray<A>, read: (item: A) => Promise<B>) {
-  const results: B[] = [];
-  for (let start = 0; start < items.length; start += READ_BATCH) {
-    results.push(...(await Promise.all(items.slice(start, start + READ_BATCH).map(read))));
-  }
-  return results;
-}
-
-/**
- * What a `metadata.json` status means for the board, across the spellings
- * older increments and other tools wrote (`in_progress`, `done`, `cancelled`).
- * `dropped` increments are left off the board.
- */
-export type BoardStatus = "planned" | "active" | "paused" | "review" | "completed" | "dropped";
-const STATUS_MEANINGS: Readonly<Record<string, BoardStatus>> = {
-  active: "active",
-  "in-progress": "active",
-  started: "active",
-  paused: "paused",
-  "ready-for-review": "review",
-  "in-review": "review",
-  review: "review",
-  completed: "completed",
-  complete: "completed",
-  done: "completed",
-  closed: "completed",
-  abandoned: "dropped",
-  cancelled: "dropped",
-  canceled: "dropped",
-  superseded: "dropped",
-  archived: "dropped",
-};
-export function boardStatus(status: string): BoardStatus {
-  return (
-    STATUS_MEANINGS[
-      status
-        .trim()
-        .toLowerCase()
-        .replaceAll(/[_\s]+/gu, "-")
-    ] ?? "planned"
-  );
-}
+export { boardStatus, type BoardStatus } from "./IncrementCopies.ts";
 
 /** What the ledger shows for an increment: tasks done (not skipped), blocked, and claimed inside the lease. */
 export interface BoardEvidence {
@@ -300,20 +264,75 @@ export function boardColumn(
   return boardPlacement(status, tasks, evidence).column;
 }
 
+/** A copy whose files cannot be read (a remote copy with no cache folder): its status alone. */
+const NO_DETAIL: Detail = {
+  total: 0,
+  done: 0,
+  finished: 0,
+  active: 0,
+  blockedTasks: 0,
+  blockers: [],
+  pullRequests: [],
+  hasSpec: false,
+  ledgerAt: null,
+  authorFamily: null,
+  leaseEndsAt: null,
+};
+
+const isClosed = (meta: CopyMeta) => {
+  const meaning = boardStatus(meta.status);
+  return meaning === "completed" || meaning === "dropped";
+};
+
+/** A card and the root its copy was read from (null when its files could not be read). */
+export interface BuiltCard {
+  readonly card: ProjectBoardCard;
+  readonly root: string | null;
+}
+
 /**
- * One increment's card. The board list and the increment view both build
- * cards here, so the same increment never shows two different cards.
+ * One increment's card from its chosen copy. The board list and the increment
+ * view both build cards here, so the same increment never shows two different
+ * cards.
  */
 async function buildCard(
-  root: string,
+  copies: BoardCopies,
   id: string,
-  meta: Meta,
+  chosen: IncrementCopy,
   now: number,
-): Promise<ProjectBoardCard> {
-  const folder = NodePath.join(root, INCREMENTS_DIR, id);
-  const detail = await readDetail(root, folder, now);
+): Promise<BuiltCard> {
+  const detailOf = (root: string | null) =>
+    root === null
+      ? Promise.resolve(NO_DETAIL)
+      : readDetail(root, NodePath.join(root, INCREMENTS_DIR, id), now);
+  let copy = chosen;
+  let root = await copyRoot(copies, id, copy);
+  let detail = await detailOf(root);
+  if (!detail.hasSpec) {
+    // A stub must not hide a spec. Only a copy that leaves the increment on
+    // the same side of done, so the column counts made before this still hold.
+    const other = await copyWithSpec(copies, id, copy);
+    const otherRoot =
+      other === null || isClosed(other.meta) !== isClosed(copy.meta)
+        ? null
+        : await copyRoot(copies, id, other);
+    if (other !== null && otherRoot !== null) {
+      copy = other;
+      root = otherRoot;
+      detail = await detailOf(root);
+    }
+  }
+  const meta = copy.meta;
+  const folder = root === null ? null : NodePath.join(root, INCREMENTS_DIR, id);
   // After the detail: its ledger author stands in for review records that name none.
-  const reviews = await readIncrementReviews(folder, detail.authorFamily);
+  let reviews = folder === null ? [] : await readIncrementReviews(folder, detail.authorFamily);
+  if (reviews.length === 0 && copy.kind !== "project" && copies.projectIds.has(id)) {
+    // Review records are often written to the project folder while the spec lives elsewhere.
+    reviews = await readIncrementReviews(
+      NodePath.join(copies.root, INCREMENTS_DIR, id),
+      detail.authorFamily,
+    );
+  }
   const meaning = boardStatus(meta.status);
   const closed = meaning === "completed" || meaning === "dropped";
   const paused = !closed && meaning === "paused";
@@ -327,7 +346,7 @@ async function buildCard(
     !closed && detail.ledgerAt !== null && detail.ledgerAt > (meta.updatedAt ?? "")
       ? detail.ledgerAt
       : meta.updatedAt;
-  return {
+  const card: ProjectBoardCard = {
     incrementId: id,
     title: meta.title,
     status: meta.status,
@@ -346,29 +365,46 @@ async function buildCard(
     columnReason: reason,
     updatedAt,
     pullRequests: [...detail.pullRequests],
-    specPath: detail.hasSpec ? NodePath.join(folder, "spec.md") : null,
+    specPath: detail.hasSpec && folder !== null ? NodePath.join(folder, "spec.md") : null,
     ...(reviews.length === 0 ? {} : { reviews: [...reviews] }),
+    ...(copy.kind === "project" || copy.name === null
+      ? {}
+      : {
+          source: {
+            kind: copy.kind,
+            name: copy.name.slice(0, 200),
+            ...(copy.kind === "remote" ? { fetchedAt: copies.fetchedAt } : {}),
+          },
+        }),
   };
+  return { card, root };
+}
+
+/** The planning root's copies: the project folder, its worktrees and the remote branch. */
+export async function boardCopiesFor(
+  workspaceRoot: string,
+  options: BoardCopyOptions = {},
+): Promise<BoardCopies> {
+  return openBoardCopies(await incrementRootFor(workspaceRoot, null), options);
 }
 
 /**
  * One increment's card, exactly as the board shows it, for the increment
- * view. `root` is the resolved planning root. Unlike the board it also
- * answers for a dropped increment, in the Done column. Null when the folder
- * is not there.
+ * view, with the root its copy was read from. Unlike the board it also
+ * answers for a dropped increment, in the Done column. Null when no copy
+ * holds the increment.
  */
 export async function readBoardCard(
-  root: string,
+  copies: BoardCopies,
   incrementId: string,
   now: number,
-): Promise<ProjectBoardCard | null> {
+): Promise<BuiltCard | null> {
   // Only what the board lists: an increment folder name (never "", ".." or a
-  // path) naming a real folder, not a link that may lead out of the root.
+  // path). Each checkout lists real folders only, not a link that may lead
+  // out of its root.
   if (!INCREMENT_FOLDER.test(incrementId)) return null;
-  const folder = NodePath.join(root, INCREMENTS_DIR, incrementId);
-  const stat = await NodeFSP.lstat(folder).catch(() => null);
-  if (stat === null || !stat.isDirectory()) return null;
-  return buildCard(root, incrementId, await readMeta(root, folder), now);
+  const copy = await chooseCopy(copies, incrementId);
+  return copy === null ? null : buildCard(copies, incrementId, copy, now);
 }
 
 const newestFirst = (left: ProjectBoardCard, right: ProjectBoardCard) =>
@@ -377,22 +413,34 @@ const newestFirst = (left: ProjectBoardCard, right: ProjectBoardCard) =>
 
 export async function readProjectBoard(
   workspaceRoot: string,
-  input: { readonly query?: string; readonly doneLimit?: number; readonly now: number },
+  input: {
+    readonly query?: string;
+    readonly doneLimit?: number;
+    readonly now: number;
+  } & BoardCopyOptions,
 ): Promise<Omit<ProjectBoardResult, "projectId">> {
-  const root = await incrementRootFor(workspaceRoot, null);
-  const folderOf = (id: string) => NodePath.join(root, INCREMENTS_DIR, id);
-  const ids = await incrementIds(root);
-  const metas = await inBatches(ids, (id) => readMeta(root, folderOf(id)));
+  const copies = await boardCopiesFor(workspaceRoot, input);
+  const root = copies.root;
+  const projectIds = [...copies.projectIds];
+  const projectMetas = new Map<string, CopyMeta>();
+  (
+    await inBatches(projectIds, (id) => readCopyMeta(root, NodePath.join(root, INCREMENTS_DIR, id)))
+  ).forEach((meta, index) => projectMetas.set(projectIds[index]!, meta));
+  const ids = copyIds(copies);
+  const chosen = await inBatches(ids, (id) => chooseCopy(copies, id, projectMetas.get(id)));
   const words = (input.query ?? "").toLowerCase().split(/\s+/u).filter(Boolean);
-  const open: Array<{ id: string; meta: Meta }> = [];
-  const closed: Array<{ id: string; meta: Meta }> = [];
+  const open: Array<{ id: string; copy: IncrementCopy }> = [];
+  const closed: Array<{ id: string; copy: IncrementCopy }> = [];
+  let notDone = 0;
   ids.forEach((id, index) => {
-    const meta = metas[index]!;
-    const meaning = boardStatus(meta.status);
+    const copy = chosen[index];
+    if (copy === null || copy === undefined) return;
+    const meaning = boardStatus(copy.meta.status);
     if (meaning === "dropped") return;
-    const haystack = `${id} ${meta.title ?? ""}`.toLowerCase();
+    if (meaning !== "completed") notDone += 1;
+    const haystack = `${id} ${copy.meta.title ?? ""}`.toLowerCase();
     if (!words.every((word) => haystack.includes(word))) return;
-    (meaning === "completed" ? closed : open).push({ id, meta });
+    (meaning === "completed" ? closed : open).push({ id, copy });
   });
   const doneLimit = Math.min(
     PROJECT_BOARD_DONE_MAX,
@@ -401,14 +449,20 @@ export async function readProjectBoard(
   const shownClosed = closed
     .toSorted(
       (left, right) =>
-        (right.meta.updatedAt ?? "").localeCompare(left.meta.updatedAt ?? "") ||
+        (right.copy.meta.updatedAt ?? "").localeCompare(left.copy.meta.updatedAt ?? "") ||
         right.id.localeCompare(left.id, undefined, { numeric: true }),
     )
     .slice(0, doneLimit);
-  const cards = await inBatches([...open, ...shownClosed], ({ id, meta }) =>
-    buildCard(root, id, meta, input.now),
-  );
+  const cards = (
+    await inBatches([...open, ...shownClosed], ({ id, copy }) => buildCard(copies, id, copy, input.now))
+  ).map((built) => built.card);
   const counts = { planned: 0, active: 0, review: 0, done: closed.length };
   for (const card of cards) if (card.column !== "done") counts[card.column] += 1;
-  return { cards: cards.toSorted(newestFirst), counts, detail: true };
+  return {
+    cards: cards.toSorted(newestFirst),
+    counts,
+    detail: true,
+    notDone,
+    ...(copies.behind === null ? {} : { behind: copies.behind }),
+  };
 }
