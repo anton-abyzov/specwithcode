@@ -430,8 +430,11 @@ export async function resolveRepositoryPath(
   if (up > 0 && up !== segments.length) throw refuse();
   if (segments.some((segment) => segment === ".git" || segment.includes("\\"))) throw refuse();
   const candidate = NodePath.resolve(projectRoot, ...segments);
-  const top = await runGit(candidate, ["rev-parse", "--show-toplevel"], { allowFailure: true });
-  if (top.code !== 0) {
+  // A folder that is not there cannot even be asked: Git fails to start in it.
+  const top = await runGit(candidate, ["rev-parse", "--show-toplevel"], {
+    allowFailure: true,
+  }).catch(() => null);
+  if (top === null || top.code !== 0) {
     throw new BundleError("invalid", "The mapped repository folder is not a Git repository here.");
   }
   const [real, expected] = await Promise.all([

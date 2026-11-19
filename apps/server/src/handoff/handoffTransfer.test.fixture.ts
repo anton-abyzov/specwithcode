@@ -158,6 +158,10 @@ export interface RigMachine {
   threadLookupFails: boolean;
   /** How many times this machine was started. */
   boots: number;
+  /** Where this machine keeps what must outlive a restart. */
+  readonly stateDir: string;
+  /** Asked at each read of this machine's projects; false reads as the project unlinked. */
+  linked: () => boolean;
   receiver: HandoffReceiver.HandoffReceiver["Service"];
   moves: Effect.Success<typeof HandoffMoves.make>;
 }
@@ -251,6 +255,8 @@ export const makeRig = (
         onDocument: null,
         threadLookupFails: false,
         boots: 0,
+        stateDir: NodeFS.mkdtempSync(NodePath.join(base, "state-")),
+        linked: () => true,
         receiver: undefined as never,
         moves: undefined as never,
       };
@@ -292,6 +298,7 @@ export const makeRig = (
               createdAt: "2026-11-19T14:00:00.000Z",
               reason: "handoff",
               skipped: [...written.skipped],
+              overLimit: written.overLimit,
               excludedSecretCount: written.excludedSecretCount,
               requiredSecretPaths: [...written.requiredSecretPaths],
               transcriptMessageCount: 1,
@@ -361,13 +368,17 @@ export const makeRig = (
             },
           }),
         } as never),
-        Layer.succeed(ServerConfig.ServerConfig, { worktreesDir } as never),
+        Layer.succeed(ServerConfig.ServerConfig, {
+          worktreesDir,
+          // Each machine keeps its own state, as two installs do.
+          stateDir: target.stateDir,
+        } as never),
         Layer.succeed(ProjectService.ProjectService, {
           getById: (id: ProjectId) =>
             Effect.succeed(
               id === target.projectId ? Option.some(projectOf(target)) : Option.none(),
             ),
-          snapshot: Effect.succeed({ projects: [projectOf(target)] }),
+          snapshot: Effect.sync(() => ({ projects: target.linked() ? [projectOf(target)] : [] })),
         } as never),
         Layer.succeed(ProviderRegistry.ProviderRegistry, {
           getProviders: Effect.succeed([

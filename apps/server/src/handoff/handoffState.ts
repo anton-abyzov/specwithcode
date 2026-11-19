@@ -40,6 +40,7 @@ import {
   HandoffLauncher,
   PeerTranscriptMessage,
   type ReplicateMeta,
+  ReplicateSet,
   TakeoverRequest,
   TakeoverResponse,
 } from "./handoffWire.ts";
@@ -136,6 +137,8 @@ export const HandoffIncomingDetail = Schema.Struct({
   carried: Schema.optional(TeamRulesCarried),
   /** The reviewer lock as the source sent it (`ReplicateMeta.reviewLock`). */
   reviewLock: Schema.optional(Schema.NullOr(HandoffReviewLock)),
+  /** The thread's worktree set at this checkpoint; absent for a thread in one repository. */
+  set: Schema.optional(ReplicateSet),
   /** The epoch this machine continued the thread at, and what it answered. */
   takeoverEpoch: Schema.NullOr(NonNegativeInt),
   takeover: Schema.NullOr(TakeoverResponse),
@@ -635,6 +638,7 @@ export function upsertIncoming(
     execution: meta.execution,
     ...(meta.carried === undefined ? {} : { carried: meta.carried }),
     ...(meta.reviewLock === undefined ? {} : { reviewLock: meta.reviewLock }),
+    ...(meta.set === undefined ? {} : { set: meta.set }),
     takeoverEpoch: null,
     takeover: null,
     // A newer checkpoint keeps the designation the latest heartbeat gave.

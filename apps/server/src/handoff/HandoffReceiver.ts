@@ -87,6 +87,7 @@ import {
 import { refComponent } from "./checkpointGit.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import * as HandoffTransferStore from "./HandoffTransferStore.ts";
+import { makeSetReceiver } from "./HandoffSetReceiver.ts";
 import {
   acceptedMessage,
   claimRefusal,
@@ -147,7 +148,6 @@ import type {
 import {
   capabilityFailure,
   HANDOFF_APP_VERSION,
-  HANDOFF_CAPABILITIES,
   HANDOFF_PROTOCOL_VERSION,
   versionFailure,
 } from "./handoffWire.ts";
@@ -357,6 +357,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const grants = yield* WorkGrants.WorkGrants;
+  const sets = makeSetReceiver(config, handoff.document, (cause) => fromBundleError(label, cause));
   const locks = yield* KeyedLock.make<string>();
   const transfers = yield* HandoffTransferStore.fromContext;
   // Read where the server provides it; without it a thread's existence is unknown.
@@ -447,15 +448,18 @@ export const make = Effect.gen(function* () {
       return { known } satisfies NegotiateResponse;
     });
 
-  const replicate = (caller: ReceiverCaller, meta: ReplicateMeta, bundle: Uint8Array | null) =>
+  const replicate = (caller: ReceiverCaller, sent: ReplicateMeta, bundle: Uint8Array | null) =>
     Effect.gen(function* () {
-      yield* sameSource(caller, meta.sourceEnvironmentId);
-      const project = yield* requireProject(caller, meta.sourceProjectId);
+      yield* sameSource(caller, sent.sourceEnvironmentId);
+      const linked = requireProject(caller, sent.sourceProjectId);
+      const { meta, landed, project } = yield* sets.take(caller, linked, sent, bundle);
+      if (meta === null) return { sequence: sent.checkpoint.sequence };
       const root = yield* repositoryRoot(project, meta.repositoryPath);
       const targetRef = incomingRef(meta.sourceEnvironmentId, meta.sourceThreadId);
       const commit = meta.checkpoint.commit;
       yield* Effect.tryPromise({
         try: async () => {
+          if (landed) return;
           if (bundle === null || bundle.byteLength === 0) {
             await pinCommit({ root, commit, targetRef });
             return;
@@ -486,7 +490,7 @@ export const make = Effect.gen(function* () {
       if (verdict.kind === "refused") return yield* refuse(409, verdict.code, verdict.message);
       const stored = findIncoming(verdict.document, meta.sourceEnvironmentId, meta.sourceThreadId);
       return { sequence: stored?.checkpoint.sequence ?? meta.checkpoint.sequence };
-    });
+    }).pipe(Effect.scoped);
 
   const providerFor = (modelSelection: ModelSelection) =>
     providers.getProviders.pipe(
@@ -554,6 +558,7 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => required),
           );
         }
+        missing = [...missing, ...(yield* sets.missingSecrets(project.workspaceRoot, detail.set))];
       }
       const provider = modelSelection === null ? null : yield* providerFor(modelSelection);
       const holder = replica?.lease;
@@ -611,6 +616,7 @@ export const make = Effect.gen(function* () {
               peerLabel: "The source machine",
               capabilities: request.capabilities,
             }));
+      const capabilities = yield* sets.offer(request, unfit === null);
       const version =
         unfit === null
           ? null
@@ -629,7 +635,7 @@ export const make = Effect.gen(function* () {
         machineLabel: label,
         protocolVersion: HANDOFF_PROTOCOL_VERSION,
         appVersion: HANDOFF_APP_VERSION,
-        capabilities: HANDOFF_CAPABILITIES,
+        capabilities,
         results,
       } satisfies PeerPreflightResponse;
     });
@@ -957,7 +963,7 @@ export const make = Effect.gen(function* () {
       ).slice(-16)}-e${request.epoch}`;
       const placed = resolveHandoffPlacement({
         repository: root,
-        name,
+        name: sets.folderName(name, request, detail.set),
         defaultDirectory: config.worktreesDir,
         settings: resolveProjectSettings(settings, project.id).settings,
       }).pipe(
@@ -979,7 +985,7 @@ export const make = Effect.gen(function* () {
         .split("/")
         .some((segment) => segment.length > 0 && segment !== "." && segment !== "..");
       const inPlace =
-        usesWorktrees || retriedInWorktree
+        detail.set !== undefined || usesWorktrees || retriedInWorktree
           ? null
           : nested
             ? ({ applied: false, reason: "nested" } as const)
@@ -992,9 +998,10 @@ export const make = Effect.gen(function* () {
                   }),
                 catch: (cause) => fromBundleError(label, cause),
               });
+      const setWorkspace = yield* sets.folder(project, name, request, detail, placement, replica);
       const workspace =
-        inPlace?.applied === true
-          ? null
+        setWorkspace !== null || inPlace?.applied === true
+          ? setWorkspace
           : yield* materialize({
               root,
               placement: yield* placement,

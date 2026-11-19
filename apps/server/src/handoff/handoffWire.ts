@@ -74,6 +74,15 @@ export function versionFailure(input: {
   };
 }
 /**
+ * A thread in a worktree set travels as one bundle per member repository
+ * (`set` and `setPart` on a replicate). A machine that does not name this
+ * would keep one repository and leave the rest behind, so it is sent none.
+ */
+export const HANDOFF_WORKTREE_SET_CAPABILITY = "handoff.worktree-set";
+export function hasWorktreeSets(capabilities: ReadonlyArray<string> | undefined): boolean {
+  return capabilities?.includes(HANDOFF_WORKTREE_SET_CAPABILITY) === true;
+}
+/**
  * What this machine's handoff does beyond the numbered protocol. `handoff.v2`
  * is the transfer record alone; the protocol version says nothing about it.
  */
@@ -81,6 +90,7 @@ export const HANDOFF_CAPABILITIES: ReadonlyArray<string> = [
   HANDOFF_V2_CAPABILITY,
   HANDOFF_PLAN_CAPABILITY,
   HANDOFF_TRACK_START_CAPABILITY,
+  HANDOFF_WORKTREE_SET_CAPABILITY,
 ];
 
 /**
@@ -142,6 +152,36 @@ export const HandoffLauncher = Schema.Struct({
 });
 export type HandoffLauncher = typeof HandoffLauncher.Type;
 
+/** A thread holds at most this many repositories on the wire. */
+export const HANDOFF_SET_MAX_MEMBERS = 16;
+
+/** One member repository of a worktree set, at the checkpoint the thread is handed over at. */
+export const ReplicateSetMember = Schema.Struct({
+  repositoryPath,
+  commit: sha,
+  baseCommit: sha,
+  branch: Schema.NullOr(text(512)),
+  /** Secret-like files this member's worktree has; the destination must hold each (paths only). */
+  requiredSecretPaths: Schema.optional(Schema.Array(text(1024)).check(Schema.isMaxLength(200))),
+});
+export type ReplicateSetMember = typeof ReplicateSetMember.Type;
+
+/** Every member of the thread's worktree set, the thread's own checkpoint first. */
+/**
+ * `repositoryPath` of every frame of a set. A build that moves one repository
+ * per thread reads only that field, and refuses this path wherever it runs
+ * (`resolveRepositoryPath`): it cannot take one member for the whole thread.
+ * The member's own path is in `setPart.repositoryPath` and `set.members`.
+ */
+export const HANDOFF_SET_FRAME_PATH = "../worktree-set";
+
+export const ReplicateSet = Schema.Struct({
+  /** The offer this machine opened for the set in its check (`PeerPreflightRequest.setOffer`). */
+  offer: text(64),
+  members: Schema.Array(ReplicateSetMember).check(Schema.isMaxLength(HANDOFF_SET_MAX_MEMBERS)),
+});
+export type ReplicateSet = typeof ReplicateSet.Type;
+
 export const ReplicateMeta = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
   sourceLabel: text(120),
@@ -171,6 +211,16 @@ export const ReplicateMeta = Schema.Struct({
    * `handoffReviewLock` capability.
    */
   reviewLock: Schema.optional(Schema.NullOr(HandoffReviewLock)),
+  /**
+   * Worktree sets (`handoff.worktree-set`), sent only to a machine that named
+   * the capability when this set was offered to it. `setPart`: one other
+   * member's bundle, kept outside every repository until the set is whole.
+   * `set`: the thread's own frame, sent last, naming every member's commit;
+   * only with it does any member reach its repository, all of them or none.
+   * A frame whose offer the destination did not take is refused unread.
+   */
+  setPart: Schema.optional(Schema.Struct({ offer: text(64), repositoryPath, commit: sha })),
+  set: Schema.optional(ReplicateSet),
 });
 export type ReplicateMeta = typeof ReplicateMeta.Type;
 export const ReplicateResponse = Schema.Struct({ sequence: NonNegativeInt });
@@ -215,6 +265,12 @@ export const PeerPreflightRequest = Schema.Struct({
   appVersion: Schema.optional(text(40)),
   /** Absent from a machine that keeps no transfer records. */
   capabilities: Schema.optional(HandoffCapabilities),
+  /**
+   * A worktree set this source is about to send for one thread. A machine that
+   * answers with `handoff.worktree-set` has agreed to take the frames that
+   * carry this id, and no others.
+   */
+  setOffer: Schema.optional(Schema.Struct({ id: text(64), sourceThreadId: ThreadId })),
   threads: Schema.Array(
     Schema.Struct({
       sourceThreadId: ThreadId,
