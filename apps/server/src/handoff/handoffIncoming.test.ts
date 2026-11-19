@@ -36,6 +36,7 @@ import { HandoffMode } from "./HandoffMode.ts";
 import * as HandoffReceiver from "./HandoffReceiver.ts";
 import {
   EMPTY_HANDOFF_DOCUMENT,
+  emptyThreadRecord,
   findIncoming,
   HANDOFF_INCOMING_MAX,
   HandoffDocument,
@@ -247,6 +248,57 @@ describe("takeover", () => {
       kind: "refuse",
       code: "fenced",
     });
+  });
+});
+
+describe("a takeover that sleep or silence started (1390 AC-36)", () => {
+  const document = stored(EMPTY_HANDOFF_DOCUMENT, meta(3));
+  const continuationId = HandoffReceiver.continuationThreadId(m4, sourceThread, 2);
+
+  it("is refused with a definite answer, whichever older machine sends it", () => {
+    for (const reason of ["sleep", "auto-takeover"] as const) {
+      expect(
+        takeoverVerdict(document, takeover({ reason }), "Minis", continuationId),
+        reason,
+      ).toMatchObject({ kind: "refuse", code: "invalid", check: "lease" });
+    }
+    // A start a person or the limit rule made still proceeds.
+    for (const reason of ["handoff", "machine-handoff", "continue-here"] as const) {
+      expect(
+        takeoverVerdict(document, takeover({ reason }), "Minis", continuationId).kind,
+        reason,
+      ).toBe("proceed");
+    }
+  });
+
+  it("already acted on: the same answer again, never not accepted", () => {
+    const request = takeover({ reason: "sleep" });
+    const continued = markContinued(document, request, response, now);
+    expect(takeoverVerdict(continued, request, "Minis", continuationId)).toEqual({
+      kind: "repeat",
+      response,
+    });
+  });
+
+  it("cut off after its continuation started: it finishes instead of running twice", () => {
+    // The continuation's lease is saved before its thread launches and before the
+    // replica is marked continued. A restart in between leaves only this record.
+    const started: Document = {
+      ...document,
+      threads: { [continuationId]: emptyThreadRecord(localProject) },
+    };
+    expect(
+      takeoverVerdict(started, takeover({ reason: "sleep" }), "Minis", continuationId).kind,
+    ).toBe("proceed");
+    // Another epoch is another start, and that one is refused.
+    expect(
+      takeoverVerdict(
+        started,
+        takeover({ reason: "sleep", epoch: 5 }),
+        "Minis",
+        HandoffReceiver.continuationThreadId(m4, sourceThread, 5),
+      ),
+    ).toMatchObject({ kind: "refuse", code: "invalid" });
   });
 });
 

@@ -1,17 +1,16 @@
 /**
- * The sleep trigger with the Away session behind it (1267 #4, #5): a lid
- * close records the session and pauses routines before it answers; a wake
- * closes it (nothing moved) or fills it (work moved) before it answers, so
- * auto bring back and the wake card read it; a lid close with work still away
- * leaves nothing new; handoff-off threads never go into the intent.
+ * The Away session behind a lid close an earlier release left (1267 #4, #5,
+ * 1390 AC-36): that release recorded the session and paused routines before
+ * it answered (`previousRelease.awaySleep.test.fixture.ts`). This version
+ * starts nothing on a lid close; its wake closes the session (nothing moved)
+ * or fills it (work moved) before it answers, so auto bring back and the
+ * wake card read it.
  */
 import {
   AWAY_INTENT_CANCEL_PATH,
   AWAY_INTENT_STATUS_PATH,
   type AwayConfig,
   EnvironmentId,
-  type OrchestrationV2ThreadShell,
-  type Project,
   ProjectId,
 } from "@specweave-studio/contracts";
 import { assert, describe, it } from "@effect/vitest";
@@ -19,9 +18,10 @@ import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
 import type { AwayPeerPost } from "./awayPeerCall.ts";
-import { makeAwaySleep, memorySleepStore, sleepIntentIds } from "./awaySleepRoute.ts";
+import { makeAwaySleep, memorySleepStore } from "./awaySleepRoute.ts";
 import type { SleepSessionPort } from "./awaySleepSession.ts";
 import { memoryWakeHoldStore } from "./AwayWakeHold.ts";
+import * as Previous from "./previousRelease.awaySleep.test.fixture.ts";
 
 const M4 = EnvironmentId.make("m4");
 const MS = EnvironmentId.make("ministorm");
@@ -74,7 +74,7 @@ const setup = (options: {
           };
         return { status: 200, json: {} };
       });
-    const away = yield* makeAwaySleep({
+    const deps: Previous.AwaySleepDeps = {
       self: M4,
       store: memorySleepStore(),
       hold: memoryWakeHoldStore(),
@@ -84,24 +84,30 @@ const setup = (options: {
       post,
       away: port,
       giveWay: () => Effect.succeed(true),
-    });
-    return { away, log };
+    };
+    const before = yield* Previous.makeAwaySleep(deps);
+    const away = yield* makeAwaySleep(deps);
+    return { before, away, log };
   });
 
-describe("the lid close records the Away session", () => {
-  it.effect("before the answer, the session is recorded and its routines paused", () =>
+describe("the Away session of a lid close an earlier release left", () => {
+  it.effect("the earlier release recorded the session; this version records none", () =>
     Effect.gen(function* () {
-      const { away, log } = yield* setup({ moved: false });
+      const { before, away, log } = yield* setup({ moved: false });
+      const left = yield* before.sleep({ onBattery: true });
+      assert.deepEqual(left.answer, { outcome: "left" });
+      assert.deepEqual(log, ["begin:thread-1"]);
+      // The lid closes again after the update: no second session, nothing sent.
       const decision = yield* away.sleep({ onBattery: true });
-      assert.deepEqual(decision.answer, { outcome: "left" });
-      // begin ran inside the sleep call; the intent is sent after.
+      yield* decision.send;
+      assert.deepEqual(decision.answer, { outcome: "skipped" });
       assert.deepEqual(log, ["begin:thread-1"]);
     }),
   );
 
-  it.effect("work still away: this sleep leaves nothing new", () =>
+  it.effect("a lid close with no session open records none and sends nothing", () =>
     Effect.gen(function* () {
-      const { away, log } = yield* setup({ moved: false, mayStart: false });
+      const { away, log } = yield* setup({ moved: false });
       const decision = yield* away.sleep({ onBattery: true });
       yield* decision.send;
       assert.deepEqual(decision.answer, { outcome: "skipped" });
@@ -111,8 +117,8 @@ describe("the lid close records the Away session", () => {
 
   it.effect("a wake before the target acted closes the session, routines on again", () =>
     Effect.gen(function* () {
-      const { away, log } = yield* setup({ moved: false });
-      yield* (yield* away.sleep({ onBattery: true })).send;
+      const { before, away, log } = yield* setup({ moved: false });
+      yield* (yield* before.sleep({ onBattery: true })).send;
       yield* TestClock.adjust(MINUTE);
       assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "none" });
       assert.include(log, "nothingMoved");
@@ -122,10 +128,10 @@ describe("the lid close records the Away session", () => {
 
   it.effect("a wake after it acted fills the session before the card or auto bring back", () =>
     Effect.gen(function* () {
-      const { away, log } = yield* setup({ moved: true, bringBack: "auto-on-power" });
+      const { before, away, log } = yield* setup({ moved: true, bringBack: "auto-on-power" });
       let brought = 0;
       yield* away.onAutoBringBack(Effect.sync(() => void ((brought += 1), log.push("bringBack"))));
-      yield* (yield* away.sleep({ onBattery: false })).send;
+      yield* (yield* before.sleep({ onBattery: false })).send;
       yield* TestClock.adjust(10 * MINUTE);
       assert.deepEqual(yield* away.wake({ onBattery: false }), { outcome: "auto" });
       yield* Effect.yieldNow;
@@ -134,40 +140,4 @@ describe("the lid close records the Away session", () => {
       assert.notInclude(log, "nothingMoved");
     }),
   );
-});
-
-describe("sleepIntentIds with handoff mode off (#13)", () => {
-  it("leaves a thread with handoff mode off out of the intent", () => {
-    const project = {
-      id: ProjectId.make("p1"),
-      deletedAt: null,
-      workspaceSettings: {
-        coordinatorBinding: null,
-        logicalProject: { members: [{ environmentId: MS }] },
-      },
-    } as unknown as Project;
-    const shell = (id: string) =>
-      ({
-        id,
-        projectId: project.id,
-        status: "running",
-        activityRunStatus: "running",
-        activeRunId: "run",
-        archivedAt: null,
-        deletedAt: null,
-        lineage: { relationshipToParent: null },
-        heldQueuedCount: 0,
-        executionMachineId: null,
-      }) as unknown as OrchestrationV2ThreadShell;
-    const ids = sleepIntentIds({
-      self: M4,
-      target: MS,
-      coordinatorScope: "live",
-      projects: [project],
-      shells: [shell("on"), shell("off")],
-      tasks: [],
-      handoffOff: (entry) => entry.id === "off",
-    });
-    assert.deepEqual(ids.threadIds, ["on"]);
-  });
 });
