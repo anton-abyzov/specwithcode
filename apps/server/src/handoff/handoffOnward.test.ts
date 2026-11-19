@@ -8,9 +8,10 @@
  * arrived with a launcher of its own.
  */
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { EnvironmentId } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 
-import { allow, rows } from "../fleet/remoteWorkers.testkit.ts";
+import { allow, quiet, rows, settled } from "../fleet/remoteWorkers.testkit.ts";
 import {
   removeStages,
   source,
@@ -106,6 +107,65 @@ describe("a handed-off worker that moves again", () => {
         if (outcome._tag !== "Failure") return;
         expect(outcome.failure.message).toContain("a thread on Launcher waits for this work's result");
         expect(outcome.failure.message).toContain("back to Launcher");
+        const record = s.documents.source.threads[worker];
+        expect(record?.lease).toMatchObject({ state: "active", epoch: 1 });
+        expect(record?.checkpoint).toBeNull();
+        expect(record?.continuedOn).toBeNull();
+        expect(yield* rows).toEqual([]);
+      }).pipe(Effect.provide(life.layer));
+    },
+    LIVE,
+  );
+
+  it.live(
+    "names only machines where the source holds a work grant for this project, and the source gets the result once",
+    () => {
+      const s = stage();
+      // Listed by the source, but that machine never let the source run work there.
+      s.network.ungranted.push({
+        machineId: "machine-listed-only",
+        environmentId: EnvironmentId.make("env-listed-only"),
+        label: "Listed only",
+      });
+      const life = s.boot();
+      return Effect.gen(function* () {
+        const { handOff } = yield* begin(life);
+        yield* handOff;
+        // So the target declines a later move there, as for any machine outside the reach.
+        expect((s.network.takeovers[0] as { launcher?: unknown }).launcher).toEqual({
+          environmentId: source,
+          label: "Source",
+          reachable: [target.environmentId],
+        });
+        yield* s.finish();
+        yield* settled(life.world, rows, (current) => current[0]?.state === "idle");
+        yield* quiet(life.world);
+        expect(s.kept).toHaveLength(1);
+        expect(s.kept[0]?.text).toContain("finished: completed");
+      }).pipe(Effect.provide(life.layer));
+    },
+    LIVE,
+  );
+
+  it.live(
+    "is not continued under another model on this machine while a thread elsewhere waits: the launcher follows this thread",
+    () => {
+      const s = stage();
+      arrivedWith(s, {
+        environmentId: "env-launcher",
+        label: "Launcher",
+        reachable: [target.environmentId],
+      });
+      const life = s.boot();
+      return Effect.gen(function* () {
+        const { handOffHere } = yield* begin(life);
+        const outcome = yield* Effect.result(handOffHere);
+        expect(outcome._tag).toBe("Failure");
+        if (outcome._tag !== "Failure") return;
+        expect(outcome.failure.message).toContain("a thread on Launcher waits for this work's result");
+        // Nothing about the thread changed: it is still this machine's, and never held.
+        expect(s.network.takeovers).toEqual([]);
+        expect(s.launches).toEqual([]);
         const record = s.documents.source.threads[worker];
         expect(record?.lease).toMatchObject({ state: "active", epoch: 1 });
         expect(record?.checkpoint).toBeNull();

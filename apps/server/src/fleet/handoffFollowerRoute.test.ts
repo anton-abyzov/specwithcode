@@ -269,6 +269,42 @@ describe("the run that is a handed-off thread's result", () => {
     LIVE,
   );
 
+  it.live(
+    "is not a run that ended before the first run was stopped: the run started after the stop is",
+    () => {
+      const { target, kept, boot } = stage({ fallbackGraceMs: 1 });
+      target.create(THREAD);
+      const first = target.start(THREAD, { status: "queued", creationSource: "web" });
+      const ahead = target.start(THREAD, { status: "queued", creationSource: "web" });
+      target.set(THREAD, ahead.id, "running");
+      target.set(THREAD, ahead.id, "completed");
+      target.set(THREAD, first.id, "running");
+      target.set(THREAD, first.id, "interrupted");
+      const { world, layer } = boot();
+      return Effect.gen(function* () {
+        yield* follow(handedOff());
+        // Read more than once: the success that came before the stop is never the result.
+        yield* settled(
+          world,
+          Effect.sync(() => target.asked(THREAD, "studio_thread_read")),
+          (reads) => reads >= 3,
+        );
+        expect(kept).toEqual([]);
+        expect(yield* rows).toMatchObject([{ state: "following", deliveredRunIds: [] }]);
+        const next = target.start(THREAD, { creationSource: "web" });
+        target.set(THREAD, next.id, "failed");
+        const row = yield* ended(world);
+        expect(row).toMatchObject({ state: "idle", lastStatus: "failed" });
+        expect(kept).toHaveLength(1);
+        expect(kept[0]).toMatchObject({ threadId: LAUNCHER });
+        expect(kept[0]?.text).toContain("finished: failed");
+        yield* quiet(world);
+        expect(kept).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    },
+    LIVE,
+  );
+
   for (const layout of ["on the page", "off the page"] as const) {
     it.live(
       `is the first run's when both ran while the source was away and the first run is ${layout}`,

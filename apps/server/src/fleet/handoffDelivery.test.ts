@@ -95,14 +95,34 @@ describe("what a handed-off thread owes its launcher", () => {
     expect(
       nextHandoffStep([run(1, "interrupted", 1, 2), unlisted, run(3, "completed", 3, 4)], [], "run-1"),
     ).toEqual({ kind: "unsure" });
-    // One of them still queued has not started, so the other is the next run.
+    // Alone too: a run known by its status may have ended before the stop.
     expect(
       nextHandoffStep(
         [run(1, "interrupted", 1, 2), unlisted, { ...run(3, "queued", null), unlisted: true }],
         [],
         "run-1",
       ),
-    ).toEqual({ kind: "report", runId: "run-2", status: "completed" });
+    ).toEqual({ kind: "unsure" });
+  });
+
+  it("never lets a run that started before the owed run was stopped take its place", () => {
+    // The second message was moved ahead and finished; then the first run started and was stopped.
+    const before = [run(1, "interrupted", 3, 4), run(2, "completed", 1, 2)];
+    expect(nextHandoffStep(before, [], "run-1")).toEqual({ kind: "nothing" });
+    // The run started after the stop is the result, in whatever order the runs are listed.
+    const after = run(3, "failed", 5, 6);
+    for (const runs of [[...before, after], [after, ...before.toReversed()]])
+      expect(nextHandoffStep(runs, [], "run-1")).toEqual({
+        kind: "hold",
+        runId: "run-3",
+        pin: "run-3",
+        completedAt: at(6),
+      });
+    // When the stop is not known, neither is what came after it.
+    const stopped: ListedRun = { ...run(1, "interrupted", null), unlisted: true };
+    expect(nextHandoffStep([stopped, run(2, "completed", 1, 2)], [], "run-1")).toEqual({
+      kind: "unsure",
+    });
   });
 
   it("holds a failure, whoever sent a message after it", () => {

@@ -147,6 +147,8 @@ export function stage(
     refuseTakeover: false,
     /** The source's fleet file cannot be read: it lists no machine. */
     fleetUnread: false,
+    /** Machines the source lists but holds no work grant on. */
+    ungranted: [] as Array<{ machineId: string; environmentId: EnvironmentId; label: string }>,
     /** Takeovers that left the source, whatever became of them. */
     takeovers: [] as Array<TakeoverRequest>,
   };
@@ -317,13 +319,23 @@ export function stage(
   const there = { machineId: target.id, environmentId: target.environmentId, label: "Target" };
   const peers = {
     target: () => Effect.succeed(there),
-    targets: Effect.sync(() => (network.fleetUnread ? [] : [there])),
+    targets: Effect.sync(() => (network.fleetUnread ? [] : [there, ...network.ungranted])),
     negotiate: (_: unknown, request: never) =>
       asked((built) => built.negotiate(asSource, request)),
     replicate: (_: unknown, meta: never, bundle: never) =>
       asked((built) => built.replicate(asSource, meta, bundle)),
-    preflight: (_: unknown, request: never) =>
-      asked((built) => built.preflight(asSource, request)),
+    preflight: (environmentId: unknown, request: never) =>
+      network.ungranted.some((machine) => machine.environmentId === environmentId)
+        ? Effect.fail(
+            new HandoffPeerError({
+              code: "needs_grant",
+              message: "This machine has no work grant there.",
+              check: "grant",
+              uncertain: false,
+              local: true,
+            }),
+          )
+        : asked((built) => built.preflight(asSource, request)),
     takeover: (_: unknown, request: TakeoverRequest) => {
       network.takeovers.push(request);
       if (network.refuseTakeover) {
@@ -441,7 +453,16 @@ export function stage(
       world: life.world,
       layer: life.layer,
       /** Builds this life's moves; run it inside `layer`. */
-      start: Effect.map(makeMoves, (moves) => ({ moves, handOff: handOffWith(moves) })),
+      start: Effect.map(makeMoves, (moves) => ({
+        moves,
+        handOff: handOffWith(moves),
+        /** The same thread continued on this machine under another model. */
+        handOffHere: moves.handOff({
+          threadId: worker,
+          destinationEnvironmentId: source,
+          modelSelection: { ...(modelSelection as object), model: "another-model" } as never,
+        }),
+      })),
     };
   };
 
