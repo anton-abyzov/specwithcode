@@ -16,7 +16,7 @@ The card shows three knots on one line, **Turn SpecWeave on**, **Ask for it whol
 
 1. **Turn SpecWeave on.** "This project has no plans or board yet. Turn SpecWeave on." **Show me** opens the Board tab and points at **Set up SpecWeave**. The step is done once SpecWeave is on in the project.
 2. **Ask for it whole.** "Ask for the whole feature in one request." **Write it for me** puts the request in the coordinator's message box, and you send it yourself. **Open the thread** opens the coordinator. While the work runs, the step says where the card is: **Planning**, **Working: 1 of 4 tasks**, **In review** or **Fixing what the review found**.
-3. **Read the review.** "When the card is in Done, open it and read what the review found." **Open the review** opens the card, which lists who reviewed the work and their verdict. A review by a model from the same family as the builder is labelled as such. When no agent from a second family is ready, the request leaves the review out, and the step names agents that could review it.
+3. **Read the review.** "When the card is in Done, open it and read what the review found." **Open the review** opens the card, which lists who reviewed the work and their verdict. When no review from another family is recorded, the step points out a review from the builder's own family. When no agent from a second family is ready, the request leaves the review out, and the step names agents that could review it.
 
 **Skip this step** moves on without the step. **Leave the guide** puts it away. A step that cannot go on says **Waiting on this step** and where to look: the Board tab for SpecWeave, the coordinator's last message for the request.
 
@@ -27,7 +27,7 @@ The card reads "That is the loop: plan, board, work, review, done." and offers t
 - **Review finished features in all projects on this Mac** turns on automatic review on this machine, for every project that has no review setting of its own. The sample keeps its own setting off. Each review uses the reviewer's plan.
 - **Remove the sample project** removes the sample from SpecWithCode. Its folder and files stay on disk.
 
-After a guide finishes, the Overview no longer offers the card on that machine, also after the sample is removed.
+After a guide finishes, the Overview stops suggesting a new guide on that machine, also after the sample is removed. If you start another sample from the command palette, the Overview still offers to continue that one.
 
 ## Open it again
 
