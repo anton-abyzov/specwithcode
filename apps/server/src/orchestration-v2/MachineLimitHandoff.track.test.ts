@@ -439,6 +439,7 @@ describe("what the last check before the send reads again (1390 T-13, round 2)",
         localUnreported: true,
         second: {
           id: ThreadId.make("t2"),
+          latestRunId: RunId.make("r2"),
           providerInstanceId: codexId,
           modelSelection: { instanceId: codexId, model: "gpt-6" },
           usageLimitResetAt: DateTime.formatIso(DateTime.makeUnsafe(stoppedAt + 60_000)),

@@ -53,6 +53,7 @@ import {
   targetMachineLabel,
 } from "@specweave-studio/shared/machineFallback";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import { usageResetAt } from "@specweave-studio/shared/providerFallback";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -733,8 +734,21 @@ export const make = Effect.gen(function* () {
     const transient = new Map<string, Refusal>();
     // When the window that sends the thread away resets: the track's first reset here, or
     // the stop's own. A thread sent for it is not sent straight back before then.
+    // An idle thread moved at the threshold has no stop: its sign-in's own reset is the end.
+    const stopResetMs = Date.parse(thread.usageLimitResetAt ?? "");
     const windowEndMs =
-      tracked !== null ? tracked.earliestResetMs : Date.parse(thread.usageLimitResetAt ?? "");
+      tracked !== null
+        ? tracked.earliestResetMs
+        : Number.isFinite(stopResetMs)
+          ? stopResetMs
+          : source === undefined
+            ? null
+            : usageResetAt(
+                source,
+                input.rule.providerLimitSwitchAtPercent ?? 100,
+                nowMs,
+                thread.modelSelection.model,
+              );
     const windowEnd =
       windowEndMs !== null && Number.isFinite(windowEndMs)
         ? DateTime.formatIso(DateTime.makeUnsafe(windowEndMs))

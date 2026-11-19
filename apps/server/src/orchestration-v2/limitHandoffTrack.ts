@@ -305,7 +305,9 @@ export function judgeTrackMachine(input: {
     "out",
     failures[0]?.message ?? `${label}: ${evidence?.line ?? "no sign-in on the track has room"}`,
     null,
-    evidence?.resetsAt ?? null,
+    // Only a sign-in confirmed full says when the track is back; a reset read
+    // beside usage nobody verified is not evidence of it.
+    evidence?.kind === "different-account" ? evidence.resetsAt : null,
   );
 }
 

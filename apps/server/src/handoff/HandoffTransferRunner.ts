@@ -832,20 +832,34 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       if (!recorded) return yield* failed("busy", RESUMED_HERE);
 
       // 3. Hold the thread: no new turn starts, a running one stops.
+      // Off is read in the same write that takes the hold: one saved since the check
+      // above leaves the record as it is, and an automatic move holds nothing.
+      let off = false;
       const held = yield* deps
-        .updateRecord(threadId, (record) => ({
-          ...record,
-          lease: {
-            holderEnvironmentId: self,
-            holderLabel: selfLabel,
-            holderThreadId: threadId,
-            epoch: record.lease?.epoch ?? 0,
-            renewedAt: now,
-            state: "handing-off",
-          },
-          pendingTakeover: null,
-        }))
+        .updateRecord(threadId, (record) => {
+          off = trigger.kind === "automatic" && record.mode === "off";
+          return off
+            ? record
+            : {
+                ...record,
+                lease: {
+                  holderEnvironmentId: self,
+                  holderLabel: selfLabel,
+                  holderThreadId: threadId,
+                  epoch: record.lease?.epoch ?? 0,
+                  renewedAt: now,
+                  state: "handing-off",
+                },
+                pendingTakeover: null,
+              };
+        })
         .pipe(Effect.tapError((error) => finish(operationId, "stayed", error.message)));
+      if (off) {
+        const ended = yield* finish(operationId, "stayed", AUTOMATIC_OFF);
+        // A hold an earlier start of this operation took is given back with it.
+        if (ended && held?.lease?.state === "handing-off") yield* releaseUnsent(threadId, null);
+        return yield* failed("invalid", AUTOMATIC_OFF);
+      }
       const epoch = (held?.lease?.epoch ?? 0) + 1;
       const holding = yield* patch(operationId, ["pending", "held"], {
         state: "held",
@@ -866,6 +880,19 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       const heldShell = yield* deps
         .shellOf(threadId)
         .pipe(Effect.tapError((error) => staysHeld(null, error.message)));
+      // A turn that started while the other machine was asked is not the one this
+      // move was admitted for. Nothing was sent or stopped yet: the hold is given
+      // back and that turn runs on here.
+      const changed = automaticStartRefusal({
+        trigger,
+        mode: undefined,
+        runId: heldShell.activeRunId ?? heldShell.latestRunId,
+        disposition: heldShell.activeRunId !== null ? "resume" : disposition,
+      });
+      if (changed !== null) {
+        yield* staysHeld(null, changed);
+        return yield* failed("invalid", changed);
+      }
       let checkpoint = first.checkpoint;
       const resume = deps.resumeTurn(heldShell);
       /** The stopped turn runs again only once the hold was really given back. */
