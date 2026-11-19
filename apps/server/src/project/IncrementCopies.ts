@@ -977,7 +977,11 @@ async function ledgerBytes(copies: BoardCopies, id: string, copy: IncrementCopy)
   return stat?.isFile() === true ? stat.size : 0;
 }
 
-/** Whether a folder copy has its `spec.md`, by path; trusted for SPEC_SEEN_MS. */
+/**
+ * Whether a folder copy has its `spec.md`, by path and the copy's metadata
+ * (status, reopens, time): a reopen or any metadata change asks again.
+ * Trusted for SPEC_SEEN_MS.
+ */
 const specSeen = new Map<string, { readonly at: number; readonly has: boolean }>();
 /**
  * How long a spec check holds. A spec only decides which closed copy is
@@ -989,11 +993,14 @@ const SPEC_SEEN_MS = 30_000;
 async function hasSpec(copies: BoardCopies, id: string, copy: IncrementCopy): Promise<boolean> {
   if (copy.root === null) return copies.remote?.increments.get(id)?.files.has("spec.md") ?? false;
   const path = NodePath.join(folderOf(copy.root, id), "spec.md");
-  const seen = specSeen.get(path);
+  const key = [path, copy.meta.status, copy.meta.reopened, copy.meta.updatedAt ?? ""].join(
+    "\u0000",
+  );
+  const seen = specSeen.get(key);
   if (seen !== undefined && Date.now() - seen.at < SPEC_SEEN_MS) return seen.has;
   const stat = await NodeFSP.stat(path).catch(() => null);
   const has = stat?.isFile() === true;
-  remember(specSeen, path, { at: Date.now(), has }, 16_384);
+  remember(specSeen, key, { at: Date.now(), has }, 16_384);
   return has;
 }
 

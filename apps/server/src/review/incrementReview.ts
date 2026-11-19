@@ -336,12 +336,18 @@ export async function readIncrementReviews(
 ): Promise<ReadonlyArray<ProjectBoardCardReview>> {
   const paths = [...(incrementPath === null ? [] : [incrementPath]), ...alsoFrom];
   if (paths.length === 0) return [];
+  const primaries = incrementPath === null ? 0 : 1;
   const stamps = await Promise.all(
-    paths.map(async (path) => {
+    paths.map(async (path, index) => {
+      // Another copy's folders are signed as its reader admits them: a
+      // linked folder is not read, so it signs as a link, not its target.
+      const look = index < primaries ? NodeFSP.stat : NodeFSP.lstat;
       const reportsPath = NodePath.join(path, "reports");
-      const reports = await NodeFSP.stat(reportsPath).catch(() => null);
+      const reports = await look(reportsPath).catch(() => null);
+      if (reports?.isSymbolicLink() === true) return "link";
       if (reports === null || !reports.isDirectory()) return null;
-      const runs = await NodeFSP.stat(NodePath.join(reportsPath, "reviews")).catch(() => null);
+      const runs = await look(NodePath.join(reportsPath, "reviews")).catch(() => null);
+      if (runs?.isSymbolicLink() === true) return `${reports.mtimeMs}:link`;
       return `${reports.mtimeMs}:${runs?.isDirectory() === true ? runs.mtimeMs : "-"}`;
     }),
   );

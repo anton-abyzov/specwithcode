@@ -700,6 +700,71 @@ describe("the newest copy of an increment", () => {
     expect((await cardOf(root, id, cacheDir))?.source).toMatchObject({ name: "origin/trunk" });
   });
 
+  it("sees a spec and a reopen written in the project folder right after a read", async () => {
+    const id = "0001-reopened-here";
+    const { root, cacheDir } = await behindProject(
+      async (at) => {
+        await writeIncrement(at, id, {
+          tasks: 2,
+          ledger: doneLedger(2),
+          metadata: { status: "completed" },
+        });
+      },
+      async (at) => {
+        await writeIncrement(at, id, { metadata: { status: "completed" } });
+      },
+    );
+    const first = await readProjectBoard(root, { now: NOW, cacheDir });
+    expect(first.notDone).toBe(0);
+    expect(first.cards[0]).toMatchObject({ status: "completed", source: { kind: "remote" } });
+    // Reopened in the project folder, with its spec back, within seconds.
+    await writeIncrement(root, id, {
+      tasks: 3,
+      ledger: doneLedger(2),
+      metadata: { status: "active", reopened: [{ at: "2026-11-14T11:00:00.000Z" }] },
+    });
+    const second = await readProjectBoard(root, { now: NOW, cacheDir });
+    expect(second.notDone).toBe(1);
+    const card = second.cards.find((entry) => entry.incrementId === id);
+    expect(card).toMatchObject({ status: "active", tasks: { total: 3 } });
+    expect(card?.source).toBeUndefined();
+  });
+
+  it("shows the project folder's reviews once a linked reports folder becomes a real one", async () => {
+    const id = "0001-unlinked-reports";
+    const { root, cacheDir } = await behindProject(
+      async (at) => {
+        await writeIncrement(at, id, {
+          tasks: 1,
+          ledger: doneLedger(1),
+          metadata: { status: "active" },
+        });
+      },
+      async (at) => {
+        const folder = await writeIncrement(at, id, { metadata: { status: "planned" } });
+        await NodeFSP.mkdir(NodePath.join(folder, "archive", "reports"), { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(folder, "archive", "reports", "review-approved.md"),
+          "<!-- specweave review: model=gpt-6.1-sol family=openai author=claude at=2026-11-13T12:00:00Z -->\n# Review\nVerdict: ship\n",
+        );
+        await NodeFSP.symlink(
+          NodePath.join(folder, "archive", "reports"),
+          NodePath.join(folder, "reports"),
+        );
+      },
+    );
+    expect((await cardOf(root, id, cacheDir))?.reviews).toBeUndefined();
+    const folder = folderOf(root, id);
+    await NodeFSP.rm(NodePath.join(folder, "reports"));
+    await NodeFSP.rename(
+      NodePath.join(folder, "archive", "reports"),
+      NodePath.join(folder, "reports"),
+    );
+    expect((await cardOf(root, id, cacheDir))?.reviews?.map((review) => review.verdict)).toEqual([
+      "ship",
+    ]);
+  });
+
   it("answers from the folders alone when Git fails, and runs Git only when the remote commit changes", async () => {
     const { root, cacheDir } = await behindProject(
       async (at) => {
