@@ -4,6 +4,7 @@
 // Playwright comes from STUDIO_PLAYWRIGHT_MODULE (an installed playwright-core entry).
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeAssert from "node:assert/strict";
@@ -11,7 +12,10 @@ process.env.PWDEBUG = "0";
 process.env.PLAYWRIGHT_HTML_OPEN = "never";
 const { chromium } = await import(NodeURL.pathToFileURL(process.env.STUDIO_PLAYWRIGHT_MODULE).href);
 const root = NodePath.resolve(".artifacts/handoff-mode/site");
-const output = NodePath.resolve(process.argv[2] ?? ".artifacts/handoff-mode/evidence");
+// Evidence goes outside the repository: the folder passed, else a new temporary one.
+const output = process.argv[2]
+  ? NodePath.resolve(process.argv[2])
+  : await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "handoff-mode-evidence-"));
 await NodeFSP.mkdir(output, { recursive: true });
 const server = NodeHttp.createServer(async (req, res) => {
   try {
@@ -172,16 +176,10 @@ try {
     NodeAssert.ok(reasonNames.includes(name), `Stays reason ${name} is not read from the server`);
   const staysCase = index.cases.find((entry) => entry.key === "stays");
   NodeAssert.deepEqual(
-    staysCase.rows.map((row) => row.detail).sort(),
+    staysCase.rows.map((row) => row.reason).sort(),
     index.stays.map((reason) => reason.text).sort(),
     "the stays case has one row per reason",
   );
-  const ACTION_TEXT = {
-    "resume-here": "Resume here",
-    wait: "Wait",
-    open: "Open on Minis",
-    "try-again": "Try again",
-  };
   const progressResults = [];
   for (const entry of index.cases) {
     for (const theme of ["light", "dark"]) {
@@ -197,17 +195,34 @@ try {
           NodeAssert.equal(await item.getAttribute("data-row-state"), row.state, row.title);
           const text = await item.innerText();
           NodeAssert.ok(text.includes(row.title), `${entry.key}: ${row.title} is shown`);
-          if (row.detail && (row.state === "stayed" || row.state === "failed"))
+          // The reason, exactly, or none at all.
+          const reason = item.locator('[data-slot="hand-off-row-reason"]');
+          if (row.reason === null)
+            NodeAssert.equal(await reason.count(), 0, `${entry.key}: ${row.title} has no reason`);
+          else
             NodeAssert.equal(
-              (await item.locator('[data-slot="hand-off-row-reason"]').innerText()).trim(),
-              row.detail,
+              (await reason.innerText()).trim(),
+              row.reason,
               `${entry.key}: the reason of ${row.title}`,
             );
-          if (row.action)
-            NodeAssert.ok(text.includes(ACTION_TEXT[row.action]), `${row.title}: ${row.action}`);
-          // A row nothing can be done for offers no control.
-          if (!row.action || row.action === "wait")
-            NodeAssert.equal(await item.locator("button").count(), 0, `${row.title}: no control`);
+          // The next step: a real button with that accessible name, the word Wait, or nothing.
+          const buttons = item.getByRole("button");
+          if (row.control === null || row.control === "Wait")
+            NodeAssert.equal(await buttons.count(), 0, `${row.title}: no control`);
+          else {
+            NodeAssert.equal(await buttons.count(), 1, `${row.title}: one control`);
+            NodeAssert.equal(
+              await item.getByRole("button", { name: row.control, exact: true }).count(),
+              1,
+              `${row.title}: the ${row.control} button`,
+            );
+          }
+          if (row.control === "Wait")
+            NodeAssert.equal(
+              await item.getByText("Wait", { exact: true }).count(),
+              1,
+              `${row.title}: Wait`,
+            );
         }
         if (entry.key === "track-out") {
           await page.getByText("Complex track is out on every machine").waitFor();

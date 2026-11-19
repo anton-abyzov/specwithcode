@@ -488,12 +488,8 @@ function Fixture() {
           cases: HANDOFF_PROGRESS_CASES.map((entry) => ({
             key: entry.key,
             label: entry.label,
-            rows: entry.rows.map((row) => ({
-              title: row.title,
-              state: row.state,
-              action: row.action,
-              detail: row.detail,
-            })),
+            // The hand-written expectations, never progressRow's own output.
+            rows: entry.rows.map((row) => ({ title: row.title, ...row.expected })),
           })),
           stays: STAYS_REASONS,
         })}

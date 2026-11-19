@@ -72,12 +72,43 @@ export const STAYS_REASONS: ReadonlyArray<{
   },
 ];
 
+/** A next step the user can press, by its accessible name, or the word "Wait" (not a control). */
+export type ExpectedControl = "Resume here" | "Wait" | "Open on Minis" | "Try again" | null;
+
+export interface ExpectedRow {
+  readonly state: string;
+  readonly control: ExpectedControl;
+  /** The exact "Stays" reason under the row, or null when none is shown. */
+  readonly reason: string | null;
+}
+
+/**
+ * What the dialog must show for each input record state, written out by hand from AC-21 and
+ * the progress view's contract. Never derived from `progressRow`: a wrong mapping in the
+ * shipped logic must disagree with this table.
+ */
+export const EXPECTED_BY_INPUT: Readonly<
+  Record<HandoffTransferState, { readonly state: string; readonly control: ExpectedControl }>
+> = {
+  pending: { state: "pending", control: null },
+  held: { state: "held", control: "Resume here" },
+  sent: { state: "waiting", control: "Wait" },
+  accepted: { state: "waiting", control: "Wait" },
+  unknown: { state: "waiting", control: "Wait" },
+  resumed: { state: "resumed", control: "Open on Minis" },
+  ready: { state: "ready", control: "Open on Minis" },
+  stayed: { state: "stayed", control: null },
+  failed: { state: "failed", control: "Try again" },
+};
+
+export type FixtureRow = HandOffProgressViewRow & { readonly expected: ExpectedRow };
+
 let serial = 0;
 function record(
   state: HandoffTransferState,
   title: string,
   extra: Partial<HandoffTransferRecord> = {},
-): HandOffProgressViewRow {
+): FixtureRow {
   serial += 1;
   const threadId = `t-${serial}` as ThreadId;
   const value: HandoffTransferRecord = {
@@ -110,7 +141,15 @@ function record(
     sentAt: state === "sent" || state === "accepted" ? "2026-11-19T20:00:02.000Z" : null,
     ...extra,
   };
-  return { ...progressRow(value), title };
+  const detail = extra.detail ?? null;
+  return {
+    ...progressRow(value),
+    title,
+    expected: {
+      ...EXPECTED_BY_INPUT[state],
+      reason: state === "stayed" || state === "failed" ? detail : null,
+    },
+  };
 }
 
 export interface HandoffProgressCase {
@@ -118,7 +157,7 @@ export interface HandoffProgressCase {
   /** What the case shows, for the receipt. */
   readonly label: string;
   readonly trigger: HandoffTransferTrigger;
-  readonly rows: ReadonlyArray<HandOffProgressViewRow>;
+  readonly rows: ReadonlyArray<FixtureRow>;
   readonly incomplete?: boolean;
   readonly trackOut?: HandOffTrackOut;
   readonly rowNotice?: { readonly operationId: string; readonly text: string };
@@ -139,6 +178,7 @@ function build(): HandoffProgressCase[] {
         record("pending", "Pending: not held yet"),
         record("held", "Held: paused here, not sent yet"),
         record("sent", "Sent: waiting for Minis"),
+        record("accepted", "Accepted: waiting for Minis to start it"),
         record("unknown", "No answer: in doubt"),
         record("resumed", "Resumed on Minis"),
         record("ready", "Installed idle on Minis", { disposition: "ready" }),
