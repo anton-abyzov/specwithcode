@@ -11,6 +11,14 @@ const row = (role: MachineRowRole, extra: Partial<Parameters<typeof machineRowSt
   machineRowState({ machine: "rackF", role, reach: "open", ...extra });
 
 describe("machineRowState", () => {
+  it("marks the window's own machine as this window, and no other (1427 AC-05)", () => {
+    expect(row("linked", { window: true }).window).toBe(true);
+    expect(row("independent", { window: true }).window).toBe(true);
+    expect(row("linked").window).toBeUndefined();
+    // A machine this window cannot open is never the window's own.
+    expect(row("linked", { window: true, reach: "never-opened" }).window).toBeUndefined();
+  });
+
   it("greys a machine this window never opened or that refuses it, with the one step on the row", () => {
     for (const reach of ["never-opened", "refused"] as const)
       expect(row("linked", { reach })).toEqual({

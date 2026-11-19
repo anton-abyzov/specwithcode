@@ -258,6 +258,18 @@ it("lists the project's machines as equals: no role word, no pill and no step on
   );
 });
 
+it("marks the window's own machine as this window, in visible text (1427 AC-05)", async () => {
+  await renderSwitcher({ ...handlers(), ...EVERY_ROW, windowEnvironmentId: "mini" });
+  expect(textsIn(rowOf("mini:p"), "[data-row-window]")).toEqual(["this window"]);
+  for (const key of ["m4:p", "m1:p", "m3:p", "m5:p", "linux-mini:p"])
+    expect(textsIn(rowOf(key), "[data-row-window]")).toEqual([]);
+});
+
+it("marks no row when the window's machine is not known", async () => {
+  await renderSwitcher({ ...handlers(), ...EVERY_ROW });
+  expect(document.querySelector("[data-row-window]")).toBeNull();
+});
+
 it("greys a machine this window cannot open: never pressable, with its reason and Connect…", async () => {
   const calls = handlers();
   await renderSwitcher({
