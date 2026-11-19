@@ -237,6 +237,20 @@ try {
         (await page.locator(".sws-board-columns").getAttribute("data-layout")) === "columns",
         `${label}: side by side layout`,
       );
+      check(
+        (await page.locator(".sws-board-not-done").textContent()) === "11 not done" &&
+          (await page.locator(".sws-board-behind").textContent()) ===
+            "Project folder is 61 commits behind origin/main",
+        `${label}: not-done count and behind line`,
+      );
+      check(
+        (await cardOf(page, "0028-upload-progress")
+          .locator(".sws-board-card-source")
+          .textContent()) === "From origin/main" &&
+          (await cardOf(page, ID.outOfReach).locator(".sws-board-card-source").textContent()) ===
+            "From worktree fix-1407-init-rerun-safety",
+        `${label}: source lines`,
+      );
       const counts = await headingCounts(page);
       check(
         JSON.stringify(counts) ===

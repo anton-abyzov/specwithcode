@@ -5929,4 +5929,19 @@ export const pt: PhraseCatalog = {
     "Pode fazer o trabalho levar muito mais tempo: nas medições, o trabalho revisado levou em mediana 2,6 vezes o tempo do mesmo trabalho antes da revisão (metade das execuções entre 1,6 e 3,6 vezes), porque cada rodada de revisão e suas correções somam tempo.",
   "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
     "Pode fazer o trabalho levar mais tempo: cada consulta soma cerca de 2 minutos. Nas medições, as threads que consultaram levaram cerca de 1,1 vezes o tempo normal, e 1 em cada 10 levou 1,4 vezes ou mais.",
+  "{count} not done": "{count} não concluídos",
+  "Project folder is {count} commit behind {branch}":
+    "A pasta do projeto está {count} commit atrás de {branch}",
+  "Project folder is {count} commits behind {branch}":
+    "A pasta do projeto está {count} commits atrás de {branch}",
+  "Last fetched just now.": "Última busca agora mesmo.",
+  "Last fetched {age} ago.": "Última busca há {age}.",
+  "From worktree {name}": "Do worktree {name}",
+  "From {branch}": "De {branch}",
+  "From {branch}, fetched just now": "De {branch}, buscado agora mesmo",
+  "From {branch}, fetched {age} ago": "De {branch}, buscado há {age}",
+  "This is the newest copy of the increment. The project folder's copy is older or missing.":
+    "Esta é a cópia mais recente do incremento. A cópia da pasta do projeto é mais antiga ou não existe.",
+  "This copy's files could not be read on this machine.":
+    "Não foi possível ler os arquivos desta cópia nesta máquina.",
 };

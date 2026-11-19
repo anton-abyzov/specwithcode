@@ -208,20 +208,24 @@ export function viewPrimaryAction(input: {
     | "pausedReason"
     | "blockedTasks"
     | "specPath"
-  >;
+  > &
+    Partial<Pick<ProjectBoardCard, "source">>;
   readonly abandoned: boolean;
   readonly liveThreads: number;
 }): ViewPrimaryAction | null {
   const { card } = input;
   if (card.column === "done" || input.abandoned) return null;
   if (input.liveThreads > 0) return { kind: "thread" };
-  if (card.specPath === null)
+  // Another copy whose files could not be read: its spec and tasks are
+  // unknown, not missing, so nothing asks to plan them.
+  const unread = card.specPath === null && card.source !== undefined;
+  if (card.specPath === null && !unread)
     return {
       kind: "ask",
       label: "Plan it with the coordinator",
       prompt: `Plan increment ${card.incrementId}: it has a folder and a title but no spec.md. Write the problem, the acceptance criteria and the tasks.`,
     };
-  if (card.tasks.total === 0 && !boardCardPaused(card))
+  if (card.tasks.total === 0 && !boardCardPaused(card) && !unread)
     return {
       kind: "ask",
       label: "Plan the tasks",

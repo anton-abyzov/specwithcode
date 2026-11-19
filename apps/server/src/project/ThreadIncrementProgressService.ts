@@ -46,6 +46,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { ServerConfig } from "../config.ts";
+import { nodePath as NodePath } from "../nodePath.ts";
 import { readProjectBoard } from "./ProjectBoard.ts";
 import { readProjectBoardIncrement } from "./ProjectBoardIncrement.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
@@ -298,6 +300,12 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   // The folder reader is plain promises; its evidence lookups run back in here.
   const runEvidence = Effect.runPromiseWith(yield* Effect.context<never>());
+  // Where the board writes the remote branch's copy of an increment it shows
+  // (IncrementCopies.ts). Optional, so layers without the config still build.
+  const boardCopiesDir = Option.match(yield* Effect.serviceOption(ServerConfig), {
+    onNone: () => undefined,
+    onSome: (config) => NodePath.join(config.stateDir, "board-copies"),
+  });
 
   const projectOf = (projectId: ThreadIncrementProgressInput["projectId"]) =>
     projects
@@ -996,6 +1004,7 @@ export const make = Effect.gen(function* () {
       const result = yield* Effect.promise(() =>
         readProjectBoard(project.workspaceRoot, {
           now,
+          cacheDir: boardCopiesDir,
           ...(input.query === undefined ? {} : { query: input.query }),
           ...(input.doneLimit === undefined ? {} : { doneLimit: input.doneLimit }),
         }),
@@ -1017,6 +1026,7 @@ export const make = Effect.gen(function* () {
         readProjectBoardIncrement(project.workspaceRoot, {
           incrementId: input.incrementId,
           now,
+          cacheDir: boardCopiesDir,
           ...(input.includeDone === undefined ? {} : { includeDone: input.includeDone }),
         }),
       );

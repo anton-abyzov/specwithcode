@@ -5860,4 +5860,19 @@ export const ko: PhraseCatalog = {
     "작업 완료까지 시간이 훨씬 오래 걸릴 수 있습니다. 측정 결과 리뷰한 작업은 리뷰 전 같은 작업보다 중앙값 2.6배의 시간이 걸렸습니다(실행의 절반은 1.6~3.6배). 리뷰 라운드와 그 수정에 시간이 들기 때문입니다.",
   "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
     "작업 시간이 늘어날 수 있습니다. 상담 한 번에 약 2분이 걸립니다. 측정 결과 상담한 스레드는 약 1.1배의 시간이 걸렸고, 10개 중 1개는 1.4배 이상 걸렸습니다.",
+  "{count} not done": "완료되지 않음 {count}개",
+  "Project folder is {count} commit behind {branch}":
+    "프로젝트 폴더가 {branch}보다 커밋 {count}개 뒤처져 있습니다",
+  "Project folder is {count} commits behind {branch}":
+    "프로젝트 폴더가 {branch}보다 커밋 {count}개 뒤처져 있습니다",
+  "Last fetched just now.": "마지막 가져오기: 방금.",
+  "Last fetched {age} ago.": "마지막 가져오기: {age} 전.",
+  "From worktree {name}": "워크트리 {name}에서",
+  "From {branch}": "{branch}에서",
+  "From {branch}, fetched just now": "{branch}에서, 방금 가져옴",
+  "From {branch}, fetched {age} ago": "{branch}에서, {age} 전에 가져옴",
+  "This is the newest copy of the increment. The project folder's copy is older or missing.":
+    "이것은 증분의 최신 사본입니다. 프로젝트 폴더의 사본은 더 오래되었거나 없습니다.",
+  "This copy's files could not be read on this machine.":
+    "이 사본의 파일을 이 컴퓨터에서 읽을 수 없습니다.",
 };
