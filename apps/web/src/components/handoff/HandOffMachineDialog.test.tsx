@@ -360,3 +360,12 @@ it("keeps this request's error in view beside the progress of what was written",
     "Minis: the request was refused",
   );
 });
+
+it("says when more threads are ticked than one hand off takes", async () => {
+  await act(async () => root.render(<HandOffMachineDialogView {...props({ overLimit: true })} />));
+  expect(document.body.textContent).toContain(
+    "Up to 100 threads go in one hand off. Hand off the rest after.",
+  );
+  await act(async () => root.render(<HandOffMachineDialogView {...props()} />));
+  expect(document.body.textContent).not.toContain("Up to 100 threads");
+});

@@ -122,3 +122,20 @@ export function handoffMachineRows(facts: HandoffMachineRowFacts): HandoffMachin
 export function tickableHandoffRows(rows: ReadonlyArray<HandoffMachineThreadRow>): Set<ThreadId> {
   return new Set(rows.filter((row) => row.group !== "stays").map((row) => row.threadId));
 }
+
+/** The most thread ids one check or one hand off takes (the server's schema). */
+export const HANDOFF_BATCH_LIMIT = 100;
+
+/** The ticked ids, with the person's own ticks over the defaults. */
+export function selectedHandoffRows(
+  rows: ReadonlyArray<HandoffMachineThreadRow>,
+  overrides: ReadonlyMap<ThreadId, boolean>,
+): { readonly ids: Set<ThreadId>; readonly overLimit: boolean } {
+  const ticked = tickableHandoffRows(rows);
+  return {
+    ids: new Set(
+      rows.map((row) => row.threadId).filter((id) => ticked.has(id) && overrides.get(id) !== false),
+    ),
+    overLimit: false,
+  };
+}

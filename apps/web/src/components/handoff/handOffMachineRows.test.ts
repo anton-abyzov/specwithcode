@@ -9,7 +9,9 @@ import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/st
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  HANDOFF_BATCH_LIMIT,
   handoffMachineRows,
+  selectedHandoffRows,
   tickableHandoffRows,
   type HandoffMachineProject,
   type HandoffMachineRowFacts,
@@ -181,5 +183,37 @@ describe("handoffMachineRows (AC-17)", () => {
       }),
     );
     expect([...tickableHandoffRows(rows)]).toEqual(["t-run", "t-idle"]);
+  });
+
+  it("ticks at most as many threads as one hand off takes, the newest first", () => {
+    const rows = handoffMachineRows(
+      facts({
+        shells: Array.from({ length: HANDOFF_BATCH_LIMIT + 5 }, (_, index) =>
+          shell(`t-${String(index).padStart(3, "0")}`, {
+            updatedAt: new Date(Date.UTC(2026, 10, 19, 0, index)).toISOString(),
+          }),
+        ),
+      }),
+    );
+    expect(HANDOFF_BATCH_LIMIT).toBe(100);
+    const picked = selectedHandoffRows(rows, new Map());
+    expect(picked.ids.size).toBe(100);
+    expect(picked.ids.has("t-104" as ThreadId)).toBe(true);
+    expect(picked.ids.has("t-004" as ThreadId)).toBe(false);
+    expect(picked.overLimit).toBe(true);
+    // Unticking one makes room for the next; ticking past the limit adds nothing.
+    const next = selectedHandoffRows(
+      rows,
+      new Map([
+        ["t-104" as ThreadId, false],
+        ["t-000" as ThreadId, true],
+      ]),
+    );
+    expect(next.ids.has("t-104" as ThreadId)).toBe(false);
+    expect(next.ids.size).toBe(100);
+    expect(next.overLimit).toBe(true);
+    const few = selectedHandoffRows(rows.slice(0, 3), new Map([[rows[0]!.threadId, false]]));
+    expect([...few.ids]).toEqual([rows[1]!.threadId, rows[2]!.threadId]);
+    expect(few.overLimit).toBe(false);
   });
 });
