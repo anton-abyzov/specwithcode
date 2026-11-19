@@ -29,6 +29,9 @@ function harness(options: { statuses?: number[]; token?: string | undefined } = 
   const statuses = [...(options.statuses ?? [])];
   let tokenReads = 0;
   let saved: TeamUsageState = initialTeamUsageState;
+  let machineName = "M4";
+  const secrets = new Map<string, string>();
+  let gate: Promise<void> | undefined;
   const reporter = makeTeamUsageReporter({
     loadState: Effect.sync(() => saved),
     saveState: (state) =>
@@ -37,7 +40,7 @@ function harness(options: { statuses?: number[]; token?: string | undefined } = 
       }),
     buildSummary: (config: TeamUsageConfig) =>
       Effect.sync((): TeamUsageSummary => ({
-        machineLabel: config.machineLabel ?? "M4",
+        machineLabel: config.machineLabel ?? machineName,
         at: DateTime.formatIso(DateTime.makeUnsafe(now)),
         accounts: [
           {
@@ -56,11 +59,17 @@ function harness(options: { statuses?: number[]; token?: string | undefined } = 
       tokenReads += 1;
       return "token" in options ? options.token : TOKEN;
     }),
-    readSelfHostedCredential: Effect.succeed(undefined),
-    writeSelfHostedCredential: () => Effect.void,
-    send: (request) =>
+    readSelfHostedCredential: (url) => Effect.sync(() => secrets.get(url)),
+    writeSelfHostedCredential: (url, value) =>
       Effect.sync(() => {
+        if (value === undefined) secrets.delete(url);
+        else secrets.set(url, value);
+      }),
+    send: (request) =>
+      Effect.promise(async () => {
         sent.push(request);
+        const wait = gate;
+        if (wait && request.method === "POST") await wait;
         return statuses.shift() ?? 200;
       }),
     nowMs: Effect.sync(() => now),
@@ -68,6 +77,20 @@ function harness(options: { statuses?: number[]; token?: string | undefined } = 
   return {
     reporter,
     sent,
+    secrets,
+    rename: (name: string) => {
+      machineName = name;
+    },
+    hold: () => {
+      let release = () => {};
+      gate = new Promise<void>((resolve) => {
+        release = () => {
+          gate = undefined;
+          resolve();
+        };
+      });
+      return release;
+    },
     get tokenReads() {
       return tokenReads;
     },
@@ -172,6 +195,103 @@ describe("team usage opt-in (0898 AC-01)", () => {
     expect((await run(h.reporter.status)).lastError).toBe(
       "Sign in with `vskill auth login` to send to your team.",
     );
+  });
+});
+
+// Lets the runtime run what is ready, without a timer.
+const settle = async () => {
+  for (let index = 0; index < 20; index += 1) await Promise.resolve();
+};
+
+describe("team usage review round 1 (0898)", () => {
+  const a = { kind: "selfHosted" as const, url: "https://a.example/usage" };
+  const b = { kind: "selfHosted" as const, url: "https://b.example/usage" };
+
+  it("never sends a new endpoint's credential to the old one", async () => {
+    const h = harness({ statuses: [200, 200, 200] });
+    await run(
+      h.reporter.update({
+        config: { enabled: true, endpoint: a },
+        selfHostedCredential: "secret-a",
+      }),
+    );
+    await run(
+      h.reporter.update({
+        config: { enabled: true, endpoint: b },
+        selfHostedCredential: "secret-b",
+      }),
+    );
+    const byHost = h.sent.map(
+      (request) =>
+        `${request.method} ${new URL(request.url).host} ${request.headers.Authorization}`,
+    );
+    expect(byHost).toEqual([
+      "POST a.example Bearer secret-a",
+      "DELETE a.example Bearer secret-a",
+      "POST b.example Bearer secret-b",
+    ]);
+    // A's credential goes once its history is removed.
+    expect([...h.secrets.keys()]).toEqual([b.url]);
+  });
+
+  it("refuses a credential with no self-hosted endpoint to bind it to", async () => {
+    const h = harness();
+    const result = await run(
+      h.reporter.update({
+        config: { enabled: true, endpoint: hosted },
+        selfHostedCredential: "stray",
+      }),
+    );
+    expect(result).toEqual({ ok: false, reason: "Enter the self-hosted endpoint first." });
+    expect(h.secrets.size).toBe(0);
+    expect(h.sent).toEqual([]);
+  });
+
+  it("an opt-out waits for a send in flight, so the history stays removed", async () => {
+    const h = harness();
+    await run(h.reporter.update({ config: { enabled: true, endpoint: hosted } }));
+    h.advance(2 * 60 * 60_000);
+    h.use(50);
+    const release = h.hold();
+    const tick = Effect.runPromise(h.reporter.tick);
+    await settle();
+    let optedOut = false;
+    const optOut = Effect.runPromise(
+      h.reporter.update({ config: { enabled: false, endpoint: hosted } }),
+    ).then(() => {
+      optedOut = true;
+    });
+    await settle();
+    expect(optedOut).toBe(false);
+    expect(h.sent.map((request) => request.method)).not.toContain("DELETE");
+    release();
+    await tick;
+    await optOut;
+    expect(h.sent.map((request) => request.method)).toEqual(["POST", "POST", "DELETE"]);
+    h.advance(2 * 60 * 60_000);
+    await run(h.reporter.tick);
+    expect(h.sent).toHaveLength(3);
+  });
+
+  it("a renamed machine's history under the old name is removed, even after opt-out", async () => {
+    const h = harness();
+    await run(h.reporter.update({ config: { enabled: true, endpoint: hosted } }));
+    h.rename("New name");
+    h.advance(2 * 60 * 60_000);
+    await run(h.reporter.tick);
+    await run(h.reporter.tick);
+    const labels = (method: string) =>
+      h.sent
+        .filter((request) => request.method === method)
+        .map(
+          (request) =>
+            new URL(request.url).searchParams.get("machineLabel") ??
+            JSON.parse(request.body!).machineLabel,
+        );
+    expect(labels("POST")).toEqual(["M4", "New name"]);
+    expect(labels("DELETE")).toEqual(["M4"]);
+    await run(h.reporter.update({ config: { enabled: false, endpoint: hosted } }));
+    expect(labels("DELETE")).toEqual(["M4", "New name"]);
   });
 });
 

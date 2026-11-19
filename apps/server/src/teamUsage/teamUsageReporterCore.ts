@@ -7,6 +7,11 @@
  * when its numbers changed or a new UTC day began. Turning it off, or moving
  * to another endpoint or machine label, stops sending and asks the old
  * endpoint to delete that machine's history, retried until it confirms.
+ * Every label this machine reported under is remembered, so a rename of the
+ * machine never leaves history behind. A self-hosted credential belongs to
+ * its own endpoint address and is never sent anywhere else. Updates, sends
+ * and removals run one at a time, so a send in flight cannot put back
+ * history an opt-out just removed.
  *
  * @module teamUsage/teamUsageReporterCore
  */
@@ -18,6 +23,7 @@ import type {
   TeamUsageUpdateInput,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 
 import {
   type TeamUsageCredentials,
@@ -41,6 +47,8 @@ export interface TeamUsageState {
   readonly config: TeamUsageConfig;
   /** Old endpoints that still hold this machine's history. */
   readonly removals: readonly TeamUsageRemoval[];
+  /** Every endpoint and label a summary was accepted under and not removed since. */
+  readonly reported?: readonly TeamUsageRemoval[];
   readonly lastSentAt?: string;
   /** The last sent body without its timestamp, to skip unchanged sends. */
   readonly lastSentBody?: string;
@@ -57,15 +65,33 @@ export interface TeamUsageDeps {
   readonly saveState: (state: TeamUsageState) => Effect.Effect<void>;
   readonly buildSummary: (config: TeamUsageConfig) => Effect.Effect<TeamUsageSummary>;
   readonly readHostedToken: Effect.Effect<string | undefined>;
-  readonly readSelfHostedCredential: Effect.Effect<string | undefined>;
-  readonly writeSelfHostedCredential: (value: string | undefined) => Effect.Effect<void>;
+  /** The bearer saved for this self-hosted endpoint address, and only for it. */
+  readonly readSelfHostedCredential: (url: string) => Effect.Effect<string | undefined>;
+  readonly writeSelfHostedCredential: (
+    url: string,
+    value: string | undefined,
+  ) => Effect.Effect<void>;
   /** Sends one request; the HTTP status, or 0 when it never got an answer. */
   readonly send: (request: TeamUsageRequest) => Effect.Effect<number>;
   readonly nowMs: Effect.Effect<number>;
 }
 
+/** Same destination: the hosted tenant, or the self-hosted address. Labels do not count. */
 const sameEndpoint = (a: TeamUsageEndpoint | undefined, b: TeamUsageEndpoint | undefined) =>
-  JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  a === undefined || b === undefined
+    ? a === b
+    : a.kind === "hosted"
+      ? b.kind === "hosted" && a.tenantId === b.tenantId
+      : b.kind === "selfHosted" && a.url === b.url;
+
+const sameRemoval = (a: TeamUsageRemoval, b: TeamUsageRemoval) =>
+  sameEndpoint(a.endpoint, b.endpoint) && a.machineLabel === b.machineLabel;
+
+const addRemovals = (list: readonly TeamUsageRemoval[], more: readonly TeamUsageRemoval[]) => {
+  const out = [...list];
+  for (const entry of more) if (!out.some((known) => sameRemoval(known, entry))) out.push(entry);
+  return out;
+};
 
 const utcDay = (iso: string | undefined) => iso?.slice(0, 10);
 
@@ -89,6 +115,9 @@ export function normalizeConfig(config: TeamUsageConfig): TeamUsageConfig {
 
 export const makeTeamUsageReporter = (deps: TeamUsageDeps) => {
   let state: TeamUsageState | undefined;
+  // One operation at a time: an opt-out never races a send that already started.
+  const lock = Semaphore.makeUnsafe(1);
+  const serial = <A, E, R>(effect: Effect.Effect<A, E, R>) => lock.withPermits(1)(effect);
   const current = Effect.gen(function* () {
     if (state === undefined) state = yield* deps.loadState;
     return state;
@@ -109,7 +138,7 @@ export const makeTeamUsageReporter = (deps: TeamUsageDeps) => {
         } satisfies TeamUsageCredentials;
       return {
         hostedToken: undefined,
-        selfHostedCredential: yield* deps.readSelfHostedCredential,
+        selfHostedCredential: yield* deps.readSelfHostedCredential(endpoint.url),
       } satisfies TeamUsageCredentials;
     });
 
@@ -134,14 +163,32 @@ export const makeTeamUsageReporter = (deps: TeamUsageDeps) => {
       // 404: nothing is stored there for this machine any more.
       if ((status >= 200 && status < 300) || status === 404) continue;
       left.push(removal);
-      error = status === 0 ? "The team endpoint did not answer." : `Removing history failed (HTTP ${status}).`;
+      error =
+        status === 0
+          ? "The team endpoint did not answer."
+          : `Removing history failed (HTTP ${status}).`;
     }
     const latest = yield* current;
+    const done = now.removals.filter(
+      (removal) => !left.some((entry) => sameRemoval(entry, removal)),
+    );
     yield* commit({
       ...latest,
       removals: left,
+      reported: (latest.reported ?? []).filter(
+        (entry) => !done.some((gone) => sameRemoval(gone, entry)),
+      ),
       ...(error === undefined ? {} : { lastError: error }),
     });
+    // A self-hosted address nothing points at any more loses its saved credential.
+    for (const removal of done) {
+      const endpoint = removal.endpoint;
+      if (endpoint.kind !== "selfHosted") continue;
+      const stillUsed =
+        sameEndpoint(latest.config.endpoint, endpoint) ||
+        left.some((entry) => sameEndpoint(entry.endpoint, endpoint));
+      if (!stillUsed) yield* deps.writeSelfHostedCredential(endpoint.url, undefined);
+    }
   });
 
   const sendIfDue = (force: boolean) =>
@@ -156,7 +203,8 @@ export const makeTeamUsageReporter = (deps: TeamUsageDeps) => {
       if (
         now.removals.some(
           (entry) =>
-            sameEndpoint(entry.endpoint, config.endpoint) && entry.machineLabel === summary.machineLabel,
+            sameEndpoint(entry.endpoint, config.endpoint) &&
+            entry.machineLabel === summary.machineLabel,
         )
       )
         return;
@@ -167,7 +215,11 @@ export const makeTeamUsageReporter = (deps: TeamUsageDeps) => {
         if (nowMs - lastMs < SEND_INTERVAL_MS) return;
         if (body === now.lastSentBody) return;
       }
-      const request = teamUsageSendRequest(config.endpoint, yield* credentials(config.endpoint), summary);
+      const request = teamUsageSendRequest(
+        config.endpoint,
+        yield* credentials(config.endpoint),
+        summary,
+      );
       if (!request.ok) {
         yield* commit({ ...now, lastError: request.reason });
         return;
@@ -176,7 +228,23 @@ export const makeTeamUsageReporter = (deps: TeamUsageDeps) => {
       const latest = yield* current;
       if (status >= 200 && status < 300) {
         const { lastError: _dropped, ...rest } = latest;
-        yield* commit({ ...rest, lastSentAt: summary.at, lastSentBody: body });
+        const sent = { endpoint: config.endpoint, machineLabel: summary.machineLabel };
+        const reported = latest.reported ?? [];
+        // The machine was renamed since: its history under the old name goes.
+        const renamed = reported.filter(
+          (entry) =>
+            sameEndpoint(entry.endpoint, sent.endpoint) && entry.machineLabel !== sent.machineLabel,
+        );
+        yield* commit({
+          ...rest,
+          lastSentAt: summary.at,
+          lastSentBody: body,
+          reported: addRemovals(
+            reported.filter((entry) => !renamed.includes(entry)),
+            [sent],
+          ),
+          removals: addRemovals(latest.removals, renamed),
+        });
         return;
       }
       yield* commit({
@@ -191,16 +259,21 @@ export const makeTeamUsageReporter = (deps: TeamUsageDeps) => {
     });
 
   /** One timer step: finish removals, then send if due. */
-  const tick = Effect.gen(function* () {
-    yield* runRemovals;
-    yield* sendIfDue(false);
-  });
+  const tick = serial(
+    Effect.gen(function* () {
+      yield* runRemovals;
+      yield* sendIfDue(false);
+    }),
+  );
 
   const status = Effect.gen(function* () {
     const now = yield* current;
     const config = now.config;
     const preview = yield* deps.buildSummary(config);
-    const selfHostedCredentialSet = (yield* deps.readSelfHostedCredential) !== undefined;
+    const selfHostedCredentialSet =
+      config.endpoint?.kind === "selfHosted"
+        ? (yield* deps.readSelfHostedCredential(config.endpoint.url)) !== undefined
+        : false;
     // The sign-in is looked up only while the hosted view is chosen.
     const hostedSignedIn =
       config.endpoint?.kind === "hosted" ? (yield* deps.readHostedToken) !== undefined : undefined;
@@ -216,43 +289,59 @@ export const makeTeamUsageReporter = (deps: TeamUsageDeps) => {
   });
 
   const update = (input: TeamUsageUpdateInput) =>
-    Effect.gen(function* () {
-      const config = normalizeConfig(input.config);
-      if (config.endpoint !== undefined) {
-        const target = teamUsageEndpointUrl(config.endpoint);
-        if ("reason" in target) return { ok: false as const, reason: target.reason };
-      }
-      if (input.selfHostedCredential !== undefined)
-        yield* deps.writeSelfHostedCredential(input.selfHostedCredential);
-      const before = yield* current;
-      const old = before.config;
-      const wasSending = old.enabled && old.endpoint !== undefined;
-      const moved =
-        !config.enabled ||
-        !sameEndpoint(old.endpoint, config.endpoint) ||
-        teamUsageLabel(old.machineLabel) !== teamUsageLabel(config.machineLabel);
-      const removals = [...before.removals];
-      // Whatever this machine may have sent under the old endpoint and label is
-      // removed there; a delete of nothing is answered 404 and counts as done.
-      if (wasSending && moved && old.endpoint !== undefined) {
-        const sentLabel = (yield* deps.buildSummary(old)).machineLabel;
-        const removal = { endpoint: old.endpoint, machineLabel: sentLabel };
-        if (!removals.some((entry) => JSON.stringify(entry) === JSON.stringify(removal)))
-          removals.push(removal);
-      }
-      const restarted = moved || !wasSending;
-      const { lastSentAt: _a, lastSentBody: _b, lastError: _c, ...rest } = before;
-      yield* commit({
-        ...(restarted ? rest : before),
-        config,
-        removals,
-      });
-      yield* runRemovals;
-      if (config.enabled) yield* sendIfDue(true);
-      return { ok: true as const };
-    });
+    serial(
+      Effect.gen(function* () {
+        const config = normalizeConfig(input.config);
+        if (config.endpoint !== undefined) {
+          const target = teamUsageEndpointUrl(config.endpoint);
+          if ("reason" in target) return { ok: false as const, reason: target.reason };
+        }
+        if (input.selfHostedCredential !== undefined) {
+          // A credential is saved for the address it was typed for, never a slot others read.
+          if (config.endpoint?.kind !== "selfHosted")
+            return { ok: false as const, reason: "Enter the self-hosted endpoint first." };
+          yield* deps.writeSelfHostedCredential(config.endpoint.url, input.selfHostedCredential);
+        }
+        const before = yield* current;
+        const old = before.config;
+        const wasSending = old.enabled && old.endpoint !== undefined;
+        const moved =
+          !config.enabled ||
+          !sameEndpoint(old.endpoint, config.endpoint) ||
+          teamUsageLabel(old.machineLabel) !== teamUsageLabel(config.machineLabel);
+        let removals = [...before.removals];
+        let reported = [...(before.reported ?? [])];
+        // Whatever this machine sent under the old endpoint and labels is removed
+        // there; a delete of nothing is answered 404 and counts as done.
+        if (wasSending && moved && old.endpoint !== undefined) {
+          const sentLabel = (yield* deps.buildSummary(old)).machineLabel;
+          removals = addRemovals(removals, [
+            ...reported,
+            { endpoint: old.endpoint, machineLabel: sentLabel },
+          ]);
+          reported = [];
+        }
+        const restarted = moved || !wasSending;
+        const { lastSentAt: _a, lastSentBody: _b, lastError: _c, ...rest } = before;
+        yield* commit({
+          ...(restarted ? rest : before),
+          config,
+          removals,
+          reported,
+        });
+        yield* runRemovals;
+        if (config.enabled) yield* sendIfDue(true);
+        return { ok: true as const };
+      }),
+    );
 
-  return { tick, status, update, sendIfDue, runRemovals };
+  return {
+    tick,
+    status,
+    update,
+    sendIfDue: (force: boolean) => serial(sendIfDue(force)),
+    runRemovals: serial(runRemovals),
+  };
 };
 
 export type TeamUsageReporterCore = ReturnType<typeof makeTeamUsageReporter>;

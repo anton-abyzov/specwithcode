@@ -24,6 +24,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
@@ -33,6 +34,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
+import { sha256 } from "../nodeCrypto.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { readVskillApiToken } from "../project/vskillApiToken.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -50,6 +52,9 @@ import type { TeamUsageRequest } from "./teamUsageTransport.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 
 const TICK = "5 minutes";
+
+/** One secret per self-hosted address, so a credential is only ever read for its own endpoint. */
+const credentialName = (url: string) => `${TEAM_USAGE_SECRET}-${sha256([url], "hex").slice(0, 32)}`;
 
 export class TeamUsageReporter extends Context.Service<
   TeamUsageReporter,
@@ -72,6 +77,7 @@ const decodeState = (raw: string): TeamUsageState => {
       ...parsed,
       config: { ...parsed.config, enabled: parsed.config?.enabled === true },
       removals: Array.isArray(parsed.removals) ? parsed.removals : [],
+      reported: Array.isArray(parsed.reported) ? parsed.reported : [],
     } as TeamUsageState;
   } catch {
     return initialTeamUsageState;
@@ -117,6 +123,8 @@ export const make = Effect.gen(function* () {
           : withHeaders.pipe(HttpClientRequest.bodyText(request.body, "application/json"));
       const response = yield* http.execute(req).pipe(
         Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+        // A redirect could move the summary to another host or to plain http.
+        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
         Effect.timeout("30 seconds"),
       );
       return response.status;
@@ -154,18 +162,19 @@ export const make = Effect.gen(function* () {
         });
       }),
     readHostedToken: hostedToken,
-    readSelfHostedCredential: secrets.get(TEAM_USAGE_SECRET).pipe(
-      Effect.map((value) =>
-        Option.isSome(value) && value.value.length > 0
-          ? new TextDecoder().decode(value.value)
-          : undefined,
+    readSelfHostedCredential: (url) =>
+      secrets.get(credentialName(url)).pipe(
+        Effect.map((value) =>
+          Option.isSome(value) && value.value.length > 0
+            ? new TextDecoder().decode(value.value)
+            : undefined,
+        ),
+        Effect.orElseSucceed(() => undefined),
       ),
-      Effect.orElseSucceed(() => undefined),
-    ),
-    writeSelfHostedCredential: (value) =>
+    writeSelfHostedCredential: (url, value) =>
       (value === undefined || value.trim() === ""
-        ? secrets.remove(TEAM_USAGE_SECRET)
-        : secrets.set(TEAM_USAGE_SECRET, new TextEncoder().encode(value.trim()))
+        ? secrets.remove(credentialName(url))
+        : secrets.set(credentialName(url), new TextEncoder().encode(value.trim()))
       ).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("could not store team credential", { cause }),
@@ -195,6 +204,7 @@ export const make = Effect.gen(function* () {
       )
       .pipe(
         Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
         Effect.timeout("30 seconds"),
         Effect.option,
       );
