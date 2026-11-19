@@ -193,18 +193,15 @@ export type Fetched =
   | { readonly ok: true; readonly heads: Map<string, string> | null; readonly porcelain: boolean }
   | { readonly ok: false; readonly reason: string };
 
-let porcelainKnown: boolean | undefined;
-/** Whether this machine's Git has `fetch --porcelain` (2.41 and newer). Asked once. */
+/** Whether the Git that fetches here has `fetch --porcelain` (2.41 and newer). Asked per fetch. */
 export async function gitHasFetchPorcelain(git: Git, cwd: string): Promise<boolean> {
-  if (porcelainKnown !== undefined) return porcelainKnown;
   const version = await git(cwd, ["version"], { allowFailure: true, timeoutMs: LOCAL_MS }).catch(
     () => null,
   );
   const found = /git version (\d+)\.(\d+)/.exec(version?.stdout ?? "");
   if (version === null || version.code !== 0 || found === null) return false;
   const [major, minor] = [Number(found[1]), Number(found[2])];
-  porcelainKnown = major > 2 || (major === 2 && minor >= 41);
-  return porcelainKnown;
+  return major > 2 || (major === 2 && minor >= 41);
 }
 
 /**

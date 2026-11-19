@@ -57,7 +57,7 @@ import {
   uncommittedCount,
 } from "./projectSyncGit.ts";
 import { type Row, sameTuple, upstreamOf } from "./projectSyncRecord.ts";
-import { refTransaction } from "./refTransaction.ts";
+import { type RefTransaction, refTransaction } from "./refTransaction.ts";
 
 const stepOf = (
   planned: ProjectSyncStep,
@@ -306,9 +306,37 @@ export async function fastForwardRepository(
         : projectSyncLockedDetail(reason),
     );
   }
+  // From here on the transaction is open: whatever happens, it is closed before this
+  // returns (an `abort` after a `commit` or an `abort` does nothing).
+  try {
+    return await underTheLock(context, lookup, transaction, cwd, row, changes, planned, decline);
+  } finally {
+    await transaction.abort();
+  }
+}
+
+/** Everything between `prepare: ok` and the transaction's end. */
+async function underTheLock(
+  context: SyncContext,
+  lookup: () => ReturnType<NonNullable<SyncContext["record"]>>,
+  transaction: RefTransaction,
+  cwd: string,
+  row: Row,
+  changes: ReadonlyArray<Change>,
+  planned: ProjectSyncStep,
+  decline: (...declined: Declined) => ProjectSyncStepResult,
+): Promise<ProjectSyncStepResult> {
+  const { git } = context;
+  const head = row.head!;
+  const target = row.target!;
   // The admission point. HEAD and the branch it names are locked now and cannot change;
-  // everything else is read for the last time before the write.
-  const admitted = await admit(context, lookup, cwd, row, changes);
+  // everything else is read for the last time before the write. A read that throws is unread.
+  const admitted = await admit(context, lookup, cwd, row, changes).catch((): Declined => [
+    PROJECT_SYNC_STATE_UNREAD_DETAIL,
+    "none",
+    "refused",
+    {},
+  ]);
   if (admitted !== null) {
     await transaction.abort();
     return decline(...admitted);
@@ -335,10 +363,22 @@ export async function fastForwardRepository(
   }));
   if (tree.code !== 0) {
     await transaction.abort();
-    return afterFailedTree(context, cwd, row, changes, planned, gitReason(tree.stderr));
+    return afterFailedTree(context, cwd, row, changes, planned, gitReason(tree.stderr)).catch(() =>
+      stepOf(planned, {
+        detail: PROJECT_SYNC_UNVERIFIED_DETAIL,
+        movedUnverified: true,
+        downgraded: true,
+      }),
+    );
   }
   const committed = await transaction.commit().catch(() => null);
-  return readBack(context, cwd, row, changes, planned, committed);
+  return readBack(context, cwd, row, changes, planned, committed).catch(() =>
+    stepOf(planned, {
+      detail: PROJECT_SYNC_UNVERIFIED_DETAIL,
+      movedUnverified: true,
+      downgraded: true,
+    }),
+  );
 }
 
 /** Branch, commit and upstream against the row; a sentence when they differ or are unread. */
@@ -438,10 +478,11 @@ async function differing(
   targetSide: boolean,
 ): Promise<Array<string> | null> {
   const out = new Set<string>();
-  const paths = changes.map((change) => change.path);
+  // The whole checkout, not only the move's paths: it was clean at the admission point, so
+  // every difference is one from then on, and no path list can grow too long for Git.
   for (const args of [
-    ["diff-index", "--cached", "--name-only", "-z", "--no-renames", commit, "--", ...paths],
-    ["diff", "--name-only", "-z", "--no-renames", commit, "--", ...paths],
+    ["diff-index", "--cached", "--name-only", "-z", "--no-renames", commit],
+    ["diff", "--name-only", "-z", "--no-renames", commit],
   ]) {
     const listed = await git(cwd, args, { allowFailure: true, timeoutMs: LOCAL_MS }).catch(
       () => null,

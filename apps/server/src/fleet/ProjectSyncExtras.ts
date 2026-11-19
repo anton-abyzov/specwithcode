@@ -232,10 +232,12 @@ export async function inventoryRepository(
       continue;
     }
     if (heads === null) {
-      // Membership unknown: an upstream's commits are counted against its ref here, as Git
-      // keeps it; a branch with no upstream is not counted at all.
-      if (against === null) continue;
-      const commits = await counted([head, `^${against}`]);
+      // Membership unknown. An upstream's commits are counted against its ref here, as Git
+      // keeps it; a branch with no upstream against origin's branch of its name as this
+      // checkout last fetched it, when there is one. A count, never a claim of membership.
+      const local = against ?? `refs/remotes/origin/${branch}`;
+      if (against === null && (await refCommit(root, local).catch(() => null)) === null) continue;
+      const commits = await counted([head, `^${local}`]);
       if (commits === 0) continue;
       if (notPushed.length >= PROJECT_SYNC_MAX_LISTED) branchesNotListed += 1;
       else notPushed.push({ branch, head, commits });

@@ -401,7 +401,7 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
     }).pipe(Effect.provide(ProjectAdmission.layer)),
   );
 
-  it.effect("never cuts a merge short: a cancelled call waits for it under the lock", () =>
+  it.effect("never cuts a move short: a cancelled call waits for it under the lock", () =>
     Effect.gen(function* () {
       const admission = yield* ProjectAdmission.ProjectAdmission;
       const events: Array<string> = [];
@@ -410,10 +410,10 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
       const work = ProjectSync.untilGitEnds(
         () =>
           new Promise<void>((resolve) => {
-            events.push("merge started");
+            events.push("move started");
             started.fire();
             finish = () => {
-              events.push("merge ended");
+              events.push("move ended");
               resolve();
             };
           }),
@@ -427,13 +427,13 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
         ),
       );
       const cancelled = yield* Effect.forkChild(Fiber.interrupt(first));
-      // The cancel is asked for; the merge still runs and the lock is still held.
+      // The cancel is asked for; the move still runs and the lock is still held.
       yield* settle;
-      expect(events).toEqual(["merge started"]);
+      expect(events).toEqual(["move started"]);
       finish();
       yield* Fiber.join(cancelled);
       yield* Fiber.join(second);
-      expect(events).toEqual(["merge started", "merge ended", "next call has the lock"]);
+      expect(events).toEqual(["move started", "move ended", "next call has the lock"]);
     }).pipe(Effect.provide(ProjectAdmission.layer)),
   );
 
@@ -760,6 +760,36 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
           items: [{ kind: "branch", path: ".swc-clone-lib-Ab12Cd/clone", branch: "main" }],
         });
         expect(sent.items[0]).toMatchObject({ status: "stays", stays: "failed" });
+      }),
+    );
+  });
+
+  it.effect("keeps every extra of a folder it could not read, and lists none (P3-09)", () => {
+    const f = umbrella();
+    const nested = NodeFS.realpathSync(f.nested);
+    commit(f.nested, "lib.ts", "export const lib = 2;\n");
+    // Git never answers whether the nested folder is a thread's worktree.
+    gitHooks.before = (command) => {
+      if (command.cwd === nested && command.args.includes("--git-common-dir"))
+        throw new Error("git rev-parse timed out");
+    };
+    return withMachines(f, unscopedGrant(m4), (extras) =>
+      Effect.gen(function* () {
+        const inventory = yield* extras.inventory({ projectId: projectA });
+        expect(
+          inventory.repositories.find((entry) => entry.path === "repositories/lib"),
+        ).toMatchObject({ notPushed: [], onlyHere: [], unreadDetail: expect.any(String) });
+        const sent = yield* extras.sendExtras({
+          projectId: projectA,
+          targetEnvironmentId: m5,
+          operationId: OPERATION,
+          items: [{ kind: "branch", path: "repositories/lib", branch: "main" }],
+        });
+        expect(sent.items[0]).toMatchObject({
+          status: "stays",
+          stays: "failed",
+          detail: "This folder could not be read, so Sync skipped it.",
+        });
       }),
     );
   });

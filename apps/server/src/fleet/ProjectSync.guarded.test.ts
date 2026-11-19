@@ -15,9 +15,12 @@ import {
   PROJECT_SYNC_CHANGED_HEAD_DETAIL,
   PROJECT_SYNC_CHANGED_UPSTREAM_DETAIL,
   PROJECT_SYNC_FETCH_KEPT_MS,
+  PROJECT_SYNC_FETCHED_UNREAD_DETAIL,
   PROJECT_SYNC_FETCHES_KEPT,
+  PROJECT_SYNC_GIT_TOO_OLD_DETAIL,
   PROJECT_SYNC_GRAFTS_DETAIL,
   PROJECT_SYNC_NO_FETCH_DETAIL,
+  PROJECT_SYNC_STATE_UNREAD_DETAIL,
   PROJECT_SYNC_UNVERIFIED_DETAIL,
   projectSyncFilesDifferDetail,
   projectSyncFilterDetail,
@@ -46,7 +49,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { runGit } from "./folderTransfer/git.ts";
 import * as ProjectSync from "./ProjectSync.ts";
-import { keepFetch, keptFetch, newFetchRecord } from "./projectSyncRecord.ts";
+import { keepFetch, keptFetch, newFetchRecord, parseFetchPorcelain } from "./projectSyncRecord.ts";
 import { refTransaction, type RefTransactionFactory } from "./refTransaction.ts";
 
 vi.mock("./folderTransfer/git.ts", async (importOriginal) => {
@@ -212,6 +215,60 @@ describe("history and content Sync does not run (D4-03)", () => {
       Effect.map(({ step }) => {
         expect(step).toMatchObject({ moved: 0, detail: projectSyncSubmoduleDetail("mod") });
         expect(git(f.b, "rev-parse", "HEAD")).toBe(f.was);
+      }),
+    );
+  });
+
+  it.effect("refuses a changed populated submodule, and leaves its checkout on its branch", () => {
+    const f = twoMachines();
+    const child = NodePath.join(f.base, "child.git");
+    git(f.base, "init", "-q", "--bare", "-b", "main", child);
+    const childWork = NodePath.join(f.base, "child-work");
+    git(f.base, "clone", "-q", child, childWork);
+    git(childWork, "checkout", "-q", "-b", "main");
+    commit(childWork, "lib.ts", "export const lib = 1;\n");
+    git(childWork, "push", "-q", "-u", "origin", "main");
+    git(f.a, "-c", "protocol.file.allow=always", "submodule", "add", "-q", child, "mod");
+    git(f.a, "commit", "-q", "-m", "add the submodule");
+    git(f.a, "push", "-q", "origin", "main");
+    git(f.b, "pull", "-q", "--ff-only");
+    git(f.b, "-c", "protocol.file.allow=always", "submodule", "update", "-q", "--init");
+    const nested = NodePath.join(f.b, "mod");
+    git(nested, "checkout", "-q", "-b", "work");
+    const was = git(f.b, "rev-parse", "HEAD");
+    // origin's project moves the submodule on.
+    commit(childWork, "lib.ts", "export const lib = 2;\n");
+    git(childWork, "push", "-q", "origin", "main");
+    git(
+      NodePath.join(f.a, "mod"),
+      "-c",
+      "protocol.file.allow=always",
+      "pull",
+      "-q",
+      "origin",
+      "main",
+    );
+    git(f.a, "add", "mod");
+    git(f.a, "commit", "-q", "-m", "move the submodule");
+    git(f.a, "push", "-q", "origin", "main");
+    git(f.b, "config", "submodule.recurse", "true");
+    const child0 = {
+      head: git(nested, "rev-parse", "HEAD"),
+      branch: git(nested, "symbolic-ref", "HEAD"),
+      index: git(nested, "ls-files", "-s"),
+      file: NodeFS.readFileSync(NodePath.join(nested, "lib.ts"), "utf8"),
+    };
+    return fetchAndMove(f).pipe(
+      Effect.map(({ step }) => {
+        expect(step).toMatchObject({ moved: 0, detail: projectSyncSubmoduleDetail("mod") });
+        expect(git(f.b, "rev-parse", "main")).toBe(was);
+        expect({
+          head: git(nested, "rev-parse", "HEAD"),
+          branch: git(nested, "symbolic-ref", "HEAD"),
+          index: git(nested, "ls-files", "-s"),
+          file: NodeFS.readFileSync(NodePath.join(nested, "lib.ts"), "utf8"),
+        }).toEqual(child0);
+        expect(child0.branch).toBe("refs/heads/work");
       }),
     );
   });
@@ -491,11 +548,15 @@ describe("what a write that did not go as planned says (D4-01, D4-06)", () => {
   });
 
   /** Fetches B with a real runner, then moves it with `transaction` in place of Git's own. */
-  const moveWith = async (f: ReturnType<typeof behind>, transaction: RefTransactionFactory) => {
+  const moveWith = async (
+    f: ReturnType<typeof behind>,
+    transaction: RefTransactionFactory = refTransaction,
+    inUse: ProjectSync.SyncContext["inUse"] = async () => null,
+  ) => {
     const fetched = newFetchRecord("project-guarded");
     const context: ProjectSync.SyncContext = {
       git: (cwd, args, options) => runGit(cwd, args, options),
-      inUse: async () => null,
+      inUse,
       fetched,
       transaction,
     };
@@ -557,6 +618,169 @@ describe("what a write that did not go as planned says (D4-01, D4-06)", () => {
       detail: PROJECT_SYNC_UNVERIFIED_DETAIL,
     });
     expect(git(f.b, "rev-parse", "main")).toBe(f.head);
+  });
+});
+
+describe("the transaction is always closed (D4-01)", () => {
+  it("aborts and leaves no lock when a read under the lock throws", async () => {
+    const f = behind();
+    const fetched = newFetchRecord("project-guarded");
+    let asked = 0;
+    const context: ProjectSync.SyncContext = {
+      git: (cwd, args, options) => runGit(cwd, args, options),
+      // Free at the fetch and before the lock; the app's thread list fails under it.
+      inUse: async () => {
+        asked += 1;
+        if (asked === 3) throw new Error("the thread list could not be read");
+        return null;
+      },
+      fetched,
+    };
+    await ProjectSync.fetchAll(context, [{ path: ".", cwd: f.b }]);
+    const step = await ProjectSync.fastForwardRepository(context, { path: ".", cwd: f.b }, null);
+    expect(asked).toBe(3);
+    expect(step).toMatchObject({ moved: 0, detail: PROJECT_SYNC_STATE_UNREAD_DETAIL });
+    expect(git(f.b, "rev-parse", "HEAD")).toBe(f.was);
+    expect(lockFiles(f.b)).toEqual([]);
+    // Git writes work again at once.
+    git(f.b, "update-ref", "refs/heads/probe", f.was);
+  });
+});
+
+describe("no merge, whatever merge settings say (P3-03)", () => {
+  it.effect(
+    "moves forward with pull.twohead=ours and merge.ff=false, and makes no merge commit",
+    () => {
+      const f = behind();
+      git(f.b, "config", "pull.twohead", "ours");
+      git(f.b, "config", "merge.ff", "false");
+      return fetchAndMove(f).pipe(
+        Effect.map(({ step }) => {
+          expect(step).toMatchObject({ action: "fast-forward", moved: 1 });
+          expect(git(f.b, "rev-parse", "HEAD")).toBe(f.head);
+          expect(git(f.b, "rev-list", "--count", "--merges", "HEAD")).toBe("0");
+          expect(NodeFS.readFileSync(NodePath.join(f.b, "app.ts"), "utf8")).toBe(
+            "export const a = 2;\n",
+          );
+        }),
+      );
+    },
+  );
+});
+
+describe("the move goes by object ids and the recorded folders, not by an address (P3-06)", () => {
+  it.effect("moves to the fetched commit after origin's address changed", () => {
+    const f = behind();
+    return withSync(f.b, (sync) =>
+      Effect.gen(function* () {
+        const fetched = yield* sync.fetch(one);
+        git(f.b, "remote", "set-url", "origin", NodePath.join(f.base, "elsewhere.git"));
+        const run = yield* sync.run({
+          ...one,
+          fetchId: fetched.fetchId,
+          fastForward: [{ path: ".", otherBranch: null }],
+          clone: [],
+        });
+        expect(run.repositories[0]).toMatchObject({ action: "fast-forward", moved: 1 });
+        expect(git(f.b, "rev-parse", "HEAD")).toBe(f.head);
+      }),
+    );
+  });
+
+  it.effect("declines a folder cloned again at the same path since the fetch", () => {
+    const f = behind();
+    return withSync(f.b, (sync) =>
+      Effect.gen(function* () {
+        const fetched = yield* sync.fetch(one);
+        NodeFS.rmSync(f.b, { recursive: true, force: true });
+        git(f.base, "clone", "-q", f.remote, f.b);
+        const before = snapshot(f.b);
+        const run = yield* sync.run({
+          ...one,
+          fetchId: fetched.fetchId,
+          fastForward: [{ path: ".", otherBranch: null }],
+          clone: [],
+        });
+        expect(run.repositories[0]).toMatchObject({
+          action: "none",
+          moved: 0,
+          detail: PROJECT_SYNC_CHANGED_HEAD_DETAIL,
+        });
+        expect(snapshot(f.b)).toEqual(before);
+      }),
+    );
+  });
+});
+
+describe("what the fetch's own output proves (P3-04, P3-08)", () => {
+  const OLD = "a".repeat(40);
+  const NEW = "b".repeat(40);
+  it("reads fetched, unchanged, forced and tag lines, and nothing else", () => {
+    const heads = parseFetchPorcelain(
+      [
+        `  ${OLD} ${NEW} refs/remotes/origin/main`,
+        `= ${NEW} ${NEW} refs/remotes/origin/level`,
+        `+ ${OLD} ${NEW} refs/remotes/origin/forced`,
+        `* ${"0".repeat(40)} ${NEW} refs/tags/v1`,
+        "",
+      ].join("\n"),
+    );
+    expect(heads && [...heads]).toEqual([
+      ["refs/heads/main", NEW],
+      ["refs/heads/level", NEW],
+      ["refs/heads/forced", NEW],
+    ]);
+    expect(parseFetchPorcelain(`  ${OLD} ${NEW} refs/heads/main\n`)).toBeNull();
+    expect(parseFetchPorcelain(`- ${OLD} ${NEW} refs/remotes/origin/gone\n`)).toBeNull();
+    expect(parseFetchPorcelain("From somewhere\n")).toBeNull();
+    expect(parseFetchPorcelain(`  ${OLD} ${NEW} refs/remotes/origin/a b\n`)).toBeNull();
+  });
+
+  /** One fetch of B through a runner that changes what `version` or `fetch` say. */
+  const fetchThrough = async (
+    f: ReturnType<typeof behind>,
+    change: (args: ReadonlyArray<string>, real: Awaited<ReturnType<typeof runGit>>) => typeof real,
+  ) => {
+    const fetched = newFetchRecord("project-guarded");
+    const context: ProjectSync.SyncContext = {
+      git: async (cwd, args, options) => change(args, await runGit(cwd, args, options)),
+      inUse: async () => null,
+      fetched,
+    };
+    const facts = await ProjectSync.fetchAll(context, [{ path: ".", cwd: f.b }]);
+    const step = await ProjectSync.fastForwardRepository(context, { path: ".", cwd: f.b }, null);
+    return { facts: facts[0]!, rows: fetched.rows.size, step };
+  };
+
+  it("output that does not read as proof: fetched, unread, and nothing moves", async () => {
+    const f = behind();
+    const { facts, rows, step } = await fetchThrough(f, (args, real) =>
+      args[0] === "fetch" ? { ...real, stdout: "not porcelain\n" } : real,
+    );
+    expect(facts).toMatchObject({
+      fetch: "ok",
+      stateUnread: true,
+      unreadDetail: PROJECT_SYNC_FETCHED_UNREAD_DETAIL,
+    });
+    expect(rows).toBe(0);
+    expect(step).toMatchObject({ moved: 0, detail: PROJECT_SYNC_NO_FETCH_DETAIL });
+    expect(git(f.b, "rev-parse", "HEAD")).toBe(f.was);
+  });
+
+  it("a Git older than 2.41: fetched without --porcelain, and nothing moves", async () => {
+    const f = behind();
+    const { facts, rows, step } = await fetchThrough(f, (args, real) =>
+      args[0] === "version" ? { ...real, stdout: "git version 2.40.1\n" } : real,
+    );
+    expect(facts).toMatchObject({
+      fetch: "ok",
+      stateUnread: true,
+      unreadDetail: PROJECT_SYNC_GIT_TOO_OLD_DETAIL,
+    });
+    expect(rows).toBe(0);
+    expect(step).toMatchObject({ moved: 0 });
+    expect(git(f.b, "rev-parse", "refs/remotes/origin/main")).toBe(f.head);
+    expect(git(f.b, "rev-parse", "HEAD")).toBe(f.was);
   });
 });
 

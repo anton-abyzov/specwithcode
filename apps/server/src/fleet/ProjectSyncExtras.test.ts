@@ -209,6 +209,19 @@ describe("what Git does not carry (1390 AC-12)", () => {
     expect(extras.notPushed.map((entry) => `${entry.branch} ${entry.commits}`)).toEqual(["main 1"]);
   });
 
+  it("without a fetch, still counts a branch with no upstream against its name's tracking ref (D4-08)", async () => {
+    const f = twoMachines();
+    git(f.a, "checkout", "-q", "-b", "work");
+    commit(f.a, "work.ts", "export const work = 1;\n");
+    git(f.a, "push", "-q", "origin", "work");
+    git(f.a, "fetch", "-q", "origin");
+    const own = commit(f.a, "work.ts", "export const work = 2;\n");
+    const extras = await inventoryRepository({ path: ".", cwd: f.a });
+    expect(extras.notPushed).toEqual([{ branch: "work", head: own, commits: 1 }]);
+    expect(extras.onlyHere).toEqual([]);
+    expect(extras.onlyHereUnknown).toBe(true);
+  });
+
   it("reports a folder it could not read as unread, with no counts to show (D4-06, P3-09)", async () => {
     const f = twoMachines();
     commit(f.a, "app.ts", "export const a = 2;\n");
