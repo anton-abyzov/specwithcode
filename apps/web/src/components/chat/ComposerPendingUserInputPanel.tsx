@@ -26,6 +26,7 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
+import { Tooltip, TooltipPopup } from "../ui/tooltip";
 import { useQuestionCardCollapsed } from "./questionCardCollapse";
 import { useQuestionOptionsLayout } from "./questionOptionsLayout";
 import {
@@ -188,6 +189,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   );
   const compactOptions = optionsLayout === "compact";
   const [hoveredOptionKey, setHoveredOptionKey] = useState<string | null>(null);
+  // The clipped description under the pointer, which the tooltip points at.
+  const [hoveredDescription, setHoveredDescription] = useState<HTMLElement | null>(null);
   const [focusedOptionKey, setFocusedOptionKey] = useState<string | null>(null);
   const [pinnedOptionKeys, setPinnedOptionKeys] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
@@ -563,11 +566,14 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 const hasDescription = Boolean(presented.description);
                 const pinned = pinnedOptionKeys.has(optionKey);
                 const expanded =
-                  hasDescription &&
-                  (!compactOptions ||
-                    pinned ||
-                    hoveredOptionKey === optionKey ||
-                    focusedOptionKey === optionKey);
+                  hasDescription && (!compactOptions || pinned || focusedOptionKey === optionKey);
+                // Hover never resizes a row: a clipped description shows in a
+                // tooltip instead, so nothing under the pointer moves.
+                const showDescriptionTip =
+                  compactOptions &&
+                  !expanded &&
+                  hoveredOptionKey === optionKey &&
+                  hoveredDescription !== null;
                 return (
                   // A div, not a button: descriptions may hold links, which
                   // cannot nest inside a button and must not pick the option.
@@ -586,12 +592,20 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                         return;
                       }
                       clearHoverTimer();
+                      const row = event.currentTarget;
                       // A short pause, so sweeping the pointer across the list
-                      // does not open every row on the way.
+                      // does not open a tooltip for every row on the way.
                       hoverTimerRef.current = window.setTimeout(() => {
                         hoverTimerRef.current = null;
-                        setHoveredOptionKey(optionKey);
-                      }, 180);
+                        const description = row.querySelector<HTMLElement>(
+                          "[data-question-option-description]",
+                        );
+                        // Only a clipped description needs its full text shown.
+                        if (description && description.scrollWidth > description.clientWidth + 1) {
+                          setHoveredDescription(description);
+                          setHoveredOptionKey(optionKey);
+                        }
+                      }, 350);
                     }}
                     onPointerLeave={() => {
                       clearHoverTimer();
@@ -689,6 +703,20 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                         </div>
                       ) : null}
                     </div>
+                    {showDescriptionTip && presented.description ? (
+                      // Mounted only while shown, pointing at the clipped text.
+                      <Tooltip open>
+                        <TooltipPopup
+                          anchor={hoveredDescription}
+                          side="top"
+                          align="start"
+                          className="max-w-96"
+                          data-question-option-tip={letter}
+                        >
+                          {renderText(presented.description, "description")}
+                        </TooltipPopup>
+                      </Tooltip>
+                    ) : null}
                     {hasDescription && !compactOptions ? null : hasDescription ? (
                       // For touch, where there is no hover: shows or hides the
                       // full description without picking the option.

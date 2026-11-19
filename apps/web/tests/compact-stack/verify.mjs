@@ -141,16 +141,38 @@ try {
         assert.equal(metrics.queueListHidden, true, "queue list folded by default");
         assert.equal(await page.locator("[data-queue-reason]").count(), 0, "no steer paragraph");
 
-        // Compact: hover expands an option's description; leaving folds it
-        // again. All open: hover changes nothing.
-        const optionB = page.locator('[data-question-option="B"]');
-        const before = (await optionB.boundingBox()).height;
-        await optionB.hover();
-        await page.waitForTimeout(400);
-        const hovered = (await optionB.boundingBox()).height;
-        entry.hoverExpands = hovered > before;
-        if (!compact) assert.equal(hovered, before, "hover leaves an open card still");
-        else if (viewport.width < 1000) assert.ok(hovered > before, "hover shows the full description");
+        // Hover never moves anything: every row keeps its box, in both layouts.
+        // Compact rows show a clipped description in a tooltip instead.
+        // Offsets inside the card plus the card's own height: scrolling the
+        // card's scroll area is not a layout change, resizing a row is.
+        const rowBoxes = () =>
+          page
+            .locator("[data-question-option]")
+            .evaluateAll((rows) => [
+              ...rows.map((row) => `${row.offsetTop}:${row.offsetHeight}`),
+              `card:${document.querySelector("[data-question-card]").offsetHeight}`,
+            ]);
+        // Moves the pointer onto a row's label without scrolling anything.
+        const pointAt = async (letter) => {
+          const box = await page.locator(`[data-question-option="${letter}"]`).boundingBox();
+          await page.mouse.move(box.x + 40, box.y + box.height / 2);
+        };
+        const beforeHover = await rowBoxes();
+        for (const letter of ["A", "B", "C"]) {
+          await pointAt(letter);
+          await page.waitForTimeout(450);
+          assert.deepEqual(await rowBoxes(), beforeHover, `hover on ${letter} moves no row`);
+        }
+        await pointAt("B");
+        await page.waitForTimeout(450);
+        const tip = page.locator('[data-question-option-tip="B"]');
+        entry.hoverTip = (await tip.count()) > 0 && (await tip.isVisible());
+        if (compact) {
+          assert.ok(entry.hoverTip, "hover shows the clipped description in a tooltip");
+          assert.match(await tip.innerText(), /Keep today's order/);
+        } else {
+          assert.equal(entry.hoverTip, false, "no tooltip when every description is open");
+        }
         await page.screenshot({
           path: path.join(output, `${label}-${viewport.name}-${theme}-hover.png`),
         });
