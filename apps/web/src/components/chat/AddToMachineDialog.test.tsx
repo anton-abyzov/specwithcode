@@ -6,6 +6,10 @@ import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/
 import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 
 import { readAddToMachineJob } from "../../studio/addToMachine";
+import {
+  linkRefusalsForTest as refusalsKept,
+  resetLinkRefusalsForTest,
+} from "../../studio/linkRefusals";
 import { AddToMachineDialog } from "./AddToMachineDialog";
 
 const state = vi.hoisted(() => ({
@@ -13,6 +17,8 @@ const state = vi.hoisted(() => ({
   handlers: {} as Record<string, (input: unknown) => unknown>,
   environments: {} as Record<string, unknown>,
   waitForProject: vi.fn(async () => ({})),
+  /** How the link of a consolidated copy ends; a test replaces it to refuse or throw. */
+  link: (async () => ({ status: "linked" })) as () => Promise<unknown>,
   /** This window's access:write on the source, as the session reports it. */
   sourceAccess: "unknown" as "granted" | "denied" | "unknown",
 }));
@@ -32,7 +38,7 @@ vi.mock("../../studio/projectLink", () => ({
   projectLink: new Proxy({}, { get: (_target, name) => `link:${String(name)}` }),
   linkCopyAsWorkers: (...args: unknown[]) => {
     state.calls.push(["linkCopyAsWorkers", args[1]]);
-    return Promise.resolve({ status: "linked" });
+    return state.link();
   },
 }));
 vi.mock("../studio/ProjectLinkDialog", () => ({ ProjectLinkDialog: () => null }));
@@ -375,7 +381,8 @@ it("carries no secrets once the line is unticked, and ignored files when asked",
   });
 });
 
-it("links and consolidates an existing checkout after the copy is applied", async () => {
+/** Copies into the existing checkout and presses Apply and link. */
+async function applyAndLink() {
   const copyStatus = (copyState: string) => ({
     operationId: "00000000-0000-4000-8000-000000000001",
     state: copyState,
@@ -406,6 +413,10 @@ it("links and consolidates an existing checkout after the copy is applied", asyn
     },
   ]);
   await act(async () => button("Apply and link")!.click());
+}
+
+it("links and consolidates an existing checkout after the copy is applied", async () => {
+  await applyAndLink();
   // Secrets travel by default.
   expect(calls("copySecrets")).toEqual([
     expect.objectContaining({ input: expect.objectContaining({ paths: [".env"] }) }),
@@ -420,6 +431,31 @@ it("links and consolidates an existing checkout after the copy is applied", asyn
   await act(async () => button("Done")!.click());
   expect(onAdded).toHaveBeenCalledWith({ environmentId: "mini", projectId: "existing" });
   expect(onOpenChange).toHaveBeenCalledWith(false);
+});
+
+it.each([
+  {
+    how: "is refused",
+    link: async () => ({ status: "review", reason: "The two notes could not be merged." }),
+  },
+  {
+    how: "throws",
+    link: async () => {
+      throw new Error("The two notes could not be merged.");
+    },
+  },
+])("keeps for the machine menu why the link $how after consolidating", async ({ link }) => {
+  state.link = link;
+  try {
+    await applyAndLink();
+    await settle();
+    expect(refusalsKept()).toEqual([
+      { text: "The two notes could not be merged.", verbatim: true },
+    ]);
+  } finally {
+    state.link = async () => ({ status: "linked" });
+    resetLinkRefusalsForTest();
+  }
 });
 
 it("leaves secrets on the source in a window that may not send them", async () => {
