@@ -225,6 +225,10 @@ def mark_read(home, receipt, now=None):
         assert failed_install(value), 'Not a failed install that names a state copy'
         watermark = folder.parent / FAILURE_READ_FILE
         current = failure_read_through(folder.parent.parent)
+        # An existing watermark that cannot be read may hold a later mark: never replace it with
+        # a possibly older one. Pruning treats it as absent, which keeps copies.
+        assert current is not None or not os.path.lexists(str(watermark)), \
+            'Read watermark cannot be read; fix or remove ' + str(watermark) + ' first'
         if current is None or current < start:
             _write_receipt(watermark, {'schemaVersion': 1, 'readThrough': start, 'receipt': receipt.name, 'at': at})
         if FAILURE_COPY_READ_KEY not in value:

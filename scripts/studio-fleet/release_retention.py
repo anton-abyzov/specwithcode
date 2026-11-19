@@ -441,26 +441,28 @@ def _named_receipts(updates):
 
 
 def _unread_failure_names(receipts, own):
-    """The unread failed install's receipt name (unread_failure_receipt) while its copy still exists,
-    so that copy keeps a reference; once it is gone the receipt follows the usual rules. A receipt that
-    cannot be read is skipped on its own: it never hides the newest readable failure (before 1168's
-    review a single unreadable file emptied this set and let that receipt go). None when the folder
-    cannot be listed: prune no receipt."""
-    parsed = []
+    """The receipt names receipt pruning must keep for unread failures: the unread failed install's
+    (unread_failure_receipt) while its copy still exists, and every receipt that cannot be read, which
+    might be that failure's own. An unreadable receipt never hides the newest readable failure either
+    (before 1168's review one unreadable file emptied this set). None when the folder cannot be
+    listed: prune no receipt."""
+    parsed, unclassified = [], set()
     try:
         paths = list(receipts.glob('update-*.json'))
     except OSError:
         return None
     for path in paths:
         try:
-            if not path.is_symlink() and path.is_file() and path.stat().st_size <= RECEIPT_READ_LIMIT:
-                parsed.append((path, json.loads(path.read_text())))
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > RECEIPT_READ_LIMIT:
+                unclassified.add(path.name)
+                continue
+            parsed.append((path, json.loads(path.read_text())))
         except (OSError, ValueError):
-            continue
+            unclassified.add(path.name)
     unread = unread_failure_receipt(parsed, failure_read_through(own))
     if unread is None or not os.path.lexists(dict(parsed)[unread]['stateBackup']):
-        return set()
-    return {unread.name}
+        return unclassified
+    return unclassified | {unread.name}
 
 
 def _finished(receipt):

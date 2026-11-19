@@ -196,6 +196,34 @@ class UnreadFailureCopy(unittest.TestCase):
         self.assertNotIn(failed_copy.name, state_backup_prune.after_install('m4', self.home, later))
         self.assertTrue(failed_copy.is_dir())
 
+    def test_an_unreadable_newest_failure_receipt_is_not_aged_out(self):
+        """Review round 3, finding 1: the unread failure's own receipt unreadable while receipts age."""
+        failed_copy, failed, later_copy, later = self.m4_history()
+        self.restored(failed)
+        self.age_past_the_receipt_window(later)
+        for path in self.receipts.iterdir():
+            os.utime(path, (time.time() - 10 * DAY,) * 2)
+        with self.unreadable(failed):
+            removed = release_retention.prune_update_receipts(self.own, keep=[later])
+        self.assertNotIn(failed.name, removed['receipts'])
+        self.assertTrue(failed.is_file())
+        self.assertNotIn(failed_copy.name, state_backup_prune.after_install('m4', self.home, later))
+        self.assertTrue(failed_copy.is_dir())
+
+    def test_an_unreadable_watermark_is_never_lowered(self):
+        """Review round 3, finding 2: marking an older failure read while the watermark is unreadable."""
+        older_copy = self.copy('20261101T000000Z')
+        older = self.receipt('1.0.300-20261101T000000Z', m4_failure(older_copy / 'statev2.sqlite'))
+        _, failed, _, _ = self.m4_history()
+        state_backup_prune.mark_read(self.home, failed)
+        watermark = self.own / 'updates' / release_retention.FAILURE_READ_FILE
+        before = watermark.read_bytes()
+        with self.unreadable(watermark), self.assertRaisesRegex(AssertionError, 'Read watermark cannot be read'):
+            state_backup_prune.mark_read(self.home, older)
+        self.assertEqual(watermark.read_bytes(), before)
+        self.assertNotIn(READ, json.loads(older.read_text()))
+        self.assertEqual(release_retention.failure_read_through(self.own), '20261118190331588596')
+
     def test_an_unreadable_older_receipt_cannot_skip_the_read_mark(self):
         """Review round 2, finding 2: the watermark is one file, so an older receipt unreadable while
         B is marked read is still covered once it is readable again and B's receipt is gone."""
