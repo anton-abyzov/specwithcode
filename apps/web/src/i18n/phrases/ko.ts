@@ -5075,6 +5075,8 @@ export const ko: PhraseCatalog = {
   "Follow project (off)": "프로젝트 설정 따름 (끔)",
   "Lets this thread ask a stronger model to check its work.":
     "이 스레드가 더 강한 모델에게 작업 검토를 요청할 수 있게 합니다.",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "이 스레드의 기능이 완성되면 다른 계열의 모델이 작업을 검토하게 합니다.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "채팅이 해결되었거나 보관되었고 이 일수 동안 비활성인 워크트리를 삭제합니다. 브랜치와 채팅 기록은 유지됩니다.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5760,10 +5762,12 @@ export const ko: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "SpecWithCode Connect를 통해 머신에 접근하려면 다시 로그인하세요.",
   "Sign in again": "다시 로그인",
-  "first": "먼저",
-  "None of the ready agents runs a model on this list.": "준비된 에이전트 중 이 목록의 모델을 쓰는 에이전트가 없습니다.",
+  first: "먼저",
+  "None of the ready agents runs a model on this list.":
+    "준비된 에이전트 중 이 목록의 모델을 쓰는 에이전트가 없습니다.",
   "No reviewer yet.": "아직 리뷰어가 없습니다.",
-  "A review needs a model from a second family, such as {first} or {second}.": "리뷰에는 {first} 또는 {second} 같은 다른 계열의 모델이 필요합니다.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "리뷰에는 {first} 또는 {second} 같은 다른 계열의 모델이 필요합니다.",
   "Add one": "추가하기",
   "+{n} more": "+{n}개 더",
   "Ready once an agent is signed in.": "에이전트가 로그인하면 준비됩니다.",
@@ -5842,6 +5846,8 @@ export const ko: PhraseCatalog = {
   "This connection cannot change the settings of this Mac.":
     "이 연결로는 이 Mac의 설정을 바꿀 수 없습니다.",
   "How much longer work takes with {setting}": "'{setting}' 사용 시 작업이 얼마나 더 걸리는지",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "작업 완료까지 시간이 훨씬 오래 걸릴 수 있습니다. 측정 결과 리뷰한 작업은 리뷰 전 같은 작업보다 중앙값 2.6배의 시간이 걸렸습니다(실행의 절반은 1.6~3.6배). 리뷰 라운드와 그 수정에 시간이 들기 때문입니다.",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "작업 시간이 늘어날 수 있습니다. 상담 한 번에 약 2분이 걸립니다. 측정 결과 상담한 스레드는 약 1.1배의 시간이 걸렸고, 10개 중 1개는 1.4배 이상 걸렸습니다.",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "작업 완료까지 시간이 훨씬 오래 걸릴 수 있습니다. 측정 결과 리뷰한 작업은 리뷰 전 같은 작업보다 중앙값 2.6배의 시간이 걸렸습니다(실행의 절반은 1.6~3.6배). 리뷰 라운드와 그 수정에 시간이 들기 때문입니다.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "작업 시간이 늘어날 수 있습니다. 상담 한 번에 약 2분이 걸립니다. 측정 결과 상담한 스레드는 약 1.1배의 시간이 걸렸고, 10개 중 1개는 1.4배 이상 걸렸습니다.",
 };

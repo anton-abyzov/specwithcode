@@ -68,12 +68,13 @@ export function makeSubagentChildThread(input: {
   readonly purpose?: OrchestrationV2AppThread["purpose"];
 }): OrchestrationV2AppThread {
   // Delivery evidence judges the parent's request, not the child's. The
-  // advisor choice and purpose are the parent's own too: a child follows its
-  // project, and is an advisor only when it was started as one.
+  // advisor and review choices and purpose are the parent's own too: a child
+  // follows its project, and is an advisor only when it was started as one.
   const {
     lifecycleReceipt: _lifecycleReceipt,
     lifecycleRevision: _lifecycleRevision,
     advisorMode: _advisorMode,
+    reviewMode: _reviewMode,
     purpose: _purpose,
     ...parentThread
   } = input.parentThread;

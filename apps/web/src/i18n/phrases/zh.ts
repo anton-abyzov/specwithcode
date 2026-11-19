@@ -4939,6 +4939,8 @@ export const zh: PhraseCatalog = {
   "Follow project (on)": "跟随项目（开）",
   "Follow project (off)": "跟随项目（关）",
   "Lets this thread ask a stronger model to check its work.": "允许此会话请更强的模型检查其工作。",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "此会话的功能完成后，由另一家族的模型审查其工作。",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "删除其聊天已解决或已归档且已闲置这么多天的工作树。分支和聊天记录会保留。",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5586,10 +5588,11 @@ export const zh: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "请重新登录，以便通过 SpecWithCode Connect 访问你的机器。",
   "Sign in again": "重新登录",
-  "first": "优先",
+  first: "优先",
   "None of the ready agents runs a model on this list.": "已就绪的智能体都没有使用此列表中的模型。",
   "No reviewer yet.": "还没有审查者。",
-  "A review needs a model from a second family, such as {first} or {second}.": "审查需要另一系列的模型，例如 {first} 或 {second}。",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "审查需要另一系列的模型，例如 {first} 或 {second}。",
   "Add one": "添加一个",
   "+{n} more": "另外 {n} 个",
   "Ready once an agent is signed in.": "智能体登录后即可使用。",
@@ -5663,6 +5666,8 @@ export const zh: PhraseCatalog = {
   "It appears in the sidebar once this window catches up.": "窗口更新后，它会出现在侧边栏中。",
   "This connection cannot change the settings of this Mac.": "此连接无法更改这台 Mac 的设置。",
   "How much longer work takes with {setting}": "开启“{setting}”后工作会多花多少时间",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "可能让工作耗时大幅增加：实测中，经过审查的工作耗时中位数是审查前同样工作的 2.6 倍（一半的运行在 1.6 到 3.6 倍之间），因为每轮审查及其修复都会增加时间。",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "可能让工作耗时增加：每次咨询约增加 2 分钟。实测中，咨询过的会话耗时约为 1.1 倍，每 10 个中有 1 个达到 1.4 倍或更多。",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "可能让工作耗时大幅增加：实测中，经过审查的工作耗时中位数是审查前同样工作的 2.6 倍（一半的运行在 1.6 到 3.6 倍之间），因为每轮审查及其修复都会增加时间。",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "可能让工作耗时增加：每次咨询约增加 2 分钟。实测中，咨询过的会话耗时约为 1.1 倍，每 10 个中有 1 个达到 1.4 倍或更多。",
 };

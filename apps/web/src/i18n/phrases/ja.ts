@@ -5135,6 +5135,8 @@ export const ja: PhraseCatalog = {
   "Follow project (off)": "プロジェクトに従う (オフ)",
   "Lets this thread ask a stronger model to check its work.":
     "このスレッドが、より強力なモデルに作業の確認を頼めるようにします。",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "このスレッドの機能が完成したら、別系統のモデルに作業をレビューさせます。",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "チャットが解決済みまたはアーカイブ済みで、この日数のあいだ非アクティブなワークツリーを削除します。ブランチとチャットの履歴は残ります。",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5833,10 +5835,12 @@ export const ja: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "SpecWithCode Connect 経由でマシンにアクセスするには、もう一度サインインしてください。",
   "Sign in again": "もう一度サインイン",
-  "first": "最初",
-  "None of the ready agents runs a model on this list.": "準備できたエージェントのどれも、このリストのモデルを使っていません。",
+  first: "最初",
+  "None of the ready agents runs a model on this list.":
+    "準備できたエージェントのどれも、このリストのモデルを使っていません。",
   "No reviewer yet.": "レビュー担当はまだいません。",
-  "A review needs a model from a second family, such as {first} or {second}.": "レビューには、{first} や {second} など別系統のモデルが必要です。",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "レビューには、{first} や {second} など別系統のモデルが必要です。",
   "Add one": "追加する",
   "+{n} more": "ほか {n} 件",
   "Ready once an agent is signed in.": "エージェントがサインインすると使えます。",
@@ -5916,6 +5920,8 @@ export const ja: PhraseCatalog = {
   "This connection cannot change the settings of this Mac.":
     "この接続では、この Mac の設定を変更できません。",
   "How much longer work takes with {setting}": "「{setting}」で作業がどれだけ長くなるか",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "作業の完了までの時間が大幅に延びることがあります。計測では、レビューした作業はレビュー前の同じ作業と比べて中央値で 2.6 倍の時間がかかりました（半数の実行は 1.6〜3.6 倍）。レビューの各ラウンドと修正に時間がかかるためです。",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "作業時間が延びることがあります。相談 1 回あたり約 2 分かかります。計測では、相談したスレッドは約 1.1 倍の時間がかかり、10 件に 1 件は 1.4 倍以上でした。",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "作業の完了までの時間が大幅に延びることがあります。計測では、レビューした作業はレビュー前の同じ作業と比べて中央値で 2.6 倍の時間がかかりました（半数の実行は 1.6〜3.6 倍）。レビューの各ラウンドと修正に時間がかかるためです。",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "作業時間が延びることがあります。相談 1 回あたり約 2 分かかります。計測では、相談したスレッドは約 1.1 倍の時間がかかり、10 件に 1 件は 1.4 倍以上でした。",
 };

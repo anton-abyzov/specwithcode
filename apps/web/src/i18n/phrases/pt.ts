@@ -5140,6 +5140,8 @@ export const pt: PhraseCatalog = {
   "Follow project (off)": "Como no projeto (desativado)",
   "Lets this thread ask a stronger model to check its work.":
     "Permite que esta thread peça a um modelo mais forte para revisar o trabalho.",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "Faz um modelo de outra família revisar o trabalho desta thread quando a funcionalidade estiver pronta.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Excluir worktrees cujos chats estão resolvidos ou arquivados e inativos por esta quantidade de dias. Branches e o histórico do chat são mantidos.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5829,10 +5831,12 @@ export const pt: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "Entre novamente para acessar suas máquinas pelo SpecWithCode Connect.",
   "Sign in again": "Entrar novamente",
-  "first": "primeiro",
-  "None of the ready agents runs a model on this list.": "Nenhum dos agentes prontos usa um modelo desta lista.",
+  first: "primeiro",
+  "None of the ready agents runs a model on this list.":
+    "Nenhum dos agentes prontos usa um modelo desta lista.",
   "No reviewer yet.": "Ainda não há revisor.",
-  "A review needs a model from a second family, such as {first} or {second}.": "Uma revisão precisa de um modelo de outra família, como {first} ou {second}.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "Uma revisão precisa de um modelo de outra família, como {first} ou {second}.",
   "Add one": "Adicionar um",
   "+{n} more": "+{n} mais",
   "Ready once an agent is signed in.": "Pronto assim que um agente entrar.",
@@ -5910,7 +5914,10 @@ export const pt: PhraseCatalog = {
     "Ele aparece na barra lateral quando esta janela se atualizar.",
   "This connection cannot change the settings of this Mac.":
     "Esta conexão não pode alterar as configurações deste Mac.",
-  "How much longer work takes with {setting}": "Quanto tempo a mais o trabalho leva com “{setting}”",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "Pode fazer o trabalho levar muito mais tempo: nas medições, o trabalho revisado levou em mediana 2,6 vezes o tempo do mesmo trabalho antes da revisão (metade das execuções entre 1,6 e 3,6 vezes), porque cada rodada de revisão e suas correções somam tempo.",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "Pode fazer o trabalho levar mais tempo: cada consulta soma cerca de 2 minutos. Nas medições, as threads que consultaram levaram cerca de 1,1 vezes o tempo normal, e 1 em cada 10 levou 1,4 vezes ou mais.",
+  "How much longer work takes with {setting}":
+    "Quanto tempo a mais o trabalho leva com “{setting}”",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "Pode fazer o trabalho levar muito mais tempo: nas medições, o trabalho revisado levou em mediana 2,6 vezes o tempo do mesmo trabalho antes da revisão (metade das execuções entre 1,6 e 3,6 vezes), porque cada rodada de revisão e suas correções somam tempo.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "Pode fazer o trabalho levar mais tempo: cada consulta soma cerca de 2 minutos. Nas medições, as threads que consultaram levaram cerca de 1,1 vezes o tempo normal, e 1 em cada 10 levou 1,4 vezes ou mais.",
 };

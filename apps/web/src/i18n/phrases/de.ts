@@ -5169,6 +5169,8 @@ export const de: PhraseCatalog = {
   "Follow project (off)": "Wie im Projekt (aus)",
   "Lets this thread ask a stronger model to check its work.":
     "Erlaubt diesem Thread, ein stärkeres Modell um eine Prüfung seiner Arbeit zu bitten.",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "Lässt ein Modell einer anderen Familie die Arbeit dieses Threads prüfen, sobald sein Feature fertig ist.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Worktrees entfernen, deren Chats erledigt oder archiviert und so viele Tage inaktiv sind. Branches und Chatverlauf bleiben erhalten.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5869,10 +5871,12 @@ export const de: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "Melde dich erneut an, um deine Rechner über SpecWithCode Connect zu erreichen.",
   "Sign in again": "Erneut anmelden",
-  "first": "zuerst",
-  "None of the ready agents runs a model on this list.": "Keiner der bereiten Agenten nutzt ein Modell auf dieser Liste.",
+  first: "zuerst",
+  "None of the ready agents runs a model on this list.":
+    "Keiner der bereiten Agenten nutzt ein Modell auf dieser Liste.",
   "No reviewer yet.": "Noch kein Prüfer.",
-  "A review needs a model from a second family, such as {first} or {second}.": "Eine Prüfung braucht ein Modell aus einer zweiten Familie, etwa {first} oder {second}.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "Eine Prüfung braucht ein Modell aus einer zweiten Familie, etwa {first} oder {second}.",
   "Add one": "Eines hinzufügen",
   "+{n} more": "+{n} weitere",
   "Ready once an agent is signed in.": "Bereit, sobald ein Agent angemeldet ist.",
@@ -5953,6 +5957,8 @@ export const de: PhraseCatalog = {
   "This connection cannot change the settings of this Mac.":
     "Diese Verbindung kann die Einstellungen dieses Mac nicht ändern.",
   "How much longer work takes with {setting}": "Wie viel länger die Arbeit mit „{setting}“ dauert",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "Kann die Arbeit deutlich verlängern: In Messungen dauerte geprüfte Arbeit im Median 2,6-mal so lange wie dieselbe Arbeit vor dem Review (die Hälfte der Läufe 1,6- bis 3,6-mal), weil jede Review-Runde und ihre Korrekturen Zeit kosten.",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "Kann die Arbeit verlängern: Jede Konsultation kostet etwa 2 Minuten. In Messungen dauerten Threads mit Konsultationen etwa 1,1-mal so lange, jeder zehnte 1,4-mal so lange oder länger.",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "Kann die Arbeit deutlich verlängern: In Messungen dauerte geprüfte Arbeit im Median 2,6-mal so lange wie dieselbe Arbeit vor dem Review (die Hälfte der Läufe 1,6- bis 3,6-mal), weil jede Review-Runde und ihre Korrekturen Zeit kosten.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "Kann die Arbeit verlängern: Jede Konsultation kostet etwa 2 Minuten. In Messungen dauerten Threads mit Konsultationen etwa 1,1-mal so lange, jeder zehnte 1,4-mal so lange oder länger.",
 };

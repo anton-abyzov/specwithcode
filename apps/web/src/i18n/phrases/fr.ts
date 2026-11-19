@@ -4464,7 +4464,8 @@ export const fr: PhraseCatalog = {
   "Setup can be closed once the import finishes.":
     "La configuration pourra être fermée une fois l'importation terminée.",
   "Add a folder on this machine": "Ajouter un dossier de cette machine",
-  "Start with SpecWeave, for plans and a board": "Commencer avec SpecWeave, pour des plans et un tableau",
+  "Start with SpecWeave, for plans and a board":
+    "Commencer avec SpecWeave, pour des plans et un tableau",
   "Type a path, browse or drop a folder": "Saisissez un chemin, parcourez ou déposez un dossier",
   "Starting from nothing?": "Vous partez de zéro ?",
   "New empty project or clone a repository": "Nouveau projet vide ou cloner un dépôt",
@@ -5180,6 +5181,8 @@ export const fr: PhraseCatalog = {
   "Follow project (off)": "Comme le projet (désactivé)",
   "Lets this thread ask a stronger model to check its work.":
     "Permet à ce fil de demander à un modèle plus puissant de vérifier son travail.",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "Fait relire le travail de ce fil par un modèle d'une autre famille une fois sa fonctionnalité terminée.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Supprimer les worktrees dont les discussions sont résolues ou archivées et inactives depuis ce nombre de jours. Les branches et l’historique des discussions sont conservés.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5877,10 +5880,12 @@ export const fr: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "Reconnectez-vous pour accéder à vos machines via SpecWithCode Connect.",
   "Sign in again": "Se reconnecter",
-  "first": "en premier",
-  "None of the ready agents runs a model on this list.": "Aucun des agents prêts n’utilise un modèle de cette liste.",
+  first: "en premier",
+  "None of the ready agents runs a model on this list.":
+    "Aucun des agents prêts n’utilise un modèle de cette liste.",
   "No reviewer yet.": "Pas encore de relecteur.",
-  "A review needs a model from a second family, such as {first} or {second}.": "Une relecture demande un modèle d’une autre famille, comme {first} ou {second}.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "Une relecture demande un modèle d’une autre famille, comme {first} ou {second}.",
   "Add one": "En ajouter un",
   "+{n} more": "+{n} de plus",
   "Ready once an agent is signed in.": "Prêt dès qu’un agent est connecté.",
@@ -5961,6 +5966,8 @@ export const fr: PhraseCatalog = {
   "This connection cannot change the settings of this Mac.":
     "Cette connexion ne peut pas modifier les réglages de ce Mac.",
   "How much longer work takes with {setting}": "Combien de temps en plus avec « {setting} »",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "Peut rendre le travail beaucoup plus long à terminer : dans les mesures, le travail relu a pris en médiane 2,6 fois le temps du même travail avant la relecture (la moitié des exécutions entre 1,6 et 3,6 fois), car chaque tour de relecture et ses corrections prennent du temps.",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "Peut rendre le travail plus long : chaque consultation ajoute environ 2 minutes. Dans les mesures, les fils qui ont consulté ont pris environ 1,1 fois le temps habituel, et 1 sur 10 a pris 1,4 fois ou plus.",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "Peut rendre le travail beaucoup plus long à terminer : dans les mesures, le travail relu a pris en médiane 2,6 fois le temps du même travail avant la relecture (la moitié des exécutions entre 1,6 et 3,6 fois), car chaque tour de relecture et ses corrections prennent du temps.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "Peut rendre le travail plus long : chaque consultation ajoute environ 2 minutes. Dans les mesures, les fils qui ont consulté ont pris environ 1,1 fois le temps habituel, et 1 sur 10 a pris 1,4 fois ou plus.",
 };

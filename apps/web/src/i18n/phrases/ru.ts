@@ -5133,6 +5133,8 @@ export const ru: PhraseCatalog = {
   "Follow project (off)": "Как в проекте (выкл.)",
   "Lets this thread ask a stronger model to check its work.":
     "Позволяет этому треду просить более сильную модель проверить работу.",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "Когда функция в этом треде готова, работу треда проверяет модель другого семейства.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Удалять worktree, чаты которых решены или в архиве и неактивны столько дней. Ветки и история чатов сохраняются.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5822,10 +5824,12 @@ export const ru: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "Войдите снова, чтобы открывать свои машины через SpecWithCode Connect.",
   "Sign in again": "Войти снова",
-  "first": "первая",
-  "None of the ready agents runs a model on this list.": "Ни один из готовых агентов не использует модель из этого списка.",
+  first: "первая",
+  "None of the ready agents runs a model on this list.":
+    "Ни один из готовых агентов не использует модель из этого списка.",
   "No reviewer yet.": "Проверяющего пока нет.",
-  "A review needs a model from a second family, such as {first} or {second}.": "Для проверки нужна модель другого семейства, например {first} или {second}.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "Для проверки нужна модель другого семейства, например {first} или {second}.",
   "Add one": "Добавить",
   "+{n} more": "ещё {n}",
   "Ready once an agent is signed in.": "Будет готово, когда агент войдёт в систему.",
@@ -5903,7 +5907,10 @@ export const ru: PhraseCatalog = {
     "Он появится на боковой панели, когда окно обновится.",
   "This connection cannot change the settings of this Mac.":
     "Это подключение не может менять настройки этого Mac.",
-  "How much longer work takes with {setting}": "Насколько дольше идёт работа с настройкой «{setting}»",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "Работа может занять намного больше времени: в замерах проверенная работа шла по медиане в 2,6 раза дольше, чем та же работа до проверки (у половины запусков в 1,6–3,6 раза), потому что каждый раунд проверки и его исправления добавляют время.",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "Работа может занять больше времени: каждая консультация добавляет около 2 минут. В замерах треды с консультациями шли примерно в 1,1 раза дольше, а каждый десятый — в 1,4 раза дольше или больше.",
+  "How much longer work takes with {setting}":
+    "Насколько дольше идёт работа с настройкой «{setting}»",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "Работа может занять намного больше времени: в замерах проверенная работа шла по медиане в 2,6 раза дольше, чем та же работа до проверки (у половины запусков в 1,6–3,6 раза), потому что каждый раунд проверки и его исправления добавляют время.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "Работа может занять больше времени: каждая консультация добавляет около 2 минут. В замерах треды с консультациями шли примерно в 1,1 раза дольше, а каждый десятый — в 1,4 раза дольше или больше.",
 };

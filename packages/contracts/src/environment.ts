@@ -178,6 +178,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       serves the studio-code `advisor` tool. Absent on older servers, so clients
       hide the Advisor controls there. */
   advisor: Schema.optionalKey(Schema.Boolean),
+  /** Server understands thread.review-mode.set and reads a thread's own review
+      choice before the project's. Absent on older servers, so clients hide the
+      Adversarial review row there. */
+  threadReviewMode: Schema.optionalKey(Schema.Boolean),
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),

@@ -182,12 +182,7 @@ export function AdvisorSettings(props: {
   const builtInOff = off || (!mixed.claudeBuiltIn && !advisor.claudeBuiltIn);
   // At project scope the row's own reset removes the field from the override;
   // here it restores the default.
-  const reset = (
-    field: AdvisorField,
-    label: string,
-    show: boolean,
-    change: AdvisorSettingsPatch,
-  ) =>
+  const reset = (field: AdvisorField, label: string, show: boolean, change: AdvisorSettingsPatch) =>
     !isProjectScope && !mixed[field] && show ? (
       <SettingResetButton label={label} onClick={() => save(change)} />
     ) : null;
