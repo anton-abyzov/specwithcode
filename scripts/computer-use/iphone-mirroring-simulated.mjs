@@ -19,6 +19,7 @@ import { MIRRORING_APP, PATH_REFUSAL } from "./iphone-mirroring-check.mjs";
  * big digits read as a different speck each time. pillExpands: called with the
  * number of each tab tap after the setup tap; "stays" leaves the page and shows
  * the expanded pill's tab names, "switches" shows them once, then the page.
+ * callPx: how far each computer_scroll call moves the list, whatever its notches.
  */
 export function simulatedPhone({
   missClick,
@@ -36,6 +37,7 @@ export function simulatedPhone({
   behind = [],
   cursorBends = [],
   notchPx = 20,
+  callPx,
   timerNoise = false,
   pillExpands,
   // Called with the number of each input call: "refuse" puts SpecWithCode in
@@ -94,9 +96,10 @@ export function simulatedPhone({
   let reads = 0;
   const pillLines = () => {
     if (state.app !== "Clock" || state.pill === undefined) return [];
-    const shown = Object.entries(tabs).map(([text, box]) =>
-      line(text, box.x - 20, box.y + 18, 60, 10),
-    );
+    // As on the phone, only one name is read; the pointer and the pill's edge hide the rest.
+    const shown = Object.entries(tabs)
+      .slice(0, 1)
+      .map(([text, box]) => line(text, box.x - 20, box.y + 18, 60, 10));
     if (state.pill.switchTo !== undefined) {
       state.tab = state.pill.switchTo;
       state.pill = undefined;
@@ -254,7 +257,7 @@ export function simulatedPhone({
         if (state.app === "Settings") {
           state.scroll = Math.max(
             0,
-            state.scroll + (args.direction === "down" ? 1 : -1) * args.amount * notchPx,
+            state.scroll + (args.direction === "down" ? 1 : -1) * (callPx ?? args.amount * notchPx),
           );
         }
         return done();

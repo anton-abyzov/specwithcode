@@ -48,11 +48,30 @@ describe("icon tabs and scrolling", () => {
     expect(result.lines).toContain("Clicks landed: 20 of 20");
   });
 
+  it("scrolls again when one call moves the list only a little, and judges the whole move", async () => {
+    const phone = simulatedPhone({ callPx: 13 });
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^PASS scroll down: 2 calls of 25 wheel notches moved -13px, -13px; in all shared text moved -26px/,
+      ),
+    );
+    expect(result.lines).toContainEqual(expect.stringMatching(/^PASS scroll up: 2 calls/));
+    // A list that does not move fails after the last call.
+    const stuck = simulatedPhone({ callPx: 0 });
+    const failed = await runCheck(stuck.deps);
+    expect(failed.lines).toContainEqual(
+      expect.stringMatching(/^FAIL scroll down: 3 calls of 25 wheel notches moved 0px, 0px, 0px/),
+    );
+  });
+
   it("scrolls far enough when a wheel notch moves the list only a few pixels", async () => {
     const phone = simulatedPhone({ notchPx: 2.6 });
     const result = await runCheck(phone.deps);
     expect(result.lines).toContainEqual(
-      expect.stringMatching(/^PASS scroll down: 25 wheel notches: shared text moved -65px/),
+      expect.stringMatching(
+        /^PASS scroll down: 1 call of 25 wheel notches moved -65px; in all shared text moved -65px/,
+      ),
     );
     expect(result.lines).toContainEqual(expect.stringMatching(/^PASS scroll up/));
   });
