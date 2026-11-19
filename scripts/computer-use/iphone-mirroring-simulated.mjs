@@ -14,7 +14,12 @@ import { MIRRORING_APP, PATH_REFUSAL } from "./iphone-mirroring-check.mjs";
  * tabs as unlabelled icons in a column at the lower right, and each page its
  * title. behind: text of other windows showing in the window's margins, the
  * same in every reading. cursorBends: typed texts whose first reading after
- * typing shows the last letter bent by the text cursor, as "a".
+ * typing shows the last letter bent by the text cursor, as "a". notchPx: how
+ * far one wheel notch moves the Settings list. timerNoise: the Stopwatch page's
+ * big digits read as a different speck each time. pillExpands: called with the
+ * number of each tab tap after the setup tap; "stays" leaves the page and shows
+ * the expanded pill's tab names, "switches" shows them once, then the page.
+ * callPx: how far each computer_scroll call moves the list, whatever its notches.
  */
 export function simulatedPhone({
   missClick,
@@ -31,6 +36,10 @@ export function simulatedPhone({
   iconTabs = false,
   behind = [],
   cursorBends = [],
+  notchPx = 20,
+  callPx,
+  timerNoise = false,
+  pillExpands,
   // Called with the number of each input call: "refuse" puts SpecWithCode in
   // front first (the product refuses, nothing sent); "partway" sends it, then
   // reports that iPhone Mirroring left the front.
@@ -83,7 +92,30 @@ export function simulatedPhone({
   const line = (text, x, y, width = 120, height = 20) => ({ text, x, y, width, height });
 
   const behindLines = () => behind.map((text, index) => line(text, 602, 110 + index * 30, 8, 14));
-  const ocr = () => [...screen(), ...behindLines()];
+  const noise = [["•:0"], ["o", "•:0"], ["00:0O.0O"], []];
+  let reads = 0;
+  const pillLines = () => {
+    if (state.app !== "Clock" || state.pill === undefined) return [];
+    // As on the phone, only one name is read; the pointer and the pill's edge hide the rest.
+    const shown = Object.entries(tabs)
+      .slice(0, 1)
+      .map(([text, box]) => line(text, box.x - 20, box.y + 18, 60, 10));
+    if (state.pill.switchTo !== undefined) {
+      state.tab = state.pill.switchTo;
+      state.pill = undefined;
+    }
+    return shown;
+  };
+  const ocr = () => {
+    // The page as it is now; an expanding pill switches it only after this reading.
+    const page = screen();
+    const extra =
+      timerNoise && state.app === "Clock" && state.tab === "Stopwatch"
+        ? noise[reads++ % noise.length].map((text) => line(text, 640, 200))
+        : [];
+    return [...page, ...extra, ...pillLines(), ...behindLines()];
+  };
+
   const screen = () => {
     if (state.app === "home") return [line("Clock", 640, 300), line("Settings", 760, 300)];
     if (state.app === "spotlight") {
@@ -207,7 +239,16 @@ export function simulatedPhone({
             args.y >= box.y &&
             args.y < box.y + box.height,
         );
-        if (state.app === "Clock" && hit !== undefined && counted !== missClick && !deadClicks) {
+        const expands = hit === undefined ? undefined : pillExpands?.(counted);
+        state.pill = undefined;
+        if (expands !== undefined && state.app === "Clock") {
+          state.pill = { switchTo: expands === "switches" ? hit[0] : undefined };
+        } else if (
+          state.app === "Clock" &&
+          hit !== undefined &&
+          counted !== missClick &&
+          !deadClicks
+        ) {
           state.tab = hit[0];
         }
         return done();
@@ -216,7 +257,7 @@ export function simulatedPhone({
         if (state.app === "Settings") {
           state.scroll = Math.max(
             0,
-            state.scroll + (args.direction === "down" ? 1 : -1) * args.amount * 20,
+            state.scroll + (args.direction === "down" ? 1 : -1) * (callPx ?? args.amount * notchPx),
           );
         }
         return done();
