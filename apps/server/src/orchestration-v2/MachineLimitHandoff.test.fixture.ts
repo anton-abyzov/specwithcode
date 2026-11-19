@@ -231,6 +231,8 @@ export interface Scenario {
   readonly optedOut?: boolean;
   /** When this machine's sign-ins reset, when not the day's 18:00. */
   readonly localResetsAt?: string;
+  /** This machine's other sign-in reports no usage, as an unmetered one does. */
+  readonly localUnreported?: boolean;
   /** A second thread in the same project, swept after the first. */
   readonly second?: Record<string, unknown>;
   /** Runs while a machine answers a track check: what changes between the check and the send. */
@@ -281,7 +283,13 @@ export function run(scenario: Scenario, sweeps = 1) {
   const threads = () => (world.second === null ? [thread] : [thread, world.second]);
   const providers = () => [
     claudeSpent(stoppedAt, scenario.localResetsAt),
-    codex(stoppedAt, scenario.localSpent && !world.localReset ? 100 : 20, scenario.localResetsAt),
+    scenario.localUnreported
+      ? { ...provider(codexId, "codex", stoppedAt), usageLimits: undefined }
+      : codex(
+          stoppedAt,
+          scenario.localSpent && !world.localReset ? 100 : 20,
+          scenario.localResetsAt,
+        ),
   ];
   const deps = Layer.mergeAll(
     Layer.mock(Projects.ProjectService)({

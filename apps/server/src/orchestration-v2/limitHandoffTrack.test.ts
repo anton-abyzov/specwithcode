@@ -426,6 +426,10 @@ describe("what a machine's answer means for the track (AC-38)", () => {
     ).toBe("out");
     // Even an answer with no failure listed is not a target without a reading that qualifies.
     expect(judged(answered({ evidence: stale })).state).toBe("out");
+    // A reset read with usage nobody verified is not when the track is back.
+    expect(
+      judged(answered({ evidence: { ...stale, resetsAt: iso(now + 30 * 60_000) } })).resetsAt,
+    ).toBeNull();
     expect(judged(answered({ evidence: null })).state).toBe("out");
   });
 
