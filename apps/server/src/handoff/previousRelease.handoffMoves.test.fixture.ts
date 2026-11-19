@@ -9,11 +9,13 @@
  *
  * Kept from the tag, bodies unchanged: lines 108-109 and 180-183, and from
  * `make` lines 198-201, 203-215, 225-719 (from the replication backoff to
- * `resendPending`) and 762-1031 (`handOffLocked` to `handOffMachine`), with
- * the two moves its return names. Left out: Continue here, the lease tick
- * (heartbeat, replication, automatic continuation) and the fence's branch,
- * with the state only they use. `handOff` with a takeover still unanswered
- * runs `resendPending`, the function the tag's heartbeat runs for it too.
+ * `resendPending`), 725-760 (`keepChangesAfterFence`), 762-1031
+ * (`handOffLocked` to `handOffMachine`) and, as the body of `heard`, 1359-1379:
+ * what the lease tick does with each continuation a heartbeat answer names.
+ * Left out: Continue here and the rest of the lease tick (sending heartbeats,
+ * replication, automatic continuation), with the state only they use. `handOff`
+ * with a takeover still unanswered runs `resendPending`, the function the tag's
+ * heartbeat runs for it too.
  * The pure helpers it calls (`preflightError`, the queue carry, the
  * replication backoff, the worktree-set message) and everything else it
  * imports are today's; each symbol it uses is unchanged since the tag. Never
@@ -58,6 +60,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { createBundle, negotiationCandidates, repositoryPathFor } from "./bundleGit.ts";
+import { keepFencedChanges } from "./checkpointGit.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import {
   carryQueuedMessages,
@@ -78,6 +81,7 @@ import {
   type HandoffThreadRecord,
 } from "./handoffState.ts";
 import {
+  type HeartbeatResponse,
   type PeerPreflightResponse,
   type PeerTranscriptMessage,
   type ReplicateMeta,
@@ -879,8 +883,73 @@ export const make = Effect.gen(function* () {
       return run;
     });
 
+  const keepChangesAfterFence = (shell: OrchestrationV2ThreadShell, peer: EnvironmentId) =>
+    Effect.gen(function* () {
+      const record = yield* recordOf(shell.id);
+      if (record === undefined) return;
+      const project = yield* projects.getById(shell.projectId).pipe(
+        Effect.map(Option.getOrNull),
+        Effect.orElseSucceed(() => null),
+      );
+      if (project === null) return;
+      const replica = record.replicas.find((entry) => entry.environmentId === peer);
+      const handedOverCommit =
+        record.checkpoint !== null &&
+        replica?.sequence != null &&
+        replica.sequence >= record.checkpoint.sequence
+          ? record.checkpoint.commit
+          : null;
+      const branch = yield* Effect.tryPromise(() =>
+        keepFencedChanges({
+          cwd: shell.worktreePath ?? project.workspaceRoot,
+          threadId: shell.id,
+          machineLabel: selfLabel,
+          handedOverCommit,
+        }),
+      );
+      if (branch === null) return;
+      yield* updateRecord(shell.id, (current) => ({ ...current, fencedBranch: branch })).pipe(
+        Effect.ignore,
+      );
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Handoff could not keep this machine's changes after the fence", {
+          threadId: shell.id,
+          cause,
+        }),
+      ),
+    );
+
+  /** What the tag's lease tick does with a heartbeat answer naming continuations. */
+  const heard = (peer: EnvironmentId, response: HeartbeatResponse) =>
+    Effect.gen(function* () {
+      const answer = { value: response };
+    for (const continued of answer.value.continued) {
+      const shell = yield* projections
+        .getThreadShell(continued.sourceThreadId)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (shell === null) continue;
+      yield* interruptRun(shell, `This thread continues on ${answer.value.machineLabel}.`);
+      yield* keepChangesAfterFence(shell, peer);
+      yield* fenceSource(
+        shell,
+        peer,
+        {
+          threadId: continued.threadId,
+          machineLabel: answer.value.machineLabel,
+          modelSelection: null,
+          resumed: false,
+          notice: null,
+        },
+        continued.epoch,
+        "handoff",
+      );
+    }
+    });
+
   return {
     handOff: (input: HandOffInput) => handOffAs(input, "handoff"),
     handOffMachine,
+    heard,
   };
 });

@@ -10,6 +10,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
+import { continuationThreadId } from "./HandoffReceiver.ts";
 import { EMPTY_HANDOFF_TRANSFER_DOCUMENT } from "./HandoffTransferStore.ts";
 import { PAUSED_OFFLINE_REFUSAL, turnRefusal } from "./HandoffTurnGate.ts";
 import {
@@ -18,6 +19,7 @@ import {
   minis,
   registerCleanup,
   scenario,
+  suspend,
   threadId,
 } from "./handoffMove.test.fixture.ts";
 import * as PreviousReceiver from "./previousRelease.handoffReceiver.test.fixture.ts";
@@ -70,6 +72,59 @@ describe("handoff: lost takeovers, sleep and silence", () => {
       yield* moves.tick;
       expect(destination.launches).toHaveLength(1);
     }),
+  );
+
+  it.effect(
+    "sends a move that was asked for and never delivered once, at the same epoch, after a lid close",
+    () =>
+      Effect.gen(function* () {
+        const setup = yield* scenario();
+        const { source, destination, moves, network, destinationRoot, transfers } = setup;
+        NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+        const continuation = continuationThreadId(m4, threadId, 2);
+        const operations = () => Object.values(transfers.document.transfers);
+        network.dropTakeoverRequest = true;
+        expect((yield* handOff(moves).pipe(Effect.flip)).code).toBe("unreachable");
+        expect(destination.launches).toEqual([]);
+        // Both machines keep transfer records: the move is on file as one operation.
+        const held = source.document.threads[threadId];
+        const [operation] = operations();
+        expect(operations()).toHaveLength(1);
+        expect(held?.lease).toMatchObject({ state: "handing-off", epoch: 1 });
+        expect(held?.pendingTakeover).toMatchObject({
+          destinationEnvironmentId: minis,
+          request: { reason: "handoff", epoch: 2, operationId: operation?.operationId },
+        });
+        expect(operation).toMatchObject({
+          targetEnvironmentId: minis,
+          lineage: { sourceEnvironmentId: m4, sourceThreadId: threadId, epoch: 2 },
+        });
+        // The lid closes: nothing is released, moved or sent, and the operation is as it was.
+        yield* suspend(moves);
+        expect(source.document.threads[threadId]).toEqual(held);
+        expect(operations()).toEqual([operation]);
+        expect(destination.launches).toEqual([]);
+        // Minis is reached again: the same operation goes out at the same epoch, once.
+        network.dropTakeoverRequest = false;
+        yield* moves.tick;
+        expect(destination.launches.map((launch) => launch.threadId)).toEqual([continuation]);
+        expect(destination.document.threads[continuation]?.lease?.epoch).toBe(2);
+        const record = source.document.threads[threadId];
+        expect(record?.continuedOn).toMatchObject({ environmentId: minis, threadId: continuation });
+        expect(record?.lease).toMatchObject({ state: "fenced", epoch: 2 });
+        expect(record?.pendingTakeover).toBeNull();
+        expect(turnRefusal(source.document, threadId, m4)).not.toBeNull();
+        expect(operations()).toHaveLength(1);
+        expect(operations()[0]).toMatchObject({
+          operationId: operation?.operationId,
+          targetEnvironmentId: minis,
+          lineage: { epoch: 2 },
+          receipt: { threadId: continuation },
+        });
+        yield* moves.tick;
+        expect(destination.launches).toHaveLength(1);
+        expect(operations()).toHaveLength(1);
+      }),
   );
 
   it.effect(

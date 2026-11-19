@@ -8,8 +8,9 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { afterEach } from "@effect/vitest";
+import { afterEach, expect } from "@effect/vitest";
 import {
+  type AwayConfig,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   type HandoffCheckpoint,
@@ -24,6 +25,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import type { AwayPeerPost } from "../away/awayPeerCall.ts";
+import { makeAwaySleep, memorySleepStore } from "../away/awaySleepRoute.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import { unscopedGrant } from "../fleet/workGrantPolicy.ts";
@@ -589,3 +592,35 @@ export const scenario = (
 
 export const handOff = (moves: Effect.Success<ReturnType<typeof scenario>>["moves"]) =>
   moves.handOff({ threadId, destinationEnvironmentId: minis });
+
+/** The lid closes on M4, on this release: the desktop's notice, then a window's ask. */
+export const suspend = (moves: Effect.Success<ReturnType<typeof scenario>>["moves"]) =>
+  Effect.gen(function* () {
+    const posted: Array<string> = [];
+    const post: AwayPeerPost = (_target, path) =>
+      Effect.sync(() => {
+        posted.push(path);
+        return { status: 200, json: {} };
+      });
+    const config: AwayConfig = {
+      target: minis,
+      sleepTrigger: "always",
+      graceMinutes: 2,
+      bringBack: "prompt",
+      coordinatorScope: "live",
+    };
+    const away = yield* makeAwaySleep({
+      self: m4,
+      store: memorySleepStore(),
+      config: Effect.succeed(config),
+      post,
+    });
+    const notice = yield* away.sleep({ onBattery: true });
+    yield* notice.send;
+    expect(notice.answer).toEqual({ outcome: "skipped" });
+    expect(posted).toEqual([]);
+    const refused = yield* moves
+      .handOffMachine({ destinationEnvironmentId: minis, reason: "sleep" })
+      .pipe(Effect.flip);
+    expect(refused.code).toBe("invalid");
+  });

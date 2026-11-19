@@ -9,17 +9,21 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import type { AwayConfig } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type { AwayPeerPost } from "../away/awayPeerCall.ts";
-import { makeAwaySleep, memorySleepStore } from "../away/awaySleepRoute.ts";
 import { HandoffPeers } from "./handoffPeers.ts";
 import * as HandoffReceiver from "./HandoffReceiver.ts";
 import { turnRefusal } from "./HandoffTurnGate.ts";
-import { m4, minis, registerCleanup, scenario, threadId } from "./handoffMove.test.fixture.ts";
+import {
+  m4,
+  minis,
+  registerCleanup,
+  scenario,
+  suspend,
+  threadId,
+} from "./handoffMove.test.fixture.ts";
 import * as PreviousMoves from "./previousRelease.handoffMoves.test.fixture.ts";
 import * as PreviousReceiver from "./previousRelease.handoffReceiver.test.fixture.ts";
 import { PREVIOUS_RELEASE } from "./previousRelease.test.fixture.ts";
@@ -152,7 +156,11 @@ describe(`a machine on ${PREVIOUS_RELEASE} sends a takeover from a lid close (13
         expect(setup.destination.launches).toHaveLength(1);
         expect(again.results[0]).toMatchObject({ threadId, outcome: "stayed" });
         expect(again.results[0]?.detail).toContain("Needs update");
-        // The source's next heartbeat hears of the thread that launched, which fences it.
+        // Until its next heartbeat the source still runs the thread it was refused for.
+        const active = setup.source.document.threads[threadId];
+        expect(active?.lease).toMatchObject({ state: "active", epoch: 1 });
+        expect(active?.continuedOn).toBeNull();
+        // That heartbeat hears of the thread that launched, and the source fences on it.
         const beat = yield* setup.destinationReceiver.heartbeat(setup.asSource, {
           sourceEnvironmentId: m4,
           sourceLabel: "M4",
@@ -161,6 +169,16 @@ describe(`a machine on ${PREVIOUS_RELEASE} sends a takeover from a lid close (13
         expect(beat.continued).toMatchObject([
           { sourceThreadId: threadId, threadId: continuation, epoch: 2 },
         ]);
+        yield* previous.heard(minis, beat);
+        const record = setup.source.document.threads[threadId];
+        expect(record?.continuedOn?.threadId).toBe(continuation);
+        expect(record?.lease).toMatchObject({ state: "fenced", epoch: 2 });
+        expect(turnRefusal(setup.source.document, threadId, m4)).not.toBeNull();
+        // The turn that ran on here was stopped for it, and nothing new launched.
+        const interrupts = setup.source.dispatched.filter(
+          (command) => command.type === "run.interrupt",
+        );
+        expect(interrupts.at(-1)).toMatchObject({ runId: "run-2" });
         expect(setup.destination.launches).toHaveLength(1);
       }),
   );
@@ -271,38 +289,6 @@ describe(`a machine on ${PREVIOUS_RELEASE} sends a takeover from a lid close (13
   );
 });
 
-/** The lid closes on M4, now on this release: the desktop's notice, then a window's ask. */
-const suspend = (setup: Setup) =>
-  Effect.gen(function* () {
-    const posted: Array<string> = [];
-    const post: AwayPeerPost = (_target, path) =>
-      Effect.sync(() => {
-        posted.push(path);
-        return { status: 200, json: {} };
-      });
-    const config: AwayConfig = {
-      target: minis,
-      sleepTrigger: "always",
-      graceMinutes: 2,
-      bringBack: "prompt",
-      coordinatorScope: "live",
-    };
-    const away = yield* makeAwaySleep({
-      self: m4,
-      store: memorySleepStore(),
-      config: Effect.succeed(config),
-      post,
-    });
-    const notice = yield* away.sleep({ onBattery: true });
-    yield* notice.send;
-    expect(notice.answer).toEqual({ outcome: "skipped" });
-    expect(posted).toEqual([]);
-    const refused = yield* setup.moves
-      .handOffMachine({ destinationEnvironmentId: minis, reason: "sleep" })
-      .pipe(Effect.flip);
-    expect(refused.code).toBe("invalid");
-  });
-
 describe(`a move by hand made on ${PREVIOUS_RELEASE}, cut, then a lid close after M4 updated`, () => {
   /** M4, still on the previous release, hands the thread to Minis on that release too. */
   const earlierMove = (setup: Setup) =>
@@ -326,7 +312,7 @@ describe(`a move by hand made on ${PREVIOUS_RELEASE}, cut, then a lid close afte
       network.dropTakeoverAnswer = true;
       const held = yield* earlierMove(setup);
       expect(destination.launches.map((launch) => launch.threadId)).toEqual([continuation]);
-      yield* suspend(setup);
+      yield* suspend(setup.moves);
       // The lid close released nothing.
       expect(source.document.threads[threadId]).toEqual(held);
       network.dropTakeoverAnswer = false;
@@ -349,7 +335,7 @@ describe(`a move by hand made on ${PREVIOUS_RELEASE}, cut, then a lid close afte
         network.dropTakeoverRequest = true;
         const held = yield* earlierMove(setup);
         expect(destination.launches).toEqual([]);
-        yield* suspend(setup);
+        yield* suspend(setup.moves);
         expect(source.document.threads[threadId]).toEqual(held);
         network.dropTakeoverRequest = false;
         // A receiver on that release would start the thread and keep nothing to answer
