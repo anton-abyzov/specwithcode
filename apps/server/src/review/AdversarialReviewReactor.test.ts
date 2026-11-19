@@ -169,6 +169,8 @@ const runReactor = (input: {
   readonly reviewMode?: "on" | "off" | null;
   /** The choice from the source thread's second read on, as if changed during the recheck wait. */
   readonly laterReviewMode?: "on" | "off" | null;
+  /** The source thread's project from its second read on, as if it moved during the wait. */
+  readonly laterProjectId?: ProjectId;
   readonly tasks: ReadonlyArray<never>;
   /** Tasks from the second read on, as a cached first read would lag them. */
   readonly laterTasks?: ReadonlyArray<never>;
@@ -200,8 +202,9 @@ const runReactor = (input: {
           ),
         ),
         getThreadRecords: (threadId: ThreadId) => {
+          const later = threadId === sourceId && threadReads++ > 0;
           const reviewMode =
-            threadId === sourceId && threadReads++ > 0 && input.laterReviewMode !== undefined
+            later && input.laterReviewMode !== undefined
               ? input.laterReviewMode
               : threadId === sourceId
                 ? input.reviewMode
@@ -211,7 +214,7 @@ const runReactor = (input: {
               ...personThread,
               ...(reviewMode === undefined ? {} : { reviewMode }),
               id: threadId,
-              projectId,
+              projectId: later ? (input.laterProjectId ?? projectId) : projectId,
               title:
                 threadId === reviewThreadId
                   ? AdversarialReviewService.adversarialReviewTitle(personThread.title)
@@ -222,8 +225,8 @@ const runReactor = (input: {
         },
       } as never),
       Layer.succeed(ProjectService.ProjectService, {
-        getById: () =>
-          Effect.succeed(Option.some({ id: projectId, title: "App", workspaceRoot: "/repo" })),
+        getById: (id: ProjectId) =>
+          Effect.succeed(Option.some({ id, title: "App", workspaceRoot: "/repo" })),
       } as never),
       Layer.succeed(ServerSettings.ServerSettingsService, {
         getSettings: Effect.succeed(settings),
@@ -360,6 +363,20 @@ describe("AdversarialReviewReactor", () => {
       expect(later.map((start) => start.commandId)).toEqual([
         "adversarial-review:project-review:0042-passkeys",
       ]);
+    }),
+  );
+
+  it.effect("starts nothing on the recheck once the thread moved to another project", () =>
+    Effect.gen(function* () {
+      const starts = yield* runReactor({
+        auto: true,
+        laterProjectId: ProjectId.make("project-other"),
+        tasks: [task("done"), task("claimed")],
+        laterTasks: [task("done"), task("done")],
+        events: [completed(sourceId, "run-1")],
+        wait: "6 seconds",
+      });
+      expect(starts).toEqual([]);
     }),
   );
 

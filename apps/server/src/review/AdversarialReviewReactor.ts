@@ -176,8 +176,7 @@ export const start = Effect.gen(function* () {
       project.id,
       project,
     ).settings;
-    if (!threadReviewState(thread.reviewMode, settings.adversarialReview).enabled)
-      return undefined;
+    if (!threadReviewState(thread.reviewMode, settings.adversarialReview).enabled) return undefined;
     return { thread, project };
   });
 
@@ -207,8 +206,11 @@ export const start = Effect.gen(function* () {
         bindingTakesAutoReview(later.binding) &&
         featureCompleteForReview(later)
           ? admit(threadId, userMessageId).pipe(
+              // A thread moved to another project meanwhile is left to its next run there.
               Effect.flatMap((still) =>
-                still === undefined ? Effect.void : startReview(thread.id, project.id, later),
+                still === undefined || still.project.id !== project.id
+                  ? Effect.void
+                  : startReview(thread.id, project.id, later),
               ),
             )
           : Effect.void,
