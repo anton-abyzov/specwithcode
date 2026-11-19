@@ -77,6 +77,7 @@ import {
   setAcpRegistryProvider,
 } from "../acp/AcpRegistryProbe.ts";
 import * as AcpRegistrySupport from "../acp/AcpRegistrySupport.ts";
+import { withAcpEffortFallback } from "../acp/AcpEffortFallback.ts";
 import {
   teamRulesDriverRefusal,
   teamRulesOwnsProviderLaunch,
@@ -162,12 +163,20 @@ function modelsFromDiscovery(
             capabilities,
           },
         ]
-      : discovered.map((model) => ({
-          slug: model.id,
-          name: model.name,
-          isCustom: false,
-          ...(model.id === discovery?.currentModelId ? { isDefault: true } : {}),
-          capabilities,
+      : discovered.map((model) => {
+          // A reasoning model keeps Effort when the probe's own model reported none.
+          const shared = capabilities.optionDescriptors ?? [];
+          const optionDescriptors = withAcpEffortFallback(agentId, model.id, shared);
+          return {
+            slug: model.id,
+            name: model.name,
+            isCustom: false,
+            ...(model.id === discovery?.currentModelId ? { isDefault: true } : {}),
+            capabilities:
+              optionDescriptors === shared
+                ? capabilities
+                : createModelCapabilities({ optionDescriptors }),
+          };
         }));
   return providerModelsFromSettings(builtInModels, customModels, capabilities);
 }
