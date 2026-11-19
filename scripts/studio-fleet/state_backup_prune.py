@@ -10,7 +10,12 @@ spawn starts after_install in its own session: it waits for the helper to exit a
 installation lock, keeps the new copy and every identity's unresolved recovery copies. Older verified
 copies can go immediately; unclassified copies still have the existing age guard, and adds the removed folders to
 the receipt's prunedStateBackups. A refused or failed update prunes nothing.
+
+The newest failed install's copy stays until someone has read it (release_retention.
+unread_failure_receipt). After reading it, release it with
+`python3 state_backup_prune.py --mark-read <receipt>`; the next prune may then remove it.
 """
+import argparse
 import datetime
 import json
 import os
@@ -23,7 +28,8 @@ import tempfile
 import time
 
 from installation_descriptor import installation_lock
-from release_retention import STATE_BACKUP_NAME, held_state_backups, prune_state_backups
+from release_retention import (FAILURE_COPY_READ_KEY, STATE_BACKUP_NAME, failed_install, held_state_backups,
+                               prune_state_backups)
 import studio_paths
 
 LOCK_BUSY = 'Another installation operation is in progress for this home'
@@ -196,3 +202,36 @@ def after_install(identity, home, receipt, wait=LOCK_WAIT_SECONDS, sleep=time.sl
             if str(error) != LOCK_BUSY or clock() >= deadline:
                 return None
         sleep(0.5)
+
+
+def mark_read(home, receipt, now=None):
+    """Stamps FAILURE_COPY_READ_KEY in a failed install's receipt, under the installation lock, so its
+    state copy is no longer kept for a person. Returns the stamp (an earlier one stays). Only a receipt
+    in an identity's own receipts folder that names a copy: a refusal record without one (1414's
+    refusal_proof reads exactly five keys) is never touched."""
+    receipt = pathlib.Path(receipt)
+    assert not receipt.is_symlink() and receipt.is_file(), 'Receipt not found: ' + str(receipt)
+    folder = receipt.resolve().parent
+    roots = [root.resolve() for root in (studio_paths.branded_root(home), studio_paths.legacy_root(home)) if root.exists()]
+    assert folder.name == 'receipts' and folder.parent.name == 'updates' and folder.parent.parent.parent in roots, \
+        'Not an update receipt of this home'
+    with installation_lock(home):
+        value = json.loads(receipt.read_text())
+        assert failed_install(value), 'Not a failed install that names a state copy'
+        if FAILURE_COPY_READ_KEY not in value:
+            value[FAILURE_COPY_READ_KEY] = now or datetime.datetime.now(datetime.timezone.utc).isoformat()
+            _write_receipt(receipt, value)
+        return value[FAILURE_COPY_READ_KEY]
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Release a failed install's kept state copy once it has been read.")
+    parser.add_argument('--mark-read', type=pathlib.Path, required=True, metavar='RECEIPT',
+                        help='the failed install receipt (updates/receipts/update-<version>-<stamp>.json)')
+    args = parser.parse_args(argv)
+    stamp = mark_read(pathlib.Path.home(), args.mark_read)
+    print(json.dumps({'receipt': str(args.mark_read), FAILURE_COPY_READ_KEY: stamp}))
+
+
+if __name__ == '__main__':
+    main()
