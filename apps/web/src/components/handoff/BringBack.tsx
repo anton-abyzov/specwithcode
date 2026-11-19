@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
+import { threadAwaitingPerson } from "@specweave-studio/client-runtime/state/models";
 import { useMemo } from "react";
 
 import { useThreadShell } from "../../state/entities";
@@ -30,6 +31,8 @@ export function useBringBackOffer(
   const sourceRoot = thread?.execution?.sourceRoot ?? null;
   const hasPendingApprovals = own?.hasPendingApprovals ?? false;
   const hasPendingUserInput = own?.hasPendingUserInput ?? false;
+  const hasPendingSignIn = own ? threadAwaitingPerson(own)?.kind === "sign-in" : false;
+  const waitsOnContinuation = continuation ? threadAwaitingPerson(continuation) : null;
   return useMemo(
     () =>
       environmentId === null || id === null
@@ -43,9 +46,18 @@ export function useBringBackOffer(
               execution: { sourceRoot },
               hasPendingApprovals,
               hasPendingUserInput,
+              hasPendingSignIn,
             },
             connected,
-            continuation,
+            continuation:
+              continuation === null
+                ? null
+                : {
+                    movedTo: continuation.movedTo,
+                    hasPendingApprovals: continuation.hasPendingApprovals,
+                    hasPendingUserInput: continuation.hasPendingUserInput,
+                    hasPendingSignIn: waitsOnContinuation?.kind === "sign-in",
+                  },
             machineName,
           }),
     [
@@ -53,6 +65,7 @@ export function useBringBackOffer(
       continuation,
       environmentId,
       hasPendingApprovals,
+      hasPendingSignIn,
       hasPendingUserInput,
       id,
       machineName,
@@ -75,6 +88,7 @@ export function BringBackButton({ offer }: { offer: BringBackOffer | null }) {
       onClick={() =>
         requestHandOffThread(offer.threadRef, {
           destinationEnvironmentId: offer.destinationEnvironmentId,
+          pinDestination: true,
         })
       }
     >

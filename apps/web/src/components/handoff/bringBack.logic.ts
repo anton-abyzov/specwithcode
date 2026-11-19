@@ -5,6 +5,9 @@ import type {
   ThreadExecutionRecord,
   ThreadId,
 } from "@specweave-studio/contracts";
+import { threadAwaitingPerson } from "@specweave-studio/client-runtime/state/models";
+
+import type { HandoffDestination } from "./HandoffResults";
 
 /** The thread this window shows, with what Bring back reads from it. */
 export interface BringBackThread {
@@ -15,6 +18,7 @@ export interface BringBackThread {
   readonly execution?: Pick<ThreadExecutionRecord, "sourceRoot"> | null | undefined;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
+  readonly hasPendingSignIn?: boolean;
 }
 
 /** The continuation on the other machine, as this window reads it; null when it can't. */
@@ -22,6 +26,7 @@ export interface BringBackContinuation {
   readonly movedTo?: OrchestrationV2ThreadProjectMoveLink | null | undefined;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
+  readonly hasPendingSignIn?: boolean;
 }
 
 /**
@@ -36,10 +41,55 @@ export interface BringBackOffer {
   readonly refused: string | null;
 }
 
-export const BRING_BACK_BUSY = "Answer its question or approval first.";
+export const BRING_BACK_BUSY = "Answer its question, approval or sign-in first.";
 
-const busy = (thread: { hasPendingApprovals: boolean; hasPendingUserInput: boolean }) =>
-  thread.hasPendingApprovals || thread.hasPendingUserInput;
+const busy = (thread: {
+  hasPendingApprovals: boolean;
+  hasPendingUserInput: boolean;
+  hasPendingSignIn?: boolean;
+}) => thread.hasPendingApprovals || thread.hasPendingUserInput || thread.hasPendingSignIn === true;
+
+/**
+ * Why the thread can't go back now, read from its live state, or null. A
+ * question, an approval or a sign-in waiting on the person stops it, and so
+ * does a thread this window can't read: it is never moved unseen.
+ */
+export function bringBackWaitReason(
+  thread: Parameters<typeof threadAwaitingPerson>[0] | null,
+): string | null {
+  if (thread === null) return "The thread can't be read here, so it stays.";
+  return threadAwaitingPerson(thread) === null ? null : BRING_BACK_BUSY;
+}
+
+/**
+ * Bring back's one machine: the source, never another. It is the only choice
+ * offered; when it can't take work the dialog has no destination and says why.
+ */
+export function pinnedDestination(
+  destinations: readonly HandoffDestination[],
+  pinned: EnvironmentId,
+  machineName: (environmentId: EnvironmentId, label?: string | null) => string,
+): {
+  readonly destinations: readonly HandoffDestination[];
+  readonly destination: EnvironmentId | null;
+  readonly refused: string | null;
+} {
+  const found = destinations.find((item) => item.environmentId === pinned);
+  const only: HandoffDestination = found ?? {
+    environmentId: pinned,
+    label: machineName(pinned),
+    state: "offline",
+    reason: "Not connected",
+  };
+  if (only.state === "reachable")
+    return { destinations: [only], destination: pinned, refused: null };
+  const why = only.state === "this-machine" ? "it runs here" : (only.reason ?? "Offline");
+  return {
+    destinations: [only],
+    destination: null,
+    refused: `${only.label} can't take the thread back now: ${why.toLowerCase()}.`,
+  };
+}
 
 /**
  * Bring back for one handed-off thread (1390 AC-23), or null when there is

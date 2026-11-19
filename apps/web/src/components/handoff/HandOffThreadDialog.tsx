@@ -12,7 +12,7 @@ import { ChevronDownIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { create } from "zustand";
 
-import { readThreadShell } from "../../state/entities";
+import { readThreadShell, useThreadShell } from "../../state/entities";
 import { handoffMode, runHandoffMode } from "../../studio/handoffMode";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -38,6 +38,7 @@ import {
   type HandoffDestination,
   type PreflightView,
 } from "./HandoffResults";
+import { bringBackWaitReason, pinnedDestination } from "./bringBack.logic";
 import { HandoffDestinationUpdate } from "./HandoffDestinationUpdate";
 import { HandoffModelPicker, useHandoffModelSummary } from "./HandoffModelPicker";
 import { destinationOptions, MachineOptionRows } from "./MachineOptionRows";
@@ -47,6 +48,8 @@ type Request = {
   readonly threadRef: ScopedThreadRef;
   readonly mode: HandOffThreadDialogMode;
   readonly destinationEnvironmentId?: EnvironmentId | undefined;
+  /** Bring back: that machine is required, never just the first choice. */
+  readonly pinDestination?: boolean | undefined;
   /** The model a caller already checked for that machine (the limit banner's verdict). */
   readonly modelSelection?: ModelSelection | undefined;
 };
@@ -58,6 +61,8 @@ export function requestHandOffThread(
   threadRef: ScopedThreadRef,
   options?: {
     readonly destinationEnvironmentId?: EnvironmentId;
+    /** Offer only that machine and refuse when it can't take work (Bring back). */
+    readonly pinDestination?: boolean;
     readonly modelSelection?: ModelSelection;
   },
 ) {
@@ -66,6 +71,7 @@ export function requestHandOffThread(
       threadRef,
       mode: "move",
       destinationEnvironmentId: options?.destinationEnvironmentId,
+      pinDestination: options?.pinDestination === true,
       modelSelection: options?.modelSelection,
     },
   });
@@ -86,6 +92,9 @@ export function HandOffThreadDialogHost() {
       threadRef={request.threadRef}
       mode={request.mode}
       initialDestinationId={request.destinationEnvironmentId ?? null}
+      pinnedDestinationId={
+        request.pinDestination ? (request.destinationEnvironmentId ?? null) : null
+      }
       initialModel={request.modelSelection ?? null}
     />
   ) : null;
@@ -117,6 +126,8 @@ export interface HandOffThreadDialogViewProps {
   onSubmit: () => void;
   onCancel: () => void;
   onOpenContinuation: () => void;
+  /** Why confirm stays disabled whatever the check says (Bring back refusing). */
+  blockedReason?: string | null;
 }
 
 /** True when a result notice says something stayed behind, so it reads as a warning. */
@@ -145,8 +156,11 @@ export function HandOffThreadDialogView(props: HandOffThreadDialogViewProps) {
   const mode = props.mode ?? "move";
   const destination = props.destinations.find((item) => item.environmentId === props.destinationId);
   const machine = destination?.label ?? null;
+  const blockedReason = props.blockedReason ?? null;
   const ready =
-    props.preflight.state === "done" && props.preflight.results.every((result) => result.ok);
+    blockedReason === null &&
+    props.preflight.state === "done" &&
+    props.preflight.results.every((result) => result.ok);
   const canRetry =
     props.preflight.state === "error" || (props.preflight.state === "done" && !ready);
   // Not about the picked machine: say so on the button, which stays disabled.
@@ -285,6 +299,11 @@ export function HandOffThreadDialogView(props: HandOffThreadDialogViewProps) {
                   here={mode === "switch-model"}
                 />
                 {props.destinationUpdate}
+                {blockedReason !== null ? (
+                  <p role="status" className="text-sm text-muted-foreground">
+                    {blockedReason}
+                  </p>
+                ) : null}
                 {props.error ? (
                   <p role="alert" className="text-sm text-destructive-foreground">
                     {props.error}
@@ -340,11 +359,14 @@ function HandOffThreadDialog({
   threadRef,
   mode,
   initialDestinationId,
+  pinnedDestinationId = null,
   initialModel = null,
 }: {
   threadRef: ScopedThreadRef;
   mode: HandOffThreadDialogMode;
   initialDestinationId: EnvironmentId | null;
+  /** Bring back's source: the only machine offered, with no fallback. */
+  pinnedDestinationId?: EnvironmentId | null;
   /** A model already checked for the chosen machine; else the thread's own. */
   initialModel?: ModelSelection | null;
 }) {
@@ -381,12 +403,22 @@ function HandOffThreadDialog({
     [],
   );
 
+  // Bring back offers only its source and refuses rather than pick another.
+  const pin =
+    mode === "move" && pinnedDestinationId !== null
+      ? pinnedDestination(destinations, pinnedDestinationId, name)
+      : null;
+  // A question, approval or sign-in arriving while the dialog is open stops it too.
+  const liveThread = useThreadShell(pin ? threadRef : null);
+  const blockedReason = pin ? (pin.refused ?? bringBackWaitReason(liveThread)) : null;
   // Moving defaults to the first reachable other machine; switching stays on this one.
   const destination =
     mode === "switch-model"
       ? threadRef.environmentId
-      : // A machine found to need an update is never it, picked by hand or not.
-        pickDestination(destinations, destinationId);
+      : pin
+        ? pin.destination
+        : // A machine found to need an update is never it, picked by hand or not.
+          pickDestination(destinations, destinationId);
   const destinationLabel =
     destinations.find((item) => item.environmentId === destination)?.label ??
     (destination ? name(destination) : "");
@@ -435,6 +467,14 @@ function HandOffThreadDialog({
 
   const submit = async () => {
     if (destination === null) return;
+    // Bring back reads the thread again at confirm: it never interrupts a wait.
+    if (pin) {
+      const refused = pin.refused ?? bringBackWaitReason(readThreadShell(threadRef));
+      if (refused !== null) {
+        setError(refused);
+        return;
+      }
+    }
     setSubmitting(true);
     setError(null);
     const next = await runHandoffMode(handoffMode.handOff, {
@@ -475,7 +515,8 @@ function HandOffThreadDialog({
     <HandOffThreadDialogView
       mode={mode}
       title={thread.title || "Untitled thread"}
-      destinations={destinations}
+      destinations={pin ? pin.destinations : destinations}
+      blockedReason={blockedReason}
       destinationId={destination}
       onDestination={(environmentId) => {
         setDestinationId(environmentId);
