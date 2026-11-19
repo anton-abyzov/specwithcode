@@ -9721,3 +9721,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     );
   });
 });
+
+it("names the machine to sign in to Codex again on", () => {
+  assert.include(
+    CodexAdapterV2.codexSignInExpiredMessage("Studio A"),
+    "sign in to Codex again in Settings > Providers on Studio A.",
+  );
+  assert.equal(
+    CodexAdapterV2.codexSignInExpiredMessage(undefined),
+    CodexAdapterV2.CODEX_SIGN_IN_EXPIRED_FAILURE_MESSAGE,
+  );
+});

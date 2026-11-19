@@ -804,9 +804,11 @@ describe("RemoteWorkers", () => {
     });
     return Effect.gen(function* () {
       const workers = yield* RemoteWorkers.RemoteWorkers;
-      expect((yield* workers.launch(launchInput()).pipe(Effect.flip)).code).toBe(
-        "machine_not_authorized",
-      );
+      const missing = yield* workers.launch(launchInput()).pipe(Effect.flip);
+      expect(missing.code).toBe("machine_not_authorized");
+      // The step names the machine it is done on, which a relayed error keeps.
+      expect(missing.message).toContain("On M4 (not on M1), the user opens Settings > Machines");
+      expect(missing.message).not.toContain("this machine");
       yield* allow();
       expect((yield* workers.launch(launchInput()).pipe(Effect.flip)).code).toBe(
         "project_unavailable_on_machine",

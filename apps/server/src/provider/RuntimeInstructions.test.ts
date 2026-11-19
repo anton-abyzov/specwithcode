@@ -216,6 +216,10 @@ describe("buildRuntimeInstructions", () => {
       expect(responseStyleInstructions(style)).toContain(
         "A blocker is a decision only the user can make or a step only they can take outside the app",
       );
+      // Steps and Blockers say where the user acts: the reader may be on another machine.
+      expect(responseStyleInstructions(style)).toContain(
+        'Start each step the user must take with its machine ("On <machine>: ...").',
+      );
     }
     expect(concise).toContain("Ask workers and subagents you brief to report the same way");
   });

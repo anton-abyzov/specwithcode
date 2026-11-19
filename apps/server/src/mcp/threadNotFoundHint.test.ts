@@ -128,6 +128,9 @@ it.effect("explains a coordinator ID with no thread here, without claiming it is
       expect(answer.message).toContain("was not found");
       expect(answer.message).toContain("If you copied it exactly");
       expect(answer.message).toContain("no coordinator has run under this ID here");
+      // Every machine runs its own coordinator (1390): none leaves coordinating to another.
+      expect(answer.message).not.toContain("leaves coordinating to another machine");
+      expect(answer.message).toContain("studio_thread_read {machine}");
       expect(answer.message).toContain("copy threadId");
     }
   }),
