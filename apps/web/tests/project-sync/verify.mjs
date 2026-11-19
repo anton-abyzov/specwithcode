@@ -187,6 +187,14 @@ try {
       }
       assert.deepEqual(Object.keys(PLAN).sort(), [...rows].sort());
       assert.equal(await page.locator('[data-slot="checkbox"][data-checked]').count(), 0);
+      // Stashes are listed and stay: the line has no box and no label to tick.
+      const stash = page.locator('[data-sync-extra="stashes"]');
+      assert.equal(await stash.count(), 1);
+      assert.match(await stash.textContent(), /^1 stash in /);
+      assert.equal(await stash.locator('[data-slot="checkbox"], [role="checkbox"], label').count(), 0);
+      assert.ok(
+        (await page.locator('[data-sync-extra="uncommitted"] [data-slot="checkbox"]').count()) > 0,
+      );
       assert.equal(await page.locator("[data-sync-run]").isDisabled(), false);
       assert.equal(await page.locator("[data-sync-run]").textContent(), "Sync");
       // A secret by its name is never offered; a finding and an unread file are, once their
@@ -522,7 +530,7 @@ try {
         read.sentences = await texts(page, "[data-sync-sentence]");
         read.facts = await texts(page, "[data-sync-fact]");
         read.headings = await texts(page, `${DIALOG} h3`);
-        read.extras = await texts(page, "[data-sync-extra] label");
+        read.extras = await texts(page, "[data-sync-extra]");
         read.leftOut = await texts(page, "[data-sync-left-out] span span");
         read.buttons = await texts(page, `${DIALOG} [data-slot="dialog-footer"] button`);
       }

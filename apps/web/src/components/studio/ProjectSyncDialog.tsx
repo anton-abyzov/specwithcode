@@ -2,7 +2,7 @@ import { CheckIcon, ChevronRightIcon, MinusIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useTx } from "../../i18n";
-import { randomUUID } from "../../lib/utils";
+import { cn, randomUUID } from "../../lib/utils";
 import { renderRich } from "../../i18n/rich";
 import {
   forgetSyncStatus,
@@ -302,15 +302,24 @@ function Extras({
           <ul className="flex flex-col gap-2">
             {extras.lines.map((line) => {
               const id = `${side}:${line.id}`;
+              const Row = line.tickable ? "label" : "div";
               return (
                 <li key={line.id} data-sync-extra={line.kind}>
-                  <label className="flex items-start gap-2 text-sm has-data-disabled:text-muted-foreground">
-                    <span className="flex h-5 shrink-0 items-center">
-                      <Checkbox
-                        checked={ticked.has(id)}
-                        disabled={busy || !line.tickable}
-                        onCheckedChange={(on) => onTick(id, on === true)}
-                      />
+                  {/* A line that cannot be sent (stashes, branches not listed) has no box. */}
+                  <Row
+                    className={cn(
+                      "flex items-start gap-2 text-sm has-data-disabled:text-muted-foreground",
+                      !line.tickable && "text-muted-foreground",
+                    )}
+                  >
+                    <span className="flex h-5 w-4.5 shrink-0 items-center sm:w-4">
+                      {line.tickable ? (
+                        <Checkbox
+                          checked={ticked.has(id)}
+                          disabled={busy}
+                          onCheckedChange={(on) => onTick(id, on === true)}
+                        />
+                      ) : null}
                     </span>
                     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <span className="wrap-anywhere">
@@ -331,7 +340,7 @@ function Extras({
                         </span>
                       ) : null}
                     </span>
-                  </label>
+                  </Row>
                 </li>
               );
             })}
