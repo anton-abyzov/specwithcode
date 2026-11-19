@@ -404,9 +404,10 @@ describe("OwnedProcessTree.end", () => {
     };
     const tree = new OwnedProcessTree(root(200, false), host);
     expect((await tree.end(1_000)).unknown).toBe(true);
-    // The retry reads again and finds the same tool in its own group.
+    // The retry reads again, finds the same tool in its own group and ends it. What the
+    // tool may have started while the table could not be read stays unknown.
     table = [posix(202, 1, 202, "tool")];
-    expect(await tree.end(2_000)).toMatchObject({ survivors: 0, unknown: false });
+    expect(await tree.end(2_000)).toMatchObject({ survivors: 0, unknown: true });
     expect(calls).toContain("SIGKILL 202");
   });
 
@@ -818,6 +819,84 @@ describe("OwnedProcessTree.end", () => {
         expect(result.survivors).toBe(0);
       },
     );
+
+    const member = (pid: number, ppid = 1, pgid = group, started = `t${pid}`) =>
+      entry(pid, ppid, pgid, started);
+
+    it("ends a member it saw join the group during grace once it leaves the group", async () => {
+      let table = [member(201)];
+      let signalled = false;
+      const f = fixture(
+        (now) => {
+          if (table.length === 0) return table;
+          if (signalled && now >= 200 && now < 800) table = [member(201), member(202, 201)];
+          if (signalled && now >= 800 && now < 1_000) table = [member(202)];
+          if (signalled && now >= 1_000) table = [member(202, 1, 202)];
+          return table;
+        },
+        (pid) => pid === -group && table.some((row) => row.pgid === group),
+        (pid, signal) => {
+          if (pid === -group && signal === "SIGTERM") signalled = true;
+          if (pid === 202 && signal === "SIGKILL") table = [];
+        },
+      );
+      const result = await f.tree.end();
+      expect(f.signals).toContain("SIGKILL 202");
+      expect(table).toEqual([]);
+      expect(result).toEqual({ found: 1, survivors: 0, unknown: false });
+    });
+
+    it("keeps a Stop unconfirmed on retry once a wind-down reading failed", async () => {
+      let table = [member(201)];
+      let killedGroup = false;
+      const f = fixture(
+        (now) => {
+          if (now === 4_000 && !killedGroup) {
+            table = [member(201), member(202, 201, 202)];
+            return undefined;
+          }
+          return table;
+        },
+        (pid) => pid === -group && table.some((row) => row.pgid === group),
+        (pid, signal) => {
+          if (pid === -group && signal === "SIGKILL") {
+            killedGroup = true;
+            table = [member(202, 1, 202)];
+          }
+        },
+      );
+      expect((await f.tree.end()).unknown).toBe(true);
+      // The helper now names no parent: a retry cannot prove the tree gone.
+      expect((await f.tree.end()).unknown).toBe(true);
+    });
+
+    it("never signals the group on a retry after its escalation reading failed", async () => {
+      let table = [member(201)];
+      let onRetry = false;
+      let retryStartedAt = -1;
+      let failed = false;
+      const f = fixture(
+        (now) => {
+          if (onRetry && !failed && retryStartedAt >= 0 && now === retryStartedAt + 4_000) {
+            failed = true;
+            // The last original member exited and the id now leads another job.
+            table = [member(200, 1, group, "replacement")];
+            return undefined;
+          }
+          return table;
+        },
+        (pid) => pid === -group && table.some((row) => row.pgid === group),
+        (pid, signal) => {
+          if (onRetry && pid === -group && signal === "SIGTERM") retryStartedAt = f.now();
+        },
+      );
+      expect(await f.tree.end()).toEqual({ found: 1, survivors: 1, unknown: false });
+      onRetry = true;
+      const before = f.signals.length;
+      const retry = await f.tree.end();
+      expect(f.signals.slice(before)).toEqual(["SIGTERM -200"]);
+      expect(retry.unknown).toBe(true);
+    });
 
     it("never signals a group whose id was recycled during a retry, nor its child", async () => {
       const original = entry(201, 1, group);

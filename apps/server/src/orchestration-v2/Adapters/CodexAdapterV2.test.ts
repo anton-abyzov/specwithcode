@@ -6792,6 +6792,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(lateChildUpdates.at(-1)?.providerTurn.status, "interrupted");
         assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        // Codex only acknowledged the late child's interrupt and never said it ended: the
+        // folder change waits for that native turn.
+        const appThreadId = harness.providerThread.appThreadId;
+        assert.isNotNull(appThreadId);
+        assert.isTrue(stopTeardownPending(appThreadId!));
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );

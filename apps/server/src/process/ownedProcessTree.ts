@@ -306,6 +306,11 @@ export class OwnedProcessTree {
   /** The CLI's own start, read while it ran, to tell a new leader of its group id. */
   private rootStarted: string | null = null;
   private endedOnce = false;
+  /**
+   * A table read failed while the tree wound down after a signal: what a process started
+   * then (a helper launched on SIGTERM) may never be found, so no later end confirms.
+   */
+  private coverageLost = false;
   /** A reading meant to catch what the CLI started failed, so an empty tree proves nothing. */
   private unconfirmed = false;
   /**
@@ -462,6 +467,7 @@ export class OwnedProcessTree {
         groupUsable = false;
       }
     }
+    const retry = this.endedOnce;
     this.endedOnce = true;
     if (members !== undefined && groupUsable) {
       if (members.length === 0) this.groupRetired = true;
@@ -508,7 +514,7 @@ export class OwnedProcessTree {
         this.escapees.clear();
         for (const entry of escapees) this.escapees.set(entry.pid, entry);
       }
-      return { found, survivors, unknown };
+      return { found, survivors, unknown: unknown || this.coverageLost };
     };
     if (found === 0) return settle(0);
     // Each escapee is signalled only right after a read shows it is still the same process.
@@ -559,9 +565,13 @@ export class OwnedProcessTree {
     // Reads the table: members that left the group, and what any known process started
     // since (a helper launched on SIGTERM), become escapees while their parents still run.
     const refresh = (now: ReadonlyArray<ProcessEntry>) => {
-      const pgids = new Map(now.map((entry) => [entry.pid, entry.pgid]));
-      const leavers = stillRunning(seenMembers, now).filter(
-        (entry) => entry.pid !== host.selfPid && pgids.get(entry.pid) !== this.root.pid,
+      // Any process ever seen in the group, found running outside it, left it.
+      const leavers = now.filter(
+        (entry) =>
+          entry.pid !== host.selfPid &&
+          entry.pgid !== this.root.pid &&
+          entry.started.length > 0 &&
+          this.groupSeen.get(entry.pid) === entry.started,
       );
       const owned = ownsGroup(now);
       // Members joined since (forked by a seen member) carry the group's continuity on.
@@ -586,8 +596,11 @@ export class OwnedProcessTree {
         const now = await this.read(Math.min(until, deadline));
         if (now === undefined) {
           // Nothing tells whether a member left the group, or started a helper, instead
-          // of ending.
-          if (seenMembers.length > 0 || escapees.length > 0) unknown = true;
+          // of ending; a later end cannot find out either.
+          if (seenMembers.length > 0 || escapees.length > 0) {
+            unknown = true;
+            this.coverageLost = true;
+          }
           if (!groupAlive() && escapees.length === 0) return true;
         } else {
           refresh(now);
@@ -606,7 +619,13 @@ export class OwnedProcessTree {
       // while the member still runs: once SIGKILL ends it, the helper names no parent.
       const now = await this.read(deadline);
       if (now === undefined) {
-        if (seenMembers.length > 0) unknown = true;
+        if (seenMembers.length > 0) {
+          unknown = true;
+          this.coverageLost = true;
+        }
+        // On a retry the group id may have been recycled since the last proof of
+        // ownership, so without a reading it is not signalled.
+        if (retry) groupUsable = false;
       } else refresh(now);
       if (groupAlive()) this.signalGroup("SIGKILL");
     }

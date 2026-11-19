@@ -7086,9 +7086,13 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               // which has no terminal to end. The folder change waits until Codex reports
               // the turn ended, says it has no such turn, or its app-server is gone; an
               // accepted interrupt alone proves nothing.
+              const heldNativeTurns = new Set<string>();
               const holdUntilNativeTurnEnds = (context: ActiveCodexTurnContext) => {
                 if (appThreadId === null) return;
                 const nativeTurnId = context.nativeTurnId;
+                if (nativelyEndedTurns.has(nativeTurnId) || heldNativeTurns.has(nativeTurnId))
+                  return;
+                heldNativeTurns.add(nativeTurnId);
                 holdFailedStopTeardown(appThreadId, () =>
                   Effect.runPromise(
                     Effect.gen(function* () {
@@ -7253,6 +7257,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   }
                   const completedAt = yield* DateTime.now;
                   for (const context of activeLineage) {
+                    // Settled here, not by Codex: an acknowledged interrupt is no proof the
+                    // turn (and a foreground command in it) ended.
+                    holdUntilNativeTurnEnds(context);
                     yield* finalizeCodexTurn({
                       context,
                       nativeTurnId: context.nativeTurnId,
