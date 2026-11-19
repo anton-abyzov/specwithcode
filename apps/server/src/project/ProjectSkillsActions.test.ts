@@ -693,6 +693,7 @@ it.layer(live)("managed Skills dependency fallback", (it) => {
     Effect.gen(function* () {
       let prepared = 0;
       const fx = yield* fixture({ managed, onPrepare: () => { prepared++; } });
+      yield* write(join(fx.bin, "next.lock"), lockText({ version: "1.2.0", pinnedVersion: "1.2.0" }));
       yield* fx.service.action(action({ kind: "install-version", version: "1.2.0" }));
       expect(prepared).toBe(managed ? 1 : 0);
       expect(yield* readOr(fx.lockPath)).toContain('"1.2.0"');
