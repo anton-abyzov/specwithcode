@@ -671,6 +671,44 @@ it("never says in sync when neither machine read a repository the result shows",
   );
 });
 
+it("says a repository unread after the run could not be read, and leaves the other machine's cell", async () => {
+  const unread = { path: "tools/cli", branch: null, head: null, clean: false, unread: true };
+  const { api } = scripted({
+    fetch: {
+      "Laptop E": fetched(facts(".", { behind: 3 }), facts("tools/cli")),
+      "Rack F": fetched(facts("."), facts("tools/cli")),
+    },
+    status: {
+      "Laptop E": {
+        scanLimited: false,
+        repositories: [unread, { ...checkout("."), unread: true }],
+      },
+      "Rack F": { scanLimited: false, repositories: [checkout("."), checkout("tools/cli")] },
+    },
+  });
+  await render(api);
+  expect(cell("tools/cli", "a")).toBe("Laptop EmainUp to date");
+  const before = cell("tools/cli", "b");
+  await click("[data-sync-run]");
+  expect(stage()).toBe("result");
+  // Nothing moved there, and the last read says the checkout could not be read.
+  expect(cell("tools/cli", "a")).toBe("Laptop ECould not be read. Not moved");
+  expect(
+    document.querySelector(
+      '[data-sync-row="tools/cli"] [data-sync-cell="a"] .text-success-foreground',
+    ),
+  ).toBeNull();
+  expect(cell("tools/cli", "b")).toBe(before);
+  // The move the run confirmed stays, marked apart from what is unknown now.
+  expect(cell(".", "a")).toContain("Moved forward");
+  expect(cell(".", "a")).toContain("Its state could not be read after the run");
+  expect(
+    document.querySelector('[data-sync-row="."] [data-sync-cell="a"] .text-success-foreground'),
+  ).toBeNull();
+  // A row left unknown is not a finished sync.
+  expect(document.querySelector("h2")?.textContent).toBe("Sync Atlas: Laptop E and Rack F");
+});
+
 it("never says in sync when one machine lists a repository twice", async () => {
   const { api } = scripted({
     fetch: {

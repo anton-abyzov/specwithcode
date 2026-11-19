@@ -313,4 +313,7 @@ export const syncJa: PhraseCatalog = {
     "{repository} を読み取れませんでした: {machine} にだけあるものは不明です",
   "Which branches of {repository} are only on {machine} could not be read":
     "{repository} のどのブランチが {machine} にだけあるか読み取れませんでした",
+  "Its state could not be read after the run": "実行後にその状態を読み取れませんでした",
+  "Could not compare: a repository could not be read":
+    "比較できません: リポジトリを読み取れませんでした",
 };

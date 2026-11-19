@@ -310,4 +310,7 @@ export const syncEs: PhraseCatalog = {
     "No se pudo leer {repository}: no se sabe qué hay solo en {machine}",
   "Which branches of {repository} are only on {machine} could not be read":
     "No se pudo leer qué ramas de {repository} están solo en {machine}",
+  "Its state could not be read after the run": "Su estado no se pudo leer después de la ejecución",
+  "Could not compare: a repository could not be read":
+    "No se pudo comparar: no se pudo leer un repositorio",
 };

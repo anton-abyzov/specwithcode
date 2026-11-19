@@ -163,6 +163,22 @@ describe("machineSyncFact", () => {
     });
   });
 
+  it("says the comparison could not be read when a machine could not read a repository", () => {
+    const unread: MachineSyncStatus = {
+      repositories: [{ path: ".", head: null, clean: false, unread: true }],
+      scanLimited: false,
+    };
+    const readable = status([[".", A]]);
+    for (const [shown, other] of [
+      [readable, unread],
+      [unread, readable],
+    ] as const)
+      expect(fact(shown, other)).toEqual({
+        tone: "unknown",
+        text: "Could not compare: a repository could not be read",
+      });
+  });
+
   it("counts a repository that differs: another commit, uncommitted work, or only on one machine", () => {
     const shown = status([
       [".", A],

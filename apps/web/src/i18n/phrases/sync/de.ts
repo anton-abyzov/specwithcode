@@ -314,4 +314,8 @@ export const syncDe: PhraseCatalog = {
     "{repository} konnte nicht gelesen werden: Was nur auf {machine} liegt, ist unbekannt",
   "Which branches of {repository} are only on {machine} could not be read":
     "Welche Branches von {repository} nur auf {machine} liegen, konnte nicht gelesen werden",
+  "Its state could not be read after the run":
+    "Sein Zustand konnte nach dem Lauf nicht gelesen werden",
+  "Could not compare: a repository could not be read":
+    "Kein Vergleich möglich: Ein Repository konnte nicht gelesen werden",
 };

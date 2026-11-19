@@ -305,4 +305,7 @@ export const syncKo: PhraseCatalog = {
     "{repository}을(를) 읽을 수 없습니다: {machine}에만 있는 것은 알 수 없습니다",
   "Which branches of {repository} are only on {machine} could not be read":
     "{repository}의 어떤 브랜치가 {machine}에만 있는지 읽을 수 없습니다",
+  "Its state could not be read after the run": "실행 후 상태를 읽을 수 없었습니다",
+  "Could not compare: a repository could not be read":
+    "비교할 수 없습니다: 저장소를 읽을 수 없었습니다",
 };

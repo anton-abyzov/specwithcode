@@ -309,4 +309,7 @@ export const syncFr: PhraseCatalog = {
     "{repository} n'a pas pu être lu : ce qui est seulement sur {machine} est inconnu",
   "Which branches of {repository} are only on {machine} could not be read":
     "Impossible de lire quelles branches de {repository} sont seulement sur {machine}",
+  "Its state could not be read after the run": "Son état n'a pas pu être lu après l'exécution",
+  "Could not compare: a repository could not be read":
+    "Comparaison impossible : un dépôt n'a pas pu être lu",
 };

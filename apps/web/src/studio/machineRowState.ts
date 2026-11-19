@@ -47,6 +47,8 @@ export interface MachineSyncStatus {
     readonly path: string;
     readonly head: string | null;
     readonly clean: boolean;
+    /** The machine could not read this checkout. */
+    readonly unread?: boolean | undefined;
   }>;
   /** The folder could not be scanned in full, so repositories may be missing from the list. */
   readonly scanLimited: boolean;
@@ -76,6 +78,9 @@ export function machineSyncFact(input: {
   const here = new Map(shown.repositories.map((item) => [item.path, item]));
   const there = new Map(other.repositories.map((item) => [item.path, item]));
   const paths = new Set([...here.keys(), ...there.keys()]);
+  // What a machine could not read is no difference and no sameness: it is not known.
+  if ([...here.values(), ...there.values()].some((item) => item.unread === true))
+    return { tone: "unknown", text: "Could not compare: a repository could not be read" };
   let differ = 0;
   for (const path of paths) {
     const a = here.get(path);

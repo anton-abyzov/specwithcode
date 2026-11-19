@@ -29,6 +29,7 @@ import {
   extrasRemain,
   extrasSendOutcome,
   statusesProveInSync,
+  unreadPaths,
   otherSide,
   runHasWork,
   syncExtras,
@@ -848,7 +849,14 @@ export function ProjectSyncDialog({
     setStage({
       kind: "result",
       checked,
-      rows: syncResultRows(checked.plan, { a: a ?? null, b: b ?? null }),
+      rows: syncResultRows(
+        checked.plan,
+        { a: a ?? null, b: b ?? null },
+        {
+          a: unreadPaths(statusA?.ok ? statusA.value : null),
+          b: unreadPaths(statusB?.ok ? statusB.value : null),
+        },
+      ),
       leftovers: syncLeftovers(checked.plan, { a: a ?? null, b: b ?? null }),
       sides: { a: side(a, sent.a), b: side(b, sent.b) },
       proven: statusesProveInSync(

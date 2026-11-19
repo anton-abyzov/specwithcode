@@ -306,4 +306,7 @@ export const syncRu: PhraseCatalog = {
     "Не удалось прочитать {repository}: что есть только на {machine}, неизвестно",
   "Which branches of {repository} are only on {machine} could not be read":
     "Не удалось прочитать, какие ветки {repository} есть только на {machine}",
+  "Its state could not be read after the run": "После запуска его состояние не удалось прочитать",
+  "Could not compare: a repository could not be read":
+    "Не удалось сравнить: репозиторий не удалось прочитать",
 };

@@ -574,6 +574,10 @@ export function syncResultTitle(input: {
  * repositories, each on the same branch at the same commit, with nothing uncommitted, and
  * both folders scanned in full. A status that did not come proves nothing.
  */
+/** The paths a machine's status says it could not read; none without a status. */
+export const unreadPaths = (status: ProjectSyncStatusResult | null): ReadonlySet<string> =>
+  new Set(status?.repositories.filter((item) => item.unread === true).map((item) => item.path));
+
 export function statusesProveInSync(
   a: ProjectSyncStatusResult | null,
   b: ProjectSyncStatusResult | null,
@@ -980,8 +984,36 @@ export function syncResultRows(
       } | null
     >
   >,
+  /** Paths each machine's status after the run says it could not read. */
+  unread: Readonly<Record<SyncSide, ReadonlySet<string>>> = { a: new Set(), b: new Set() },
 ): SyncResultRow[] {
   const cell = (side: SyncSide, planned: SyncCell): SyncResultCell => {
+    const got = result(side, planned);
+    if (!unread[side].has(planned.step.path) || !got.done) return got;
+    const answer = ran[side]?.results?.find((item) => item.path === planned.step.path);
+    // A move the run confirmed stays a receipt, apart from the state that is unknown now.
+    if (answer && (answer.moved > 0 || answer.reason === "missing"))
+      return {
+        ...got,
+        line: {
+          ...got.line,
+          facts: [...got.line.facts, { text: "Its state could not be read after the run" }],
+        },
+        done: false,
+      };
+    return {
+      present: got.present,
+      branch: null,
+      line: {
+        tone: "held",
+        sentence: { text: "Could not be read. Not moved" },
+        facts: [],
+        detail: null,
+      },
+      done: false,
+    };
+  };
+  const result = (side: SyncSide, planned: SyncCell): SyncResultCell => {
     const asked =
       ran[side]?.sent !== false &&
       (planned.step.action === "fast-forward" || planned.step.action === "clone");

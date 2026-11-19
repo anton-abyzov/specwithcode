@@ -280,4 +280,6 @@ export const syncZh: PhraseCatalog = {
     "无法读取 {repository}：不知道哪些内容只在 {machine} 上",
   "Which branches of {repository} are only on {machine} could not be read":
     "无法读取 {repository} 的哪些分支只在 {machine} 上",
+  "Its state could not be read after the run": "运行后无法读取其状态",
+  "Could not compare: a repository could not be read": "无法比较：有仓库无法读取",
 };
