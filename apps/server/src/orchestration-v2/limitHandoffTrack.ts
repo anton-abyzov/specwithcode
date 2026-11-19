@@ -188,6 +188,30 @@ export function limitHandoffTrackState(input: {
   };
 }
 
+/** What of a trigger the last check before a send compares. */
+type AdmittedTrigger = {
+  readonly key: string;
+  readonly track?: Extract<ThreadTrackState, { readonly kind: "track" }> | undefined;
+};
+
+/**
+ * Does the trigger a move was decided on still hold, read afresh at the send?
+ * It must be the same stop (or idle window), on the same track, and that track
+ * must be out here as it was: a move is for all three.
+ */
+export function limitHandoffStillAdmitted(
+  admitted: AdmittedTrigger | null,
+  fresh: AdmittedTrigger | null,
+): boolean {
+  return (
+    admitted !== null &&
+    fresh !== null &&
+    fresh.key === admitted.key &&
+    fresh.track?.track === admitted.track?.track &&
+    fresh.track?.outHere === admitted.track?.outHere
+  );
+}
+
 const needsTrackStart = (label: string, consequence: string) =>
   `Needs update: ${label} runs a SpecWithCode from before automatic track hand offs, so ${consequence}. Update SpecWithCode on ${label} first.`;
 

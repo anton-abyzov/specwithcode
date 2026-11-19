@@ -109,6 +109,7 @@ import {
   type PeerCheck,
   toPreflightProvider,
 } from "./handoffPlanReceiver.ts";
+import { recordArrivalLine } from "./handoffLine.ts";
 import {
   CONTINUATION_ID_PREFIX,
   type ContinuationEvidence,
@@ -1326,6 +1327,16 @@ export const make = Effect.gen(function* () {
         undefined,
         HandoffTransferStore.markLaunched(current, lineage),
       ]);
+      // An automatic move leaves its line on the continuation too (1390 AC-28).
+      const sourceEnvironmentId = caller.sourceEnvironmentId;
+      const { sourceProjectId } = detail;
+      yield* recordArrivalLine(orchestrator, threadId, {
+        request,
+        sourceEnvironmentId,
+        sourceProjectId,
+        replica,
+        machineLabel: label,
+      });
       return response;
     }).pipe(
       Effect.mapError((error) =>
