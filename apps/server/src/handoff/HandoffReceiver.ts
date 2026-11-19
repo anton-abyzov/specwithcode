@@ -1050,7 +1050,14 @@ export const make = Effect.gen(function* () {
                   undefined,
                   HandoffTransferStore.revokeAcceptance(current, lineage, error.message),
                 ])
-                .pipe(Effect.ignore),
+                .pipe(
+                  // The acceptance is still on file, so a repeat would launch: this is no "no".
+                  Effect.catch(() =>
+                    Effect.sync(() => {
+                      standing = true;
+                    }),
+                  ),
+                ),
         ),
       );
       const previous = detail.execution;
