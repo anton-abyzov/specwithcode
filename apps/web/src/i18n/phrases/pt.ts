@@ -5836,6 +5836,80 @@ export const pt: PhraseCatalog = {
   "Add one": "Adicionar um",
   "+{n} more": "+{n} mais",
   "Ready once an agent is signed in.": "Pronto assim que um agente entrar.",
+  // 1398: the first feature guide and its offer.
+  "Your first feature": "Sua primeira funcionalidade",
+  "Turn SpecWeave on": "Ativar o SpecWeave",
+  "Ask for it whole": "Pedir tudo de uma vez",
+  "Read the review": "Ler a revisão",
+  "This project has no plans or board yet. Turn SpecWeave on.":
+    "Este projeto ainda não tem planos nem quadro. Ative o SpecWeave.",
+  "Show me": "Mostrar",
+  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.":
+    "Peça a funcionalidade inteira em um só pedido. Seus agentes planejam, constroem, revisam e fecham.",
+  "Ask for the whole feature in one request. Your agents plan it, build it and close it.":
+    "Peça a funcionalidade inteira em um só pedido. Seus agentes planejam, constroem e fecham.",
+  "Write it for me": "Escrever para mim",
+  "Open the thread": "Abrir a conversa",
+  Planning: "Planejando",
+  "Working: {done} of {total} tasks": "Trabalhando: {done} de {total} tarefas",
+  "In review": "Em revisão",
+  "Fixing what the review found": "Corrigindo o que a revisão encontrou",
+  "When the card is in Done, open it and read what the review found.":
+    "Quando o cartão estiver em Concluído, abra-o e leia o que a revisão encontrou.",
+  "Open the review": "Abrir a revisão",
+  Ship: "Pronta para entregar",
+  "Fix first": "Corrigir antes",
+  "No verdict": "Sem veredito",
+  "A reviewer": "Um revisor",
+  "Reviewed by {model}, the same family that built it.":
+    "Revisada por {model}, da mesma família que a construiu.",
+  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
+    "Nenhuma revisão foi feita. Uma revisão precisa de um modelo de uma segunda família, como {codex} ou {muse}.",
+  "No review is recorded for this feature.":
+    "Nenhuma revisão está registrada para esta funcionalidade.",
+  "Skip this step": "Pular esta etapa",
+  "Leave the guide": "Sair do guia",
+  "Waiting on this step. The Board tab says what went wrong.":
+    "Esta etapa está esperando. A aba Quadro diz o que deu errado.",
+  "Waiting on this step. The coordinator's last message says why.":
+    "Esta etapa está esperando. A última mensagem do coordenador diz por quê.",
+  "That is the loop: plan, board, work, review, done.":
+    "Esse é o ciclo: plano, quadro, trabalho, revisão, concluído.",
+  "Review finished features in all projects on this Mac":
+    "Revisar funcionalidades concluídas em todos os projetos deste Mac",
+  "Each review uses the reviewer's plan.": "Cada revisão usa o plano do revisor.",
+  "On for all projects on this Mac. Each review uses the reviewer's plan.":
+    "Ativado para todos os projetos deste Mac. Cada revisão usa o plano do revisor.",
+  "Remove the sample project": "Remover o projeto de exemplo",
+  "Remove {name} from SpecWithCode? Its folder and files stay on disk.":
+    "Remover {name} do SpecWithCode? A pasta e os arquivos ficam no disco.",
+  "Build a first feature": "Crie uma primeira funcionalidade",
+  "Your agents plan and build one small feature and another model reviews it, on your own plans.":
+    "Seus agentes planejam e constroem uma pequena funcionalidade e outro modelo a revisa, nos seus próprios planos.",
+  "Try a first feature": "Testar uma primeira funcionalidade",
+  "Sign in an agent first": "Primeiro conecte um agente",
+  "Continue your first feature": "Continue sua primeira funcionalidade",
+  "Your sample project is where you left it.": "Seu projeto de exemplo está onde você parou.",
+  "Open it": "Abrir",
+  "Dismiss Build a first feature": "Dispensar Crie uma primeira funcionalidade",
+  "First feature guide": "Guia da primeira funcionalidade",
+  "Automatic review is still on for the sample": "A revisão automática continua ativada no exemplo",
+  done: "concluído",
+  skipped: "pulado",
+  Reviews: "Revisões",
+  "Removed {name}": "{name} removido",
+  "Its folder and files stay on disk.": "A pasta e os arquivos ficam no disco.",
+  "The guide could not be updated. Try again.": "Não foi possível atualizar o guia. Tente de novo.",
+  "The setting was not saved. Try again.": "A configuração não foi salva. Tente de novo.",
+  "The sample project was not removed. Try again.":
+    "O projeto de exemplo não foi removido. Tente de novo.",
+  "Could not make the sample project": "Não foi possível criar o projeto de exemplo",
+  "The sample project has no first commit": "O projeto de exemplo não tem um primeiro commit",
+  "The sample project is ready": "O projeto de exemplo está pronto",
+  "It appears in the sidebar once this window catches up.":
+    "Ele aparece na barra lateral quando esta janela se atualizar.",
+  "This connection cannot change the settings of this Mac.":
+    "Esta conexão não pode alterar as configurações deste Mac.",
   "How much longer work takes with {setting}": "Quanto tempo a mais o trabalho leva com “{setting}”",
   "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "Pode fazer o trabalho levar muito mais tempo: nas medições, o trabalho revisado levou em mediana 2,6 vezes o tempo do mesmo trabalho antes da revisão (metade das execuções entre 1,6 e 3,6 vezes), porque cada rodada de revisão e suas correções somam tempo.",
   "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "Pode fazer o trabalho levar mais tempo: cada consulta soma cerca de 2 minutos. Nas medições, as threads que consultaram levaram cerca de 1,1 vezes o tempo normal, e 1 em cada 10 levou 1,4 vezes ou mais.",
