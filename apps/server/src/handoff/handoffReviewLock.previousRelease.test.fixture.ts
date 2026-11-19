@@ -1,6 +1,6 @@
 /**
  * The previous release's side of a handoff, as far as a reviewer lock touches
- * it, copied from tag `v1.0.384`. Each block names the file it came from.
+ * it, copied from tag `v1.0.386`. Each block names the file it came from.
  * Nothing here imports this version's handoff code, so a change there cannot
  * move what the previous release does.
  *
@@ -23,8 +23,8 @@ import {
 } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
 
-export const PREVIOUS_RELEASE = "v1.0.384";
-export const PREVIOUS_APP_VERSION = "1.0.384";
+export const PREVIOUS_RELEASE = "v1.0.386";
+export const PREVIOUS_APP_VERSION = "1.0.386";
 
 /* apps/server/src/handoff/handoffWire.ts */
 

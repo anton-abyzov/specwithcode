@@ -599,12 +599,10 @@ export const make = Effect.gen(function* () {
       const shell = yield* shellOf(threadId);
       const taken = { shell, destination, epoch: pending.request.epoch };
       // No row for its launcher, no re-send: the takeover stays pending for the next try.
-      yield* follow
-        .register(taken)
-        .pipe(
-          Effect.mapError(() => failed("busy", HandoffFollow.FOLLOW_NOT_RECORDED_PAUSED)),
-          Effect.tapError((error) => inDoubt(threadId, error.message)),
-        );
+      yield* follow.register(taken).pipe(
+        Effect.mapError(() => failed("busy", HandoffFollow.FOLLOW_NOT_RECORDED_PAUSED)),
+        Effect.tapError((error) => inDoubt(threadId, error.message)),
+      );
       const response = yield* sendTakeover(destination, pending.request).pipe(
         Effect.tapError((error) =>
           !destinationRefused(error)
