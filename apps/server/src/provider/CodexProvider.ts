@@ -777,6 +777,21 @@ function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]):
   return { status: "ready", auth };
 }
 
+const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
+
+/**
+ * What a failed Codex check says on the provider row. A process that stopped
+ * as it started says why in its own words (a broken install, an expired
+ * sign-in), so that line leads; anything else keeps the probe's wording.
+ */
+export function codexProbeFailureMessage(error: CodexErrors.CodexAppServerError): string {
+  if (isCodexAppServerProcessExitedError(error) && error.stderr) {
+    const code = error.code === undefined ? "" : ` (exit code ${error.code})`;
+    return `Codex stopped as it started${code}: ${error.stderr.replace(/\.$/, "")}.`;
+  }
+  return `Codex app-server provider probe failed: ${error.message}.`;
+}
+
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
   codexSettings: CodexSettings,
   probe: (input: {
@@ -852,7 +867,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         status: "error",
         auth: { status: "unknown" },
         message: installed
-          ? `Codex app-server provider probe failed: ${error.message}.`
+          ? codexProbeFailureMessage(error)
           : `Could not start Codex CLI (\`${codexSettings.binaryPath}\`). Check Settings → Providers → Codex → Binary path on the server.` +
             (codexSettings.binaryPath === "codex"
               ? " Installing ChatGPT or Codex desktop may not add codex to PATH."

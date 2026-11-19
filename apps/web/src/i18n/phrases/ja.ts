@@ -5950,4 +5950,17 @@ export const ja: PhraseCatalog = {
   "Waiting for {machine}": "{machine} を待っています",
   "Waiting for machines to allow this device": "マシンがこのデバイスを許可するのを待っています",
   "Waiting to join": "参加を待っています",
+  "Sign in or switch account": "サインインまたはアカウントを切り替え",
+  "Reinstall or update": "再インストールまたは更新",
+  "Pick command": "コマンドを選択",
+  "The sign-in looks expired or missing. Sign in again, with this account or another.":
+    "サインインが期限切れか、ありません。このアカウントか別のアカウントでもう一度サインインしてください。",
+  "The install looks broken. Reinstall or update it, then check again.":
+    "インストールが壊れているようです。再インストールまたは更新してから、もう一度確認してください。",
+  "The command could not be started. Pick the command to run, or reinstall.":
+    "コマンドを起動できませんでした。実行するコマンドを選ぶか、再インストールしてください。",
+  "Checked at {time}. Still not working.": "{time} に確認しました。まだ動作しません。",
+  "Checked at {time}.": "{time} に確認しました。",
+  "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.":
+    "このフォルダーは 1 つのターミナルセッションに属し、閉じると消えます。次回の確認でアプリがコマンドを探し直します。",
 };

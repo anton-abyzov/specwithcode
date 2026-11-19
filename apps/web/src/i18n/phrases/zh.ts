@@ -5693,4 +5693,17 @@ export const zh: PhraseCatalog = {
   "Waiting for {machine}": "正在等待 {machine}",
   "Waiting for machines to allow this device": "正在等待机器允许此设备",
   "Waiting to join": "等待加入",
+  "Sign in or switch account": "登录或切换账号",
+  "Reinstall or update": "重新安装或更新",
+  "Pick command": "选择命令",
+  "The sign-in looks expired or missing. Sign in again, with this account or another.":
+    "登录似乎已过期或不存在。请用此账号或其他账号重新登录。",
+  "The install looks broken. Reinstall or update it, then check again.":
+    "安装似乎已损坏。请重新安装或更新，然后再次检查。",
+  "The command could not be started. Pick the command to run, or reinstall.":
+    "无法启动该命令。请选择要运行的命令，或重新安装。",
+  "Checked at {time}. Still not working.": "已于 {time} 检查。仍无法使用。",
+  "Checked at {time}.": "已于 {time} 检查。",
+  "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.":
+    "此文件夹属于一个终端会话，会话关闭后就会消失。应用会在下次检查时重新查找命令。",
 };

@@ -5877,4 +5877,17 @@ export const ko: PhraseCatalog = {
   "Waiting for {machine}": "{machine} 기다리는 중",
   "Waiting for machines to allow this device": "머신이 이 기기를 허용하기를 기다리는 중",
   "Waiting to join": "참여 대기 중",
+  "Sign in or switch account": "로그인 또는 계정 전환",
+  "Reinstall or update": "다시 설치 또는 업데이트",
+  "Pick command": "명령 선택",
+  "The sign-in looks expired or missing. Sign in again, with this account or another.":
+    "로그인이 만료되었거나 없습니다. 이 계정이나 다른 계정으로 다시 로그인하세요.",
+  "The install looks broken. Reinstall or update it, then check again.":
+    "설치가 손상된 것 같습니다. 다시 설치하거나 업데이트한 뒤 다시 확인하세요.",
+  "The command could not be started. Pick the command to run, or reinstall.":
+    "명령을 시작할 수 없습니다. 실행할 명령을 선택하거나 다시 설치하세요.",
+  "Checked at {time}. Still not working.": "{time}에 확인했습니다. 아직 작동하지 않습니다.",
+  "Checked at {time}.": "{time}에 확인했습니다.",
+  "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.":
+    "이 폴더는 하나의 터미널 세션에 속하며 세션이 닫히면 사라집니다. 다음 확인 때 앱이 명령을 다시 찾습니다.",
 };

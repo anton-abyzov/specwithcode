@@ -19,6 +19,7 @@ import {
 } from "@specweave-studio/contracts";
 
 import type { ProviderInstanceEntry } from "./providerInstances";
+import { isVolatileCommandPath } from "./components/settings/providerRepair";
 
 /** Registry agents SpecWithCode can install and update itself. */
 export const FEATURED_ACP_AGENT_IDS = ["github-copilot-cli", "grok-build", "gemini"] as const;
@@ -247,6 +248,8 @@ export function withInstalledBinary(
     instance.config !== null && typeof instance.config === "object"
       ? (instance.config as Record<string, unknown>)
       : {};
+  // A per-shell folder is gone with its terminal; the bare command is looked up at each start instead.
+  if (isVolatileCommandPath(executablePath)) return instance;
   return { ...instance, config: { ...config, binaryPath: executablePath } };
 }
 

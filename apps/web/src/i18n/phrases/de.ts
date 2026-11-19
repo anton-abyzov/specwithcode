@@ -5988,4 +5988,17 @@ export const de: PhraseCatalog = {
   "Waiting for {machine}": "Warte auf {machine}",
   "Waiting for machines to allow this device": "Warte, bis Rechner dieses Gerät zulassen",
   "Waiting to join": "Wartet auf Beitritt",
+  "Sign in or switch account": "Anmelden oder Konto wechseln",
+  "Reinstall or update": "Neu installieren oder aktualisieren",
+  "Pick command": "Befehl wählen",
+  "The sign-in looks expired or missing. Sign in again, with this account or another.":
+    "Die Anmeldung scheint abgelaufen oder fehlt. Melde dich erneut an, mit diesem oder einem anderen Konto.",
+  "The install looks broken. Reinstall or update it, then check again.":
+    "Die Installation scheint defekt. Installiere neu oder aktualisiere, dann prüfe erneut.",
+  "The command could not be started. Pick the command to run, or reinstall.":
+    "Der Befehl ließ sich nicht starten. Wähle den Befehl aus oder installiere neu.",
+  "Checked at {time}. Still not working.": "Geprüft um {time}. Funktioniert noch nicht.",
+  "Checked at {time}.": "Geprüft um {time}.",
+  "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.":
+    "Dieser Ordner gehört zu einer Terminalsitzung und verschwindet, wenn sie endet. Die App sucht den Befehl bei der nächsten Prüfung neu.",
 };

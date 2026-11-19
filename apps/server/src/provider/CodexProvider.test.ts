@@ -20,6 +20,7 @@ import {
   checkCodexProviderStatus,
   withAccountBilling,
   type CodexAppServerProviderSnapshot,
+  codexProbeFailureMessage,
 } from "./CodexProvider.ts";
 
 describe("fresh Codex account status with optional discovery", () => {
@@ -737,5 +738,27 @@ describe("withAccountBilling", () => {
   it("leaves billing unreported without an account read", () => {
     expect(withAccountBilling(models, undefined)).toBe(models);
     expect(withAccountBilling(models, "something-new")).toBe(models);
+  });
+});
+
+describe("codexProbeFailureMessage", () => {
+  it("leads with Codex's own reason when it stopped as it started", () => {
+    expect(
+      codexProbeFailureMessage(
+        new CodexErrors.CodexAppServerProcessExitedError({
+          code: 1,
+          stderr:
+            "Error: Missing optional dependency @openai/codex-linux-x64. Reinstall Codex: npm install -g @openai/codex@latest",
+        }),
+      ),
+    ).toBe(
+      "Codex stopped as it started (exit code 1): Error: Missing optional dependency @openai/codex-linux-x64. Reinstall Codex: npm install -g @openai/codex@latest.",
+    );
+  });
+
+  it("keeps the probe's wording without a reason", () => {
+    expect(
+      codexProbeFailureMessage(new CodexErrors.CodexAppServerProcessExitedError({ code: 1 })),
+    ).toBe("Codex app-server provider probe failed: Codex App Server process exited with code 1.");
   });
 });
