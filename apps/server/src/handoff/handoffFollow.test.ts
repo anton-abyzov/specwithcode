@@ -662,6 +662,8 @@ describe("a handed-off worker's result", () => {
         yield* allow();
         const { handOff } = yield* scenario(local, other);
         yield* handOff;
+        // The follower is on the first run when it is stopped there.
+        yield* eventually(rows, (current) => current[0]?.followedRunId === "there-run-1");
         yield* finish(other, "interrupted");
         yield* eventually(
           rows,
@@ -728,6 +730,8 @@ describe("a handed-off worker's result", () => {
         yield* allow();
         const { handOff } = yield* scenario(local, other);
         yield* handOff;
+        // The follower is on the first run when it is stopped there.
+        yield* eventually(rows, (current) => current[0]?.followedRunId === "there-run-1");
         yield* finish(other, "interrupted");
         yield* eventually(
           rows,
