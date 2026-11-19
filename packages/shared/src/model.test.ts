@@ -461,7 +461,14 @@ describe("isReasoningCapableModel", () => {
   });
 
   it("leaves out older Claude models and other families", () => {
-    for (const slug of ["claude-sonnet-4", "claude-haiku-3-5", "claude-sonnet-4-20250514", "gpt-4o", "auto", "grok-4.7"])
+    for (const slug of [
+      "claude-sonnet-4",
+      "claude-haiku-3-5",
+      "claude-sonnet-4-20250514",
+      "gpt-4o",
+      "auto",
+      "grok-4.7",
+    ])
       expect(isReasoningCapableModel(slug), slug).toBe(false);
   });
 });

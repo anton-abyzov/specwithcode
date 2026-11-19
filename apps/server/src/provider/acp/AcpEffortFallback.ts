@@ -8,10 +8,11 @@ import { isReasoningCapableModel } from "@specweave-studio/shared/model";
  * probe session's current model, and that model can have none (or the probe
  * can return no options at all). Every model would then show no Effort.
  */
-const AGENT_EFFORT_OPTIONS: Readonly<Record<string, { readonly id: string; readonly label: string }>> =
-  {
-    "github-copilot-cli": { id: "reasoning_effort", label: "Reasoning Effort" },
-  };
+const AGENT_EFFORT_OPTIONS: Readonly<
+  Record<string, { readonly id: string; readonly label: string }>
+> = {
+  "github-copilot-cli": { id: "reasoning_effort", label: "Reasoning Effort" },
+};
 
 /** Levels Copilot lists for every reasoning model it serves. */
 const FALLBACK_LEVELS = [

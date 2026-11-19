@@ -17,10 +17,10 @@ describe("withAcpEffortFallback", () => {
   it("gives a Copilot reasoning model Effort when discovery reported only Mode", () => {
     for (const slug of ["gpt-6.2-astra", "gpt-7-nova", "claude-opus-5.5"]) {
       const descriptors = withAcpEffortFallback("github-copilot-cli", slug, [MODE]);
-      expect(descriptors.map((descriptor) => descriptor.id), slug).toEqual([
-        "mode",
-        "reasoning_effort",
-      ]);
+      expect(
+        descriptors.map((descriptor) => descriptor.id),
+        slug,
+      ).toEqual(["mode", "reasoning_effort"]);
       const effort = descriptors[1];
       expect(effort?.type === "select" ? effort.options.map((option) => option.id) : []).toEqual([
         "low",
