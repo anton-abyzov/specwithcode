@@ -170,6 +170,23 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
 }
 
 type Workspace = "worktree" | "root" | "existing_worktree";
+/**
+ * What a change to a routine says it was made on: the revision and the
+ * definition its row showed. A routine another machine runs is changed there,
+ * and only on the definition named. Read from the row acted on, or from the
+ * task a form kept when it opened, never from a later list.
+ */
+export function routineSeen(task: Pick<ScheduledTask, "revision" | "definitionHash"> | null): {
+  readonly expectedRevision?: number;
+  readonly expectedDefinition?: string;
+} {
+  if (task === null) return {};
+  return {
+    ...(task.revision === undefined ? {} : { expectedRevision: task.revision }),
+    ...(task.definitionHash === undefined ? {} : { expectedDefinition: task.definitionHash }),
+  };
+}
+
 export type ScheduledTaskDraft = {
   readonly task: ScheduledTask | null;
   readonly title: string;

@@ -41,6 +41,9 @@ export const copyNotRemovedRefusal = (label: string | null) =>
     0,
     500,
   );
+/** A change to a routine another machine runs that does not say which definition it was made on. */
+export const UNSEEN_ROUTINE_EDIT_REFUSAL =
+  "This routine runs on another machine, and this change did not say which version of it was shown, so nothing was changed. Reload the routines, or update the app, and try again.";
 export const STALE_ROUTINE_EDIT_REFUSAL =
   "This routine changed since you opened it, so your change was not saved. Open it again and repeat the change.";
 
@@ -78,6 +81,14 @@ export interface RoutineRunnerRecord {
    * says what the runner counted, not that this copy took that definition.
    */
   readonly installedRevision?: number | null | undefined;
+  /**
+   * `disarmed`: the hash of the definition as its runner sent it, written with
+   * the row that took it. This machine may hold that row under its own limits
+   * (a lower runtime mode, another sign-in), so the row's own hash is not the
+   * runner's; this is what a change made here names. Null when the row was not
+   * written from its runner: then the row itself is hashed.
+   */
+  readonly definitionHash?: string | null | undefined;
 }
 
 /** A resting copy whose routine was deleted at its runner and whose own row is still to go. */
@@ -109,6 +120,7 @@ interface RecordRow {
   readonly asked_json: string;
   readonly copy_enabled: number | null;
   readonly installed_revision: number | null;
+  readonly definition_hash: string | null;
 }
 
 const STATES: ReadonlySet<string> = new Set([
@@ -147,6 +159,7 @@ const recordOf = (row: RecordRow): RoutineRunnerRecord | null => {
     copyEnabled: row.copy_enabled === null ? null : row.copy_enabled !== 0,
     installedRevision:
       row.installed_revision === null ? null : Math.max(0, Math.trunc(row.installed_revision)),
+    definitionHash: row.definition_hash ?? null,
   };
 };
 
@@ -161,10 +174,15 @@ export const makeRunnerRecords = (sql: SqlClient.SqlClient) => {
         ),
       );
   const read = (taskId: string) =>
-    sql<RecordRow>`SELECT * FROM scheduled_task_runners WHERE task_id = ${taskId}`.pipe(
-      Effect.map((rows) => (rows[0] === undefined ? null : recordOf(rows[0]))),
-    );
-  const all = sql<RecordRow>`SELECT * FROM scheduled_task_runners`.pipe(
+    sql<RecordRow>`
+      SELECT r.*, d.definition_hash FROM scheduled_task_runners r
+      LEFT JOIN scheduled_task_copy_definitions d ON d.task_id = r.task_id
+      WHERE r.task_id = ${taskId}
+    `.pipe(Effect.map((rows) => (rows[0] === undefined ? null : recordOf(rows[0]))));
+  const all = sql<RecordRow>`
+    SELECT r.*, d.definition_hash FROM scheduled_task_runners r
+    LEFT JOIN scheduled_task_copy_definitions d ON d.task_id = r.task_id
+  `.pipe(
     Effect.map(
       (rows) =>
         new Map(
@@ -176,6 +194,9 @@ export const makeRunnerRecords = (sql: SqlClient.SqlClient) => {
     ),
   );
   const write = (record: RoutineRunnerRecord) =>
+    // The record and the hash of what its row took are one write.
+    sql.withTransaction(writeRecord(record));
+  const writeRecord = (record: RoutineRunnerRecord) =>
     Effect.gen(function* () {
       const now = DateTime.formatIso(yield* DateTime.now);
       const acked = stringifyJson([...new Set(record.acked)].toSorted());
@@ -205,9 +226,22 @@ export const makeRunnerRecords = (sql: SqlClient.SqlClient) => {
           copy_enabled = excluded.copy_enabled,
           installed_revision = excluded.installed_revision
       `;
+      if (record.definitionHash == null)
+        yield* sql`DELETE FROM scheduled_task_copy_definitions WHERE task_id = ${record.taskId}`;
+      else
+        yield* sql`
+          INSERT INTO scheduled_task_copy_definitions (task_id, definition_hash)
+          VALUES (${record.taskId}, ${record.definitionHash})
+          ON CONFLICT (task_id) DO UPDATE SET definition_hash = excluded.definition_hash
+        `;
     });
   const remove = (taskId: string) =>
-    sql`DELETE FROM scheduled_task_runners WHERE task_id = ${taskId}`.pipe(Effect.asVoid);
+    sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`DELETE FROM scheduled_task_runners WHERE task_id = ${taskId}`;
+        yield* sql`DELETE FROM scheduled_task_copy_definitions WHERE task_id = ${taskId}`;
+      }),
+    );
   const receipt = (key: string) =>
     sql<{ readonly answer_json: string }>`
       SELECT answer_json FROM scheduled_task_runner_receipts WHERE receipt_key = ${key}

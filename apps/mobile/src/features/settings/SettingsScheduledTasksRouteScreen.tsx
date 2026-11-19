@@ -71,6 +71,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   editDraft,
+  routineSeen,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
   type ScheduledTaskDraft as Draft,
@@ -675,6 +676,8 @@ function TaskForm({
     }
     const input: ScheduledTaskUpsertInput = {
       ...(draft.task ? { id: draft.task.id, requireExisting: true } : {}),
+      // What this form opened on, so a change made since is not overwritten.
+      ...routineSeen(draft.task),
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
       projectId: draft.projectId,
@@ -1220,8 +1223,11 @@ function EnvironmentTasks({
       action === "run"
         ? await runNow({ environmentId, input: { id: task.id } })
         : action === "toggle"
-          ? await setEnabled({ environmentId, input: { id: task.id, enabled: !task.enabled } })
-          : await remove({ environmentId, input: { id: task.id } });
+          ? await setEnabled({
+              environmentId,
+              input: { id: task.id, enabled: !task.enabled, ...routineSeen(task) },
+            })
+          : await remove({ environmentId, input: { id: task.id, ...routineSeen(task) } });
     failure(`Could not ${action === "toggle" ? "update" : action} routine`, result);
   };
 

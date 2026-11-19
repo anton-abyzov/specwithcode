@@ -648,7 +648,8 @@ export const make = Effect.gen(function* () {
           }));
         if (routineCopies === undefined) return { shadowWorkers };
         const snapshot = yield* routineCopies
-          .snapshot({ projectId: project.id, logicalProjectId, recipient })
+          // The role goes with them: see `handover` on the snapshot.
+          .snapshot({ projectId: project.id, logicalProjectId, recipient, handover: true })
           .pipe(Effect.orElseSucceed(() => null));
         if (snapshot === null) return { shadowWorkers };
         const runStates = yield* withSql(
