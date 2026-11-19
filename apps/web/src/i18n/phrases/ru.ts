@@ -6030,8 +6030,6 @@ export const ru: PhraseCatalog = {
   "Show hand off progress": "Показать ход передачи",
   "Nothing in {project} on {machine} can go.": "Из {project} на {machine} передать нечего.",
   "Nothing here can go.": "Отсюда передать нечего.",
-  "Queued ({n})": "В очереди ({n})",
-  "Queued threads": "Треды в очереди",
   "Waiting for your next message ({n})": "Ждут вашего следующего сообщения ({n})",
   "Waiting for your next message": "Ждут вашего следующего сообщения",
   "Stays ({n})": "Остаются ({n})",
@@ -6040,4 +6038,6 @@ export const ru: PhraseCatalog = {
   "The personal assistant stays on this machine.": "Личный ассистент остаётся на этом компьютере.",
   "Its queued messages do not travel in a hand off by hand yet.":
     "При ручной передаче сообщения из очереди пока не переносятся.",
+  "Up to {n} threads go in one hand off. Hand off the rest after.":
+    "За одну передачу уходит до {n} тредов. Остальные передайте потом.",
 };

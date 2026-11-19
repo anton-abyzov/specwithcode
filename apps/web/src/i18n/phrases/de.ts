@@ -6079,8 +6079,6 @@ export const de: PhraseCatalog = {
   "Show hand off progress": "Fortschritt der Übergabe anzeigen",
   "Nothing in {project} on {machine} can go.": "Nichts in {project} auf {machine} kann gehen.",
   "Nothing here can go.": "Nichts von hier kann gehen.",
-  "Queued ({n})": "In der Warteschlange ({n})",
-  "Queued threads": "Threads in der Warteschlange",
   "Waiting for your next message ({n})": "Wartet auf deine nächste Nachricht ({n})",
   "Waiting for your next message": "Wartet auf deine nächste Nachricht",
   "Stays ({n})": "Bleibt ({n})",
@@ -6090,4 +6088,6 @@ export const de: PhraseCatalog = {
     "Der persönliche Assistent bleibt auf diesem Rechner.",
   "Its queued messages do not travel in a hand off by hand yet.":
     "Seine Nachrichten in der Warteschlange gehen bei einer Übergabe von Hand noch nicht mit.",
+  "Up to {n} threads go in one hand off. Hand off the rest after.":
+    "Bis zu {n} Threads gehen in einer Übergabe. Übergib den Rest danach.",
 };

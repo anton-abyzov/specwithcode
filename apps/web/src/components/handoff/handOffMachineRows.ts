@@ -11,8 +11,11 @@ import {
 } from "@specweave-studio/client-runtime/state/shell";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 
-/** The dialog's groups, in the order AC-17 lists them. */
-export type HandoffMachineGroup = "running" | "queued" | "waiting" | "stays";
+/**
+ * The dialog's groups, in AC-17's order. Queued is not one yet: a hand off by
+ * hand leaves held messages behind, so an idle thread with some stays.
+ */
+export type HandoffMachineGroup = "running" | "waiting" | "stays";
 
 export interface HandoffMachineThreadRow {
   readonly threadId: ThreadId;
@@ -48,7 +51,7 @@ export const ASSISTANT_STAYS = "The personal assistant stays on this machine.";
 /** A hand off by hand moves the thread, not the messages held behind it. */
 export const QUEUE_STAYS = "Its queued messages do not travel in a hand off by hand yet.";
 
-const ORDER: Record<HandoffMachineGroup, number> = { running: 0, queued: 1, waiting: 2, stays: 3 };
+const ORDER: Record<HandoffMachineGroup, number> = { running: 0, waiting: 1, stays: 2 };
 
 /**
  * What the thread is doing, as the server's `handoffActivity` reads it: null
@@ -103,7 +106,11 @@ export function handoffMachineRows(facts: HandoffMachineRowFacts): HandoffMachin
           : null;
     rows.push(
       reason === null
-        ? { ...base, group: activity, updatedAt: shell.updatedAt }
+        ? {
+            ...base,
+            group: activity === "running" ? "running" : "waiting",
+            updatedAt: shell.updatedAt,
+          }
         : { ...base, group: "stays", reason, updatedAt: shell.updatedAt },
     );
   }
@@ -126,16 +133,21 @@ export function tickableHandoffRows(rows: ReadonlyArray<HandoffMachineThreadRow>
 /** The most thread ids one check or one hand off takes (the server's schema). */
 export const HANDOFF_BATCH_LIMIT = 100;
 
-/** The ticked ids, with the person's own ticks over the defaults. */
+/**
+ * The ticked ids, with the person's own ticks over the defaults, in row order
+ * (running first, then the newest waiting) up to `HANDOFF_BATCH_LIMIT`.
+ * `overLimit` says more were wanted than one hand off takes.
+ */
 export function selectedHandoffRows(
   rows: ReadonlyArray<HandoffMachineThreadRow>,
   overrides: ReadonlyMap<ThreadId, boolean>,
 ): { readonly ids: Set<ThreadId>; readonly overLimit: boolean } {
   const ticked = tickableHandoffRows(rows);
+  const wanted = rows
+    .map((row) => row.threadId)
+    .filter((id) => ticked.has(id) && (overrides.get(id) ?? true));
   return {
-    ids: new Set(
-      rows.map((row) => row.threadId).filter((id) => ticked.has(id) && overrides.get(id) !== false),
-    ),
-    overLimit: false,
+    ids: new Set(wanted.slice(0, HANDOFF_BATCH_LIMIT)),
+    overLimit: wanted.length > HANDOFF_BATCH_LIMIT,
   };
 }

@@ -6041,8 +6041,6 @@ export const ja: PhraseCatalog = {
   "Show hand off progress": "引き継ぎの進行状況を表示",
   "Nothing in {project} on {machine} can go.": "{machine} の {project} に移せるものはありません。",
   "Nothing here can go.": "ここから移せるものはありません。",
-  "Queued ({n})": "キュー ({n})",
-  "Queued threads": "キューにあるスレッド",
   "Waiting for your next message ({n})": "次のメッセージを待っています ({n})",
   "Waiting for your next message": "次のメッセージを待っています",
   "Stays ({n})": "残る ({n})",
@@ -6051,4 +6049,6 @@ export const ja: PhraseCatalog = {
   "The personal assistant stays on this machine.": "パーソナルアシスタントはこのマシンに残ります。",
   "Its queued messages do not travel in a hand off by hand yet.":
     "手動の引き継ぎでは、キューにあるメッセージはまだ移りません。",
+  "Up to {n} threads go in one hand off. Hand off the rest after.":
+    "1 回の引き継ぎで移せるのは {n} 件のスレッドまでです。残りはその後に引き継いでください。",
 };

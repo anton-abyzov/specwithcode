@@ -6088,8 +6088,6 @@ export const fr: PhraseCatalog = {
   "Show hand off progress": "Afficher la progression de la transmission",
   "Nothing in {project} on {machine} can go.": "Rien dans {project} sur {machine} ne peut partir.",
   "Nothing here can go.": "Rien ici ne peut partir.",
-  "Queued ({n})": "En file ({n})",
-  "Queued threads": "Fils en file",
   "Waiting for your next message ({n})": "En attente de votre prochain message ({n})",
   "Waiting for your next message": "En attente de votre prochain message",
   "Stays ({n})": "Reste ({n})",
@@ -6098,4 +6096,6 @@ export const fr: PhraseCatalog = {
   "The personal assistant stays on this machine.": "L’assistant personnel reste sur cette machine.",
   "Its queued messages do not travel in a hand off by hand yet.":
     "Ses messages en file ne partent pas encore lors d’un transfert manuel.",
+  "Up to {n} threads go in one hand off. Hand off the rest after.":
+    "Jusqu’à {n} fils partent en un transfert. Transférez le reste ensuite.",
 };

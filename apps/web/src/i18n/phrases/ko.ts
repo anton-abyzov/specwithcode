@@ -5968,8 +5968,6 @@ export const ko: PhraseCatalog = {
   "Nothing in {project} on {machine} can go.":
     "{machine}의 {project}에서 보낼 수 있는 것이 없습니다.",
   "Nothing here can go.": "여기서 보낼 수 있는 것이 없습니다.",
-  "Queued ({n})": "대기열 ({n})",
-  "Queued threads": "대기열의 스레드",
   "Waiting for your next message ({n})": "다음 메시지를 기다리는 중 ({n})",
   "Waiting for your next message": "다음 메시지를 기다리는 중",
   "Stays ({n})": "남음 ({n})",
@@ -5978,4 +5976,6 @@ export const ko: PhraseCatalog = {
   "The personal assistant stays on this machine.": "개인 비서는 이 기기에 남습니다.",
   "Its queued messages do not travel in a hand off by hand yet.":
     "수동 인계에서는 대기 중인 메시지가 아직 함께 가지 않습니다.",
+  "Up to {n} threads go in one hand off. Hand off the rest after.":
+    "한 번의 인계로 최대 {n}개 스레드가 갑니다. 나머지는 그다음에 인계하세요.",
 };

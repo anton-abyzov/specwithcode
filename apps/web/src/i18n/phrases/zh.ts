@@ -5779,8 +5779,6 @@ export const zh: PhraseCatalog = {
   "Show hand off progress": "显示交接进度",
   "Nothing in {project} on {machine} can go.": "{machine} 上的 {project} 中没有可交接的内容。",
   "Nothing here can go.": "这里没有可交接的内容。",
-  "Queued ({n})": "排队中 ({n})",
-  "Queued threads": "排队中的线程",
   "Waiting for your next message ({n})": "等待你的下一条消息 ({n})",
   "Waiting for your next message": "等待你的下一条消息",
   "Stays ({n})": "留下 ({n})",
@@ -5789,4 +5787,6 @@ export const zh: PhraseCatalog = {
   "The personal assistant stays on this machine.": "个人助理留在这台机器上。",
   "Its queued messages do not travel in a hand off by hand yet.":
     "手动交接时，排队中的消息暂时不会一起转移。",
+  "Up to {n} threads go in one hand off. Hand off the rest after.":
+    "一次交接最多 {n} 个线程。其余的之后再交接。",
 };

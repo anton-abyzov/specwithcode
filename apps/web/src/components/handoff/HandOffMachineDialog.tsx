@@ -23,8 +23,9 @@ import {
 } from "../../studio/handoffMode";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import {
+  HANDOFF_BATCH_LIMIT,
   handoffMachineRows,
-  tickableHandoffRows,
+  selectedHandoffRows,
   type HandoffMachineGroup,
   type HandoffMachineThreadRow,
 } from "./handOffMachineRows";
@@ -125,7 +126,6 @@ const GROUPS: ReadonlyArray<{
   readonly list: string;
 }> = [
   { group: "running", legend: "Running ({n})", list: "Running threads" },
-  { group: "queued", legend: "Queued ({n})", list: "Queued threads" },
   {
     group: "waiting",
     legend: "Waiting for your next message ({n})",
@@ -143,6 +143,8 @@ export interface HandOffMachineDialogViewProps {
   onDestination: (environmentId: EnvironmentId) => void;
   threads: readonly HandoffMachineThreadRow[];
   selected: ReadonlySet<ThreadId>;
+  /** More rows are ticked than one hand off takes: the first ones go. */
+  overLimit?: boolean;
   onToggle: (threadId: ThreadId, selected: boolean) => void;
   checking: boolean;
   preflight: ReadonlyMap<ThreadId, HandoffPreflightResult>;
@@ -335,6 +337,13 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
                     </fieldset>
                   );
                 })}
+                {props.overLimit ? (
+                  <p role="status" className="text-xs text-muted-foreground">
+                    {tx("Up to {n} threads go in one hand off. Hand off the rest after.", {
+                      n: HANDOFF_BATCH_LIMIT,
+                    })}
+                  </p>
+                ) : null}
                 {props.destinationUpdate}
                 {props.preflightError ? (
                   <p role="alert" className="text-xs text-destructive-foreground">
@@ -516,11 +525,10 @@ function HandOffMachineDialog({
     () => handoffMachineRows({ environmentId, shells, snapshot, projects, projectId }),
     [environmentId, projectId, projects, shells, snapshot],
   );
-  const [deselected, setDeselected] = useState<ReadonlySet<ThreadId>>(new Set());
-  const selected = useMemo(
-    () => new Set([...tickableHandoffRows(threads)].filter((id) => !deselected.has(id))),
-    [deselected, threads],
-  );
+  // The person's own ticks; every other row keeps its default.
+  const [ticks, setTicks] = useState<ReadonlyMap<ThreadId, boolean>>(new Map());
+  const picked = useMemo(() => selectedHandoffRows(threads, ticks), [threads, ticks]);
+  const selected = picked.ids;
   const [preflight, setPreflight] = useState<ReadonlyMap<ThreadId, HandoffPreflightResult>>(
     new Map(),
   );
@@ -595,14 +603,8 @@ function HandOffMachineDialog({
       }}
       threads={threads}
       selected={selected}
-      onToggle={(threadId, on) =>
-        setDeselected((current) => {
-          const next = new Set(current);
-          if (on) next.delete(threadId);
-          else next.add(threadId);
-          return next;
-        })
-      }
+      overLimit={picked.overLimit}
+      onToggle={(threadId, on) => setTicks((current) => new Map(current).set(threadId, on))}
       checking={checking}
       preflight={preflight}
       preflightError={preflightError}
