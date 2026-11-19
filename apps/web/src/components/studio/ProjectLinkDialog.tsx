@@ -19,7 +19,7 @@ import { bestLinkCopy, linkCandidateGroups } from "../../studio/linkCandidateGro
 import {
   defaultKeptSide,
   fingerprintSummary,
-  LINK_REFUSAL_TEXT,
+  LINK_REFUSAL_WORDS,
   linkIsResuming,
   looksLikeSameProject,
   noteMergeComplete,
@@ -266,9 +266,9 @@ export function ProjectLinkDialog({
     : null;
   const refusal = sides
     ? sides.kept.keepRefusal
-      ? LINK_REFUSAL_TEXT[sides.kept.keepRefusal](sides.keptLabel)
+      ? tx(LINK_REFUSAL_WORDS[sides.kept.keepRefusal], { machine: sides.keptLabel })
       : sides.joining.joinRefusal && !resuming
-        ? LINK_REFUSAL_TEXT[sides.joining.joinRefusal](sides.joiningLabel)
+        ? tx(LINK_REFUSAL_WORDS[sides.joining.joinRefusal], { machine: sides.joiningLabel })
         : null
     : null;
   const machineProblem = hereProblem ?? (target ? machines.problem(target.environmentId) : null);

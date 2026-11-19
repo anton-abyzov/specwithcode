@@ -819,6 +819,13 @@ describe("extras that were asked for", () => {
     expect(extrasSendOutcome({ _tag: "ProjectSyncError", code: "failed", reason: "x" })).toBe(
       "unknown",
     );
+    // A code nobody showed to come before the first send is not taken as a refusal.
+    expect(extrasSendOutcome({ _tag: "ProjectSyncError", code: "busy", reason: "x" })).toBe(
+      "unknown",
+    );
+    expect(extrasSendOutcome({ _tag: "ProjectSyncError", code: "later", reason: "x" })).toBe(
+      "unknown",
+    );
     expect(extrasSendOutcome({ _tag: "EnvironmentRpcUnavailableError" })).toBe("unknown");
     expect(extrasSendOutcome({ _tag: "SchemaError" })).toBe("unknown");
     expect(extrasSendOutcome(undefined)).toBe("unknown");
@@ -826,6 +833,18 @@ describe("extras that were asked for", () => {
 });
 
 describe("what the result may claim", () => {
+  it("never says Moved forward for a step that moved nothing", () => {
+    const unread = stepLine(
+      step("behind", { action: "fast-forward", detail: "The result could not be read." }),
+      "result",
+      { moved: 0, downgraded: true },
+    );
+    expect(unread.tone).toBe("held");
+    expect(unread.sentence).toEqual({ text: "Not moved" });
+    expect(unread.detail).toBe("The result could not be read.");
+    expect(readStepLine(unread)).not.toContain("Moved forward");
+  });
+
   const HEAD = "a".repeat(40);
   const at = (branch: string | null, head = HEAD, clean = true, path = ".") => ({
     path,

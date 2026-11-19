@@ -10,6 +10,7 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { refreshSealedRoute, secretsSealed } from "../../studio/copySecretsRoute";
 import { machineHandoff } from "../../studio/machineHandoff";
+import { forgetLinkRefusal, rememberLinkRefusal } from "../../studio/linkRefusals";
 import { linkCopyAsWorkers, projectLink } from "../../studio/projectLink";
 import { randomUUID } from "../../lib/utils";
 import { cloneableRows, copySettled, DEFAULT_COPY_SELECTION } from "../../studio/folderCopy";
@@ -620,6 +621,13 @@ export function HandoffFolderCopyWatcher({
           newOperationId: randomUUID,
         });
         const now = readPendingCopy(key);
+        // The machine menu says why beside Link while the dialog stays closed.
+        const pair = [
+          `${environmentId}:${projectId}`,
+          `${saved.environmentId}:${done.projectId}`,
+        ] as const;
+        if (outcome.status === "linked") forgetLinkRefusal(...pair);
+        else rememberLinkRefusal(...pair, outcome.words);
         if (outcome.status === "linked" && now?.operationId === operationId && !now.linked)
           writePointer(key, { ...now, linked: true });
       } catch {

@@ -495,19 +495,20 @@ it("stops between two calls when a grant changes during the run", async () => {
   expect(results).toContain("This window can only read M5");
 });
 
-it("does not move a checkout when the pair is blocked by the time Sync is pressed", async () => {
+it("leaves no Sync to press once the pair is blocked, and a late press moves nothing", async () => {
   const { api } = scripted({
     fetch: { M4: fetched(facts(".", { behind: 3 })), M5: fetched(facts(".")) },
   });
   await render(api);
   const run = button("[data-sync-run]");
-  // The same commit that greys the dialog also carries the press: the gate still holds.
+  // The press arrives after the block: the button it was aimed at is gone.
   await act(async () => {
     flushSync(() => root.render(dialog(api, [target(M5, READ_ONLY(M5))], {})));
     run.click();
   });
   expect(api.run).not.toHaveBeenCalled();
   expect(stage()).toBe("failed");
+  expect(document.querySelector("[data-sync-run]")).toBeNull();
 });
 
 it("never says in sync for a clone that landed on another branch", async () => {

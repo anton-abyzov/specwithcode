@@ -46,6 +46,7 @@ import {
   writeAddToMachineCopy,
 } from "~/studio/addToMachineCopy";
 import { useMachineNicknames } from "~/studio/machineNickname";
+import { forgetLinkRefusal, rememberLinkRefusal } from "~/studio/linkRefusals";
 import { linkCopyAsWorkers } from "~/studio/projectLink";
 import { ProjectLinkDialog } from "./studio/ProjectLinkDialog";
 import { toastManager } from "./ui/toast";
@@ -358,6 +359,13 @@ async function runJob(job: AddToMachineJob, context: RunContext): Promise<void> 
       newOperationId: randomUUID,
     });
     finish(job);
+    // The machine menu says why beside Link, after this notice is gone.
+    const pair = [
+      `${job.source.environmentId}:${job.source.projectId}`,
+      `${destination.environmentId}:${destination.projectId}`,
+    ] as const;
+    if (outcome.status === "linked") forgetLinkRefusal(...pair);
+    else rememberLinkRefusal(...pair, outcome.words);
     if (outcome.status === "review")
       toastManager.add(
         stackedThreadToast({

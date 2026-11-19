@@ -626,6 +626,11 @@ export function ProjectSyncDialog({
     gate.current = block;
   });
   const stopped = (line: SyncText): SyncFailure => ({ kind: "blocked", line });
+  // A plan on screen or a check under way: what a new block takes away.
+  const planning = useRef(false);
+  useEffect(() => {
+    planning.current = stage.kind === "plan" || stage.kind === "checking";
+  });
   const machineOf = useCallback(
     (side: SyncSide, other: SyncMachine) => (side === "a" ? shown : other),
     [shown],
@@ -695,14 +700,12 @@ export function ProjectSyncDialog({
   // A plan on screen is for the two machines as they were allowed then. When either becomes
   // blocked, the plan and its ticks go, a check under way is dropped, and the reason is shown.
   useEffect(() => {
-    if (blockKey === null) return;
-    setStage((last) => {
-      if (last.kind !== "plan" && last.kind !== "checking") return last;
-      run.current += 1;
-      setTicked(new Set());
-      setAnyway(new Set());
-      return gate.current ? { kind: "failed", failures: [stopped(gate.current)] } : last;
-    });
+    const line = gate.current;
+    if (blockKey === null || !line || !planning.current) return;
+    run.current += 1;
+    setTicked(new Set());
+    setAnyway(new Set());
+    setStage({ kind: "failed", failures: [stopped(line)] });
   }, [blockKey]);
   // The machine shown became another one: what was read of the old one is not shown for it.
   const shownKey = syncMachineKey(shown);
