@@ -160,7 +160,8 @@ describe("a limit fallback onto another model", () => {
       anyReady: true,
       limitedInstanceIds: new Set([claude.instanceId]),
     });
-    // Mapped to the nearest level Muse offers here, with no second effort option.
-    expect(moved?.options).toEqual([{ id: "reasoningEffort", value: "high" }]);
+    // Mapped to the nearest level Muse offers here (a tie goes to the higher
+    // level), with no second effort option.
+    expect(moved?.options).toEqual([{ id: "reasoningEffort", value: "max" }]);
   });
 });
