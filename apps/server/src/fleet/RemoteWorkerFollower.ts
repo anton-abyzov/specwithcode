@@ -544,9 +544,14 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       let backoff = timings.backoffStartMs;
       let failingSince: number | undefined;
+      /** How long until a handed-off thread is asked again for its continuation or a run. */
+      let awaitPoll = timings.backoffStartMs;
       while (true) {
         const row = yield* findRow(rowId);
         if (!row || row.state !== "following" || row.remoteThreadId === null) return;
+        const handoff = row.handoff;
+        // Nothing to wait on yet: the latest run is asked for and answered at once.
+        const awaiting = handoff?.awaiting;
         const semaphore = yield* permitFor(row.machineId);
         const result = yield* semaphore
           .withPermits(1)(
@@ -555,8 +560,10 @@ const make = Effect.gen(function* () {
               tool: "studio_thread_wait",
               arguments: {
                 threadId: row.remoteThreadId,
-                ...(row.followedRunId === null ? {} : { runId: row.followedRunId }),
-                timeoutMs: timings.waitMs,
+                ...(row.followedRunId === null || awaiting !== undefined
+                  ? {}
+                  : { runId: row.followedRunId }),
+                timeoutMs: awaiting === undefined ? timings.waitMs : 1,
               },
               timeoutMs: timings.waitMs + 15_000,
             }),
@@ -570,7 +577,53 @@ const make = Effect.gen(function* () {
           if (row.lostContactNotified) yield* update(rowId, () => ({ lostContactNotified: false }));
           const answer = isRecord(result.success) ? result.success : {};
           const status = typeof answer.status === "string" ? answer.status : "idle";
+          if (handoff !== undefined && awaiting !== undefined) {
+            const seen = typeof answer.runId === "string" ? answer.runId : null;
+            if (seen === null || seen === handoff.passedRunId) {
+              // The continuation is there with nothing running: not started, never finished.
+              if (awaiting !== "run" || row.lastStatus !== "idle")
+                yield* update(rowId, (current) =>
+                  current.handoff === undefined
+                    ? {}
+                    : { lastStatus: "idle", handoff: { ...current.handoff, awaiting: "run" } },
+                );
+              yield* Effect.sleep(Duration.millis(awaitPoll));
+              awaitPoll = Math.min(awaitPoll * 2, timings.waitMs);
+              continue;
+            }
+            // Its run is kept before it is waited on, so the wake's key survives a restart.
+            awaitPoll = timings.backoffStartMs;
+            yield* update(rowId, (current) => ({
+              followedRunId: seen,
+              lastStatus: status,
+              handoff: {
+                sourceThreadId: handoff.sourceThreadId,
+                epoch: handoff.epoch,
+                ...(current.handoff?.passedRunId === undefined
+                  ? {}
+                  : { passedRunId: current.handoff.passedRunId }),
+              },
+            }));
+            continue;
+          }
           const runId = typeof answer.runId === "string" ? answer.runId : row.followedRunId;
+          if (
+            handoff !== undefined &&
+            runId !== null &&
+            answer.timedOut !== true &&
+            isTerminalThreadStatus(status) &&
+            status !== "completed" &&
+            status !== "failed"
+          ) {
+            // Stopped there, or cut by a restart: like a local worker's, that run
+            // reports nothing, and the run that ends the work is still to come.
+            yield* update(rowId, () => ({
+              followedRunId: null,
+              lastStatus: status,
+              handoff: { ...handoff, awaiting: "run", passedRunId: runId },
+            }));
+            continue;
+          }
           if (answer.timedOut === true || !isTerminalThreadStatus(status)) {
             // A run still open may be held on a question to the person over there.
             yield* noteWaitingOnYou(row, runId, status);
@@ -608,6 +661,13 @@ const make = Effect.gen(function* () {
               error.remoteCode === "thread_not_found" ||
               /not found|was deleted/iu.test(error.remoteMessage ?? "")
             ) {
+              if (awaiting === "continuation") {
+                // The takeover that creates it may still be on its way, or its answer lost.
+                yield* setReachable(row.machineId, true);
+                yield* Effect.sleep(Duration.millis(awaitPoll));
+                awaitPoll = Math.min(awaitPoll * 2, timings.backoffMaxMs);
+                continue;
+              }
               yield* update(rowId, () => ({ state: "stopped", lastError: error.message }));
               return;
             }

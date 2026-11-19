@@ -79,6 +79,25 @@ export const RemoteWorkerRecord = Schema.Struct({
    * this server shows the worker but never steers or follows it.
    */
   readOnly: Schema.optionalKey(Schema.Boolean),
+  /**
+   * A thread here that was handed off to the row's machine, followed so its
+   * result still reaches the thread that launched it. `remoteThreadId` is the
+   * continuation, known before the takeover is sent.
+   */
+  handoff: Schema.optionalKey(
+    Schema.Struct({
+      sourceThreadId: Schema.String,
+      epoch: Schema.Int,
+      /**
+       * What the follower has not seen yet: the continuation itself (the
+       * takeover may still be on its way), or a run in it (it arrived idle, or
+       * its last run was stopped). Absent while a run is followed.
+       */
+      awaiting: Schema.optionalKey(Schema.Literals(["continuation", "run"])),
+      /** A run that was stopped without a result; only a later run reports. */
+      passedRunId: Schema.optionalKey(Schema.String),
+    }),
+  ),
   /** The mode it was started with; rows written before this have none. */
   runtimeMode: Schema.optionalKey(StudioFleetWorkerAccess),
   /** The caller's own mode when the machine's worker grant lowered it to `runtimeMode`. */

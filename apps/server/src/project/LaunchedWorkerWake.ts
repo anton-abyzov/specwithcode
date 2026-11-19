@@ -19,6 +19,7 @@ import { coordinatorSourceTitle } from "@specweave-studio/shared/coordinatorRepl
 import {
   CommandId,
   MessageId,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2Notification,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShell,
@@ -121,12 +122,37 @@ const reportedStatus = (status: OrchestrationV2Run["status"]) =>
   status === "completed" || status === "failed";
 
 /** A top-level thread an agent in a thread here started through the MCP tools. */
-const launchedByAgent = (shell: OrchestrationV2ThreadShell) =>
+export const launchedByAgent = (
+  shell: Pick<
+    OrchestrationV2ThreadShell,
+    "lineage" | "createdBy" | "creationSource" | "origin" | "deletedAt"
+  >,
+) =>
   shell.lineage.parentThreadId === null &&
   shell.createdBy === "agent" &&
   shell.creationSource === "mcp" &&
   shell.origin === undefined &&
   shell.deletedAt === null;
+
+/**
+ * The thread that sent `threadId`'s first message, if an agent's thread did.
+ * Also what a handed-off worker's result is sent back to.
+ */
+export function firstMessageSender(
+  messages: ReadonlyArray<Pick<OrchestrationV2ConversationMessage, "createdAt" | "createdBy" | "senderThreadId">>,
+  threadId: ThreadId,
+): ThreadId | undefined {
+  const first = messages.reduce<(typeof messages)[number] | undefined>(
+    (earliest, message) =>
+      earliest === undefined || DateTime.isLessThan(message.createdAt, earliest.createdAt)
+        ? message
+        : earliest,
+    undefined,
+  );
+  return first?.createdBy === "agent" && first.senderThreadId !== threadId
+    ? first.senderThreadId
+    : undefined;
+}
 
 export function launchedWorkerWake(input: {
   readonly threadId: ThreadId;
@@ -161,16 +187,7 @@ export const make = Effect.gen(function* () {
       const { messages } = yield* threads.getThreadRecords(threadId, ["messages"], {
         messageRoles: ["user"],
       });
-      const first = messages.reduce<(typeof messages)[number] | undefined>(
-        (earliest, message) =>
-          earliest === undefined || DateTime.isLessThan(message.createdAt, earliest.createdAt)
-            ? message
-            : earliest,
-        undefined,
-      );
-      return first?.createdBy === "agent" && first.senderThreadId !== threadId
-        ? first.senderThreadId
-        : undefined;
+      return firstMessageSender(messages, threadId);
     });
 
   const observeRun = (run: OrchestrationV2Run) =>

@@ -78,6 +78,7 @@ import {
 import { createBundle, negotiationCandidates, repositoryPathFor } from "./bundleGit.ts";
 import { keepFencedChanges } from "./checkpointGit.ts";
 import { HandoffConnectivity, layer as HandoffConnectivityLayer } from "./handoffConnectivity.ts";
+import * as HandoffFollow from "./handoffFollow.ts";
 import { type HandoffContinueHereOptions, HandoffMode } from "./HandoffMode.ts";
 import { HandoffPeerError, HandoffPeers, layer as HandoffPeersLayer } from "./handoffPeers.ts";
 import { shouldResume } from "./handoffPreflight.ts";
@@ -206,6 +207,8 @@ export const make = Effect.gen(function* () {
   const locks = yield* KeyedLock.make<string>();
   const self = handoff.environmentId;
   const selfLabel = handoff.machineLabel;
+  // Keeps a worker's launcher waiting for it once it runs on another machine.
+  const follow = yield* HandoffFollow.fromContext({ self, projections, peers });
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   // A move to this machine runs on the owner's own sign-ins: no access ceiling applies.
   const selfCaller: ReceiverCaller = {
@@ -547,6 +550,7 @@ export const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const now = yield* nowIso;
+      yield* follow.confirm({ shell, destination, epoch, continuation: response });
       yield* updateRecord(shell.id, (record) => ({
         ...fenceRecord(
           record,
@@ -690,6 +694,8 @@ export const make = Effect.gen(function* () {
       }
       const destination = pending.destinationEnvironmentId as EnvironmentId;
       const shell = yield* shellOf(threadId);
+      const taken = { shell, destination, epoch: pending.request.epoch };
+      yield* follow.register(taken);
       const response = yield* sendTakeover(destination, pending.request).pipe(
         Effect.tapError((error) =>
           !destinationRefused(error)
@@ -697,7 +703,9 @@ export const make = Effect.gen(function* () {
             : error.code === "fenced"
               ? // The destination saw a newer epoch; a heartbeat settles who runs it.
                 inDoubt(threadId, error.message)
-              : releaseHold(threadId, error.message.slice(0, 1000)),
+              : releaseHold(threadId, error.message.slice(0, 1000)).pipe(
+                  Effect.andThen(follow.retire({ threadId, epoch: taken.epoch })),
+                ),
         ),
         Effect.mapError(fromPeer),
       );
@@ -861,6 +869,7 @@ export const make = Effect.gen(function* () {
         reason,
         modelSelection,
       };
+      yield* follow.register({ shell: first.shell, destination, epoch });
       const response = yield* sendTakeover(destination, request).pipe(
         Effect.tapError((error) =>
           error._tag === "HandoffPeerError" && error.uncertain
@@ -874,7 +883,10 @@ export const make = Effect.gen(function* () {
                 destinationRefused(error) && error.check === "grant"
                   ? `Not moved: ${error.message}`.slice(0, 1000)
                   : null,
-              ).pipe(Effect.andThen(resume)),
+              ).pipe(
+                Effect.andThen(follow.retire({ threadId: input.threadId, epoch })),
+                Effect.andThen(resume),
+              ),
         ),
         Effect.mapError(fromPeer),
       );
@@ -1557,6 +1569,7 @@ export const make = Effect.gen(function* () {
 export const layerFleet = Layer.effectDiscard(
   Effect.gen(function* () {
     const handoff = yield* HandoffMode;
+    yield* HandoffFollow.required;
     const moves = yield* make;
     yield* handoff.attachMoves(moves);
   }),

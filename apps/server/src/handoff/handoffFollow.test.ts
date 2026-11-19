@@ -627,7 +627,10 @@ describe("a handed-off worker's result", () => {
         const { handOff } = yield* scenario(local, other);
         yield* handOff;
         yield* finish(other, "interrupted");
-        yield* eventually(rows, (current) => current[0]?.followedRunId === null);
+        yield* eventually(
+          rows,
+          (current) => current[0]?.handoff?.passedRunId === "there-run-1",
+        );
         yield* afterMorePolls(other);
         expect(local.wakes).toEqual([]);
         expect(yield* rows).toMatchObject([{ state: "following", deliveredRunIds: [] }]);
