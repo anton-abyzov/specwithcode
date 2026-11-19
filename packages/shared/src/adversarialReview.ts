@@ -19,6 +19,8 @@ import type {
 } from "@specweave-studio/contracts";
 import {
   defaultTrackSelections,
+  fitSavedTrackEntry,
+  followsBuiltInFamily,
   providersForModel,
   trackAlternate,
   trackStartEffort,
@@ -129,14 +131,29 @@ export function reviewerOrderGroups(input: {
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
 }): ReadonlyArray<ReviewerOrderGroup> {
   // A listed reviewer without an effort runs at Medium, as the Models page shows it.
-  const base =
+  // One saved from a built-in row runs on the release of its family a source lists.
+  const base: ReadonlyArray<{ readonly entry: ModelSelection; readonly family: boolean }> =
     input.reviewers.length > 0
-      ? input.reviewers.map((entry) =>
-          withTrackEffort(entry, input.providers, trackStartEffort("review", entry.model)),
-        )
-      : defaultReviewerChain(input);
+      ? input.reviewers.flatMap((saved) => {
+          const fitted = fitSavedTrackEntry("review", saved, input.providers, input.sourceOrder);
+          return fitted === null
+            ? []
+            : [
+                {
+                  entry: withTrackEffort(
+                    fitted,
+                    input.providers,
+                    trackStartEffort("review", saved.model),
+                  ),
+                  family: followsBuiltInFamily("review", saved.model),
+                },
+              ];
+        })
+      : defaultReviewerChain(input).map((entry) => ({ entry, family: true }));
   // Only a person's own list pins places; the default order groups freely.
-  const listed = new Set(input.reviewers.map(fallbackSelectionKey));
+  const listed = new Set(
+    input.reviewers.length === 0 ? [] : base.map(({ entry }) => fallbackSelectionKey(entry)),
+  );
   const seen = new Set<string>();
   const claim = (selection: ModelSelection) => {
     const key = fallbackSelectionKey(selection);
@@ -145,7 +162,7 @@ export function reviewerOrderGroups(input: {
     return true;
   };
   const groups: ReviewerOrderGroup[] = [];
-  for (const entry of base) {
+  for (const { entry, family } of base) {
     if (!claim(entry)) continue;
     const names = describeModel(
       input.providers.find((provider) => provider.instanceId === entry.instanceId),
@@ -158,7 +175,7 @@ export function reviewerOrderGroups(input: {
       model: names,
       order: input.sourceOrder,
       // The built-in order stands for each model's whole family; a listed reviewer for itself.
-      family: input.reviewers.length === 0,
+      family,
     })) {
       if (provider.instanceId === entry.instanceId) continue;
       // The entry's effort goes with it, matched to the levels that source offers.

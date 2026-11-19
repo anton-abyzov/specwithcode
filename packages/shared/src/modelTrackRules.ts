@@ -21,9 +21,11 @@ import { describeModel, isSameModel } from "./modelIdentity.ts";
 import { newerOfFamily } from "./modelTiers.ts";
 import {
   builtInTrackSelection,
+  followsBuiltInFamily,
   TRACK_DEFAULT_EFFORT,
   isFreePlanProvider,
   isFreeTrackModel,
+  makerInstanceId,
   providerHomeFamily,
   providersForModel,
   trackStartEffort,
@@ -225,7 +227,12 @@ export function describeTrack(input: {
   // the best one before room is read), then the others by the Sources order,
   // the maker's harness and, outside Review, the most room. Held sources come
   // last and are never started on unless the person named one.
-  const sourcesOf = (slug: string, free: boolean, named?: ProviderInstanceId) => {
+  const sourcesOf = (
+    slug: string,
+    free: boolean,
+    named?: ProviderInstanceId,
+    family = named === undefined,
+  ) => {
     const ranked = (withRoom: boolean) =>
       providersForModel({
         providers: input.providers,
@@ -233,7 +240,7 @@ export function describeTrack(input: {
         order: input.sourceOrder ?? undefined,
         preferFree: free,
         // A built-in row runs on whichever release of its family a source lists.
-        family: named === undefined,
+        family,
         ...(withRoom && input.track !== "review"
           ? {
               usedPercent: (provider: ServerProvider, served: string) =>
@@ -270,19 +277,34 @@ export function describeTrack(input: {
       const names = describeModel(provider, selection.model);
       const freeModel = isFreeTrackModel(names);
       const free = input.track === "daily" && freeModel;
+      // Saved from a built-in row: it runs and reads like that row (`followsBuiltInFamily`).
+      const family = followsBuiltInFamily(input.track, selection.model);
+      const sources = sourcesOf(selection.model, free, selection.instanceId, family);
+      const first = family ? sources.find((source) => source.used) : undefined;
+      const listedName =
+        first === undefined ? undefined : describeModel(first.provider, first.slug).name;
+      const builtInName = family
+        ? DEFAULT_MODEL_TRACKS[input.track].find((entry) => entry.model === selection.model)?.name
+        : undefined;
       const newer =
-        provider !== undefined && provider.models.some((model) => model.slug === selection.model)
-          ? newerOfFamily(provider, selection.model)
-          : undefined;
+        first !== undefined
+          ? newerOfFamily(first.provider, first.slug)
+          : provider !== undefined &&
+              provider.models.some((model) => model.slug === selection.model)
+            ? newerOfFamily(provider, selection.model)
+            : undefined;
       return {
         selection,
         model: selection.model,
-        name: names.name ?? selection.model,
+        name:
+          listedName !== undefined && listedName !== first?.slug
+            ? listedName
+            : (builtInName ?? names.name ?? selection.model),
         builtIn: false,
         free,
         misplaced: freeModel && input.track !== "daily",
         follows: newer ?? null,
-        sources: sourcesOf(selection.model, free, selection.instanceId),
+        sources,
         effort:
           modelSelectionEffortValue(selection) ?? trackStartEffort(input.track, selection.model),
       };
@@ -309,6 +331,27 @@ export function describeTrack(input: {
       sources,
       effort,
     };
+  });
+}
+
+/**
+ * A built-in track saved as the person's own list with one row changed, such
+ * as its effort: every built-in entry as it is, by its maker's name
+ * (`gpt-6.2-sol`, so it keeps following its newest release), at the level its
+ * row shows; a model no source here lists is kept under its maker's own
+ * harness. Only the row at `at` takes `selection`'s options.
+ */
+export function savedBuiltInTrack(input: {
+  readonly rows: ReadonlyArray<TrackRow>;
+  readonly at: number;
+  readonly selection: ModelSelection;
+}): ReadonlyArray<ModelSelection> {
+  return input.rows.flatMap((row, index) => {
+    const instanceId =
+      row.selection?.instanceId ?? makerInstanceId({ slug: row.model, name: row.name });
+    if (instanceId === null) return [];
+    const options = index === input.at ? input.selection.options : row.selection?.options;
+    return [{ instanceId, model: row.model, ...(options === undefined ? {} : { options }) }];
   });
 }
 

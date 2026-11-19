@@ -39,6 +39,7 @@ import {
   describeTrack,
   moveSource,
   moveTrackEntry,
+  savedBuiltInTrack,
   singleReviewFamily,
   type SourceMoveRefusal,
   type SourceRow,
@@ -511,7 +512,10 @@ function TrackCard(props: {
               disabled={props.mixed}
               onChange={(selection) =>
                 props.onSave(
-                  current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
+                  // A built-in track saves every built-in entry as it is, this row's level changed.
+                  row.builtIn
+                    ? savedBuiltInTrack({ rows, at: index, selection })
+                    : current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
                 )
               }
             />

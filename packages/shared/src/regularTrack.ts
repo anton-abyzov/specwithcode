@@ -178,7 +178,13 @@ export function reviewOnlyModel(
   const onReviewTrack = reviewTrackLine(rule);
   const builtInLines = new Set<string>();
   const lane = (saved: ReadonlyArray<ModelSelection> | undefined, track: "daily" | "complex") => {
-    if (saved !== undefined && saved.length > 0) return saved.map((entry) => entry.model);
+    if (saved !== undefined && saved.length > 0) {
+      // An entry saved from a built-in row follows its family, so it counts by its line too.
+      for (const entry of saved)
+        if (DEFAULT_MODEL_TRACKS[track].some((builtIn) => builtIn.model === entry.model))
+          builtInLines.add(modelLine(entry.model));
+      return saved.map((entry) => entry.model);
+    }
     for (const entry of DEFAULT_MODEL_TRACKS[track]) builtInLines.add(modelLine(entry.model));
     return [];
   };

@@ -229,12 +229,46 @@ describe("ModelTracksSettings effort", () => {
     act(() => picker(root, "GPT-6.1-Sol").props["data-on-change"]("high"));
     expect(state.update).toHaveBeenCalledTimes(1);
     const saved = state.update.mock.calls[0]![0].modelLanes.routine as ModelSelection[];
-    const sol = saved.find((entry) => entry.model === "gpt-6.1-sol");
-    expect(sol?.options).toEqual([{ id: "reasoningEffort", value: "high" }]);
-    // The built-in rows it saves keep the level each one showed.
-    expect(saved.find((entry) => entry.model === "claude-opus-5-5")?.options).toEqual([
-      { id: "effort", value: "medium" },
+    // Every built-in entry is saved as it is, by its maker's name: Sonnet and
+    // Luna, which nothing here lists, stay on their makers' harnesses, and the
+    // Sol row keeps following the newest Sol release.
+    expect(saved).toEqual([
+      { instanceId: claude.instanceId, model: "claude-opus-5-5", options: [{ id: "effort", value: "medium" }] },
+      { instanceId: claude.instanceId, model: "claude-sonnet-5-5" },
+      { instanceId: codex.instanceId, model: "gpt-6.2-sol", options: [{ id: "reasoningEffort", value: "high" }] },
+      { instanceId: codex.instanceId, model: "gpt-6-luna" },
     ]);
+  });
+
+  it("shows a built-in list saved by an effort change as it was, but that row's level", () => {
+    const before = render();
+    const names = rowNames(track(before, "Daily"));
+    act(() => picker(before, "GPT-6.1-Sol").props["data-on-change"]("high"));
+    const routine = state.update.mock.calls[0]![0].modelLanes.routine as ModelSelection[];
+    act(() => renderer?.unmount());
+    state.settings = { ...state.settings, modelLanes: { routine, complex: [] } };
+    const after = render();
+    expect(rowNames(track(after, "Daily"))).toEqual(names);
+    expect(picker(after, "GPT-6.1-Sol").props["data-effort-value"]).toBe("high");
+    expect(picker(after, "Claude Opus 5.5").props["data-effort-value"]).toBe("medium");
+  });
+
+  it("saves the Review built-in list whole when one reviewer's level changes", () => {
+    state.providers = [claude, muse];
+    const root = render();
+    act(() => picker(root, "Muse Wonder Full 1.0", "Review").props["data-on-change"]("high"));
+    const reviewers = state.update.mock.calls[0]![0].adversarialReview.reviewers as ModelSelection[];
+    expect(reviewers.map((entry) => entry.model)).toEqual([
+      "muse-wonder-full-1.0",
+      "muse-wonder-1.0",
+      "gpt-6.2-sol",
+      "gemini-4-carbon",
+    ]);
+    expect(reviewers[0]?.options).toEqual([{ id: "reasoningEffort", value: "high" }]);
+    expect(reviewers[1]?.options).toEqual([{ id: "reasoningEffort", value: "xhigh" }]);
+    // Sol and Gemini are not installed here: kept under their makers' harnesses.
+    expect(reviewers[2]?.instanceId).toBe("codex");
+    expect(reviewers[3]?.instanceId).toBe("antigravity");
   });
 
   it("shows the start level read-only for a model nothing here lists", () => {
