@@ -180,10 +180,12 @@ export function routineSeen(task: Pick<ScheduledTask, "revision" | "definitionHa
   readonly expectedRevision?: number;
   readonly expectedDefinition?: string;
 } {
-  if (task === null) return {};
+  // Only a routine another machine runs shows a definition; one this machine
+  // runs is changed as before, whatever the list said of it since.
+  if (task === null || task.definitionHash === undefined) return {};
   return {
     ...(task.revision === undefined ? {} : { expectedRevision: task.revision }),
-    ...(task.definitionHash === undefined ? {} : { expectedDefinition: task.definitionHash }),
+    expectedDefinition: task.definitionHash,
   };
 }
 
