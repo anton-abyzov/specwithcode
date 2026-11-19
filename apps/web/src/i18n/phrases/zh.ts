@@ -1,7 +1,9 @@
 import type { PhraseCatalog } from "../phrases";
+import { syncZh } from "./sync/zh";
 
 /** Simplified Chinese Settings titles and labels. "会话" for thread, as in the message catalog. */
 export const zh: PhraseCatalog = {
+  ...syncZh,
   About: "关于",
   "Accent color": "强调色",
   Account: "账户",
@@ -3027,7 +3029,6 @@ export const zh: PhraseCatalog = {
   "Run this draft on": "在此运行草稿：",
   "Auto balance matching projects": "自动均衡匹配的项目",
   "Add to another machine…": "添加到另一台电脑…",
-  "Send to another machine…": "发送到另一台电脑…",
   Link: "关联",
   "Leave this machine…": "离开这台电脑…",
   "Another project or no project": "其他项目或不使用项目",
@@ -5028,10 +5029,6 @@ export const zh: PhraseCatalog = {
   "Link {machine} to this project": "将 {machine} 关联到此项目",
   "Link {machine}": "关联 {machine}",
   "connect {main} first": "请先连接 {main}",
-  "Copy {project} to {machine}": "将 {project} 复制到 {machine}",
-  "Move {project} to {machine}": "将 {project} 移到 {machine}",
-  "Copy {project} to another machine": "将 {project} 复制到另一台机器",
-  "Move {project} to another machine": "将 {project} 移到另一台机器",
   "Nothing on {machine} is replaced without asking.": "{machine} 上的内容不会未经询问就被替换。",
   "the other machine": "另一台机器",
   "Link with a project on another machine": "与另一台机器上的项目关联",
