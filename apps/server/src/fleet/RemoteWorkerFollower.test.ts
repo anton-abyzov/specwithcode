@@ -493,6 +493,114 @@ describe("RemoteWorkerFollower", () => {
   });
 });
 
+describe("a worker handed off to another machine", () => {
+  const handedOff = (
+    awaiting: "continuation" | "run",
+  ): RemoteWorkerStore.RemoteWorkerRecord => ({
+    id: "handoff-follow:1",
+    callerThreadId: "coordinator",
+    projectId: "local-project",
+    machineId: "m1",
+    environmentId: "env-m1",
+    remoteProjectId: null,
+    remoteThreadId: "handoff:1",
+    title: "Fix the flaky test",
+    launchStartedAt: "2026-10-12T00:00:00.000Z",
+    followedRunId: null,
+    reportBack: true,
+    state: "following",
+    lastStatus: null,
+    deliveredRunIds: [],
+    lostContactNotified: false,
+    lastError: null,
+    updatedAt: "2026-10-12T00:00:00.000Z",
+    handoff: { sourceThreadId: "thread-1", epoch: 2, awaiting },
+  });
+  const follow = (row: RemoteWorkerStore.RemoteWorkerRecord) =>
+    Effect.gen(function* () {
+      yield* allow();
+      const store = yield* RemoteWorkerStore.RemoteWorkerStore;
+      yield* store.modify(row.id, () => row);
+      yield* (yield* RemoteWorkerFollower.RemoteWorkerFollower).follow(row.id);
+    });
+
+  it.live("waits out a thread the other machine does not have yet", () => {
+    let polls = 0;
+    let created = false;
+    const { world, layer } = setup({
+      studio_thread_wait: () => {
+        polls += 1;
+        return created
+          ? finished("b-run-1")
+          : {
+              failure: JSON.stringify({
+                code: "thread_not_found",
+                message: "Thread handoff:1 was not found.",
+              }),
+            };
+      },
+    });
+    return Effect.gen(function* () {
+      yield* follow(handedOff("continuation"));
+      yield* eventually(
+        Effect.sync(() => polls),
+        (count) => count >= 3,
+      );
+      expect(yield* rows).toMatchObject([{ state: "following", lastError: null }]);
+      expect(world.wakes).toEqual([]);
+      created = true;
+      const [row] = yield* eventually(rows, (current) => current[0]?.state === "idle");
+      expect(row).toMatchObject({ followedRunId: "b-run-1", deliveredRunIds: ["b-run-1"] });
+      expect(row?.handoff?.awaiting).toBeUndefined();
+      expect(world.wakes.map((wake) => wake.commandId)).toEqual([
+        "remote-worker-wake:handoff-follow:1:b-run-1",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reads an idle thread with no run as not started, never as finished", () => {
+    let polls = 0;
+    let started = false;
+    const { world, layer } = setup({
+      studio_thread_wait: () => {
+        polls += 1;
+        return started
+          ? finished("b-run-1")
+          : { result: { threadId: "handoff:1", runId: null, status: "idle", timedOut: false } };
+      },
+    });
+    return Effect.gen(function* () {
+      yield* follow(handedOff("continuation"));
+      yield* eventually(
+        Effect.sync(() => polls),
+        (count) => count >= 3,
+      );
+      expect(yield* rows).toMatchObject([
+        { state: "following", deliveredRunIds: [], handoff: { awaiting: "run" } },
+      ]);
+      expect(world.wakes).toEqual([]);
+      started = true;
+      yield* eventually(rows, (current) => current[0]?.state === "idle");
+      expect(world.wakes.map((wake) => wake.commandId)).toEqual([
+        "remote-worker-wake:handoff-follow:1:b-run-1",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("stops once the thread it already saw is gone", () => {
+    const { world, layer } = setup({
+      studio_thread_wait: () => ({
+        failure: JSON.stringify({ code: "thread_not_found", message: "Thread was deleted." }),
+      }),
+    });
+    return Effect.gen(function* () {
+      yield* follow(handedOff("run"));
+      yield* eventually(rows, (current) => current[0]?.state === "stopped");
+      expect(world.wakes).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+});
+
 describe("a remote worker waiting on the person", () => {
   const readAnswer = (pendingRequestCount: number) => ({
     result: {

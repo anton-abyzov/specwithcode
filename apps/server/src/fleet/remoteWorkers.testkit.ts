@@ -97,7 +97,7 @@ export const capabilities = {
 export interface World {
   readonly tools: Record<string, FakeToolHandler>;
   readonly local: { current: Project };
-  readonly caller: { archived: boolean };
+  readonly caller: { archived: boolean; deleted?: boolean };
   readonly wakes: Array<{
     readonly commandId: string;
     readonly text: string;
@@ -168,7 +168,7 @@ export const setup = (
     id: ThreadId.make(id),
     projectId: world.local.current.id,
     archivedAt: world.caller.archived ? DateTime.toDateUtc(DateTime.nowUnsafe()) : null,
-    deletedAt: null,
+    deletedAt: world.caller.deleted ? DateTime.toDateUtc(DateTime.nowUnsafe()) : null,
   });
   const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
     getThreadShell: (id) => Effect.sync(() => shell(id) as never),
