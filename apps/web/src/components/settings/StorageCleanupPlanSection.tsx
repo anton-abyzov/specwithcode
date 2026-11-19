@@ -133,7 +133,7 @@ function StorageCleanupPlanMachine({
                     "Dependency folders are left out: their files are shared with the package store.",
                   )}
                   {plan.complete ? null : (
-                    <> {tx("Some folders could not be fully checked or measured.")}</>
+                    <> {tx("Some folders could not be fully checked.")}</>
                   )}
                 </p>
               )}
@@ -209,11 +209,10 @@ function StorageCleanupPlanRow({ item }: { item: StorageCleanupPlanItem }) {
           </p>
         )}
       </div>
-      {item.bytes === null ? null : (
-        <span className="shrink-0 text-muted-foreground tabular-nums">
-          {formatStorageFreeSpace(item.bytes)}
-        </span>
-      )}
+      {/* A folder whose size walk ran out of time still has a row; it says so. */}
+      <span className="shrink-0 text-muted-foreground tabular-nums" data-size="">
+        {item.bytes === null ? tx("size unknown") : formatStorageFreeSpace(item.bytes)}
+      </span>
     </li>
   );
 }

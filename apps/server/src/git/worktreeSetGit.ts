@@ -323,17 +323,149 @@ export interface AddedThreadRepository {
   readonly alreadyMember: boolean;
   /** What its worktree was cut from, such as `main` or `origin/main`; null when not recorded. */
   readonly baseRef: string | null;
+  /** A member the thread already listed had lost its folder and was created again. */
+  readonly restored?: boolean | undefined;
 }
+
+interface MemberCut {
+  readonly start: string;
+  readonly base: string | null;
+  readonly label: string;
+}
+
+/**
+ * Where a new member's branch is cut from: the repository's checked-out
+ * branch (origin's copy when asked), else its default branch on origin.
+ */
+const newMemberCut = Effect.fn("worktreeSet.newMemberCut")(function* (
+  repository: string,
+  entry: string,
+  startFromOrigin: boolean,
+) {
+  const git = yield* GitWorkflowService.GitWorkflowService;
+  const current = yield* git.localStatus({ cwd: repository }).pipe(
+    Effect.map((status) => status.refName),
+    Effect.orElseSucceed(() => null),
+  );
+  if (current !== null) {
+    const start = yield* memberStart(repository, current, startFromOrigin);
+    return {
+      start,
+      base: current,
+      label: start === current ? current : `origin/${current}`,
+    } satisfies MemberCut;
+  }
+  const fallback = yield* originDefaultBranch(repository);
+  if (fallback === null)
+    return yield* Effect.fail(
+      `Repository "${entry}" has no branch checked out and its default branch on origin could not be found, so there is nothing to cut a worktree from. Check out a branch in ${repository}, or fetch its origin, then add it again.`,
+    );
+  return {
+    start: `refs/remotes/origin/${fallback}`,
+    base: fallback,
+    label: `origin/${fallback}`,
+  } satisfies MemberCut;
+});
+
+/** Files a leftover member folder may hold and still count as empty. */
+const IGNORED_LEFTOVERS = new Set([".DS_Store"]);
+
+/**
+ * Creates again a member the thread lists whose folder is gone or holds no
+ * `.git`: on the thread's branch when the repository still has it, else cut
+ * as a new member would be. A leftover folder holding anything but
+ * `.DS_Store` is refused and left as it is. The manifest entry stays; its
+ * `baseRef` changes only when the branch was cut again.
+ */
+const restoreThreadRepository = Effect.fn("worktreeSet.restoreRepository")(function* (input: {
+  readonly folder: string;
+  readonly existing: ReadonlyArray<WorktreeSetMember>;
+  readonly plain: boolean;
+  readonly held: WorktreeSetMember;
+  readonly entry: string;
+  readonly branch: string;
+  readonly startFromOrigin: boolean;
+  readonly submodules: WorktreeSubmodules | null;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const git = yield* GitWorkflowService.GitWorkflowService;
+  const { held } = input;
+  const repository = held.repository;
+  const memberPath = worktreeSetMemberPath(input.folder, held, path);
+  const leftovers = (yield* fs.exists(memberPath).pipe(Effect.orElseSucceed(() => true)))
+    ? yield* fs
+        .readDirectory(memberPath)
+        .pipe(
+          Effect.mapError(
+            (cause) => `Could not read ${memberPath} to restore ${repository}: ${String(cause)}`,
+          ),
+        )
+    : [];
+  if (leftovers.some((name) => !IGNORED_LEFTOVERS.has(name)))
+    return yield* Effect.fail(
+      `${memberPath} holds files but no git checkout, so ${repository} cannot be restored there. Move those files out of that folder, then add the repository again.`,
+    );
+  const hasBranch = yield* git
+    .hasCommit({ cwd: repository, refName: `refs/heads/${input.branch}` })
+    .pipe(Effect.orElseSucceed(() => false));
+  // Decide what to cut from before anything is changed, so a refusal changes nothing.
+  const cut: MemberCut | null = hasBranch
+    ? null
+    : yield* newMemberCut(repository, input.entry, input.startFromOrigin);
+  // Git creates into an existing folder only when it is empty.
+  for (const name of leftovers)
+    yield* fs
+      .remove(path.join(memberPath, name))
+      .pipe(Effect.mapError((cause) => `Could not clear ${memberPath}: ${String(cause)}`));
+  // The repository forgets the lost worktree, so its branch and path can be used again.
+  yield* Effect.suspend(() => git.pruneWorktrees({ cwd: repository })).pipe(
+    Effect.catchCause(() => Effect.void),
+  );
+  yield* git
+    .createWorktree(
+      {
+        cwd: repository,
+        refName: cut === null ? input.branch : cut.start,
+        ...(cut === null ? {} : { newRefName: input.branch }),
+        ...(cut?.base == null ? {} : { baseRefName: cut.base }),
+        path: memberPath,
+      },
+      { submodules: input.submodules },
+    )
+    .pipe(
+      Effect.mapError(
+        (error) =>
+          `Could not create the worktree of ${repository} again: ${"detail" in error ? error.detail : String(error)}`,
+      ),
+    );
+  const member: WorktreeSetMember = cut === null ? held : { ...held, baseRef: cut.label };
+  const members = input.existing.map((candidate) => (candidate === held ? member : candidate));
+  // A plain worktree has no manifest to update.
+  if (cut !== null && !input.plain)
+    yield* writeWorktreeSet(input.folder, members).pipe(
+      Effect.mapError((cause) => `Could not record the worktree set: ${String(cause)}`),
+    );
+  yield* excludeNestedMembers(input.folder, members);
+  return {
+    members,
+    member,
+    alreadyMember: false,
+    baseRef: member.baseRef ?? null,
+    restored: true,
+  } satisfies AddedThreadRepository;
+});
 
 /**
  * Adds one repository to a thread's folder on the thread's branch. `existing`
  * is the set's members; `plain` says the folder is a plain worktree of the
  * project root (no manifest), which becomes a set whose root member is the
  * folder itself. A repository the thread already has is returned, not added
- * again. The branch is checked out when the repository already has it, else
- * cut from the repository's checked-out branch, or from its default branch on
- * origin when none is checked out. Fails, leaving the set as it was, with a
- * sentence saying why.
+ * again; when its folder is gone or holds no `.git` it is created again
+ * (`restored`), whatever the limit or a low disk says. The branch is checked
+ * out when the repository already has it, else cut from the repository's
+ * checked-out branch, or from its default branch on origin when none is
+ * checked out. Fails, leaving the set as it was, with a sentence saying why.
  */
 export const addThreadRepository = Effect.fn("worktreeSet.addRepository")(function* (input: {
   readonly folder: string;
@@ -365,12 +497,24 @@ export const addThreadRepository = Effect.fn("worktreeSet.addRepository")(functi
   const held = existing.find(
     (member) => path.resolve(member.repository) === path.resolve(requested.repository),
   );
+  if (held !== undefined && !(yield* hasGit(worktreeSetMemberPath(input.folder, held, path))))
+    return yield* restoreThreadRepository({
+      folder: input.folder,
+      existing,
+      plain: input.plain,
+      held,
+      entry: input.entry,
+      branch: input.branch,
+      startFromOrigin: input.startFromOrigin,
+      submodules: input.submodules,
+    });
   if (held !== undefined)
     return {
       members: existing,
       member: held,
       alreadyMember: true,
       baseRef: held.baseRef ?? null,
+      restored: false,
     } satisfies AddedThreadRepository;
   if (requested.relativePath === "")
     return yield* Effect.fail(
@@ -410,29 +554,9 @@ export const addThreadRepository = Effect.fn("worktreeSet.addRepository")(functi
     .hasCommit({ cwd: repository, refName: `refs/heads/${input.branch}` })
     .pipe(Effect.orElseSucceed(() => false));
   // Decide what to cut from before anything is written, so a refusal changes nothing.
-  let cut: { readonly start: string; readonly base: string | null; readonly label: string };
-  if (hasBranch) cut = { start: input.branch, base: null, label: input.branch };
-  else {
-    const current = yield* git.localStatus({ cwd: repository }).pipe(
-      Effect.map((status) => status.refName),
-      Effect.orElseSucceed(() => null),
-    );
-    if (current !== null) {
-      const start = yield* memberStart(repository, current, input.startFromOrigin);
-      cut = { start, base: current, label: start === current ? current : `origin/${current}` };
-    } else {
-      const fallback = yield* originDefaultBranch(repository);
-      if (fallback === null)
-        return yield* Effect.fail(
-          `Repository "${input.entry}" has no branch checked out and its default branch on origin could not be found, so there is nothing to cut a worktree from. Check out a branch in ${repository}, or fetch its origin, then add it again.`,
-        );
-      cut = {
-        start: `refs/remotes/origin/${fallback}`,
-        base: fallback,
-        label: `origin/${fallback}`,
-      };
-    }
-  }
+  const cut: MemberCut = hasBranch
+    ? { start: input.branch, base: null, label: input.branch }
+    : yield* newMemberCut(repository, input.entry, input.startFromOrigin);
   const member: WorktreeSetMember = {
     ...laidOut,
     baseRef: cut.label,
@@ -476,6 +600,7 @@ export const addThreadRepository = Effect.fn("worktreeSet.addRepository")(functi
     member,
     alreadyMember: false,
     baseRef: cut.label,
+    restored: false,
   } satisfies AddedThreadRepository;
 });
 

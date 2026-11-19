@@ -4980,7 +4980,8 @@ export const zh: PhraseCatalog = {
   "At least {size} would be freed.": "至少会释放 {size}。",
   "Dependency folders are left out: their files are shared with the package store.":
     "不计入依赖文件夹：其文件与包存储共享。",
-  "Some folders could not be fully checked or measured.": "部分文件夹无法完整检查或测量。",
+  "Some folders could not be fully checked.": "部分文件夹无法完整检查。",
+  "size unknown": "大小未知",
   "Leftover files of stopped downloads": "中断下载的残留文件",
   "Nothing to remove right now.": "目前没有可删除的内容。",
   "Nothing was removed.": "没有删除任何内容。",
