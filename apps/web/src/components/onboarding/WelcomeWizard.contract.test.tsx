@@ -35,6 +35,9 @@ vi.mock("./ChromeAccessRow", () => ({
 vi.mock("./MacAppsRow", () => ({
   MacAppsRow: () => <li data-access-row="mac-apps" />,
 }));
+vi.mock("./IPhoneRow", () => ({
+  IPhoneRow: () => <li data-access-row="iphone" />,
+}));
 vi.mock("@clerk/react", () => ({
   useAuth: () => world.auth,
   useUser: () => ({ user: null }),
