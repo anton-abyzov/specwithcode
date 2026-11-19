@@ -119,12 +119,69 @@ it("keeps the whole-machine wording without a project", async () => {
   expect(text).toContain("Hand off work from M4");
   expect(text).toContain("Scope: every project on M4");
   expect(text).not.toContain("coordinator");
-  expect(text).toContain("Nothing running here can go.");
+  expect(text).toContain("Nothing here can go.");
 });
 
-it("says when the project has nothing running that can move", async () => {
+it("says when nothing in the project can go", async () => {
   await act(async () => root.render(<HandOffMachineDialogView {...props({ threads: [] })} />));
-  expect(document.body.textContent).toContain("Nothing running in atlas on M4 can go.");
+  expect(document.body.textContent).toContain("Nothing in atlas on M4 can go.");
+});
+
+it("lists idle work under Waiting for your next message and what cannot go under Stays (AC-17)", async () => {
+  const idle = "t-idle" as ThreadId;
+  const question = "t-question" as ThreadId;
+  const view = props({
+    threads: [
+      { threadId: ready, title: "Fix the build", group: "running" },
+      { threadId: idle, title: "Plan the release", group: "waiting" },
+      { threadId: question, title: "Pick a name", group: "stays", reason: "Answer it first" },
+    ],
+    selected: new Set([ready, idle]),
+    preflight: new Map([
+      [ready, preflight(ready)],
+      [idle, preflight(idle, { resume: false, runEnding: "completed" })],
+    ]),
+  });
+  await act(async () => root.render(<HandOffMachineDialogView {...view} />));
+  const text = document.body.textContent ?? "";
+  expect(text).toContain("Running (1)");
+  expect(text).toContain("Waiting for your next message (1)");
+  expect(text).toContain("Stays (1)");
+  const waiting = document.querySelector('[aria-label="Waiting for your next message"]');
+  expect(waiting?.textContent).toContain("Plan the release");
+  // An idle thread arrives Ready: it waits there and starts no turn.
+  expect(waiting?.textContent).toContain("It will wait there for your next message.");
+  expect(waiting?.querySelector('[data-thread-status="ready"]')).not.toBeNull();
+  const stays = document.querySelector('[aria-label="Stays here"]');
+  expect(stays?.textContent).toContain("Pick a name");
+  expect(stays?.textContent).toContain("Answer it first");
+  // A row that stays cannot be ticked.
+  expect(stays?.querySelector('[role="checkbox"]')).toBeNull();
+  expect(stays?.querySelector("[data-thread-status]")?.getAttribute("data-thread-status")).toBe(
+    "stays",
+  );
+  await act(async () => button("Hand off to Minis")!.click());
+  expect(view.onSubmit).toHaveBeenCalledTimes(1);
+});
+
+it("says nothing can go when every row stays", async () => {
+  const question = "t-question" as ThreadId;
+  await act(async () =>
+    root.render(
+      <HandOffMachineDialogView
+        {...props({
+          threads: [
+            { threadId: question, title: "Pick a name", group: "stays", reason: "Answer it first" },
+          ],
+          selected: new Set(),
+          preflight: new Map(),
+        })}
+      />,
+    ),
+  );
+  expect(document.body.textContent).toContain("Nothing in atlas on M4 can go.");
+  expect(document.body.textContent).toContain("Stays (1)");
+  expect(button("Nothing can go")?.disabled).toBe(true);
 });
 
 it("disables the primary as 'Nothing can go' when no selected thread passed", async () => {
@@ -302,4 +359,13 @@ it("keeps this request's error in view beside the progress of what was written",
   expect(document.querySelector('[role="alert"]')?.textContent).toBe(
     "Minis: the request was refused",
   );
+});
+
+it("says when more threads are ticked than one hand off takes", async () => {
+  await act(async () => root.render(<HandOffMachineDialogView {...props({ overLimit: true })} />));
+  expect(document.body.textContent).toContain(
+    "Up to 100 threads go in one hand off. Hand off the rest after.",
+  );
+  await act(async () => root.render(<HandOffMachineDialogView {...props()} />));
+  expect(document.body.textContent).not.toContain("Up to 100 threads");
 });

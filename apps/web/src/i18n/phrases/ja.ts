@@ -6039,7 +6039,16 @@ export const ja: PhraseCatalog = {
   "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
     "{machine} にはこの引き継ぎの全スレッドの記録が残っていないため、この一覧は一部です。",
   "Show hand off progress": "引き継ぎの進行状況を表示",
-  "Nothing running in {project} on {machine} can go.":
-    "{machine} の {project} で実行中のもので、移せるものはありません。",
-  "Nothing running here can go.": "ここで実行中のもので、移せるものはありません。",
+  "Nothing in {project} on {machine} can go.": "{machine} の {project} に移せるものはありません。",
+  "Nothing here can go.": "ここから移せるものはありません。",
+  "Waiting for your next message ({n})": "次のメッセージを待っています ({n})",
+  "Waiting for your next message": "次のメッセージを待っています",
+  "Stays ({n})": "残る ({n})",
+  "Stays here": "ここに残る",
+  "Answer it first": "先に回答してください",
+  "The personal assistant stays on this machine.": "パーソナルアシスタントはこのマシンに残ります。",
+  "Its queued messages do not travel in a hand off by hand yet.":
+    "手動の引き継ぎでは、キューにあるメッセージはまだ移りません。",
+  "Up to {n} threads go in one hand off. Hand off the rest after.":
+    "1 回の引き継ぎで移せるのは {n} 件のスレッドまでです。残りはその後に引き継いでください。",
 };

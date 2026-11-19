@@ -6062,7 +6062,17 @@ export const es: PhraseCatalog = {
   "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
     "{machine} ya no conserva todos los hilos de este traspaso, así que esta lista no está completa.",
   "Show hand off progress": "Ver el progreso del traspaso",
-  "Nothing running in {project} on {machine} can go.":
-    "Nada de lo que se ejecuta en {project} en {machine} puede irse.",
-  "Nothing running here can go.": "Nada de lo que se ejecuta aquí puede irse.",
+  "Nothing in {project} on {machine} can go.": "Nada en {project} en {machine} puede irse.",
+  "Nothing here can go.": "Nada de aquí puede irse.",
+  "Waiting for your next message ({n})": "Esperando tu próximo mensaje ({n})",
+  "Waiting for your next message": "Esperando tu próximo mensaje",
+  "Stays ({n})": "Se queda ({n})",
+  "Stays here": "Se queda aquí",
+  "Answer it first": "Respóndelo primero",
+  "The personal assistant stays on this machine.":
+    "El asistente personal se queda en esta máquina.",
+  "Its queued messages do not travel in a hand off by hand yet.":
+    "Sus mensajes en cola aún no viajan en un traspaso manual.",
+  "Up to {n} threads go in one hand off. Hand off the rest after.":
+    "Hasta {n} hilos van en un traspaso. Traspasa el resto después.",
 };

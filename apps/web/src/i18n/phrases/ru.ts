@@ -6028,7 +6028,16 @@ export const ru: PhraseCatalog = {
   "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
     "{machine} больше не хранит все треды этой передачи, поэтому список неполный.",
   "Show hand off progress": "Показать ход передачи",
-  "Nothing running in {project} on {machine} can go.":
-    "Из того, что выполняется в {project} на {machine}, передать нечего.",
-  "Nothing running here can go.": "Из того, что выполняется здесь, передать нечего.",
+  "Nothing in {project} on {machine} can go.": "Из {project} на {machine} передать нечего.",
+  "Nothing here can go.": "Отсюда передать нечего.",
+  "Waiting for your next message ({n})": "Ждут вашего следующего сообщения ({n})",
+  "Waiting for your next message": "Ждут вашего следующего сообщения",
+  "Stays ({n})": "Остаются ({n})",
+  "Stays here": "Остаются здесь",
+  "Answer it first": "Сначала ответьте",
+  "The personal assistant stays on this machine.": "Личный ассистент остаётся на этом компьютере.",
+  "Its queued messages do not travel in a hand off by hand yet.":
+    "При ручной передаче сообщения из очереди пока не переносятся.",
+  "Up to {n} threads go in one hand off. Hand off the rest after.":
+    "За одну передачу уходит до {n} тредов. Остальные передайте потом.",
 };

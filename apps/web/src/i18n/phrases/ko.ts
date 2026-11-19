@@ -5965,7 +5965,17 @@ export const ko: PhraseCatalog = {
   "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
     "{machine}에 이 넘기기의 모든 스레드 기록이 남아 있지 않아 이 목록은 일부입니다.",
   "Show hand off progress": "넘기기 진행 상황 보기",
-  "Nothing running in {project} on {machine} can go.":
-    "{machine}의 {project}에서 실행 중인 것 중 보낼 수 있는 것이 없습니다.",
-  "Nothing running here can go.": "여기서 실행 중인 것 중 보낼 수 있는 것이 없습니다.",
+  "Nothing in {project} on {machine} can go.":
+    "{machine}의 {project}에서 보낼 수 있는 것이 없습니다.",
+  "Nothing here can go.": "여기서 보낼 수 있는 것이 없습니다.",
+  "Waiting for your next message ({n})": "다음 메시지를 기다리는 중 ({n})",
+  "Waiting for your next message": "다음 메시지를 기다리는 중",
+  "Stays ({n})": "남음 ({n})",
+  "Stays here": "여기에 남음",
+  "Answer it first": "먼저 답하세요",
+  "The personal assistant stays on this machine.": "개인 비서는 이 기기에 남습니다.",
+  "Its queued messages do not travel in a hand off by hand yet.":
+    "수동 인계에서는 대기 중인 메시지가 아직 함께 가지 않습니다.",
+  "Up to {n} threads go in one hand off. Hand off the rest after.":
+    "한 번의 인계로 최대 {n}개 스레드가 갑니다. 나머지는 그다음에 인계하세요.",
 };

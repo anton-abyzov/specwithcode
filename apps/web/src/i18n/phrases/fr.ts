@@ -6086,7 +6086,16 @@ export const fr: PhraseCatalog = {
   "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
     "{machine} ne conserve plus tous les fils de ce transfert : cette liste est incomplète.",
   "Show hand off progress": "Afficher la progression de la transmission",
-  "Nothing running in {project} on {machine} can go.":
-    "Rien de ce qui tourne dans {project} sur {machine} ne peut partir.",
-  "Nothing running here can go.": "Rien de ce qui tourne ici ne peut partir.",
+  "Nothing in {project} on {machine} can go.": "Rien dans {project} sur {machine} ne peut partir.",
+  "Nothing here can go.": "Rien ici ne peut partir.",
+  "Waiting for your next message ({n})": "En attente de votre prochain message ({n})",
+  "Waiting for your next message": "En attente de votre prochain message",
+  "Stays ({n})": "Reste ({n})",
+  "Stays here": "Reste ici",
+  "Answer it first": "Répondez d’abord",
+  "The personal assistant stays on this machine.": "L’assistant personnel reste sur cette machine.",
+  "Its queued messages do not travel in a hand off by hand yet.":
+    "Ses messages en file ne partent pas encore lors d’un transfert manuel.",
+  "Up to {n} threads go in one hand off. Hand off the rest after.":
+    "Jusqu’à {n} fils partent en un transfert. Transférez le reste ensuite.",
 };
