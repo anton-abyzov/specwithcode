@@ -1218,6 +1218,49 @@ describe("the members of a set, each measured on its own", () => {
       expect(read(lib, ".env.local")).toBe("PORT=2\n");
     });
 
+    it("keeps a cut attempt whose copied file can no longer be read", async () => {
+      const { there, set, folder, build } = await arrived();
+      NodeFS.appendFileSync(NodePath.join(there, LIB, ".git", "info", "exclude"), ".env.local\n");
+      write(NodePath.join(there, LIB), ".env.local", "PORT=1\n");
+      const needing: ReplicateSet = {
+        ...set,
+        members: [set.members[0]!, { ...set.members[1]!, requiredSecretPaths: [".env.local"] }],
+      };
+      await build(needing);
+      NodeFS.rmSync(worktreeSetManifestPath(folder, NodePath));
+      const copy = NodePath.join(folder, LIB, ".env.local");
+      // In its place, something that is there and cannot be read as a file.
+      NodeFS.rmSync(copy);
+      NodeFS.mkdirSync(copy);
+
+      const refused = await build(needing).then(
+        () => null,
+        (cause: Error) => cause.message,
+      );
+
+      expect(refused ?? "built again").toMatch(/^packages\/lib: /);
+      expect(NodeFS.statSync(copy).isDirectory()).toBe(true);
+    });
+
+    it("keeps a cut attempt whose member needs a file outside its own checkout", async () => {
+      const { set, folder, build } = await arrived();
+      const needing: ReplicateSet = {
+        ...set,
+        members: [set.members[0]!, { ...set.members[1]!, requiredSecretPaths: ["../outside.env"] }],
+      };
+      await build(needing);
+      NodeFS.rmSync(worktreeSetManifestPath(folder, NodePath));
+
+      const refused = await build(needing).then(
+        () => null,
+        (cause: Error) => cause.message,
+      );
+
+      // A path that cannot be compared proves nothing: the checkout is kept.
+      expect(refused ?? "built again").toMatch(/^packages\/lib: /);
+      expect(read(NodePath.join(folder, LIB), "draft.ts")).toBe("export {};\n");
+    });
+
     it("builds again over a cut attempt whose copied files are as they were copied", async () => {
       const { there, set, folder, build } = await arrived();
       NodeFS.appendFileSync(NodePath.join(there, LIB, ".git", "info", "exclude"), ".env.local\n");
