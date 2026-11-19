@@ -470,6 +470,59 @@ describe("backfillLedger", () => {
     expect(state.periods).toHaveLength(1);
   });
 
+  it("adds nothing when the ledger and the history both read a reset before its rounded time", () => {
+    const state = emptyLedger();
+    const live = (checkedAt: number, used: number, resetsAt: number) =>
+      advanceLedger(state, {
+        accountKey: "claude:max@example.com",
+        driver: claude,
+        checkedAt,
+        windows: [{ ...weekly(used, resetsAt), id: "seven_day" }],
+        resetCredits: null,
+      });
+    live(reset1 - 10 * MINUTE, 90, reset1 + 3 * MINUTE);
+    live(reset1 + 2 * MINUTE, 90, reset1 + 3 * MINUTE);
+    live(reset1 + 6 * MINUTE, 1, reset2);
+    expect(state.periods.map((period) => period.endedAt)).toEqual([reset1 + 3 * MINUTE]);
+    const past = history(
+      series("seven_day", "weekly", [
+        [reset1 - 10 * MINUTE, 90, reset1 + 4 * MINUTE],
+        [reset1 + 3.5 * MINUTE, 90, reset1 + 4 * MINUTE],
+        [reset1 + 6 * MINUTE, 1, reset2],
+      ]),
+    );
+    expect(backfillLedger(state, past)).toBe(0);
+    expect(state.periods).toHaveLength(1);
+  });
+
+  it("backfills an early reset four minutes after a scheduled one the ledger holds", () => {
+    const state = emptyLedger();
+    const live = (checkedAt: number, used: number, resetsAt: number) =>
+      advanceLedger(state, {
+        accountKey: "claude:max@example.com",
+        driver: claude,
+        checkedAt,
+        windows: [{ ...weekly(used, resetsAt), id: "seven_day" }],
+        resetCredits: null,
+      });
+    live(reset1 - 10 * MINUTE, 90, reset1);
+    live(reset1 + 2 * MINUTE, 90, reset1);
+    live(reset1 + 3 * MINUTE, 1, reset2);
+    expect(state.periods.map((period) => period.endedAt)).toEqual([reset1 + 2 * MINUTE]);
+    const past = history(
+      series("seven_day", "weekly", [
+        [reset1 + 3 * MINUTE, 1, reset2],
+        [reset1 + 4 * MINUTE, 30, reset2],
+        [reset1 + 6 * MINUTE, 1, reset2 + DAY],
+      ]),
+    );
+    expect(backfillLedger(state, past)).toBe(1);
+    expect(state.periods.map((period) => period.endedAt)).toEqual([
+      reset1 + 2 * MINUTE,
+      reset1 + 6 * MINUTE,
+    ]);
+  });
+
   it("leaves a cursor undated when a whole window went unread since the history's last reset", () => {
     const state = emptyLedger();
     advanceLedger(state, {

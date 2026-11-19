@@ -227,6 +227,33 @@ describe("mergeResetPeriods", () => {
     expect(mergeResetPeriods([[rounded], [late]])).toHaveLength(1);
   });
 
+  it("treats three machines' records of one reset, none read at the reset, as one", () => {
+    const a = period(reset1 + MINUTE, reset1 + MINUTE, 90, null);
+    const b = period(reset1 + 3 * MINUTE, reset1 + 2 * MINUTE, 90, null);
+    const c = period(reset1 + 4 * MINUTE, reset1 + 3.5 * MINUTE, 91, null);
+    expect(mergeResetPeriods([[b], [c]])).toHaveLength(1);
+    expect(mergeResetPeriods([[a], [b], [c]])).toHaveLength(1);
+    expect(mergeResetPeriods([[c], [a], [b]])).toHaveLength(1);
+  });
+
+  it("keeps an early reset four minutes after a scheduled one that one machine saw", () => {
+    const periods = resetPeriods(
+      "codex:a@x.dev",
+      "weekly",
+      [
+        read(reset1 - 10 * MINUTE, 90, reset1),
+        read(reset1 + 2 * MINUTE, 90, reset1),
+        read(reset1 + 3 * MINUTE, 1, reset2),
+        read(reset1 + 4 * MINUTE, 30, reset2),
+        read(reset1 + 6 * MINUTE, 1, reset2 + DAY),
+      ],
+      WEEK,
+    );
+    expect(periods.map((entry) => entry.cause)).toEqual(["scheduled", "early"]);
+    expect(mergeResetPeriods([periods])).toHaveLength(2);
+    expect(mergeResetPeriods([[periods[0]!], [periods[1]!]])).toHaveLength(2);
+  });
+
   it("keeps different accounts and windows apart", () => {
     const other = { ...period(reset1, reset1 - HOUR, 10, null), windowId: "seven_day_opus" };
     expect(mergeResetPeriods([[period(reset1, reset1 - HOUR, 59, null)], [other]])).toHaveLength(2);

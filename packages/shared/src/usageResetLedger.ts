@@ -138,43 +138,40 @@ export function resetPeriods(
 
 /**
  * A read up to five minutes past the announced reset still counts as before
- * it, and closes its period at that read: a record whose last read is its end.
- * The same reset seen from a read before the announced time ends there
- * instead, so two such records of one window this close are one reset.
+ * it, and closes its period at that read; providers also round one announced
+ * reset differently between reads. Two records of one scheduled reset can
+ * therefore end this far apart without their spans meeting.
  */
 export const SAME_RESET_MS = 15 * MINUTE;
-/** Providers round one announced reset differently between reads, by up to this much. */
-export const RESET_ROUNDING_MS = 5 * MINUTE;
+
+type ResetIdentity = Pick<ResetPeriod, "lastReadAt" | "endedAt" | "cause">;
 
 /**
- * Whether two records of one window are the same reset: their spans from last
- * read to end overlap (both reads bracket it), or one was closed by a read just
- * past its announced time (its span is a single instant) and the other ended
- * at or up to `SAME_RESET_MS` before that read. Two early resets minutes apart
- * each span a read gap, and a reset after the late read is a later one: both
- * stay apart.
+ * Whether two records of one window are the same reset:
+ * - their spans from last read to end overlap (both reads bracket it; two
+ *   records of one early reset always do, as both contain its instant);
+ * - one was closed at a read just past its announced time (its span is a
+ *   single instant) and the other ended at or up to `SAME_RESET_MS` before it;
+ * - both are scheduled and end within `SAME_RESET_MS`: two scheduled resets of
+ *   a ledger window are at least a day apart.
+ * Two early resets minutes apart each span their own read gap, and an early
+ * reset after a scheduled one has another cause: both stay apart.
  */
-export function sameResetRecord(
-  left: Pick<ResetPeriod, "lastReadAt" | "endedAt">,
-  right: Pick<ResetPeriod, "lastReadAt" | "endedAt">,
-): boolean {
+export function sameResetRecord(left: ResetIdentity, right: ResetIdentity): boolean {
   if (left.lastReadAt < right.endedAt && right.lastReadAt < left.endedAt) return true;
-  return lateReadOf(left, right) || lateReadOf(right, left);
+  if (lateReadOf(left, right) || lateReadOf(right, left)) return true;
+  return (
+    left.cause === "scheduled" &&
+    right.cause === "scheduled" &&
+    Math.abs(left.endedAt - right.endedAt) <= SAME_RESET_MS
+  );
 }
 
-/**
- * `late` was closed at a read just past the announced reset, and `other` ended
- * shortly before that read, or after it by no more than providers' rounding of
- * the announced time (another machine read the same reset as a few minutes
- * later). A record ending later than that is a later reset.
- */
-function lateReadOf(
-  late: Pick<ResetPeriod, "lastReadAt" | "endedAt">,
-  other: Pick<ResetPeriod, "lastReadAt" | "endedAt">,
-): boolean {
+/** `late` was closed at a read just past the announced reset, and `other` ended shortly before it. */
+function lateReadOf(late: ResetIdentity, other: ResetIdentity): boolean {
   return (
     late.lastReadAt === late.endedAt &&
-    other.endedAt - late.endedAt <= RESET_ROUNDING_MS &&
+    other.endedAt <= late.endedAt &&
     late.endedAt - other.endedAt <= SAME_RESET_MS
   );
 }
