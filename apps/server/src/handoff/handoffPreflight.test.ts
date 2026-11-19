@@ -269,7 +269,7 @@ describe("checkFailures: the check before anything is copied (1390)", () => {
     expect(checkFailures(base)).toEqual([]);
     // The preflight of the Hold step still needs the copy.
     expect(messages({ checkpointSequence: null })).toEqual([
-      "Minis: no checkpoint for this thread",
+      "Tower H: no checkpoint for this thread",
     ]);
   });
 
@@ -289,9 +289,9 @@ describe("checkFailures: the check before anything is copied (1390)", () => {
         (failure) => failure.message,
       ),
     ).toEqual([
-      expect.stringContaining("Minis: this project is not linked here"),
-      "Minis: claudeAgent is not set up",
-      "Minis: another machine (M3) runs this thread",
+      expect.stringContaining("Tower H: this project is not linked here"),
+      "Tower H: claudeAgent is not set up",
+      "Tower H: another machine (M3) runs this thread",
     ]);
   });
 });
