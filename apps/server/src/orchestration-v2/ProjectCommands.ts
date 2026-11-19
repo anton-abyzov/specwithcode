@@ -418,7 +418,8 @@ export function ownershipRejection(
           ownership.joinExpectedLogicalProjectId === identity.id &&
           identity.members.every((member) => member.projectId === projectId) &&
           identity.members.length <= 1 &&
-          (next.state === "transferred" || acceptedIncoming)
+          // It joins with its own coordinator as it is, or as a copy that had already given way.
+          (next.state === "transferred" || acceptedIncoming || keepsActiveBinding())
         )
       )
         return "Only an explicitly accepted standalone project can join another identity.";
