@@ -6072,6 +6072,10 @@ export const de: PhraseCatalog = {
   "{machine} finishes this hand off by itself. You can close this.":
     "{machine} schließt diese Übergabe selbst ab. Du kannst das hier schließen.",
   "This machine can't hand threads off yet.": "Dieser Rechner kann Threads noch nicht übergeben.",
+  "Hand off work to another machine": "Arbeit an einen anderen Rechner übergeben",
+  "Hand off every project on this machine": "Jedes Projekt auf diesem Rechner übergeben",
+  "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
+    "{machine} hat nicht mehr jeden Thread dieser Übergabe gespeichert, diese Liste ist also unvollständig.",
   "Show hand off progress": "Fortschritt der Übergabe anzeigen",
   "Nothing running in {project} on {machine} can go.":
     "Nichts, was in {project} auf {machine} läuft, kann gehen.",

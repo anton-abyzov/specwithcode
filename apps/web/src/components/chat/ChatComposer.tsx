@@ -108,6 +108,7 @@ import {
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import {
   COMPOSER_APP_COMMANDS,
+  composerAppCommandDescription,
   matchAwaySkillCommands,
   type ComposerAppCommand,
 } from "../../studio/composerAppCommands";
@@ -3072,7 +3073,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             type: "app-command" as const,
             command: entry.command,
             label: entry.label,
-            description: entry.description,
+            description: composerAppCommandDescription(entry),
           }))
         : [];
       // The app runs these itself; a provider command of the same name is shadowed.
@@ -3099,7 +3100,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               type: "app-command" as const,
               command: entry.command,
               label: `$${entry.command}`,
-              description: entry.description,
+              description: composerAppCommandDescription(entry),
             }))
           : [];
       const awayNames = new Set<string>(awayItems.map((item) => item.command));

@@ -5772,6 +5772,10 @@ export const zh: PhraseCatalog = {
   "{machine} finishes this hand off by itself. You can close this.":
     "{machine} 会自行完成这次交接。你可以关闭此窗口。",
   "This machine can't hand threads off yet.": "这台电脑还不能交接会话。",
+  "Hand off work to another machine": "将工作交接到另一台机器",
+  "Hand off every project on this machine": "交接这台机器上的所有项目",
+  "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
+    "{machine} 已不再保留这次交接的全部线程记录，因此此列表不完整。",
   "Show hand off progress": "显示交接进度",
   "Nothing running in {project} on {machine} can go.":
     "{machine} 上的 {project} 中没有可交接的运行中内容。",

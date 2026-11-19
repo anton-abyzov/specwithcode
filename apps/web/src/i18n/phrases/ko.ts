@@ -5960,6 +5960,10 @@ export const ko: PhraseCatalog = {
   "{machine} finishes this hand off by itself. You can close this.":
     "{machine}이(가) 이 넘기기를 스스로 마칩니다. 이 창은 닫아도 됩니다.",
   "This machine can't hand threads off yet.": "이 컴퓨터는 아직 스레드를 넘길 수 없습니다.",
+  "Hand off work to another machine": "작업을 다른 기기로 넘기기",
+  "Hand off every project on this machine": "이 기기의 모든 프로젝트 넘기기",
+  "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
+    "{machine}에 이 넘기기의 모든 스레드 기록이 남아 있지 않아 이 목록은 일부입니다.",
   "Show hand off progress": "넘기기 진행 상황 보기",
   "Nothing running in {project} on {machine} can go.":
     "{machine}의 {project}에서 실행 중인 것 중 보낼 수 있는 것이 없습니다.",

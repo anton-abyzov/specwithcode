@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   HandOffResult,
+  HandoffPreflightResult,
   ModelSelection,
   ScopedThreadRef,
   ThreadId,
@@ -31,6 +32,8 @@ import {
   HandoffPreflightPanel,
   destinationNeedsUpdate,
   destinationsNeedingUpdate,
+  destinationUpdateRows,
+  pickDestination,
   preflightBlockedHere,
   type HandoffDestination,
   type PreflightView,
@@ -350,9 +353,11 @@ function HandOffThreadDialog({
   const [thread] = useState(() => readThreadShell(threadRef));
   const paired = useHandoffDestinations(threadRef.environmentId, mode === "switch-model");
   // Machines a check found without transfer records: shown as "Needs update", never a target.
-  const [needsUpdate, setNeedsUpdate] = useState<ReadonlySet<EnvironmentId>>(new Set());
+  const [needsUpdate, setNeedsUpdate] = useState<
+    ReadonlyMap<EnvironmentId, readonly HandoffPreflightResult[]>
+  >(new Map());
   const destinations = useMemo(
-    () => destinationsNeedingUpdate(paired, needsUpdate),
+    () => destinationsNeedingUpdate(paired, new Set(needsUpdate.keys())),
     [needsUpdate, paired],
   );
   const [destinationId, setDestinationId] = useState<EnvironmentId | null>(initialDestinationId);
@@ -380,9 +385,8 @@ function HandOffThreadDialog({
   const destination =
     mode === "switch-model"
       ? threadRef.environmentId
-      : (destinationId ??
-        destinations.find((item) => item.state === "reachable")?.environmentId ??
-        null);
+      : // A machine found to need an update is never it, picked by hand or not.
+        pickDestination(destinations, destinationId);
   const destinationLabel =
     destinations.find((item) => item.environmentId === destination)?.label ??
     (destination ? name(destination) : "");
@@ -401,8 +405,11 @@ function HandOffThreadDialog({
       },
     }).then((next) => {
       if (!live) return;
-      if (next.ok && destinationNeedsUpdate(next.value))
-        setNeedsUpdate((current) => new Set(current).add(destination));
+      if (next.ok && destinationNeedsUpdate(next.value)) {
+        // Its row turns into "Needs update" with its own update action; the next machine is checked.
+        setNeedsUpdate((current) => new Map(current).set(destination, next.value));
+        return;
+      }
       setPreflight(
         next.ok ? { state: "done", results: next.value } : { state: "error", message: next.error },
       );
@@ -492,14 +499,29 @@ function HandOffThreadDialog({
       onMoreOptionsChange={setMoreOptionsOpen}
       preflight={shownPreflight}
       destinationUpdate={
-        shownPreflight.state === "done" ? (
-          <HandoffDestinationUpdate
-            environmentId={destination}
-            label={destinationLabel}
-            results={shownPreflight.results}
-            onUpdated={recheck}
-          />
-        ) : null
+        <>
+          {destinationUpdateRows(
+            needsUpdate,
+            shownPreflight.state === "done" ? destination : null,
+            shownPreflight.state === "done" ? shownPreflight.results : [],
+            (id) => destinations.find((item) => item.environmentId === id)?.label ?? name(id),
+          ).map((row) => (
+            <HandoffDestinationUpdate
+              key={row.environmentId}
+              environmentId={row.environmentId}
+              label={row.label}
+              results={row.results}
+              onUpdated={() => {
+                setNeedsUpdate((current) => {
+                  const next = new Map(current);
+                  next.delete(row.environmentId);
+                  return next;
+                });
+                recheck();
+              }}
+            />
+          ))}
+        </>
       }
       onRecheck={recheck}
       submitting={submitting}

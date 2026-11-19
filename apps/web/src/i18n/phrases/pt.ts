@@ -6027,6 +6027,10 @@ export const pt: PhraseCatalog = {
   "{machine} finishes this hand off by itself. You can close this.":
     "{machine} conclui esta passagem sozinha. Você pode fechar isto.",
   "This machine can't hand threads off yet.": "Esta máquina ainda não consegue passar threads.",
+  "Hand off work to another machine": "Passar o trabalho para outra máquina",
+  "Hand off every project on this machine": "Passar todos os projetos desta máquina",
+  "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
+    "{machine} já não guarda todos os threads desta passagem, por isso esta lista está incompleta.",
   "Show hand off progress": "Ver o progresso da passagem",
   "Nothing running in {project} on {machine} can go.":
     "Nada do que está rodando em {project} em {machine} pode ir.",

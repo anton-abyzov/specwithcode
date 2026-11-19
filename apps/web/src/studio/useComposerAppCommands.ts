@@ -35,6 +35,32 @@ export interface ComposerAppCommandScope {
   readonly continueSelf?: () => void | Promise<void>;
 }
 
+/**
+ * Opens the dialog a command asks for. `/handoff` is Hand off for the thread's
+ * project, `/away` is Hand off for every project on the thread's machine, and
+ * `/back` asks to bring work back. Each dialog checks and asks before anything goes.
+ */
+export function openComposerAppDialog(
+  command: "handoff" | "away" | "back",
+  thread: Pick<EnvironmentThreadShell, "environmentId" | "projectId"> | null,
+  projectOf: (
+    thread: Pick<EnvironmentThreadShell, "environmentId" | "projectId">,
+  ) => { readonly title: string } | null | undefined = readProject,
+) {
+  if (command === "back") {
+    requestAway("back");
+    return;
+  }
+  if (command === "away" || thread === null) {
+    requestHandOffMachine(thread?.environmentId ?? null);
+    return;
+  }
+  requestMigrateProjectThreads(thread.environmentId, {
+    id: thread.projectId,
+    title: projectOf(thread)?.title ?? "",
+  });
+}
+
 function notice(title: string, description?: string) {
   toastManager.add({ type: "info", title, ...(description ? { description } : {}) });
 }
@@ -96,26 +122,10 @@ export function useComposerAppCommands(scope: ComposerAppCommandScope) {
           notice("Project threads", bulkStatusSummary(bulkThreadTargets(threads())));
           return;
         }
-        case "handoff": {
-          // The Hand off dialog checks each thread and asks before anything goes.
-          if (thread === null) {
-            requestHandOffMachine();
-            return;
-          }
-          const project = readProject({
-            environmentId: thread.environmentId,
-            projectId: thread.projectId,
-          });
-          requestMigrateProjectThreads(thread.environmentId, {
-            id: thread.projectId,
-            title: project?.title ?? "",
-          });
-          return;
-        }
+        case "handoff":
         case "away":
         case "back": {
-          // The Away dialog plans the move and asks before anything changes.
-          requestAway(command);
+          openComposerAppDialog(command, thread);
           return;
         }
       }

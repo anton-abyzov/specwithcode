@@ -6034,6 +6034,10 @@ export const ja: PhraseCatalog = {
   "{machine} finishes this hand off by itself. You can close this.":
     "{machine} がこの引き継ぎを自分で完了します。これは閉じてかまいません。",
   "This machine can't hand threads off yet.": "このマシンはまだスレッドを引き継げません。",
+  "Hand off work to another machine": "作業を別のマシンに引き継ぐ",
+  "Hand off every project on this machine": "このマシンのすべてのプロジェクトを引き継ぐ",
+  "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
+    "{machine} にはこの引き継ぎの全スレッドの記録が残っていないため、この一覧は一部です。",
   "Show hand off progress": "引き継ぎの進行状況を表示",
   "Nothing running in {project} on {machine} can go.":
     "{machine} の {project} で実行中のもので、移せるものはありません。",

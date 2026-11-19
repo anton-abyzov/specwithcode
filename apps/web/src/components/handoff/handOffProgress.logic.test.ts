@@ -366,19 +366,14 @@ describe("the hand off this window asked for", () => {
     targetEnvironmentId: MINI,
     lineage: { ...lineage, epoch: 2 },
   });
-  const batches = [
-    batchOf("window-desk", ["op-desk"]),
-    batchOf("window-mini", ["op-mini"], MINI),
-  ];
+  const batches = [batchOf("window-desk", ["op-desk"]), batchOf("window-mini", ["op-mini"], MINI)];
 
   it("shows only the batch this window named, whatever is newer on the thread", () => {
     const groups = progressGroups([mine, theirs], batches);
     expect(groups.map((group) => group.batchId)).toEqual(["window-mini", "window-desk"]);
     const shown = submittedGroups(groups, "window-desk", null);
     expect(shown.map((group) => group.targetEnvironmentId)).toEqual([TARGET]);
-    expect(shown.flatMap((group) => group.rows.map((row) => row.operationId))).toEqual([
-      "op-desk",
-    ]);
+    expect(shown.flatMap((group) => group.rows.map((row) => row.operationId))).toEqual(["op-desk"]);
   });
 
   it("shows nothing while its own batch has no record, so the form and its error stay", () => {
@@ -426,10 +421,7 @@ describe("Resume here names its operation", () => {
 describe("an automatic start opens its own progress view", () => {
   const automatic = { kind: "automatic", key: "limit:1", usageWindowKey: "w" } as const;
   const auto = (state: HandoffTransferState, id: string) =>
-    progressGroups(
-      [record(state, { operationId: id, batchId: null, trigger: automatic })],
-      [],
-    )[0]!;
+    progressGroups([record(state, { operationId: id, batchId: null, trigger: automatic })], [])[0]!;
   const manual = progressGroups([record("held", { operationId: "op-manual", batchId: null })], []);
 
   it("opens the newest automatic hand off this window has not seen", () => {

@@ -15,6 +15,7 @@ import { create } from "zustand";
 
 import { englishPhrase, useTx, type TranslatePhrase } from "../../i18n";
 import { readThreadShell, useProjects } from "../../state/entities";
+import { randomUUID } from "../../lib/utils";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import {
   handoffMachineCandidates,
@@ -46,10 +47,13 @@ import {
   HandoffPreflightFailures,
   destinationNeedsUpdate,
   destinationsNeedingUpdate,
+  destinationUpdateRows,
+  pickDestination,
   preflightSummary,
   type HandoffDestination,
 } from "./HandoffResults";
 import { HandoffDestinationUpdate } from "./HandoffDestinationUpdate";
+import { submittedGroups } from "./handOffProgress.logic";
 import { destinationOptions, MachineOptionRows } from "./MachineOptionRows";
 import { useHandoffDestinations } from "./useHandoffDestinations";
 
@@ -83,6 +87,14 @@ export function requestMigrateProjectThreads(
 
 const close = () => useRequest.setState({ request: null });
 
+/** Closes the dialog from outside it. */
+export const closeHandOffMachine = close;
+
+/** The open request outside React, for tests and non-component callers. */
+export function readHandOffMachineRequest(): HandOffMachineRequest | null {
+  return useRequest.getState().request;
+}
+
 export function HandOffMachineDialogHost() {
   const request = useRequest((state) => state.request);
   const primary = usePrimaryEnvironmentId();
@@ -96,7 +108,7 @@ export function HandOffMachineDialogHost() {
           project={request.project ?? null}
         />
       ) : null}
-      <HandOffProgressDialogHost />
+      <HandOffProgressDialogHost environmentId={primary} />
     </>
   );
 }
@@ -219,7 +231,15 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
           </DialogHeader>
           <DialogPanel>
             {leaving ? (
-              props.progress
+              <div className="flex flex-col gap-3">
+                {/* What this window asked may have failed while its records were written. */}
+                {props.error ? (
+                  <p role="alert" className="text-sm text-destructive-foreground">
+                    {props.error}
+                  </p>
+                ) : null}
+                {props.progress}
+              </div>
             ) : props.run ? (
               <HandoffMachineResults
                 run={props.run}
@@ -432,11 +452,8 @@ function HandOffMachineDialog({
   );
   const [destinationId, setDestinationId] = useState<EnvironmentId | null>(null);
   const groups = useHandOffProgressGroups(environmentId);
-  // The operations this machine already had when Hand off was pressed: the view shows a newer one.
-  const [before, setBefore] = useState<{
-    readonly operations: ReadonlySet<string>;
-    readonly threads: ReadonlySet<ThreadId>;
-  } | null>(null);
+  // The name this window gave its batch: only that batch's records are its progress.
+  const [batchId, setBatchId] = useState<string | null>(null);
   const projects = useProjects();
   const threads = useMemo<HandoffMachineThreadRow[]>(
     () =>
@@ -473,11 +490,7 @@ function HandOffMachineDialog({
   const [error, setError] = useState<string | null>(null);
   const [run, setRun] = useState<HandoffMachineRun | null>(null);
 
-  const chosen = destinations.find((item) => item.environmentId === destinationId);
-  const destination =
-    (chosen?.state === "reachable" ? chosen.environmentId : null) ??
-    destinations.find((item) => item.state === "reachable")?.environmentId ??
-    null;
+  const destination = pickDestination(destinations, destinationId);
   const selectedKey = [...selected].toSorted().join(",");
   const [recheck, setRecheck] = useState(0);
 
@@ -514,24 +527,16 @@ function HandOffMachineDialog({
   }, [destination, environmentId, recheck, run, selectedKey]);
 
   // Until the machine has written this hand off's records, look for them often.
-  const awaitingRecords = submitting && before !== null;
+  const awaitingRecords = submitting && batchId !== null;
   useEffect(() => {
     if (!awaitingRecords) return;
     const timer = window.setInterval(() => void refreshHandoffMode(environmentId), 1_500);
     return () => window.clearInterval(timer);
   }, [awaitingRecords, environmentId]);
 
-  // One batch can cover several projects: each is its own card.
-  const shown =
-    before === null
-      ? []
-      : groups.filter(
-          (candidate) =>
-            candidate.rows.some(
-              (row) => !before.operations.has(row.operationId) && before.threads.has(row.threadId),
-            ) &&
-            (projectId === null || candidate.projectId === projectId),
-        );
+  // One batch can cover several projects: each is its own card. Another window's
+  // hand off of the same threads is not this window's progress.
+  const shown = submittedGroups(groups, batchId, projectId);
 
   const destinationName = destination
     ? (destinations.find((item) => item.environmentId === destination)?.label ?? name(destination))
@@ -564,27 +569,31 @@ function HandOffMachineDialog({
       onRecheck={() => setRecheck((count) => count + 1)}
       destinationUpdate={
         <>
-          {[...needsUpdate].map(([id, results]) => (
+          {destinationUpdateRows(
+            needsUpdate,
+            destination,
+            [...preflight.values()],
+            (id) => paired.find((item) => item.environmentId === id)?.label ?? name(id),
+          ).map((row) => (
             <HandoffDestinationUpdate
-              key={id}
-              environmentId={id}
-              label={paired.find((item) => item.environmentId === id)?.label ?? name(id)}
-              results={results}
-              onUpdated={() => {
-                setNeedsUpdate((current) => {
-                  const next = new Map(current);
-                  next.delete(id);
-                  return next;
-                });
-                setRecheck((count) => count + 1);
-              }}
+              key={row.environmentId}
+              environmentId={row.environmentId}
+              label={row.label}
+              results={row.results}
+              {...(needsUpdate.has(row.environmentId)
+                ? {
+                    onUpdated: () => {
+                      setNeedsUpdate((current) => {
+                        const next = new Map(current);
+                        next.delete(row.environmentId);
+                        return next;
+                      });
+                      setRecheck((count) => count + 1);
+                    },
+                  }
+                : {})}
             />
           ))}
-          <HandoffDestinationUpdate
-            environmentId={destination}
-            label={destinationName}
-            results={[...preflight.values()]}
-          />
         </>
       }
       submitting={submitting}
@@ -614,14 +623,17 @@ function HandOffMachineDialog({
           .filter((threadId) => selected.has(threadId) && preflight.get(threadId)?.ok);
         setSubmitting(true);
         setError(null);
-        setBefore({
-          operations: new Set(groups.flatMap((item) => item.rows.map((row) => row.operationId))),
-          threads: new Set(threadIds),
-        });
+        const batch = randomUUID();
+        setBatchId(batch);
         void refreshHandoffMode(environmentId);
         void runHandoffMode(handoffMode.handOffMachine, {
           environmentId,
-          input: { destinationEnvironmentId: destination, reason: "manual", threadIds },
+          input: {
+            destinationEnvironmentId: destination,
+            reason: "manual",
+            threadIds,
+            batchId: batch,
+          },
         }).then((next) => {
           setSubmitting(false);
           if (next.ok) setRun(next.value);

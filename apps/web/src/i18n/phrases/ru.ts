@@ -6023,6 +6023,10 @@ export const ru: PhraseCatalog = {
   "{machine} finishes this hand off by itself. You can close this.":
     "{machine} завершит эту передачу сама. Это окно можно закрыть.",
   "This machine can't hand threads off yet.": "Эта машина пока не умеет передавать треды.",
+  "Hand off work to another machine": "Передать работу на другую машину",
+  "Hand off every project on this machine": "Передать все проекты этой машины",
+  "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
+    "{machine} больше не хранит все треды этой передачи, поэтому список неполный.",
   "Show hand off progress": "Показать ход передачи",
   "Nothing running in {project} on {machine} can go.":
     "Из того, что выполняется в {project} на {machine}, передать нечего.",

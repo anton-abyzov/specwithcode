@@ -139,6 +139,7 @@ const SLEEP_START_PHRASES: readonly string[] = [
  */
 const PHASE_3_PHRASES: readonly string[] = [
   "This server can't move threads to another machine yet.",
+  "Leave this machine: hand its threads, routines and coordinator on",
   "Nothing ready to move",
   "Move 1 thread",
   "Can't move",

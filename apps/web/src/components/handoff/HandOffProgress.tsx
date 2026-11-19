@@ -7,7 +7,7 @@
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import type { EnvironmentId, HandoffTransferTrigger, ThreadId } from "@specweave-studio/contracts";
 import { useRouter } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { create } from "zustand";
 
 import { useLocale, useTx, type TranslatePhrase } from "../../i18n";
@@ -31,6 +31,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import {
+  automaticGroupToOpen,
   progressGroups,
   progressNotes,
   progressReason,
@@ -38,6 +39,7 @@ import {
   progressSummary,
   progressSummaryText,
   progressTitle,
+  releaseInput,
   trackOutView,
   type HandOffProgressGroup,
   type HandOffProgressRow,
@@ -62,6 +64,8 @@ export interface HandOffProgressViewProps {
   readonly targetName: string | null;
   readonly trigger: HandoffTransferTrigger;
   readonly rows: ReadonlyArray<HandOffProgressViewRow>;
+  /** The machine no longer keeps every thread of this hand off: never "All n on". */
+  readonly incomplete?: boolean;
   /** No machine has the track: shown in place of the bar. */
   readonly trackOut?: HandOffTrackOut | null;
   /** The row whose release is being asked now. */
@@ -169,14 +173,14 @@ export function HandOffProgressView(props: HandOffProgressViewProps) {
       new Date(iso).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" }));
   const names = { source: props.sourceName, target: props.targetName };
   const out = props.trackOut ? trackOutView(props.trackOut) : null;
-  const summary = progressSummary(props.rows);
+  const summary = progressSummary(props.rows, props.incomplete);
   const notes = out
     ? [
         tx(
           "Same-account and unknown-usage machines are never chosen automatically, and no other track is used.",
         ),
       ]
-    : progressNotes(props.rows, names, tx);
+    : progressNotes(props.rows, names, tx, props.incomplete);
   const percent = Math.round(summary.fraction * 100);
   return (
     <section
@@ -374,6 +378,7 @@ export function HandOffProgress(props: {
       targetName={group.targetEnvironmentId === null ? null : name(group.targetEnvironmentId)}
       trigger={group.trigger}
       rows={rows}
+      incomplete={group.incomplete}
       busyOperationId={busy}
       rowNotice={notice}
       onRelease={(row) => {
@@ -381,7 +386,8 @@ export function HandOffProgress(props: {
         setNotice(null);
         void runHandoffMode(handoffMode.resumeFenced, {
           environmentId,
-          input: { threadId: row.threadId },
+          // The record this row shows, so a later move of the thread is never released by it.
+          input: releaseInput(row),
         }).then((result) => {
           setBusy(null);
           if (!result.ok) {
@@ -433,14 +439,32 @@ export function useHandOffProgressGroups(environmentId: EnvironmentId | null) {
   );
 }
 
-interface ProgressRequest {
+/** One hand off of a machine: a group, or the one a thread is in. */
+interface GroupRequest {
+  readonly kind: "group";
   readonly environmentId: EnvironmentId;
   /** A group's key, or a thread whose newest move is shown. */
   readonly groupKey: string | null;
   readonly threadId: ThreadId | null;
 }
 
-const useRequest = create<{ request: ProgressRequest | null }>(() => ({ request: null }));
+/**
+ * The automatic rule found no machine with the thread's track, so nothing
+ * moved and no record exists. The decision that found it supplies these.
+ */
+export interface HandOffNoMove {
+  readonly projectName: string;
+  readonly trackOut: HandOffTrackOut;
+}
+
+interface NoMoveRequest extends HandOffNoMove {
+  readonly kind: "no-move";
+  readonly environmentId: EnvironmentId;
+}
+
+export type HandOffProgressRequest = GroupRequest | NoMoveRequest;
+
+const useRequest = create<{ request: HandOffProgressRequest | null }>(() => ({ request: null }));
 
 /** Opens the progress view for one hand off of a machine: a group, or the one a thread is in. */
 export function requestHandOffProgress(
@@ -449,6 +473,7 @@ export function requestHandOffProgress(
 ) {
   useRequest.setState({
     request: {
+      kind: "group",
       environmentId,
       groupKey: "groupKey" in target ? target.groupKey : null,
       threadId: "threadId" in target ? target.threadId : null,
@@ -456,14 +481,93 @@ export function requestHandOffProgress(
   });
 }
 
-const closeProgress = () => useRequest.setState({ request: null });
-
-export function HandOffProgressDialogHost() {
-  const request = useRequest((state) => state.request);
-  return request ? <HandOffProgressDialog request={request} /> : null;
+/**
+ * Opens the same view for an automatic start that moved nothing: every allowed
+ * machine is out of the track, and the earliest known reset is shown.
+ */
+export function requestHandOffNoMove(environmentId: EnvironmentId, state: HandOffNoMove) {
+  useRequest.setState({ request: { kind: "no-move", environmentId, ...state } });
 }
 
-function HandOffProgressDialog({ request }: { request: ProgressRequest }) {
+/** The open request outside React, for tests and non-component callers. */
+export function readHandOffProgressRequest(): HandOffProgressRequest | null {
+  return useRequest.getState().request;
+}
+
+const closeProgress = () => useRequest.setState({ request: null });
+
+/**
+ * Opens the view by itself when this machine writes the records of a hand off
+ * the usage-limit rule started: nobody pressed anything, so nobody is asked to.
+ */
+function HandOffAutomaticProgress({ environmentId }: { environmentId: EnvironmentId }) {
+  const { snapshot } = useHandoffModeSnapshot(environmentId);
+  const groups = useHandOffProgressGroups(environmentId);
+  const seen = useRef<ReadonlySet<string> | null>(null);
+  const loaded = snapshot !== null && snapshot !== undefined;
+  useEffect(() => {
+    if (!loaded) return;
+    const key = automaticGroupToOpen(seen.current, groups);
+    seen.current = new Set(groups.flatMap((group) => group.rows.map((row) => row.operationId)));
+    // A view a person has open is never replaced.
+    if (key !== null && useRequest.getState().request === null)
+      requestHandOffProgress(environmentId, { groupKey: key });
+  }, [environmentId, groups, loaded]);
+  return null;
+}
+
+export function HandOffProgressDialogHost({
+  environmentId = null,
+}: {
+  /** The machine this window serves: its automatic hand offs open their own view. */
+  environmentId?: EnvironmentId | null;
+}) {
+  const request = useRequest((state) => state.request);
+  return (
+    <>
+      {environmentId ? <HandOffAutomaticProgress environmentId={environmentId} /> : null}
+      {request?.kind === "group" ? <HandOffProgressDialog request={request} /> : null}
+      {request?.kind === "no-move" ? <HandOffNoMoveDialog request={request} /> : null}
+    </>
+  );
+}
+
+function HandOffNoMoveDialog({ request }: { request: NoMoveRequest }) {
+  const tx = useTx();
+  const name = useMachineNicknames();
+  const { snapshot } = useHandoffModeSnapshot(request.environmentId);
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) closeProgress();
+      }}
+    >
+      <DialogPopup className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{tx("Hand off progress")}</DialogTitle>
+        </DialogHeader>
+        <DialogPanel>
+          <HandOffProgressView
+            projectName={request.projectName}
+            sourceName={name(request.environmentId, snapshot?.machineLabel)}
+            targetName={null}
+            trigger={{ kind: "automatic" }}
+            rows={[]}
+            trackOut={request.trackOut}
+          />
+        </DialogPanel>
+        <DialogFooter>
+          <Button type="button" onClick={closeProgress}>
+            {tx("Done")}
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+function HandOffProgressDialog({ request }: { request: GroupRequest }) {
   const tx = useTx();
   const groups = useHandOffProgressGroups(request.environmentId);
   const group =

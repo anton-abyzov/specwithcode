@@ -170,6 +170,49 @@ export function destinationsNeedingUpdate(
 }
 
 /**
+ * The machine a dialog sends to: the one picked while it can take work, else
+ * the first that can. A machine that needs an update is never it, however it
+ * was picked.
+ */
+export function pickDestination(
+  destinations: readonly HandoffDestination[],
+  chosen: EnvironmentId | null,
+): EnvironmentId | null {
+  const reachable = destinations.filter((item) => item.state === "reachable");
+  return (
+    reachable.find((item) => item.environmentId === chosen)?.environmentId ??
+    reachable[0]?.environmentId ??
+    null
+  );
+}
+
+export interface DestinationUpdateRow {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly results: readonly HandoffPreflightResult[];
+}
+
+/**
+ * One update action per machine, each with the check that machine itself
+ * answered: the machines found to need an update, then the current destination.
+ */
+export function destinationUpdateRows(
+  needsUpdate: ReadonlyMap<EnvironmentId, readonly HandoffPreflightResult[]>,
+  destination: EnvironmentId | null,
+  results: readonly HandoffPreflightResult[],
+  label: (environmentId: EnvironmentId) => string,
+): DestinationUpdateRow[] {
+  const rows = [...needsUpdate].map(([environmentId, own]) => ({
+    environmentId,
+    label: label(environmentId),
+    results: own,
+  }));
+  if (destination !== null && !needsUpdate.has(destination))
+    rows.push({ environmentId: destination, label: label(destination), results });
+  return rows;
+}
+
+/**
  * True when a version check says to update the destination first. The
  * destination words it "<destination> runs SpecWithCode … Update <machine>
  * first.", so the machine to update is the destination when both names match.

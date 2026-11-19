@@ -12,7 +12,7 @@ import { useRef, useSyncExternalStore, type ReactNode } from "react";
 
 import { composerSendButtonLabel, composerSubmissionIntentForKey } from "../../composer-logic";
 import { parseAwayAppCommand, parseComposerAppCommand } from "../../studio/composerAppCommands";
-import { requestAway } from "../../studio/awayRequest";
+import { openComposerAppDialog } from "../../studio/useComposerAppCommands";
 import { resolveLeadingSkillCommand } from "../../providerSkillSearch";
 import { ViewerThreadComposerPortal } from "../../viewerOverlayStore";
 import type { ProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
@@ -66,11 +66,11 @@ export async function submitCoordinatorDraft(input: {
     void onAppCommand(appCommand);
     return;
   }
-  // `/away` and `/back` act on the machine, so they open the Away dialog from any composer.
+  // `/away` and `/back` act on the machine, so they open Hand off (or Bring back) from any composer.
   const awayCommand = images.length === 0 ? parseAwayAppCommand(text) : null;
   if (awayCommand !== null) {
     composer.setPrompt("");
-    requestAway(awayCommand);
+    openComposerAppDialog(awayCommand, null);
     return;
   }
   composer.setSubmitting(true);

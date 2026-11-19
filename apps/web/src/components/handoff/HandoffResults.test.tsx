@@ -250,9 +250,9 @@ describe("a machine without transfer records", () => {
     expect(pickDestination(marked, null)).toBe(mini);
     expect(pickDestination(destinations, null)).toBe(desk);
     expect(pickDestination(destinations, mini)).toBe(mini);
-    expect(pickDestination(destinationsNeedingUpdate(destinations, new Set([desk, mini])), desk)).toBe(
-      null,
-    );
+    expect(
+      pickDestination(destinationsNeedingUpdate(destinations, new Set([desk, mini])), desk),
+    ).toBe(null);
   });
 
   it("keeps each machine's update action on that machine's own check", () => {

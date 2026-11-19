@@ -106,6 +106,8 @@ export interface HandOffProgressSummary {
 /** The summary and the bar come from the same rows, so they cannot disagree. */
 export function progressSummary(
   rows: ReadonlyArray<Pick<HandOffProgressRow, "state">>,
+  /** The machine no longer keeps every thread of this hand off: the rows are not all of it. */
+  incomplete = false,
 ): HandOffProgressSummary {
   const count = (state: HandOffRowState) => rows.filter((row) => row.state === state).length;
   const counts = {
@@ -121,7 +123,7 @@ export function progressSummary(
     total,
     counts,
     fraction: total === 0 ? 0 : finished / total,
-    allArrived: total > 0 && counts.resumed + counts.ready === total,
+    allArrived: !incomplete && total > 0 && counts.resumed + counts.ready === total,
   };
 }
 
@@ -153,6 +155,13 @@ export function progressSummaryText(
 export interface HandOffProgressGroup {
   /** The batch (or the lone operation) and the project: one view shows one project. */
   readonly key: string;
+  /** The batch the records were written in; null for a lone operation. */
+  readonly batchId: string | null;
+  /**
+   * The batch names an operation this machine no longer keeps a record of, so
+   * these rows may not be every thread of this project's hand off.
+   */
+  readonly incomplete: boolean;
   readonly projectId: ProjectId;
   readonly sourceEnvironmentId: EnvironmentId;
   readonly targetEnvironmentId: EnvironmentId | null;
@@ -168,6 +177,7 @@ export function progressGroups(
 ): HandOffProgressGroup[] {
   const batchOf = new Map((batches ?? []).map((batch) => [batch.batchId, batch]));
   const groups = new Map<string, { first: HandoffTransferRecord; rows: HandOffProgressRow[] }>();
+  const known = new Set((transfers ?? []).map((record) => record.operationId));
   const ordered = [...(transfers ?? [])].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   for (const record of ordered) {
     const key = `${record.batchId ?? record.operationId}:${record.projectId}`;
@@ -184,6 +194,8 @@ export function progressGroups(
       rows.sort((a, b) => at(a) - at(b));
       return {
         key,
+        batchId: first.batchId,
+        incomplete: (batch?.operationIds ?? []).some((id) => !known.has(id)),
         projectId: first.projectId,
         sourceEnvironmentId: first.lineage.sourceEnvironmentId,
         targetEnvironmentId: batch?.targetEnvironmentId ?? first.targetEnvironmentId,
@@ -193,6 +205,50 @@ export function progressGroups(
       };
     })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+/**
+ * The groups of the hand off one window asked for, by the name it gave the
+ * batch. Another window's hand off of the same threads is never one of them,
+ * and neither is anything before this machine wrote the batch.
+ */
+export function submittedGroups(
+  groups: ReadonlyArray<HandOffProgressGroup>,
+  batchId: string | null,
+  projectId: ProjectId | null,
+): HandOffProgressGroup[] {
+  if (batchId === null) return [];
+  return groups.filter(
+    (group) => group.batchId === batchId && (projectId === null || group.projectId === projectId),
+  );
+}
+
+/** What "Resume here" sends: the thread, and the record the press was made on. */
+export function releaseInput(row: Pick<HandOffProgressRow, "threadId" | "operationId">): {
+  readonly threadId: ThreadId;
+  readonly operationId: string;
+} {
+  return { threadId: row.threadId, operationId: row.operationId };
+}
+
+/**
+ * The automatic hand off whose view opens by itself: the newest one with a
+ * record this window has not seen. `seen` is null on the window's first read,
+ * when only a hand off still under way opens.
+ */
+export function automaticGroupToOpen(
+  seen: ReadonlySet<string> | null,
+  groups: ReadonlyArray<HandOffProgressGroup>,
+): string | null {
+  for (const group of groups) {
+    if (group.trigger.kind !== "automatic") continue;
+    const fresh =
+      seen === null
+        ? group.rows.some((row) => !row.finished)
+        : group.rows.some((row) => !seen.has(row.operationId));
+    if (fresh) return group.key;
+  }
+  return null;
 }
 
 /** The newest move of one thread from this machine, or null when it has none. */
@@ -242,9 +298,18 @@ export function progressNotes(
   rows: ReadonlyArray<Pick<HandOffProgressRow, "state">>,
   names: HandOffProgressNames,
   tx: TranslatePhrase,
+  /** The machine no longer keeps every thread of this hand off. */
+  incomplete = false,
 ): string[] {
   const target = names.target ?? tx("the other machine");
   const notes: string[] = [];
+  if (incomplete)
+    notes.push(
+      tx(
+        "{machine} no longer keeps every thread of this hand off, so this list is not all of it.",
+        { machine: names.source },
+      ),
+    );
   if (rows.some((row) => row.state === "waiting"))
     notes.push(
       tx(
