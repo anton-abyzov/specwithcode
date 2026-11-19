@@ -164,6 +164,48 @@ export class RemoteWorkerFollower extends Context.Service<
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+interface ListedRun {
+  readonly runId: string;
+  readonly ordinal: number;
+  readonly status: string;
+}
+
+/**
+ * The run of a handed-off thread to follow next, from its recent runs: the one
+ * going, else the first one queued, else the newest that completed or failed.
+ * Runs up to `passedRunId` are behind it, and a run that was only stopped
+ * reports nothing. A thread's newest run alone would not do: a queued message
+ * outranks the run that is going, and cancelling it would hide that run.
+ */
+export function nextHandoffRun(
+  runs: ReadonlyArray<ListedRun>,
+  passedRunId: string | undefined,
+): ListedRun | undefined {
+  const floor = runs.find((run) => run.runId === passedRunId)?.ordinal ?? 0;
+  const later = runs
+    .filter((run) => run.ordinal > floor)
+    .toSorted((left, right) => left.ordinal - right.ordinal);
+  return (
+    later.find((run) => ["preparing", "starting", "running", "waiting"].includes(run.status)) ??
+    later.find((run) => run.status === "queued") ??
+    later.findLast((run) => run.status === "completed" || run.status === "failed")
+  );
+}
+
+const listedRuns = (answer: unknown): ReadonlyArray<ListedRun> =>
+  (isRecord(answer) && Array.isArray(answer.recentRuns) ? answer.recentRuns : [])
+    .filter(isRecord)
+    .flatMap((run) =>
+      typeof run.runId === "string" &&
+      typeof run.ordinal === "number" &&
+      typeof run.status === "string"
+        ? [{ runId: run.runId, ordinal: run.ordinal, status: run.status }]
+        : [],
+    );
+
+/** How many of a handed-off thread's newest runs are looked at for the one to follow. */
+const HANDOFF_RUN_WINDOW = 20;
+
 const make = Effect.gen(function* () {
   const store = yield* RemoteWorkerStore.RemoteWorkerStore;
   const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
@@ -550,23 +592,33 @@ const make = Effect.gen(function* () {
         const row = yield* findRow(rowId);
         if (!row || row.state !== "following" || row.remoteThreadId === null) return;
         const handoff = row.handoff;
-        // Nothing to wait on yet: the latest run is asked for and answered at once.
         const awaiting = handoff?.awaiting;
         const semaphore = yield* permitFor(row.machineId);
         const result = yield* semaphore
           .withPermits(1)(
-            client.call({
-              machineId: row.machineId,
-              tool: "studio_thread_wait",
-              arguments: {
-                threadId: row.remoteThreadId,
-                ...(row.followedRunId === null || awaiting !== undefined
-                  ? {}
-                  : { runId: row.followedRunId }),
-                timeoutMs: awaiting === undefined ? timings.waitMs : 1,
-              },
-              timeoutMs: timings.waitMs + 15_000,
-            }),
+            client.call(
+              awaiting === undefined
+                ? {
+                    machineId: row.machineId,
+                    tool: "studio_thread_wait",
+                    arguments: {
+                      threadId: row.remoteThreadId,
+                      ...(row.followedRunId === null ? {} : { runId: row.followedRunId }),
+                      timeoutMs: timings.waitMs,
+                    },
+                    timeoutMs: timings.waitMs + 15_000,
+                  }
+                : {
+                    // No run to wait on yet: its recent runs say whether one began.
+                    machineId: row.machineId,
+                    tool: "studio_thread_read",
+                    arguments: {
+                      threadId: row.remoteThreadId,
+                      limit: 1,
+                      runLimit: HANDOFF_RUN_WINDOW,
+                    },
+                  },
+            ),
           )
           .pipe(Effect.result);
         if (result._tag === "Success") {
@@ -578,9 +630,9 @@ const make = Effect.gen(function* () {
           const answer = isRecord(result.success) ? result.success : {};
           const status = typeof answer.status === "string" ? answer.status : "idle";
           if (handoff !== undefined && awaiting !== undefined) {
-            const seen = typeof answer.runId === "string" ? answer.runId : null;
-            if (seen === null || seen === handoff.passedRunId) {
-              // The continuation is there with nothing running: not started, never finished.
+            const seen = nextHandoffRun(listedRuns(answer), handoff.passedRunId);
+            if (seen === undefined) {
+              // The continuation is there with nothing to follow: not started, never finished.
               if (awaiting !== "run" || row.lastStatus !== "idle")
                 yield* update(rowId, (current) =>
                   current.handoff === undefined
@@ -593,9 +645,9 @@ const make = Effect.gen(function* () {
             }
             // Its run is kept before it is waited on, so the wake's key survives a restart.
             awaitPoll = timings.backoffStartMs;
-            yield* update(rowId, (current) => ({
-              followedRunId: seen,
-              lastStatus: status,
+            const kept = yield* update(rowId, (current) => ({
+              followedRunId: seen.runId,
+              lastStatus: seen.status,
               handoff: {
                 sourceThreadId: handoff.sourceThreadId,
                 epoch: handoff.epoch,
@@ -604,6 +656,8 @@ const make = Effect.gen(function* () {
                   : { passedRunId: current.handoff.passedRunId }),
               },
             }));
+            // A row that cannot be written is asked about again later, not at once.
+            if (kept === undefined) yield* Effect.sleep(Duration.millis(timings.backoffMaxMs));
             continue;
           }
           const runId = typeof answer.runId === "string" ? answer.runId : row.followedRunId;
@@ -615,13 +669,21 @@ const make = Effect.gen(function* () {
             status !== "completed" &&
             status !== "failed"
           ) {
+            const failedRunId = handoff.failedRunId;
+            if (failedRunId !== undefined) {
+              // The fallback after a failed run was only stopped: the failure is the result.
+              yield* update(rowId, () => ({ followedRunId: failedRunId }));
+              if (yield* deliver(row, failedRunId, "failed")) continue;
+              return;
+            }
             // Stopped there, or cut by a restart: like a local worker's, that run
             // reports nothing, and the run that ends the work is still to come.
-            yield* update(rowId, () => ({
+            const kept = yield* update(rowId, () => ({
               followedRunId: null,
               lastStatus: status,
               handoff: { ...handoff, awaiting: "run", passedRunId: runId },
             }));
+            if (kept === undefined) yield* Effect.sleep(Duration.millis(timings.backoffMaxMs));
             continue;
           }
           if (answer.timedOut === true || !isTerminalThreadStatus(status)) {
@@ -638,7 +700,13 @@ const make = Effect.gen(function* () {
             yield* update(rowId, (current) =>
               movedOn(current, runId) || (current.state !== "following" && current.state !== "idle")
                 ? {}
-                : { state: "following", followedRunId: next },
+                : {
+                    state: "following",
+                    followedRunId: next,
+                    ...(current.handoff === undefined || runId === null
+                      ? {}
+                      : { handoff: { ...current.handoff, failedRunId: runId } }),
+                  },
             );
             continue;
           }
@@ -678,7 +746,12 @@ const make = Effect.gen(function* () {
         yield* setReachable(row.machineId, false);
         const current = yield* now;
         failingSince ??= current;
-        if (current - failingSince >= timings.lostContactMs && !row.lostContactNotified) {
+        // A continuation never seen is not a worker lost: its takeover may not have arrived.
+        if (
+          current - failingSince >= timings.lostContactMs &&
+          !row.lostContactNotified &&
+          awaiting !== "continuation"
+        ) {
           yield* notifyLostContact(row, failingSince);
         }
         yield* Effect.sleep(Duration.millis(backoff));

@@ -96,6 +96,8 @@ export const RemoteWorkerRecord = Schema.Struct({
       awaiting: Schema.optionalKey(Schema.Literals(["continuation", "run"])),
       /** A run that was stopped without a result; only a later run reports. */
       passedRunId: Schema.optionalKey(Schema.String),
+      /** A failed run a fallback run followed; reported if that one is only stopped. */
+      failedRunId: Schema.optionalKey(Schema.String),
     }),
   ),
   /** The mode it was started with; rows written before this have none. */

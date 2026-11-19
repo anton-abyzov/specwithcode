@@ -84,7 +84,10 @@ export interface HandoffFollowDependencies {
   readonly self: EnvironmentId;
   readonly store: RemoteWorkerStore.RemoteWorkerStore["Service"];
   readonly follower: Pick<RemoteWorkerFollower.RemoteWorkerFollower["Service"], "follow">;
-  readonly projections: Pick<ProjectionStore.ProjectionStoreV2Shape, "getThreadRecords">;
+  readonly projections: Pick<
+    ProjectionStore.ProjectionStoreV2Shape,
+    "getThreadRecords" | "getThreadShell"
+  >;
   /** This machine's name for `environmentId` in its fleet, when it has one. */
   readonly machineIdOf: (environmentId: EnvironmentId) => Effect.Effect<string | undefined>;
 }
@@ -104,14 +107,25 @@ const revivable = (row: RemoteWorkerStore.RemoteWorkerRecord) =>
 export const make = (dependencies: HandoffFollowDependencies): HandoffFollowShape => {
   const { self, store, follower, projections } = dependencies;
 
-  /** The thread waiting for this worker: the one whose agent sent its first message. */
+  /**
+   * The thread waiting for this worker: the one whose agent sent its first
+   * message. A delegated child is not woken, here as on this machine.
+   */
   const launcherOf = (shell: HandoffFollowInput["shell"]) =>
-    launchedByAgent(shell)
-      ? projections.getThreadRecords(shell.id, ["messages"], { messageRoles: ["user"] }).pipe(
-          Effect.map(({ messages }) => firstMessageSender(messages, shell.id)),
-          Effect.orElseSucceed(() => undefined),
-        )
-      : Effect.succeed(undefined);
+    Effect.gen(function* () {
+      if (!launchedByAgent(shell)) return undefined;
+      const { messages } = yield* projections.getThreadRecords(shell.id, ["messages"], {
+        messageRoles: ["user"],
+      });
+      const sender = firstMessageSender(messages, shell.id);
+      if (sender === undefined) return undefined;
+      const launcher = yield* projections.getThreadShell(sender);
+      return launcher === null ||
+        launcher.deletedAt !== null ||
+        launcher.lineage.relationshipToParent === "subagent"
+        ? undefined
+        : sender;
+    }).pipe(Effect.orElseSucceed(() => undefined));
 
   // Following is best effort: it never fails or delays the handoff itself.
   const quiet =
@@ -166,15 +180,22 @@ export const make = (dependencies: HandoffFollowDependencies): HandoffFollowShap
             },
           };
         }
-        // The destination's own answer wins over the id worked out here, while nothing was seen.
+        // What the destination answered wins over what was worked out here, while nothing
+        // was seen: its own id, or another machine that continued the thread instead.
+        const movedTo = current.environmentId === input.destination ? undefined : machineId;
         if (
           current.handoff?.awaiting === "continuation" &&
           current.state === "following" &&
-          (current.remoteThreadId !== continuation.threadId ||
+          nothingDelivered(current) &&
+          (movedTo !== undefined ||
+            current.remoteThreadId !== continuation.threadId ||
             (continuation.projectId !== null && current.remoteProjectId !== continuation.projectId))
         ) {
           return {
             ...current,
+            ...(movedTo === undefined
+              ? {}
+              : { machineId: movedTo, environmentId: input.destination }),
             remoteThreadId: continuation.threadId,
             remoteProjectId: continuation.projectId ?? current.remoteProjectId,
             updatedAt: now,

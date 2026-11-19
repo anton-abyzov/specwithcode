@@ -524,14 +524,21 @@ describe("a worker handed off to another machine", () => {
       yield* (yield* RemoteWorkerFollower.RemoteWorkerFollower).follow(row.id);
     });
 
+  const recent = (...runs: ReadonlyArray<readonly [string, string]>) => ({
+    result: {
+      thread: { threadId: "handoff:1", pendingRequestCount: 0 },
+      recentRuns: runs.map(([runId, status], index) => ({ runId, ordinal: index + 1, status })),
+    },
+  });
+
   it.live("waits out a thread the other machine does not have yet", () => {
     let polls = 0;
     let created = false;
     const { world, layer } = setup({
-      studio_thread_wait: () => {
+      studio_thread_read: () => {
         polls += 1;
         return created
-          ? finished("b-run-1")
+          ? recent(["b-run-1", "completed"])
           : {
               failure: JSON.stringify({
                 code: "thread_not_found",
@@ -562,11 +569,9 @@ describe("a worker handed off to another machine", () => {
     let polls = 0;
     let started = false;
     const { world, layer } = setup({
-      studio_thread_wait: () => {
+      studio_thread_read: () => {
         polls += 1;
-        return started
-          ? finished("b-run-1")
-          : { result: { threadId: "handoff:1", runId: null, status: "idle", timedOut: false } };
+        return started ? recent(["b-run-1", "running"]) : recent();
       },
     });
     return Effect.gen(function* () {
@@ -587,9 +592,48 @@ describe("a worker handed off to another machine", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("reports the failed run when the fallback after it was only stopped", () => {
+    const { world, layer } = setup({
+      studio_thread_read: () => recent(["b-run-1", "failed"], ["b-run-2", "interrupted"]),
+      studio_thread_wait: (args) => ({
+        result:
+          args.runId === "b-run-1"
+            ? { threadId: "handoff:1", runId: "b-run-1", status: "failed", timedOut: false }
+            : { threadId: "handoff:1", runId: "b-run-2", status: "interrupted", timedOut: false },
+      }),
+    });
+    return Effect.gen(function* () {
+      yield* follow({
+        ...handedOff("run"),
+        followedRunId: "b-run-1",
+        handoff: { sourceThreadId: "thread-1", epoch: 2 },
+      });
+      const [row] = yield* eventually(rows, (current) => current[0]?.state === "idle");
+      expect(row).toMatchObject({ lastStatus: "failed", deliveredRunIds: ["b-run-1"] });
+      expect(world.wakes.map((wake) => wake.commandId)).toEqual([
+        "remote-worker-wake:handoff-follow:1:b-run-1",
+      ]);
+      expect(world.wakes[0]?.text).toContain("finished: failed");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it("picks the run going over a queued message, and nothing from runs that were stopped", () => {
+    const runs = (...statuses: ReadonlyArray<string>) =>
+      statuses.map((status, index) => ({ runId: `r${index + 1}`, ordinal: index + 1, status }));
+    const next = RemoteWorkerFollower.nextHandoffRun;
+    expect(next([], undefined)).toBeUndefined();
+    expect(next(runs("interrupted", "cancelled"), undefined)).toBeUndefined();
+    expect(next(runs("interrupted", "running", "queued"), "r1")?.runId).toBe("r2");
+    // The queued message was cancelled: the run that was going is still the one.
+    expect(next(runs("interrupted", "completed", "cancelled"), "r1")?.runId).toBe("r2");
+    expect(next(runs("completed", "queued", "queued"), undefined)?.runId).toBe("r2");
+    expect(next(runs("completed", "interrupted"), "r2")).toBeUndefined();
+    expect(next(runs("completed", "failed"), undefined)?.runId).toBe("r2");
+  });
+
   it.live("stops once the thread it already saw is gone", () => {
     const { world, layer } = setup({
-      studio_thread_wait: () => ({
+      studio_thread_read: () => ({
         failure: JSON.stringify({ code: "thread_not_found", message: "Thread was deleted." }),
       }),
     });

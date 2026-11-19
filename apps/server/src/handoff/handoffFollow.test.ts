@@ -78,29 +78,35 @@ interface OtherMachine {
   readonly launches: Array<ThreadLaunchService.ThreadLaunchInput>;
   readonly runs: Array<{ readonly id: string; status: string }>;
   unreachable: boolean;
-  /** Waits this machine answered, whatever the answer. */
+  /** Waits and reads this machine was asked for, whatever it answered. */
   waits: number;
-  readonly wait: (args: Record<string, unknown>) => Promise<FakeToolAnswer>;
+  readonly wait: (args: Record<string, unknown>) => FakeToolAnswer;
+  readonly read: (args: Record<string, unknown>) => FakeToolAnswer;
 }
 
 function otherMachine(): OtherMachine {
-  const other: OtherMachine = {
-    launches: [],
-    runs: [],
-    unreachable: false,
-    waits: 0,
-    wait: async (args) => {
-      other.waits += 1;
-      if (other.unreachable) return { raw: new Response("down", { status: 503 }) };
-      const threadId = String(args.threadId);
-      if (!other.launches.some((launch) => launch.threadId === threadId)) {
-        return {
+  /** What both tools answer first: the machine is down, or it has no such thread. */
+  const before = (threadId: string): FakeToolAnswer | undefined => {
+    other.waits += 1;
+    if (other.unreachable) return { raw: new Response("down", { status: 503 }) };
+    return other.launches.some((launch) => launch.threadId === threadId)
+      ? undefined
+      : {
           failure: JSON.stringify({
             code: "thread_not_found",
             message: `Thread ${threadId} was not found.`,
           }),
         };
-      }
+  };
+  const other: OtherMachine = {
+    launches: [],
+    runs: [],
+    unreachable: false,
+    waits: 0,
+    wait: (args) => {
+      const threadId = String(args.threadId);
+      const refused = before(threadId);
+      if (refused !== undefined) return refused;
       const run =
         typeof args.runId === "string"
           ? other.runs.find((candidate) => candidate.id === args.runId)
@@ -111,6 +117,19 @@ function otherMachine(): OtherMachine {
       }
       const open = ["queued", "preparing", "starting", "running", "waiting"].includes(run.status);
       return { result: { threadId, runId: run.id, status: run.status, timedOut: open } };
+    },
+    read: (args) => {
+      const threadId = String(args.threadId);
+      return (
+        before(threadId) ?? {
+          result: {
+            thread: { threadId, pendingRequestCount: 0 },
+            recentRuns: other.runs
+              .map((run, index) => ({ runId: run.id, ordinal: index + 1, status: run.status }))
+              .toReversed(),
+          },
+        }
+      );
     },
   };
   return other;
@@ -137,6 +156,8 @@ const scenario = (world: ReturnType<typeof setup>["world"], other: OtherMachine)
       sequence: 0,
       /** Who sent the worker's first message. */
       startedBy: "agent" as "agent" | "user",
+      /** What the thread that sent it is to its own parent. */
+      launcherIs: "top-level" as "top-level" | "subagent",
     };
     const documents: Record<"source" | "destination", HandoffDocument> = {
       source: EMPTY_HANDOFF_DOCUMENT,
@@ -349,7 +370,21 @@ const scenario = (world: ReturnType<typeof setup>["world"], other: OtherMachine)
           Layer.succeed(HandoffConnectivity, { probe: Effect.succeed("online" as const) }),
           orchestrator,
           Layer.succeed(ProjectionStore.ProjectionStoreV2, {
-            getThreadShell: (id: ThreadId) => Effect.succeed(id === worker ? workerShell() : null),
+            getThreadShell: (id: ThreadId) =>
+              Effect.succeed(
+                id === worker
+                  ? workerShell()
+                  : id === launcher
+                    ? {
+                        id: launcher,
+                        deletedAt: null,
+                        lineage: {
+                          relationshipToParent:
+                            fixture.launcherIs === "subagent" ? "subagent" : null,
+                        },
+                      }
+                    : null,
+              ),
             getThread: () => Effect.succeed({ execution: null }),
             getThreadRecords: () =>
               Effect.succeed({
@@ -407,7 +442,7 @@ const finish = (other: OtherMachine, status = "completed") =>
 
 const world = () => {
   const other = otherMachine();
-  const kit = setup({ studio_thread_wait: other.wait });
+  const kit = setup({ studio_thread_wait: other.wait, studio_thread_read: other.read });
   return { other, ...kit };
 };
 
@@ -444,7 +479,6 @@ describe("a handed-off worker's result", () => {
         expect((yield* handOff).threadId).toBe(moved.threadId);
         yield* moves.tick;
         yield* moves.tick;
-        yield* afterMorePolls(other).pipe(Effect.timeoutOption("200 millis"));
         expect(local.wakes).toHaveLength(1);
         expect(yield* rows).toHaveLength(1);
         expect(documents.source.threads[worker]?.continuedOn?.threadId).toBe(moved.threadId);
@@ -529,7 +563,6 @@ describe("a handed-off worker's result", () => {
         expect(documents.source.threads[worker]?.continuedOn?.threadId).toBe(
           other.launches[0]?.threadId,
         );
-        yield* afterMorePolls(other).pipe(Effect.timeoutOption("200 millis"));
         expect(local.wakes).toHaveLength(1);
         expect(yield* rows).toMatchObject([{ state: "idle", deliveredRunIds: ["there-run-1"] }]);
       }).pipe(Effect.provide(layer));
@@ -614,7 +647,6 @@ describe("a handed-off worker's result", () => {
         other.unreachable = false;
         yield* eventually(rows, (current) => current[0]?.state === "idle");
         yield* moves.tick;
-        yield* afterMorePolls(other).pipe(Effect.timeoutOption("200 millis"));
         expect(local.wakes).toHaveLength(1);
         expect(local.wakes[0]?.text).toContain("finished: completed");
       }).pipe(Effect.provide(layer));
@@ -662,13 +694,62 @@ describe("a handed-off worker's result", () => {
           local.caller[gone] = true;
           yield* finish(other);
           yield* eventually(rows, (current) => current[0]?.state === "disposed");
-          yield* afterMorePolls(other).pipe(Effect.timeoutOption("200 millis"));
           expect(local.wakes).toEqual([]);
         }).pipe(Effect.provide(layer));
       },
       LIVE,
     );
   }
+
+  it.live(
+    "reports the run that was going when a message queued behind it is cancelled",
+    () => {
+      const { other, world: local, layer } = world();
+      return Effect.gen(function* () {
+        yield* allow();
+        const { handOff } = yield* scenario(local, other);
+        yield* handOff;
+        yield* finish(other, "interrupted");
+        yield* eventually(
+          rows,
+          (current) => current[0]?.handoff?.passedRunId === "there-run-1",
+        );
+        // A message starts a run there, and a second message waits behind it.
+        other.runs.push({ id: "there-run-2", status: "running" });
+        other.runs.push({ id: "there-run-3", status: "queued" });
+        yield* eventually(rows, (current) => current[0]?.followedRunId === "there-run-2");
+        const queued = other.runs[2];
+        const going = other.runs[1];
+        if (queued !== undefined) queued.status = "cancelled";
+        yield* afterMorePolls(other);
+        expect(local.wakes).toEqual([]);
+        if (going !== undefined) going.status = "completed";
+        const [row] = yield* eventually(rows, (current) => current[0]?.state === "idle");
+        expect(local.wakes.map((wake) => wake.commandId)).toEqual([
+          `remote-worker-wake:${row?.id}:there-run-2`,
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+    LIVE,
+  );
+
+  it.live(
+    "follows nothing for a worker a delegated child launched",
+    () => {
+      const { other, world: local, layer } = world();
+      return Effect.gen(function* () {
+        yield* allow();
+        const { handOff, fixture } = yield* scenario(local, other);
+        fixture.launcherIs = "subagent";
+        yield* handOff;
+        yield* finish(other);
+        expect(yield* rows).toEqual([]);
+        expect(other.waits).toBe(0);
+        expect(local.wakes).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+    LIVE,
+  );
 
   it.live(
     "follows nothing for a thread no agent's thread launched",
