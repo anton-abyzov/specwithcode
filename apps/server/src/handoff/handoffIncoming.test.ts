@@ -51,6 +51,7 @@ import {
 } from "./handoffState.ts";
 import {
   HANDOFF_APP_VERSION,
+  HANDOFF_CAPABILITIES,
   HANDOFF_PROTOCOL_VERSION,
   type ReplicateMeta,
   type TakeoverRequest,
@@ -555,6 +556,7 @@ const receiving = (
         sourceEnvironmentId: m4,
         protocolVersion: HANDOFF_PROTOCOL_VERSION,
         appVersion: HANDOFF_APP_VERSION,
+        capabilities: HANDOFF_CAPABILITIES,
         threads: [
           {
             sourceThreadId: sourceThread,
@@ -694,7 +696,8 @@ describe("takeover under the source's work grant", () => {
         yield* replicate(peer(), claude);
         launchState.fail = true;
         const refused = yield* takeOver(peer()).pipe(Effect.flip);
-        expect(refused).toMatchObject({ status: 500, code: "failed" });
+        // The launch may have created the thread: in doubt, never a "no" the source releases on.
+        expect(refused).toMatchObject({ status: 503, code: "failed", uncertain: true });
         expect(origins.size).toBe(0);
         // The user continues the same epoch here: the same thread id, under no grant.
         launchState.fail = false;
@@ -941,7 +944,8 @@ describe("takeover and the project's Use worktrees switch", () => {
       yield* replicate(peer(), claude);
       launchState.fail = true;
       const refused = yield* takeOver(peer()).pipe(Effect.flip);
-      expect(refused).toMatchObject({ status: 500, code: "failed" });
+      // The launch may have created the thread: in doubt, never a "no" the source releases on.
+        expect(refused).toMatchObject({ status: 503, code: "failed", uncertain: true });
       expect(git(root, "status", "--porcelain")).toBe("M app.ts");
       launchState.fail = false;
       const response = yield* takeOver(peer());

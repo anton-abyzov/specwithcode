@@ -14,6 +14,7 @@ import {
   EnvironmentId,
   HANDOFF_LEASE_STALE_MS,
   type HandoffCheckpoint,
+  type HandoffContinueHereInput,
   type HandoffRunEnding,
   type ServerSettings as ServerSettingsValue,
   ProjectId,
@@ -42,7 +43,7 @@ import * as HandoffMoves from "./HandoffMoves.ts";
 import { HandoffPeerError, HandoffPeers } from "./handoffPeers.ts";
 import * as HandoffReceiver from "./HandoffReceiver.ts";
 import { PAUSED_OFFLINE_REFUSAL, turnRefusal } from "./HandoffTurnGate.ts";
-import { HANDOFF_PROTOCOL_VERSION } from "./handoffWire.ts";
+import { HANDOFF_CAPABILITIES, HANDOFF_PROTOCOL_VERSION } from "./handoffWire.ts";
 import {
   EMPTY_HANDOFF_DOCUMENT,
   emptyThreadRecord,
@@ -496,6 +497,17 @@ const scenario = (
     };
   });
 
+/**
+ * The rule a copy follows when it continues by itself: a stale lease, and a
+ * source that does not answer. Asked by hand, it asks the machine that runs
+ * the thread instead (`HandoffTransferRunner.test.ts`).
+ */
+const continueAlone = (
+  moves: Effect.Success<typeof HandoffMoves.make>,
+  input: HandoffContinueHereInput,
+  options?: Parameters<Effect.Success<typeof HandoffMoves.make>["continueHereAs"]>[2],
+) => moves.continueHereAs(input, "auto-takeover", options);
+
 const handOff = (moves: Effect.Success<ReturnType<typeof scenario>>["moves"]) =>
   moves.handOff({ threadId, destinationEnvironmentId: minis });
 
@@ -570,7 +582,7 @@ const staleReplicaOnMinis = (
         : Effect.provideService(HandoffConnectivity, { probe: Effect.succeed(connect) }),
     );
     yield* TestClock.setTime(renewedAt + HANDOFF_LEASE_STALE_MS + 1_000);
-    const continueHere = minisMoves.continueHere({
+    const continueHere = continueAlone(minisMoves, {
       sourceEnvironmentId: m4,
       sourceThreadId: threadId,
     });
@@ -806,8 +818,7 @@ describe("handoff between two machines", () => {
         Effect.provide(destinationServices),
       );
       yield* TestClock.setTime(renewedAt + HANDOFF_LEASE_STALE_MS + 1_000);
-      const refused = yield* minisMoves
-        .continueHere({ sourceEnvironmentId: m4, sourceThreadId: threadId })
+      const refused = yield* continueAlone(minisMoves, { sourceEnvironmentId: m4, sourceThreadId: threadId })
         .pipe(Effect.flip);
       expect(refused.code).toBe("invalid");
       expect(refused.message).toContain("Update M4 first.");
@@ -831,6 +842,7 @@ describe("handoff between two machines", () => {
         ...request,
         protocolVersion: HANDOFF_PROTOCOL_VERSION,
         appVersion: "9.9.9",
+        capabilities: HANDOFF_CAPABILITIES,
       });
       expect(current.protocolVersion).toBe(HANDOFF_PROTOCOL_VERSION);
       expect(current.results[0]?.failures.some((entry) => entry.message.includes("Update"))).toBe(
@@ -972,31 +984,36 @@ describe("handoff between two machines", () => {
     }),
   );
 
-  it.effect("keeps a re-sent takeover paused on a fenced refusal and releases it on others", () =>
-    Effect.gen(function* () {
-      const { source, destination, moves, network, destinationRoot } = yield* scenario();
-      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
-      network.dropTakeoverRequest = true;
-      yield* handOff(moves).pipe(Effect.flip);
-      expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
-      network.dropTakeoverRequest = false;
+  it.effect.each(["fenced", "busy"] as const)(
+    "releases a re-sent takeover only on a definite answer (%s)",
+    (refusal) =>
+      Effect.gen(function* () {
+        const { source, destination, moves, network, destinationRoot } = yield* scenario();
+        NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+        network.dropTakeoverRequest = true;
+        yield* handOff(moves).pipe(Effect.flip);
+        expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
+        network.dropTakeoverRequest = false;
 
-      // A newer epoch on the destination: the thread stays paused until a heartbeat settles it.
-      network.refuseTakeover = "fenced";
-      yield* moves.tick;
-      expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
-      expect(source.document.threads[threadId]?.pendingTakeover).not.toBeNull();
-      expect(destination.launches).toHaveLength(0);
-
-      // A definite refusal for any other reason gives the thread back to the source.
-      network.refuseTakeover = "busy";
-      yield* moves.tick;
-      const record = source.document.threads[threadId];
-      expect(record?.lease?.state).toBe("active");
-      expect(record?.pendingTakeover).toBeNull();
-      expect(record?.continuedOn).toBeNull();
-      expect(destination.launches).toHaveLength(0);
-    }),
+        network.refuseTakeover = refusal;
+        if (refusal === "fenced") {
+          // A newer epoch on the destination, which cannot be asked what became of this
+          // operation: the thread stays paused.
+          network.down = true;
+          yield* moves.tick;
+          expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
+          expect(destination.launches).toHaveLength(0);
+          network.down = false;
+        }
+        // "Not accepted", from the destination itself, gives the thread back; the epoch
+        // that was sent is used up.
+        yield* moves.tick;
+        const record = source.document.threads[threadId];
+        expect(record?.lease).toMatchObject({ state: "active", epoch: 2 });
+        expect(record?.pendingTakeover).toBeNull();
+        expect(record?.continuedOn).toBeNull();
+        expect(destination.launches).toHaveLength(0);
+      }),
   );
 
   it.effect("hands running threads off when the machine goes to sleep and resumes them", () =>
@@ -1067,14 +1084,13 @@ describe("handoff between two machines", () => {
           Effect.provide(destinationServices),
         );
         yield* TestClock.setTime(renewedAt + 30_000);
-        const early = yield* minisMoves
-          .continueHere({ sourceEnvironmentId: m4, sourceThreadId: threadId })
+        const early = yield* continueAlone(minisMoves, { sourceEnvironmentId: m4, sourceThreadId: threadId })
           .pipe(Effect.flip);
         expect(early.code).toBe("busy");
         expect(destination.launches).toHaveLength(0);
 
         yield* TestClock.setTime(renewedAt + HANDOFF_LEASE_STALE_MS + 1_000);
-        const continued = yield* minisMoves.continueHere({
+        const continued = yield* continueAlone(minisMoves, {
           sourceEnvironmentId: m4,
           sourceThreadId: threadId,
         });
@@ -1091,7 +1107,7 @@ describe("handoff between two machines", () => {
           }).kind,
         ).toBe("reuse");
         // A repeat is the same continuation.
-        const again = yield* minisMoves.continueHere({
+        const again = yield* continueAlone(minisMoves, {
           sourceEnvironmentId: m4,
           sourceThreadId: threadId,
         });
@@ -1168,8 +1184,7 @@ describe("handoff between two machines", () => {
     ({ connect, source, refusal }) =>
       Effect.gen(function* () {
         const { minisMoves, destination } = yield* staleReplicaOnMinis(source, { connect });
-        const refused = yield* minisMoves
-          .continueHere({ sourceEnvironmentId: m4, sourceThreadId: threadId }, { byAgent: true })
+        const refused = yield* continueAlone(minisMoves, { sourceEnvironmentId: m4, sourceThreadId: threadId }, { byAgent: true })
           .pipe(Effect.flip);
         expect(refused.code).toBe("busy");
         expect(refused.message).toContain(refusal);
@@ -1183,7 +1198,7 @@ describe("handoff between two machines", () => {
       const { minisMoves, destination } = yield* staleReplicaOnMinis("silent", {
         connect: "online",
       });
-      yield* minisMoves.continueHere(
+      yield* continueAlone(minisMoves, 
         { sourceEnvironmentId: m4, sourceThreadId: threadId },
         { byAgent: true },
       );
@@ -1236,8 +1251,7 @@ describe("handoff between two machines", () => {
           },
         },
       };
-      const attempt = minisMoves
-        .continueHere({ sourceEnvironmentId: m4, sourceThreadId: threadId })
+      const attempt = continueAlone(minisMoves, { sourceEnvironmentId: m4, sourceThreadId: threadId })
         .pipe(
           Effect.flip,
           Effect.map((error) => error.message),
@@ -1269,7 +1283,7 @@ describe("handoff between two machines", () => {
       const { destination, destinationReceiver, destinationServices, minisMoves } =
         yield* staleReplicaOnMinis("silent");
       const attempt = (moves: typeof minisMoves) =>
-        moves.continueHere({ sourceEnvironmentId: m4, sourceThreadId: threadId });
+        continueAlone(moves, { sourceEnvironmentId: m4, sourceThreadId: threadId });
       // A server that just started.
       const started = yield* HandoffMoves.make.pipe(
         Effect.provideService(HandoffReceiver.HandoffReceiver, destinationReceiver),
@@ -1559,36 +1573,37 @@ describe("handoff between two machines", () => {
     }),
   );
 
-  it.effect(
-    "interrupts again after the takeover when the first interrupt did not stop the turn",
-    () =>
-      Effect.gen(function* () {
-        const { source, destination, moves, fixture, destinationRoot } = yield* scenario();
-        NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
-        fixture.activeRunId = "run-1";
-        fixture.ignoreInterrupt = true;
-        let done = false;
-        const fiber = yield* handOff(moves).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              done = true;
-            }),
-          ),
-          Effect.forkChild,
-        );
-        // The bounded wait for the turn to end runs out. Git work in between is real I/O,
-        // so the test clock moves in small steps while the handoff runs.
-        for (let step = 0; step < 2_000 && !done; step += 1) {
-          yield* TestClock.withLive(Effect.sleep("5 millis"));
-          yield* TestClock.adjust("1 second");
-        }
-        const result = yield* Fiber.join(fiber);
-        expect(result.threadId).toBe(destination.launches[0]?.threadId);
-        const interrupts = source.dispatched.filter((command) => command.type === "run.interrupt");
-        expect(interrupts).toHaveLength(2);
-        expect(interrupts[1]).toMatchObject({ runId: "run-1", cause: "agent" });
-        expect(String(interrupts[1]?.commandId)).toContain("handoff-fenced-interrupt:run-1");
-      }),
+  it.effect("never hands over a thread whose turn does not stop", () =>
+    Effect.gen(function* () {
+      const { source, destination, moves, fixture, destinationRoot } = yield* scenario();
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      fixture.activeRunId = "run-1";
+      fixture.ignoreInterrupt = true;
+      let done = false;
+      const fiber = yield* handOff(moves).pipe(
+        Effect.result,
+        Effect.ensuring(
+          Effect.sync(() => {
+            done = true;
+          }),
+        ),
+        Effect.forkChild,
+      );
+      // The bounded wait for the turn to end runs out. Git work in between is real I/O,
+      // so the test clock moves in small steps while the handoff runs.
+      for (let step = 0; step < 2_000 && !done; step += 1) {
+        yield* TestClock.withLive(Effect.sleep("5 millis"));
+        yield* TestClock.adjust("1 second");
+      }
+      const result = yield* Fiber.join(fiber);
+      // The destination would start the next turn while this one still runs.
+      expect(result._tag).toBe("Failure");
+      expect(destination.launches).toHaveLength(0);
+      expect(source.document.threads[threadId]?.lease).toMatchObject({ state: "active", epoch: 1 });
+      expect(source.dispatched.filter((command) => command.type === "run.interrupt")).toHaveLength(
+        1,
+      );
+    }),
   );
 
   it.effect("backs off a failing replication instead of retrying it on every tick", () =>

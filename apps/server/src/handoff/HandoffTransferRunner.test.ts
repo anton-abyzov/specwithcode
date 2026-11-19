@@ -801,7 +801,9 @@ describe("a hold from before transfer records", () => {
     Effect.gen(function* () {
       const rig = yield* makeRig(temporary, three);
       const [a, b, c] = rig.machines as [RigMachine, RigMachine, RigMachine];
-      const sequence = yield* legacyHold(rig, a, [b, c]);
+      yield* legacyHold(rig, a, [b, c]);
+      // The checkpoint the takeover named is the one that machine holds.
+      const sequence = findIncoming(b.document, a.environmentId, t1)!.checkpoint.sequence;
       const record = a.document.threads[t1]!;
       a.document = {
         ...a.document,
