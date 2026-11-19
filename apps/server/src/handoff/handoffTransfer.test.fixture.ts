@@ -43,7 +43,12 @@ import * as ServerSettings from "../serverSettings.ts";
 import { writeCheckpoint } from "./checkpointGit.ts";
 import { HandoffConnectivity } from "./handoffConnectivity.ts";
 import { HandoffMode } from "./HandoffMode.ts";
-import { type FolderWorkReceiver, makeFolderWorkReceiver } from "./HandoffBatch.ts";
+import {
+  type FolderWorkReceiver,
+  HandoffBatchAdmission,
+  HandoffFolderWork,
+  makeFolderWorkReceiver,
+} from "./HandoffBatch.ts";
 import { unknownCheckPath } from "./handoffPlan.ts";
 import { unknownFolderWorkPath } from "./handoffWire.ts";
 import * as HandoffMoves from "./HandoffMoves.ts";
@@ -173,6 +178,14 @@ export interface RigMachine {
    * releases: null answers as the current build does.
    */
   capabilities: ReadonlyArray<string> | null;
+  /** The project's folder when it is not the repository's top level; null: the top level. */
+  projectRoot: string | null;
+  /** How many of the next project lookups fail, as an unreadable store does. */
+  projectLookupFails: number;
+  /** This machine's own folder work, read at the next start; null: it cannot read any. */
+  folderSource: HandoffFolderWork["Service"] | null;
+  /** The usage-limit rule's answer for an automatic start, read at the next start; null: no rule is readable. */
+  admission: HandoffBatchAdmission["Service"] | null;
   moves: Effect.Success<typeof HandoffMoves.make>;
 }
 
@@ -274,6 +287,10 @@ export const makeRig = (
         receiver: undefined as never,
         folderWork: undefined as never,
         capabilities: entry.capabilities ?? null,
+        projectRoot: null,
+        projectLookupFails: 0,
+        folderSource: null,
+        admission: { automatic: () => Effect.succeed(null) },
         moves: undefined as never,
       };
     });
@@ -351,7 +368,7 @@ export const makeRig = (
     const projectOf = (target: RigMachine) => ({
       id: target.projectId,
       title: "App",
-      workspaceRoot: target.root,
+      workspaceRoot: target.projectRoot ?? target.root,
       workspaceSettings: { logicalProject: { members } },
     });
 
@@ -391,9 +408,15 @@ export const makeRig = (
         } as never),
         Layer.succeed(ProjectService.ProjectService, {
           getById: (id: ProjectId) =>
-            Effect.succeed(
-              id === target.projectId ? Option.some(projectOf(target)) : Option.none(),
-            ),
+            Effect.suspend(() => {
+              if (target.projectLookupFails > 0) {
+                target.projectLookupFails -= 1;
+                return Effect.fail(new Error("The projects could not be read.") as never);
+              }
+              return Effect.succeed(
+                id === target.projectId ? Option.some(projectOf(target)) : Option.none(),
+              );
+            }),
           snapshot: Effect.sync(() => ({ projects: target.linked() ? [projectOf(target)] : [] })),
         } as never),
         Layer.succeed(ProviderRegistry.ProviderRegistry, {
@@ -675,6 +698,12 @@ export const makeRig = (
           Layer.succeed(HandoffTransferStore, store),
           Layer.succeed(HandoffPeers, peersFor(machine)),
           Layer.succeed(HandoffConnectivity, { probe: Effect.succeed("online" as const) }),
+          machine.folderSource === null
+            ? Layer.empty
+            : Layer.succeed(HandoffFolderWork, machine.folderSource),
+          machine.admission === null
+            ? Layer.empty
+            : Layer.succeed(HandoffBatchAdmission, machine.admission),
         );
         const receiver = yield* HandoffReceiver.make.pipe(Effect.provide(services));
         const moves = yield* HandoffMoves.make.pipe(

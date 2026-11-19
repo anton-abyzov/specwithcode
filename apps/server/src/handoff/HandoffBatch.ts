@@ -414,6 +414,23 @@ export class HandoffFolderWork extends Context.Service<
   }
 >()("specweave-studio/handoff/HandoffBatch/HandoffFolderWork") {}
 
+/**
+ * The usage-limit rule's own answer for a thread an automatic start names:
+ * why the thread stays, or null when the rule takes it now. The server reads
+ * it; a window's list of threads is a request, never the decision.
+ */
+export class HandoffBatchAdmission extends Context.Service<
+  HandoffBatchAdmission,
+  {
+    readonly automatic: (input: {
+      readonly threadId: ThreadId;
+      readonly projectId: ProjectId;
+      readonly destination: EnvironmentId;
+      readonly trigger: HandoffTransferTrigger;
+    }) => Effect.Effect<string | null>;
+  }
+>()("specweave-studio/handoff/HandoffBatch/HandoffBatchAdmission") {}
+
 /** This server's folder work, read and sent by Sync's own extras. */
 export const folderWorkLayer = Layer.effect(
   HandoffFolderWork,
