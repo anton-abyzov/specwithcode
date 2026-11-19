@@ -3193,8 +3193,6 @@ export const ja: PhraseCatalog = {
   "Jump to latest": "最新へ移動",
   "Jump to latest{value}": "最新へ移動{value}",
   New: "新着",
-  "This server can't move threads to another machine yet.":
-    "このサーバーはまだスレッドを別のマシンに移動できません。",
   "No other machine can take this thread now.": "現在このスレッドを引き継げるマシンはありません。",
   "Link increment": "インクリメントをリンク",
   "Choose the SpecWeave increment this thread's plan card follows. SpecWithCode reads its spec and ledger and never writes to them.":
@@ -5963,4 +5961,81 @@ export const ja: PhraseCatalog = {
   "Checked at {time}.": "{time} に確認しました。",
   "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.":
     "このフォルダーは 1 つのターミナルセッションに属し、閉じると消えます。次回の確認でアプリがコマンドを探し直します。",
+  Pending: "保留中",
+  "Held on {machine}": "{machine} で保留中",
+  "Waiting for confirmation": "確認待ち",
+  Resumed: "再開済み",
+  "Resumed on {machine}": "{machine} で再開",
+  "Ready on {machine}": "{machine} で準備完了",
+  Stayed: "残留",
+  "Not held yet": "まだ保留されていません",
+  "Paused on {machine}, not sent yet": "{machine} で一時停止中、まだ送信されていません",
+  "{machine} has not answered yet": "{machine} からまだ応答がありません",
+  "Sent at {time}. {machine} has not answered yet":
+    "{time} に送信。{machine} からまだ応答がありません",
+  "Its interrupted run continues there": "中断された実行はそこで続きます",
+  "Idle. Installed on {machine}; nothing started":
+    "アイドル。{machine} に配置済み。何も開始していません",
+  "It stays on {machine}": "{machine} に残ります",
+  "{target} did not accept it. It runs on {source} again":
+    "{target} が受け入れませんでした。再び {source} で実行されます",
+  "Same-account and unknown-usage machines are never chosen automatically, and no other track is used.":
+    "同じアカウントのマシンや使用量が不明なマシンは自動では選ばれず、他のトラックも使われません。",
+  "{track} track is out on every machine": "{track} トラックはすべてのマシンで使い切られました",
+  "1 thread stays on {machine}. Nothing moves.":
+    "1 件のスレッドが {machine} に残ります。何も移動しません。",
+  "{n} threads stay on {machine}. Nothing moves.":
+    "{n} 件のスレッドが {machine} に残ります。何も移動しません。",
+  "Next reset: {machine} at {time}": "次のリセット: {machine}、{time}",
+  "Checked again then.": "その時点で再確認します。",
+  "Reset unknown": "リセット時刻は不明",
+  "No eligible sign-in reports when it resets.":
+    "対象となるサインインのいずれも、リセット時刻を報告していません。",
+  "Threads finished": "完了したスレッド",
+  Wait: "待機",
+  "Open on {machine}": "{machine} で開く",
+  "Resume here": "ここで再開",
+  "It is being sent now, so it was not released. Nothing changed.":
+    "現在送信中のため、解放されませんでした。何も変わっていません。",
+  "Hand off progress": "引き継ぎの進行状況",
+  "This machine keeps no record of that hand off any more.":
+    "このマシンには、その引き継ぎの記録がもう残っていません。",
+  "All {n} on {machine}": "{n} 件すべてが {machine} に",
+  "{f} of {n} finished": "{n} 件中 {f} 件完了",
+  "{f} of {n} finished: {counts}": "{n} 件中 {f} 件完了: {counts}",
+  "{track} track out of tokens on {machine}": "{machine} で {track} トラックのトークンが尽きました",
+  "Out of tokens on {machine}": "{machine} でトークンが尽きました",
+  "You asked to hand off": "引き継ぎを依頼しました",
+  "You asked to continue on {machine}": "{machine} での続行を依頼しました",
+  "You asked to hand off to {machine}": "{machine} への引き継ぎを依頼しました",
+  "Hand off “{project}”": "「{project}」を引き継ぐ",
+  "Hand off “{project}” to {machine}": "「{project}」を {machine} に引き継ぐ",
+  "Waiting is not failed. {source} runs none of these threads while {target} has not answered.":
+    "待機は失敗ではありません。{target} が応答するまで、{source} はこれらのスレッドを実行しません。",
+  "Ready means installed idle: nothing starts on {machine} until you write.":
+    "準備完了とはアイドル状態で配置済みという意味です。書き込むまで {machine} では何も始まりません。",
+  "{n} resumed": "再開 {n} 件",
+  "{n} ready": "準備完了 {n} 件",
+  "{n} stayed": "残留 {n} 件",
+  "{n} failed": "失敗 {n} 件",
+  "Hand off work from {machine}": "{machine} の作業を引き継ぐ",
+  "Scope: {project}": "範囲: {project}",
+  "Scope: every project on {machine}": "範囲: {machine} 上のすべてのプロジェクト",
+  "Handing off…": "引き継いでいます…",
+  "Nothing can go": "移せるものがありません",
+  "Hand off to {machine}": "{machine} に引き継ぐ",
+  "Hand off": "引き継ぐ",
+  "Tick what goes. It continues on the machine you pick. Anything that cannot go stays here, untouched, with its reason.":
+    "移すものにチェックを入れてください。選んだマシンで続行されます。移せないものは理由とともに、そのままここに残ります。",
+  "Hand off to": "引き継ぎ先",
+  "Running ({n})": "実行中 ({n})",
+  "Nothing unfinished in {project} on {machine}.":
+    "{machine} の {project} に未完了のものはありません。",
+  "Nothing unfinished here.": "ここに未完了のものはありません。",
+  "Running threads": "実行中のスレッド",
+  Goes: "移動",
+  "{machine} finishes this hand off by itself. You can close this.":
+    "{machine} がこの引き継ぎを自分で完了します。これは閉じてかまいません。",
+  "This machine can't hand threads off yet.": "このマシンはまだスレッドを引き継げません。",
+  "Show hand off progress": "引き継ぎの進行状況を表示",
 };

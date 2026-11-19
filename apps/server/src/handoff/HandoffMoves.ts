@@ -1019,6 +1019,13 @@ export const make = Effect.gen(function* () {
     return yield* handoff.snapshot;
   });
 
+  const resumeThread = (threadId: ThreadId) =>
+    transfers.resumeHere(threadId).pipe(Effect.andThen(handoff.snapshot));
+
+  const transferView = Effect.map(transferStore.read, (document) =>
+    HandoffTransferStore.sourceTransferView(document, self),
+  );
+
   const autoContinue = Drain.makeAutoContinueLoops({
     self,
     document: handoff.document,
@@ -1249,6 +1256,8 @@ export const make = Effect.gen(function* () {
     handOffMachine,
     continueHere,
     resumeFenced,
+    resumeThread,
+    transfers: transferView,
     preflight,
     heartbeat,
     replicate,

@@ -3163,8 +3163,6 @@ export const ko: PhraseCatalog = {
   "Jump to latest": "최신으로 이동",
   "Jump to latest{value}": "최신으로 이동{value}",
   New: "새 항목",
-  "This server can't move threads to another machine yet.":
-    "이 서버는 아직 스레드를 다른 컴퓨터로 옮길 수 없습니다.",
   "No other machine can take this thread now.":
     "지금은 이 스레드를 넘겨받을 수 있는 다른 컴퓨터가 없습니다.",
   "Link increment": "인크리먼트 연결",
@@ -5890,4 +5888,80 @@ export const ko: PhraseCatalog = {
   "Checked at {time}.": "{time}에 확인했습니다.",
   "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.":
     "이 폴더는 하나의 터미널 세션에 속하며 세션이 닫히면 사라집니다. 다음 확인 때 앱이 명령을 다시 찾습니다.",
+  Pending: "대기 중",
+  "Held on {machine}": "{machine}에서 보류됨",
+  "Waiting for confirmation": "확인 대기 중",
+  Resumed: "재개됨",
+  "Resumed on {machine}": "{machine}에서 재개됨",
+  "Ready on {machine}": "{machine}에서 준비됨",
+  Stayed: "남음",
+  "Not held yet": "아직 보류되지 않음",
+  "Paused on {machine}, not sent yet": "{machine}에서 일시 중지됨, 아직 보내지 않음",
+  "{machine} has not answered yet": "{machine}이(가) 아직 응답하지 않았습니다",
+  "Sent at {time}. {machine} has not answered yet":
+    "{time}에 보냄. {machine}이(가) 아직 응답하지 않았습니다",
+  "Its interrupted run continues there": "중단된 실행이 거기서 계속됩니다",
+  "Idle. Installed on {machine}; nothing started": "유휴 상태. {machine}에 설치됨, 시작된 것 없음",
+  "It stays on {machine}": "{machine}에 남습니다",
+  "{target} did not accept it. It runs on {source} again":
+    "{target}이(가) 받지 않았습니다. 다시 {source}에서 실행됩니다",
+  "Same-account and unknown-usage machines are never chosen automatically, and no other track is used.":
+    "같은 계정이거나 사용량을 알 수 없는 컴퓨터는 자동으로 선택되지 않으며, 다른 트랙도 사용하지 않습니다.",
+  "{track} track is out on every machine": "{track} 트랙이 모든 컴퓨터에서 소진되었습니다",
+  "1 thread stays on {machine}. Nothing moves.":
+    "스레드 1개가 {machine}에 남습니다. 아무것도 이동하지 않습니다.",
+  "{n} threads stay on {machine}. Nothing moves.":
+    "스레드 {n}개가 {machine}에 남습니다. 아무것도 이동하지 않습니다.",
+  "Next reset: {machine} at {time}": "다음 초기화: {machine}, {time}",
+  "Checked again then.": "그때 다시 확인합니다.",
+  "Reset unknown": "초기화 시점 알 수 없음",
+  "No eligible sign-in reports when it resets.":
+    "조건에 맞는 로그인 중 초기화 시점을 알려 주는 것이 없습니다.",
+  "Threads finished": "완료된 스레드",
+  Wait: "대기",
+  "Open on {machine}": "{machine}에서 열기",
+  "Resume here": "여기서 재개",
+  "It is being sent now, so it was not released. Nothing changed.":
+    "지금 보내는 중이라 해제되지 않았습니다. 변경된 것은 없습니다.",
+  "Hand off progress": "넘기기 진행 상황",
+  "This machine keeps no record of that hand off any more.":
+    "이 컴퓨터에는 해당 넘기기 기록이 더 이상 없습니다.",
+  "All {n} on {machine}": "{n}개 모두 {machine}에",
+  "{f} of {n} finished": "{n}개 중 {f}개 완료",
+  "{f} of {n} finished: {counts}": "{n}개 중 {f}개 완료: {counts}",
+  "{track} track out of tokens on {machine}": "{machine}에서 {track} 트랙의 토큰이 소진됨",
+  "Out of tokens on {machine}": "{machine}에서 토큰이 소진됨",
+  "You asked to hand off": "넘기기를 요청했습니다",
+  "You asked to continue on {machine}": "{machine}에서 계속하도록 요청했습니다",
+  "You asked to hand off to {machine}": "{machine}(으)로 넘기도록 요청했습니다",
+  "Hand off “{project}”": "“{project}” 넘기기",
+  "Hand off “{project}” to {machine}": "“{project}”을(를) {machine}(으)로 넘기기",
+  "Waiting is not failed. {source} runs none of these threads while {target} has not answered.":
+    "대기는 실패가 아닙니다. {target}이(가) 응답하기 전까지 {source}은(는) 이 스레드들을 실행하지 않습니다.",
+  "Ready means installed idle: nothing starts on {machine} until you write.":
+    "준비됨은 유휴 상태로 설치되었다는 뜻입니다. 메시지를 쓰기 전까지 {machine}에서는 아무것도 시작되지 않습니다.",
+  "{n} resumed": "재개 {n}개",
+  "{n} ready": "준비 {n}개",
+  "{n} stayed": "남음 {n}개",
+  "{n} failed": "실패 {n}개",
+  "Hand off work from {machine}": "{machine}의 작업 넘기기",
+  "Scope: {project}": "범위: {project}",
+  "Scope: every project on {machine}": "범위: {machine}의 모든 프로젝트",
+  "Handing off…": "넘기는 중…",
+  "Nothing can go": "보낼 수 있는 것이 없습니다",
+  "Hand off to {machine}": "{machine}(으)로 넘기기",
+  "Hand off": "넘기기",
+  "Tick what goes. It continues on the machine you pick. Anything that cannot go stays here, untouched, with its reason.":
+    "보낼 항목을 선택하세요. 고른 컴퓨터에서 계속됩니다. 보낼 수 없는 항목은 이유와 함께 그대로 여기에 남습니다.",
+  "Hand off to": "넘길 대상",
+  "Running ({n})": "실행 중 ({n})",
+  "Nothing unfinished in {project} on {machine}.":
+    "{machine}의 {project}에 끝나지 않은 작업이 없습니다.",
+  "Nothing unfinished here.": "여기에 끝나지 않은 작업이 없습니다.",
+  "Running threads": "실행 중인 스레드",
+  Goes: "이동",
+  "{machine} finishes this hand off by itself. You can close this.":
+    "{machine}이(가) 이 넘기기를 스스로 마칩니다. 이 창은 닫아도 됩니다.",
+  "This machine can't hand threads off yet.": "이 컴퓨터는 아직 스레드를 넘길 수 없습니다.",
+  "Show hand off progress": "넘기기 진행 상황 보기",
 };

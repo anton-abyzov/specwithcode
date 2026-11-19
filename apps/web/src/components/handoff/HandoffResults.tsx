@@ -129,15 +129,57 @@ export function preflightBlockedHere(preflight: PreflightView): boolean {
 }
 
 const VERSION_FAILURE = /^(.+?) runs SpecWithCode .* Update (.+) first\.$/s;
+// A machine from before transfer records: "Needs update: Desk runs a SpecWithCode from before
+// handoff transfer records[…]. Update SpecWithCode on Desk first." A destination that relays
+// it about the source puts its own name and a colon in front.
+const NEEDS_UPDATE = /(?:^|: )Needs update: (.+?) runs a SpecWithCode from before /s;
+
+/**
+ * The machine a version check says keeps no transfer records, or null. Such a
+ * machine is never a destination: nothing falls back to the older exchange.
+ */
+export function needsUpdateMachine(results: readonly HandoffPreflightResult[]): string | null {
+  for (const result of results)
+    for (const failure of result.failures) {
+      if (failure.check !== "version") continue;
+      const match = NEEDS_UPDATE.exec(failure.message);
+      if (match) return match[1]!;
+    }
+  return null;
+}
+
+/**
+ * True when the machine without transfer records is the destination. A
+ * destination that finds the source without them names "The source machine".
+ */
+export function destinationNeedsUpdate(results: readonly HandoffPreflightResult[]): boolean {
+  const named = needsUpdateMachine(results);
+  return named !== null && named !== "The source machine";
+}
+
+/** The destinations with those machines shown as "Needs update" and not selectable. */
+export function destinationsNeedingUpdate(
+  destinations: readonly HandoffDestination[],
+  needsUpdate: ReadonlySet<EnvironmentId>,
+): HandoffDestination[] {
+  return destinations.map((destination) =>
+    needsUpdate.has(destination.environmentId) && destination.state === "reachable"
+      ? { ...destination, state: "offline", reason: "Needs update" }
+      : destination,
+  );
+}
 
 /**
  * True when a version check says to update the destination first. The
  * destination words it "<destination> runs SpecWithCode … Update <machine>
  * first.", so the machine to update is the destination when both names match.
+ * A check that names a machine from before transfer records names the
+ * destination unless the destination relayed it about the source.
  */
 export function versionFailureNamesDestination(
   results: readonly HandoffPreflightResult[],
 ): boolean {
+  if (destinationNeedsUpdate(results)) return true;
   return results.some((result) =>
     result.failures.some((failure) => {
       if (failure.check !== "version") return false;
@@ -234,7 +276,7 @@ function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-const OUTCOME_TEXT = { moved: "Moved", stayed: "Stayed", skipped: "Skipped" } as const;
+const OUTCOME_TEXT = { moved: "Handed off", stayed: "Stayed", skipped: "Skipped" } as const;
 
 /** One line per thread: moved (with a link), stayed with the exact reason, or skipped. */
 export function HandoffMachineResults(props: {
@@ -244,11 +286,7 @@ export function HandoffMachineResults(props: {
 }) {
   const { run } = props;
   if (run.results.length === 0)
-    return (
-      <p className="text-sm text-muted-foreground">
-        Nothing was running here that's set to keep ready to move.
-      </p>
-    );
+    return <p className="text-sm text-muted-foreground">Nothing unfinished here.</p>;
   return (
     <ul className="flex flex-col gap-2" aria-label="Results">
       {run.results.map((result) => (

@@ -3210,8 +3210,6 @@ export const es: PhraseCatalog = {
   "Jump to latest": "Ir a lo último",
   "Jump to latest{value}": "Ir a lo último{value}",
   New: "Nuevo",
-  "This server can't move threads to another machine yet.":
-    "Este servidor aún no puede mover hilos a otro equipo.",
   "No other machine can take this thread now.": "Ningún otro equipo puede tomar este hilo ahora.",
   "Link increment": "Vincular incremento",
   "Choose the SpecWeave increment this thread's plan card follows. SpecWithCode reads its spec and ledger and never writes to them.":
@@ -5987,4 +5985,79 @@ export const es: PhraseCatalog = {
   "Checked at {time}.": "Comprobado a las {time}.",
   "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.":
     "Esta carpeta pertenece a una sesión de terminal y desaparece al cerrarla. La app vuelve a buscar el comando en la próxima comprobación.",
+  Pending: "Pendiente",
+  "Held on {machine}": "Retenido en {machine}",
+  "Waiting for confirmation": "Esperando confirmación",
+  Resumed: "Reanudado",
+  "Resumed on {machine}": "Reanudado en {machine}",
+  "Ready on {machine}": "Listo en {machine}",
+  Stayed: "Se quedó",
+  "Not held yet": "Aún no retenido",
+  "Paused on {machine}, not sent yet": "En pausa en {machine}, aún no enviado",
+  "{machine} has not answered yet": "{machine} aún no ha respondido",
+  "Sent at {time}. {machine} has not answered yet":
+    "Enviado a las {time}. {machine} aún no ha respondido",
+  "Its interrupted run continues there": "Su ejecución interrumpida continúa allí",
+  "Idle. Installed on {machine}; nothing started":
+    "Inactivo. Instalado en {machine}; no se inició nada",
+  "It stays on {machine}": "Se queda en {machine}",
+  "{target} did not accept it. It runs on {source} again":
+    "{target} no lo aceptó. Vuelve a ejecutarse en {source}",
+  "Same-account and unknown-usage machines are never chosen automatically, and no other track is used.":
+    "Las máquinas con la misma cuenta o con uso desconocido nunca se eligen automáticamente, y no se usa ninguna otra pista.",
+  "{track} track is out on every machine": "La pista {track} está agotada en todas las máquinas",
+  "1 thread stays on {machine}. Nothing moves.": "1 hilo se queda en {machine}. No se mueve nada.",
+  "{n} threads stay on {machine}. Nothing moves.":
+    "{n} hilos se quedan en {machine}. No se mueve nada.",
+  "Next reset: {machine} at {time}": "Próximo reinicio: {machine} a las {time}",
+  "Checked again then.": "Se vuelve a comprobar entonces.",
+  "Reset unknown": "Reinicio desconocido",
+  "No eligible sign-in reports when it resets.":
+    "Ningún inicio de sesión apto indica cuándo se reinicia.",
+  "Threads finished": "Hilos terminados",
+  Wait: "Esperar",
+  "Open on {machine}": "Abrir en {machine}",
+  "Resume here": "Reanudar aquí",
+  "It is being sent now, so it was not released. Nothing changed.":
+    "Se está enviando ahora, así que no se liberó. No cambió nada.",
+  "Hand off progress": "Progreso del traspaso",
+  "This machine keeps no record of that hand off any more.":
+    "Esta máquina ya no conserva ningún registro de ese traspaso.",
+  "All {n} on {machine}": "Los {n} en {machine}",
+  "{f} of {n} finished": "{f} de {n} terminados",
+  "{f} of {n} finished: {counts}": "{f} de {n} terminados: {counts}",
+  "{track} track out of tokens on {machine}": "La pista {track} se quedó sin tokens en {machine}",
+  "Out of tokens on {machine}": "Sin tokens en {machine}",
+  "You asked to hand off": "Pediste el traspaso",
+  "You asked to continue on {machine}": "Pediste continuar en {machine}",
+  "You asked to hand off to {machine}": "Pediste el traspaso a {machine}",
+  "Hand off “{project}”": "Traspasar «{project}»",
+  "Hand off “{project}” to {machine}": "Traspasar «{project}» a {machine}",
+  "Waiting is not failed. {source} runs none of these threads while {target} has not answered.":
+    "Esperar no es fallar. {source} no ejecuta ninguno de estos hilos mientras {target} no haya respondido.",
+  "Ready means installed idle: nothing starts on {machine} until you write.":
+    "Listo significa instalado e inactivo: nada se inicia en {machine} hasta que escribas.",
+  "{n} resumed": "{n} reanudados",
+  "{n} ready": "{n} listos",
+  "{n} stayed": "{n} se quedaron",
+  "{n} failed": "{n} fallidos",
+  "Hand off work from {machine}": "Traspasar trabajo desde {machine}",
+  "Scope: {project}": "Alcance: {project}",
+  "Scope: every project on {machine}": "Alcance: todos los proyectos de {machine}",
+  "Handing off…": "Traspasando…",
+  "Nothing can go": "Nada puede irse",
+  "Hand off to {machine}": "Traspasar a {machine}",
+  "Hand off": "Traspasar",
+  "Tick what goes. It continues on the machine you pick. Anything that cannot go stays here, untouched, with its reason.":
+    "Marca lo que se va. Continúa en la máquina que elijas. Lo que no puede irse se queda aquí, intacto, con su motivo.",
+  "Hand off to": "Traspasar a",
+  "Running ({n})": "En ejecución ({n})",
+  "Nothing unfinished in {project} on {machine}.": "Nada sin terminar en {project} en {machine}.",
+  "Nothing unfinished here.": "Nada sin terminar aquí.",
+  "Running threads": "Hilos en ejecución",
+  Goes: "Se va",
+  "{machine} finishes this hand off by itself. You can close this.":
+    "{machine} termina este traspaso por sí sola. Puedes cerrar esto.",
+  "This machine can't hand threads off yet.": "Esta máquina aún no puede traspasar hilos.",
+  "Show hand off progress": "Ver el progreso del traspaso",
 };

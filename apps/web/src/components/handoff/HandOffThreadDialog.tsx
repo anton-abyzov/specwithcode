@@ -48,7 +48,7 @@ type Request = {
 
 const useRequest = create<{ request: Request | null }>(() => ({ request: null }));
 
-/** Opens "Move to another machine…" for one thread, optionally on a chosen machine. */
+/** Opens "Hand off to another machine…" for one thread, optionally on a chosen machine. */
 export function requestHandOffThread(
   threadRef: ScopedThreadRef,
   options?: {
@@ -128,11 +128,11 @@ export function handOffPrimaryLabel(props: {
   /** No machine can take it from here (its folder is not a Git repository). */
   blockedHere?: boolean;
 }): string {
-  if (props.submitting) return props.mode === "move" ? "Moving…" : "Switching…";
+  if (props.submitting) return props.mode === "move" ? "Handing off…" : "Switching…";
   if (props.checking) return "Checking…";
-  if (props.blockedHere && props.mode === "move") return "Can't move";
+  if (props.blockedHere && props.mode === "move") return "Can't hand off";
   if (props.mode === "switch-model") return "Switch and continue";
-  return props.machine ? `Move to ${props.machine}` : "Move";
+  return props.machine ? `Hand off to ${props.machine}` : "Hand off";
 }
 
 /** The dialog's body, without data wiring, so fixtures and tests can render each state. */
@@ -168,17 +168,17 @@ export function HandOffThreadDialogView(props: HandOffThreadDialogViewProps) {
           {props.result ? (
             <DialogHeader>
               <DialogTitle>
-                {mode === "move" ? `Moved to ${props.result.machine}` : "Model switched"}
+                {mode === "move" ? `Handed off to ${props.result.machine}` : "Model switched"}
               </DialogTitle>
             </DialogHeader>
           ) : (
             <DialogHeader>
               <DialogTitle>
-                {mode === "move" ? `Move "${props.title}"` : "Switch model"}
+                {mode === "move" ? `Hand off "${props.title}"` : "Switch model"}
               </DialogTitle>
               <DialogDescription>
                 {mode === "move"
-                  ? "Its conversation and file changes go with it. This copy stops and stays here to read."
+                  ? "Its conversation and file changes go with it. It stops here and stays readable."
                   : `"${props.title}" keeps going here with the model you pick.`}
               </DialogDescription>
             </DialogHeader>
@@ -443,7 +443,7 @@ function HandOffThreadDialog({
     toastManager.add(
       stackedThreadToast({
         type: notice && noticeIsWarning(notice) ? "warning" : "success",
-        title: mode === "move" ? `Moved to ${machine}` : "Model switched",
+        title: mode === "move" ? `Handed off to ${machine}` : "Model switched",
         ...(notice ? { description: notice } : {}),
       }),
     );

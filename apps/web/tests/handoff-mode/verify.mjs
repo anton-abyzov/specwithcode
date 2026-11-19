@@ -45,8 +45,8 @@ const cases = [
   ["thread-switch", "Switch and continue"],
   ["machine", "Minis: no .env.local"],
   ["machine-done", "Open on Minis"],
-  // 0969 AC-10: the switcher's "Move M4's running threads…" scopes the dialog to one project.
-  ["migrate", "atlas's coordinator stays on M4."],
+  // 0969 AC-10: the machine menu scopes the dialog to one project.
+  ["migrate", "Scope: atlas"],
   ["resume", "Resume all threads on this machine?"],
   // 1121: one machine default; projects are set on their own page.
   ["settings", "Keep threads ready to move"],
@@ -71,11 +71,17 @@ try {
       shots.push(path);
     }
   }
-  // A failed check keeps the thread here: Move stays disabled until the checks pass.
+  // A failed check keeps the thread here: Hand off stays disabled until the checks pass.
   await page.goto(`${origin}/?view=thread-check`);
-  NodeAssert.equal(await page.getByRole("button", { name: "Move to Minis" }).isDisabled(), true);
+  NodeAssert.equal(
+    await page.getByRole("button", { name: "Hand off to Minis" }).isDisabled(),
+    true,
+  );
   await page.goto(`${origin}/?view=thread-ready`);
-  NodeAssert.equal(await page.getByRole("button", { name: "Move to Minis" }).isDisabled(), false);
+  NodeAssert.equal(
+    await page.getByRole("button", { name: "Hand off to Minis" }).isDisabled(),
+    false,
+  );
   // No per-project list, no automated or archived groups, no inert auto-continue row.
   await page.goto(`${origin}/?view=settings`);
   await page.getByText("Keep threads ready to move").first().waitFor();

@@ -55,7 +55,15 @@ describe("matchComposerAppCommands", () => {
       "stop-all",
       "continue-all",
     ]);
-    expect(matchComposerAppCommands("")).toHaveLength(7);
+    expect(matchComposerAppCommands("")).toHaveLength(8);
+    expect(matchComposerAppCommands("hand").map((entry) => entry.command)).toEqual([
+      "handoff",
+      "away",
+    ]);
+    expect(parseComposerAppCommand("/handoff")).toBe("handoff");
+    // `$handoff` stays a skill name: only the slash form is the app's.
+    expect(parseComposerAppCommand("$handoff")).toBeNull();
+    expect(isAwayAppCommand("handoff")).toBe(false);
     expect(matchComposerAppCommands("aw").map((entry) => entry.command)).toEqual(["away"]);
     expect(matchComposerAppCommands("back").map((entry) => entry.command)).toEqual(["back"]);
   });

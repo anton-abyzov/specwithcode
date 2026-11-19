@@ -24,6 +24,8 @@ import {
   type HandoffModeSnapshot,
   type HandoffPreflightInput,
   type HandoffPreflightResult,
+  type HandoffTransferBatch,
+  type HandoffTransferRecord,
   type EnvironmentId,
   type ModelSelection,
   type HandoffNote,
@@ -105,6 +107,12 @@ export interface HandoffContinueHereOptions {
   readonly byAgent?: boolean;
 }
 
+/** What a window is shown of the transfer records: this machine's own moves and their batches. */
+export interface HandoffTransferView {
+  readonly transfers: ReadonlyArray<HandoffTransferRecord>;
+  readonly batches: ReadonlyArray<HandoffTransferBatch>;
+}
+
 /** The moves between machines and models, provided by HandoffMoves once the fleet exists. */
 export interface HandoffMovesPort {
   readonly handOff: (input: HandOffInput) => Effect.Effect<HandOffResult, HandoffModeError>;
@@ -116,6 +124,12 @@ export interface HandoffMovesPort {
     options?: HandoffContinueHereOptions,
   ) => Effect.Effect<HandOffResult, HandoffModeError>;
   readonly resumeFenced: Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
+  /** "Resume here" for one thread: releases its hold only when nothing was sent under it. */
+  readonly resumeThread: (
+    threadId: ThreadId,
+  ) => Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
+  /** This machine's transfer records as the source, for the progress view. */
+  readonly transfers: Effect.Effect<HandoffTransferView, HandoffModeError>;
   readonly preflight: (
     input: HandoffPreflightInput,
   ) => Effect.Effect<ReadonlyArray<HandoffPreflightResult>, HandoffModeError>;
@@ -174,6 +188,9 @@ export class HandoffMode extends Context.Service<
       options?: HandoffContinueHereOptions,
     ) => Effect.Effect<HandOffResult, HandoffModeError>;
     readonly resumeFenced: Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
+    readonly resumeThread: (
+      threadId: ThreadId,
+    ) => Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
     readonly preflight: (
       input: HandoffPreflightInput,
     ) => Effect.Effect<ReadonlyArray<HandoffPreflightResult>, HandoffModeError>;
@@ -280,7 +297,19 @@ export const make = Effect.gen(function* () {
     })),
   });
 
-  const snapshot = Effect.map(store.read, toSnapshot);
+  // The records ride on the snapshot a window already polls. Before the moves
+  // exist, or when the records cannot be read, the field is left out: the
+  // settings and badges this snapshot also feeds must still load.
+  const transferView = Effect.suspend(() =>
+    moves === null ? Effect.succeed(null) : moves.transfers.pipe(Effect.orElseSucceed(() => null)),
+  );
+  const snapshot = Effect.gen(function* () {
+    const base = toSnapshot(yield* store.read);
+    const view = yield* transferView;
+    return view === null
+      ? base
+      : { ...base, transfers: view.transfers, transferBatches: view.batches };
+  });
 
   const viewSnapshot = snapshot.pipe(
     Effect.orElseSucceed((): HandoffModeSnapshot => {
@@ -871,6 +900,7 @@ export const make = Effect.gen(function* () {
         : viaMoves((port) => port.handOffMachine(input)),
     continueHere: (input, options) => viaMoves((port) => port.continueHere(input, options)),
     resumeFenced: viaMoves((port) => port.resumeFenced),
+    resumeThread: (threadId) => viaMoves((port) => port.resumeThread(threadId)),
     preflight: (input) => viaMoves((port) => port.preflight(input)),
     fence,
     guardSideEffect: guard,
@@ -896,7 +926,8 @@ export const layerRpcHandlers = WsHandoffModeRpcGroup.middleware(RpcInstrumentat
       [WS_METHODS.handoffModeHandOff]: handoff.handOff,
       [WS_METHODS.handoffModeHandOffMachine]: handoff.handOffMachine,
       [WS_METHODS.handoffModeContinueHere]: (input) => handoff.continueHere(input),
-      [WS_METHODS.handoffModeResumeFenced]: () => handoff.resumeFenced,
+      [WS_METHODS.handoffModeResumeFenced]: (input) =>
+        input.threadId === undefined ? handoff.resumeFenced : handoff.resumeThread(input.threadId),
       [WS_METHODS.handoffModePreflight]: handoff.preflight,
     };
   }),

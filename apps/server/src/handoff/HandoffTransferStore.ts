@@ -26,6 +26,7 @@ import {
   type EnvironmentId,
   HandoffModeError,
   type HandoffTransferAcceptance,
+  type HandoffTransferBatch,
   HandoffTransferDocument,
   type HandoffTransferLineage,
   type HandoffTransferReceipt,
@@ -424,6 +425,43 @@ export function openTransfers(
         !isHandoffTransferFinished(record.state),
     )
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+/** Finished moves a window is sent on every poll; the file keeps more than it shows. */
+export const HANDOFF_TRANSFER_VIEW_FINISHED_MAX = 40;
+
+/**
+ * What a window is shown: the moves this machine is the source of, oldest
+ * first, and the batches that still name one of them. Verdicts this machine
+ * gave as a destination are not part of it.
+ */
+export function sourceTransferView(
+  document: HandoffTransferDocument,
+  sourceEnvironmentId: EnvironmentId,
+): {
+  readonly transfers: ReadonlyArray<HandoffTransferRecord>;
+  readonly batches: ReadonlyArray<HandoffTransferBatch>;
+} {
+  const own = Object.values(document.transfers).filter(
+    (record) => record.lineage.sourceEnvironmentId === sourceEnvironmentId,
+  );
+  // Every open move, and the finished ones a person may still be looking at.
+  const finished = own
+    .filter((record) => isHandoffTransferFinished(record.state))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, HANDOFF_TRANSFER_VIEW_FINISHED_MAX);
+  const kept = new Set(finished.map((record) => record.operationId));
+  // The order they were written in, which is a batch's own order for records of one instant.
+  const transfers = own
+    .filter((record) => !isHandoffTransferFinished(record.state) || kept.has(record.operationId))
+    .map((record, index) => ({ record, index }))
+    .sort((x, y) => x.record.createdAt.localeCompare(y.record.createdAt) || x.index - y.index)
+    .map(({ record }) => record);
+  const shown = new Set(transfers.map((record) => record.operationId));
+  const batches = Object.values(document.batches)
+    .filter((batch) => batch.operationIds.some((id) => shown.has(id)))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return { transfers, batches };
 }
 
 function capTransfers(document: HandoffTransferDocument): HandoffTransferDocument {

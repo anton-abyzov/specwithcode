@@ -1,12 +1,16 @@
 /**
  * Runs a composer's app commands (`/stop`, `/continue`, `/stop-all`,
- * `/continue-all`, `/status`, `/away`, `/back`) locally, with no model turn.
+ * `/continue-all`, `/status`, `/handoff`, `/away`, `/back`) locally, with no model turn.
  */
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { useCallback } from "react";
 
 import { toastManager } from "../components/ui/toast";
-import { readThreadShells } from "../state/entities";
+import {
+  requestHandOffMachine,
+  requestMigrateProjectThreads,
+} from "../components/handoff/HandOffMachineDialog";
+import { readProject, readThreadShells } from "../state/entities";
 import {
   bulkStatusSummary,
   bulkThreadTargets,
@@ -90,6 +94,22 @@ export function useComposerAppCommands(scope: ComposerAppCommandScope) {
         }
         case "status": {
           notice("Project threads", bulkStatusSummary(bulkThreadTargets(threads())));
+          return;
+        }
+        case "handoff": {
+          // The Hand off dialog checks each thread and asks before anything goes.
+          if (thread === null) {
+            requestHandOffMachine();
+            return;
+          }
+          const project = readProject({
+            environmentId: thread.environmentId,
+            projectId: thread.projectId,
+          });
+          requestMigrateProjectThreads(thread.environmentId, {
+            id: thread.projectId,
+            title: project?.title ?? "",
+          });
           return;
         }
         case "away":

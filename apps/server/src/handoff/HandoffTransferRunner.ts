@@ -1199,5 +1199,5 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       ),
     );
 
-  return { handOff, planBatch, endBatch, resumeUnsent, reconcile, pull, servePull };
+  return { handOff, planBatch, endBatch, resumeHere, resumeUnsent, reconcile, pull, servePull };
 }
