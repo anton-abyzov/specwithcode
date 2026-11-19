@@ -43,6 +43,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { writeCheckpoint } from "./checkpointGit.ts";
 import { HandoffConnectivity } from "./handoffConnectivity.ts";
 import { HandoffMode } from "./HandoffMode.ts";
+import { unknownCheckPath } from "./handoffPlan.ts";
 import * as HandoffMoves from "./HandoffMoves.ts";
 import { HandoffPeerError, HandoffPeers } from "./handoffPeers.ts";
 import * as HandoffReceiver from "./HandoffReceiver.ts";
@@ -93,7 +94,8 @@ export type PeerCallPath =
   | "takeover"
   | "heartbeat"
   | "transfer-status"
-  | "transfer-pull";
+  | "transfer-pull"
+  | "check";
 
 export interface PeerCall {
   readonly from: EnvironmentId;
@@ -443,6 +445,7 @@ export const makeRig = (
     ): Effect.Effect<unknown, HandoffPeerError | HandoffReceiver.HandoffRefusal> =>
       Effect.gen(function* () {
         if (!PREVIOUS_PEER_PATHS.has(path)) {
+          if (path === "check") return yield* new HandoffPeerError(unknownCheckPath(to.label));
           return yield* unknownPath(to.label);
         }
         const caller = {
@@ -540,6 +543,8 @@ export const makeRig = (
           return to.receiver.transferStatus(caller, request as never);
         case "transfer-pull":
           return to.receiver.transferPull(caller, request as never);
+        case "check":
+          return to.receiver.check(caller, request as never);
       }
     };
 
@@ -603,6 +608,7 @@ export const makeRig = (
         heartbeat: (to, request) => send(self, to, "heartbeat", request),
         transferStatus: (to, request) => send(self, to, "transfer-status", request),
         transferPull: (to, request) => send(self, to, "transfer-pull", request),
+        check: (to, request) => send(self, to, "check", request),
         coordinatorLease: unused,
         coordinatorReplica: unused,
         memoryExport: unused,

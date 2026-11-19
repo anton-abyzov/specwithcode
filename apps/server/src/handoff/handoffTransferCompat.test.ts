@@ -67,6 +67,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
     for (const path of PREVIOUS_PEER_PATHS) expect(PEER_PATHS.has(path)).toBe(true);
     // The two review paths came with the reviewer lock, after that release too.
     expect([...PEER_PATHS].filter((path) => !PREVIOUS_PEER_PATHS.has(path)).sort()).toEqual([
+      "check",
       "review-replicate",
       "review-takeover",
       "transfer-pull",

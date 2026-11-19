@@ -41,6 +41,7 @@ import {
 import packageJson from "../../package.json" with { type: "json" };
 import { CoordinatorStandbyShadowWorker } from "../project/CoordinatorStandbyStore.ts";
 import { HandoffReviewLock } from "./handoffReviewLock.ts";
+import { HANDOFF_PLAN_CAPABILITY } from "./handoffPlan.ts";
 
 export const HANDOFF_PEER_PREFIX = "/api/handoff/v1";
 /**
@@ -75,7 +76,10 @@ export function versionFailure(input: {
  * What this machine's handoff does beyond the numbered protocol. `handoff.v2`
  * is the transfer record alone; the protocol version says nothing about it.
  */
-export const HANDOFF_CAPABILITIES: ReadonlyArray<string> = [HANDOFF_V2_CAPABILITY];
+export const HANDOFF_CAPABILITIES: ReadonlyArray<string> = [
+  HANDOFF_V2_CAPABILITY,
+  HANDOFF_PLAN_CAPABILITY,
+];
 
 /**
  * The check a handoff fails when the other machine does not keep transfer
@@ -479,7 +483,8 @@ export type PeerPath =
   | "transfer-status"
   | "transfer-pull"
   | "review-replicate"
-  | "review-takeover";
+  | "review-takeover"
+  | "check";
 export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "negotiate",
   "replicate",
@@ -503,6 +508,7 @@ export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "transfer-pull",
   "review-replicate",
   "review-takeover",
+  "check",
 ]);
 
 /**

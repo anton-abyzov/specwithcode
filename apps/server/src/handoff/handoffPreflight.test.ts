@@ -12,6 +12,7 @@ import { EMPTY_HANDOFF_DOCUMENT, emptyThreadRecord, type HandoffDocument } from 
 import {
   HANDOFF_CONTINUE_TEXT,
   HANDOFF_SEED_MAX_CHARS,
+  checkFailures,
   handoffSeed,
   type PreflightFacts,
   preflightFailures,
@@ -253,5 +254,44 @@ describe("turnRefusal", () => {
     expect(refusal).not.toContain("woke");
     // Without a pause the same thread starts turns.
     expect(turnRefusal({ ...document, pausedSince: null }, threadId, laptopE)).toBeNull();
+  });
+});
+
+describe("checkFailures: the check before anything is copied (1390)", () => {
+  const {
+    checkpointSequence: _sequence,
+    requiredSequence: _required,
+    missingFiles: _files,
+    ...base
+  } = ready;
+
+  it("passes a thread the destination holds no copy of", () => {
+    expect(checkFailures(base)).toEqual([]);
+    // The preflight of the Hold step still needs the copy.
+    expect(messages({ checkpointSequence: null })).toEqual([
+      "Tower H: no checkpoint for this thread",
+    ]);
+  });
+
+  it("names the link, the grant, the provider, the model and the lease", () => {
+    const checks = (facts: Partial<typeof base>) =>
+      checkFailures({ ...base, ...facts }).map((failure) => failure.check);
+    expect(checks({ project: null })).toEqual(["project-link"]);
+    expect(checks({ project: { title: "SpecWeave", inGrant: false } })).toEqual(["grant"]);
+    expect(checks({ provider: null })).toEqual(["provider"]);
+    expect(checks({ provider: { ...base.provider!, authStatus: "unauthenticated" } })).toEqual([
+      "provider",
+    ]);
+    expect(checks({ modelSelection: { ...claude, model: "claude-fable-5-2" } })).toEqual(["model"]);
+    expect(checks({ otherHolder: "M3" })).toEqual(["lease"]);
+    expect(
+      checkFailures({ ...base, project: null, provider: null, otherHolder: "M3" }).map(
+        (failure) => failure.message,
+      ),
+    ).toEqual([
+      expect.stringContaining("Tower H: this project is not linked here"),
+      "Tower H: claudeAgent is not set up",
+      "Tower H: another machine (M3) runs this thread",
+    ]);
   });
 });

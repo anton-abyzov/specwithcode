@@ -36,7 +36,6 @@ import {
   type Project,
   type ProjectId,
   type RuntimeMode,
-  type ServerProvider,
   ThreadId,
   type ThreadExecutionReason,
   type ThreadExecutionRecord,
@@ -99,11 +98,16 @@ import {
   HANDOFF_CONTINUE_TEXT,
   handoffSeed,
   HANDOFF_SEED_MAX_CHARS,
-  type PreflightProvider,
   NOT_LINKED_HERE,
   preflightFailures,
   shouldResume,
 } from "./handoffPreflight.ts";
+import {
+  makeAccountRefusal,
+  makePeerCheck,
+  type PeerCheck,
+  toPreflightProvider,
+} from "./handoffPlanReceiver.ts";
 import {
   CONTINUATION_ID_PREFIX,
   type ContinuationEvidence,
@@ -294,21 +298,6 @@ export function continuationThreadId(
   return ThreadId.make(`${CONTINUATION_ID_PREFIX}${digest}`);
 }
 
-function toPreflightProvider(provider: ServerProvider): PreflightProvider {
-  return {
-    instanceId: provider.instanceId,
-    driver: provider.driver,
-    displayName: provider.displayName,
-    enabled: provider.enabled,
-    installed: provider.installed,
-    authStatus: provider.auth.status,
-    models: provider.models.map((model) => ({
-      slug: model.slug,
-      ...(model.aliases === undefined ? {} : { aliases: model.aliases }),
-    })),
-  };
-}
-
 export class HandoffReceiver extends Context.Service<
   HandoffReceiver,
   {
@@ -326,6 +315,7 @@ export class HandoffReceiver extends Context.Service<
       caller: ReceiverCaller,
       request: PeerPreflightRequest,
     ) => Effect.Effect<PeerPreflightResponse, HandoffRefusal>;
+    readonly check: PeerCheck;
     readonly takeover: (
       caller: ReceiverCaller,
       request: TakeoverRequest,
@@ -425,21 +415,7 @@ export const make = Effect.gen(function* () {
     caller.grant === null ||
     projectInGrant(caller.grant.projects, caller.sourceEnvironmentId, project);
 
-  /** Why the grant does not let the source run on this sign-in, or null when it does. */
-  const accountRefusal = (
-    caller: ReceiverCaller,
-    sourceLabel: string,
-    instanceId: ModelSelection["instanceId"],
-  ) => {
-    if (caller.grant === null || accountInGrant(caller.grant.accounts, instanceId)) return null;
-    const allowed =
-      caller.grant.accounts.kind === "listed" ? caller.grant.accounts.instanceIds : [];
-    return at(
-      allowed.length === 0
-        ? `this machine lets ${sourceLabel} use none of its sign-ins, so it cannot continue work here. The user can allow sign-ins in Settings > Machines > Who can run work here.`
-        : `this machine lets ${sourceLabel} use only these sign-ins: ${allowed.join(", ")}. The user can allow ${instanceId} in Settings > Machines > Who can run work here.`,
-    );
-  };
+  const accountRefusal = makeAccountRefusal(at);
 
   const requireProject = (caller: ReceiverCaller, sourceProjectId: ProjectId) =>
     Effect.gen(function* () {
@@ -657,6 +633,20 @@ export const make = Effect.gen(function* () {
         results,
       } satisfies PeerPreflightResponse;
     });
+
+  const check = makePeerCheck({
+    label,
+    at,
+    environmentId: handoff.environmentId,
+    sameSource,
+    document,
+    localProject,
+    inGrant,
+    accountRefusal,
+    getProviders: providers.getProviders,
+    getSettings: serverSettings.getSettings,
+    refuse,
+  });
 
   /** A worktree at the checkpoint's base commit holding its files as uncommitted changes. */
   const materialize = (input: {
@@ -1485,6 +1475,7 @@ export const make = Effect.gen(function* () {
     negotiate,
     replicate,
     preflight,
+    check,
     takeover,
     heartbeat,
     transferStatus,
