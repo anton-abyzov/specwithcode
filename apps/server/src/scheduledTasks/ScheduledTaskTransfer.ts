@@ -48,7 +48,7 @@ import * as FleetTargets from "../fleet/FleetTargets.ts";
 import type { ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { ScheduledTaskService } from "./ScheduledTaskService.ts";
-import { isCoordinatorOwnedRoutine } from "./ScheduledTaskCopies.ts";
+import { isCoordinatorOwnedRoutine, routineCopyOf } from "./ScheduledTaskCopies.ts";
 import {
   runsHere,
   type RoutineRunnerRecord,
@@ -139,6 +139,48 @@ export interface TransferOutDeps {
   readonly setRevision: (taskId: string, revision: number) => Effect.Effect<void>;
   /** One id for a whole move; every step of it, and every retry, carries it. */
   readonly newOperationId: Effect.Effect<string>;
+  /** The routine as it is sent to another machine; null when it cannot be. */
+  readonly copyOf: (task: ScheduledTask) => CoordinatorRoutineCopy | null;
+  /**
+   * Claims the routine for a move before anything leaves this machine: under
+   * the change lock, the routine as it is now and the `moving` record that
+   * refuses every other change. A routine that is off, gone or no longer as
+   * `expected` is not claimed.
+   */
+  readonly claim: (input: {
+    readonly taskId: ScheduledTask["id"];
+    readonly expected: RoutineRunnerRecord | null;
+    readonly moving: (revision: number) => RoutineRunnerRecord;
+  }) => Effect.Effect<
+    | {
+        readonly kind: "claimed";
+        readonly task: ScheduledTask;
+        readonly record: RoutineRunnerRecord;
+      }
+    | { readonly kind: "refused"; readonly detail: string }
+  >;
+  /**
+   * Turns the routine off here for a move and records that with the state it
+   * carries, as one write: a move whose record does not say `off` never
+   * touched the row, so nothing a person did to it is ever undone.
+   */
+  readonly commitOff: (input: {
+    readonly task: ScheduledTask;
+    readonly note: string;
+    readonly record: (runState: TransferRunState) => RoutineRunnerRecord;
+  }) => Effect.Effect<RoutineRunnerRecord | null>;
+  /**
+   * The end of Bring back, as one write: who runs the routine, its revision,
+   * whether it is on and the state it came back with. False when it was not saved.
+   */
+  readonly commitReturn: (input: {
+    readonly task: Pick<ScheduledTask, "id" | "projectId">;
+    /** The record to keep; null removes it. */
+    readonly record: RoutineRunnerRecord | null;
+    readonly revision: number;
+    readonly enabled: boolean;
+    readonly runState: TransferRunState | null;
+  }) => Effect.Effect<boolean>;
 }
 
 export type TransferOutcome =
@@ -183,9 +225,12 @@ const MoveOperation = Schema.Struct({
   targetLabel: Schema.String,
   targetProjectId: Schema.NullOr(Schema.String),
   capped: Schema.Boolean,
-  /** `staged`: saved there, still on here. `off`: off here, the enable may have been sent. */
-  phase: Schema.Literals(["staged", "off"]),
-  /** Whether it was on when the move began; a move cut off after turning it off turns it on again. */
+  /**
+   * `claimed`: recorded here, nothing sent yet. `staged`: saved there, still on
+   * here. `off`: off here, written with this record; the enable may have been sent.
+   */
+  phase: Schema.Literals(["claimed", "staged", "off"]),
+  /** Whether it was on when the move claimed it. Only a claimed routine that is on moves. */
   wasEnabled: Schema.optional(Schema.Boolean),
   runState: Schema.NullOr(TransferRunState),
   /** The record this routine had before the move, restored when the move is called off. */
@@ -279,6 +324,9 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
               acked: [],
               operationId: record.operationId,
               operation: null,
+              asked: [],
+              // Its row is off for the move; this is what it follows the coordinator with again.
+              copyEnabled: operation.wasEnabled ?? true,
             })
             .pipe(Effect.ignore);
           return {
@@ -337,11 +385,11 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
         );
       // Cut off before this machine turned it off: no enable was ever sent, so the
       // move is called off here whatever the target answers, and starts clean next time.
+      // Turning it off is written with the record that says so, so the row is as a
+      // person left it: it is never turned on from here.
       const callOffUnsent = Effect.gen(function* () {
         yield* abort(operation.target, record.operationId!, task.id);
-        // The server may have stopped between turning it off and recording that.
-        const now = yield* deps.readState(task.id);
-        yield* backHere(task, operation, operation.wasEnabled === true && now?.enabled === false);
+        yield* backHere(task, operation, false);
         return failed("Stays here: the move was cut off before it began. Try again.", false);
       });
       if (operation.target !== target)
@@ -353,7 +401,7 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
         routineId: task.id,
         operationId: record.operationId,
       }).pipe(Effect.result);
-      if (operation.phase === "staged") return yield* callOffUnsent;
+      if (operation.phase !== "off") return yield* callOffUnsent;
       if (asked._tag === "Failure" || !affirmsRunner(asked.success))
         return failed(
           `${operation.targetLabel} did not say where the move stands. It stays off here; try again.`,
@@ -410,8 +458,6 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
           "Stays here: it runs where its project's coordinator runs until every linked machine confirms its runner.",
           false,
         );
-      const before = yield* deps.readState(task.id);
-      if (before === null) return failed("This routine is gone.", false);
       // 0. The target says it can take a runner. Anything else: nothing was sent, nothing changes.
       const probe = yield* ask(target, { op: "status", routineId: task.id }).pipe(Effect.result);
       if (probe._tag === "Failure")
@@ -423,53 +469,75 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
         );
       if (!affirmsRunner(probe.success)) return failed(needsUpdateDetail(targetLabel), false);
       const operationId = yield* deps.newOperationId;
-      // 1. Saved there, off.
+      const self = yield* deps.selfEnvironmentId;
+      const claimedOperation: MoveOperation = {
+        target,
+        targetLabel,
+        targetProjectId: null,
+        capped: false,
+        phase: "claimed",
+        wasEnabled: true,
+        runState: null,
+        prior: existing,
+      };
+      // 1. Claimed here, before the routine is read for sending: from now on nobody
+      //    changes it, so what is staged is what moves. A move this machine cannot
+      //    remember is not started.
+      const claim = yield* deps.claim({
+        taskId: task.id,
+        expected: existing,
+        moving: (revision) => ({
+          taskId: task.id,
+          state: "moving",
+          runnerEnvironmentId: self ?? "",
+          runnerLabel: null,
+          revision,
+          acked: existing?.acked ?? [],
+          operationId,
+          operation: claimedOperation,
+        }),
+      });
+      if (claim.kind === "refused") return failed(claim.detail, false);
+      const claimed = claim.task;
+      const copy = deps.copyOf(claimed);
+      if (copy === null) {
+        yield* restoreRecord(task.id, existing);
+        return failed("Stays here: this routine cannot be sent.", false);
+      }
+      // 2. Saved there, off.
       const staged = yield* ask(target, {
         op: "runner-stage",
         operationId,
-        sourceProjectId: task.projectId,
-        routine: { ...input.copy, enabled: false },
-        ownThread: task.ownThread === true,
+        sourceProjectId: claimed.projectId,
+        routine: { ...copy, enabled: false },
+        ownThread: claimed.ownThread === true,
         boundThreadId: input.boundThreadId,
       }).pipe(Effect.result);
       if (staged._tag === "Failure") {
         // It may have been saved there, off: taken away again so nothing is left behind.
         if (staged.failure.uncertain) yield* abort(target, operationId, task.id);
+        yield* restoreRecord(task.id, existing);
         return failed(`Stays here: ${staged.failure.message}`, false);
       }
-      const self = yield* deps.selfEnvironmentId;
       const operation: MoveOperation = {
-        target,
-        targetLabel,
+        ...claimedOperation,
         targetProjectId: staged.success.projectId ?? null,
         capped: staged.success.capped === true,
         phase: "staged",
-        wasEnabled: before.enabled === true,
-        runState: null,
-        prior: existing,
       };
-      const moving: RoutineRunnerRecord = {
-        taskId: task.id,
-        state: "moving",
-        runnerEnvironmentId: self ?? "",
-        runnerLabel: null,
-        revision: existing?.revision ?? 0,
-        acked: existing?.acked ?? [],
-        operationId,
-        operation,
-      };
-      // Remembered before anything changes here: a move this machine cannot remember
-      // is not started.
-      const remembered = yield* deps.records.write(moving).pipe(Effect.result);
-      if (remembered._tag === "Failure") {
-        yield* abort(target, operationId, task.id);
-        return failed("Stays here: this machine could not record the move.", false);
-      }
-      // 2. Off here, then the state as it is now. It is turned on there only once
-      //    this machine's row reads off: otherwise it could fire on both.
-      const off = yield* deps.setEnabled(task.id, false);
-      const after = off ? yield* deps.readState(task.id) : null;
-      if (!off || after === null || after.enabled === true) {
+      // 3. Off here, with the state as it is now and the record that says so, in one
+      //    write. It is turned on there only once that write is made: otherwise it
+      //    could fire on both, or a retry could not repeat the enable.
+      let offOperation: MoveOperation = operation;
+      const offRecord = yield* deps.commitOff({
+        task: claimed,
+        note: awayPausedNote(targetLabel),
+        record: (runState) => {
+          offOperation = { ...operation, phase: "off", runState };
+          return { ...claim.record, operation: offOperation };
+        },
+      });
+      if (offRecord === null) {
         yield* abort(target, operationId, task.id);
         yield* backHere(task, operation, false);
         return failed(
@@ -477,19 +545,7 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
           false,
         );
       }
-      yield* deps.note(task.id, awayPausedNote(targetLabel));
-      const runState = settledRunState(task, before, after, yield* deps.nowMs);
-      const offOperation: MoveOperation = { ...operation, phase: "off", runState };
-      const offRecord = { ...moving, operation: offOperation };
-      // Written before the enable leaves: a retry repeats this enable and no other.
-      const written = yield* deps.records.write(offRecord).pipe(Effect.result);
-      if (written._tag === "Failure") {
-        // Without it a retry could not repeat the enable: called off, and on here again.
-        yield* abort(target, operationId, task.id);
-        yield* backHere(task, offOperation, true);
-        return failed("Stays here: this machine could not record the move.", false);
-      }
-      // 3. On there, acknowledged.
+      // 4. On there, acknowledged.
       return yield* finish(task, offRecord, offOperation, null);
     });
 
@@ -517,24 +573,33 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
       const state = released.success.runState ?? null;
       // Gone there: this machine runs it again, under the record it had before the move.
       const record = yield* deps.records.read(input.task.id);
-      if (record !== null && !runsHere(record)) {
-        const operation = Option.getOrNull(decodeOperation(record.operation));
-        yield* restoreRecord(input.task.id, operation?.prior ?? null);
-      }
-      // Above the count the other copies heard from that machine: they follow the
-      // higher one, so they name this machine again.
-      yield* deps.setRevision(
-        input.task.id,
-        Math.max(released.success.revision ?? 0, yield* deps.revisionOf(input.task.id)) + 1,
-      );
-      yield* deps.note(input.task.id, null);
-      // On first, then the state: turning on computes its own next run, which the state replaces.
-      if (input.wasEnabled) yield* deps.setEnabled(input.task.id, true);
-      if (state !== null)
-        yield* deps.writeState(
-          input.task,
-          input.wasEnabled ? state : { ...state, nextRunAt: null },
-        );
+      const kept =
+        record === null || runsHere(record)
+          ? record
+          : ((Option.getOrNull(decodeOperation(record.operation))?.prior ??
+              null) as RoutineRunnerRecord | null);
+      // Who runs it, its count, whether it is on and its state are one write. Until
+      // it is made the routine has not come back: it stays off here and Bring back
+      // asks again, and the other machine answers with the same state.
+      const saved = yield* deps.commitReturn({
+        task: input.task,
+        record: kept,
+        // Above the count the other copies heard from that machine: they follow the
+        // higher one, so they name this machine again.
+        revision:
+          Math.max(released.success.revision ?? 0, yield* deps.revisionOf(input.task.id)) + 1,
+        enabled: input.wasEnabled,
+        runState: state === null ? null : input.wasEnabled ? state : { ...state, nextRunAt: null },
+      });
+      if (!saved)
+        return {
+          kind: "failed",
+          detail:
+            `${input.targetLabel} let it go, but this machine could not save it. It stays off here; bring it back again.`.slice(
+              0,
+              500,
+            ),
+        } as const;
       return { kind: "returned", detail: "Runs here again." } as const;
     });
 
@@ -696,21 +761,94 @@ export const makeTransfer = ({ sql, scheduled, post, projects, label }: Transfer
       setRevision: (taskId, revision) =>
         runner.records.setRevision(taskId, revision).pipe(Effect.ignore),
       newOperationId: runner.newId.pipe(Effect.map((id) => `routine-move:${id}`)),
+      copyOf: (task) => routineCopyOf({ ...task, ownThread: true }),
+      claim: (input) =>
+        runner
+          .locked(
+            runner.records.atomically(
+              Effect.gen(function* () {
+                const now = yield* runner.records.readStrict(input.taskId);
+                if ((now?.state ?? null) !== (input.expected?.state ?? null))
+                  return {
+                    kind: "refused",
+                    detail: "Stays as it is: it changed while the move began. Try again.",
+                  } as const;
+                const listed = yield* scheduled.list();
+                const task = listed.tasks.find((entry) => entry.id === input.taskId);
+                if (task === undefined)
+                  return { kind: "refused", detail: "This routine is gone." } as const;
+                const state = yield* withSql(readStateRow(input.taskId));
+                if (state === null || !state.enabled)
+                  return {
+                    kind: "refused",
+                    detail: "Stays here, off: it was turned off on this machine.",
+                  } as const;
+                const record = input.moving(yield* runner.revision(input.taskId));
+                yield* runner.records.write(record);
+                return { kind: "claimed", task: { ...task, enabled: true }, record } as const;
+              }),
+            ),
+          )
+          .pipe(
+            logged("record a move")({
+              kind: "refused",
+              detail: "Stays here: this machine could not record the move.",
+            } as const),
+          ),
+      commitOff: (input) =>
+        runner
+          .locked(
+            runner.records.atomically(
+              Effect.gen(function* () {
+                const before = yield* withSql(readStateRow(input.task.id));
+                if (before === null) return yield* Effect.fail("gone" as const);
+                yield* runner.internal.setEnabled({ id: input.task.id, enabled: false });
+                const after = yield* withSql(readStateRow(input.task.id));
+                if (after === null || after.enabled) return yield* Effect.fail("on" as const);
+                yield* runner.records.setNote(input.task.id, input.note);
+                const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+                const record = input.record(settledRunState(input.task, before, after, nowMs));
+                yield* runner.records.write(record);
+                return record;
+              }),
+            ),
+          )
+          .pipe(logged("turn a routine off for its move")(null)),
+      commitReturn: (input) =>
+        runner
+          .locked(
+            runner.records.atomically(
+              Effect.gen(function* () {
+                if (input.record === null) yield* runner.records.remove(input.task.id);
+                else yield* runner.records.write(input.record);
+                yield* runner.records.setRevision(input.task.id, input.revision);
+                // On first, then the state: turning on computes its own next run, which the state replaces.
+                if (input.enabled)
+                  yield* runner.internal.setEnabled({ id: input.task.id, enabled: true });
+                if (input.runState !== null)
+                  yield* withSql(
+                    writeStateRow(input.task.projectId, input.task.id, input.runState),
+                  );
+                yield* runner.records.setNote(input.task.id, null);
+              }),
+            ),
+          )
+          .pipe(Effect.as(true), logged("save a routine that came back")(false)),
     });
 
     const into = makeTransferIn({
       projects,
       findTask: (id) =>
         Effect.gen(function* () {
-          const listed = yield* scheduled.list().pipe(Effect.orElseSucceed(() => ({ tasks: [] })));
+          // A list that cannot be read is not an empty one: the caller must not take
+          // the routine for gone from here.
+          const listed = yield* scheduled.list();
           const task = listed.tasks.find((entry) => entry.id === id);
           if (task === undefined) return null;
           const grantedBy =
-            scheduled.readGrant === undefined
-              ? undefined
-              : yield* scheduled.readGrant(task.id).pipe(Effect.orElseSucceed(() => undefined));
+            scheduled.readGrant === undefined ? undefined : yield* scheduled.readGrant(task.id);
           return { projectId: task.projectId, grantedBy };
-        }),
+        }).pipe(Effect.mapError(() => "its routines could not be read.")),
       upsert: (input, grantedBy) =>
         runner.internal.upsert(input, { grantedBy }).pipe(
           Effect.asVoid,
@@ -757,6 +895,18 @@ export const makeTransfer = ({ sql, scheduled, post, projects, label }: Transfer
         ),
       writeState: (projectId, id, state) =>
         withSql(writeStateRow(projectId, id, state)).pipe(logged("write run state")(undefined)),
+      atomically: (effect) =>
+        runner.records.atomically(effect).pipe(
+          Effect.mapError((error) =>
+            // A refusal passes through; anything else is this machine failing to write.
+            error._tag === "RoutineTransferRefusal"
+              ? error
+              : new RoutineTransferRefusal({
+                  status: 503,
+                  message: "This machine could not save the release.",
+                }),
+          ),
+        ),
     });
 
     const pauseHere = makePauseHere(scheduled, sql);

@@ -830,7 +830,7 @@ it.effect("the list a screen subscribes to carries each routine's revision and r
   }),
 );
 
-it.effect("a move cut off after the routine was turned off turns it on again here", () =>
+it.effect("a move cut off before it turned the routine off leaves the row as a person set it", () =>
   Effect.gen(function* () {
     yield* start;
     const { machines } = yield* fleet(["alpha", "beta"]);
@@ -839,7 +839,8 @@ it.effect("a move cut off after the routine was turned off turns it on again her
     yield* beta.seed();
     yield* settle(alpha);
     const settled = (yield* alpha.record)!;
-    // As a server that stopped right after turning it off would find it.
+    // A move records turning the routine off together with turning it off. One cut
+    // off before that never touched the row, so an off row is a person's doing.
     yield* alpha.runner.records.write({
       ...settled,
       state: "moving",
@@ -857,7 +858,7 @@ it.effect("a move cut off after the routine was turned off turns it on again her
     });
     yield* alpha.sql`UPDATE scheduled_tasks SET enabled = 0 WHERE task_id = ${ROUTINE}`;
     assert.deepInclude(yield* move(alpha, beta, task), { kind: "failed", offHere: false });
-    assert.equal((yield* alpha.row)?.enabled, 1);
+    assert.equal((yield* alpha.row)?.enabled, 0);
     assert.equal((yield* alpha.record)?.state, "settled");
   }),
 );

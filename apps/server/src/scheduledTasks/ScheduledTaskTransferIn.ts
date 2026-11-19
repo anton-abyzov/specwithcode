@@ -31,16 +31,23 @@ import {
   type RoutineTransferRefusal,
   type RoutineTransferRequest,
   type RoutineTransferResponse,
-  type TransferRunState,
+  TransferRunState,
 } from "./ScheduledTaskRunnerWire.ts";
 
 export interface TransferInDeps {
   readonly projects: Effect.Effect<ReadonlyArray<Project>>;
   /** The project a routine id belongs to here, and the grant it was saved under. */
-  readonly findTask: (id: string) => Effect.Effect<{
-    readonly projectId: string;
-    readonly grantedBy: ScheduledTaskGrantedBy | undefined;
-  } | null>;
+  readonly findTask: (id: string) => Effect.Effect<
+    {
+      readonly projectId: string;
+      readonly grantedBy: ScheduledTaskGrantedBy | undefined;
+    } | null,
+    string
+  >;
+  /** Every write of `effect`, or none of them. */
+  readonly atomically: <A>(
+    effect: Effect.Effect<A, RoutineTransferRefusal>,
+  ) => Effect.Effect<A, RoutineTransferRefusal>;
   readonly upsert: (
     input: ScheduledTaskUpsertInput,
     grantedBy: ScheduledTaskGrantedBy,
@@ -97,6 +104,10 @@ type MoveRequest = Extract<
   { op: "runner-stage" | "runner-enable" | "runner-abort" }
 >;
 const decodeStoredAnswer = Schema.decodeUnknownOption(RoutineRunnerResponse);
+/** What a release answered, kept on the record that rests here afterwards. */
+const decodeReleased = Schema.decodeUnknownOption(
+  Schema.Struct({ released: Schema.NullOr(TransferRunState) }),
+);
 
 export const makeTransferIn = (deps: TransferInDeps) => {
   const capable = { capabilities: [ROUTINE_RUNNER_CAPABILITY] } as const;
@@ -107,7 +118,8 @@ export const makeTransferIn = (deps: TransferInDeps) => {
   /** The caller's own routine here, or a refusal: Away touches only what it moved. */
   const ownRoutine = (caller: ReceiverCaller, id: string) =>
     Effect.gen(function* () {
-      const held = yield* deps.findTask(id);
+      // Unreadable is not absent: a caller told "gone" would run the routine as well.
+      const held = yield* strict(deps.findTask(id));
       if (held === null) return null;
       if (held.grantedBy?.coordinatorEnvironmentId !== caller.sourceEnvironmentId)
         return yield* refuse(403, "That routine was not moved here by that machine.");
@@ -159,7 +171,7 @@ export const makeTransferIn = (deps: TransferInDeps) => {
           403,
           "This machine's work grant does not allow that routine's sign-in.",
         );
-      const held = yield* deps.findTask(routine.id);
+      const held = yield* strict(deps.findTask(routine.id));
       if (held !== null && held.projectId !== project.id)
         return yield* refuse(409, "Another project here uses that routine's id.");
       if (
@@ -244,42 +256,60 @@ export const makeTransferIn = (deps: TransferInDeps) => {
         }
         case "release": {
           const held = yield* ownRoutine(caller, request.routineId);
-          // Already gone: a retry after the first answer was lost.
+          // Already gone: a retry after the first answer was lost. It gets the state
+          // the first answer carried, kept on the record that rests here.
           if (held === null) {
             const rests = yield* strict(deps.records.read(request.routineId));
+            const before =
+              rests?.runnerEnvironmentId === caller.sourceEnvironmentId
+                ? Option.getOrNull(decodeReleased(rests.operation))
+                : null;
             return {
               routineId: request.routineId,
               enabled: false,
-              runState: null,
+              runState: before?.released ?? null,
               ...(rests === null ? {} : { revision: rests.revision }),
             };
           }
-          // Read first: turning it off clears its next run.
-          const runState = yield* deps.readState(request.routineId);
-          yield* deps
-            .setEnabled(request.routineId, false)
-            .pipe(Effect.mapError((message) => refuse(409, `Not turned off here: ${message}`)));
-          yield* deps
-            .remove(request.routineId)
-            .pipe(Effect.mapError((message) => refuse(409, `Not removed here: ${message}`)));
-          // A routine this machine ran by a runner record goes back to its caller: the
-          // record stays, resting, so a copy that arrives later cannot fire here as well.
-          const record = yield* strict(deps.records.read(request.routineId));
-          if (record === null) return { routineId: request.routineId, enabled: false, runState };
-          // Kept on the resting record, so a repeat of this request answers the same count.
-          const revision = yield* deps.revisionOf(request.routineId);
-          yield* strict(
-            deps.records.write({
-              ...record,
-              state: "disarmed",
-              runnerEnvironmentId: caller.sourceEnvironmentId,
-              runnerLabel: null,
-              revision,
-              acked: [],
-              operation: null,
+          // Off, gone and the answer kept, in one write: a routine released here is
+          // never left on, and a repeat of this request answers the same state.
+          return yield* deps.atomically(
+            Effect.gen(function* () {
+              // Read first: turning it off clears its next run.
+              const runState = yield* deps.readState(request.routineId);
+              yield* deps
+                .setEnabled(request.routineId, false)
+                .pipe(Effect.mapError((message) => refuse(409, `Not turned off here: ${message}`)));
+              yield* deps
+                .remove(request.routineId)
+                .pipe(Effect.mapError((message) => refuse(409, `Not removed here: ${message}`)));
+              // The record stays, resting for the caller, so a copy that arrives later
+              // cannot fire here as well.
+              const record = yield* strict(deps.records.read(request.routineId));
+              const revision = record === null ? 0 : yield* deps.revisionOf(request.routineId);
+              yield* strict(
+                deps.records.write({
+                  taskId: request.routineId,
+                  operationId: null,
+                  ...record,
+                  state: "disarmed",
+                  runnerEnvironmentId: caller.sourceEnvironmentId,
+                  runnerLabel: null,
+                  revision,
+                  acked: [],
+                  operation: { released: runState },
+                  asked: [],
+                  copyEnabled: null,
+                }),
+              );
+              return {
+                routineId: request.routineId,
+                enabled: false,
+                runState,
+                ...(record === null ? {} : { revision }),
+              };
             }),
           );
-          return { routineId: request.routineId, enabled: false, runState, revision };
         }
       }
     });

@@ -123,6 +123,8 @@ export interface Network {
   readonly offline: Set<string>;
   /** The request arrives and is acted on; its answer is lost. Called once per request. */
   dropAnswer: (from: string, to: string, op: string) => boolean;
+  /** Runs once the other machine acted on a request, before its answer is back. */
+  during?: ((from: string, to: string, op: string) => Effect.Effect<void>) | undefined;
   /** Every request sent, as `from>to:op`. */
   readonly log: Array<string>;
 }
@@ -179,6 +181,7 @@ export const fleet = (
             { sourceEnvironmentId: self, grant: grantFor(self), runtimeCeiling: "full-access" },
             wire,
           ).pipe(Effect.result);
+          if (network.during !== undefined) yield* network.during(from, to, wire.op ?? "?");
           if (network.dropAnswer(from, to, wire.op ?? "?"))
             return yield* new AwayPeerError({
               message: `${to} did not answer.`,

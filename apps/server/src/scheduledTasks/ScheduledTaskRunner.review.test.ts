@@ -8,6 +8,7 @@ import { assert, it } from "@effect/vitest";
 import type { ScheduledTask } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -20,6 +21,7 @@ import {
   ROUTINE,
   STANDBY,
 } from "./ScheduledTaskRunner.testkit.ts";
+import { routineCopyOf } from "./ScheduledTaskCopies.ts";
 import { taskInput } from "./ScheduledTaskService.coordinatorGate.testkit.ts";
 
 const NOON = "2026-11-03T12:00:00.000Z";
@@ -179,6 +181,149 @@ it.effect("T21-04: the same after the first machine's server started again", () 
   Effect.gen(function* () {
     const { fires } = yield* lostDisarmReply(true);
     assert.equal(fires(), 1);
+  }),
+);
+
+// --- T21-06, T21-08, T21-09: the move and Bring back ---------------------------------------
+
+const LATER = "2026-11-03T18:00:00.000Z";
+const move = (from: Machine, to: Machine, task: ScheduledTask) =>
+  from.transfer!.moveOut({
+    task,
+    target: to.environmentId,
+    targetLabel: to.name,
+    copy: routineCopyOf({ ...task, ownThread: true })!,
+    boundThreadId: null,
+  });
+const bringBack = (to: Machine, from: Machine) =>
+  to.transfer!.bringBack({
+    task: { id: ROUTINE, projectId: to.projectId },
+    target: from.environmentId,
+    targetLabel: from.name,
+    wasEnabled: true,
+  });
+/** Alpha runs the routine, every copy rests, and it moved to beta. */
+const movedToBeta = Effect.gen(function* () {
+  yield* start;
+  const all = yield* fleet(["alpha", "beta"]);
+  const [alpha, beta] = all.machines as [Machine, Machine];
+  const task = yield* alpha.seed();
+  yield* beta.seed();
+  yield* settle(alpha);
+  assert.deepInclude(yield* move(alpha, beta, task), { kind: "moved" });
+  return { ...all, alpha, beta, task };
+});
+
+it.effect("T21-06: a routine a person turned off while it moved never runs afterwards", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines, network, everyoneLooks, fires } = yield* fleet(["alpha", "beta"]);
+    const [alpha, beta] = machines as [Machine, Machine];
+    const task = yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    // The person's own change, made while the other machine answers the stage.
+    let disable: Exit.Exit<unknown, unknown> | null = null;
+    network.during = (_from, _to, op) =>
+      op === "runner-stage" && disable === null
+        ? alpha.service.setEnabled({ id: ROUTINE, enabled: false }).pipe(
+            Effect.exit,
+            Effect.map((exit) => void (disable = exit)),
+          )
+        : Effect.void;
+    yield* move(alpha, beta, task);
+    network.during = undefined;
+    yield* alpha.reopen;
+    yield* move(alpha, beta, task);
+    yield* alpha.makeDue(DUE);
+    yield* beta.sql`UPDATE scheduled_tasks SET next_run_at = ${DUE} WHERE task_id = ${ROUTINE} AND enabled = 1`;
+    yield* everyoneLooks;
+    const turnedOff = disable !== null && Exit.isSuccess(disable);
+    assert.isFalse(turnedOff && fires() > 0, "it ran after a person turned it off");
+    // The move claimed it first, so the change was refused: nobody was told it is off.
+    assert.isFalse(turnedOff);
+    assert.equal(alpha.fires(), 0);
+    assert.equal(beta.fires(), 1);
+  }),
+);
+
+it.effect("T21-06: a routine turned off before its move began stays off, here and there", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines, everyoneLooks, fires } = yield* fleet(["alpha", "beta"]);
+    const [alpha, beta] = machines as [Machine, Machine];
+    // What Away read before the person turned it off.
+    const snapshot = yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    yield* alpha.service.setEnabled({ id: ROUTINE, enabled: false });
+    assert.deepInclude(yield* move(alpha, beta, snapshot), { kind: "failed", offHere: false });
+    yield* alpha.reopen;
+    yield* alpha.sql`UPDATE scheduled_tasks SET next_run_at = ${DUE} WHERE task_id = ${ROUTINE} AND enabled = 1`;
+    yield* beta.sql`UPDATE scheduled_tasks SET next_run_at = ${DUE} WHERE task_id = ${ROUTINE} AND enabled = 1`;
+    yield* everyoneLooks;
+    assert.equal(fires(), 0);
+    assert.isFalse((yield* listed(alpha)).enabled);
+    assert.equal((yield* alpha.record)?.state, "settled");
+  }),
+);
+
+it.effect("T21-08: Bring back does not take a failed read on the runner for a release", () =>
+  Effect.gen(function* () {
+    const { alpha, beta, everyoneLooks } = yield* movedToBeta;
+    beta.state.listFails = true;
+    assert.deepInclude(yield* bringBack(alpha, beta), { kind: "failed" });
+    beta.state.listFails = false;
+    assert.notOk((yield* alpha.row)?.enabled);
+    yield* alpha.makeDue(DUE);
+    yield* beta.makeDue(DUE);
+    yield* everyoneLooks;
+    // Only the machine that still runs it fired.
+    assert.equal(beta.fires(), 1);
+    assert.equal(alpha.fires(), 0);
+  }),
+);
+
+it.effect("T21-09: a release whose answer was lost is answered again with its run state", () =>
+  Effect.gen(function* () {
+    const { alpha, beta, network, everyoneLooks, fires } = yield* movedToBeta;
+    yield* beta.sql`UPDATE scheduled_tasks SET next_run_at = ${LATER}, run_count = 7 WHERE task_id = ${ROUTINE}`;
+    let lost = false;
+    network.dropAnswer = (_from, _to, op) =>
+      !lost && (op === "release" || op === "runner-release") ? (lost = true) : false;
+    assert.deepInclude(yield* bringBack(alpha, beta), { kind: "failed" });
+    assert.notOk((yield* alpha.row)?.enabled);
+    yield* alpha.reopen;
+    yield* beta.reopen;
+    assert.deepInclude(yield* bringBack(alpha, beta), { kind: "returned" });
+    // What the routine did on the other machine came back with it.
+    assert.deepInclude(yield* alpha.row, { enabled: 1, run_count: 7, next_run_at: LATER });
+    assert.isUndefined(yield* beta.row);
+    yield* alpha.makeDue(DUE);
+    yield* everyoneLooks;
+    assert.equal(fires(), 1);
+    assert.equal(alpha.fires(), 1);
+  }),
+);
+
+it.effect("T21-09: a return this machine could not save stays pending, then finishes", () =>
+  Effect.gen(function* () {
+    const { alpha, beta, everyoneLooks, fires } = yield* movedToBeta;
+    yield* beta.sql`UPDATE scheduled_tasks SET next_run_at = ${LATER}, run_count = 7 WHERE task_id = ${ROUTINE}`;
+    const heal = yield* alpha.breakTable("scheduled_tasks", "UPDATE");
+    // Released there, not saved here: not returned, so Bring back tries again.
+    assert.deepInclude(yield* bringBack(alpha, beta), { kind: "failed" });
+    yield* heal;
+    assert.notOk((yield* alpha.row)?.enabled);
+    assert.equal((yield* alpha.record)?.state, "disarmed");
+    yield* alpha.reopen;
+    assert.deepInclude(yield* bringBack(alpha, beta), { kind: "returned" });
+    assert.deepInclude(yield* alpha.row, { enabled: 1, run_count: 7, next_run_at: LATER });
+    assert.notEqual((yield* alpha.record)?.state, "disarmed");
+    yield* alpha.makeDue(DUE);
+    yield* everyoneLooks;
+    assert.equal(fires(), 1);
+    assert.equal(alpha.fires(), 1);
   }),
 );
 

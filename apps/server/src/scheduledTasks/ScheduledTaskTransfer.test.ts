@@ -91,7 +91,11 @@ const CAPABLE = { capabilities: [ROUTINE_RUNNER_CAPABILITY] };
 
 function out(
   answers: Record<string, () => Effect.Effect<unknown, AwayPeerError>>,
-  here: { readonly offWorks?: boolean; readonly readsEnabled?: boolean } = {},
+  here: {
+    readonly offWorks?: boolean;
+    readonly readsEnabled?: boolean;
+    readonly returnSaves?: boolean;
+  } = {},
 ) {
   const log: Array<string> = [];
   const memory = memoryRecords();
@@ -121,6 +125,33 @@ function out(
     revisionOf: () => Effect.succeed(0),
     setRevision: () => Effect.void,
     newOperationId: Effect.succeed("routine-move:fixture-1"),
+    copyOf: () => COPY,
+    claim: (input) =>
+      Effect.sync(() => {
+        const record = input.moving(0);
+        memory.rows.set(record.taskId, record);
+        return { kind: "claimed", task: TASK, record } as const;
+      }),
+    // As the scheduler writes it: off, the note and the record together, or nothing.
+    commitOff: (input) =>
+      Effect.sync(() => {
+        log.push("here:off");
+        if (here.offWorks === false || here.readsEnabled === true) return null;
+        log.push(`note:${input.note}`);
+        const record = input.record(STATE);
+        memory.rows.set(record.taskId, record);
+        return record;
+      }),
+    commitReturn: (input) =>
+      Effect.sync(() => {
+        if (here.returnSaves === false) return false;
+        if (input.record === null) memory.rows.delete(input.task.id);
+        else memory.rows.set(input.task.id, input.record);
+        log.push("note:clear");
+        if (input.enabled) log.push("here:on");
+        if (input.runState !== null) log.push(`state:${input.runState.nextRunAt}`);
+        return true;
+      }),
   });
   return { transfer, log, memory };
 }
@@ -411,6 +442,7 @@ describe("routine transfer, the target's side", () => {
     const transfer = makeTransferIn({
       projects: Effect.succeed([project]),
       findTask: () => Effect.succeed(held),
+      atomically: (effect) => effect,
       upsert: (input, grantedBy) => Effect.sync(() => void (saved = { input, grantedBy })),
       setEnabled: (_id, enabled) => Effect.sync(() => (log.push(enabled ? "on" : "off"), true)),
       remove: () => Effect.sync(() => void log.push("remove")),
@@ -521,6 +553,7 @@ describe("a runner move, the target's side", () => {
     const transfer = makeTransferIn({
       projects: Effect.succeed([project]),
       findTask: () => Effect.sync(() => held),
+      atomically: (effect) => effect,
       upsert: (input, grantedBy) =>
         Effect.sync(() => {
           log.push("save");
