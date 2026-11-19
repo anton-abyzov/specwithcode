@@ -226,11 +226,7 @@ const PHASE_3_TEXT: readonly string[] = [
   'Move "${props.title}"',
 ];
 
-export const RETIRED_TEXT: readonly string[] = [
-  ...PHASE_1_TEXT,
-  ...PHASE_2_TEXT,
-  ...PHASE_3_TEXT,
-];
+export const RETIRED_TEXT: readonly string[] = [...PHASE_1_TEXT, ...PHASE_2_TEXT, ...PHASE_3_TEXT];
 
 /** Phase 1: role words. "Main machine" is a settings label of its own (D-20). */
 const PHASE_1_BANNED: readonly RegExp[] = [
