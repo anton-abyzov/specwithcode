@@ -3009,7 +3009,7 @@ export const ja: PhraseCatalog = {
   "Send with credits": "クレジットで送信",
   "Send to this thread on {machine}": "{machine} のこのスレッドに送信",
   "Start a thread on {machine}": "{machine} でスレッドを開始",
-  "Start {count} threads on {machine}": "{machine} で {count} 件のスレッドを開始",
+  "Start one thread per model on {machine}": "{machine} でモデルごとにスレッドを開始",
   "Finding pull request...": "プルリクエストを検索中...",
   "Searching workspace files...": "ワークスペースのファイルを検索中...",
   "Draft attachment may not persist": "下書きの添付ファイルが保持されない可能性があります",

@@ -2907,7 +2907,7 @@ export const zh: PhraseCatalog = {
   "Send with credits": "使用额度发送",
   "Send to this thread on {machine}": "发送到 {machine} 上的此会话",
   "Start a thread on {machine}": "在 {machine} 上开始一个会话",
-  "Start {count} threads on {machine}": "在 {machine} 上开始 {count} 个会话",
+  "Start one thread per model on {machine}": "在 {machine} 上为每个模型开始一个会话",
   "Finding pull request...": "正在查找拉取请求...",
   "Searching workspace files...": "正在搜索工作区文件...",
   "Draft attachment may not persist": "草稿附件可能无法保留",

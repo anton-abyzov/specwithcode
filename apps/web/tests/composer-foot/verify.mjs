@@ -306,7 +306,7 @@ function check(tag, facts, scene, typed) {
     assert.equal(thread.edge.width, "2px");
   }
   if (coordinator) {
-    assert.equal(coordinator.chipWords, "On m4", `${tag}: coordinator chip says ${coordinator.chipWords}`);
+    assert.equal(coordinator.chipWords, "On Laptop A", `${tag}: coordinator chip says ${coordinator.chipWords}`);
     assert.equal(coordinator.chipCut, false, `${tag}: the coordinator's machine name is cut`);
     assert.equal(coordinator.voiceWords, "", `${tag}: voice says ${coordinator.voiceWords}`);
     // AC-05: the run state is a dot unless it needs the person.

@@ -134,7 +134,7 @@ describe("ComposerPrimaryActions", () => {
     // A new draft has no thread yet.
     expect(label({ startsThreads: 1 })).toBe("Start a thread on Workstation W");
     // Two models picked: one thread each.
-    expect(label({ startsThreads: 2 })).toBe("Start 2 threads on Workstation W");
+    expect(label({ startsThreads: 2 })).toBe("Start one thread per model on Workstation W");
     // Whatever it says, the button prints none of it.
     for (const startsThreads of [null, 1, 2])
       expect(sendButtonTo(SEND_TARGET, { startsThreads }).textContent).toBe("");

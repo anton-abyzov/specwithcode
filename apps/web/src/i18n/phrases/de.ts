@@ -3024,7 +3024,7 @@ export const de: PhraseCatalog = {
   "Send with credits": "Mit Guthaben senden",
   "Send to this thread on {machine}": "An diesen Thread auf {machine} senden",
   "Start a thread on {machine}": "Thread auf {machine} starten",
-  "Start {count} threads on {machine}": "{count} Threads auf {machine} starten",
+  "Start one thread per model on {machine}": "Einen Thread pro Modell auf {machine} starten",
   "Finding pull request...": "Pull Request wird gesucht...",
   "Searching workspace files...": "Workspace-Dateien werden durchsucht...",
   "Draft attachment may not persist": "Anhang des Entwurfs bleibt evtl. nicht erhalten",
