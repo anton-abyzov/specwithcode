@@ -64,7 +64,11 @@ const fileAction = (path: string, body: string, replaces = false): FileAction =>
   writePath: path,
 });
 
-const folderAction = (path: string, replaces = false): FileAction => ({
+const folderAction = (
+  path: string,
+  replaces = false,
+  reviewed?: FileAction["reviewed"],
+): FileAction => ({
   path,
   kind: "mkdir",
   entry: {
@@ -77,10 +81,15 @@ const folderAction = (path: string, replaces = false): FileAction => ({
     repo: null,
   },
   replaces,
+  ...(reviewed ? { reviewed } : {}),
   localSource: null,
   row: "files",
   writePath: path,
 });
+
+/** What the preview saw: the file `original T` or the link to `somewhere-else`. */
+const ORIGINAL_T = { type: "file" as const, size: 11, sha256: sha("original T\n") };
+const LINK_T = { type: "symlink" as const, size: 0, sha256: null, target: "somewhere-else" };
 
 /** A destination folder, staged files and the Apply input for `actions`. */
 function scenario(
@@ -134,25 +143,25 @@ describe("a take-theirs folder that replaces a file or link", () => {
       "a file",
       (target: string) => NodeFS.writeFileSync(NodePath.join(target, "T"), "original T\n"),
       { "T/x": "copied x\n" },
-      [folderAction("T", true), fileAction("T/x", "copied x\n")],
+      [folderAction("T", true, ORIGINAL_T), fileAction("T/x", "copied x\n")],
     ],
     [
       "a link",
       (target: string) => NodeFS.symlinkSync("somewhere-else", NodePath.join(target, "T")),
       { "T/x": "copied x\n" },
-      [folderAction("T", true), fileAction("T/x", "copied x\n")],
+      [folderAction("T", true, LINK_T), fileAction("T/x", "copied x\n")],
     ],
     [
       "a file, with a nested folder",
       (target: string) => NodeFS.writeFileSync(NodePath.join(target, "T"), "original T\n"),
       { "T/a/x": "copied x\n" },
-      [folderAction("T", true), folderAction("T/a"), fileAction("T/a/x", "copied x\n")],
+      [folderAction("T", true, ORIGINAL_T), folderAction("T/a"), fileAction("T/a/x", "copied x\n")],
     ],
     [
       "a file, with a nested folder the plan does not list",
       (target: string) => NodeFS.writeFileSync(NodePath.join(target, "T"), "original T\n"),
       { "T/a/x": "copied x\n" },
-      [folderAction("T", true), fileAction("T/a/x", "copied x\n")],
+      [folderAction("T", true, ORIGINAL_T), fileAction("T/a/x", "copied x\n")],
     ],
   ] as const)(
     "journals its backup and mkdir before what goes inside, so Undo restores %s exactly",
