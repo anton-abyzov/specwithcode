@@ -358,7 +358,7 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     ),
   );
 
-  it.effect("stops only the listed threads that still block, a waiting run by its id", () =>
+  it.effect("stops only listed threads that still block with the run that was seen", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const { scenario, parent } = yield* makeScenario;
@@ -369,25 +369,34 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
         });
         scenario.threads[1] = shell("worker", {
           title: "Worker",
-          activeRunId: RunId.make("run-2"),
-          status: "waiting",
+          activeRunId: RunId.make("run-3"),
+          status: "running",
         });
+        scenario.threads.push(shell("queued", { title: "Queued", status: "queued" }));
         scenario.threads.push(shell("idle", { title: "Idle" }));
         const result = yield* withFolders(scenario, (folders) =>
           folders.stop({
             commandId,
             projectId,
             workspaceRoot: parent,
-            threadIds: [
-              ThreadId.make("coordinator"),
-              ThreadId.make("worker"),
-              ThreadId.make("idle"),
+            threads: [
+              { id: ThreadId.make("coordinator"), runId: RunId.make("run-1") },
+              // The worker's check showed run-2; run-3 started since.
+              { id: ThreadId.make("worker"), runId: RunId.make("run-2") },
+              { id: ThreadId.make("queued"), runId: null },
+              { id: ThreadId.make("idle"), runId: null },
             ],
           }),
         );
         expect(result).toEqual({
-          stopped: [ThreadId.make("coordinator"), ThreadId.make("worker")],
-          failed: [],
+          stopped: [ThreadId.make("coordinator"), ThreadId.make("queued")],
+          failed: [
+            {
+              id: ThreadId.make("worker"),
+              title: "Worker",
+              message: '"Worker" started other work after the check; press Stop again to stop it.',
+            },
+          ],
         });
         expect(
           scenario.dispatched.map((command) => [
@@ -395,10 +404,11 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
             (command as { readonly threadId?: string }).threadId,
           ]),
         ).toEqual([
-          ["thread.stop", "coordinator"],
-          ["run.interrupt", "worker"],
+          ["run.interrupt", "coordinator"],
+          ["thread.stop", "queued"],
         ]);
-        expect(scenario.dispatched[1]).toMatchObject({ runId: "run-2", holdQueue: true });
+        // The run is interrupted the way the Stop button does it, delegated tasks included.
+        expect(scenario.dispatched[0]).toMatchObject({ runId: "run-1", holdQueue: true });
       }),
     ),
   );
@@ -417,7 +427,7 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
             commandId,
             projectId,
             workspaceRoot: parent,
-            threadIds: [ThreadId.make("coordinator")],
+            threads: [{ id: ThreadId.make("coordinator"), runId: RunId.make("run-1") }],
           }),
         );
         expect(result).toEqual({
@@ -443,7 +453,7 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
           const check = yield* withFolders(scenario, (folders) =>
             folders.check({ projectId, workspaceRoot: parent }),
           );
-          expect(check.activeThreads.map((thread) => thread.id)).toEqual(["worker"]);
+          expect(check.activeThreads).toEqual([{ id: "worker", title: "worker", runId: null }]);
         } finally {
           release();
         }

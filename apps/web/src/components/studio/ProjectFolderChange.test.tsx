@@ -207,9 +207,15 @@ describe("ProjectFolderChange", () => {
       expect(state.folderStop).toHaveBeenCalledTimes(1);
       expect(state.folderStop.mock.calls[0]![0]).toMatchObject({
         environmentId: "host",
-        input: { projectId: "easychamp", workspaceRoot: parent, threadIds: ["t1", "t2"] },
+        input: {
+          projectId: "easychamp",
+          workspaceRoot: parent,
+          threads: [
+            { id: "t1", runId: null },
+            { id: "t2", runId: null },
+          ],
+        },
       });
-      expect(state.interrupt).not.toHaveBeenCalled();
       // While it stops, the box says so and the button shows progress.
       expect(container.textContent).toContain('Stopping "Coordinator", "Worker".');
       expect(button("Stopping…").getAttribute("aria-busy")).toBe("true");
@@ -310,33 +316,30 @@ describe("ProjectFolderChange", () => {
     }
   });
 
-  it("falls back to the thread Stop on a server without folder Stop", async () => {
+  it("names the refusal when the server cannot stop the work, and sends nothing else", async () => {
     vi.useFakeTimers();
     try {
-      state.folderCheck
-        .mockResolvedValueOnce({
-          _tag: "Success",
-          value: check({
-            sameRepository: true,
-            activeThreads: [{ id: "t1", title: "Worker" }],
-          } as unknown as Partial<ProjectFolderCheck>),
-        })
-        .mockResolvedValue({ _tag: "Success", value: check({ sameRepository: true }) });
+      state.folderCheck.mockResolvedValue({
+        _tag: "Success",
+        value: check({
+          sameRepository: true,
+          activeThreads: [{ id: "t1", title: "Worker", runId: "run-1" }],
+        } as unknown as Partial<ProjectFolderCheck>),
+      });
       state.folderStop.mockResolvedValue({ _tag: "Failure", error: new Error("Unknown method") });
-      state.interrupt.mockResolvedValue({ _tag: "Success", value: {} });
       render();
       await typeFolder(parent);
       await click("Check");
       await click("Stop 1 run");
+      expect(state.folderStop.mock.calls[0]![0].input.threads).toEqual([
+        { id: "t1", runId: "run-1" },
+      ]);
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(2_500);
+        await vi.advanceTimersByTimeAsync(60_500);
       });
-      expect(state.interrupt).toHaveBeenCalledWith({
-        environmentId: "host",
-        input: { threadId: "t1" },
-      });
-      expect(container.querySelector("[data-folder-stopped]")?.textContent).toBe(
-        'Stopped "Worker". Nothing blocks the change now.',
+      expect(state.interrupt).not.toHaveBeenCalled();
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+        '"Worker" is still running 60 seconds after Stop. Stop failed: Unknown method. Open the thread to see what it is doing, or press Stop again.',
       );
     } finally {
       vi.useRealTimers();

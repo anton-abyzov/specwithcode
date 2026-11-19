@@ -24,6 +24,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.voiceSynthesize]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsEnvironmentImport]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsThreadsDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsFolderStop]: AuthOrchestrationOperateScope,
   [WS_METHODS.nativeConnectionsRead]: AuthFilesystemReadScope,
   [WS_METHODS.browserBridgeStatus]: AuthFilesystemReadScope,
   // Both start Claude Code's browser server, a local process.

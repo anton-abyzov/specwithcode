@@ -14,6 +14,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  RunId,
   ThreadId,
   TrimmedNonEmptyString,
   TrimmedString,
@@ -351,16 +352,18 @@ export const ProjectFolderCheckInput = Schema.Struct({
 export type ProjectFolderCheckInput = typeof ProjectFolderCheckInput.Type;
 
 /**
- * Stop for the threads a folder check listed as running. The server stops each one that
- * still blocks the change, the way its Stop button would (`thread.stop`: the running
- * turn is interrupted, the queue held, a pending approval or question ended), and skips
- * one that no longer blocks, so a late retry never stops a newer run.
+ * Stop for the threads a folder check listed as running, each with the run it saw. The
+ * server stops a thread that still blocks the change with that same run, the way its
+ * Stop button would (the run is interrupted with its delegated tasks and the queue held;
+ * a thread with only queued or background work gets `thread.stop`). A thread that
+ * started another run since, or no longer blocks, is left alone, so a late or replayed
+ * Stop never reaches newer work.
  */
 export const ProjectFolderStopInput = Schema.Struct({
   commandId: CommandId,
   projectId: ProjectId,
   workspaceRoot: TrimmedNonEmptyString,
-  threadIds: Schema.Array(ThreadId),
+  threads: Schema.Array(Schema.Struct({ id: ThreadId, runId: Schema.NullOr(RunId) })),
 });
 export type ProjectFolderStopInput = typeof ProjectFolderStopInput.Type;
 
@@ -394,7 +397,14 @@ export const ProjectFolderCheck = Schema.Struct({
     }),
   ),
   /** Threads with a queued, running or waiting turn, or a pending request. They must stop first. */
-  activeThreads: Schema.Array(Schema.Struct({ id: ThreadId, title: Schema.String })),
+  activeThreads: Schema.Array(
+    Schema.Struct({
+      id: ThreadId,
+      title: Schema.String,
+      /** The run that keeps it busy, or null for queued or background work; absent from older servers. */
+      runId: Schema.optional(Schema.NullOr(RunId)),
+    }),
+  ),
   /**
    * Threads that move with the folder and hold queued messages after a Stop. They do not
    * block the change; the messages run in the new folder when the thread resumes.

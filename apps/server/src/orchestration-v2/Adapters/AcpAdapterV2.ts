@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import { withStopTeardown } from "../../process/stopTeardowns.ts";
 import * as NodePath from "node:path";
 
 import {
@@ -8321,7 +8322,12 @@ export function makeAcpAdapterV2(
               );
             },
             (effect, turnInput) =>
-              effect.pipe(
+              // The folder change waits while a user Stop ends (or replaces) the agent.
+              (turnInput.requestRuntimeRestart === true &&
+              turnInput.providerThread.appThreadId !== null
+                ? withStopTeardown(turnInput.providerThread.appThreadId, effect)
+                : effect
+              ).pipe(
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapter.ProviderAdapterInterruptError({

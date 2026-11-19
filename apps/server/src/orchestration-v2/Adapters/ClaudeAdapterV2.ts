@@ -192,8 +192,8 @@ import {
   type ProviderAdapterDriverCreateInput,
 } from "../ProviderAdapterDriver.ts";
 import { type BackgroundWorkReport, backgroundWorkNotification } from "../Notification.ts";
-import { type OwnedProcessTree, spawnOwnedProcess } from "../../process/ownedProcessTree.ts";
-import { withStopTeardown } from "../../process/stopTeardowns.ts";
+import { retryTreeEnd, spawnOwnedProcess } from "../../process/ownedProcessTree.ts";
+import { beginStopTeardown, withStopTeardown } from "../../process/stopTeardowns.ts";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import * as PromptSuggestions from "../PromptSuggestions.ts";
 import * as SubagentLaunchCheckpoints from "../SubagentLaunchCheckpoints.ts";
@@ -426,6 +426,9 @@ export type ClaudeAgentSdkQueryOptions = Omit<
   readonly tools: NonNullable<ClaudeQueryOptions["tools"]>;
   readonly permissionMode: NonNullable<ClaudeQueryOptions["permissionMode"]>;
 } & ClaudeAgentSdkThreadIdentity;
+
+/** How long Stop's reading of the CLI's process tree may take (Windows CIM is slow). */
+const CLAUDE_TREE_REMEMBER_TIMEOUT_MS = 10_000;
 
 export interface ClaudeAgentSdkQueryOpenInput {
   readonly options: ClaudeAgentSdkQueryOptions;
@@ -788,7 +791,7 @@ export const layerQueryRunner: Layer.Layer<
         );
         // The server spawns the CLI itself, so Stop and every close can end what the CLI
         // started too (the SDK's own spawn and close end only the CLI).
-        let ownedTree: OwnedProcessTree | null = null;
+        let owned: ReturnType<typeof spawnOwnedProcess> | null = null;
         const queryRuntime = yield* Effect.try({
           try: () =>
             query({
@@ -796,8 +799,7 @@ export const layerQueryRunner: Layer.Layer<
               options: {
                 ...input.options,
                 spawnClaudeCodeProcess: (spawnOptions) => {
-                  const owned = spawnOwnedProcess(spawnOptions);
-                  ownedTree = owned.tree;
+                  owned = spawnOwnedProcess(spawnOptions);
                   return owned.child;
                 },
               },
@@ -806,33 +808,42 @@ export const layerQueryRunner: Layer.Layer<
         });
         // Once the CLI's output ends, what it left running is ended before the stream
         // reports its end, so the run settles only after that; the folder change also
-        // waits on it while it runs.
+        // waits on it while it runs. When processes survive it, or the process table
+        // could not be read, the folder change keeps waiting while it is tried again.
         const endOwnedTree = Effect.suspend(() => {
-          const tree: OwnedProcessTree | null = ownedTree;
-          if (tree === null) return Effect.void;
-          return withStopTeardown(
-            input.threadId,
-            Effect.promise(() => tree.end()).pipe(
-              Effect.tap((result) =>
-                result.survivors > 0
-                  ? Effect.logWarning("orchestration-v2.claude-process-tree-survivors", {
-                      threadId: input.threadId,
-                      providerSessionId: input.providerSessionId,
-                      pid: tree.root.pid,
-                      found: result.found,
-                      survivors: result.survivors,
-                    })
-                  : result.found > 0
-                    ? Effect.logInfo("orchestration-v2.claude-process-tree-ended", {
-                        threadId: input.threadId,
-                        providerSessionId: input.providerSessionId,
-                        pid: tree.root.pid,
-                        found: result.found,
-                      })
-                    : Effect.void,
-              ),
-            ),
-          );
+          const spawned: ReturnType<typeof spawnOwnedProcess> | null = owned;
+          if (spawned === null) return Effect.void;
+          const { tree, child, stderrTail } = spawned;
+          const exitedBadly =
+            child.exitCode !== null && child.exitCode !== 0 && stderrTail().trim().length > 0;
+          return Effect.gen(function* () {
+            if (exitedBadly) {
+              yield* Effect.logWarning("orchestration-v2.claude-cli-exited-with-stderr", {
+                threadId: input.threadId,
+                providerSessionId: input.providerSessionId,
+                exitCode: child.exitCode,
+                stderr: redactProviderFailureText(stderrTail()),
+              });
+            }
+            const release = beginStopTeardown(input.threadId);
+            const result = yield* Effect.promise(() => tree.end());
+            const log = {
+              threadId: input.threadId,
+              providerSessionId: input.providerSessionId,
+              pid: tree.root.pid,
+              ...result,
+            };
+            if (result.survivors === 0 && !result.unknown) {
+              release();
+              if (result.found > 0) {
+                yield* Effect.logInfo("orchestration-v2.claude-process-tree-ended", log);
+              }
+              return;
+            }
+            yield* Effect.logWarning("orchestration-v2.claude-process-tree-unconfirmed", log);
+            // Tried again in the background, holding the folder change meanwhile.
+            void retryTreeEnd(tree).finally(release);
+          });
         });
         yield* logProtocolEvent({
           direction: "outgoing",
@@ -858,8 +869,10 @@ export const layerQueryRunner: Layer.Layer<
           ),
           endProcessTree: endOwnedTree,
           rememberProcessTree: Effect.suspend(() => {
-            const tree: OwnedProcessTree | null = ownedTree;
-            return tree === null ? Effect.void : Effect.promise(() => tree.remember());
+            const spawned: ReturnType<typeof spawnOwnedProcess> | null = owned;
+            return spawned === null
+              ? Effect.void
+              : Effect.promise(() => spawned.tree.remember(CLAUDE_TREE_REMEMBER_TIMEOUT_MS));
           }),
           offer: (message) =>
             Queue.offer(promptQueue, message).pipe(
@@ -8379,7 +8392,8 @@ export function makeClaudeAdapterV2(
           projectContextHooks.register(nativeThreadId, turnInput);
           const existing = yield* Ref.get(queryContext);
           // A continuation prompts nothing: it drains output the live process
-          // already produced, so it keeps that process whatever its selection.
+          // already produced, so it keeps that process whatever its selection,
+          // even one Stop is closing (it then ends with that process, stopped).
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
@@ -8508,9 +8522,11 @@ export function makeClaudeAdapterV2(
                   ),
                   Effect.asVoid,
                 );
+          // A process Stop is closing is never handed to a new turn: the turn gets its own.
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
+            !existing.stopping &&
             existing.queryPolicyKey === queryPolicyKey &&
             existing.selectionKey === compiledSelection.queryIdentity
           ) {

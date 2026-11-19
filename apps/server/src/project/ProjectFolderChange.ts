@@ -599,7 +599,11 @@ export const make = Effect.gen(function* () {
         activeThreads: shells
           .filter(movesWithFolder(project, keep, rebound))
           .filter((thread) => threadBlocksFolderChange(thread, input.approvalRequestId))
-          .map((thread) => ({ id: thread.id, title: thread.title || "Untitled thread" })),
+          .map((thread) => ({
+            id: thread.id,
+            title: thread.title || "Untitled thread",
+            runId: thread.activeRunId ?? null,
+          })),
         heldThreads: shells
           .filter(movesWithFolder(project, keep, rebound))
           .filter(
@@ -876,44 +880,50 @@ export const make = Effect.gen(function* () {
   });
 
   const stop = Effect.fn("ProjectFolderService.stop")(function* (input: ProjectFolderStopInput) {
-    // The server's own classification: only threads that still block are stopped, so a
-    // retry after the first Stop took effect never reaches a newer run.
+    // The server's own classification, bound to the run the person saw: a thread that
+    // no longer blocks, or blocks with a newer run, is left alone.
     const current = yield* check({
       projectId: input.projectId,
       workspaceRoot: input.workspaceRoot,
     });
-    const wanted = new Set(input.threadIds);
-    const shells = new Map(
-      (yield* projectThreads(input.projectId)).map((shell) => [shell.id, shell] as const),
-    );
+    const seen = new Map(input.threads.map((thread) => [thread.id, thread.runId] as const));
     const stopped: ThreadId[] = [];
     const failed: Array<{ id: ThreadId; title: string; message: string }> = [];
     const reason = "Stopped to change the project folder.";
     for (const thread of current.activeThreads) {
-      if (!wanted.has(thread.id)) continue;
-      const shell = shells.get(thread.id);
-      // A run waiting on an approval or a question is interrupted by its id, which ends
-      // the request too; thread.stop covers the rest (queues, background work).
-      const waiting =
-        shell?.status === "waiting" && shell.activeRunId !== null && shell.activeRunId !== undefined
-          ? yield* threads
+      if (!seen.has(thread.id)) continue;
+      const runId = thread.runId ?? null;
+      if (seen.get(thread.id) !== runId) {
+        failed.push({
+          id: thread.id,
+          title: thread.title,
+          message: `"${thread.title}" started other work after the check; press Stop again to stop it.`,
+        });
+        continue;
+      }
+      // One command id per thread and run, whichever branch it takes, so a replay of
+      // this request is answered from the first dispatch instead of acting again.
+      const operation = `${input.commandId}:${thread.id}:${runId ?? "no-run"}`;
+      const interrupted =
+        runId === null
+          ? null
+          : yield* threads
               .dispatch({
                 type: "run.interrupt",
-                commandId: CommandId.make(`${input.commandId}:interrupt:${thread.id}`),
+                commandId: CommandId.make(operation),
                 threadId: thread.id,
-                runId: shell.activeRunId,
+                runId,
                 reason,
                 holdQueue: true,
               })
-              .pipe(Effect.exit)
-          : null;
+              .pipe(Effect.exit);
       const result =
-        waiting !== null && Exit.isSuccess(waiting)
-          ? waiting
+        interrupted !== null && Exit.isSuccess(interrupted)
+          ? interrupted
           : yield* threads
               .dispatch({
                 type: "thread.stop",
-                commandId: CommandId.make(`${input.commandId}:stop:${thread.id}`),
+                commandId: CommandId.make(runId === null ? operation : `${operation}:thread`),
                 threadId: thread.id,
                 reason,
               })

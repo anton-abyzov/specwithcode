@@ -22,7 +22,6 @@ import {
 } from "../../lib/folderLayoutGuidance";
 import { readLocalApi } from "../../localApi";
 import { projectEnvironment } from "../../state/projects";
-import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { ProjectFolderCopies } from "./ProjectFolderCopies";
@@ -229,6 +228,7 @@ function later(ms: number, stopTimers: Timers): Promise<void> {
 /** Whether two checks compare the same two repositories, so a tick still applies. */
 function sameRepositoryDetails(a: ProjectFolderCheck, b: ProjectFolderCheck) {
   return (
+    a.currentRoot === b.currentRoot &&
     a.targetRoot === b.targetRoot &&
     a.currentRepository === b.currentRepository &&
     a.targetRepository === b.targetRepository &&
@@ -370,7 +370,6 @@ export function ProjectFolderChange({
   }, []);
   const runCheck = useAtomCommand(projectEnvironment.folderCheck);
   const changeFolder = useAtomCommand(projectEnvironment.changeFolder);
-  const interrupt = useAtomCommand(threadEnvironment.interruptTurn);
   const folderStop = useAtomCommand(projectEnvironment.folderStop);
   // Only the desktop app can open a native folder picker.
   const pickFolder =
@@ -422,7 +421,7 @@ export function ProjectFolderChange({
 
   /**
    * Stop ends a run asynchronously: the provider winds the turn down and the server
-   * settles it, which can take half a minute. So the flow asks the server to stop what
+   * settles it, which can take up to a minute. So the flow asks the server to stop what
    * blocks the change (it stops only threads that still block, so nothing newer is
    * reached), and checks the folder again until the stopped threads are idle, keeping
    * what the person ticked while the details it confirms stay the same. It says plainly
@@ -445,33 +444,27 @@ export function ProjectFolderChange({
     const deadline = Date.now() + STOP_WAIT_MS;
     const remaining = () => Math.max(0, deadline - Date.now());
     const reasons: string[] = [];
-    const reasonOf = (result: Parameters<typeof squashAtomCommandFailure>[0]) => {
-      const cause = squashAtomCommandFailure(result);
-      if (cause instanceof Error) reasons.push(cause.message);
-    };
     // Polling starts without waiting on this answer, so a slow one cannot use up the wait.
+    // Each thread goes with the run the check saw, so the server never stops newer work.
     void folderStop({
       environmentId: project.environmentId,
       input: {
         commandId: CommandId.make(`folder-stop:${randomUUID()}`),
         projectId: project.id,
         workspaceRoot: targetRoot,
-        threadIds: stopping.map((thread) => thread.id),
+        threads: stopping.map((thread) => ({ id: thread.id, runId: thread.runId ?? null })),
       },
-    }).then(async (result) => {
+    }).then((result) => {
+      if (run !== generation.current) return;
       if (result._tag === "Success") {
         for (const failure of result.value.failed) reasons.push(failure.message);
         return;
       }
-      // A server without folder Stop: the thread Stop button's command, once per thread.
-      await Promise.all(
-        stopping.map((thread) =>
-          interrupt({ environmentId: project.environmentId, input: { threadId: thread.id } }).then(
-            (sent) => {
-              if (sent._tag === "Failure") reasonOf(sent);
-            },
-          ),
-        ),
+      const cause = squashAtomCommandFailure(result);
+      reasons.push(
+        cause instanceof Error && cause.message.length > 0
+          ? `Stop failed: ${cause.message.replace(/\.?$/u, ".")}`
+          : "Stop failed. If this machine runs an older SpecWithCode, update it or stop the thread there.",
       );
     });
     let latest: ProjectFolderCheck | null = null;
@@ -501,7 +494,9 @@ export function ProjectFolderChange({
       unknown = false;
       // A tick confirms the details shown when it was given, not ones that changed since.
       if (!sameRepositoryDetails(pressed, latest)) setConfirmRepository(false);
-      if (planningSummary(pressed) !== planningSummary(latest)) setConfirmPlanning(false);
+      if (JSON.stringify(pressed.planning ?? null) !== JSON.stringify(latest.planning ?? null)) {
+        setConfirmPlanning(false);
+      }
       setCheck(latest);
       const still = latest.activeThreads.filter((thread) => stoppingIds.has(thread.id));
       if (still.length === 0) break;
@@ -806,7 +801,7 @@ export function ProjectFolderChange({
                   <div className="project-notice" data-folder-active-work>
                     <p>
                       {phase === "stopping"
-                        ? `Stopping ${quotedTitles(check.activeThreads)}. This can take up to half a minute; the folder can change once ${check.activeThreads.length === 1 ? "it has" : "they have"} stopped.`
+                        ? `Stopping ${quotedTitles(check.activeThreads)}. This can take up to a minute; the folder can change once ${check.activeThreads.length === 1 ? "it has" : "they have"} stopped.`
                         : `Stop the running work first: ${quotedTitles(check.activeThreads)}.`}
                     </p>
                     <button

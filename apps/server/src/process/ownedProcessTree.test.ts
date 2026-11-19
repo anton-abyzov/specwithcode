@@ -105,6 +105,8 @@ describe("windowsTree", () => {
   it("finds orphans of the exited CLI, but not children of a newer process with its pid", () => {
     const spawnedAt = 1_800_000_000_000;
     const created = BigInt(filetimeFromEpochMs(spawnedAt)) + 10n;
+    // The CLI's creation time, read while it ran.
+    const remembered = new Map([[200, { entry: win(200, 100, created, "claude.exe"), created }]]);
     const table = [
       // The CLI exited; its tool still runs and still names it as parent.
       win(201, 200, created + 50n, "bash -c npm run dev"),
@@ -112,9 +114,16 @@ describe("windowsTree", () => {
       win(200, 1, created + 100n, "newer process"),
       win(210, 200, created + 200n, "newer process's child"),
     ];
-    expect(windowsTree(table, root(200, false, spawnedAt), 100).map((k) => k.entry.pid)).toEqual([
-      201,
-    ]);
+    expect(
+      windowsTree(table, root(200, false, spawnedAt), 100, remembered).map((k) => k.entry.pid),
+    ).toEqual([201]);
+  });
+
+  it("takes nothing below an exited CLI whose creation time was never read", () => {
+    // 300 was started by an earlier owner of pid 200, half a second before the spawn.
+    const spawnedAt = 1_800_000_000_000;
+    const table = [win(300, 200, BigInt(filetimeFromEpochMs(spawnedAt - 500)), "old helper")];
+    expect(windowsTree(table, root(200, false, spawnedAt), 100)).toEqual([]);
   });
 
   it("finds what an exited tool started, from an earlier reading", () => {
@@ -158,24 +167,28 @@ describe("posixEscapees", () => {
     expect(posixEscapees(table, root(200, true), 100).map((e) => e.pid)).toEqual([202, 203]);
   });
 
-  it("checks identity against a fresh read", () => {
+  it("checks identity against a fresh read by pid and start time, through an exec", () => {
     const snapshot = [posix(202, 1, 202), posix(203, 202, 202)];
     expect(
-      stillRunning(snapshot, [{ ...posix(202, 1, 202), started: "later" }, posix(203, 1, 202)]).map(
-        (e) => e.pid,
-      ),
+      stillRunning(snapshot, [
+        { ...posix(202, 1, 202), started: "later" },
+        { ...posix(203, 1, 202), command: "exec'd into node" },
+      ]).map((e) => e.pid),
     ).toEqual([203]);
   });
 });
 
-function fakeHost(platform: NodeJS.Platform, tables: Array<ReadonlyArray<ProcessEntry>>) {
+function fakeHost(platform: NodeJS.Platform, tables: Array<ReadonlyArray<ProcessEntry> | null>) {
   const calls: string[] = [];
   let groupAlive = true;
   let clock = 0;
   const host: TreeHost = {
     platform,
     selfPid: 100,
-    readProcessList: async () => (tables.length > 1 ? tables.shift() : tables[0]),
+    readProcessList: async () => {
+      const table = tables.length > 1 ? tables.shift() : tables[0];
+      return table === null ? undefined : table;
+    },
     signal: (pid, signal) => {
       if (signal === 0) {
         if (pid < 0 && groupAlive) return;
@@ -183,7 +196,7 @@ function fakeHost(platform: NodeJS.Platform, tables: Array<ReadonlyArray<Process
       }
       calls.push(`${signal} ${pid}`);
     },
-    killVerified: async (entries) => {
+    killVerified: async (entries, _timeoutMs) => {
       calls.push(`kill ${entries.map((e) => e.pid).join(",")}`);
     },
     sleep: async (ms) => {
@@ -208,11 +221,12 @@ describe("OwnedProcessTree.end", () => {
     const ending = tree.end(4_000);
     const result = await ending;
     expect(calls).toEqual(["SIGTERM -200", "SIGKILL -200"]);
-    expect(result).toEqual({ found: 2, survivors: 1 });
+    expect(result).toEqual({ found: 2, survivors: 1, unknown: false });
     endGroup();
     expect(await new OwnedProcessTree(root(200, false), host).end(4_000)).toEqual({
       found: 2,
       survivors: 0,
+      unknown: false,
     });
   });
 
@@ -222,8 +236,38 @@ describe("OwnedProcessTree.end", () => {
     expect(await new OwnedProcessTree(root(200, false), host).end()).toEqual({
       found: 0,
       survivors: 0,
+      unknown: false,
     });
     expect(calls).toEqual([]);
+  });
+
+  it("says it cannot tell when the process table cannot be read", async () => {
+    const posixHost = fakeHost("linux", [null]);
+    posixHost.endGroup();
+    expect(await new OwnedProcessTree(root(200, false), posixHost.host).end()).toEqual({
+      found: 0,
+      survivors: 0,
+      unknown: true,
+    });
+    const windowsHost = fakeHost("win32", [null]);
+    expect(await new OwnedProcessTree(root(200, true), windowsHost.host).end()).toEqual({
+      found: 0,
+      survivors: 0,
+      unknown: true,
+    });
+    expect(windowsHost.calls).toEqual([]);
+  });
+
+  it("runs one end at a time and keeps every step inside one deadline", async () => {
+    const t = (n: number) => 1_000_000n + BigInt(n) * 10n;
+    const running = [win(200, 100, t(10)), win(201, 200, t(11))];
+    const { host, calls } = fakeHost("win32", [running]);
+    const tree = new OwnedProcessTree(root(200, true), host);
+    const [first, second] = await Promise.all([tree.end(1_000), tree.end(1_000)]);
+    expect(second).toBe(first);
+    // The tree never dies here: kills repeat only until the deadline, then it reports them.
+    expect(first.survivors).toBe(2);
+    expect(calls.length).toBeLessThanOrEqual(4);
   });
 
   it("never signals group 0 when the spawn gave no pid", async () => {
@@ -231,6 +275,7 @@ describe("OwnedProcessTree.end", () => {
     expect(await new OwnedProcessTree(root(0, false), host).end()).toEqual({
       found: 0,
       survivors: 0,
+      unknown: false,
     });
     expect(calls).toEqual([]);
   });
@@ -242,6 +287,7 @@ describe("OwnedProcessTree.end", () => {
     expect(await new OwnedProcessTree(root(200, true), host).end()).toEqual({
       found: 2,
       survivors: 0,
+      unknown: false,
     });
     expect(calls).toEqual(["kill 200,201", "kill 201"]);
   });
@@ -269,13 +315,14 @@ describe("on this machine", () => {
   it("ends the tool process the spawned CLI left running when it was killed alone", async () => {
     const abort = new AbortController();
     // Stands in for the CLI: it starts a long-running tool, reports its pid and waits.
-    const { child, tree } = spawnOwnedProcess({
+    const { child, tree, stderrTail } = spawnOwnedProcess({
       command: process.execPath,
       args: [
         "-e",
         [
           "const { spawn } = require('node:child_process');",
           "const tool = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+          "process.stderr.write('started');",
           "process.stdout.write(String(tool.pid) + '\\n');",
           "setInterval(() => {}, 1000);",
         ].join(" "),
@@ -295,6 +342,7 @@ describe("on this machine", () => {
       });
       expect(alive(toolPid)).toBe(true);
       await tree.remember();
+      expect(await until(() => stderrTail() === "started", 5_000)).toBe(true);
 
       // The SDK ends the CLI alone: TerminateProcess on Windows, a signal elsewhere.
       const exited = new Promise((resolve) => child.once("exit", resolve));
