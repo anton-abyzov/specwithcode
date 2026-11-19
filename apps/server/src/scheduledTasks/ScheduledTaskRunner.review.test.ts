@@ -465,6 +465,7 @@ it.effect("T21-10: a title-only change on a copy never reverts the runner's prom
           title: "Only the title",
           prompt: shown.prompt,
           ...(shown.revision === undefined ? {} : { expectedRevision: shown.revision }),
+          expectedDefinition: shown.definitionHash,
         }),
       )
       .pipe(Effect.result);
@@ -491,7 +492,14 @@ it.effect("T21-12: a save whose revision could not advance changes nothing", () 
     assert.equal((yield* alpha.row)?.title, "Synthetic review");
     // The same for a change a copy sends.
     const fromCopy = yield* beta.service
-      .upsert(taskInput({ id: ROUTINE, projectId: beta.projectId, title: "Sent from the copy" }))
+      .upsert(
+        taskInput({
+          id: ROUTINE,
+          projectId: beta.projectId,
+          title: "Sent from the copy",
+          expectedDefinition: (yield* listed(beta)).definitionHash,
+        }),
+      )
       .pipe(Effect.result);
     assert.equal(fromCopy._tag, "Failure");
     assert.equal((yield* alpha.row)?.title, "Synthetic review");

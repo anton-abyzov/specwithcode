@@ -1,8 +1,9 @@
 /**
- * The cases the second review of the routine runner asked for (1390 AC-45,
- * T21R2-01 to T21R2-03): a copy put back on the release before and sent a
- * handover, a due slot carried across a rest, and a definition paired with a
- * revision it was not read with.
+ * The cases the second and third reviews of the routine runner asked for
+ * (1390 AC-45, T21R2-01 to T21R2-03, T21R3-01 to T21R3-03): a copy put back on
+ * the release before and sent a handover, also after a machine joined; a due
+ * slot carried across a rest; a definition paired with a revision it was not
+ * read with; and a change made on a definition its runner no longer holds.
  */
 import { assert, it } from "@effect/vitest";
 import type { ProjectId, ScheduledTask } from "@specweave-studio/contracts";
@@ -97,12 +98,14 @@ const fires379 = (machine: Machine, now: string) =>
     },
     DateTime.makeUnsafe(Date.parse(now)),
   );
-const snapshotOf = (machine: Machine) =>
+/** What `machine` sends `to` as a coordinator: a lease's routines, or a handover's. */
+const snapshotOf = (machine: Machine, to: Machine) =>
   Effect.gen(function* () {
     const copies = yield* machine.service.routineCopies!();
     const snapshot = yield* copies.snapshot({
       projectId: machine.projectId,
       logicalProjectId: "logical-a",
+      recipient: to.environmentId,
     });
     return snapshot?.routines ?? [];
   });
@@ -114,7 +117,7 @@ const downgradedReceives = (step: "replica" | "handover") =>
     yield* alpha.seed();
     yield* beta.seed();
     // What alpha sent while nothing was settled; a snapshot is kept between leases.
-    assert.isTrue((yield* snapshotOf(alpha))[0]?.enabled);
+    assert.isTrue((yield* snapshotOf(alpha, beta))[0]?.enabled);
     yield* settle(alpha);
     assert.equal((yield* alpha.record)?.state, "settled");
     assert.equal((yield* beta.record)?.state, "disarmed");
@@ -123,7 +126,7 @@ const downgradedReceives = (step: "replica" | "handover") =>
     // Beta is put back on v1.0.379. Alpha, its acknowledgement in hand, sends it what
     // a coordinator sends: a lease's routines, or a handover with their run states.
     const old = yield* downgraded(beta);
-    const routines = yield* snapshotOf(alpha);
+    const routines = yield* snapshotOf(alpha, beta);
     if (step === "replica") yield* old.replica(routines);
     else {
       yield* old.handover(routines, yield* runStatesOf(alpha));
@@ -266,6 +269,9 @@ const titleOnly = (machine: Machine) =>
           title: "Only the title",
           prompt: shown.prompt,
           ...(shown.revision === undefined ? {} : { expectedRevision: shown.revision }),
+          ...(shown.definitionHash === undefined
+            ? {}
+            : { expectedDefinition: shown.definitionHash }),
         }),
       )
       .pipe(Effect.result);
@@ -338,5 +344,166 @@ it.effect("T21R2-03: a change saved between the sender's reads is never sent hal
     assert.equal(copy.revision, (yield* listed(alpha)).revision);
     assert.equal((yield* titleOnly(beta))._tag, "Success");
     assert.equal((yield* listed(alpha)).prompt, NEW_PROMPT);
+  }),
+);
+
+// --- T21R3-01 ------------------------------------------------------------------------------
+
+it.effect(
+  "T21R3-01: a machine joining before the handover never re-arms the copy that confirmed",
+  () =>
+    Effect.gen(function* () {
+      yield* at(NOON);
+      const { machines } = yield* fleet(["alpha", "beta", "gamma"]);
+      const [alpha, beta, gamma] = machines as [Machine, Machine, Machine];
+      // Gamma is not linked yet: alpha settles with beta alone.
+      for (const machine of [alpha, beta]) machine.state.unlinked.add(gamma.environmentId);
+      for (const machine of machines) yield* machine.seed();
+      yield* settle(alpha);
+      assert.equal((yield* alpha.record)?.state, "settled");
+      assert.equal((yield* beta.row)?.enabled, 0);
+      // Gamma joins between settlement and the snapshot; beta is put back on v1.0.379.
+      for (const machine of [alpha, beta]) machine.state.unlinked.delete(gamma.environmentId);
+      yield* alpha.makeDue(DUE);
+      const old = yield* downgraded(beta);
+      yield* old.handover(yield* snapshotOf(alpha, beta), yield* runStatesOf(alpha));
+      yield* handOver(alpha, beta);
+      // Alpha asks only gamma, which confirms: beta's earlier answer still counts.
+      yield* settle(alpha);
+      assert.sameMembers(
+        [...((yield* alpha.record)?.acked ?? [])],
+        [beta.environmentId, gamma.environmentId],
+      );
+      const onBeta = yield* fires379(beta, NOON);
+      yield* alpha.due;
+      yield* gamma.due;
+      // Exactly one machine is eligible, and it is the runner.
+      assert.deepEqual(onBeta, []);
+      assert.equal(alpha.fires(), 1);
+      assert.equal(gamma.fires(), 0);
+      assert.equal((yield* beta.row)?.enabled, 0);
+    }),
+);
+
+it.effect("T21R3-01: an unreadable runner set never sends a routine on", () =>
+  Effect.gen(function* () {
+    yield* at(NOON);
+    const { alpha, beta } = yield* pair;
+    yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    assert.equal((yield* alpha.record)?.state, "settled");
+    // Alpha cannot read which copies rest for it.
+    yield* alpha.sql
+      .unsafe("ALTER TABLE scheduled_task_runners RENAME TO runners_away")
+      .pipe(Effect.orDie);
+    const sent = yield* snapshotOf(alpha, beta).pipe(Effect.result);
+    yield* alpha.sql
+      .unsafe("ALTER TABLE runners_away RENAME TO scheduled_task_runners")
+      .pipe(Effect.orDie);
+    // Refused, or sent with nothing on: never the routine as on.
+    assert.isFalse(sent._tag === "Success" && sent.success.some((routine) => routine.enabled));
+    assert.equal(sent._tag, "Failure");
+    // Readable again, it is sent off, as before.
+    assert.deepEqual(
+      (yield* snapshotOf(alpha, beta)).map((routine) => routine.enabled),
+      [false],
+    );
+  }),
+);
+
+// --- T21R3-02 ------------------------------------------------------------------------------
+
+/** A form as it was opened: saved later, unchanged but for its title. */
+const saveForm = (machine: Machine, form: ScheduledTask, named: "hash" | "revision only") =>
+  machine.service
+    .upsert(
+      taskInput({
+        id: ROUTINE,
+        projectId: machine.projectId,
+        title: "Only the title",
+        prompt: form.prompt,
+        ...(form.revision === undefined ? {} : { expectedRevision: form.revision }),
+        ...(named === "hash" ? { expectedDefinition: form.definitionHash } : {}),
+      }),
+    )
+    .pipe(Effect.result);
+
+it.effect("T21R3-02: a draft opened before a refresh is refused after it", () =>
+  Effect.gen(function* () {
+    yield* at(NOON);
+    const { alpha, beta } = yield* pair;
+    const first = yield* alpha.seed();
+    yield* alpha.service.upsert(
+      taskInput({ id: ROUTINE, projectId: alpha.projectId, prompt: NEW_PROMPT }),
+    );
+    yield* settle(alpha);
+    // A coordinator's replica, sent before the change, arrives after: the old prompt.
+    const copies = yield* beta.service.routineCopies!();
+    yield* copies.replace({
+      projectId: beta.projectId as ProjectId,
+      logicalProjectId: "logical-a",
+      routines: [routineCopyOf(first)!],
+    });
+    // A person opens the form on beta: the old prompt, at the revision beta heard.
+    const form = yield* listed(beta);
+    assert.equal(form.prompt, first.prompt);
+    // A refresh installs the runner's definition at that same revision.
+    yield* settle(alpha);
+    const refreshed = yield* listed(beta);
+    assert.equal(refreshed.prompt, NEW_PROMPT);
+    assert.equal(refreshed.revision, form.revision);
+    // The original draft, saved now, names the definition it opened on.
+    const stale = yield* saveForm(beta, form, "hash");
+    assert.equal((yield* listed(alpha)).prompt, NEW_PROMPT);
+    assert.equal(stale._tag, "Failure");
+    // A save that names no definition cannot say what it was made on.
+    const unnamed = yield* saveForm(beta, form, "revision only");
+    assert.equal((yield* listed(alpha)).prompt, NEW_PROMPT);
+    assert.equal(unnamed._tag, "Failure");
+    // A form opened after the refresh saves the first time.
+    assert.equal((yield* titleOnly(beta))._tag, "Success");
+    const runner = yield* listed(alpha);
+    assert.equal(runner.prompt, NEW_PROMPT);
+    assert.equal(runner.title, "Only the title");
+  }),
+);
+
+// --- T21R3-03 ------------------------------------------------------------------------------
+
+it.effect("T21R3-03: a move finished after a lost answer never claims a later definition", () =>
+  Effect.gen(function* () {
+    yield* at(NOON);
+    const { alpha, beta, network } = yield* pair;
+    const task = yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    const move = alpha.transfer!.moveOut({
+      task,
+      target: beta.environmentId,
+      targetLabel: beta.name,
+      copy: routineCopyOf({ ...task, ownThread: true })!,
+      boundThreadId: null,
+    });
+    // Beta turns the routine on; its answer is lost.
+    network.dropAnswer = (_from, _to, op) => op === "runner-enable";
+    assert.equal((yield* move).kind, "failed");
+    // A person changes it on beta, which runs it now.
+    yield* beta.service.upsert(
+      taskInput({ id: ROUTINE, projectId: beta.projectId, prompt: NEW_PROMPT }),
+    );
+    network.dropAnswer = () => false;
+    assert.equal((yield* move).kind, "moved");
+    const form = yield* listed(alpha);
+    assert.equal(form.prompt, task.prompt);
+    const stale = yield* saveForm(alpha, form, "hash");
+    assert.equal((yield* listed(beta)).prompt, NEW_PROMPT);
+    assert.equal(stale._tag, "Failure");
+    // Refused with what beta holds, so the same change made again is saved.
+    assert.equal((yield* listed(alpha)).prompt, NEW_PROMPT);
+    assert.equal((yield* titleOnly(alpha))._tag, "Success");
+    const runner = yield* listed(beta);
+    assert.equal(runner.prompt, NEW_PROMPT);
+    assert.equal(runner.title, "Only the title");
   }),
 );

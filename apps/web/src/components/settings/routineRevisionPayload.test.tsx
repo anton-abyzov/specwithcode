@@ -189,6 +189,28 @@ describe("Settings > Routines commands", () => {
     ]);
   });
 
+  it("names the definition its row showed, on a machine that only keeps a copy", async () => {
+    act(() => {
+      rendered = create(
+        <ScheduledTaskRow
+          environmentId={environmentId}
+          task={task("daily", { revision: 7, definitionHash: "seen" })}
+          onEdit={() => {}}
+        />,
+      );
+    });
+    await click((root) => root.findByProps({ "data-switch": true }));
+    expect(mock.sent).toEqual([
+      {
+        command: "setScheduledTaskEnabled",
+        value: {
+          environmentId,
+          input: { id: "daily", enabled: false, expectedRevision: 7, expectedDefinition: "seen" },
+        },
+      },
+    ]);
+  });
+
   it("deletes a routine against the revision its row showed", async () => {
     act(() => {
       rendered = create(

@@ -355,9 +355,21 @@ it.effect("concurrent edits: one is saved, the stale one is refused and changes 
     const onCopy = yield* listed(beta);
     assert.deepInclude(onRunner.runner, { here: true, revision: 0 });
     assert.deepInclude(onCopy.runner, { here: false, revision: 0, label: "alpha" });
-    const edit = (machine: Machine, title: string, expectedRevision: number) =>
+    // Each form names what it opened on: the revision, and on the copy the definition too.
+    const edit = (
+      machine: Machine,
+      title: string,
+      expectedRevision: number,
+      form: { readonly definitionHash?: string | undefined } = onCopy,
+    ) =>
       machine.service.upsert(
-        taskInput({ id: ROUTINE, projectId: machine.projectId, title, expectedRevision }),
+        taskInput({
+          id: ROUTINE,
+          projectId: machine.projectId,
+          title,
+          expectedRevision,
+          ...(machine === beta ? { expectedDefinition: form.definitionHash } : {}),
+        }),
       );
 
     // Two changes against the same revision at the same moment, one on each machine.
@@ -386,7 +398,7 @@ it.effect("concurrent edits: one is saved, the stale one is refused and changes 
     assert.equal((yield* alpha.row)?.title, winner);
 
     // A change made on the copy goes to the runner, and the copy shows what the runner saved.
-    yield* edit(beta, "Sent to the runner", 1);
+    yield* edit(beta, "Sent to the runner", 1, yield* listed(beta));
     assert.equal((yield* alpha.row)?.title, "Sent to the runner");
     assert.equal((yield* beta.row)?.title, "Sent to the runner");
     assert.equal((yield* listed(alpha)).revision, 2);
@@ -429,10 +441,18 @@ it.effect("a change that cannot reach the runner is refused and nothing is writt
     yield* alpha.seed();
     yield* beta.seed();
     yield* settle(alpha);
+    const shown = (yield* beta.service.list()).tasks.find((task) => task.id === ROUTINE)!;
     network.offline.add("alpha");
     const before = yield* beta.row;
     const refused = yield* beta.service
-      .upsert(taskInput({ id: ROUTINE, projectId: beta.projectId, title: "Unsent" }))
+      .upsert(
+        taskInput({
+          id: ROUTINE,
+          projectId: beta.projectId,
+          title: "Unsent",
+          expectedDefinition: shown.definitionHash,
+        }),
+      )
       .pipe(Effect.flip);
     assert.include(refused.message, "This routine runs on alpha");
     const off = yield* beta.service.setEnabled({ id: ROUTINE, enabled: false }).pipe(Effect.flip);
@@ -736,6 +756,8 @@ it.effect("resting copies hear the revision of a change made on the runner", () 
         projectId: beta.projectId,
         title: "Changed on the copy",
         expectedRevision: 1,
+        expectedDefinition: (yield* beta.service.list()).tasks.find((task) => task.id === ROUTINE)!
+          .definitionHash,
       }),
     );
     assert.equal((yield* alpha.row)?.title, "Changed on the copy");
