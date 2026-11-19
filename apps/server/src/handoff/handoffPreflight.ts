@@ -190,3 +190,8 @@ export function handoffSeed(input: {
   const out = tail.length === 0 ? head : `${head}\n\nLast messages:\n${tail.join("\n\n")}`;
   return out;
 }
+
+/** Stub (1390, T-10): tests first. */
+export function checkFailures(_facts: any): Array<HandoffPreflightFailure> {
+  return [{ check: "checkpoint", message: "stub" }];
+}

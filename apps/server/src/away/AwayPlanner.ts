@@ -787,3 +787,8 @@ export const make = Effect.gen(function* () {
 
 /** Needs HandoffMode, ProjectService, the projection store, routines, AwayAccess and RemoteWorkers. */
 export const layer = Layer.effect(AwayPlanner, make);
+
+/** Stub (1390, T-10): tests first. */
+export function handoffActivity(_shell: any, _self: EnvironmentId): any {
+  return undefined;
+}

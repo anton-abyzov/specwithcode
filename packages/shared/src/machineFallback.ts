@@ -231,3 +231,8 @@ export function sameMachineTarget(
     left.modelSelection.model === right.modelSelection.model
   );
 }
+
+/** Stub (1390, T-10): tests first. */
+export function judgeAccountEvidence(_input: any): any {
+  return { kind: "usage-unknown", line: "", percentLeft: null, automatic: false, byHand: false, reason: "not_checked" };
+}
