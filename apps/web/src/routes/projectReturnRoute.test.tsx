@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   search: {} as Record<string, unknown>,
   navigate: vi.fn(),
   aideHidden: false,
+  chatsFolder: false,
   props: null as null | {
     onProjectKeyMoved: (key: string) => void;
     onSelectThread: (id: string | null) => void;
@@ -28,6 +29,7 @@ vi.mock("../components/studio/ProjectWorkspace", () => ({
   },
 }));
 vi.mock("../studio/hiddenAideRoute", () => ({ useHiddenAideRoute: () => state.aideHidden }));
+vi.mock("../studio/chatsProjectRoute", () => ({ useChatsProjectRoute: () => state.chatsFolder }));
 import { Route } from "./projects.$projectKey";
 let root: ReturnType<typeof createRoot>;
 beforeEach(async () => {
@@ -81,4 +83,15 @@ it("sends a hidden personal assistant's page to Overview without opening it", as
   );
   expect(state.props).toBeNull();
   expect(state.navigate).toHaveBeenCalledWith({ to: "/", replace: true });
+});
+
+it("sends a machine's No project folder to Overview: chats have no project page", async () => {
+  state.search = {};
+  state.chatsFolder = true;
+  await act(async () =>
+    root.render(createElement((Route as unknown as { component: ComponentType }).component)),
+  );
+  expect(state.props).toBeNull();
+  expect(state.navigate).toHaveBeenCalledWith({ to: "/", replace: true });
+  state.chatsFolder = false;
 });

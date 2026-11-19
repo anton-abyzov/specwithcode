@@ -8,6 +8,7 @@ import {
 } from "../studio/projectPaneThreads";
 import type { SelectProjectThread } from "../studio/useProjectPaneSelection";
 import { useHiddenAideRoute } from "../studio/hiddenAideRoute";
+import { useChatsProjectRoute } from "../studio/chatsProjectRoute";
 export const Route = createFileRoute("/projects/$projectKey")({
   // `?thread=<id>` is the thread open in the right panel, so links, reload and
   // back/forward all land on it.
@@ -29,9 +30,12 @@ function ProjectWorkspaceRoute() {
   // A hidden personal assistant (Settings → General) has no page: links, history
   // and reloads that name it land on Overview instead. Nothing is deleted.
   const aideHidden = useHiddenAideRoute(projectKey);
+  // A machine's "No project" folder holds chats; it is not a project and has no page.
+  const chatsFolder = useChatsProjectRoute(projectKey);
+  const leave = aideHidden || chatsFolder;
   useEffect(() => {
-    if (aideHidden) void navigate({ to: "/", replace: true });
-  }, [aideHidden, navigate]);
+    if (leave) void navigate({ to: "/", replace: true });
+  }, [leave, navigate]);
   const selectThread = useCallback<SelectProjectThread>(
     (next, options) => {
       if (
@@ -82,7 +86,7 @@ function ProjectWorkspaceRoute() {
     },
     [navigate, projectKey],
   );
-  if (aideHidden) return null;
+  if (leave) return null;
   return (
     <ProjectWorkspace
       projectKey={projectKey}
