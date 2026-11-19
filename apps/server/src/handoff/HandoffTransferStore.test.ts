@@ -251,6 +251,63 @@ describe("a source's record of a move", () => {
     });
   });
 
+  it("shows a batch whole: a thread that stayed is not cut from one that arrived", () => {
+    // One thread stayed, one arrived, then enough other moves finished to push the first out.
+    let document = putTransfer(
+      EMPTY_HANDOFF_TRANSFER_DOCUMENT,
+      record({
+        operationId: "stayed",
+        batchId: "mixed",
+        state: "stayed",
+        createdAt: "2026-11-19T15:00:00.000Z",
+        updatedAt: "2026-11-19T15:00:01.000Z",
+      }),
+    );
+    document = putTransfer(
+      document,
+      record({
+        operationId: "arrived",
+        batchId: "mixed",
+        lineage: { ...lineage, sourceThreadId: ThreadId.make("thread:two") },
+        state: "ready",
+        createdAt: "2026-11-19T15:00:00.000Z",
+        updatedAt: "2026-11-19T15:00:02.000Z",
+      }),
+    );
+    for (let index = 0; index < HANDOFF_TRANSFER_VIEW_FINISHED_MAX - 1; index += 1) {
+      document = putTransfer(
+        document,
+        record({
+          operationId: `later-${index}`,
+          lineage: { ...lineage, sourceThreadId: ThreadId.make(`thread:later-${index}`) },
+          state: "resumed",
+          createdAt: `2026-11-19T16:00:${String(index).padStart(2, "0")}.000Z`,
+          updatedAt: `2026-11-19T16:00:${String(index).padStart(2, "0")}.000Z`,
+        }),
+      );
+    }
+    document = {
+      ...document,
+      batches: {
+        mixed: {
+          batchId: "mixed",
+          targetEnvironmentId: b,
+          trigger: { kind: "manual" as const },
+          operationIds: ["stayed", "arrived"],
+          createdAt: "2026-11-19T15:00:00.000Z",
+        },
+      },
+    };
+    const view = sourceTransferView(document, a);
+    const shown = view.transfers.map((item) => item.operationId);
+    expect(view.batches.map((item) => item.batchId)).toEqual(["mixed"]);
+    // Every record of a batch that is shown, or none of them.
+    expect(shown.filter((id) => id === "stayed" || id === "arrived")).toEqual([
+      "stayed",
+      "arrived",
+    ]);
+  });
+
   it("keeps every open record and only the newest finished ones", () => {
     let document = putTransfer(EMPTY_HANDOFF_TRANSFER_DOCUMENT, record({ state: "unknown" }));
     for (let index = 0; index < HANDOFF_TRANSFER_FINISHED_MAX + 20; index += 1) {

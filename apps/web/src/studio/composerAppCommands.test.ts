@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { de } from "../i18n/phrases/de";
+import { es } from "../i18n/phrases/es";
+import { fr } from "../i18n/phrases/fr";
+import { ja } from "../i18n/phrases/ja";
+import { ko } from "../i18n/phrases/ko";
+import { pt } from "../i18n/phrases/pt";
+import { ru } from "../i18n/phrases/ru";
+import { zh } from "../i18n/phrases/zh";
 import {
+  COMPOSER_APP_COMMANDS,
+  composerAppCommandDescription,
   isAwayAppCommand,
   leadingSlashQuery,
   matchAwaySkillCommands,
@@ -93,5 +103,24 @@ describe("parseAwayAppCommand", () => {
     expect(parseAwayAppCommand("/stop")).toBeNull();
     expect(parseAwayAppCommand("/away now")).toBeNull();
     expect(parseAwayAppCommand("hello")).toBeNull();
+  });
+});
+
+describe("the /handoff description", () => {
+  const entry = COMPOSER_APP_COMMANDS.find((item) => item.command === "handoff")!;
+
+  it("is in every catalog", () => {
+    for (const [language, catalog] of Object.entries({ de, es, fr, ja, ko, pt, ru, zh }))
+      expect(Object.hasOwn(catalog, entry.description), language).toBe(true);
+  });
+
+  it("is shown in the interface language", () => {
+    const german = (english: string) => (de as Record<string, string>)[english] ?? english;
+    const shown = composerAppCommandDescription(entry, german);
+    expect(shown).toBe((de as Record<string, string>)[entry.description]);
+    expect(shown).not.toBe(entry.description);
+    // A description with no translation stays English.
+    const stop = COMPOSER_APP_COMMANDS.find((item) => item.command === "stop")!;
+    expect(composerAppCommandDescription(stop, german)).toBe(stop.description);
   });
 });

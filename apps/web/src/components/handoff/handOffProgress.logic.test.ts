@@ -1,5 +1,5 @@
 import {
-  HandoffModeEmptyInput,
+  HandOffMachineInput,
   HandoffModeSnapshot,
   HandoffResumeFencedInput,
   type EnvironmentId,
@@ -14,6 +14,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { englishPhrase } from "../../i18n";
 import {
+  HandoffModeSnapshot383,
+  HandOffMachineInput383,
+  HandoffResumeFencedInput383,
+  SNAPSHOT_FROM_383,
+} from "./handoffMode383.fixture";
+import {
+  automaticGroupToOpen,
   progressGroups,
   progressNotes,
   progressReason,
@@ -21,14 +28,22 @@ import {
   progressSummary,
   progressSummaryText,
   progressTitle,
+  releaseInput,
   rowStateOf,
+  submittedGroups,
   threadTransfer,
   trackOutView,
 } from "./handOffProgress.logic";
 
 const encodeResume = Schema.encodeSync(HandoffResumeFencedInput);
 const decodeResume = Schema.decodeUnknownSync(HandoffResumeFencedInput);
-const decodeResume383 = Schema.decodeUnknownSync(HandoffModeEmptyInput);
+const decodeResume383 = Schema.decodeUnknownSync(HandoffResumeFencedInput383);
+const decodeSnapshot = Schema.decodeUnknownSync(HandoffModeSnapshot);
+const decodeSnapshot383 = Schema.decodeUnknownSync(HandoffModeSnapshot383);
+const encodeSnapshot = Schema.encodeSync(HandoffModeSnapshot);
+const encodeMachineInput = Schema.encodeSync(HandOffMachineInput);
+const decodeMachineInput = Schema.decodeUnknownSync(HandOffMachineInput);
+const decodeMachineInput383 = Schema.decodeUnknownSync(HandOffMachineInput383);
 
 const SOURCE = "env-source" as EnvironmentId;
 const TARGET = "env-target" as EnvironmentId;
@@ -300,35 +315,168 @@ describe("trackOutView (no machine has the track)", () => {
   });
 });
 
+const batchOf = (
+  batchId: string,
+  operationIds: string[],
+  target: EnvironmentId = TARGET,
+): HandoffTransferBatch => ({
+  batchId,
+  targetEnvironmentId: target,
+  trigger: { kind: "manual" },
+  operationIds,
+  createdAt: "2026-11-19T07:00:00.000Z",
+});
+
+describe("a batch this machine keeps only part of", () => {
+  // What the machine's view sent before it kept batches whole: the batch names
+  // two operations, and only the one that arrived is still a record.
+  const arrived = record("ready", { operationId: "op-arrived", batchId: "mixed" });
+  const batch = batchOf("mixed", ["op-stayed", "op-arrived"]);
+
+  it("marks the group incomplete and never says all arrived", () => {
+    const [group] = progressGroups([arrived], [batch]);
+    expect(group?.incomplete).toBe(true);
+    const summary = progressSummary(group!.rows, group!.incomplete);
+    expect(summary.allArrived).toBe(false);
+    expect(progressSummaryText(summary, "Desk", englishPhrase)).toBe("1 of 1 finished: 1 ready");
+    expect(progressNotes(group!.rows, names, englishPhrase, group!.incomplete)).toContain(
+      "Laptop no longer keeps every thread of this hand off, so this list is not all of it.",
+    );
+  });
+
+  it("is complete, and says all arrived, when every operation of the batch is here", () => {
+    const stayed = record("ready", { operationId: "op-stayed", batchId: "mixed" });
+    const [group] = progressGroups([stayed, arrived], [batch]);
+    expect(group?.incomplete).toBe(false);
+    const summary = progressSummary(group!.rows, group!.incomplete);
+    expect(progressSummaryText(summary, "Desk", englishPhrase)).toBe("All 2 on Desk");
+    expect(progressNotes(group!.rows, names, englishPhrase, group!.incomplete)).toHaveLength(1);
+  });
+});
+
+describe("the hand off this window asked for", () => {
+  const MINI = "env-mini" as EnvironmentId;
+  const thread = "thread-shared" as ThreadId;
+  const lineage = { sourceEnvironmentId: SOURCE, sourceThreadId: thread, epoch: 1 };
+  // Two windows pressed Hand off for the same thread: this one to Desk, the other to Mini.
+  const mine = record("failed", { operationId: "op-desk", batchId: "window-desk", lineage });
+  const theirs = record("sent", {
+    operationId: "op-mini",
+    batchId: "window-mini",
+    targetEnvironmentId: MINI,
+    lineage: { ...lineage, epoch: 2 },
+  });
+  const batches = [
+    batchOf("window-desk", ["op-desk"]),
+    batchOf("window-mini", ["op-mini"], MINI),
+  ];
+
+  it("shows only the batch this window named, whatever is newer on the thread", () => {
+    const groups = progressGroups([mine, theirs], batches);
+    expect(groups.map((group) => group.batchId)).toEqual(["window-mini", "window-desk"]);
+    const shown = submittedGroups(groups, "window-desk", null);
+    expect(shown.map((group) => group.targetEnvironmentId)).toEqual([TARGET]);
+    expect(shown.flatMap((group) => group.rows.map((row) => row.operationId))).toEqual([
+      "op-desk",
+    ]);
+  });
+
+  it("shows nothing while its own batch has no record, so the form and its error stay", () => {
+    const groups = progressGroups([theirs], [batches[1]!]);
+    expect(submittedGroups(groups, "window-desk", null)).toEqual([]);
+    expect(submittedGroups(groups, null, null)).toEqual([]);
+  });
+
+  it("keeps to one project when the dialog has that scope", () => {
+    const other = record("pending", {
+      operationId: "op-other",
+      batchId: "window-desk",
+      projectId: "project-other" as ProjectId,
+    });
+    const groups = progressGroups([mine, other], [batchOf("window-desk", ["op-desk", "op-other"])]);
+    expect(submittedGroups(groups, "window-desk", null)).toHaveLength(2);
+    expect(submittedGroups(groups, "window-desk", PROJECT).map((g) => g.projectId)).toEqual([
+      PROJECT,
+    ]);
+  });
+
+  it("sends the batch's name with the request, and a 1.0.383 machine still takes it", () => {
+    const sent = encodeMachineInput({
+      destinationEnvironmentId: TARGET,
+      reason: "manual",
+      threadIds: [thread],
+      batchId: "window-desk",
+    } as HandOffMachineInput);
+    expect(decodeMachineInput(sent)).toMatchObject({ batchId: "window-desk" });
+    expect(() => decodeMachineInput383(sent)).not.toThrow();
+  });
+});
+
+describe("Resume here names its operation", () => {
+  it("sends the row's operation with the thread", () => {
+    const row = progressRow(record("held", { operationId: "op-held" }));
+    expect(releaseInput(row)).toEqual({ threadId: row.threadId, operationId: "op-held" });
+    expect(decodeResume(encodeResume(releaseInput(row)))).toEqual({
+      threadId: row.threadId,
+      operationId: "op-held",
+    });
+  });
+});
+
+describe("an automatic start opens its own progress view", () => {
+  const automatic = { kind: "automatic", key: "limit:1", usageWindowKey: "w" } as const;
+  const auto = (state: HandoffTransferState, id: string) =>
+    progressGroups(
+      [record(state, { operationId: id, batchId: null, trigger: automatic })],
+      [],
+    )[0]!;
+  const manual = progressGroups([record("held", { operationId: "op-manual", batchId: null })], []);
+
+  it("opens the newest automatic hand off this window has not seen", () => {
+    const first = auto("sent", "op-auto-1");
+    const second = auto("pending", "op-auto-2");
+    const seen = new Set([...first.rows.map((row) => row.operationId), "op-manual"]);
+    expect(automaticGroupToOpen(seen, [second, first, ...manual])).toBe(second.key);
+    // Nothing new: nothing opens again.
+    expect(automaticGroupToOpen(new Set([...seen, "op-auto-2"]), [second, first])).toBeNull();
+  });
+
+  it("never opens for a hand off a person asked for", () => {
+    expect(automaticGroupToOpen(new Set(), manual)).toBeNull();
+  });
+
+  it("on a window's first read opens only one still under way", () => {
+    expect(automaticGroupToOpen(null, [auto("resumed", "op-auto-done")])).toBeNull();
+    const open = auto("sent", "op-auto-open");
+    expect(automaticGroupToOpen(null, [open])).toBe(open.key);
+  });
+});
+
 /**
- * Version-pinned in both directions. 1.0.383 is the release before transfer
- * records: its snapshot has no `transfers`, and its "Resume here" input is `{}`.
+ * Version-pinned in both directions with the shapes of tag v1.0.383, the
+ * release before transfer records: its snapshot has no `transfers`, and its
+ * "Resume here" input is `{}`.
  */
 describe("with a machine on 1.0.383", () => {
-  const snapshot383 = {
-    environmentId: SOURCE,
-    machineLabel: "Laptop",
-    config: undefined as unknown,
-    projectModes: {},
-    threads: [],
-    incoming: [],
-    pausedSince: null,
-    machineRun: null,
-  };
-
   it("reads its snapshot as nothing to show: no row, so no Resume here", () => {
-    const fields = HandoffModeSnapshot.fields;
-    const shape = Schema.Struct({
-      transfers: fields.transfers,
-      transferBatches: fields.transferBatches,
-    });
-    const decoded = Schema.decodeUnknownSync(shape)(snapshot383);
+    const decoded = decodeSnapshot(SNAPSHOT_FROM_383);
     expect(decoded.transfers).toBeUndefined();
     expect(progressGroups(decoded.transfers, decoded.transferBatches)).toEqual([]);
   });
 
+  it("a 1.0.383 window reads today's snapshot and drops the records it does not know", () => {
+    const today = encodeSnapshot({
+      ...decodeSnapshot(SNAPSHOT_FROM_383),
+      transfers: [record("held")],
+      transferBatches: [batchOf("batch-1", ["op-x"])],
+    });
+    const old = decodeSnapshot383(today);
+    expect(old).not.toHaveProperty("transfers");
+    expect(old.machineLabel).toBe("Old Mac");
+  });
+
   it("sends a per-thread Resume here that the 1.0.383 input shape still decodes", () => {
-    const sent = encodeResume({ threadId: "thread-1" as ThreadId });
+    const sent = encodeResume({ threadId: "thread-1" as ThreadId, operationId: "op-1" });
     // The 1.0.383 payload schema takes it, and its handler reads no field of it.
     expect(() => decodeResume383(sent)).not.toThrow();
     // And the window never sends it there: that machine lists no record to press it on.

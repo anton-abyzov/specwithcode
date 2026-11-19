@@ -640,6 +640,8 @@ describe("the transfer record of a handoff", () => {
         destinationEnvironmentId: b.environmentId,
         reason: "manual" as const,
         threadIds: [t1, t2],
+        // The window names its batch, so it can tell its own hand off from another window's.
+        batchId: "window-batch",
       };
 
       const window = yield* a.moves.handOffMachine(input).pipe(Effect.forkChild);
@@ -649,7 +651,10 @@ describe("the transfer record of a handoff", () => {
       // checkpoint and disposition.
       const atFirstHold = planned as unknown as HandoffTransferDocument;
       const batch = Object.values(atFirstHold.batches)[0];
-      expect(batch).toMatchObject({ targetEnvironmentId: b.environmentId });
+      expect(batch).toMatchObject({
+        batchId: "window-batch",
+        targetEnvironmentId: b.environmentId,
+      });
       expect(batch?.operationIds).toHaveLength(2);
       const plannedRecords = batch!.operationIds.map((id) => atFirstHold.transfers[id]!);
       expect(plannedRecords.map((record) => record.lineage.sourceThreadId)).toEqual([t1, t2]);
@@ -704,7 +709,12 @@ describe("the transfer record of a handoff", () => {
         yield* a.moves.resumeThread(t1);
         expect(leaseOf(a, t2)?.state).toBe("handing-off");
         expect(moved(transferOf(a, t1))).toBe(true);
-        yield* a.moves.resumeThread(t2);
+        // A press on a row another hand off has replaced names an operation that is
+        // not this thread's open one: it changes nothing.
+        yield* a.moves.resumeThread(t2, "an-earlier-operation");
+        expect(leaseOf(a, t2)?.state).toBe("handing-off");
+        expect(transferOf(a, t2)).toMatchObject({ state: "held", operationId: second });
+        yield* a.moves.resumeThread(t2, second);
       } else {
         yield* TestClock.adjust("16 minutes");
         yield* a.moves.tick;

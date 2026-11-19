@@ -8,6 +8,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  destinationUpdateRows,
+  pickDestination,
   HandoffMachineResults,
   HandoffPreflightPanel,
   destinationNeedsUpdate,
@@ -16,7 +18,12 @@ import {
   versionFailureNamesDestination,
   type HandoffDestination,
 } from "./HandoffResults";
-import { HandOffProgressView, type HandOffProgressViewRow } from "./HandOffProgress";
+import {
+  HandOffProgressView,
+  readHandOffProgressRequest,
+  requestHandOffNoMove,
+  type HandOffProgressViewRow,
+} from "./HandOffProgress";
 import type { HandOffRowState } from "./handOffProgress.logic";
 import { destinationOptions } from "./MachineOptionRows";
 
@@ -232,6 +239,38 @@ describe("a machine without transfer records", () => {
     expect(mini?.disabled).toBeUndefined();
   });
 
+  const desk = "env-desk" as EnvironmentId;
+  const mini = "env-mini" as EnvironmentId;
+
+  it("never keeps a machine that needs an update as the destination, however it was picked", () => {
+    const marked = destinationsNeedingUpdate(destinations, new Set([desk]));
+    // Picked by hand, then found to need an update: the next machine that can take work.
+    expect(pickDestination(marked, desk)).toBe(mini);
+    // Picked by the dialog as the first reachable one.
+    expect(pickDestination(marked, null)).toBe(mini);
+    expect(pickDestination(destinations, null)).toBe(desk);
+    expect(pickDestination(destinations, mini)).toBe(mini);
+    expect(pickDestination(destinationsNeedingUpdate(destinations, new Set([desk, mini])), desk)).toBe(
+      null,
+    );
+  });
+
+  it("keeps each machine's update action on that machine's own check", () => {
+    const deskResults = [failed(fromCheck)];
+    const miniResults = [preflight({})];
+    const label = (id: EnvironmentId) => (id === desk ? "Desk" : "Mini");
+    // Desk needed an update, so the dialog moved on to Mini and checked it.
+    const rows = destinationUpdateRows(new Map([[desk, deskResults]]), mini, miniResults, label);
+    expect(rows).toEqual([
+      { environmentId: desk, label: "Desk", results: deskResults },
+      { environmentId: mini, label: "Mini", results: miniResults },
+    ]);
+    // The same machine is never listed twice.
+    expect(destinationUpdateRows(new Map([[desk, deskResults]]), desk, deskResults, label)).toEqual(
+      [{ environmentId: desk, label: "Desk", results: deskResults }],
+    );
+  });
+
   it("marks no destination when the source is the one to update", () => {
     expect(destinationNeedsUpdate([failed(fromSource)])).toBe(false);
     expect(versionFailureNamesDestination([failed(fromSource)])).toBe(false);
@@ -358,5 +397,23 @@ describe("HandOffProgressView", () => {
     const unknown = out([{ machineLabel: "Laptop", resetsAt: null }]);
     expect(unknown).toContain("Reset unknown");
     expect(unknown).not.toContain("Next reset");
+  });
+});
+
+describe("the no-move state's slot", () => {
+  it("takes the automatic decision's track, staying count and resets, with no record", () => {
+    const environmentId = "env-laptop" as EnvironmentId;
+    const trackOut = {
+      track: "Complex",
+      staying: 2,
+      resets: [{ machineLabel: "Desk", resetsAt: "2026-11-19T12:00:00.000Z" }],
+    };
+    requestHandOffNoMove(environmentId, { projectName: "atlas", trackOut });
+    expect(readHandOffProgressRequest()).toEqual({
+      kind: "no-move",
+      environmentId,
+      projectName: "atlas",
+      trackOut,
+    });
   });
 });

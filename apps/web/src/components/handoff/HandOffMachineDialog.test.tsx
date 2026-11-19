@@ -286,3 +286,20 @@ it("words the primary for each state", () => {
   expect(handOffMachineScope("M4", null)).toBe("Scope: every project on M4");
   expect(handOffMachineScope("M4", "atlas")).toBe("Scope: atlas");
 });
+
+it("keeps this request's error in view beside the progress of what was written", async () => {
+  await act(async () =>
+    root.render(
+      <HandOffMachineDialogView
+        {...props({
+          progress: <p data-slot="hand-off-progress">progress</p>,
+          error: "Minis: the request was refused",
+        })}
+      />,
+    ),
+  );
+  expect(document.querySelector('[data-slot="hand-off-progress"]')).not.toBeNull();
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+    "Minis: the request was refused",
+  );
+});
