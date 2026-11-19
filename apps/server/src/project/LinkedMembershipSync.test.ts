@@ -357,7 +357,13 @@ describe("a late call names the link it was made for", () => {
       run.offline.delete(c.machine.environmentId);
       yield* settle(run);
       assert.deepStrictEqual(run.lists(a), ["m1", "m4"]);
+      // C keeps its entry: A's unlink names another link, and a machine that cannot match
+      // an unlink keeps what it has. It goes when that link is unlinked on C itself.
+      assert.deepStrictEqual(run.lists(c), everyone);
+      yield* Effect.promise(() => run.drop(c, run.entry(c, b)!));
+      yield* settle(run);
       assert.deepStrictEqual(run.lists(c), ["m1", "m4"]);
+      assert.deepStrictEqual(run.lists(a), ["m1", "m4"]);
     }),
   );
 });
@@ -436,6 +442,97 @@ describe("with a machine from before links were named", () => {
       assert.notStrictEqual(first.operationId, second.operationId);
       assert.deepStrictEqual(run.lists(c), everyone);
       assert.deepStrictEqual(run.lists(a), everyone);
+    }),
+  );
+});
+
+describe("when a machine cannot tell, it keeps what it has (round 5)", () => {
+  const logicalId = (run: ReturnType<typeof fleet>) =>
+    run.a.machine.projects.get(run.a.member.projectId)!.workspaceSettings!.logicalProject!.id;
+
+  it.effect("a late unlink never ends a link an older machine relayed without its count", () =>
+    Effect.gen(function* () {
+      const run = fleet();
+      const { a, b, c } = run;
+      yield* Effect.promise(() => run.link(a, c));
+      yield* settle(run);
+      run.offline.add(c.machine.environmentId);
+      yield* Effect.promise(() => run.link(a, b));
+      const first = run.entry(a, b)!;
+      yield* Effect.promise(() => run.unlink(a, b));
+      const second = yield* Effect.promise(() => run.link(a, b));
+      // C hears of B's second link through a machine that drops the count.
+      const { generation: _dropped, ...relayed } = second.joined;
+      yield* Effect.promise(() =>
+        run.on(c, (service) =>
+          service.adoptMembers({
+            projectId: c.member.projectId,
+            logicalProjectId: logicalId(run),
+            from: run.entry(c, a)!,
+            fromEpoch: 0,
+            members: [run.entry(c, a)!, run.entry(c, c)!, relayed],
+          }),
+        ),
+      );
+      assert.strictEqual(run.entry(c, b)?.linkId, second.operationId);
+      // The unlink of the first link reaches C only now.
+      yield* Effect.promise(() => run.drop(c, first));
+      assert.deepStrictEqual(run.lists(c), everyone);
+    }),
+  );
+
+  it.effect("a commit without a count never brings back a copy that was unlinked", () =>
+    Effect.gen(function* () {
+      const run = fleet();
+      const { a, b } = run;
+      // A link as a machine from before counts makes it: the joining entry has none.
+      const id = operationId();
+      yield* Effect.promise(() =>
+        run.on(a, (service) =>
+          service.prepare({ operationId: id, projectId: a.member.projectId, joining: b.member }),
+        ),
+      );
+      yield* Effect.promise(() => run.commit(a, id, b.member));
+      assert.strictEqual(run.entry(a, b)?.generation, undefined);
+      yield* Effect.promise(() => run.drop(a, run.entry(a, b)!));
+      assert.deepStrictEqual(run.lists(a), ["m4"]);
+      // That commit, retried late.
+      const retried = yield* Effect.promise(() =>
+        run.commit(a, id, b.member).then(
+          () => "committed",
+          () => "refused",
+        ),
+      );
+      assert.deepStrictEqual(run.lists(a), ["m4"]);
+      assert.strictEqual(retried, "refused");
+    }),
+  );
+
+  it.effect("another machine's word of a newer link never brings back an unlinked copy", () =>
+    Effect.gen(function* () {
+      const run = fleet();
+      const { a, b, c } = run;
+      yield* Effect.promise(() => run.link(a, b));
+      yield* Effect.promise(() => run.link(a, c));
+      const listed = run.entry(a, b)!;
+      yield* Effect.promise(() => run.unlink(a, b));
+      // C lists B under a link B never accepted, counted above the unlinked one.
+      yield* Effect.promise(() =>
+        run.on(a, (service) =>
+          service.adoptMembers({
+            projectId: a.member.projectId,
+            logicalProjectId: logicalId(run),
+            from: run.entry(a, c)!,
+            fromEpoch: 0,
+            members: [
+              a.member,
+              run.entry(a, c)!,
+              { ...listed, linkId: "99999999-9999-4999-8999-999999999999", generation: 5 },
+            ],
+          }),
+        ),
+      );
+      assert.deepStrictEqual(run.lists(a), ["m1", "m4"]);
     }),
   );
 });

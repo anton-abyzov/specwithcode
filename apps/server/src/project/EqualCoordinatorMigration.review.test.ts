@@ -225,8 +225,20 @@ describe("unlinking one of three machines (AC-35)", () => {
     // 3. The M1 comes back still advertising the old unlink: the M4 keeps the new link.
     await reads(m4, m1);
     expect(listed(m4)).toContain(keyOf(trio.joining));
-    // And the M1 takes the M3 back from the M4, whose link is newer than that unlink.
+    // The M4's list alone never brings the M3 back to the M1, which unlinked it...
     await reads(m1, m4);
+    expect(listed(m1)).not.toContain(keyOf(trio.joining));
+    // ...the M3 does, speaking for itself with its newer link.
+    const relinked = linkedAs(trio.joining, relinkId, 2);
+    await trio.m1.run((service) =>
+      service.adoptMembers({
+        projectId: trio.third.projectId,
+        logicalProjectId: trio.logicalProjectId,
+        from: relinked,
+        fromEpoch: 0,
+        members: [trio.kept, trio.third, relinked],
+      }),
+    );
     expect(listed(m1)).toContain(keyOf(trio.joining));
     await reads(m4, m1);
     expect(listed(m4)).toContain(keyOf(trio.joining));

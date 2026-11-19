@@ -1,22 +1,20 @@
 /**
- * Which membership an unlink ended, and which of two memberships is the later.
+ * Which membership an unlink ended, and when a copy comes back. Where a
+ * machine cannot tell, it keeps what it has.
  *
- * A copy counts its own links: each time it accepts one it takes the next
- * generation (`nextGeneration`), above every one it or the kept copy has seen
- * for it. The link also has a name, its operation id (`linkId`). Both travel
- * with the member entry to every machine. An unlink records the generation it
- * ended (`removedMembers`). From there the order needs no clock:
+ * Every link names the membership it makes (`linkId`, its operation id) and
+ * counts it (`generation`, one above every link of the copy its accept knew
+ * of). Both travel with the member entry, and an unlink records both
+ * (`removedMembers`). Machines from before send neither, or relay an entry
+ * without its count. So:
  *
- * - a membership at or below a generation this machine knows was unlinked
- *   stays out, whoever lists it and whenever that list arrives;
- * - an unlink acts only on the membership it names, or an older one;
- * - a link's commit is refused once that link was unlinked or replaced.
- *
- * Machines from before generations send members and unlinks without one. An
- * entry without a generation counts as 0: it never outranks a recorded unlink
- * and gives way to a named entry of the same copy. An unlink without one ends
- * only a membership without one, by its date (`relinkedMembers`), and never a
- * named link.
+ * - an unlink ends a member only when their link ids match, or when both are
+ *   from before link ids (dated: `relinkedMembers`). An unlink that names a
+ *   link never ends an entry with another id, or with none;
+ * - a link's commit is refused once that link was unlinked or replaced, and a
+ *   commit without a count never brings back a copy this machine unlinked;
+ * - an unlinked copy is listed again only from its own word, or by a new
+ *   commit here. Another machine's list never brings it back.
  */
 import {
   logicalProjectMemberKey,
@@ -91,27 +89,30 @@ export const removedGeneration = (removed: ReadonlyArray<RemovedMember>, key: st
     0,
   );
 
-/** One unlink with a generation and one without per copy; the highest generation is kept. */
+/** One unlink per link of a copy, and one for its memberships from before link ids. */
 export const mergeRemoved = (
   own: ReadonlyArray<RemovedMember>,
   added: ReadonlyArray<RemovedMember>,
 ): ReadonlyArray<RemovedMember> => {
   const slot = (entry: RemovedMember) =>
-    `${logicalProjectMemberKey(entry)}\u0000${entry.generation === undefined ? "dated" : "counted"}`;
+    `${logicalProjectMemberKey(entry)}\u0000${entry.linkId ?? ""}`;
   const merged = new Map<string, RemovedMember>();
   for (const entry of [...own, ...added]) {
-    const held = merged.get(slot(entry));
-    if (held !== undefined && generationOf(held) > generationOf(entry)) continue;
     merged.delete(slot(entry));
     merged.set(slot(entry), entry);
   }
   return [...merged.values()].slice(-MAX_REMEMBERED);
 };
 
+/** Whether an entry is from before link ids: it carries neither a name nor a count. */
+const isLegacy = (entry: {
+  readonly linkId?: string | undefined;
+  readonly generation?: number | undefined;
+}) => entry.linkId === undefined && entry.generation === undefined;
+
 /**
- * Whether an unlink ends the membership `member` is listed with. One that names a
- * generation ends that link and every earlier one, an entry without a generation
- * among them. One without ends only an entry without, while no later link is known.
+ * Whether an unlink ends the membership `member` is listed with: the same link, or both
+ * from before link ids while no later link of the copy is known. Nothing else.
  */
 export const removalEnds = (
   removal: RemovedMember,
@@ -119,9 +120,29 @@ export const removalEnds = (
   ...relinked: ReadonlyArray<ReadonlyArray<RelinkedMember>>
 ) =>
   logicalProjectMemberKey(removal) === logicalProjectMemberKey(member) &&
-  (removal.generation !== undefined
-    ? generationOf(member) <= removal.generation
-    : member.generation === undefined && removalStands(removal, ...relinked));
+  (removal.linkId !== undefined
+    ? member.linkId === removal.linkId
+    : isLegacy(removal) && isLegacy(member) && removalStands(removal, ...relinked));
+
+/** Whether this machine remembers an unlink of `key`'s copy, of any link. */
+export const wasRemoved = (removed: ReadonlyArray<RemovedMember>, key: string) =>
+  removed.some((entry) => logicalProjectMemberKey(entry) === key);
+
+/**
+ * Whether `entry`, sent by its own copy, is a link newer than every unlink of it this
+ * machine remembers: named, counted above them, and not one of the links they ended.
+ */
+export const returnsAsNewLink = (removed: ReadonlyArray<RemovedMember>, entry: Membership) => {
+  const key = logicalProjectMemberKey(entry);
+  return (
+    entry.linkId !== undefined &&
+    entry.generation !== undefined &&
+    entry.generation > removedGeneration(removed, key) &&
+    !removed.some(
+      (removal) => logicalProjectMemberKey(removal) === key && removal.linkId === entry.linkId,
+    )
+  );
+};
 
 /** The generation a copy takes as it accepts a link: above all it and the kept copy know. */
 export const nextGeneration = (input: {
@@ -144,9 +165,9 @@ export const nextGeneration = (input: {
 };
 
 /**
- * What an unlink request removes here: the listed entry it names, or an older one,
- * with the unlink to remember. Nothing when the copy is not listed, or is listed by
- * a later link than the request names: that call arrived late and changes nothing.
+ * What an unlink request removes here: the listed entry of the same link, or a listed
+ * entry from before link ids when the request is from before them too. Nothing else:
+ * a late call, or one about a link this machine cannot match, changes nothing.
  */
 export const unlinkTarget = (
   members: ReadonlyArray<LogicalProjectMember>,
@@ -155,23 +176,18 @@ export const unlinkTarget = (
   const key = logicalProjectMemberKey(request);
   const listed = members.find((member) => logicalProjectMemberKey(member) === key);
   if (listed === undefined) return undefined;
-  const named = generationOf(request);
-  if (generationOf(listed) > named) return undefined;
-  if (
-    named > 0 &&
-    generationOf(listed) === named &&
-    request.linkId !== undefined &&
-    listed.linkId !== undefined &&
-    request.linkId !== listed.linkId
-  )
-    return undefined;
-  const linkId = request.linkId ?? listed.linkId;
+  const matches =
+    request.linkId !== undefined
+      ? listed.linkId === request.linkId
+      : isLegacy(request) && isLegacy(listed);
+  if (!matches) return undefined;
   return {
     listed,
-    ended:
-      named === 0
-        ? ref(request)
-        : { ...ref(request), generation: named, ...(linkId === undefined ? {} : { linkId }) },
+    ended: {
+      ...ref(listed),
+      ...(listed.linkId === undefined ? {} : { linkId: listed.linkId }),
+      ...(listed.generation === undefined ? {} : { generation: listed.generation }),
+    },
   };
 };
 
@@ -204,8 +220,20 @@ export const commitStep = (input: {
   // A caller from before generations: its copy is listed, or is added as such a member.
   if (generation === 0 && listed !== undefined && generationOf(listed) === 0)
     return { kind: "replay" };
-  if (removedGeneration(input.removed, key) >= Math.max(generation, 1))
-    return { kind: "refused", detail: "That link was unlinked since. Link the machine again." };
+  const unlinked = {
+    kind: "refused",
+    detail: "That link was unlinked since. Link the machine again.",
+  } as const;
+  // This link was unlinked, or a later one was; and with no count, any unlink of the copy wins.
+  if (
+    input.removed.some(
+      (removal) => logicalProjectMemberKey(removal) === key && removal.linkId === input.operationId,
+    ) ||
+    (joining.generation === undefined
+      ? wasRemoved(input.removed, key)
+      : removedGeneration(input.removed, key) >= generation)
+  )
+    return unlinked;
   if (listed !== undefined && generationOf(listed) >= generation)
     return { kind: "refused", detail: "That copy was linked again since." };
   return { kind: "add", joining, earlier: listed };

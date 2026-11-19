@@ -35,6 +35,8 @@ import {
   mergeRemoved,
   removalEnds,
   removalStands,
+  returnsAsNewLink,
+  wasRemoved,
   type RelinkedMember,
   type RemovedMember,
 } from "./linkMembership.ts";
@@ -162,7 +164,15 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
     Effect.gen(function* () {
       const binding = project.workspaceSettings?.coordinatorBinding;
       const fromKey = logicalProjectMemberKey(input.from);
+      const remembered = binding?.removedMembers ?? [];
+      // A copy this machine unlinked speaks for itself again only with a newer link of its own.
+      const ownWord = input.members.find((member) => logicalProjectMemberKey(member) === fromKey);
+      const returning =
+        wasRemoved(remembered, fromKey) &&
+        ownWord !== undefined &&
+        returnsAsNewLink(remembered, ownWord);
       if (
+        !returning &&
         !identity.members.some(
           (member) =>
             logicalProjectMemberKey(member) === fromKey &&
@@ -179,7 +189,7 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
       const unlinkedThere = (input.removed ?? []).filter(
         (removal) =>
           logicalProjectMemberKey(removal) !== fromKey &&
-          (removal.generation !== undefined || !listedThere.has(logicalProjectMemberKey(removal))),
+          (removal.linkId !== undefined || !listedThere.has(logicalProjectMemberKey(removal))),
       );
       const endedBy = (member: LogicalProjectMember) =>
         unlinkedThere.find((removal) => removalEnds(removal, member, ownRelinked, theirRelinked));
@@ -218,7 +228,10 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
       const relinked = mergeRelinked(ownRelinked, theirRelinked);
       const ownRemoved = current.removedMembers ?? [];
       const stillRemoved = ownRemoved.filter(
-        (removal) => removal.generation !== undefined || removalStands(removal, relinked),
+        (removal) =>
+          removal.linkId !== undefined ||
+          removal.generation !== undefined ||
+          removalStands(removal, relinked),
       );
       const held = new Map(
         identity.members.map((member) => [logicalProjectMemberKey(member), member]),
@@ -230,8 +243,13 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
           member.environmentId !== self.environmentId &&
           !stillRemoved.some((removal) => removalEnds(removal, member, relinked)),
       );
+      // An unlinked copy comes back only from its own word, as a newer link; another
+      // machine's list never brings it back, whatever link it names.
+      const mayList = (member: LogicalProjectMember) =>
+        !wasRemoved(stillRemoved, logicalProjectMemberKey(member)) ||
+        (logicalProjectMemberKey(member) === fromKey && returnsAsNewLink(stillRemoved, member));
       const added = offered
-        .filter((member) => !held.has(logicalProjectMemberKey(member)))
+        .filter((member) => !held.has(logicalProjectMemberKey(member)) && mayList(member))
         .slice(0, Math.max(0, MAX_MEMBERS - identity.members.length));
       // The same copy listed there by a later link than here: this list takes that link, as
       // one an older machine relayed without a generation takes the named one.
@@ -241,6 +259,9 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
             const mine = held.get(logicalProjectMemberKey(member));
             return (
               mine !== undefined &&
+              mayList(member) &&
+              // Only to a named link: an entry without a name is no evidence of one.
+              member.linkId !== undefined &&
               memberRef(mine) === memberRef(member) &&
               generationOf(member) > generationOf(mine)
             );
