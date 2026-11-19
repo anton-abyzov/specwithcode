@@ -16,6 +16,8 @@ import {
   regionToScreenshot,
   runCheck,
   scrolled,
+  newTexts,
+  showsNoSpotlight,
   showsSuggestion,
   simulatedPhone,
   startsWithTyped,
@@ -744,6 +746,85 @@ describe("dry run", () => {
     expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
   });
 
+  it("opens Spotlight again when the phone shows only its home screen after typing", async () => {
+    // cmd+3 number 5 opens Spotlight for "x@y#h" (1 is the path probe).
+    const phone = simulatedPhone({ spotlightMisses: (n) => n === 5 });
+    const result = await runCheck(phone.deps);
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
+    const note = result.lines.find((entry) => /^NOTE .* type "x@y#h": after typing/.test(entry));
+    expect(note).toMatch(/only its home screen, no search field \(try 1 of 3\)/);
+    expect(note).toMatch(/after cmd\+3, it showed nothing beyond the home screen/);
+    expect(result.lines).toContain(
+      'PASS type "x@y#h": shown on the phone; frontmost iPhone Mirroring',
+    );
+  });
+
+  it("calls typing unsure, never failed, when Spotlight never shows on any try", async () => {
+    const phone = simulatedPhone({ spotlightMisses: (n) => n >= 5 && n <= 7 });
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^UNSURE type "x@y#h": the phone showed no Spotlight after typing on 3 tries/,
+      ),
+    );
+    expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
+    expect(result.lines.at(-1)).toMatch(/^Result: INVALID \(could not judge type "x@y#h"/);
+  });
+
+  it("opens Spotlight again for the key repeat measurement", async () => {
+    const phone = simulatedPhone({ spotlightMisses: (n) => n === 7 });
+    const result = await runCheck(phone.deps);
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(/^NOTE .* key repeat: after typing "QHBR4207"/),
+    );
+  });
+
+  it("still fails text a shown search field reads wrong", async () => {
+    const phone = simulatedPhone();
+    const call = phone.deps.call;
+    phone.deps.call = (tool, args) =>
+      call(tool, tool === "computer_type" && args.text === "x@y#h" ? { text: "x@y" } : args);
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(/^FAIL type "x@y#h": not shown as typed/),
+    );
+    expect(result.lines.some((entry) => /no search field/.test(entry))).toBe(false);
+  });
+
+  it("taps the app's result when Return leaves Spotlight up, outside the counted clicks", async () => {
+    const phone = simulatedPhone({ deadReturn: true, suggestion: true });
+    const result = await runCheck(phone.deps);
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
+    expect(result.lines).toContain("Clicks landed: 20 of 20");
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^NOTE .* Return did not open Clock while "Clock- Ask Siri" showed; tapped the "Clock" result at \(\d+, 270\): Spotlight closed \(not one of the 20 counted clicks\)/,
+      ),
+    );
+    // The scroll step opens Settings the same way.
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(/^NOTE .* tapped the "Settings" result .*: Spotlight closed/),
+    );
+    expect(phone.state.taps).toBe(2);
+  });
+
+  it("waits for Spotlight's suggestion before pressing Return", async () => {
+    const phone = simulatedPhone({ suggestion: true });
+    const order = [];
+    const call = phone.deps.call;
+    phone.deps.call = (tool, args) => {
+      if (tool === "computer_type" && args.text === "Clock") order.length = 0;
+      if (tool === "computer_screenshot" || (tool === "computer_key" && args.keys === "return"))
+        order.push(tool === "computer_key" ? "return" : "look");
+      return call(tool, args);
+    };
+    const result = await runCheck(phone.deps);
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
+    expect(order.slice(0, 2)).toEqual(["look", "return"]);
+    expect(phone.state.taps).toBeUndefined();
+  });
+
   it("writes dry-run.log and never check.log", async () => {
     const out = tempOut();
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -946,6 +1027,28 @@ describe("judging the screen", () => {
       if (/[A-Za-z]/.test(sample)) expect(sample).not.toMatch(/[250]/);
     }
     expect(TYPE_SAMPLES.some((sample) => /(.)\1/.test(sample))).toBe(true);
+  });
+
+  it("tells the home screen from Spotlight over it, leaving clocks and specks out", () => {
+    const at = (text, y = 300) => ({ text, x: 1200, y, width: 80, height: 14 });
+    const home = [
+      at("Sunny Isles B...", 313),
+      at("77°", 332),
+      at("11:26", 330),
+      at("Messages"),
+      at("o"),
+    ];
+    // The run of November 19 at 11:26 AM: the same home screen a few seconds later.
+    expect(
+      showsNoSpotlight([...home.slice(0, 2), at("11:27", 330), at("Messages"), at("00")], home),
+    ).toBe(true);
+    expect(
+      showsNoSpotlight([at("4207 - Open", 307), at("Flood Watch"), at("Messages")], home),
+    ).toBe(false);
+    expect(newTexts([at("x@y", 307), at("Messages")], home)).toEqual(["x@y"]);
+    // Without text to compare, nothing is called the home screen.
+    expect(showsNoSpotlight([], home)).toBe(false);
+    expect(showsNoSpotlight(home, [])).toBe(false);
   });
 
   it("tells pages apart by their words, leaving clock readings out", () => {
