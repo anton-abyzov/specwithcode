@@ -445,6 +445,7 @@ const scenario = (
       transferStatus: (_, request) =>
         viaNetwork(destinationReceiver.transferStatus(asSource, request)),
       transferPull: () => Effect.die("unused"),
+      check: () => Effect.die("unused"),
     });
     const moves = yield* Effect.gen(function* () {
       const receiver = yield* HandoffReceiver.make;
