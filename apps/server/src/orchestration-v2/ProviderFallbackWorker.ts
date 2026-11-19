@@ -283,6 +283,8 @@ export function providerFallbackCommand(
     ),
     threadId: thread.id,
     modelSelection: target,
+    // A pick that lands after this plan wins: the orchestrator refuses the move.
+    expectedModelSelection: thread.modelSelection,
   };
 }
 
@@ -493,7 +495,7 @@ const POSITIVE_BALANCE = /^\d{1,24}(?:\.\d{1,24})?$/;
  * simulated stop never redeems or spends anything.
  */
 export function providerLimitStep(
-  thread: FallbackThread,
+  thread: IdleCandidate,
   providers: ReadonlyArray<ServerProvider>,
   threadRule: ProviderFallbackRule & { readonly snoozeLimitedThreads?: boolean },
   nowMs: number,
@@ -513,11 +515,6 @@ export function providerLimitStep(
     readonly planLimitOutlived?: boolean;
     /** The run the limit stopped, to tell whether a person has picked another model since. */
     readonly stoppedRun?: Pick<OrchestrationV2Run, "providerInstanceId" | "modelSelection"> | null;
-    /** An idle thread's latest run, read for the move before the limit (see `idlePreswitchCommand`). */
-    readonly latestRun?: Pick<
-      OrchestrationV2Run,
-      "id" | "providerInstanceId" | "modelSelection"
-    > | null;
   },
 ):
   | {
@@ -664,36 +661,52 @@ export function providerLimitStep(
   return command === null ? null : { type: "switch", command };
 }
 
+/** A swept thread, with what tells a subagent the provider spawned. */
+type IdleCandidate = FallbackThread &
+  Partial<Pick<OrchestrationV2ThreadShell, "lineage" | "creationSource">>;
+
 /**
- * "Switch before the limit" for a thread that did not stop (1089): under
- * `switch`, an idle thread whose provider reached the threshold moves to the
- * fallback before its next turn, once per usage window (the `limit-preswitch:`
- * id names the window). Only after a turn that completed, with no background
- * work left in the session: a failed one is the retry's or the recovery's to
- * answer. A person's pick wins: a selection that differs from
- * the latest run's is theirs, unless an earlier pre-switch set it. Without
- * the latest run to compare, nothing moves early.
+ * The `limit-preswitch:` id of the move "Switch before the limit" would make
+ * for a thread that did not stop (1089), or null when it would make none:
+ * under `switch`, a free thread between turns after one that completed, with
+ * no background work left in its session, on a provider at the threshold. The
+ * id names the usage window, so the move goes out once per window, and a hand
+ * switch back is kept until the window resets.
  */
-function idlePreswitchCommand(
-  thread: FallbackThread,
+export function idlePreswitchId(
+  thread: IdleCandidate,
   providers: ReadonlyArray<ServerProvider>,
   rule: ProviderFallbackRule,
   nowMs: number,
-  options: {
-    readonly proven?: ModelSelection | null;
-    readonly limited?: ReadonlySet<string>;
-    readonly latestRun?: Pick<
-      OrchestrationV2Run,
-      "id" | "providerInstanceId" | "modelSelection"
-    > | null;
-  },
+): string | null {
+  if (
+    rule.providerLimitAction !== "switch" ||
+    thread.status !== "completed" ||
+    thread.latestRunId === null ||
+    thread.settledOverride === "settled" ||
+    !threadIsFree(thread) ||
+    // A session still hosting background work would be cut off from it.
+    thread.activityRunStatus != null ||
+    hostsBackgroundWork(thread) ||
+    // A subagent the provider spawned takes no messages: it has no next turn.
+    (thread.lineage?.relationshipToParent === "subagent" && thread.creationSource === "provider")
+  )
+    return null;
+  const current = providers.find((provider) => provider.instanceId === thread.providerInstanceId);
+  const model = thread.modelSelection.model;
+  if (!shouldSwitchBeforeTurn({ provider: current, model, rule, nowMs })) return null;
+  return `limit-preswitch:${thread.id}:${thread.providerInstanceId}:${usageWindowKey(current, nowMs, model)}`;
+}
+
+/** The move `idlePreswitchId` names, to the fallback with room, or null. */
+function idlePreswitchCommand(
+  thread: IdleCandidate,
+  providers: ReadonlyArray<ServerProvider>,
+  rule: ProviderFallbackRule,
+  nowMs: number,
+  options: { readonly proven?: ModelSelection | null; readonly limited?: ReadonlySet<string> },
 ): Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }> | null {
-  if (rule.providerLimitAction !== "switch" || thread.status !== "completed") return null;
-  // A session still hosting background work would be cut off from it by a move.
-  if (thread.activityRunStatus != null || hostsBackgroundWork(thread)) return null;
-  const run = options.latestRun;
-  if (run == null || run.id !== thread.latestRunId) return null;
-  if (pickedSinceStop(thread, run) && thread.modelIdentity?.preswitched !== true) return null;
+  if (idlePreswitchId(thread, providers, rule, nowMs) === null) return null;
   const command = providerFallbackCommand(
     thread,
     providers,
@@ -1662,8 +1675,6 @@ export const makeSweep = Effect.gen(function* () {
     );
   });
   const holdRuns = new Map<string, OrchestrationV2Run>();
-  // The latest run of an idle thread at the switch threshold, read once per run (1089).
-  const idleRuns = new Map<string, OrchestrationV2Run>();
   // A model a person picked since the latest run, as opposed to one a
   // pre-switch moved the thread to (its way back is still owed, 1075).
   const pickedSinceRun = (
@@ -1727,50 +1738,6 @@ export const makeSweep = Effect.gen(function* () {
       if (evidence !== null) holdThreads.push(evidence);
     }
     for (const runId of holdRuns.keys()) if (!retainedHoldRuns.has(runId)) holdRuns.delete(runId);
-    const latestRunIds = new Set<string | null>(
-      snapshot.threads.map((thread) => thread.latestRunId),
-    );
-    for (const runId of idleRuns.keys()) if (!latestRunIds.has(runId)) idleRuns.delete(runId);
-    // Read only for a thread the idle move could act on: free, not stopped,
-    // under `switch`, and on a provider at the threshold.
-    const latestRunForPreswitch = (
-      thread: FallbackThread & Partial<Pick<OrchestrationV2ThreadShell, "lineage" | "creationSource">>,
-      rule: ProviderFallbackRule,
-    ) =>
-      Effect.gen(function* () {
-        if (
-          rule.providerLimitAction !== "switch" ||
-          thread.status !== "completed" ||
-          thread.latestRunId === null ||
-          // A subagent the provider spawned takes no messages, so it has no next turn to move.
-          (thread.lineage?.relationshipToParent === "subagent" &&
-            thread.creationSource === "provider") ||
-          thread.settledOverride === "settled" ||
-          stoppedOnLimit(thread) ||
-          !threadIsFree(thread) ||
-          thread.activityRunStatus != null ||
-          hostsBackgroundWork(thread) ||
-          !shouldSwitchBeforeTurn({
-            provider: providers.find((entry) => entry.instanceId === thread.providerInstanceId),
-            model: thread.modelSelection.model,
-            rule,
-            nowMs: now,
-          })
-        )
-          return null;
-        const runId = thread.latestRunId;
-        const cached = holdRuns.get(runId) ?? idleRuns.get(runId);
-        if (cached !== undefined) return cached;
-        const run = yield* projections
-          .getThreadRecords(thread.id, ["runs"], { runIds: [runId] })
-          .pipe(
-            Effect.map((records) => records.runs.find((entry) => entry.id === runId) ?? null),
-            Effect.catchCause(() => Effect.succeed(null)),
-          );
-        if (run !== null && (run.status === "completed" || run.status === "failed"))
-          idleRuns.set(run.id, run);
-        return run;
-      });
     const outlivedHolds = new Set<string>();
     for (const thread of holdThreads)
       if (yield* planLimitOutlived(thread, providers)) outlivedHolds.add(thread.id);
@@ -1886,7 +1853,6 @@ export const makeSweep = Effect.gen(function* () {
         unopenable: failedOpen,
         planLimitOutlived: outlived.has(thread.id),
         stoppedRun: thread.latestRunId === null ? null : (holdRuns.get(thread.latestRunId) ?? null),
-        latestRun: yield* latestRunForPreswitch(thread, resolved),
       };
       // An idle move already sent this window leaves the thread as one with no
       // step: no Stop read or handoff each sweep, and its way back still runs.
@@ -1956,9 +1922,8 @@ export const makeSweep = Effect.gen(function* () {
       // An idle thread at the threshold with no target to move to (1089): its
       // fallbacks' readings may only be old. One whose move already went out
       // this window has a target, so it reads nothing.
-      const idleWithoutTarget =
-        options.latestRun != null &&
-        providerLimitStep(thread, providersFor(thread), resolved, now, options) === null;
+      const idleId = idlePreswitchId(thread, providersFor(thread), resolved, now);
+      const idleWithoutTarget = idleId !== null && step === null && !sentIds.has(idleId);
       // A context stop reads stale providers before it moves, even when a
       // target is found: home with an old reading may have room again.
       if (

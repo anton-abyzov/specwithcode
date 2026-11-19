@@ -131,7 +131,7 @@ import {
 } from "@specweave-studio/shared/teamRules";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
-import { preswitchMoveRefusal } from "./limitPreswitchGuard.ts";
+import { preswitchMoveRefusal, sameModelSelection } from "./limitPreswitchGuard.ts";
 import {
   LIMIT_PRESWITCH_COMMAND_PREFIX,
   launchFallbackAfterMove,
@@ -3310,9 +3310,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is deleted.`,
       });
     }
+    // A move planned from one selection never replaces another: a pick that
+    // landed after the plan wins (1089).
+    if (
+      command.type === "thread.model-selection.set" &&
+      command.expectedModelSelection !== undefined &&
+      !sameModelSelection(thread.modelSelection, command.expectedModelSelection)
+    )
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "The thread's model changed since this move was planned.",
+      });
     // The move before the limit (1089) is judged again here, on the thread as
     // it is when the move lands: the sweep's checks run before this command
-    // is applied, and a person's pick, Stop or new turn can land in between.
+    // is applied, and a Stop or a new turn can land in between.
     if (
       command.type === "thread.model-selection.set" &&
       command.commandId.startsWith(LIMIT_PRESWITCH_COMMAND_PREFIX)
@@ -10591,7 +10603,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
-      const { refusal, latest } = preswitchMoveRefusal(thread, runs);
+      const { refusal, latest } = preswitchMoveRefusal(runs);
       if (refusal !== null || latest === null) return refusal;
       if (yield* stopHoldsLimitResume(command, { thread }, latest.id)) return STOPPED_THREAD_REFUSAL;
       return null;

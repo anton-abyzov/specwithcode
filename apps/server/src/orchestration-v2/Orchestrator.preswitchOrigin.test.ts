@@ -169,3 +169,37 @@ it.effect("a selection change with no pre-switch writes no origin", () =>
     assert.isUndefined(yield* origin);
   }).pipe(Effect.provide(layerTest)),
 );
+
+// 1089: the sweep plans a pre-switch from the selection it read; a pick that
+// lands before the move does wins, and the move is refused as it lands.
+it.effect("refuses a pre-switch planned before a person's pick", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { threadId, move, preswitchId } = yield* setup("late-pick");
+    yield* move("person-pick-before-move", other);
+    const refused = yield* orchestrator
+      .dispatch({
+        type: "thread.model-selection.set",
+        commandId: preswitchId,
+        threadId,
+        modelSelection: fallback,
+        expectedModelSelection: home,
+      })
+      .pipe(Effect.flip);
+    assert.equal(refused._tag, "OrchestratorDispatchError");
+    assert.include(String((refused as { cause?: unknown }).cause), "changed since this move");
+    const thread = yield* projections.getThread(threadId);
+    assert.deepEqual(thread.modelSelection, other);
+    assert.isNull(thread.limitPreswitchFrom ?? null);
+    // Planned from the pick, the move lands.
+    yield* orchestrator.dispatch({
+      type: "thread.model-selection.set",
+      commandId: CommandId.make(`${preswitchId}-replanned`),
+      threadId,
+      modelSelection: fallback,
+      expectedModelSelection: other,
+    });
+    assert.deepEqual((yield* projections.getThread(threadId)).modelSelection, fallback);
+  }).pipe(Effect.provide(layerTest)),
+);

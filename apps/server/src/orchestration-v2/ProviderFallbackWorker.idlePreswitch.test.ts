@@ -69,13 +69,18 @@ const settings: ServerSettings = {
   providerLimitWaitUnderMinutes: 0,
 };
 
-function withWindow(base: ServerProvider, model: string, usedPercent: number): ServerProvider {
+function withWindow(
+  base: ServerProvider,
+  model: string,
+  usedPercent: number,
+  resetsAt = resetAt,
+): ServerProvider {
   return {
     ...base,
     models: [{ slug: model, name: model, isCustom: false, isDefault: true, capabilities: null }],
     usageLimits: {
       ...base.usageLimits!,
-      windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent, resetsAt: resetAt }],
+      windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent, resetsAt }],
     },
   };
 }
@@ -120,6 +125,8 @@ interface Thread {
 
 interface World {
   claudeUsed: number;
+  /** When Claude's window resets: a new reset is a new usage window. */
+  claudeResetAt: string;
   settings: ServerSettings;
   threads: Thread[];
   /** Dispatches fail with this error while set. */
@@ -149,6 +156,7 @@ const idleThread = (overrides: Partial<Thread> = {}): Thread => ({
 
 const world = (overrides: Partial<World> = {}): World => ({
   claudeUsed: 92,
+  claudeResetAt: resetAt,
   settings,
   threads: [idleThread()],
   failDispatch: false,
@@ -220,7 +228,7 @@ function layers(state: World) {
       getProviders: Effect.map(DateTime.now, (now) => {
         const ms = DateTime.toEpochMillis(now);
         return [
-          withWindow(provider(claudeId, "claudeAgent", ms), opus, state.claudeUsed),
+          withWindow(provider(claudeId, "claudeAgent", ms), opus, state.claudeUsed, state.claudeResetAt),
           withWindow(provider(codexId, "codex", state.codexReadAt ?? ms), "gpt-6", 30),
         ];
       }),
@@ -322,6 +330,7 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
           commandId: preswitchId,
           threadId: "t1",
           modelSelection: onCodex,
+          expectedModelSelection: onClaude,
         },
       ]);
       expect(state.threads[0]!.preswitch).toMatchObject({
@@ -407,6 +416,68 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
     }),
   );
 
+  it.effect("moves a model picked at the threshold once, between turns", () =>
+    Effect.gen(function* () {
+      // Picked after the latest turn, on a provider already past the threshold.
+      const sonnet = { instanceId: claudeId, model: "claude-sonnet-5-5" };
+      const state = world({ threads: [idleThread({ selection: sonnet })] });
+      yield* once(state);
+      expect(state.dispatched).toMatchObject([
+        { commandId: preswitchId, modelSelection: onCodex, expectedModelSelection: sonnet },
+      ]);
+      expect(state.threads[0]!.preswitch?.modelSelection).toEqual(sonnet);
+    }),
+  );
+
+  it.effect("moves again in a later window after a turn on the fallback and the way back", () =>
+    Effect.gen(function* () {
+      const state = world();
+      const nextReset = "2026-11-19T20:00:00.000Z";
+      yield* sweeps(state, (sweep) =>
+        Effect.gen(function* () {
+          yield* sweep();
+          // A turn runs on Codex, then Claude has room and the thread goes home.
+          const thread = state.threads[0]!;
+          thread.runs = [...thread.runs, { ...run("r2", "t1", onCodex, "completed"), ordinal: 2 }];
+          thread.latestRunId = "r2";
+          state.claudeUsed = 40;
+          yield* nextSweep();
+          yield* sweep();
+          expect(thread.selection).toEqual(onClaude);
+          // Claude passes the threshold in its next window: the move comes again.
+          state.claudeUsed = 92;
+          state.claudeResetAt = nextReset;
+          yield* nextSweep();
+          yield* sweep();
+        }),
+      );
+      expect(ids(state)).toEqual([
+        preswitchId,
+        returnId,
+        `limit-preswitch:t1:${claudeId}:${nextReset}`,
+      ]);
+    }),
+  );
+
+  it.effect("reads nothing more for a window whose move already went out", () =>
+    Effect.gen(function* () {
+      const state = world({ failDispatch: true });
+      yield* sweeps(state, (sweep) =>
+        Effect.gen(function* () {
+          yield* sweep();
+          // The failed move stays sent; Codex's reading then ages past use.
+          state.codexReadAt = at;
+          for (let index = 0; index < 4; index++) {
+            yield* TestClock.adjust(10 * 60_000);
+            yield* sweep();
+          }
+        }),
+      );
+      expect(ids(state)).toEqual([preswitchId]);
+      expect(state.refreshed).toEqual([]);
+    }),
+  );
+
   it.effect("reads an old fallback reading again, then moves", () =>
     Effect.gen(function* () {
       // Codex was last read 20 minutes ago: too old to count as room.
@@ -476,18 +547,6 @@ describe("what the idle move leaves alone (1089)", () => {
   it.effect("a subagent the provider spawned", () =>
     nothing(world({ threads: [idleThread({ providerSubagent: true })] })),
   );
-  it.effect("a model a person picked since the latest run", () =>
-    nothing(
-      world({
-        threads: [
-          idleThread({
-            selection: { instanceId: claudeId, model: "claude-sonnet-5-5" },
-            runs: [run("r1", "t1", onClaude, "completed")],
-          }),
-        ],
-      }),
-    ),
-  );
 });
 
 describe("providerLimitStep for an idle thread (1089)", () => {
@@ -496,13 +555,9 @@ describe("providerLimitStep for an idle thread (1089)", () => {
     withWindow(provider(codexId, "codex", at), "gpt-6", 30),
   ];
   const thread = shellOf(idleThread()) as never;
-  const latestRun = run("r1", "t1", onClaude, "completed");
 
   itPure("is a switch step with the window's idempotent id", () => {
-    const step = providerLimitStep(thread, providers, settings, at, {
-      resetAttempted: false,
-      latestRun,
-    });
+    const step = providerLimitStep(thread, providers, settings, at, { resetAttempted: false });
     expect(step).toEqual({
       type: "switch",
       command: {
@@ -510,25 +565,13 @@ describe("providerLimitStep for an idle thread (1089)", () => {
         commandId: preswitchId,
         threadId: "t1",
         modelSelection: onCodex,
+        expectedModelSelection: onClaude,
       },
     });
     // The same window gives the same id on every read.
     expect(
-      providerLimitStep(thread, providers, settings, at + 60_000, {
-        resetAttempted: false,
-        latestRun,
-      }),
+      providerLimitStep(thread, providers, settings, at + 60_000, { resetAttempted: false }),
     ).toEqual(step);
-  });
-
-  itPure("needs the latest run to tell a pick from the run's model", () => {
-    expect(providerLimitStep(thread, providers, settings, at, { resetAttempted: false })).toBeNull();
-    expect(
-      providerLimitStep(thread, providers, settings, at, {
-        resetAttempted: false,
-        latestRun: { ...latestRun, id: RunId.make("r0") },
-      }),
-    ).toBeNull();
   });
 
   itPure("leaves a limit stop on its own steps", () => {
@@ -536,7 +579,7 @@ describe("providerLimitStep for an idle thread (1089)", () => {
       idleThread({ status: "failed", lastErrorClass: "usage_limit" }),
     ) as never;
     expect(
-      providerLimitStep(stopped, providers, settings, at, { resetAttempted: true, latestRun }),
+      providerLimitStep(stopped, providers, settings, at, { resetAttempted: true }),
     ).toMatchObject({
       type: "switch",
       command: { type: "message.dispatch", commandId: "limit-fallback:t1:r1" },
