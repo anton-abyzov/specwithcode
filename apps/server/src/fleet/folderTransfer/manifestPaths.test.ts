@@ -160,3 +160,44 @@ describe("validateManifestEntries", () => {
     expect(validate([file("a/NUL.txt")])).toBeNull();
   });
 });
+
+describe("validateManifestRepositories", () => {
+  type Check = (
+    repositories: ReadonlyArray<{ path: string; mainRepository: string | null }>,
+    platform: NodeJS.Platform,
+  ) => { path: string; reason: string } | null;
+  // "not there" stands for a missing rule, so each case fails on what it expects.
+  const check = (repositories: Parameters<Check>[0], platform: NodeJS.Platform = "linux") => {
+    const rule = (Manifest as unknown as { validateManifestRepositories?: Check })
+      .validateManifestRepositories;
+    return rule ? rule(repositories, platform) : "not there";
+  };
+
+  it("accepts the root, nested repositories and worktrees inside the copy", () => {
+    expect(
+      check([
+        { path: ".", mainRepository: null },
+        { path: "services/a", mainRepository: null },
+        { path: "worktrees/a-side", mainRepository: "services/a" },
+        { path: "side", mainRepository: "." },
+      ]),
+    ).toBeNull();
+  });
+
+  it.each(["../unrelated", "/home/someone/repo", "a/../../b", ""])(
+    "refuses a main repository named %j",
+    (mainRepository) => {
+      expect(check([{ path: "wt", mainRepository }])).toMatchObject({ reason: "unsafe-path" });
+    },
+  );
+
+  it.each(["../wt", "/abs", "a//b"])("refuses a repository at %j", (path) => {
+    expect(check([{ path, mainRepository: null }])).toMatchObject({ reason: "unsafe-path" });
+  });
+
+  it("applies the destination's own name rules", () => {
+    expect(check([{ path: "aux", mainRepository: null }], "win32")).toMatchObject({
+      reason: "unsafe-path",
+    });
+  });
+});

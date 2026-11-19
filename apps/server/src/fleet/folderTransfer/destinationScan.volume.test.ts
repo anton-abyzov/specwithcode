@@ -116,6 +116,28 @@ describe("volumeNameRules", () => {
     ).toEqual({ known: false, caseInsensitive: true });
   });
 
+  it("does not take a parent's rules for a target that exists and shows none of its own", async () => {
+    const stat = (ino: bigint) => ({ dev: 1n, ino, isDirectory: () => true });
+    // Same volume, but a folder may fold case where its parent does not.
+    expect(
+      await rules("/p/t", {
+        names: async (folder) => (folder === "/p/t" ? ["123"] : ["Data"]),
+        lstat: async (path) => (path.toLowerCase().endsWith("data") ? stat(9n) : stat(1n)),
+      }),
+    ).toEqual({ known: false, caseInsensitive: true });
+  });
+
+  it("takes the rules a missing target will be made under", async () => {
+    const stat = (ino: bigint) => ({ dev: 1n, ino, isDirectory: () => true });
+    expect(
+      await rules("/p/t", {
+        names: async () => ["Data"],
+        lstat: async (path) =>
+          path === "/p/t" || path === "/p/DATA" ? null : stat(path === "/p" ? 1n : 9n),
+      }),
+    ).toEqual({ known: true, caseInsensitive: false });
+  });
+
   it("does not take the rules of another volume above the target", async () => {
     const stat = (dev: bigint, ino: bigint) => ({ dev, ino, isDirectory: () => true });
     // The target is an empty mount point; only the folder above it has a name to try.

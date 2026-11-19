@@ -401,8 +401,9 @@ describe.skipIf(!posix)("Add into a target that does not exist", () => {
       input.confinement = {
         lstat: async (asked) => {
           const stat = await realLstat(asked);
-          // Readings up to the check that follows the last write; the commit's own come later.
-          if (stat && created.includes(asked) && landing.length < 64 && !committed(file))
+          // Every reading until the commit begins. From then on folders take their
+          // final modes, which the assertions after the run pin one by one.
+          if (stat && created.includes(asked) && !committed(file))
             landing.push(
               `${NodePath.relative(target, asked) || "."}:${(stat.mode & 0o777n).toString(8)}`,
             );
@@ -600,13 +601,13 @@ function repository(root: string) {
 }
 
 describe.skipIf(!posix)("a Git step that updates working files", () => {
-  const moved = (prepare: (root: string) => void) => {
+  const moved = (prepare: (root: string, outside: string) => void) => {
     let next = "";
     const made = scenario(
-      (root) => {
+      (root, outside) => {
         repository(root);
         next = git(root, "rev-parse", "next");
-        prepare(root);
+        prepare(root, outside);
       },
       {},
       [],
@@ -645,7 +646,10 @@ describe.skipIf(!posix)("a Git step that updates working files", () => {
 
 describe.skipIf(!posix)("repairing a copied worktree's pointer", () => {
   /** A main repository and a linked worktree whose `.git` is a hard link to a file outside. */
-  const copied = (prepare: (admin: string) => void = () => undefined) => {
+  const copied = (
+    prepare: (admin: string, root: string) => void = () => undefined,
+    mainRepository = "main",
+  ) => {
     let head = "";
     let admin = "";
     const made = scenario(
@@ -657,16 +661,18 @@ describe.skipIf(!posix)("repairing a copied worktree's pointer", () => {
         head = git(NodePath.join(root, "wt"), "rev-parse", "HEAD");
         admin = NodePath.join(main, ".git", "worktrees", "wt");
         const pointer = NodePath.join(outside, "pointer");
-        NodeFS.writeFileSync(pointer, `gitdir: ${NodePath.join(root, "was", "worktrees", "wt")}\n`);
+        // As it arrives: naming the source machine's folders.
+        NodeFS.writeFileSync(
+          pointer,
+          `gitdir: ${NodePath.join(base, "source-machine", "main", ".git", "worktrees", "wt")}\n`,
+        );
         NodeFS.rmSync(NodePath.join(root, "wt", ".git"));
         NodeFS.linkSync(pointer, NodePath.join(root, "wt", ".git"));
-        prepare(admin);
+        prepare(admin, root);
       },
       {},
       [],
-      () => [
-        { ...existingStep(head), kind: "copy", repo: "wt", row: "repo:wt", mainRepository: "main" },
-      ],
+      () => [{ ...existingStep(head), kind: "copy", repo: "wt", row: "repo:wt", mainRepository }],
     );
     made.input.sourceRepositories = [
       {
@@ -681,7 +687,7 @@ describe.skipIf(!posix)("repairing a copied worktree's pointer", () => {
         origin: null,
         status: [],
         worktrees: [],
-        mainRepository: "main",
+        mainRepository,
       } as RepositoryInfo,
     ];
     return { ...made, admin };
@@ -705,5 +711,202 @@ describe.skipIf(!posix)("repairing a copied worktree's pointer", () => {
     expect(bytes(outside)).toEqual(before);
     expect(NodeFS.lstatSync(NodePath.join(target, "wt", ".git")).nlink).toBe(2);
     expect(result.warnings.some((line) => line.includes("git worktree repair"))).toBe(true);
+  });
+});
+
+describe.skipIf(!posix)("repairing a worktree whose header names another repository", () => {
+  const repair = (prepare: (admin: string, root: string) => void, mainRepository = "main") => {
+    let admin = "";
+    let head = "";
+    const made = scenario(
+      (root, outside) => {
+        const main = NodePath.join(root, "main");
+        NodeFS.mkdirSync(main, { mode: 0o700 });
+        repository(main);
+        git(main, "worktree", "add", "-q", "-b", "side", NodePath.join(root, "wt"));
+        head = git(NodePath.join(root, "wt"), "rev-parse", "HEAD");
+        admin = NodePath.join(main, ".git", "worktrees", "wt");
+        const pointer = NodePath.join(outside, "pointer");
+        NodeFS.writeFileSync(
+          pointer,
+          `gitdir: ${NodePath.join(base, "source-machine", "main", ".git", "worktrees", "wt")}\n`,
+        );
+        NodeFS.rmSync(NodePath.join(root, "wt", ".git"));
+        NodeFS.linkSync(pointer, NodePath.join(root, "wt", ".git"));
+        prepare(admin, root);
+      },
+      {},
+      [],
+      () => [{ ...existingStep(head), kind: "copy", repo: "wt", row: "repo:wt", mainRepository }],
+    );
+    made.input.sourceRepositories = [
+      {
+        path: "wt",
+        kind: "linked",
+        head,
+        branch: "side",
+        branches: {},
+        stash: null,
+        stashCount: 0,
+        identity: null,
+        origin: null,
+        status: [],
+        worktrees: [],
+        mainRepository,
+      } as RepositoryInfo,
+    ];
+    return { ...made, admin };
+  };
+
+  it("never touches a repository outside the target, whatever the header says", async () => {
+    let record = "";
+    const { input, target } = repair((_admin, root) => {
+      // The user's own repository beside the target, with a worktree of the same name.
+      const unrelated = NodePath.join(NodePath.dirname(root), "unrelated");
+      NodeFS.mkdirSync(unrelated, { mode: 0o700 });
+      repository(unrelated);
+      const elsewhere = NodePath.join(NodePath.dirname(root), "elsewhere");
+      NodeFS.mkdirSync(elsewhere, { mode: 0o700 });
+      git(unrelated, "worktree", "add", "-q", "-b", "side", NodePath.join(elsewhere, "wt"));
+      record = NodePath.join(unrelated, ".git", "worktrees", "wt", "gitdir");
+    }, "../unrelated");
+    const before = NodeFS.readFileSync(record, "utf8");
+    const result = await run(input).catch((cause: unknown) => cause);
+    expect(NodeFS.readFileSync(record, "utf8")).toBe(before);
+    expect(NodeFS.lstatSync(NodePath.join(target, "wt", ".git")).nlink).toBe(2);
+    expect(result).not.toBeInstanceOf(TypeError);
+  });
+
+  it("leaves a record alone that belongs to another worktree", async () => {
+    const foreign = `${NodePath.join(base, "source-machine", "another", ".git")}\n`;
+    const { input, target, admin } = repair((record) =>
+      NodeFS.writeFileSync(NodePath.join(record, "gitdir"), foreign),
+    );
+    const result = await run(input);
+    expect(NodeFS.readFileSync(NodePath.join(admin, "gitdir"), "utf8")).toBe(foreign);
+    expect(NodeFS.lstatSync(NodePath.join(target, "wt", ".git")).nlink).toBe(2);
+    expect(result.warnings.some((line) => line.includes("git worktree repair"))).toBe(true);
+  });
+});
+
+describe.skipIf(!posix)("Git data that shares its bytes with a file elsewhere", () => {
+  it("refuses the branch move: Git appends to its log in place", async () => {
+    let next = "";
+    const { input, target, outside } = scenario(
+      (root, elsewhere) => {
+        repository(root);
+        next = git(root, "rev-parse", "next");
+        NodeFS.linkSync(
+          NodePath.join(root, ".git", "logs", "HEAD"),
+          NodePath.join(elsewhere, "log"),
+        );
+      },
+      {},
+      [],
+      () => [existingStep(next)],
+    );
+    const was = git(target, "rev-parse", "HEAD");
+    const before = bytes(outside);
+    await expect(run(input)).rejects.toMatchObject({ reason: "git-failed" });
+    expect(bytes(outside)).toEqual(before);
+    expect(git(target, "rev-parse", "HEAD")).toBe(was);
+    expect(NodeFS.readFileSync(NodePath.join(target, "shared", "f.txt"), "utf8")).toBe("one\n");
+  });
+});
+
+describe.skipIf(!posix)("a clone into a folder that already holds something", () => {
+  const cloned = (mode: number) => {
+    counter += 1;
+    const origin = NodePath.join(base, `origin-${counter}`);
+    NodeFS.mkdirSync(origin, { mode: 0o700 });
+    repository(origin);
+    const head = git(origin, "rev-parse", "HEAD");
+    return scenario(
+      (root) => {
+        NodeFS.mkdirSync(NodePath.join(root, "repo"), { mode: 0o700 });
+        NodeFS.mkdirSync(NodePath.join(root, "repo", "shared"));
+        NodeFS.chmodSync(NodePath.join(root, "repo", "shared"), mode);
+        NodeFS.writeFileSync(NodePath.join(root, "repo", "shared", "mine.txt"), "mine\n");
+      },
+      {},
+      [],
+      () => [
+        {
+          ...existingStep(head),
+          kind: "clone",
+          repo: "repo",
+          row: "repo:repo",
+          origin,
+          moveHead: "none",
+        },
+      ],
+    );
+  };
+
+  it("checks out into private folders", async () => {
+    const { input, target } = cloned(0o700);
+    await run(input);
+    expect(NodeFS.readFileSync(NodePath.join(target, "repo", "shared", "f.txt"), "utf8")).toBe(
+      "one\n",
+    );
+  });
+
+  it("is refused before the checkout when a folder it writes into is open to a group", async () => {
+    const { input, target } = cloned(0o770);
+    await expect(run(input)).rejects.toMatchObject({ reason: "group-writable" });
+    expect(NodeFS.readdirSync(NodePath.join(target, "repo", "shared"))).toEqual(["mine.txt"]);
+    expect(NodeFS.existsSync(NodePath.join(target, "repo", "top.txt"))).toBe(false);
+  });
+});
+
+describe.skipIf(!posix)("a retry", () => {
+  it("never deletes a file that is neither the copy nor the backed-up original", async () => {
+    const { input, target } = scenario(
+      (root) => NodeFS.writeFileSync(NodePath.join(root, "a.txt"), "written since the first run\n"),
+      { "a.txt": "copied\n" },
+    );
+    (input.plan.actions as Array<FileAction>)[0] = {
+      ...fileAction("a.txt", "copied\n"),
+      replaces: true,
+    };
+    // The first run backed the reviewed file up and stopped.
+    const backup = NodePath.join(input.backupRoot, "files", "a.txt");
+    NodeFS.mkdirSync(NodePath.dirname(backup), { recursive: true });
+    NodeFS.writeFileSync(backup, "the reviewed original\n");
+    NodeFS.writeFileSync(
+      input.journalFile,
+      `${JSON.stringify({ t: "backup", path: "a.txt", backup })}\n`,
+    );
+    await expect(run(input)).rejects.toMatchObject({ reason: "changed-since-preview" });
+    expect(NodeFS.readFileSync(NodePath.join(target, "a.txt"), "utf8")).toBe(
+      "written since the first run\n",
+    );
+    expect(NodeFS.readFileSync(backup, "utf8")).toBe("the reviewed original\n");
+  });
+});
+
+describe.skipIf(!posix)("Windows rights a new entry would inherit, through the seam", () => {
+  it("refuse the folder before anything is made in it", async () => {
+    const { input, directory, target } = scenario(() => undefined, { "new/a.txt": "a\n" });
+    const mine = { owner: "user", othersMayWrite: false, othersMayReplace: false } as FolderAccess;
+    input.confinement = {
+      platform: "win32",
+      access: async (paths) =>
+        new Map(
+          paths.map((path) => [
+            path,
+            path === target
+              ? ({ ...mine, childrenOpen: true } as FolderAccess)
+              : path.startsWith(directory)
+                ? mine
+                : ({ ...mine, owner: "trusted" } as FolderAccess),
+          ]),
+        ),
+      secure: async () => undefined,
+    };
+    expect((await run(input)).refused).toEqual([
+      { path: "new/a.txt", folder: ".", reason: "acl-entry" },
+    ]);
+    expect(NodeFS.existsSync(NodePath.join(target, "new"))).toBe(false);
   });
 });

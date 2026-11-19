@@ -93,13 +93,23 @@ describe("Windows owner and DACL", () => {
         `O:${USER_SID}G:DUD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;${USER_SID})`,
         USER_SID,
       ),
-    ).toEqual({ owner: "user", othersMayWrite: false, othersMayReplace: false });
+    ).toEqual({
+      owner: "user",
+      othersMayWrite: false,
+      othersMayReplace: false,
+      childrenOpen: false,
+    });
     expect(windowsAccess("O:BAG:SYD:(A;;FA;;;SY)", USER_SID).owner).toBe("trusted");
   });
 
   it("a missing DACL lets everyone write, and is refused", async () => {
     const { windowsAccess } = await readers();
-    const open = { owner: "user", othersMayWrite: true, othersMayReplace: true };
+    const open = {
+      owner: "user",
+      othersMayWrite: true,
+      othersMayReplace: true,
+      childrenOpen: true,
+    };
     expect(windowsAccess(`O:${USER_SID}G:DUD:NO_ACCESS_CONTROL`, USER_SID)).toEqual(open);
     expect(windowsAccess(`O:${USER_SID}G:DU`, USER_SID)).toEqual(open);
     expect(windowsAccess(`O:${USER_SID}G:DUS:(AU;SA;FA;;;WD)`, USER_SID)).toEqual(open);
@@ -107,7 +117,12 @@ describe("Windows owner and DACL", () => {
 
   it("an empty DACL grants nobody anything", async () => {
     const { windowsAccess } = await readers();
-    const shut = { owner: "user", othersMayWrite: false, othersMayReplace: false };
+    const shut = {
+      owner: "user",
+      othersMayWrite: false,
+      othersMayReplace: false,
+      childrenOpen: false,
+    };
     expect(windowsAccess(`O:${USER_SID}G:DUD:`, USER_SID)).toEqual(shut);
     expect(windowsAccess(`O:${USER_SID}G:DUD:PAI`, USER_SID)).toEqual(shut);
     expect(windowsAccess(`O:${USER_SID}G:DUD:PS:(AU;SA;FA;;;WD)`, USER_SID)).toEqual(shut);
@@ -148,6 +163,17 @@ describe("Windows owner and DACL", () => {
       othersMayWrite: true,
       othersMayReplace: false,
     });
+  });
+
+  it("a grant only new entries inherit opens what is made there", async () => {
+    const { windowsAccess } = await readers();
+    const read = (sddl: string) =>
+      (windowsAccess(sddl, USER_SID) as unknown as { childrenOpen?: boolean }).childrenOpen;
+    expect(read(`O:${USER_SID}D:(A;OICIIO;GA;;;${OTHER_SID})`)).toBe(true);
+    expect(read(`O:${USER_SID}D:(A;CIIO;FW;;;BU)`)).toBe(true);
+    expect(read(`O:${USER_SID}D:(A;OICI;FA;;;AU)`)).toBe(true);
+    // Creator owner is whoever makes the entry: the app's user. Read rights open nothing.
+    expect(read(`O:${USER_SID}D:(A;OICIIO;GA;;;CO)(A;OICIIO;FR;;;BU)(A;OICI;FA;;;SY)`)).toBe(false);
   });
 
   it("a deny entry never fails a folder", async () => {
