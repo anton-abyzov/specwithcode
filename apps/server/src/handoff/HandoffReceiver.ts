@@ -141,6 +141,11 @@ export class HandoffRefusal extends Data.TaggedError("HandoffRefusal")<{
   readonly code: HandoffModeErrorCode;
   readonly message: string;
   readonly check?: HandoffPreflightCheck | undefined;
+  /**
+   * This machine may have acted before it failed (a takeover it had already
+   * accepted). The caller keeps its hold and asks again; it is never a "no".
+   */
+  readonly uncertain?: boolean | undefined;
 }> {}
 
 /** Who is asking. `grant` is null for a request this machine makes of itself. */
@@ -637,8 +642,14 @@ export const make = Effect.gen(function* () {
       catch: (cause) => fromBundleError(label, cause),
     });
 
-  const takeoverLocked = (caller: ReceiverCaller, request: TakeoverRequest) =>
-    Effect.gen(function* () {
+  const takeoverLocked = (caller: ReceiverCaller, request: TakeoverRequest) => {
+    /**
+     * Set once this machine's acceptance stands and a thread may exist for it.
+     * A failure from then on is answered as in doubt, and the acceptance is
+     * kept: the source's repeat of the operation finishes what was started.
+     */
+    let standing = false;
+    return Effect.gen(function* () {
       const lineage = {
         sourceEnvironmentId: caller.sourceEnvironmentId,
         sourceThreadId: request.sourceThreadId,
@@ -667,6 +678,8 @@ export const make = Effect.gen(function* () {
           );
         }
         if (recorded.launched && recorded.receipt !== null) return recorded.receipt;
+        // Accepted, and the launch was cut: nothing below may turn that into a "no".
+        standing = true;
       }
       const verdict = takeoverVerdict(yield* document, request, label);
       if (verdict.kind === "repeat") return verdict.response;
@@ -955,6 +968,8 @@ export const make = Effect.gen(function* () {
           };
           return [next, { ...current, threads: { ...current.threads, [threadId]: next } }] as const;
         });
+        // From here a thread may exist, whatever the launch answers.
+        standing = true;
         yield* launches
           .launch({
             commandId: CommandId.make(`handoff-takeover:${threadId}`),
@@ -995,16 +1010,19 @@ export const make = Effect.gen(function* () {
         Effect.onError(() =>
           caller.grant === null ? Effect.void : grants.forgetOrigin(threadId).pipe(Effect.ignore),
         ),
-        // A launch that failed is answered as a refusal, so the acceptance must
-        // not stand: a repeat would start a thread the source kept. An interrupt
-        // (this server stopping) leaves it, and the repeat finishes the launch.
+        // A failure before anything was launched is answered as a refusal, so
+        // the acceptance must not stand: a repeat would start a thread the
+        // source kept. Once the launch was asked for, the acceptance stays and
+        // the answer is in doubt; so does it when this server stops here.
         Effect.tapError((error) =>
-          transfers
-            .update((current) => [
-              undefined,
-              HandoffTransferStore.revokeAcceptance(current, lineage, error.message),
-            ])
-            .pipe(Effect.ignore),
+          standing
+            ? Effect.void
+            : transfers
+                .update((current) => [
+                  undefined,
+                  HandoffTransferStore.revokeAcceptance(current, lineage, error.message),
+                ])
+                .pipe(Effect.ignore),
         ),
       );
       const previous = detail.execution;
@@ -1070,7 +1088,22 @@ export const make = Effect.gen(function* () {
         HandoffTransferStore.markLaunched(current, lineage),
       ]);
       return response;
-    });
+    }).pipe(
+      Effect.mapError((error) =>
+        standing && error.uncertain !== true
+          ? new HandoffRefusal({
+              status: 503,
+              code: "failed",
+              message: `${error.message} ${label} had accepted this handoff, so it may run the thread; ask again.`.slice(
+                0,
+                1000,
+              ),
+              uncertain: true,
+            })
+          : error,
+      ),
+    );
+  };
 
   const takeover = (caller: ReceiverCaller, request: TakeoverRequest) =>
     sameSource(caller, request.sourceEnvironmentId).pipe(

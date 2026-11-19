@@ -557,7 +557,8 @@ export const make = Effect.gen(function* () {
             code: refusal.value.code ?? "failed",
             message: refusal.value.error,
             check: refusal.value.check,
-            uncertain: false,
+            // The machine says it may have acted: no "no" to release a hold on.
+            uncertain: refusal.value.uncertain === true,
           });
         }
         // A proxy's 5xx without our body may come after the destination acted.

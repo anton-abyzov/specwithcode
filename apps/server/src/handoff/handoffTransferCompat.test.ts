@@ -37,6 +37,9 @@ import {
   PreviousPeerPreflightResponse,
   PreviousTakeoverRequest,
   PreviousTakeoverResponse,
+  encodePreviousPreflightRequest,
+  encodePreviousTakeoverRequest,
+  overTheWire,
   previousMarkContinued,
   previousReadAnswer,
   previousTakeoverFailure,
@@ -77,7 +80,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
       trigger: { kind: "automatic", key: "limit-handoff:thread:one:run-1" },
     });
     const read = Schema.decodeUnknownOption(PreviousTakeoverRequest)(
-      JSON.parse(JSON.stringify(takeover)),
+      overTheWire(takeover),
     );
     expect(Option.isSome(read)).toBe(true);
     expect(Option.getOrThrow(read)).not.toHaveProperty("operationId");
@@ -91,7 +94,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
     expect(
       Option.isSome(
         Schema.decodeUnknownOption(PreviousPeerPreflightRequest)(
-          JSON.parse(JSON.stringify(preflight)),
+          overTheWire(preflight),
         ),
       ),
     ).toBe(true);
@@ -108,7 +111,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
           destinationEnvironmentId: old.environmentId,
           threadIds: [t1],
         });
-        const failures = checked.results[0]?.failures ?? [];
+        const failures = checked[0]?.failures ?? [];
         expect(failures.map((failure) => failure.check)).toEqual(["version"]);
         expect(failures[0]?.message.startsWith("Needs update: ")).toBe(true);
         expect(failures[0]?.message).toContain("OLD");
@@ -236,7 +239,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
         yield* a.moves.preflight({ destinationEnvironmentId: b.environmentId, threadIds: [t1] });
         const sequence = a.document.threads[t1]!.checkpoint!.sequence;
         // The body the release sends: its versions, and no capabilities.
-        const body = Schema.encodeSync(PreviousPeerPreflightRequest)({
+        const body = encodePreviousPreflightRequest({
           sourceEnvironmentId: a.environmentId,
           protocolVersion: PREVIOUS_PROTOCOL_VERSION,
           appVersion: "1.0.381",
@@ -250,7 +253,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
           ],
         });
         const request = Option.getOrThrow(
-          Schema.decodeUnknownOption(PeerPreflightRequest)(JSON.parse(JSON.stringify(body))),
+          Schema.decodeUnknownOption(PeerPreflightRequest)(overTheWire(body)),
         );
 
         const answer = yield* b.receiver.preflight(caller(a), request);
@@ -258,7 +261,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
         // What the release makes of the answer.
         const read = previousReadAnswer(
           200,
-          JSON.parse(JSON.stringify(answer)),
+          overTheWire(answer),
           Schema.decodeUnknownOption(PreviousPeerPreflightResponse),
         );
         expect(read.kind).toBe("ok");
@@ -277,7 +280,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
         rig.addThread(a, t1);
         yield* a.moves.preflight({ destinationEnvironmentId: b.environmentId, threadIds: [t1] });
         // The body the release sends after its hold: no operation id.
-        const body = Schema.encodeSync(PreviousTakeoverRequest)({
+        const body = encodePreviousTakeoverRequest({
           sourceEnvironmentId: a.environmentId,
           sourceThreadId: t1,
           epoch: 2,
@@ -286,7 +289,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
           modelSelection: null,
         });
         const request = Option.getOrThrow(
-          Schema.decodeUnknownOption(TakeoverRequest)(JSON.parse(JSON.stringify(body))),
+          Schema.decodeUnknownOption(TakeoverRequest)(overTheWire(body)),
         );
 
         const refusal = yield* b.receiver.takeover(caller(a), request).pipe(Effect.flip);

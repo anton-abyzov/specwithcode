@@ -16,6 +16,7 @@ import {
   isHandoffTransferFinished,
   ThreadId,
 } from "@specweave-studio/contracts";
+import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -25,6 +26,7 @@ import { unscopedGrant } from "../fleet/workGrantPolicy.ts";
 import { continuationThreadId } from "./HandoffReceiver.ts";
 import { findIncoming } from "./handoffState.ts";
 import { makeRig, type Rig, type RigMachine } from "./handoffTransfer.test.fixture.ts";
+import { putTransfer } from "./HandoffTransferStore.ts";
 import { turnRefusal } from "./HandoffTurnGate.ts";
 import type { TakeoverRequest } from "./handoffWire.ts";
 import { previousMarkContinued } from "./previousRelease381.test.fixture.ts";
@@ -33,6 +35,8 @@ const temporary: Array<string> = [];
 afterEach(() => {
   for (const path of temporary.splice(0)) NodeFS.rmSync(path, { recursive: true, force: true });
 });
+
+class LaunchFailed extends Data.TaggedError("LaunchFailed")<{ readonly message: string }> {}
 
 const t1 = ThreadId.make("thread:one");
 const t2 = ThreadId.make("thread:two");
@@ -68,7 +72,10 @@ describe("the transfer record of a handoff", () => {
       const rig = yield* makeRig(temporary);
       const [a, b] = rig.machines as [RigMachine, RigMachine];
       rig.addThread(a, t1, { running: true });
-      const seen: { atHold?: HandoffTransferRecord; atSend?: HandoffTransferRecord } = {};
+      const seen: {
+        atHold: HandoffTransferRecord | undefined;
+        atSend: HandoffTransferRecord | undefined;
+      } = { atHold: undefined, atSend: undefined };
       a.onDocument = (document) =>
         Effect.sync(() => {
           if (seen.atHold === undefined && document.threads[t1]?.lease?.state === "handing-off") {
@@ -264,29 +271,30 @@ describe("the transfer record of a handoff", () => {
     }),
   );
 
-  it.effect("records a failed launch as not accepted, so a repeat cannot start it", () =>
+  it.effect("keeps a launch that failed in doubt, and finishes it once on the repeat", () =>
     Effect.gen(function* () {
       const rig = yield* makeRig(temporary);
       const [a, b] = rig.machines as [RigMachine, RigMachine];
       rig.addThread(a, t1);
-      b.onLaunch = () => Effect.fail(new Error("no space left"));
+      // The launch may have created the thread before it failed.
+      b.onLaunch = () => Effect.fail(new LaunchFailed({ message: "no space left" }));
 
       const failure = yield* handOff(a, t1, b).pipe(Effect.flip);
       expect(failure.code).toBe("failed");
-      expect(acceptancesOf(b)[0]).toMatchObject({ verdict: "not-accepted", launched: false });
-      // A definite "not accepted": the thread runs here again, and that epoch is used up.
-      expect(leaseOf(a, t1)).toMatchObject({ state: "active", epoch: 2 });
-      expect(transferOf(a, t1)?.state).toBe("failed");
-      expect(turnRefusal(a.document, t1, a.environmentId)).toBeNull();
+      // Not a "no": the acceptance stands, and the source starts nothing.
+      expect(acceptancesOf(b)[0]).toMatchObject({ verdict: "accepted", launched: false });
+      expect(leaseOf(a, t1)?.state).toBe("handing-off");
+      expect(transferOf(a, t1)?.state).toBe("unknown");
+      expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
+      yield* a.moves.resumeFenced;
+      expect(leaseOf(a, t1)?.state).toBe("handing-off");
 
       b.onLaunch = null;
-      const repeat = yield* b.receiver.takeover(caller(a), takeovers(rig, b)[0]!).pipe(Effect.flip);
-      expect(repeat.code).not.toBe("fenced");
-      expect(b.launches).toHaveLength(0);
-
-      const again = yield* handOff(a, t1, b);
-      expect(takeovers(rig, b).at(-1)?.epoch).toBe(3);
-      expect(b.launches.map((launch) => launch.threadId)).toEqual([again.threadId]);
+      yield* a.moves.tick;
+      expect(b.launches).toHaveLength(1);
+      expect(acceptancesOf(b)[0]).toMatchObject({ verdict: "accepted", launched: true });
+      expect(continuedOn(a, t1)?.threadId).toBe(b.launches[0]?.threadId);
+      expect(new Set(takeovers(rig, b).map((request) => request.operationId)).size).toBe(1);
     }),
   );
 
@@ -737,6 +745,8 @@ describe("a hold from before transfer records", () => {
       ).toEqual([
         [b.environmentId, "not-accepted"],
         [c.environmentId, "unasked"],
+        // This machine's own receiver is asked too: a move to another model stays here.
+        [a.environmentId, "not-accepted"],
       ]);
 
       rig.network.rule = null;
@@ -744,6 +754,47 @@ describe("a hold from before transfer records", () => {
       expect(leaseOf(a, t1)).toMatchObject({ state: "active", epoch: 2 });
       expect(b.launches.length + c.launches.length).toBe(0);
     }),
+  );
+
+  it.effect.each(["failed", "stayed"] as const)(
+    "finishes the release of a move that ended as %s just before the server stopped",
+    (state) =>
+      Effect.gen(function* () {
+        const rig = yield* makeRig(temporary);
+        const [a, b] = rig.machines as [RigMachine, RigMachine];
+        yield* legacyHold(rig, a, [b]);
+        // The record was ended; the stop came before the hold was given back.
+        const now = "2026-11-19T14:00:00.000Z";
+        a.transfers.document = putTransfer(a.transfers.document, {
+          operationId: "ended-before-release",
+          batchId: null,
+          lineage: { sourceEnvironmentId: a.environmentId, sourceThreadId: t1, epoch: 2 },
+          projectId: a.projectId,
+          targetEnvironmentId: b.environmentId,
+          sequence: 1,
+          disposition: "resume",
+          state,
+          legacy: false,
+          candidates: [],
+          trigger: { kind: "manual" },
+          reason: "handoff",
+          modelSelection: null,
+          receipt: null,
+          detail: null,
+          createdAt: now,
+          updatedAt: now,
+          sentAt: state === "failed" ? now : null,
+        });
+        rig.network.rule = (call) => (call.to === b.environmentId ? "lose-request" : undefined);
+
+        yield* a.moves.tick;
+
+        // No machine is asked again: the record already says how it ended. A move that
+        // was sent used its epoch up; one that never left keeps the epoch it had.
+        expect(leaseOf(a, t1)).toMatchObject({ state: "active", epoch: state === "failed" ? 2 : 1 });
+        expect(transfersOf(a, t1)).toHaveLength(1);
+        expect(rig.callsOf("transfer-status")).toHaveLength(0);
+      }),
   );
 
   it.effect("re-sends an unanswered takeover it kept on file to the same machine only", () =>

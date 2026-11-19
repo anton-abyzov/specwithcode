@@ -338,6 +338,11 @@ export const PeerErrorBody = Schema.Struct({
   code: Schema.optional(HandoffModeErrorCode),
   /** The preflight check a refusal maps to, so the source reports it per thread. */
   check: Schema.optional(HandoffPreflightCheck),
+  /**
+   * True when this machine may have acted before it failed: the answer is not
+   * a "no", and the source keeps its hold. Absent on every plain refusal.
+   */
+  uncertain: Schema.optional(Schema.Boolean),
 });
 export type PeerErrorBody = typeof PeerErrorBody.Type;
 

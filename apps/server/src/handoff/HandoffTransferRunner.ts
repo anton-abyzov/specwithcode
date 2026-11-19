@@ -33,6 +33,7 @@ import {
   type HandoffTransferCandidate,
   type HandoffTransferRecord,
   type HandoffTransferTrigger,
+  isHandoffTransferFinished,
   type ModelSelection,
   type OrchestrationV2ThreadShell,
   type ThreadId,
@@ -69,20 +70,21 @@ import type {
 } from "./handoffWire.ts";
 
 /** A machine from before transfer records answers a takeover within this long, or not at all. */
-export const LEGACY_TAKEOVER_SETTLE_MS = 200_000;
+const LEGACY_TAKEOVER_SETTLE_MS = 200_000;
 /** A move a restart cut before it was sent carries on by itself only this long after it was asked. */
-export const UNSENT_REPLAY_WINDOW_MS = 15 * 60_000;
+const UNSENT_REPLAY_WINDOW_MS = 15 * 60_000;
 
-export const TURN_DID_NOT_STOP = "Its turn did not stop in 45 seconds, so the thread stays here.";
-export const UNSENT_TOO_OLD =
+const TURN_DID_NOT_STOP = "Its turn did not stop in 45 seconds, so the thread stays here.";
+const UNSENT_TOO_OLD =
   "The handoff was cut before anything was sent, so the thread stays here. Hand it off again to move it.";
-export const RESUMED_HERE = "Resumed here before anything was sent.";
-export const NO_MACHINE_ACCEPTED =
+const RESUMED_HERE = "Resumed here before anything was sent.";
+const NO_MACHINE_ACCEPTED =
   "No machine accepted this handoff, so the thread runs here again.";
-export const LEGACY_HOLD_WAITS =
+const LEGACY_HOLD_WAITS =
   "This thread was being handed off when SpecWithCode was updated. It stays paused until every machine that holds a copy confirms it did not continue it.";
-export const ARRIVED_FOR_THIS_RUN =
+const ARRIVED_FOR_THIS_RUN =
   "This thread arrived from that machine for this run, so it is not sent back automatically.";
+const BATCH_CUT = "The handoff was cut before this thread was held, so it stays here.";
 
 const failed = (code: HandoffModeErrorCode, message: string) =>
   new HandoffModeError({ code, message });
@@ -90,12 +92,13 @@ const failed = (code: HandoffModeErrorCode, message: string) =>
 type PeerFailure = HandoffPeerError | HandoffRefusal;
 
 /** Did the destination itself answer no? A lost answer or a failure on this machine did not. */
-export const destinationRefused = (error: PeerFailure) =>
-  error._tag === "HandoffRefusal" ||
-  (!error.uncertain && error.local !== true && error.code !== "unreachable");
+const destinationRefused = (error: PeerFailure) =>
+  error._tag === "HandoffRefusal"
+    ? error.uncertain !== true
+    : !error.uncertain && error.local !== true && error.code !== "unreachable";
 
-/** The answer never came: the destination may have acted. */
-const inDoubt = (error: PeerFailure) => error._tag === "HandoffPeerError" && error.uncertain;
+/** The answer never came, or the destination says it may have acted. */
+const inDoubt = (error: PeerFailure) => error.uncertain === true;
 
 export interface TransferRunnerDeps {
   readonly self: EnvironmentId;
@@ -173,6 +176,8 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
   const { self, selfLabel, store } = deps;
   /** Threads whose move runs in this process now; a tick leaves them alone. */
   const running = new Set<string>();
+  /** Records a batch of this process wrote and has not reached yet; a tick leaves them alone. */
+  const planning = new Set<string>();
 
   const recordOf = (threadId: ThreadId) =>
     deps.document.pipe(Effect.map((document) => document.threads[threadId]));
@@ -287,8 +292,22 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
             operationId: record.operationId,
           })
           .pipe(Effect.result);
-        if (status._tag === "Failure") open = true;
-        else if (status.success.status === "accepted") response = status.success.receipt;
+        if (status._tag === "Success") {
+          if (status.success.status === "accepted") response = status.success.receipt;
+        } else {
+          open = true;
+          const failure = status.failure;
+          if (record.legacy && failure._tag === "HandoffPeerError" && failure.needsUpdate === true) {
+            // That machine keeps no records. From now on it is asked the way a
+            // hold with nothing on file is: by a heartbeat at this epoch, twice.
+            yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
+              state: "unknown",
+              sequence: null,
+              candidates: [{ environmentId: destination, verdict: "unasked", fencedAt: null }],
+            }).pipe(Effect.ignore);
+            return yield* failed(error.code, error.message);
+          }
+        }
       }
       if (response !== null) {
         yield* finish(record.operationId, response.resumed ? "resumed" : "ready", null, response);
@@ -324,13 +343,10 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
     Effect.gen(function* () {
       const now = yield* deps.nowIso;
       const pending = held.pendingTakeover ?? null;
-      const candidates: Array<HandoffTransferCandidate> = held.replicas
-        .filter((replica) => replica.environmentId !== self)
-        .map((replica) => ({
-          environmentId: replica.environmentId,
-          verdict: "unasked",
-          fencedAt: null,
-        }));
+      // This machine too: a move to another model here is taken over by its own receiver.
+      const candidates: Array<HandoffTransferCandidate> = [
+        ...new Set([...held.replicas.map((replica) => replica.environmentId), self]),
+      ].map((environmentId) => ({ environmentId, verdict: "unasked", fencedAt: null }));
       const record: HandoffTransferRecord = {
         operationId: `legacy:${NodeCrypto.randomUUID()}`,
         batchId: null,
@@ -500,15 +516,25 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       const destination = input.destinationEnvironmentId;
       const threadId = input.threadId;
       const trigger = start.trigger ?? MANUAL;
+      if (start.operationId !== undefined) planning.delete(start.operationId);
       const current = yield* recordOf(threadId);
       const transfers = yield* store.read;
       const planned =
         start.operationId === undefined ? undefined : transfers.transfers[start.operationId];
-      /** Ends a record a batch wrote for a thread that then never left. */
+      if (planned !== undefined && isHandoffTransferFinished(planned.state)) {
+        // Resumed here, or too old, while this move waited its turn.
+        return yield* failed("busy", planned.detail ?? RESUMED_HERE);
+      }
+      /**
+       * Ends a record a batch wrote for a thread that then never left. A move
+       * carried on after a restart also gives back its hold: nothing was sent.
+       */
       const stays = (error: HandoffModeError) =>
         planned === undefined
           ? Effect.void
-          : finish(planned.operationId, "stayed", error.message);
+          : finish(planned.operationId, "stayed", error.message).pipe(
+              Effect.andThen(resuming ? releaseUnsent(threadId, error.message) : Effect.void),
+            );
       if (current?.continuedOn != null) {
         if (current.continuedOn.environmentId === destination) {
           // A retry after a timeout: the first move already happened.
@@ -626,7 +652,15 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         updatedAt: now,
         sentAt: null,
       };
-      yield* store.update((document) => [undefined, putTransfer(document, written)] as const);
+      const recorded = yield* store.update((document) => {
+        const present = document.transfers[operationId];
+        // A record that ended meanwhile is never opened again.
+        if (present !== undefined && isHandoffTransferFinished(present.state)) {
+          return [false, document] as const;
+        }
+        return [true, putTransfer(document, written)] as const;
+      });
+      if (!recorded) return yield* failed("busy", RESUMED_HERE);
 
       // 3. Hold the thread: no new turn starts, a running one stops.
       const held = yield* deps
@@ -646,10 +680,14 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           Effect.tapError((error) => finish(operationId, "stayed", error.message)),
         );
       const epoch = (held?.lease?.epoch ?? 0) + 1;
-      yield* patch(operationId, ["pending", "held"], {
+      const holding = yield* patch(operationId, ["pending", "held"], {
         state: "held",
         lineage: { ...written.lineage, epoch },
-      });
+      }).pipe(Effect.tapError(() => releaseUnsent(threadId, null)));
+      if (holding === null) {
+        yield* releaseUnsent(threadId, null);
+        return yield* failed("busy", RESUMED_HERE);
+      }
       /** Nothing was sent: the thread is given back, and the record says why it stayed. */
       const staysHeld = (message: string | null, detail: string) =>
         releaseUnsent(threadId, message).pipe(
@@ -804,6 +842,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
             },
           },
         });
+        for (const record of fresh) planning.add(record.operationId);
         return [
           new Map(fresh.map((record) => [record.lineage.sourceThreadId, record.operationId])),
           next,
@@ -811,19 +850,37 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       });
     });
 
-  /** "Resume here": releases a hold nothing was sent under. A sent one is never released by hand. */
-  const resumeHere = (threadId: ThreadId) =>
+  /** The batch is over: a record it wrote and never reached held nothing, so it ends as stayed. */
+  const endBatch = (planned: ReadonlyMap<ThreadId, string>) =>
     Effect.gen(function* () {
-      const open = openTransfer(yield* store.read, self, threadId);
-      if (open === undefined) return false;
-      const released = yield* patch(open.operationId, ["pending", "held"], {
-        state: "stayed",
-        detail: RESUMED_HERE,
-      });
-      if (released === null) return false;
-      yield* releaseUnsent(threadId, null);
-      return true;
+      for (const operationId of planned.values()) {
+        if (!planning.delete(operationId)) continue;
+        yield* patch(operationId, ["pending"], { state: "stayed", detail: BATCH_CUT }).pipe(
+          Effect.ignore,
+        );
+      }
     });
+
+  /** "Resume here": releases a hold nothing was sent under. A sent one is never released by hand. */
+  const resumeHere = (threadId: ThreadId): Effect.Effect<boolean, HandoffModeError> =>
+    // A move that runs in this process now is not stuck: it ends by itself.
+    running.has(threadId)
+      ? Effect.succeed(false)
+      : owned(
+          threadId,
+          Effect.gen(function* () {
+            const open = openTransfer(yield* store.read, self, threadId);
+            if (open === undefined) return false;
+            const released = yield* patch(open.operationId, ["pending", "held"], {
+              state: "stayed",
+              detail: RESUMED_HERE,
+            });
+            if (released === null) return false;
+            planning.delete(open.operationId);
+            yield* releaseUnsent(threadId, null);
+            return true;
+          }),
+        );
 
   const resumeUnsent = Effect.gen(function* () {
     for (const record of openTransfers(yield* store.read, self)) {
@@ -843,16 +900,43 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
    */
   const reconcile = Effect.gen(function* () {
     const document = yield* deps.document;
-    for (const [id, record] of Object.entries(document.threads)) {
-      if (record.continuedOn !== null || record.lease?.state !== "handing-off") continue;
-      if (record.lease.holderEnvironmentId !== self || running.has(id)) continue;
-      if (openTransfer(yield* store.read, self, id as ThreadId) !== undefined) continue;
-      yield* adoptLegacy(id as ThreadId, record);
+    for (const [id, listed] of Object.entries(document.threads)) {
+      if (listed.continuedOn !== null || listed.lease?.state !== "handing-off") continue;
+      if (listed.lease.holderEnvironmentId !== self || running.has(id)) continue;
+      const threadId = id as ThreadId;
+      yield* owned(
+        threadId,
+        Effect.gen(function* () {
+          // Read again under the lock: a move that just ended leaves nothing to adopt.
+          const record = yield* recordOf(threadId);
+          if (record === undefined || record.continuedOn !== null) return;
+          if (record.lease?.state !== "handing-off") return;
+          const transfers = yield* store.read;
+          if (openTransfer(transfers, self, threadId) !== undefined) return;
+          // A record that ended just before a stop that kept the hold: finish the release.
+          const epoch = record.lease.epoch + 1;
+          const ended = Object.values(transfers.transfers)
+            .filter(
+              (entry) =>
+                entry.lineage.sourceEnvironmentId === self &&
+                entry.lineage.sourceThreadId === threadId &&
+                entry.lineage.epoch === epoch,
+            )
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+          if (ended?.state === "stayed") return yield* releaseUnsent(threadId, ended.detail);
+          if (ended?.state === "failed") return yield* releaseRefused(threadId, epoch, null);
+          yield* adoptLegacy(threadId, record);
+        }),
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logInfo("Handoff could not adopt an old hold", { threadId, cause }),
+        ),
+      );
     }
     const now = yield* Clock.currentTimeMillis;
     for (const listed of openTransfers(yield* store.read, self)) {
       const threadId = listed.lineage.sourceThreadId;
-      if (running.has(threadId)) continue;
+      if (running.has(threadId) || planning.has(listed.operationId)) continue;
       yield* owned(
         threadId,
         Effect.gen(function* () {
@@ -861,6 +945,12 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           if (record === undefined) return;
           const unsent = record.state === "pending" || record.state === "held";
           if (!unsent && record.state !== "sent" && record.state !== "unknown") return;
+          const held = (yield* recordOf(threadId))?.lease?.state === "handing-off";
+          if (unsent && !held) {
+            // Written for a batch that stopped before it held this thread.
+            yield* finish(record.operationId, "stayed", BATCH_CUT);
+            return;
+          }
           if (unsent && now - Date.parse(record.createdAt) > UNSENT_REPLAY_WINDOW_MS) {
             yield* finish(record.operationId, "stayed", UNSENT_TOO_OLD);
             yield* releaseUnsent(threadId, UNSENT_TOO_OLD);
@@ -948,5 +1038,5 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       ),
     );
 
-  return { handOff, planBatch, resumeHere, resumeUnsent, reconcile, pull, servePull };
+  return { handOff, planBatch, endBatch, resumeUnsent, reconcile, pull, servePull };
 }

@@ -244,8 +244,11 @@ describe("handoff peers over SpecWithCode Connect", () => {
                 modelSelection: null,
               }),
             );
-            for (const answer of [status, pull]) {
-              const failure = Result.isFailure(answer) ? answer.failure : null;
+            const failures = [
+              Result.isFailure(status) ? status.failure : null,
+              Result.isFailure(pull) ? pull.failure : null,
+            ];
+            for (const failure of failures) {
               // A definite answer that changed nothing there: not "may have acted".
               expect(failure).toMatchObject({
                 needsUpdate: true,

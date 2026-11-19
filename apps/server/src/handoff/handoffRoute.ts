@@ -73,6 +73,7 @@ const fromRefusal = (error: HandoffRefusal) =>
   refusal(error.status, error.message, {
     code: error.code,
     ...(error.check === undefined ? {} : { check: error.check }),
+    ...(error.uncertain === true ? { uncertain: true } : {}),
   });
 
 const decodeJson = <S extends Schema.Top>(schema: S, bytes: Uint8Array) => {
