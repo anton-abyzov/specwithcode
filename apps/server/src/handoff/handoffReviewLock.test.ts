@@ -38,6 +38,7 @@ import { provider as fixtureProvider } from "../studio/fixtures.ts";
 import { writeCheckpoint } from "./checkpointGit.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import * as HandoffReceiver from "./HandoffReceiver.ts";
+import { arrivedReview, machineReviewTarget } from "./handoffReviewLock.ts";
 import * as Previous from "./handoffReviewLock.previousRelease.test.fixture.ts";
 import {
   EMPTY_HANDOFF_DOCUMENT,
@@ -314,6 +315,8 @@ describe("a review thread arriving with its reviewer lock", () => {
       );
       // The source asked for Claude, the family that wrote the work.
       expect(yield* minisHas.preflight(claude)).toEqual([{ check: "provider", message: STAYS }]);
+      // Asked for nothing, its own model is missing here too: still that one sentence.
+      expect(yield* minisHas.preflight(null)).toEqual([{ check: "provider", message: STAYS }]);
       const refused = yield* minisHas.takeOver(claude).pipe(Effect.flip);
       expect(refused).toMatchObject({ status: 409, code: "invalid", check: "provider" });
       expect(refused.message).toBe(STAYS);
@@ -638,4 +641,60 @@ describe(`against the previous release (${Previous.PREVIOUS_RELEASE})`, () => {
         expect(onlyClaude.launches).toHaveLength(0);
       }),
   );
+});
+
+describe("picking a reviewer inside the lock", () => {
+  const lock = { marker: "routing", families: ["openai"], policy: {} } as const;
+  const row = (providerInstanceId: string) => ({
+    providerInstanceId,
+    driverKind: "codex",
+    models: ["gpt-5.5"],
+    available: true,
+  });
+  const pickOn = (usable?: (instanceId: string) => boolean) =>
+    machineReviewTarget({
+      lock,
+      target: { environmentId: minis, modelSelection: claude },
+      machine: {
+        label: "Minis",
+        handoffReviewLock: true,
+        providers: [row("codex"), row("codexWork")] as never,
+      },
+      machineLabel: "Minis",
+      allowed: () => true,
+      ...(usable === undefined
+        ? {}
+        : { usable: (target) => usable(target.modelSelection.instanceId) }),
+    });
+
+  it("asks a machine for the permitted reviewer it would take now, not the first one listed", () => {
+    expect(pickOn((instanceId) => instanceId === "codexWork")).toMatchObject({
+      kind: "target",
+      proven: true,
+      target: { modelSelection: { instanceId: "codexWork", model: "gpt-5.5" } },
+    });
+  });
+
+  it("keeps the first permitted reviewer when none is usable, so its verdict says why", () => {
+    expect(pickOn(() => false)).toMatchObject({
+      kind: "target",
+      target: { modelSelection: { instanceId: "codex", model: "gpt-5.5" } },
+    });
+  });
+
+  it("refuses with the one sentence when the thread's own model is missing there too", () => {
+    expect(
+      arrivedReview({
+        carried: lock,
+        title: "Adversarial review: 1390",
+        stored: codex,
+        requested: null,
+        providers: CLAUDE_ONLY as unknown as ReadonlyArray<ServerProvider>,
+        allowed: () => true,
+        machineLabel: "Minis",
+        sourceLabel: "M4",
+        now,
+      }),
+    ).toEqual({ kind: "refused", message: STAYS });
+  });
 });

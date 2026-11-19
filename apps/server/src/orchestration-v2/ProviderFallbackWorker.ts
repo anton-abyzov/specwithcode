@@ -20,6 +20,7 @@ import {
 } from "@specweave-studio/contracts";
 import { projectLimitRule } from "../project/ProjectDelegation.ts";
 import { reviewConstrainedRule } from "@specweave-studio/shared/reviewPolicy";
+import { reviewEffortKept } from "../handoff/handoffReviewLock.ts";
 import {
   canTakeTurn,
   FALLBACK_USAGE_MAX_AGE_MS,
@@ -646,7 +647,17 @@ export function providerLimitStep(
     options.limited,
     options.failedTargets,
   );
-  return command === null ? null : { type: "switch", command };
+  if (command === null) return null;
+  // An entry of the fallback order names no options, so a review's effort is put back.
+  return command.type === "message.dispatch" && command.modelSelection != null
+    ? {
+        type: "switch",
+        command: {
+          ...command,
+          modelSelection: reviewEffortKept(thread, providers, command.modelSelection),
+        },
+      }
+    : { type: "switch", command };
 }
 
 /** Tries of one fallback step whose dispatch fails, and the wait that grows after each. */
