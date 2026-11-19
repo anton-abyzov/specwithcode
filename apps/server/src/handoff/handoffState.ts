@@ -659,6 +659,8 @@ export function takeoverVerdict(
   document: HandoffDocument,
   request: TakeoverRequest,
   machineLabel: string,
+  /** The thread id this takeover continues as; its record exists once a takeover began. */
+  continuationThreadId?: string,
 ): TakeoverVerdict {
   const at = (message: string) => `${machineLabel}: ${message}`;
   const replica = findIncoming(document, request.sourceEnvironmentId, request.sourceThreadId);
@@ -681,6 +683,21 @@ export function takeoverVerdict(
       kind: "refuse",
       code: "fenced",
       message: at(`already continued this thread at epoch ${detail.takeoverEpoch ?? 0}`),
+      check: "lease",
+    };
+  }
+  // Sleep and silence start nothing (1390 AC-36). A machine on an earlier release may
+  // still send one: it gets a definite refusal, never silence. One this machine already
+  // began before it updated is finished instead, so the source is never told "not
+  // accepted" about work that runs here.
+  if (
+    (request.reason === "sleep" || request.reason === "auto-takeover") &&
+    (continuationThreadId === undefined || document.threads[continuationThreadId] === undefined)
+  ) {
+    return {
+      kind: "refuse",
+      code: "invalid",
+      message: at("a thread moves only when someone hands it off; sleep and silence start nothing"),
       check: "lease",
     };
   }
@@ -783,22 +800,36 @@ export function heartbeatContinued(
         : replica.lease;
     return { ...replica, lease, sourceLastSeenAt: now, sourceUnreachable: false };
   });
-  // Each heartbeat restates which copies this machine may continue on its own;
-  // a copy it leaves out, or names without a delay, loses that designation.
-  const designated = new Map(
-    request.leases.map((lease) => [lease.sourceThreadId as string, lease.autoContinueMinutes]),
-  );
+  // No copy is continued here on silence (1390 AC-36). A delay a source on an earlier
+  // release names is not kept, and one saved here by an earlier release is dropped.
   let incomingDetails = document.incomingDetails ?? {};
   for (const replica of incoming) {
     if (replica.sourceEnvironmentId !== request.sourceEnvironmentId) continue;
     const key = incomingKey(replica.sourceEnvironmentId, replica.sourceThreadId);
     const detail = incomingDetails[key];
-    if (detail === undefined) continue;
-    const minutes = designated.get(replica.sourceThreadId) ?? null;
-    if ((detail.autoContinueMinutes ?? null) === minutes) continue;
-    incomingDetails = { ...incomingDetails, [key]: { ...detail, autoContinueMinutes: minutes } };
+    if (detail === undefined || (detail.autoContinueMinutes ?? null) === null) continue;
+    incomingDetails = { ...incomingDetails, [key]: { ...detail, autoContinueMinutes: null } };
   }
   return [continued, { ...document, incoming, incomingDetails }];
+}
+
+/**
+ * Machines an earlier release let continue this machine's threads on silence, which have
+ * not answered a heartbeat since. Until one answers, it may still act on what it was told.
+ */
+export function pendingDisarm(
+  document: Pick<HandoffDocument, "threads" | "autoContinuePeers">,
+): Array<{ environmentId: EnvironmentId; machineLabel: string; since: string }> {
+  return Object.entries(document.autoContinuePeers ?? {}).map(([peer, state]) => {
+    let machineLabel = peer;
+    for (const record of Object.values(document.threads)) {
+      const named = record.replicas.find((replica) => replica.environmentId === peer);
+      if (named === undefined) continue;
+      machineLabel = named.machineLabel;
+      break;
+    }
+    return { environmentId: peer as EnvironmentId, machineLabel, since: state.baselineAt };
+  });
 }
 
 /** Replicas whose source has not answered for longer than a stale lease read "unknown". */

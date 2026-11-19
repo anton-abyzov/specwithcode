@@ -81,7 +81,6 @@ export const ja: PhraseCatalog = {
   Confirmations: "確認",
   "Connect private machines automatically": "プライベートマシンを自動で接続",
   "Context window indicator": "コンテキストウィンドウの表示",
-  "Continue automatically when a machine stops answering": "マシンが応答しなくなったら自動で続行",
   "Continue threads after restarts": "再起動後にスレッドを続行",
   Contrast: "コントラスト",
   "Could not check SpecWithCode Connect": "SpecWithCode Connect を確認できませんでした",
@@ -567,8 +566,6 @@ export const ja: PhraseCatalog = {
     "その後、実行中の作業はアップデートのために停止し、アプリが再起動して、実行中とキュー内のスレッドは再起動後に続行します。",
   "This routine no longer exists or is outside the selected project scope.":
     "このルーティンはもう存在しないか、選択したプロジェクトの範囲外です。",
-  "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
-    "引き継ぎモードのスレッドは、この時間が過ぎると選んだ Mac で続行します。「オフ」はクリックを待つことを意味します。コーディネーターのスレッドはこの方法では移動しません。",
   "Try again in a moment.": "少し待ってからもう一度お試しください。",
   "Update this environment to manage Antigravity.":
     "Antigravity を管理するには、この環境を更新してください。",
@@ -1693,7 +1690,6 @@ export const ja: PhraseCatalog = {
   "Use default": "既定を使う",
   "A removed machine": "削除されたマシン",
   "More options": "その他のオプション",
-  "Automatic takeover": "自動引き継ぎ",
   "inactive chat archiving": "非アクティブなチャットのアーカイブ",
   "After 30 days": "30 日後",
   Never: "しない",
@@ -4621,8 +4617,10 @@ export const ja: PhraseCatalog = {
     "{machineLabel} を追加しました。更新したあと、この行で「許可」を選んでください。",
   "After each turn, copies this machine's threads, existing ones too, to your other machines with the same project, so any of them can pick up. Uses a few more tokens.":
     "各ターンのあと、このマシンのスレッドを既存のものも含めて、同じプロジェクトを持つほかのマシンにコピーし、どのマシンでも続きを引き継げるようにします。トークンを少し多く使います。",
-  "After work left while it slept. Ask shows one button to bring it back.":
-    "スリープ中に作業がほかへ移ったあとの動作です。「確認」では、作業を戻すボタンを 1 つ表示します。",
+  "After you left with Away. Ask shows one button to bring it back.":
+    "不在モードで離れたあとの動作です。「確認」では、作業を戻すボタンを 1 つ表示します。",
+  "Waiting for {machine} to confirm that silence no longer moves threads. Until it answers, a thread it could continue pauses here when it goes quiet.":
+    "無応答ではスレッドが移動しなくなったことを、{machine} が確認するのを待っています。応答があるまで、{machine} が続行できるスレッドは、{machine} の応答が途絶えるとここで一時停止します。",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "{hereLabel} のエージェントは {thereLabel} で作業を開始できます",
   "All sign-ins": "すべてのサインイン",
@@ -4658,18 +4656,12 @@ export const ja: PhraseCatalog = {
     "期限切れ: そのマシンでもう一度ワーカーを許可する必要があります",
   Filter: "フィルター",
   "Filter: {label}": "フィルター: {label}",
-  "Grace time": "猶予時間",
-  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.":
-    "この Mac がスリープすると、作業を不在時の移動先に渡します。移動先はまず猶予時間だけ待ち、それより早く戻れば何も移動しません。Mac のみ。",
-  "How long the target waits after the lid closes before it takes over.":
-    "蓋を閉じてから移動先が引き継ぐまでの待ち時間です。",
   "Its app sees this machine": "そのアプリからこのマシンが見える",
   "Its work may use any sign-in on this machine.":
     "その作業は、このマシンのどのサインインでも使えます。",
   "Its work may use no sign-in here, so every launch is refused.":
     "その作業はここのサインインを使えないため、すべての起動が拒否されます。",
   Lasts: "有効期間",
-  "Leave automatically when the lid closes": "蓋を閉じたら自動で不在にする",
   "Let another of your machines run work here": "自分の別のマシンにここで作業を実行させる",
   "Let {machine} manage scheduled routines": "{machine} に予定されたルーティンの管理を許可",
   Limits: "制限",
@@ -4754,8 +4746,8 @@ export const ja: PhraseCatalog = {
     "ここか {coordinatorLabel} で停止するまで。自動で更新されます。",
   "Until you stop it, here or on that machine.": "ここかそのマシンで停止するまで。",
   "When this machine wakes": "このマシンがスリープから復帰したとき",
-  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
-    "不在時にスレッド、ルーティン、コーディネーターを送る先です。このマシンがスリープしたときにも使われます。画面のロックは対象外です。",
+  "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.":
+    "このマシンを離れるときに、スレッド、ルーティン、コーディネーターを送る先です。ふたを閉じても何も移動しません。",
   "Who is it for": "対象者",
   "Whose machine {machine} is": "{machine} の所有者",
   "Work from {machine}": "{machine} からの作業",

@@ -71,6 +71,7 @@ import {
   deriveHandoffBadge,
   effectiveHandoffMode,
   emptyThreadRecord,
+  pendingDisarm,
   type EpochVerdict,
   guardSideEffect,
   type HandoffDocument,
@@ -111,14 +112,6 @@ export interface HandoffMovesPort {
   readonly continueHere: (
     input: HandoffContinueHereInput,
     options?: HandoffContinueHereOptions,
-  ) => Effect.Effect<HandOffResult, HandoffModeError>;
-  /**
-   * Continue here under a given reason. Internal: automatic continuation passes
-   * "auto-takeover"; the WebSocket input stays `continueHere`.
-   */
-  readonly continueHereAs: (
-    input: HandoffContinueHereInput,
-    reason: "continue-here" | "auto-takeover",
   ) => Effect.Effect<HandOffResult, HandoffModeError>;
   readonly resumeFenced: Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
   readonly preflight: (
@@ -269,6 +262,10 @@ export const make = Effect.gen(function* () {
     incoming: document.incoming,
     pausedSince: document.pausedSince,
     machineRun: document.machineRun,
+    pendingDisarm: pendingDisarm(document).map((entry) => ({
+      ...entry,
+      machineLabel: entry.machineLabel.slice(0, 120),
+    })),
   });
 
   const snapshot = Effect.map(store.read, toSnapshot);
@@ -847,7 +844,18 @@ export const make = Effect.gen(function* () {
     checkpointNow,
     checkpoint,
     handOff: (input) => viaMoves((port) => port.handOff(input)),
-    handOffMachine: (input) => viaMoves((port) => port.handOffMachine(input)),
+    // Sleep starts nothing (1390 AC-36): a window still on an earlier build may ask on
+    // 'suspend', and gets a definite refusal before anything is planned or sent.
+    handOffMachine: (input) =>
+      input.reason === "sleep"
+        ? Effect.fail(
+            new HandoffModeError({
+              code: "invalid",
+              message:
+                "Threads move only when you hand them off. This machine going to sleep moves nothing.",
+            }),
+          )
+        : viaMoves((port) => port.handOffMachine(input)),
     continueHere: (input, options) => viaMoves((port) => port.continueHere(input, options)),
     resumeFenced: viaMoves((port) => port.resumeFenced),
     preflight: (input) => viaMoves((port) => port.preflight(input)),

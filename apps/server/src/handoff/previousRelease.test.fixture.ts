@@ -12,6 +12,7 @@
  * - apps/server/src/away/awayPeerCall.ts:128-145 (how a peer's answer is read)
  */
 import {
+  type EnvironmentId,
   type HandoffConfig,
   type ThreadId,
   isResumableHandoffEnding,

@@ -1,24 +1,23 @@
 /**
- * The target's routes for Away mode's sleep trigger (1267 AC-09):
- * `POST /api/away/v1/intent` records the source's away intent, and
- * `POST /api/away/v1/intent/cancel` cancels it once the source is back, and
- * `POST /api/away/v1/intent/status` answers, per project, whether this
- * machine took it over from the source (1267 AC-09, the wake check), and per
- * asked thread whether it continued it, with whether more may still be. Only
- * a machine with a live work grant here gets in (`awayPeerCaller`); the body
- * must name that same machine, and only projects its grant covers are kept.
+ * The routes a machine going to sleep used to reach its Away target on
+ * (1267 AC-09; 1390 AC-36). Sleep starts nothing now:
+ * `POST /api/away/v1/intent` refuses every new intent with a definite answer,
+ * so a machine on an earlier release keeps its work and lets its hold go.
+ * `POST /api/away/v1/intent/cancel` and `POST /api/away/v1/intent/status`
+ * still answer for intents recorded before this machine updated: whether one
+ * was cancelled, and per project whether this machine took it over, with the
+ * threads it continued. Only a machine with a live work grant here gets in
+ * (`awayPeerCaller`); the body must name that same machine.
  */
 import {
   AWAY_INTENT_CANCEL_PATH,
   AWAY_INTENT_PATH,
   AWAY_INTENT_STATUS_PATH,
   AwayIntentCancelRequest,
-  type AwayIntentRecord,
   AwayIntentRequest,
   AwayIntentStatusAnswer,
   AwayIntentStatusRequest,
   type Project,
-  type ProjectId,
 } from "@specweave-studio/contracts";
 import * as ByteSize from "effect/ByteSize";
 import * as Clock from "effect/Clock";
@@ -31,12 +30,11 @@ import { HttpRouter, HttpServerRequest } from "effect/http";
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { projectInGrant } from "../fleet/workGrantPolicy.ts";
 import { HandoffMode } from "../handoff/HandoffMode.ts";
 import type { ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import { parseJson } from "../json.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { AwayIntents, type AwayIntentsShape, linkedCopyOf, projectStatus } from "./AwayIntents.ts";
+import { AwayIntents, type AwayIntentsShape, projectStatus } from "./AwayIntents.ts";
 import { answerJson, awayPeerCaller } from "./awayPeerCall.ts";
 
 const MAX_BODY_BYTES = 128 * 1024;
@@ -67,50 +65,25 @@ const readBody = Effect.gen(function* () {
   }
 });
 
+/** What a machine that still sends an intent is told. */
+export const SLEEP_START_REFUSAL =
+  "Not accepted: nothing moves when a machine goes to sleep. Hand work off from the machine that runs it.";
+
 /**
- * Records an intent for `caller`. The projects kept are the source's copies
- * that are linked here and that the caller's grant covers; the rest are
- * answered as refused, so the source lists them as staying.
+ * Refuses a new intent from `caller`: 409 with a reason, which a sender on an
+ * earlier release reads as a definite "no", never as silence. Nothing is recorded.
  */
-export const recordIntent = (
-  intents: Pick<AwayIntentsShape, "record">,
-  caller: ReceiverCaller,
-  raw: unknown,
-  projects: ReadonlyArray<Project>,
-): Effect.Effect<IntentAnswer> =>
-  Effect.gen(function* () {
-    const body = decodeIntent(raw);
-    if (Option.isNone(body))
-      return { status: 400, body: { error: "The request does not match this version." } };
-    if (body.value.sourceEnvironmentId !== caller.sourceEnvironmentId)
-      return {
-        status: 403,
-        body: { error: "A machine may record an away intent only for itself." },
-      };
-    const kept: ProjectId[] = [];
-    const refused: ProjectId[] = [];
-    for (const projectId of body.value.projectIds) {
-      const copy = linkedCopyOf(projects, caller.sourceEnvironmentId, projectId);
-      const covered =
-        copy !== undefined &&
-        (caller.grant === null ||
-          projectInGrant(caller.grant.projects, caller.sourceEnvironmentId, copy));
-      (covered ? kept : refused).push(projectId);
-    }
-    const recorded = yield* intents
-      .record(caller.sourceEnvironmentId, {
-        graceMinutes: body.value.graceMinutes,
-        projectIds: kept,
-        threadIds: body.value.threadIds,
-      })
-      .pipe(Effect.result);
-    if (recorded._tag === "Failure")
-      return { status: 500, body: { error: recorded.failure.message } };
+export const recordIntent = (caller: ReceiverCaller, raw: unknown): IntentAnswer => {
+  const body = decodeIntent(raw);
+  if (Option.isNone(body))
+    return { status: 400, body: { error: "The request does not match this version." } };
+  if (body.value.sourceEnvironmentId !== caller.sourceEnvironmentId)
     return {
-      status: 200,
-      body: { intent: recorded.success satisfies AwayIntentRecord, refusedProjectIds: refused },
+      status: 403,
+      body: { error: "A machine may record an away intent only for itself." },
     };
-  });
+  return { status: 409, body: { error: SLEEP_START_REFUSAL } };
+};
 
 export const cancelIntent = (
   intents: Pick<AwayIntentsShape, "cancel">,
@@ -138,8 +111,7 @@ export const cancelIntent = (
  * caller's copy as its predecessor.
  */
 export const intentStatus = (
-  intents: Pick<AwayIntentsShape, "latestState"> &
-    Partial<Pick<AwayIntentsShape, "followUpRunning">>,
+  intents: Pick<AwayIntentsShape, "latestState">,
   caller: ReceiverCaller,
   raw: unknown,
   projects: ReadonlyArray<Project>,
@@ -155,10 +127,6 @@ export const intentStatus = (
       return { status: 403, body: { error: "A machine may ask only about its own projects." } };
     const state = yield* intents.latestState(caller.sourceEnvironmentId).pipe(Effect.result);
     if (state._tag === "Failure") return { status: 500, body: { error: state.failure.message } };
-    const following =
-      intents.followUpRunning === undefined
-        ? false
-        : yield* intents.followUpRunning(caller.sourceEnvironmentId);
     const asked = body.value.threadIds;
     const answer: AwayIntentStatusAnswer = {
       intentState: state.success,
@@ -172,7 +140,8 @@ export const intentStatus = (
               threadId,
               continuedThreadId: continuedOf(threadId),
             })),
-            threadsSettled: state.success !== "waiting" && state.success !== "acting" && !following,
+            // Nothing here continues a thread for an intent any more.
+            threadsSettled: state.success !== "waiting" && state.success !== "acting",
           }),
       receivedAt: DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
     };
@@ -189,11 +158,7 @@ const intentRoute = HttpRouter.add(
     if ("refused" in who) return who.refused;
     const body = yield* readBody;
     if (body === undefined) return tooLarge;
-    const projects = yield* (yield* ProjectService.ProjectService).snapshot.pipe(
-      Effect.map((snapshot) => snapshot.projects),
-      Effect.orElseSucceed(() => []),
-    );
-    const answer = yield* recordIntent(yield* AwayIntents, who.caller, body.raw, projects);
+    const answer = recordIntent(who.caller, body.raw);
     return answerJson(answer.status, answer.body);
   }),
 );
