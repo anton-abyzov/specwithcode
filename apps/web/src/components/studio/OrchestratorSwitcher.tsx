@@ -739,6 +739,7 @@ export function ProjectOrchestratorSwitcher({
     unknown,
     environments,
     projects,
+    nameOf: nickname,
     reachOf: (key) => reachOf(key).reach,
     versionOf: (environmentId) => versions.get(environmentId)?.environment.serverVersion ?? null,
     ask: onCopy,

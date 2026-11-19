@@ -25,6 +25,7 @@ import {
   type OrchestratorCopy,
 } from "../../studio/projectCoordinatorMachine";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
+import { sameRepositoryLinkOffers } from "../../studio/projectLink";
 import {
   refreshSyncStatus,
   syncMachineKey,
@@ -135,6 +136,8 @@ export function useProjectSyncMenu(input: {
   readonly unknown: ReadonlyArray<{ readonly key: string; readonly machine: string }>;
   readonly environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>;
   readonly projects: readonly EnvironmentProject[];
+  /** A machine's name, for one the project's own list does not hold. */
+  readonly nameOf: (environmentId: EnvironmentId) => string;
   readonly reachOf: (key: string) => MachineReach;
   readonly versionOf: (environmentId: EnvironmentId) => string | null;
   /** Null when this window may not operate the project or the project is personal. */
@@ -194,16 +197,36 @@ export function useProjectSyncMenu(input: {
     blocked: blockedOn(item.machine, item.key),
     note: blockedOn(item.machine, item.key, false),
   }));
-  const separate: SyncTarget[] = elsewhere
-    .filter((copy) => copy.role === "independent")
-    .map((copy) => ({
-      machine: {
-        environmentId: environmentIdOf(copy.key),
-        projectId: projectIdOf(copy.key),
-        label: copy.machine,
-      },
-      blocked: { text: "Separate project" },
-    }));
+  // The same repository as a project of its own, on a machine this project is not on: in
+  // the list above when nothing here is linked, otherwise only among all the projects. Each
+  // is shown and its status read; none is ever checked, synced or sent extras.
+  const listed = new Set(elsewhere.map((copy) => checkoutKeyEnvironmentId(copy.key) as string));
+  const apart = [
+    ...elsewhere
+      .filter((copy) => copy.role === "independent")
+      .map((copy) => ({
+        key: copy.key,
+        machine: {
+          environmentId: environmentIdOf(copy.key),
+          projectId: projectIdOf(copy.key),
+          label: copy.machine,
+        } satisfies SyncMachine,
+      })),
+    ...sameRepositoryLinkOffers(input.projects, project, () => null)
+      .filter((item) => !listed.has(item.environmentId))
+      .map((item) => ({
+        key: `${item.environmentId}:${item.id}`,
+        machine: {
+          environmentId: item.environmentId,
+          projectId: item.id,
+          label: input.nameOf(item.environmentId),
+        } satisfies SyncMachine,
+      })),
+  ];
+  const separate: SyncTarget[] = apart.map((item) => ({
+    machine: item.machine,
+    blocked: { text: "Separate project" },
+  }));
   const shownBlocked = blockedOn(shown, current);
   // Greyed when the machine shown cannot sync, or when no other machine can.
   const syncBlocked: MachineRowText | null =
@@ -242,7 +265,8 @@ export function useProjectSyncMenu(input: {
       shown: readOf(syncMachineKey(shown)),
       other: read,
       shownName: input.label,
-      offline: input.reachOf(key) === "offline",
+      // Either machine: one that went offline is not asked again, so its read only ages.
+      offline: input.reachOf(key) === "offline" || input.reachOf(current) === "offline",
       version,
     });
   };
@@ -257,7 +281,9 @@ export function useProjectSyncMenu(input: {
       if (!next || !facts) return;
       void refreshSyncStatus([
         ...(input.reachOf(current) === "open" ? [shown] : []),
-        ...others.filter((item) => input.reachOf(item.key) === "open").map((item) => item.machine),
+        ...[...others, ...apart]
+          .filter((item) => input.reachOf(item.key) === "open")
+          .map((item) => item.machine),
       ]);
     },
     dialog:
