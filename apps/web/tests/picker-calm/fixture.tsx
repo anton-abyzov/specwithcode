@@ -530,14 +530,15 @@ function ComposerScene() {
                   }}
                 />
                 <span className="min-w-0 truncate text-sm font-medium">Fable 5.2</span>
+                {/* As the thread's Send draws it: the machine's color, never its name. */}
                 <button
                   type="button"
-                  className="machine-send ms-auto inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-sm font-semibold"
-                  aria-label="Send to M1"
+                  className="machine-send ms-auto inline-flex size-8 items-center justify-center rounded-full"
+                  aria-label={`Send to this thread on ${m1.name}`}
                   data-send-target=""
                   {...machineColorProps(m1)}
                 >
-                  ↑ Send to M1
+                  ↑
                 </button>
               </div>
             </div>
@@ -619,10 +620,8 @@ function MachinesScene() {
           <button
             key={machine.environmentId}
             type="button"
-            className="sws-send sws-send-target machine-send"
+            className="sws-send machine-send"
             {...machineColorProps(machine)}
-            data-send-label={`Send to ${machine.name}`}
-            data-send-short={machine.short}
             aria-label={`Send to the coordinator on ${machine.name}`}
           >
             ↑

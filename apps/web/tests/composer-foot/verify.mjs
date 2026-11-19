@@ -79,6 +79,15 @@ function measure() {
       content: after.content,
     };
   };
+  // A color token as the browser paints it where `el` stands.
+  const paint = (el, color) => {
+    if (!el?.parentElement) return null;
+    const probe = el.parentElement.appendChild(document.createElement("i"));
+    probe.style.background = color;
+    const painted = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return painted;
+  };
   const top = (el) => (el ? Math.round(el.getBoundingClientRect().top) : null);
   const out = { thread: null, coordinator: null };
   const threadPane = document.querySelector('[data-project-pane="threads"]');
@@ -95,7 +104,18 @@ function measure() {
       const style = getComputedStyle(el, "::after");
       return style.display === "none" ? null : { border: style.borderTopColor, shadow: style.boxShadow };
     };
+    const send = threadPane.querySelector("button[data-send-target]");
+    const sendBox = send?.getBoundingClientRect();
     out.thread = {
+      // Send to another machine: its color and the arrow, never the machine in words.
+      sendWords: send ? words(send) : null,
+      sendText: send?.textContent ?? null,
+      sendLabel: send?.getAttribute("aria-label") ?? null,
+      sendColor: send?.getAttribute("data-machine-color") ?? null,
+      sendBackground: send ? getComputedStyle(send).backgroundColor : null,
+      sendEnabled: send ? !send.disabled : null,
+      sendSize: sendBox ? [Math.round(sendBox.width), Math.round(sendBox.height)] : null,
+      machinePaint: paint(send, "var(--machine)"),
       chipWords: chip ? words(chip) : null,
       chipCompact: chip?.hasAttribute("data-machine-compact") ?? false,
       chipShortShows: visible(chip?.querySelector("[data-machine-short]")),
@@ -150,8 +170,10 @@ const SCENES = [
   { name: "window", width: 1440, height: 760 },
   { name: "window", width: 1100, height: 720 },
   { name: "window", width: 860, height: 720 },
-  { name: "thread", width: 600, height: 520 },
-  { name: "thread", width: 390, height: 520 },
+  // Wide enough that the thread's box is past its 720 px container breakpoint.
+  { name: "thread", width: 1100, height: 620 },
+  { name: "thread", width: 600, height: 520, draft: true },
+  { name: "thread", width: 390, height: 520, draft: true },
   { name: "coordinator", width: 600, height: 520 },
   { name: "coordinator", width: 390, height: 520 },
 ];
@@ -168,15 +190,64 @@ try {
         });
         page.on("pageerror", (error) => errors.push(`${scene.name}: ${error.message}`));
         await page.goto(
-          `${origin}/?scene=${scene.name}&theme=${theme}${banner ? "&banner=1" : ""}`,
+          `${origin}/?scene=${scene.name}&theme=${theme}${banner ? "&banner=1" : ""}${scene.draft ? "&draft=Run%20the%20tests" : ""}`,
         );
         await page.locator('[data-project-pane]').first().waitFor();
+        // A typed message turns Send on, so it shows the color it sends with.
+        const prompt = page.locator('[data-project-pane="threads"] [contenteditable="true"]');
+        // A phone-width box with a saved one-line draft sends without opening: its
+        // folded Send wears the machine's color and says where the message goes.
+        const foldedSend = page.locator(
+          '[data-project-pane="threads"] [data-chat-composer-transition-actions]',
+        );
+        const foldedFacts =
+          scene.draft && (await foldedSend.count()) > 0 && (await foldedSend.first().isVisible())
+            ? await foldedSend.first().evaluate((button) => {
+                const probe = button.parentElement.appendChild(document.createElement("i"));
+                probe.style.background = "var(--machine)";
+                const machinePaint = getComputedStyle(probe).backgroundColor;
+                probe.remove();
+                return {
+                  text: button.textContent,
+                  label: button.getAttribute("aria-label"),
+                  color: button.getAttribute("data-machine-color"),
+                  enabled: !button.disabled,
+                  background: getComputedStyle(button).backgroundColor,
+                  machinePaint,
+                };
+              })
+            : null;
+        if (scene.draft) {
+          await page.screenshot({ path: path.join(output, `${label}-folded-${scene.width}-${theme}${banner ? "-banner" : ""}.png`) });
+          if (!before) {
+            const where = `folded ${scene.width} ${theme}`;
+            assert.ok(foldedFacts, `${where}: no folded Send with a saved draft`);
+            assert.ok(foldedFacts.enabled, `${where}: folded Send is off with a saved draft`);
+            assert.equal(foldedFacts.text, "", `${where}: folded Send says ${foldedFacts.text}`);
+            assert.equal(foldedFacts.label, "Send to this thread on Build B", `${where}: label`);
+            assert.equal(foldedFacts.color, "blue", `${where}: folded Send color`);
+            assert.equal(foldedFacts.background, foldedFacts.machinePaint, `${where}: not painted blue`);
+          }
+        }
+        // A phone-width box keeps its editor folded until it is tapped.
+        const folded = page.locator(
+          '[data-project-pane="threads"] [data-chat-composer-transition-prompt]',
+        );
+        if ((await folded.count()) > 0 && (await folded.first().isVisible())) {
+          await folded.first().click();
+          await page.waitForTimeout(300);
+        }
+        const typed = (await prompt.count()) > 0 && (await prompt.first().isVisible());
+        if (typed) {
+          await prompt.first().click();
+          await page.keyboard.type("Run the tests");
+        }
         await page.waitForTimeout(400);
         const facts = await page.evaluate(measure);
         const tag = `${label}-${scene.name}-${scene.width}-${theme}${banner ? "-banner" : ""}`;
         await page.screenshot({ path: path.join(output, `${tag}.png`) });
-        results.push({ tag, ...facts });
-        if (!before) check(tag, facts, scene);
+        results.push({ tag, typed, folded: foldedFacts, ...facts });
+        if (!before) check(tag, facts, scene, typed);
         await page.close();
       }
     }
@@ -189,14 +260,26 @@ try {
 }
 console.log(`composer-foot ${label}: ${results.length} scenarios, screenshots in ${output}`);
 
-function check(tag, facts, scene) {
+function check(tag, facts, scene, typed) {
   const { thread, coordinator } = facts;
   if (thread) {
     // AC-02: "Runs on <machine>" reads in full at every width.
-    assert.equal(thread.chipWords, "Runs on linux-mini", `${tag}: chip says ${thread.chipWords}`);
+    assert.equal(thread.chipWords, "Runs on Build B", `${tag}: chip says ${thread.chipWords}`);
     assert.ok(!thread.chipCompact && thread.chipNameShows, `${tag}: the machine name is hidden`);
     assert.equal(thread.chipNameCut, false, `${tag}: the machine name is cut`);
-    assert.match(thread.chipLabel ?? "", /Runs on linux-mini/, `${tag}: chip label`);
+    assert.match(thread.chipLabel ?? "", /Runs on Build B/, `${tag}: chip label`);
+    // 1390 AC-02: Send never names a machine. The chip above does, and Send keeps
+    // that machine's color and the round shape of a send to this machine.
+    assert.equal(thread.sendWords, "", `${tag}: Send says ${thread.sendWords}`);
+    assert.equal(thread.sendText, "", `${tag}: Send holds the text ${thread.sendText}`);
+    assert.equal(thread.sendLabel, "Send to this thread on Build B", `${tag}: Send label`);
+    assert.equal(thread.sendColor, "blue", `${tag}: Send color`);
+    assert.ok(typed, `${tag}: no message could be typed`);
+    if (typed) {
+      assert.ok(thread.sendEnabled, `${tag}: Send is off with a message typed`);
+      assert.equal(thread.sendBackground, thread.machinePaint, `${tag}: Send is not painted blue`);
+      assert.equal(thread.sendSize[0], thread.sendSize[1], `${tag}: Send is ${thread.sendSize} px`);
+    }
     // AC-03: the model's name reads in full, right beside the machine.
     assert.equal(thread.model, "Opus 5.5", `${tag}: model shows ${thread.model}`);
     assert.equal(thread.modelCut, false, `${tag}: the model name is cut`);
@@ -223,7 +306,7 @@ function check(tag, facts, scene) {
     assert.equal(thread.edge.width, "2px");
   }
   if (coordinator) {
-    assert.equal(coordinator.chipWords, "On m4", `${tag}: coordinator chip says ${coordinator.chipWords}`);
+    assert.equal(coordinator.chipWords, "On Laptop A", `${tag}: coordinator chip says ${coordinator.chipWords}`);
     assert.equal(coordinator.chipCut, false, `${tag}: the coordinator's machine name is cut`);
     assert.equal(coordinator.voiceWords, "", `${tag}: voice says ${coordinator.voiceWords}`);
     // AC-05: the run state is a dot unless it needs the person.
