@@ -19,10 +19,8 @@
 import { teamRulesOutgoingCarried } from "@specweave-studio/shared/teamRules";
 import { teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import * as NodeFSP from "node:fs/promises";
-import * as NodePath from "node:path";
-import { worktreeSetManifestPath } from "../worktreeSet.ts";
 
-/** Why a thread in a worktree set stays on its machine. */
+/** What a set thread's check said before a worktree set could travel; the Away plan still reads it. */
 export const WORKTREE_SET_HANDOFF_MESSAGE =
   "This thread works in a worktree set across several repositories, and a handoff carries one repository. Finish it on this machine, or push each repository's branch and continue on the other machine from there.";
 
@@ -81,6 +79,7 @@ import { shouldResume } from "./handoffPreflight.ts";
 import { outgoingReviewLock } from "./handoffReviewLock.ts";
 import * as Resume from "./handoffResume.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
+import { readSourceSet, shipSet } from "./HandoffSetMoves.ts";
 import { makeTransferRunner } from "./HandoffTransferRunner.ts";
 import * as HandoffTransferStore from "./HandoffTransferStore.ts";
 import {
@@ -232,6 +231,8 @@ export const make = Effect.gen(function* () {
   let ticksRunning = 0;
   /** Per thread and destination: failed replications in a row and when to try again. */
   const replicateBackoff = new Map<string, { failures: number; retryAt: number }>();
+  /** Machines that named the worktree set capability (HandoffSetMoves.shipSet). */
+  const setCapable = new Map<string, number>();
   const backoffKey = (threadId: ThreadId, destination: EnvironmentId) =>
     `${threadId}\u0000${destination}`;
 
@@ -312,19 +313,15 @@ export const make = Effect.gen(function* () {
       if (isPersonalAssistantProject(project.workspaceSettings)) {
         return yield* failed("invalid", PERSONAL_ASSISTANT_PRIVATE_MESSAGE);
       }
-      const cwd = shell.worktreePath ?? project.workspaceRoot;
-      // A checkpoint carries one repository; a set's other members would be left behind.
-      if (
-        shell.worktreePath !== null &&
-        (yield* Effect.promise(() =>
-          NodeFSP.access(worktreeSetManifestPath(shell.worktreePath!, NodePath)).then(
-            () => true,
-            () => false,
-          ),
-        ))
-      ) {
-        return yield* failed("invalid", WORKTREE_SET_HANDOFF_MESSAGE);
-      }
+      // A worktree set travels whole (HandoffSetMoves); its first member holds the checkpoint.
+      const set =
+        shell.worktreePath === null
+          ? null
+          : yield* Effect.tryPromise({
+              try: () => readSourceSet(shell.worktreePath!),
+              catch: (cause) => failed("failed", cause instanceof Error ? cause.message : ""),
+            });
+      const cwd = set?.[0]?.path ?? shell.worktreePath ?? project.workspaceRoot;
       const repositoryPath = yield* Effect.tryPromise({
         try: () => repositoryPathFor(project.workspaceRoot, cwd),
         catch: (cause) =>
@@ -403,8 +400,43 @@ export const make = Effect.gen(function* () {
               );
               return yield* peers.replicate(destination, meta, new Uint8Array(bundle));
             });
+      const whole =
+        set === null
+          ? shipped
+          : shipSet({
+              self: destination === self,
+              destination,
+              destinationLabel: label,
+              projectRoot: project.workspaceRoot,
+              members: set,
+              meta,
+              capable: setCapable,
+              capabilities: peers
+                .preflight(destination, {
+                  sourceEnvironmentId: self,
+                  protocolVersion: HANDOFF_PROTOCOL_VERSION,
+                  appVersion: HANDOFF_APP_VERSION,
+                  capabilities: HANDOFF_CAPABILITIES,
+                  threads: [],
+                })
+                .pipe(Effect.map((answer) => answer.capabilities)),
+              negotiate: (path, candidates) =>
+                peers
+                  .negotiate(destination, {
+                    sourceEnvironmentId: self,
+                    sourceProjectId: shell.projectId,
+                    sourceThreadId: shell.id,
+                    repositoryPath: path,
+                    candidates,
+                  })
+                  .pipe(Effect.map((answer) => answer.known)),
+              replicate: (frame, bundle) =>
+                destination === self
+                  ? receiver.replicate(selfCaller, frame, bundle)
+                  : peers.replicate(destination, frame, bundle),
+            });
       const key = backoffKey(shell.id, destination);
-      return yield* shipped.pipe(
+      return yield* whole.pipe(
         Effect.tap(() => Effect.sync(() => replicateBackoff.delete(key))),
         Effect.tapError(() =>
           Clock.currentTimeMillis.pipe(

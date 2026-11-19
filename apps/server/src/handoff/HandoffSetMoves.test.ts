@@ -7,7 +7,9 @@
  * and the row says which member stopped it and why.
  */
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
@@ -22,6 +24,18 @@ import * as Schema from "effect/Schema";
 
 import { unscopedGrant } from "../fleet/workGrantPolicy.ts";
 import { worktreeSetManifestPath } from "../worktreeSet.ts";
+import { writeCheckpoint } from "./checkpointGit.ts";
+import {
+  bundleSetMember,
+  checkArrivedSet,
+  checkpointFolder,
+  checkpointSetMembers,
+  materializeSet,
+  type PreparedMember,
+  readSourceSet,
+  SET_LIMITS,
+  startedSetFolder,
+} from "./HandoffSetMoves.ts";
 import { findIncoming } from "./handoffState.ts";
 import {
   makeRig,
@@ -34,6 +48,7 @@ import {
   HANDOFF_PROTOCOL_VERSION,
   PeerPreflightRequest,
   type ReplicateMeta,
+  type ReplicateSet,
 } from "./handoffWire.ts";
 import {
   PreviousPeerPreflightRequest,
@@ -77,6 +92,9 @@ const caller = (machine: RigMachine) => ({
   sourceEnvironmentId: machine.environmentId,
   grant: unscopedGrant(machine.environmentId),
 });
+const encodeProbe = Schema.encodeSync(PeerPreflightRequest);
+const readAsPreviousRequest = Schema.decodeUnknownOption(PreviousPeerPreflightRequest);
+const readAsPreviousResponse = Schema.decodeUnknownOption(PreviousPeerPreflightResponse);
 const replicated = (rig: Rig, to?: RigMachine) =>
   rig.callsOf("replicate", to).map((call) => call.request as ReplicateMeta);
 
@@ -378,26 +396,252 @@ describe("the worktree set capability with a machine that does not name it", () 
       expect(replicated(rig, old)).toHaveLength(0);
       expect(old.launches).toHaveLength(0);
       // The question this build asks first is one that release can read and answer.
-      const probe = Schema.encodeSync(PeerPreflightRequest)({
+      const probe = encodeProbe({
         sourceEnvironmentId: a.environmentId,
         protocolVersion: HANDOFF_PROTOCOL_VERSION,
         appVersion: "1.0.384",
         capabilities: [...HANDOFF_CAPABILITIES],
         threads: [],
       });
-      expect(
-        Option.isSome(Schema.decodeUnknownOption(PreviousPeerPreflightRequest)(overTheWire(probe))),
-      ).toBe(true);
+      expect(Option.isSome(readAsPreviousRequest(overTheWire(probe)))).toBe(true);
       // And its answer, which names no capability, reads here as a machine without sets.
       const answer = rig.callsOf("preflight", old).length;
       expect(answer).toBeGreaterThan(0);
       expect(
         Option.isSome(
-          Schema.decodeUnknownOption(PreviousPeerPreflightResponse)(
+          readAsPreviousResponse(
             overTheWire({ machineLabel: "OLD", protocolVersion: 2, results: [] }),
           ),
         ),
       ).toBe(true);
     }),
   );
+});
+
+describe("the members of a set, each measured on its own", () => {
+  /** A project folder with its own repository and one nested in it, and a set folder of both. */
+  const project = () => {
+    const base = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-set-")),
+    );
+    temporary.push(base);
+    const root = NodePath.join(base, "project");
+    const lib = NodePath.join(root, LIB);
+    for (const [repository, file] of [
+      [root, "app.ts"],
+      [lib, "lib.ts"],
+    ] as const) {
+      NodeFS.mkdirSync(repository, { recursive: true });
+      git(repository, "init", "-q", "-b", "main");
+      write(repository, file, "export const one = 1;\n");
+      git(repository, "add", "-A");
+      git(repository, "commit", "-q", "-m", "base");
+    }
+    NodeFS.appendFileSync(NodePath.join(root, ".git", "info", "exclude"), "packages/\n");
+    const folder = NodePath.join(base, "sets", "work");
+    NodeFS.mkdirSync(NodePath.dirname(folder), { recursive: true });
+    git(root, "worktree", "add", "-q", "-b", "work", folder);
+    git(lib, "worktree", "add", "-q", "-b", "work", NodePath.join(folder, LIB));
+    const members = [
+      { relativePath: "", path: folder },
+      { relativePath: LIB, path: NodePath.join(folder, LIB) },
+    ];
+    return { base, root, lib, folder, members };
+  };
+  const prepare = async (
+    at: ReturnType<typeof project>,
+    limits = SET_LIMITS,
+  ): Promise<ReadonlyArray<PreparedMember>> => {
+    const own = await writeCheckpoint({ cwd: at.folder, threadId: "thread-1" });
+    return checkpointSetMembers({
+      projectRoot: at.root,
+      members: at.members,
+      threadId: "thread-1",
+      checkpoint: {
+        commit: own.commit,
+        baseCommit: own.baseCommit,
+        branch: own.branch,
+        ref: own.ref,
+        skipped: [...own.skipped],
+        requiredSecretPaths: [...own.requiredSecretPaths],
+        sourceRoot: { workspaceRoot: own.root } as never,
+      },
+      limits,
+    });
+  };
+
+  it("names each member by its place in the project and checkpoints every one", async () => {
+    const at = project();
+    write(NodePath.join(at.folder, LIB), "new.ts", "export {};\n");
+
+    const members = await prepare(at);
+
+    expect(members.map((member) => member.repositoryPath)).toEqual(["", LIB]);
+    expect(members[1]?.branch).toBe("work");
+    expect(git(members[1]!.root, "ls-tree", "-r", "--name-only", members[1]!.commit)).toContain(
+      "new.ts",
+    );
+    // The working tree and the branch of the member are as they were.
+    expect(git(members[1]!.root, "rev-parse", "HEAD")).toBe(members[1]!.baseCommit);
+  });
+
+  it("stops at the file count of one member, and says which", async () => {
+    const at = project();
+    const member = NodePath.join(at.folder, LIB);
+    for (const name of ["a", "b", "c"]) write(member, `${name}.ts`, "export {};\n");
+    git(member, "add", "-A");
+    git(member, "commit", "-q", "-m", "three files");
+    const limits = { ...SET_LIMITS, maxFiles: 2 };
+    const members = await prepare(at, limits);
+
+    // The other member is under the same limit and passes.
+    const own = await bundleSetMember(members[0]!, [members[0]!.baseCommit], limits);
+    await own?.dispose();
+    await expect(bundleSetMember(members[1]!, [], limits)).rejects.toThrow(
+      /^packages\/lib: 4 files would travel, over the limit of 2\.$/,
+    );
+  });
+
+  it("stops at the bundle size of one member, and says which", async () => {
+    const at = project();
+    const member = NodePath.join(at.folder, LIB);
+    write(member, "noise.bin", NodeCrypto.randomBytes(64 * 1024));
+    const limits = { ...SET_LIMITS, maxBundleBytes: 16 * 1024 };
+    const members = await prepare(at, limits);
+
+    await expect(bundleSetMember(members[1]!, [members[1]!.baseCommit], limits)).rejects.toThrow(
+      /^packages\/lib: .*handoff limit/,
+    );
+    // Measured on what travels: with nothing new to send there is no bundle to measure.
+    expect(await bundleSetMember(members[1]!, [members[1]!.commit], limits)).toBeNull();
+  });
+
+  it("does not read a broken list of repositories as a thread in one repository", async () => {
+    const at = project();
+    const manifest = worktreeSetManifestPath(at.folder, NodePath);
+    expect(await readSourceSet(at.folder)).toBeNull();
+    NodeFS.writeFileSync(manifest, "{ not json");
+    await expect(readSourceSet(at.folder)).rejects.toThrow(/could not be read/);
+    NodeFS.writeFileSync(
+      manifest,
+      JSON.stringify({ version: 1, members: [{ repository: at.lib, relativePath: LIB }] }),
+    );
+    // No member is the folder itself: the thread's checkpoint is written in the first one.
+    expect(await checkpointFolder(at.folder)).toBe(NodePath.join(at.folder, LIB));
+  });
+
+  describe("built on the other machine", () => {
+    /** A second machine's copy of the project, holding the work of both members. */
+    const arrived = async () => {
+      const at = project();
+      write(at.folder, "app.ts", "export const one = 2;\n");
+      write(NodePath.join(at.folder, LIB), "draft.ts", "export {};\n");
+      const members = await prepare(at);
+      const there = NodePath.join(at.base, "there");
+      git(at.base, "clone", "-q", at.root, there);
+      NodeFS.mkdirSync(NodePath.join(there, "packages"), { recursive: true });
+      git(at.base, "clone", "-q", at.lib, NodePath.join(there, LIB));
+      for (const member of members) {
+        const root = NodePath.join(there, member.repositoryPath);
+        git(root, "fetch", "-q", member.root, `${member.ref}:refs/specwithcode/incoming/test`);
+      }
+      const set: ReplicateSet = {
+        members: members.map(({ root: _root, ref: _ref, ...member }) => member),
+      };
+      const folder = NodePath.join(at.base, "arrived", "work-handoff");
+      const build = (with_: ReplicateSet = set) =>
+        materializeSet({
+          projectRoot: there,
+          folder,
+          set: with_,
+          sourceLabel: "Source",
+          sourceThreadId: "thread-1",
+        });
+      return { at, there, set, folder, build, members };
+    };
+    const worktrees = (root: string) => git(root, "worktree", "list", "--porcelain");
+    const branches = (root: string) => git(root, "branch", "--format=%(refname:short)").split("\n");
+
+    it("takes down the members before the one that failed, and only what it made", async () => {
+      const { there, set, folder, build } = await arrived();
+      git(there, "branch", "keep-me");
+      const broken: ReplicateSet = {
+        members: [set.members[0]!, { ...set.members[1]!, commit: "0".repeat(40) }],
+      };
+
+      await expect(build(broken)).rejects.toThrow(/^packages\/lib: /);
+
+      // The project's own member was built first; nothing of it is left.
+      expect(NodeFS.existsSync(folder)).toBe(false);
+      expect(NodeFS.existsSync(worktreeSetManifestPath(folder, NodePath))).toBe(false);
+      expect(worktrees(there)).not.toContain(folder);
+      expect(branches(there).toSorted()).toEqual(["keep-me", "main"]);
+      expect(branches(NodePath.join(there, LIB))).toEqual(["main"]);
+
+      // The same takeover, asked again with the work there, builds the whole set.
+      const built = await build();
+      expect(built).toEqual({ worktreePath: folder, branch: "work" });
+      expect(read(folder, "app.ts")).toBe("export const one = 2;\n");
+      expect(read(NodePath.join(folder, LIB), "draft.ts")).toBe("export {};\n");
+      // And a repeat after that changes nothing.
+      write(folder, "typed-here.ts", "export {};\n");
+      expect(await build()).toEqual(built);
+      expect(read(folder, "typed-here.ts")).toBe("export {};\n");
+      expect(branches(there).toSorted()).toEqual(["keep-me", "main", "work"]);
+    });
+
+    it("builds again over an attempt that was cut before the set was whole", async () => {
+      const { there, set, folder, build } = await arrived();
+      // What a cut attempt leaves: the first member, and no manifest.
+      git(there, "worktree", "add", "-q", "-b", "work", folder, set.members[0]!.baseCommit);
+      expect(await startedSetFolder({ projectRoot: there, set, name: "work-handoff" })).toBe(
+        folder,
+      );
+
+      const built = await build();
+
+      expect(built.worktreePath).toBe(folder);
+      expect(read(folder, "app.ts")).toBe("export const one = 2;\n");
+      expect(read(NodePath.join(folder, LIB), "draft.ts")).toBe("export {};\n");
+      expect(NodeFS.existsSync(worktreeSetManifestPath(folder, NodePath))).toBe(true);
+    });
+
+    it("builds a set that has no member at the folder itself, and finds it on a repeat", async () => {
+      const { there, set, folder, build } = await arrived();
+      const nested: ReplicateSet = { members: [set.members[1]!] };
+
+      const built = await build(nested);
+
+      expect(built).toEqual({ worktreePath: folder, branch: "work" });
+      expect(NodeFS.existsSync(NodePath.join(folder, ".git"))).toBe(false);
+      expect(read(NodePath.join(folder, LIB), "draft.ts")).toBe("export {};\n");
+      expect(
+        await startedSetFolder({ projectRoot: there, set: nested, name: "work-handoff" }),
+      ).toBe(folder);
+      expect(await build(nested)).toEqual(built);
+    });
+
+    it("keeps no copy of the thread while one member's work is missing", async () => {
+      const { there, set } = await arrived();
+      const first = set.members[0]!;
+      const check = (with_: ReplicateSet) =>
+        checkArrivedSet({
+          projectRoot: there,
+          set: with_,
+          repositoryPath: first.repositoryPath,
+          commit: first.commit,
+        });
+
+      await expect(check(set)).resolves.toBeUndefined();
+      await expect(
+        check({ members: [first, { ...set.members[1]!, commit: "0".repeat(40) }] }),
+      ).rejects.toThrow(/^packages\/lib: its work did not arrive here/);
+      await expect(
+        check({ members: [first, { ...set.members[1]!, repositoryPath: "../elsewhere" }] }),
+      ).rejects.toThrow(/outside the project folder/);
+      await expect(check({ members: [set.members[1]!, first] })).rejects.toThrow(
+        /does not start with the thread's own checkpoint/,
+      );
+    });
+  });
 });

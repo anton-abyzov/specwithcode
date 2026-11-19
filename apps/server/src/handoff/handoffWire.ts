@@ -74,6 +74,15 @@ export function versionFailure(input: {
   };
 }
 /**
+ * A thread in a worktree set travels as one bundle per member repository
+ * (`set` and `setPart` on a replicate). A machine that does not name this
+ * would keep one repository and leave the rest behind, so it is sent none.
+ */
+export const HANDOFF_WORKTREE_SET_CAPABILITY = "handoff.worktree-set";
+export function hasWorktreeSets(capabilities: ReadonlyArray<string> | undefined): boolean {
+  return capabilities?.includes(HANDOFF_WORKTREE_SET_CAPABILITY) === true;
+}
+/**
  * What this machine's handoff does beyond the numbered protocol. `handoff.v2`
  * is the transfer record alone; the protocol version says nothing about it.
  */
@@ -81,6 +90,7 @@ export const HANDOFF_CAPABILITIES: ReadonlyArray<string> = [
   HANDOFF_V2_CAPABILITY,
   HANDOFF_PLAN_CAPABILITY,
   HANDOFF_TRACK_START_CAPABILITY,
+  HANDOFF_WORKTREE_SET_CAPABILITY,
 ];
 
 /**
@@ -142,6 +152,26 @@ export const HandoffLauncher = Schema.Struct({
 });
 export type HandoffLauncher = typeof HandoffLauncher.Type;
 
+/** A thread holds at most this many repositories on the wire. */
+export const HANDOFF_SET_MAX_MEMBERS = 16;
+
+/** One member repository of a worktree set, at the checkpoint the thread is handed over at. */
+export const ReplicateSetMember = Schema.Struct({
+  repositoryPath,
+  commit: sha,
+  baseCommit: sha,
+  branch: Schema.NullOr(text(512)),
+  /** Secret-like files this member's worktree has; the destination must hold each (paths only). */
+  requiredSecretPaths: Schema.optional(Schema.Array(text(1024)).check(Schema.isMaxLength(200))),
+});
+export type ReplicateSetMember = typeof ReplicateSetMember.Type;
+
+/** Every member of the thread's worktree set, the thread's own checkpoint first. */
+export const ReplicateSet = Schema.Struct({
+  members: Schema.Array(ReplicateSetMember).check(Schema.isMaxLength(HANDOFF_SET_MAX_MEMBERS)),
+});
+export type ReplicateSet = typeof ReplicateSet.Type;
+
 export const ReplicateMeta = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
   sourceLabel: text(120),
@@ -171,6 +201,15 @@ export const ReplicateMeta = Schema.Struct({
    * `handoffReviewLock` capability.
    */
   reviewLock: Schema.optional(Schema.NullOr(HandoffReviewLock)),
+  /**
+   * Worktree sets (`handoff.worktree-set`), sent only to a machine that names
+   * the capability. `setPart`: this frame is one other member's bundle, for the
+   * repository at `repositoryPath`; nothing of the thread is stored for it.
+   * `set`: the thread's own frame, sent last, naming every member's commit; it
+   * is refused unless each one is already there.
+   */
+  setPart: Schema.optional(Schema.Struct({ commit: sha })),
+  set: Schema.optional(ReplicateSet),
 });
 export type ReplicateMeta = typeof ReplicateMeta.Type;
 export const ReplicateResponse = Schema.Struct({ sequence: NonNegativeInt });

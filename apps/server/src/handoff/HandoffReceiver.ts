@@ -88,6 +88,12 @@ import { refComponent } from "./checkpointGit.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import * as HandoffTransferStore from "./HandoffTransferStore.ts";
 import {
+  checkArrivedSet,
+  materializeSet,
+  missingSetSecrets,
+  startedSetFolder,
+} from "./HandoffSetMoves.ts";
+import {
   acceptedMessage,
   claimRefusal,
   dropUnstarted,
@@ -453,7 +459,8 @@ export const make = Effect.gen(function* () {
       const project = yield* requireProject(caller, meta.sourceProjectId);
       const root = yield* repositoryRoot(project, meta.repositoryPath);
       const targetRef = incomingRef(meta.sourceEnvironmentId, meta.sourceThreadId);
-      const commit = meta.checkpoint.commit;
+      // One other member of a worktree set: its bundle lands in its own repository.
+      const commit = meta.setPart?.commit ?? meta.checkpoint.commit;
       yield* Effect.tryPromise({
         try: async () => {
           if (bundle === null || bundle.byteLength === 0) {
@@ -473,6 +480,21 @@ export const make = Effect.gen(function* () {
         },
         catch: (cause) => fromBundleError(label, cause),
       });
+      // The thread's copy is its own frame alone, and only with every member here.
+      if (meta.setPart !== undefined) return { sequence: meta.checkpoint.sequence };
+      if (meta.set !== undefined) {
+        const set = meta.set;
+        yield* Effect.tryPromise({
+          try: () =>
+            checkArrivedSet({
+              projectRoot: project.workspaceRoot,
+              set,
+              repositoryPath: meta.repositoryPath,
+              commit,
+            }),
+          catch: (cause) => fromBundleError(label, cause),
+        });
+      }
       const now = yield* nowIso;
       const verdict = yield* updateDocument((current) => {
         const result = upsertIncoming(current, {
@@ -553,6 +575,13 @@ export const make = Effect.gen(function* () {
             Effect.flatMap((root) => Effect.promise(() => missingFiles(root, required))),
             Effect.orElseSucceed(() => required),
           );
+        }
+        const set = detail.set;
+        if (set !== undefined) {
+          missing = [
+            ...missing,
+            ...(yield* Effect.promise(() => missingSetSecrets(project.workspaceRoot, set))),
+          ];
         }
       }
       const provider = modelSelection === null ? null : yield* providerFor(modelSelection);
@@ -978,8 +1007,10 @@ export const make = Effect.gen(function* () {
       const nested = detail.repositoryPath
         .split("/")
         .some((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+      const set = detail.set;
+      // A worktree set is never put in the project folder: it gets a thread folder of its own.
       const inPlace =
-        usesWorktrees || retriedInWorktree
+        set !== undefined || usesWorktrees || retriedInWorktree
           ? null
           : nested
             ? ({ applied: false, reason: "nested" } as const)
@@ -992,9 +1023,35 @@ export const make = Effect.gen(function* () {
                   }),
                 catch: (cause) => fromBundleError(label, cause),
               });
-      const workspace =
-        inPlace?.applied === true
+      const setWorkspace =
+        set === undefined
           ? null
+          : yield* Effect.tryPromise({
+              try: () => startedSetFolder({ projectRoot: project.workspaceRoot, set, name }),
+              catch: (cause) => fromBundleError(label, cause),
+            }).pipe(
+              Effect.flatMap((started) =>
+                started === null
+                  ? Effect.map(placement, (place) => place.worktreePath)
+                  : Effect.succeed(started),
+              ),
+              Effect.flatMap((folder) =>
+                Effect.tryPromise({
+                  try: () =>
+                    materializeSet({
+                      projectRoot: project.workspaceRoot,
+                      folder,
+                      set,
+                      sourceLabel: replica.sourceLabel,
+                      sourceThreadId: request.sourceThreadId,
+                    }),
+                  catch: (cause) => fromBundleError(label, cause),
+                }),
+              ),
+            );
+      const workspace =
+        setWorkspace !== null || inPlace?.applied === true
+          ? setWorkspace
           : yield* materialize({
               root,
               placement: yield* placement,

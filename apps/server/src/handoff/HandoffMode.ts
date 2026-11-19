@@ -57,6 +57,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { CheckpointError, pushCheckpointRef, writeCheckpoint } from "./checkpointGit.ts";
+import { checkpointFolder } from "./HandoffSetMoves.ts";
 import {
   capHandoffNote,
   fallbackHandoffNote,
@@ -476,7 +477,11 @@ export const make = Effect.gen(function* () {
           message: PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
         });
       }
-      const cwd = shell.worktreePath ?? project.value.workspaceRoot;
+      // A thread in a worktree set is checkpointed in the set's first member.
+      const cwd =
+        shell.worktreePath === null
+          ? project.value.workspaceRoot
+          : yield* Effect.promise(() => checkpointFolder(shell.worktreePath!));
       const written = yield* Effect.tryPromise({
         try: () => writeCheckpoint({ cwd, threadId }),
         catch: (cause) =>
