@@ -34,7 +34,8 @@ import { previousMarkContinued } from "./previousRelease383.test.fixture.ts";
 
 const temporary: Array<string> = [];
 afterEach(() => {
-  for (const path of temporary.splice(0)) NodeFS.rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  for (const path of temporary.splice(0))
+    NodeFS.rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 class LaunchFailed extends Data.TaggedError("LaunchFailed")<{ readonly message: string }> {}
@@ -329,39 +330,41 @@ describe("the transfer record of a handoff", () => {
     }),
   );
 
-  it.effect("keeps the hold when the destination could not write that it took its acceptance back", () =>
-    Effect.gen(function* () {
-      const rig = yield* makeRig(temporary);
-      const [a, b] = rig.machines as [RigMachine, RigMachine];
-      rig.addThread(a, t1);
-      b.onLaunch = (input) =>
-        Effect.fail(
-          new ThreadLaunchError({
-            operation: "resolve-project",
-            commandId: input.commandId,
-            projectId: input.projectId,
-            cause: "Resume or restore the project before starting new threads.",
-          }),
-        );
-      // Its records take the acceptance and then cannot be written again.
-      b.transfers.failWrite = (next) =>
-        Object.values(next.acceptances).some((entry) => entry.verdict === "not-accepted");
+  it.effect(
+    "keeps the hold when the destination could not write that it took its acceptance back",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* makeRig(temporary);
+        const [a, b] = rig.machines as [RigMachine, RigMachine];
+        rig.addThread(a, t1);
+        b.onLaunch = (input) =>
+          Effect.fail(
+            new ThreadLaunchError({
+              operation: "resolve-project",
+              commandId: input.commandId,
+              projectId: input.projectId,
+              cause: "Resume or restore the project before starting new threads.",
+            }),
+          );
+        // Its records take the acceptance and then cannot be written again.
+        b.transfers.failWrite = (next) =>
+          Object.values(next.acceptances).some((entry) => entry.verdict === "not-accepted");
 
-      yield* handOff(a, t1, b).pipe(Effect.flip);
+        yield* handOff(a, t1, b).pipe(Effect.flip);
 
-      // The acceptance is still on file there, so a repeat would launch: not a "no".
-      expect(acceptancesOf(b)[0]).toMatchObject({ verdict: "accepted", launched: false });
-      expect(leaseOf(a, t1)?.state).toBe("handing-off");
-      expect(transferOf(a, t1)?.state).toBe("unknown");
-      expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
+        // The acceptance is still on file there, so a repeat would launch: not a "no".
+        expect(acceptancesOf(b)[0]).toMatchObject({ verdict: "accepted", launched: false });
+        expect(leaseOf(a, t1)?.state).toBe("handing-off");
+        expect(transferOf(a, t1)?.state).toBe("unknown");
+        expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
 
-      // The project is resumed there: the repeat launches once, and the source is fenced.
-      b.onLaunch = null;
-      b.transfers.failWrite = null;
-      yield* a.moves.tick;
-      expect(b.launches).toHaveLength(1);
-      expect(leaseOf(a, t1)?.state).toBe("fenced");
-    }),
+        // The project is resumed there: the repeat launches once, and the source is fenced.
+        b.onLaunch = null;
+        b.transfers.failWrite = null;
+        yield* a.moves.tick;
+        expect(b.launches).toHaveLength(1);
+        expect(leaseOf(a, t1)?.state).toBe("fenced");
+      }),
   );
 
   it.effect("keeps the hold when it could not write that the handoff was refused", () =>
@@ -731,7 +734,9 @@ describe("the transfer record of a handoff", () => {
       expect(continuedOn(a, t2)).toBeNull();
       expect(turnRefusal(a.document, t2, a.environmentId)).not.toBeNull();
       expect(["sent", "unknown"]).toContain(transferOf(a, t2)?.state);
-      expect(rig.network.calls.filter((call) => call.to === c.environmentId && call.path === "takeover")).toHaveLength(0);
+      expect(
+        rig.network.calls.filter((call) => call.to === c.environmentId && call.path === "takeover"),
+      ).toHaveLength(0);
 
       // The destination answers again: the same operation is asked, and it says what it did.
       rig.network.rule = null;
@@ -878,7 +883,10 @@ describe("a hold from before transfer records", () => {
       yield* a.moves.tick;
       expect(leaseOf(a, t1)?.state).toBe("handing-off");
       expect(
-        transferOf(a, t1)?.candidates.map((candidate) => [candidate.environmentId, candidate.verdict]),
+        transferOf(a, t1)?.candidates.map((candidate) => [
+          candidate.environmentId,
+          candidate.verdict,
+        ]),
       ).toEqual([
         [b.environmentId, "not-accepted"],
         [c.environmentId, "unasked"],
@@ -928,7 +936,10 @@ describe("a hold from before transfer records", () => {
 
         // No machine is asked again: the record already says how it ended. A move that
         // was sent used its epoch up; one that never left keeps the epoch it had.
-        expect(leaseOf(a, t1)).toMatchObject({ state: "active", epoch: state === "failed" ? 2 : 1 });
+        expect(leaseOf(a, t1)).toMatchObject({
+          state: "active",
+          epoch: state === "failed" ? 2 : 1,
+        });
         expect(transfersOf(a, t1)).toHaveLength(1);
         expect(rig.callsOf("transfer-status")).toHaveLength(0);
       }),
@@ -1091,9 +1102,12 @@ describe("Continue here on a machine that holds a copy", () => {
       const [a, b, c] = rig.machines as [RigMachine, RigMachine, RigMachine];
       yield* copyOn(rig, a, [b, c]);
 
-      yield* Effect.all([handOff(a, t1, c).pipe(Effect.result), continueHere(b, a).pipe(Effect.result)], {
-        concurrency: 2,
-      });
+      yield* Effect.all(
+        [handOff(a, t1, c).pipe(Effect.result), continueHere(b, a).pipe(Effect.result)],
+        {
+          concurrency: 2,
+        },
+      );
 
       expect(b.launches.length + c.launches.length).toBe(1);
       expect(takeovers(rig)).toHaveLength(1);

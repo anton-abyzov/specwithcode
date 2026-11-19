@@ -105,13 +105,13 @@ describe("a destination's verdict for a lineage", () => {
     expect(claim(document, { sequence: 5 })[0].kind).toBe("divergent");
     expect(claim(document, { sequence: 3 })[0].kind).toBe("divergent");
     // An older epoch of a thread this machine accepted at a newer one.
-    expect(claim(document, { lineage: { ...lineage, epoch: 1 }, operationId: "op-0" })[0].kind).toBe(
-      "stale",
-    );
+    expect(
+      claim(document, { lineage: { ...lineage, epoch: 1 }, operationId: "op-0" })[0].kind,
+    ).toBe("stale");
     // A newer epoch is a new lineage.
-    expect(claim(document, { lineage: { ...lineage, epoch: 3 }, operationId: "op-3" })[0].kind).toBe(
-      "claimed",
-    );
+    expect(
+      claim(document, { lineage: { ...lineage, epoch: 3 }, operationId: "op-3" })[0].kind,
+    ).toBe("claimed");
   });
 
   it('answers "not accepted" for good once the source was told so', () => {
@@ -135,7 +135,11 @@ describe("a destination's verdict for a lineage", () => {
       operationId: "op-1",
     });
     const older = { ...lineage, epoch: 1 };
-    const [verdict, unchanged] = settleLineage(document, { lineage: older, operationId: null, now });
+    const [verdict, unchanged] = settleLineage(document, {
+      lineage: older,
+      operationId: null,
+      now,
+    });
     expect(verdict).toMatchObject({ verdict: "accepted", lineage });
     expect(unchanged).toBe(document);
   });
@@ -176,7 +180,13 @@ describe("a source's record of a move", () => {
   it("lets exactly one of two changes from the same state apply", () => {
     const document = putTransfer(EMPTY_HANDOFF_TRANSFER_DOCUMENT, record());
     // "Sent" and "Resume here" both start from a held record.
-    const [sent, afterSend] = transitionTransfer(document, "op-1", ["held"], { state: "sent" }, now);
+    const [sent, afterSend] = transitionTransfer(
+      document,
+      "op-1",
+      ["held"],
+      { state: "sent" },
+      now,
+    );
     expect(sent?.state).toBe("sent");
     const [resumed, afterBoth] = transitionTransfer(
       afterSend,
@@ -212,7 +222,11 @@ describe("a source's record of a move", () => {
 describe("an automatic move back to where a thread came from", () => {
   const arrival: HandoffTransferAcceptance = {
     ...claim(EMPTY_HANDOFF_TRANSFER_DOCUMENT, {
-      trigger: { kind: "automatic", key: "limit-handoff:one:run-1", usageWindowKey: "2026-11-19T19:00:00.000Z" },
+      trigger: {
+        kind: "automatic",
+        key: "limit-handoff:one:run-1",
+        usageWindowKey: "2026-11-19T19:00:00.000Z",
+      },
     })[0].acceptance,
   };
   const input = {

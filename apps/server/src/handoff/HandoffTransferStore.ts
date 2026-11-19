@@ -108,9 +108,7 @@ const make = Effect.gen(function* () {
         }),
       );
       yield* fs.rename(temporary, target);
-    }).pipe(
-      Effect.mapError(() => storageFailed("Could not save the handoff transfer records.")),
-    );
+    }).pipe(Effect.mapError(() => storageFailed("Could not save the handoff transfer records.")));
 
   let cache: HandoffTransferDocument | null = null;
   const current = Effect.suspend(() =>

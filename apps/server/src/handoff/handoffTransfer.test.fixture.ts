@@ -358,7 +358,9 @@ export const makeRig = (
         Layer.succeed(ServerConfig.ServerConfig, { worktreesDir } as never),
         Layer.succeed(ProjectService.ProjectService, {
           getById: (id: ProjectId) =>
-            Effect.succeed(id === target.projectId ? Option.some(projectOf(target)) : Option.none()),
+            Effect.succeed(
+              id === target.projectId ? Option.some(projectOf(target)) : Option.none(),
+            ),
           snapshot: Effect.succeed({ projects: [projectOf(target)] }),
         } as never),
         Layer.succeed(ProviderRegistry.ProviderRegistry, {
@@ -402,7 +404,9 @@ export const makeRig = (
                 Effect.sync(() => {
                   target.dispatched.push(command);
                   const thread =
-                    command.threadId === undefined ? undefined : target.threads.get(command.threadId);
+                    command.threadId === undefined
+                      ? undefined
+                      : target.threads.get(command.threadId);
                   if (command.type === "run.interrupt" && !target.ignoreInterrupt && thread) {
                     thread.activeRunId = null;
                   }
@@ -432,7 +436,10 @@ export const makeRig = (
         if (!PREVIOUS_PEER_PATHS.has(path)) {
           return yield* unknownPath(to.label);
         }
-        const caller = { sourceEnvironmentId: from.environmentId, grant: unscopedGrant(from.environmentId) };
+        const caller = {
+          sourceEnvironmentId: from.environmentId,
+          grant: unscopedGrant(from.environmentId),
+        };
         // The route decodes a body with no parse options: fields it does not know are dropped.
         const json = overTheWire(request);
         const invalid = new HandoffReceiver.HandoffRefusal({
@@ -505,7 +512,10 @@ export const makeRig = (
       request: unknown,
       bundle: unknown,
     ): Effect.Effect<unknown, HandoffReceiver.HandoffRefusal> => {
-      const caller = { sourceEnvironmentId: from.environmentId, grant: unscopedGrant(from.environmentId) };
+      const caller = {
+        sourceEnvironmentId: from.environmentId,
+        grant: unscopedGrant(from.environmentId),
+      };
       switch (path) {
         case "negotiate":
           return to.receiver.negotiate(caller, request as never);
@@ -573,7 +583,9 @@ export const makeRig = (
       const unused = () => Effect.die("unused");
       return HandoffPeers.of({
         target: (environmentId) =>
-          Effect.succeed(others.find((other) => other.environmentId === environmentId) ?? others[0]!),
+          Effect.succeed(
+            others.find((other) => other.environmentId === environmentId) ?? others[0]!,
+          ),
         targets: Effect.succeed(others),
         negotiate: (to, request) => send(self, to, "negotiate", request),
         replicate: (to, meta, bundle) => send(self, to, "replicate", meta, bundle),
