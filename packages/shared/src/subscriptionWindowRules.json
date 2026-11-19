@@ -1,0 +1,50 @@
+{
+  "maxAgeDays": 90,
+  "rules": [
+    {
+      "id": "copilot-monthly",
+      "provider": "copilot",
+      "when": "anyWindow",
+      "note": "Monthly allowance. Resets on the first of the month at 00:00 UTC, whatever your billing day.",
+      "source": "https://docs.github.com/en/copilot/concepts/billing/billing-for-individuals",
+      "quote": "your allowance resets to the full monthly amount at 00:00:00 UTC on the first day of each calendar month.",
+      "readOn": "2026-11-18"
+    },
+    {
+      "id": "cursor-weekly-pool",
+      "provider": "cursor",
+      "when": "weeklyWindow",
+      "note": "One weekly pool. No hourly limit.",
+      "source": "https://cursor.com/help/models-and-usage/usage-limits",
+      "quote": "every paid plan includes one weekly pool of usage for Cursor models",
+      "readOn": "2026-11-18"
+    },
+    {
+      "id": "cursor-monthly-cycle",
+      "provider": "cursor",
+      "when": "renewalDate",
+      "note": "Usage resets monthly with your billing cycle.",
+      "source": "https://cursor.com/help/models-and-usage/usage-limits",
+      "quote": "usage resets monthly with your billing cycle.",
+      "readOn": "2026-11-18"
+    },
+    {
+      "id": "grok-weekly-pool",
+      "provider": "grok",
+      "when": "weeklyWindow",
+      "note": "One weekly pool across Grok products.",
+      "source": "https://docs.x.ai/grok/faq",
+      "quote": "you get one shared weekly usage pool",
+      "readOn": "2026-11-18"
+    },
+    {
+      "id": "codex-pro-no-session",
+      "provider": "codex",
+      "when": "proWeeklyWithoutSession",
+      "note": "No 5-hour window reported for this plan.",
+      "source": null,
+      "quote": "The reading itself. OpenAI's pricing page was read only as a summary, so no vendor sentence is quoted.",
+      "readOn": "2026-11-18"
+    }
+  ]
+}

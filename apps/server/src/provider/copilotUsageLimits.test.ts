@@ -71,6 +71,9 @@ describe("copilotUserResponseToLimits", () => {
         label: "Premium requests",
         usedPercent: 25,
         resetsAt: "2026-12-01T00:00:00.000Z",
+        used: 75,
+        limit: 300,
+        unit: "premium requests",
       },
     ]);
     expect(limits.subscriptionKey).toMatch(/^copilot:sha256:[a-f0-9]{64}$/u);
@@ -119,8 +122,29 @@ describe("copilotUserResponseToLimits", () => {
         label: "Chat",
         usedPercent: 80,
         resetsAt: "2026-12-01T00:00:00.000Z",
+        used: 40,
+        limit: 50,
+        unit: "chat",
       },
     ]);
+  });
+
+  it("publishes no amounts without a finite remaining count, and never a negative used", () => {
+    const withPremium = (premium: Record<string, unknown>) =>
+      copilotUserResponseToLimits({
+        response: {
+          ...proResponse,
+          quota_snapshots: { ...proResponse.quota_snapshots, premium_interactions: quota(premium) },
+        },
+        checkedAt,
+      }).windows[0];
+    const percentOnly = withPremium({ entitlement: 300, remaining: null, percent_remaining: 40, has_quota: true });
+    expect(percentOnly?.usedPercent).toBe(60);
+    expect(percentOnly).not.toHaveProperty("used");
+    expect(percentOnly).not.toHaveProperty("limit");
+    expect(percentOnly).not.toHaveProperty("unit");
+    const over = withPremium({ entitlement: 300, remaining: 320, percent_remaining: 100, has_quota: true });
+    expect(over).toMatchObject({ used: 0, limit: 300, unit: "premium requests" });
   });
 
   it("publishes no spent window for an unlimited quota", () => {

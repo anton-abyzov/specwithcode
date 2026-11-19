@@ -93,8 +93,8 @@ describe("SubscriptionRow", () => {
       },
       [lost(now - 4 * DAY, 41, 9 * HOUR)],
     );
-    expect(html).toContain("Renews Dec 2");
-    expect(html).not.toContain("Set day");
+    expect(html).toContain("Renews Dec 2 (reported by OpenAI)");
+    expect(html).toContain("Set day");
     expect(html).toContain("up to 41%");
   });
 
@@ -170,5 +170,17 @@ describe("SubscriptionsDashboard", () => {
     expect(empty).toContain('data-efficiency-chart="empty"');
     expect(empty).toContain('data-resets-table="empty"');
     expect(empty).not.toMatch(/\b0%/);
+  });
+});
+
+describe("the Subscriptions header line", () => {
+  it("counts one subscription in the singular and leaves out what is not there", async () => {
+    const { subscriptionsSummaryText } = await import("./subscriptionRows");
+    expect(
+      subscriptionsSummaryText(
+        { subscriptions: 1, atLimit: 0, nextResetAt: now - HOUR, withoutReading: 0 },
+        now,
+      ),
+    ).toBe("1 subscription · 0 at a limit");
   });
 });

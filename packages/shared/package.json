@@ -288,6 +288,10 @@
       "types": "./src/modelSearchIntents.ts",
       "import": "./src/modelSearchIntents.ts"
     },
+    "./subscriptionWindowRules": {
+      "types": "./src/subscriptionWindowRules.ts",
+      "import": "./src/subscriptionWindowRules.ts"
+    },
     "./providerUsageLinks": {
       "types": "./src/providerUsageLinks.ts",
       "import": "./src/providerUsageLinks.ts"
