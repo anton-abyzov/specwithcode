@@ -14,6 +14,7 @@ import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  HANDOFF_TRACK_START_CAPABILITY,
   HANDOFF_V2_CAPABILITY,
   type ModelSelection,
   type OrchestratorMcpProviderUsage,
@@ -52,6 +53,7 @@ import { makeRig, type RigMachine } from "./handoffTransfer.test.fixture.ts";
 import {
   HANDOFF_CAPABILITIES,
   HANDOFF_PROTOCOL_VERSION,
+  HANDOFF_WORKTREE_SET_CAPABILITY,
   PEER_PATHS,
   PeerPreflightRequest,
 } from "./handoffWire.ts";
@@ -1074,14 +1076,18 @@ const caller = (machine: RigMachine) => ({
   grant: unscopedGrant(machine.environmentId),
 });
 
+/** Every capability this build names, in order: a new or missing one fails here. */
+const ADVERTISED = [
+  HANDOFF_V2_CAPABILITY,
+  HANDOFF_PLAN_CAPABILITY,
+  HANDOFF_TRACK_START_CAPABILITY,
+  HANDOFF_WORKTREE_SET_CAPABILITY,
+];
+
 describe("the plan's own capability (EC2-04)", () => {
   it("is advertised beside the transfer record, and is not the transfer record", () => {
     expect(HANDOFF_PLAN_CAPABILITY).not.toBe(HANDOFF_V2_CAPABILITY);
-    // Later wire features add their own names after these two.
-    expect(HANDOFF_CAPABILITIES.slice(0, 2)).toEqual([
-      HANDOFF_V2_CAPABILITY,
-      HANDOFF_PLAN_CAPABILITY,
-    ]);
+    expect(HANDOFF_CAPABILITIES).toEqual(ADVERTISED);
     expect(PEER_PATHS.has("check")).toBe(true);
   });
 
@@ -1110,7 +1116,7 @@ describe("the plan's own capability (EC2-04)", () => {
           threads: [{ ...request().threads[0]!, sourceProjectId: a.projectId }],
         }),
       );
-      expect(answer.capabilities).toEqual([...HANDOFF_CAPABILITIES]);
+      expect(answer.capabilities).toEqual(ADVERTISED);
       expect(answer.results).toHaveLength(1);
       expect(answer.results[0]?.failures).toEqual([]);
       expect(answer.results[0]?.evidence?.modelSelection).toEqual(opus);
