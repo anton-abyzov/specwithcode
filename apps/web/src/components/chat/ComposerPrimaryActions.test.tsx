@@ -17,6 +17,7 @@ vi.mock("../SidebarStageBackdrop", () => ({
   useSidebarStageBackdropVariant: (enabled = true) => (enabled ? stageArtworkState.variant : null),
 }));
 
+import { MachineSendTargetContext } from "~/studio/machineIdentity";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 
 function renderPendingActions(isRunning: boolean) {
@@ -48,12 +49,35 @@ function renderPendingActions(isRunning: boolean) {
   );
 }
 
+/** A thread on another machine than this window's: fixture names, no real machine. */
+const SEND_TARGET = { name: "Workstation W", color: "teal", short: "WW" } as const;
+
+/** The Send button as a browser holds it, so its text is every span at every width. */
+function sendButtonTo(target: typeof SEND_TARGET | null, changes: Record<string, unknown> = {}) {
+  const host = document.createElement("div");
+  host.innerHTML = renderToStaticMarkup(
+    createElement(
+      MachineSendTargetContext,
+      { value: target },
+      createElement(ComposerPrimaryActions, sendButtonProps(null, changes)),
+    ),
+  );
+  const button = host.querySelector("button");
+  if (!button) throw new Error("no Send button rendered");
+  return button;
+}
+
 function renderSendButton(
   sendDisabledReason: string | null = null,
   changes: Record<string, unknown> = {},
 ) {
   return renderToStaticMarkup(
-    createElement(ComposerPrimaryActions, {
+    createElement(ComposerPrimaryActions, sendButtonProps(sendDisabledReason, changes)),
+  );
+}
+
+function sendButtonProps(sendDisabledReason: string | null, changes: Record<string, unknown>) {
+  return {
       compact: true,
       canOperateThread: true,
       pendingAction: null,
@@ -69,10 +93,9 @@ function renderSendButton(
       hasSendableContent: true,
       onPreviousPendingQuestion: () => {},
       onInterrupt: () => {},
-      onImplementPlanInNewThread: () => {},
-      ...changes,
-    }),
-  );
+    onImplementPlanInNewThread: () => {},
+    ...changes,
+  };
 }
 
 afterEach(() => {
@@ -81,6 +104,33 @@ afterEach(() => {
 });
 
 describe("ComposerPrimaryActions", () => {
+  // Increment 1390, AC-02: Send can never name a machine the chip does not.
+  it.each([
+    ["wide", false],
+    ["narrow", true],
+  ])("never prints the machine on Send to another machine (%s)", (_width, compact) => {
+    const button = sendButtonTo(SEND_TARGET, { compact });
+    const text = button.textContent ?? "";
+    expect(text).not.toContain(SEND_TARGET.name);
+    expect(text).not.toContain(SEND_TARGET.short);
+    expect(text.trim()).toBe("");
+    // The wide and the narrow label were two spans, one hidden by a container query.
+    expect(button.querySelector("[data-send-target-short]")).toBeNull();
+    expect(button.querySelectorAll("span")).toHaveLength(0);
+    // What it shows is what a send to this machine shows: the arrow.
+    expect(button.innerHTML).toBe(sendButtonTo(null, { compact }).innerHTML);
+    // It keeps the machine's color, and a screen reader hears where the message goes.
+    expect(button.classList.contains("machine-send")).toBe(true);
+    expect(button.getAttribute("data-machine-color")).toBe(SEND_TARGET.color);
+    expect(button.getAttribute("aria-label")).toBe("Send to this thread on Workstation W");
+  });
+
+  it("is as wide as a send to this machine", () => {
+    const sizes = (button: Element) =>
+      [...button.classList].filter((name) => /(^|:)(w|px|gap|text)-/u.test(name)).toSorted();
+    expect(sizes(sendButtonTo(SEND_TARGET))).toEqual(sizes(sendButtonTo(null)));
+  });
+
   it("says the typed message waits for an unreachable machine", () => {
     const markup = renderSendButton(null, { isEnvironmentUnavailable: true, waitingFor: "M1" });
     expect(markup).toContain('aria-label="Waiting for M1"');
