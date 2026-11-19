@@ -69,6 +69,15 @@ const STATE_BADGE: Record<RoutineTone, "success" | "error" | "info" | "outline">
   manual: "outline",
 };
 
+/**
+ * The revision the row showed, sent with a change: the routine's runner
+ * refuses one made against a copy that went stale. A machine that predates
+ * revisions lists none, and none is sent.
+ */
+export function shownRevision(task: Pick<ScheduledTask, "revision">) {
+  return task.revision === undefined ? {} : { expectedRevision: task.revision };
+}
+
 /** Asks before a delete; deleting a routine cannot be undone. */
 export async function confirmRoutineDelete(message: string): Promise<boolean> {
   return (
@@ -129,10 +138,13 @@ export function ScheduledTaskRow({
     setBusy(true);
     const result =
       action === "toggle"
-        ? await toggle({ environmentId, input: { id: task.id, enabled: !task.enabled } })
+        ? await toggle({
+            environmentId,
+            input: { id: task.id, enabled: !task.enabled, ...shownRevision(task) },
+          })
         : action === "run"
           ? await run({ environmentId, input: { id: task.id } })
-          : await remove({ environmentId, input: { id: task.id } });
+          : await remove({ environmentId, input: { id: task.id, ...shownRevision(task) } });
     setBusy(false);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       toastManager.add(
