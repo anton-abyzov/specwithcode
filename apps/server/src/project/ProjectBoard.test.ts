@@ -15,7 +15,7 @@ import {
   readBoardCard,
   readProjectBoard,
 } from "./ProjectBoard.ts";
-import { commitAll, repository, setRemote, worktree } from "./incrementCopies.testkit.ts";
+import { commitAll, git, repository, setRemote, worktree } from "./incrementCopies.testkit.ts";
 
 const roots: string[] = [];
 const NOW = Date.parse("2026-11-14T12:00:00Z");
@@ -351,6 +351,9 @@ describe("readProjectBoard", () => {
     }
     const merged = commitAll(root, "all");
     setRemote(root, merged);
+    // A fetched branch arrives packed; 6,000 loose objects from the local
+    // commit would time the disk, not the Board.
+    git(root, "repack", "-adq");
     // Four thread worktrees, each holding every increment; one is ahead on an open one.
     const lanes = [];
     for (const lane of ["lane-a", "lane-b", "lane-c", "lane-d"]) {

@@ -41,7 +41,7 @@ import * as NodeFSP from "node:fs/promises";
 import { parseIncrementMetadata } from "../mods/SpecweaveProgress.ts";
 import { nodePath as NodePath } from "../nodePath.ts";
 import { checkoutCommonDir, registeredCheckouts } from "./registeredCheckout.ts";
-import { incrementIds, readBounded } from "./ThreadIncrementProgress.ts";
+import { compareNumbered, incrementIds, readBounded } from "./ThreadIncrementProgress.ts";
 import { INCREMENTS_DIR } from "./ThreadReports.ts";
 
 const SMALL_BYTES = 524_288;
@@ -1127,7 +1127,5 @@ export function copyIds(copies: BoardCopies): string[] {
   const ids = new Set(copies.projectIds);
   for (const id of copies.remote?.increments.keys() ?? []) ids.add(id);
   for (const worktree of copies.worktrees) for (const id of worktree.ids) ids.add(id);
-  return [...ids].toSorted((left, right) =>
-    right.localeCompare(left, undefined, { numeric: true }),
-  );
+  return [...ids].toSorted((left, right) => compareNumbered(right, left));
 }
