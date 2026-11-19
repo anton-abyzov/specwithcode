@@ -344,6 +344,54 @@ describe("the receiver confirms its own track, account and usage (AC-38)", () =>
   });
 });
 
+describe("the reset a machine with no room names (AC-39)", () => {
+  it("is the earliest of its sign-ins on the track, not the first one listed", () => {
+    const at14 = "2026-11-19T14:30:00.000Z";
+    const answer = confirm({
+      trackEntries: [fable, astra],
+      signIns: [
+        signIn(fable, "claudeAgent", "Claude", { usedPercent: 100, resetsAt: laterReset }),
+        signIn(astra, "codex", "Codex", { usedPercent: 100, resetsAt: at14 }),
+      ],
+    });
+    expect(answer.failures.map((failure) => failure.check)).toEqual(["provider"]);
+    expect(answer.evidence).toMatchObject({ automatic: false, resetsAt: at14 });
+  });
+
+  it("takes no reset from a sign-in whose usage is not known", () => {
+    const at14 = "2026-11-19T14:30:00.000Z";
+    const answer = confirm({
+      trackEntries: [fable, astra],
+      signIns: [
+        // A reading too old to act on: its reset is not evidence either.
+        signIn(fable, "claudeAgent", "Claude", {
+          usedPercent: 100,
+          resetsAt: at14,
+          observedAt: stale,
+        }),
+        signIn(astra, "codex", "Codex", { usedPercent: 100, resetsAt: laterReset }),
+      ],
+    });
+    expect(answer.evidence).toMatchObject({
+      kind: "different-account",
+      automatic: false,
+      resetsAt: laterReset,
+    });
+  });
+
+  it("skips a reset that has passed and one nobody named", () => {
+    const answer = confirm({
+      trackEntries: [fable, fableWork, astra],
+      signIns: [
+        signIn(fable, "claudeAgent", "Claude", { usedPercent: 100, resetsAt: null }),
+        signIn(fableWork, "claudeAgent", "Claude", { usedPercent: 100, resetsAt: stale }),
+        signIn(astra, "codex", "Codex", { usedPercent: 100, resetsAt: laterReset }),
+      ],
+    });
+    expect(answer.evidence).toMatchObject({ automatic: false, resetsAt: laterReset });
+  });
+});
+
 describe("the thread's track at the source", () => {
   const lanes = { complex: [fable, astra], routine: [opus] };
   const both = { complex: [fable, opus], routine: [opus, astra] };
@@ -1029,7 +1077,11 @@ const caller = (machine: RigMachine) => ({
 describe("the plan's own capability (EC2-04)", () => {
   it("is advertised beside the transfer record, and is not the transfer record", () => {
     expect(HANDOFF_PLAN_CAPABILITY).not.toBe(HANDOFF_V2_CAPABILITY);
-    expect(HANDOFF_CAPABILITIES).toEqual([HANDOFF_V2_CAPABILITY, HANDOFF_PLAN_CAPABILITY]);
+    // Later wire features add their own names after these two.
+    expect(HANDOFF_CAPABILITIES.slice(0, 2)).toEqual([
+      HANDOFF_V2_CAPABILITY,
+      HANDOFF_PLAN_CAPABILITY,
+    ]);
     expect(PEER_PATHS.has("check")).toBe(true);
   });
 
@@ -1058,7 +1110,7 @@ describe("the plan's own capability (EC2-04)", () => {
           threads: [{ ...request().threads[0]!, sourceProjectId: a.projectId }],
         }),
       );
-      expect(answer.capabilities).toEqual([HANDOFF_V2_CAPABILITY, HANDOFF_PLAN_CAPABILITY]);
+      expect(answer.capabilities).toEqual([...HANDOFF_CAPABILITIES]);
       expect(answer.results).toHaveLength(1);
       expect(answer.results[0]?.failures).toEqual([]);
       expect(answer.results[0]?.evidence?.modelSelection).toEqual(opus);

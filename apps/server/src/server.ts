@@ -721,8 +721,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Limit handoff reads the machines above; they are built on the runtime it lives in.
   // Its moves are handoff mode's (without the adapter nothing would ever move).
   MachineLimitHandoff.layerFleet.pipe(
-    Layer.provide(RemoteWorkers.layerFleetWorkers),
     Layer.provide(LimitHandoffAdapter.layer),
+    // The adapter asks a machine what it would run a track's thread on.
+    Layer.provide(HandoffPeers.layer),
+    // Last: the peers above reach the machines through the same fleet workers.
+    Layer.provide(RemoteWorkers.layerFleetWorkers),
   ),
   MachineLimitHandoff.layerRpcHandlers,
   // Interrupts the work of a machine revoked here once its grace has passed.

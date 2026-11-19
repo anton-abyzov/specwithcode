@@ -29,7 +29,15 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { HandoffMode } from "../handoff/HandoffMode.ts";
+import { type HandoffPeerError, HandoffPeers } from "../handoff/handoffPeers.ts";
+import type { PeerCheckRequest, PeerCheckResponse } from "../handoff/handoffPlan.ts";
+import {
+  HANDOFF_APP_VERSION,
+  HANDOFF_CAPABILITIES,
+  HANDOFF_PROTOCOL_VERSION,
+} from "../handoff/handoffWire.ts";
 import type { HandoffDocument } from "../handoff/handoffState.ts";
+import { AUTOMATIC_OFF } from "../handoff/HandoffTransferRunner.ts";
 import { turnRefusal } from "../handoff/HandoffTurnGate.ts";
 import {
   type LimitHandoffOutcome,
@@ -44,6 +52,13 @@ const NOTE_MAX = 300;
 
 export interface LimitHandoffAdapterDeps {
   readonly environmentId: EnvironmentId;
+  /** This machine, as a check names it to the machine it asks. */
+  readonly machineLabel?: string;
+  /** The peer call that asks a machine what it would run a thread on (1390). */
+  readonly check?: (
+    environmentId: EnvironmentId,
+    request: PeerCheckRequest,
+  ) => Effect.Effect<PeerCheckResponse, HandoffPeerError>;
   readonly document: Effect.Effect<HandoffDocument, HandoffModeError>;
   readonly handOff: (input: HandOffInput) => Effect.Effect<HandOffResult, HandoffModeError>;
   /** Puts the note on the source thread's link to `continuation`; never fails the move. */
@@ -163,20 +178,71 @@ export function makeLimitHandoffPort(deps: LimitHandoffAdapterDeps): LimitHandof
       // An unreadable document may hide a move in flight.
       Effect.orElseSucceed(() => doubt("The handoff state could not be read.")),
     );
+  const check = deps.check;
+  const optedOut = (threadId: ThreadId) =>
+    deps.document.pipe(
+      Effect.map((document) => document.threads[threadId]?.mode === "off"),
+      Effect.orElseSucceed(() => true),
+    );
   return {
     available: true,
+    // Only the thread's own Off opts out; the project default and On both let it start.
+    // A preference that cannot be read starts nothing.
+    optedOut,
+    ...(check === undefined
+      ? {}
+      : ({
+          check: (environmentId: EnvironmentId, input) =>
+            check(environmentId, {
+              sourceEnvironmentId: deps.environmentId,
+              sourceLabel: (deps.machineLabel ?? deps.environmentId).slice(0, 120),
+              protocolVersion: HANDOFF_PROTOCOL_VERSION,
+              appVersion: HANDOFF_APP_VERSION,
+              capabilities: HANDOFF_CAPABILITIES,
+              ...input,
+            }).pipe(
+              Effect.map((response) => ({ kind: "answered" as const, response })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  kind: "failed" as const,
+                  error: { message: error.message, needsUpdate: error.needsUpdate === true },
+                }),
+              ),
+            ),
+        } satisfies Pick<LimitHandoffPortShape, "check">)),
     handOff: (request) =>
       Effect.gen(function* () {
         const before = yield* held(request.threadId);
         if (before !== null) return before;
+        // Off is read again here, at the send: it may have been chosen while a machine
+        // answered. The runner refuses it once more before the hold.
+        if (yield* optedOut(request.threadId))
+          return {
+            type: "refused",
+            code: "automatic_off",
+            message: AUTOMATIC_OFF,
+            retryable: true,
+          } satisfies LimitHandoffOutcome;
         const answer = yield* deps
           .handOff({
             threadId: request.threadId,
             destinationEnvironmentId: request.destinationEnvironmentId,
             modelSelection: request.modelSelection,
-            // The transfer record keeps who asked, so a thread that arrives for
-            // a run is not sent straight back for the same one.
-            trigger: { kind: "automatic", key: request.idempotencyKey.slice(0, 512) },
+            // The transfer record keeps who asked, for which run (the key names it)
+            // and why, so a thread that arrives for a run is not sent straight
+            // back for the same one and both machines can say why it left.
+            trigger: {
+              kind: "automatic",
+              key: request.idempotencyKey.slice(0, 512),
+              reason: request.sourceSummary.slice(0, 120),
+              ...(request.usageWindowKey === undefined
+                ? {}
+                : { usageWindowKey: request.usageWindowKey.slice(0, 120) }),
+              // The run and the disposition the move was admitted for; the runner
+              // refuses it before the hold when the thread is no longer there.
+              ...(request.runId === undefined ? {} : { runId: request.runId.slice(0, 256) }),
+              disposition: request.resume ? "resume" : "ready",
+            },
           })
           .pipe(Effect.result);
         if (answer._tag === "Success") {
@@ -222,8 +288,11 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const mode = yield* HandoffMode;
     const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const peers = yield* HandoffPeers;
     return makeLimitHandoffPort({
       environmentId: mode.environmentId,
+      machineLabel: mode.machineLabel,
+      check: peers.check,
       document: mode.document,
       handOff: mode.handOff,
       recordNote: (input) =>

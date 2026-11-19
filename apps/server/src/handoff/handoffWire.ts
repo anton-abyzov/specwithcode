@@ -11,6 +11,7 @@ import {
   CoordinatorRoutineCopies,
   CoordinatorStandbyAfterMinutes,
   EnvironmentId,
+  HANDOFF_TRACK_START_CAPABILITY,
   HANDOFF_V2_CAPABILITY,
   HandoffCapabilities,
   HandoffCheckpoint,
@@ -79,6 +80,7 @@ export function versionFailure(input: {
 export const HANDOFF_CAPABILITIES: ReadonlyArray<string> = [
   HANDOFF_V2_CAPABILITY,
   HANDOFF_PLAN_CAPABILITY,
+  HANDOFF_TRACK_START_CAPABILITY,
 ];
 
 /**

@@ -1,297 +1,54 @@
 import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import {
-  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   HandoffModeError,
-  type OrchestrationV2ServerCommand,
   type OrchestratorMcpMachine,
-  type OrchestratorMcpMachineListResult,
-  ProjectId,
   ProviderDriverKind,
-  ProviderInstanceId,
   type ProviderLimitMachineTarget,
   RunId,
-  type ServerProvider,
-  type ServerSettings,
   ThreadId,
 } from "@specweave-studio/contracts";
 import { it as itEffect } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 import { PERSONAL_ASSISTANT_PRIVATE_MESSAGE } from "@specweave-studio/shared/personalAssistant";
 
-import {
-  HandoffTurnGate,
-  PAUSED_OFFLINE_REFUSAL,
-  turnRefusal,
-} from "../handoff/HandoffTurnGate.ts";
+import { PAUSED_OFFLINE_REFUSAL } from "../handoff/HandoffTurnGate.ts";
 import * as PreviousRelease from "../handoff/handoffReviewLock.previousRelease.test.fixture.ts";
 import {
   EMPTY_HANDOFF_DOCUMENT,
   emptyThreadRecord,
   type HandoffDocument,
 } from "../handoff/handoffState.ts";
-import * as Instances from "../provider/ProviderInstanceRegistry.ts";
-import * as Providers from "../provider/ProviderRegistry.ts";
-import * as Projects from "../project/ProjectService.ts";
-import { provider } from "../studio/fixtures.ts";
-import { accountFingerprint, accountPoolKey } from "../usage/providerUsageSummary.ts";
 import { makeLimitHandoffPort } from "./LimitHandoffAdapter.ts";
 import {
   LIMIT_PREMOVE_RECENT_MS,
   type LimitHandoffOutcome,
-  type LimitHandoffPortShape,
   type LimitHandoffRequest,
   limitHandoffTrigger,
   limitResumable,
-  make,
-  MachineLimitHandoff,
-  type MachineLimitHandoffShape,
 } from "./MachineLimitHandoff.ts";
-import { makeSweep, ProviderFallbackEnv } from "./ProviderFallbackWorker.ts";
-import { fallbackPolicyTestLayer } from "./providerFallbackPolicyTestHelpers.ts";
-import * as ProjectionStore from "./ProjectionStore.ts";
-import * as ThreadManagement from "./ThreadManagementService.ts";
-
-const stoppedAt = Date.parse("2026-10-20T13:54:00.000Z");
-const resetsAt = "2026-10-20T18:00:00.000Z";
-const claudeId = ProviderInstanceId.make("claudeAgent");
-const codexId = ProviderInstanceId.make("codex");
-const minis = EnvironmentId.make("env-minis");
-const m4 = EnvironmentId.make("env-m4");
-const m3 = EnvironmentId.make("env-m3");
-const project = {
-  id: ProjectId.make("easychamp"),
-  title: "EasyChamp",
-  workspaceRoot: "/project",
-  defaultModelSelection: null,
-  workspaceSettings: DEFAULT_PROJECT_WORKSPACE_SETTINGS,
-  scripts: [],
-  createdAt: "2026-10-09T00:00:00Z",
-  updatedAt: "2026-10-09T00:00:00Z",
-  deletedAt: null,
-};
-
-function withUsage(base: ServerProvider, usedPercent: number, slug: string): ServerProvider {
-  return {
-    ...base,
-    models: [{ slug, name: slug, isCustom: false, isDefault: true, capabilities: null }],
-    usageLimits: {
-      ...base.usageLimits!,
-      windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent, resetsAt }],
-    },
-  };
-}
-
-const claudeSpent = (at: number) => withUsage(provider(claudeId, "claudeAgent", at), 100, "opus");
-const codex = (at: number, used: number) =>
-  withUsage(provider(codexId, "codex", at), used, "gpt-6");
-const sourcePool = accountFingerprint(accountPoolKey(claudeSpent(stoppedAt))!);
-const otherPool = `sha256:${"b".repeat(64)}`;
-
-const limited = {
-  id: ThreadId.make("t1"),
-  projectId: project.id,
-  providerInstanceId: claudeId,
-  modelSelection: { instanceId: claudeId, model: "opus" },
-  status: "failed" as const,
-  lastErrorClass: "usage_limit" as const,
-  latestRunId: RunId.make("r1"),
-  activeRunId: null,
-  pendingRuntimeRequest: null,
-  settledOverride: null,
-  usageLimitResetAt: resetsAt,
-  latestRunCompletedAt: DateTime.makeUnsafe(stoppedAt),
-};
-
-const target = (environmentId: EnvironmentId, label: string): ProviderLimitMachineTarget => ({
-  environmentId,
-  label,
-  modelSelection: { instanceId: claudeId, model: "opus" },
-});
-
-function machine(
-  environmentId: EnvironmentId,
-  label: string,
-  overrides: Partial<OrchestratorMcpMachine> = {},
-  usage: { accountFingerprint?: string | null; usedPercent?: number | null } = {},
-): OrchestratorMcpMachine {
-  return {
-    id: label.toLowerCase(),
-    label,
-    environmentId,
-    status: "ready",
-    access: "full-access",
-    grantExpiresAt: null,
-    project: { match: "configured", projectId: ProjectId.make("remote"), title: "EasyChamp" },
-    providers: [
-      {
-        providerInstanceId: claudeId,
-        driverKind: ProviderDriverKind.make("claudeAgent"),
-        models: ["opus"],
-        available: true,
-        usage: {
-          accountFingerprint: otherPool,
-          usedPercent: 30,
-          resetsAt,
-          signedIn: true,
-          observedAt: DateTime.formatIso(DateTime.makeUnsafe(stoppedAt)),
-          ...usage,
-        },
-      },
-    ],
-    ...overrides,
-  } as OrchestratorMcpMachine;
-}
-
-interface Scenario {
-  readonly settings?: Partial<ServerSettings>;
-  readonly thread?: Record<string, unknown>;
-  readonly machines: ReadonlyArray<OrchestratorMcpMachine>;
-  /** Answer per destination; a missing entry moves the thread. */
-  readonly answers?: Record<string, LimitHandoffOutcome | "die">;
-  /** Leave the port and fleet unbound, as a server without 0967 is. */
-  readonly unbound?: boolean;
-  /** Spend this machine's other provider too, so nothing local qualifies. */
-  readonly localSpent?: boolean;
-  /** The thread's project is this machine's personal assistant. */
-  readonly personal?: boolean;
-  /** The handoff state on disk, read by the turn gate (none: every turn starts). */
-  readonly handoffDocument?: HandoffDocument;
-  /** Replaces the scripted port, e.g. with the real adapter over a fake 0967. */
-  readonly port?: LimitHandoffPortShape;
-  /** Runs against the service before the sweeps. */
-  readonly before?: (handoff: MachineLimitHandoffShape) => Effect.Effect<void>;
-  /** A person's Stop shows from this read of the thread's Stop requests on. */
-  readonly stopFromRead?: number;
-}
-
-function run(scenario: Scenario, sweeps = 1) {
-  const requests: LimitHandoffRequest[] = [];
-  const dispatched: OrchestrationV2ServerCommand[] = [];
-  let stopReads = 0;
-  const settings: ServerSettings = {
-    ...DEFAULT_SERVER_SETTINGS,
-    providerLimitAction: "switch",
-    providerLimitFallbackModelSelection: null,
-    providerLimitFallbackModels: [{ instanceId: codexId, model: "gpt-6" }],
-    providerLimitMachineTargets: [target(minis, "Minis"), target(m3, "M3")],
-    ...scenario.settings,
-  };
-  const thread = { ...limited, ...scenario.thread };
-  const providers = () => [
-    claudeSpent(stoppedAt),
-    codex(stoppedAt, scenario.localSpent ? 100 : 20),
-  ];
-  const deps = Layer.mergeAll(
-    Layer.mock(Projects.ProjectService)({
-      getById: () =>
-        Effect.succeed(
-          Option.some(
-            scenario.personal
-              ? {
-                  ...project,
-                  title: "Example Household",
-                  workspaceRoot: "/fixtures/example-household",
-                  workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, kind: "personal" },
-                }
-              : project,
-          ),
-        ),
-    }),
-    fallbackPolicyTestLayer(settings),
-    Layer.mock(Providers.ProviderRegistry)({
-      getProviders: Effect.sync(providers),
-      refreshInstance: () => Effect.sync(providers),
-    }),
-    Layer.mock(Instances.ProviderInstanceRegistry)({
-      getInstance: () => Effect.succeed(undefined),
-    }),
-    Layer.mock(ProjectionStore.ProjectionStoreV2)({
-      getShellSnapshot: () => Effect.succeed({ threads: [thread] } as never),
-      getThreadShell: () => Effect.succeed(thread as never),
-      getThreadRecords: (threadId, _fields, filter) =>
-        filter?.turnItemTypes?.includes("run_interrupt_request")
-          ? Effect.sync(() => {
-              stopReads += 1;
-              const stopped = stopReads >= (scenario.stopFromRead ?? Infinity);
-              return {
-                thread,
-                turnItems: stopped
-                  ? [{ type: "run_interrupt_request", runId: thread.latestRunId, message: "Stop" }]
-                  : [],
-              } as never;
-            })
-          : Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
-    }),
-    Layer.mock(ThreadManagement.ThreadManagementService)({
-      dispatch: (command) =>
-        Effect.sync(() => (dispatched.push(command), { sequence: 1, storedEvents: [] })),
-    }),
-  );
-  const list: OrchestratorMcpMachineListResult = {
-    local: { id: "local", label: "M4", environmentId: m4 },
-    machines: scenario.machines,
-    projectWorkerMachine: null,
-  };
-  return Effect.gen(function* () {
-    yield* TestClock.setTime(stoppedAt + 30_000);
-    const handoff = yield* MachineLimitHandoff;
-    if (!scenario.unbound)
-      yield* handoff.bind({
-        listMachines: () => Effect.succeed(list),
-        port: scenario.port ?? {
-          available: true,
-          handOff: (request) => {
-            requests.push(request);
-            const answer = scenario.answers?.[request.destinationEnvironmentId];
-            if (answer === "die") return Effect.die(new Error("connection reset"));
-            return Effect.succeed(
-              answer ?? {
-                type: "moved",
-                machineLabel: request.destinationEnvironmentId === minis ? "Minis" : "M3",
-                threadId: "remote-t1",
-                notice: null,
-              },
-            );
-          },
-        },
-      });
-    if (scenario.before) yield* scenario.before(handoff);
-    const sweep = yield* makeSweep;
-    for (let i = 0; i < sweeps; i++) {
-      yield* sweep();
-      yield* TestClock.adjust("1 minute");
-    }
-    const held = yield* handoff.holds(thread.id, thread.latestRunId);
-    const shown = yield* handoff.candidates(thread.id).pipe(Effect.option);
-    return { requests, dispatched, held, shown: Option.getOrNull(shown) };
-  }).pipe(
-    Effect.provide(
-      Layer.effect(MachineLimitHandoff, make).pipe(
-        Layer.provideMerge(deps),
-        Layer.provide(
-          Layer.succeed(HandoffTurnGate, {
-            check: (threadId) =>
-              Effect.succeed(
-                scenario.handoffDocument === undefined
-                  ? null
-                  : turnRefusal(scenario.handoffDocument, threadId, m4),
-              ),
-          }),
-        ),
-      ),
-    ),
-    Effect.provideService(ProviderFallbackEnv, {}),
-  );
-}
+import {
+  stoppedAt,
+  resetsAt,
+  claudeId,
+  codexId,
+  minis,
+  m4,
+  m3,
+  project,
+  sourcePool,
+  otherPool,
+  limited,
+  target,
+  machine,
+  run,
+} from "./MachineLimitHandoff.test.fixture.ts";
 
 // Built out here: a test body is an Effect generator.
 const previousCandidate = Schema.decodeUnknownSync(PreviousRelease.LimitHandoffCandidate);

@@ -28,6 +28,20 @@ export function hasHandoffV2(capabilities: ReadonlyArray<string> | undefined): b
   return capabilities?.includes(HANDOFF_V2_CAPABILITY) === true;
 }
 
+/**
+ * Named by a machine that starts a hand off by itself when a thread's track
+ * is out there, and that answers such a start for the thread's own track only.
+ * It says nothing about transfer records or plans, and they say nothing about
+ * it: a machine that does not name it is never the target of an automatic
+ * track start, and is never answered for one.
+ */
+export const HANDOFF_TRACK_START_CAPABILITY = "handoff.track-start";
+
+/** Whether a peer's advertised list names the automatic track start. Absent means no. */
+export function hasHandoffTrackStart(capabilities: ReadonlyArray<string> | undefined): boolean {
+  return capabilities?.includes(HANDOFF_TRACK_START_CAPABILITY) === true;
+}
+
 export const HandoffTransferOperationId = text(128);
 
 /**
@@ -72,6 +86,12 @@ export const HandoffTransferTrigger = Schema.Struct({
   reason: Schema.optional(text(120)),
   /** When the usage window that set off an automatic move resets, or absent when unknown. */
   usageWindowKey: Schema.optional(text(120)),
+  /**
+   * The run an automatic move was admitted for, and how it was to arrive.
+   * The source refuses the move before the hold when either no longer holds.
+   */
+  runId: Schema.optional(text(256)),
+  disposition: Schema.optional(HandoffTransferDisposition),
 });
 export type HandoffTransferTrigger = typeof HandoffTransferTrigger.Type;
 

@@ -30,6 +30,8 @@ import { writeCheckpoint } from "../handoff/checkpointGit.ts";
 import { HandoffMode } from "../handoff/HandoffMode.ts";
 import * as HandoffMoves from "../handoff/HandoffMoves.ts";
 import { HandoffPeerError, HandoffPeers } from "../handoff/handoffPeers.ts";
+import type { PeerCheckRequest } from "../handoff/handoffPlan.ts";
+import { HANDOFF_CAPABILITIES, HANDOFF_PROTOCOL_VERSION } from "../handoff/handoffWire.ts";
 import * as HandoffReceiver from "../handoff/HandoffReceiver.ts";
 import {
   EMPTY_HANDOFF_DOCUMENT,
@@ -40,6 +42,7 @@ import {
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { makeLimitHandoffPort } from "./LimitHandoffAdapter.ts";
+import { judgeTrackMachine } from "./limitHandoffTrack.ts";
 import type { LimitHandoffRequest } from "./MachineLimitHandoff.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -292,7 +295,7 @@ const scenario = (options: { readonly modeOn: boolean }) =>
       transferStatus: (_, request) =>
         viaNetwork(destinationReceiver.transferStatus(asSource, request)),
       transferPull: () => Effect.die("unused"),
-      check: () => Effect.die("unused"),
+      check: (_, request) => viaNetwork(destinationReceiver.check(asSource, request)),
     });
     const moves = yield* Effect.gen(function* () {
       const receiver = yield* HandoffReceiver.make;
@@ -330,10 +333,14 @@ const scenario = (options: { readonly modeOn: boolean }) =>
     const port = makeLimitHandoffPort({
       environmentId: laptopE,
       document: Effect.sync(() => source.document),
+      machineLabel: "Laptop E",
       handOff: moves.handOff,
+      check: peers.check,
       recordNote: (input) => Effect.sync(() => void notes.push(input)),
     });
-    return { source, destination, fixture, takeovers, notes, port };
+    const receiverCheck = (sent: PeerCheckRequest) =>
+      viaNetwork(destinationReceiver.check(asSource, sent));
+    return { source, destination, fixture, takeovers, notes, port, receiverCheck };
   });
 
 const request: LimitHandoffRequest = {
@@ -422,4 +429,76 @@ describe("a limit handoff whose preflight fails", () => {
         }),
     );
   }
+});
+
+describe("an automatic track start against the real receiver (1390 T-13)", () => {
+  const tracked = {
+    start: "automatic" as const,
+    thresholdPercent: null,
+    threads: [
+      {
+        sourceThreadId: threadId,
+        sourceProjectId: sourceProject,
+        modelSelection,
+        track: "daily" as const,
+        driverKind: "claudeAgent",
+        accountFingerprints: [`sha256:${"a".repeat(64)}`],
+      },
+    ],
+  };
+
+  it.effect(
+    "is confirmed before anything is copied, and a machine with no room is sent nothing",
+    () =>
+      Effect.gen(function* () {
+        const { source, destination, takeovers, port } = yield* scenario({ modeOn: true });
+        const before = structuredClone(destination.document);
+
+        const answer = yield* port.check!(towerH, tracked);
+
+        if (answer.kind !== "answered") throw new Error(`no answer: ${answer.error.message}`);
+        // Tower H names the track start, so its answer is read for the track.
+        expect(answer.response.capabilities).toContain("handoff.track-start");
+        const judged = judgeTrackMachine({
+          environmentId: towerH,
+          machineLabel: "Tower H",
+          threadId,
+          answer,
+        });
+        // Claude is not signed in there: no sign-in with a reading that qualifies.
+        expect(judged.state).not.toBe("room");
+        expect(judged.evidence?.automatic ?? false).toBe(false);
+        // Asking copied nothing and moved nothing.
+        expect(destination.document).toEqual(before);
+        expect(takeovers).toEqual([]);
+        expect(destination.launches).toEqual([]);
+        expect(source.dispatched).toEqual([]);
+      }),
+  );
+
+  it.effect("is not answered for a source that names no track start (EC2-04)", () =>
+    Effect.gen(function* () {
+      const { receiverCheck } = yield* scenario({ modeOn: true });
+      const from = (capabilities: ReadonlyArray<string>, start: "automatic" | "manual") =>
+        receiverCheck({
+          sourceEnvironmentId: laptopE,
+          sourceLabel: "Laptop E",
+          protocolVersion: HANDOFF_PROTOCOL_VERSION,
+          capabilities: [...capabilities],
+          ...tracked,
+          start,
+        });
+      const refused = yield* from(["handoff.v2", "handoff.plan"], "automatic");
+      expect(refused.results[0]?.evidence).toBeNull();
+      expect(refused.results[0]?.failures).toMatchObject([{ check: "version" }]);
+      expect(refused.results[0]?.failures[0]?.message.startsWith("Needs update: ")).toBe(true);
+      // The same source may still plan a hand off by hand, and this build's own start is read.
+      const byHand = yield* from(["handoff.v2", "handoff.plan"], "manual");
+      expect(byHand.results[0]?.failures.some((failure) => failure.check === "version")).toBe(
+        false,
+      );
+      const own = yield* from(HANDOFF_CAPABILITIES, "automatic");
+      expect(own.results[0]?.failures.some((failure) => failure.check === "version")).toBe(false);
+    }),
+  );
 });
