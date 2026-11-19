@@ -5,7 +5,21 @@ import { latestExecutedRun } from "@specweave-studio/shared/orchestrationV2Threa
  * The refusal of a move that a turn started after the plan beat. It is not
  * recorded, so the window's move can go out once that turn has ended.
  */
-export const PRESWITCH_TURN_STARTED = "The latest turn is running or did not complete.";
+export const PRESWITCH_TURN_STARTED = "The latest turn is still running.";
+
+/**
+ * The refusal of a move whose thread's latest turn ended without completing.
+ * Nothing changes until another turn runs, so it is recorded and the window's
+ * move is spent rather than sent again on every sweep.
+ */
+export const PRESWITCH_TURN_UNFINISHED = "The latest turn did not complete.";
+
+const ENDED_STATUSES: ReadonlySet<OrchestrationV2Run["status"]> = new Set([
+  "interrupted",
+  "failed",
+  "cancelled",
+  "rolled_back",
+]);
 
 /**
  * Why a `limit-preswitch:` move (1089) no longer applies to the thread as it
@@ -21,7 +35,7 @@ export function preswitchMoveRefusal(runs: ReadonlyArray<OrchestrationV2Run>): {
   // An unfinished run counts as the latest, so a running turn refuses here.
   const latest = latestExecutedRun(runs);
   if (latest === null) return { refusal: null, latest };
-  if (latest.status !== "completed")
-    return { refusal: PRESWITCH_TURN_STARTED, latest };
-  return { refusal: null, latest };
+  if (latest.status === "completed") return { refusal: null, latest };
+  const ended = ENDED_STATUSES.has(latest.status);
+  return { refusal: ended ? PRESWITCH_TURN_UNFINISHED : PRESWITCH_TURN_STARTED, latest };
 }

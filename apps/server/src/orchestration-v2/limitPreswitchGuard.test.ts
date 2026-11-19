@@ -2,7 +2,11 @@ import { ProviderInstanceId, RunId, ThreadId } from "@specweave-studio/contracts
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { PRESWITCH_TURN_STARTED, preswitchMoveRefusal } from "./limitPreswitchGuard.ts";
+import {
+  PRESWITCH_TURN_STARTED,
+  PRESWITCH_TURN_UNFINISHED,
+  preswitchMoveRefusal,
+} from "./limitPreswitchGuard.ts";
 
 // 1089: the orchestrator judges a pre-switch again when it lands, so a turn
 // that started after the sweep's checks keeps the thread where it is.
@@ -31,7 +35,12 @@ describe("preswitchMoveRefusal", () => {
     expect(preswitchMoveRefusal([run("completed"), run("running", 1)]).refusal).toBe(
       PRESWITCH_TURN_STARTED,
     );
-    expect(preswitchMoveRefusal([run("interrupted")]).refusal).not.toBeNull();
-    expect(preswitchMoveRefusal([run("failed")]).refusal).not.toBeNull();
+    // An ended turn is a lasting refusal, recorded so the sweep does not
+    // send the same move every 30 seconds; only a running one frees the id.
+    expect(preswitchMoveRefusal([run("interrupted")]).refusal).toBe(PRESWITCH_TURN_UNFINISHED);
+    expect(preswitchMoveRefusal([run("failed")]).refusal).toBe(PRESWITCH_TURN_UNFINISHED);
+    expect(preswitchMoveRefusal([run("completed"), run("starting", 1)]).refusal).toBe(
+      PRESWITCH_TURN_STARTED,
+    );
   });
 });
