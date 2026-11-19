@@ -127,12 +127,13 @@ export function showsNoSpotlight(lines, home, again) {
  * most home labels show again, and the labels it shows that the home screen
  * did not are few next to them. Text recognition misreads a label or two on
  * every reading, and the text of other windows in the margins shows on every
- * screen, so neither alone decides it.
+ * screen, so neither alone decides it. `margins` is text known to be the
+ * margins' (see backgroundOf), left out of both.
  */
-export function stillHome(lines, home) {
-  const before = labels(home);
+export function stillHome(lines, home, margins = new Set()) {
+  const before = labels(home).filter((text) => !margins.has(text));
   if (before.length === 0) return false;
-  const now = labels(lines);
+  const now = labels(lines).filter((text) => !margins.has(text));
   const kept = new Set(before.filter((text) => now.includes(text)));
   const added = new Set(now.filter((text) => !before.includes(text)));
   return kept.size >= HOME_SHARE * new Set(before).size && added.size <= kept.size / 2;

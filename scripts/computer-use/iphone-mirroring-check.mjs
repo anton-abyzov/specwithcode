@@ -135,6 +135,7 @@ import {
   newTexts,
   showsNoSpotlight,
   stillHome,
+  texts,
   center,
   jaccard,
   pageSignature,
@@ -526,10 +527,11 @@ export async function runCheck(deps, options = {}) {
         const again = await look();
         gone = showsNoSpotlight(after.lines, home.lines, again.lines);
         seen = after;
-        if (!gone && reopen && tries < SPOTLIGHT_TRIES) {
-          note(
-            `${stamp()} ${name}: no "${text}" field read, and the reading over the home screen showed text that went away with the home key, so Spotlight is opened again (try ${tries} of ${SPOTLIGHT_TRIES}); read ${describeLines(after.lines.slice(0, 6))}`,
-          );
+        if (!gone && reopen) {
+          // The home key closed the search: it is opened again, and never used closed.
+          const detail = `no "${text}" field read, and the reading over the home screen showed text that went away with the home key, which closed the search (try ${tries} of ${SPOTLIGHT_TRIES}); read ${describeLines(after.lines.slice(0, 6))}`;
+          note(`${stamp()} ${name}: ${detail}`);
+          if (tries >= SPOTLIGHT_TRIES) return detail;
           continue;
         }
       }
@@ -742,6 +744,7 @@ export async function runCheck(deps, options = {}) {
       seen = await look();
       suggested = suggestion(seen);
     }
+    const typed = seen;
     await call("computer_key", { keys: "return" });
     await deps.sleep(config.openMs);
     seen = await look();
@@ -776,9 +779,11 @@ export async function runCheck(deps, options = {}) {
         (readField(still.text, name).after === "suggestion" ||
           seen.lines.some((line) => line !== still && normalize(line.text) === normalize(name)))
           ? `Spotlight still showed ${JSON.stringify(still.text)}`
-          : stillHome(seen.lines, lastHome)
+          : stillHome(seen.lines, lastHome, margins)
             ? "the phone showed only its home screen"
-            : undefined;
+            : jaccard(own(seen.lines), own(typed.lines)) >= 0.8
+              ? `the screen read as it did in Spotlight before Return`
+              : undefined;
       return { reading: seen, closed, tapped };
     };
     if (!searching || locateTabs(seen.lines, [tabA, tabB], barLabels) !== undefined)
@@ -802,10 +807,14 @@ export async function runCheck(deps, options = {}) {
     );
     return opened(true);
   };
+  // Text of other windows in the window's margins: what shows at the same place
+  // on the home screen and in Clock once it opened, which covers the home screen.
+  let margins = new Set();
+  const own = (lines) => texts(lines).filter((text) => !margins.has(text));
   // Why an app that did not open leaves a step unjudged.
   const notOpened = (name, open, what) =>
     open.missed !== undefined
-      ? `${name} could not be opened, so no ${what} was tried: the phone showed no Spotlight after typing "${name}" on ${SPOTLIGHT_TRIES} tries; last try: ${open.missed}`
+      ? `${name} could not be opened, so no ${what} was tried: no usable Spotlight search for "${name}" showed on ${SPOTLIGHT_TRIES} tries; last try: ${open.missed}`
       : `${name} did not open, so no ${what} was tried: after Return${open.tapped ? " and a tap on its result" : ""} ${open.closed}; read ${describeLines(open.reading.lines.slice(0, 12))}`;
   let clockOpen;
   let located;
@@ -907,6 +916,7 @@ export async function runCheck(deps, options = {}) {
     return finish();
   }
   const { bar } = located;
+  margins = backgroundOf(seen.lines, lastHome);
   // Where each tab was last read; a reading that misses a label keeps the last place.
   const tabLines = { ...located.tabs };
   check(
