@@ -58,6 +58,7 @@ import {
   transitionTransfer,
 } from "./HandoffTransferStore.ts";
 import * as HandoffFollow from "./handoffFollow.ts";
+import { reviewTakeover, sameReview } from "./handoffReviewLock.ts";
 import type {
   HandoffLauncher,
   HeartbeatRequest,
@@ -271,6 +272,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
     launcher: HandoffLauncher | undefined,
   ): TakeoverRequest => ({
     ...(launcher === undefined ? {} : { launcher }),
+    ...(record.review === true ? { review: true } : {}),
     sourceEnvironmentId: self,
     sourceThreadId: record.lineage.sourceThreadId,
     epoch: record.lineage.epoch,
@@ -299,7 +301,13 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       const threadId = record.lineage.sourceThreadId;
       const epoch = record.lineage.epoch;
       const answer = yield* deps
-        .sendTakeover(destination, requestOf(record, launcher))
+        .sendTakeover(
+          destination,
+          // A record from before the mark was kept is marked from the thread as it reads now.
+          record.review === undefined
+            ? reviewTakeover(shell, requestOf(record, launcher))
+            : requestOf(record, launcher),
+        )
         .pipe(Effect.result);
       let response = answer._tag === "Success" ? answer.success : null;
       const error = answer._tag === "Failure" ? answer.failure : null;
@@ -836,7 +844,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           yield* staysHeld(TURN_DID_NOT_STOP, TURN_DID_NOT_STOP);
           return yield* failed("busy", TURN_DID_NOT_STOP);
         }
-        const again = yield* deps.prepare(threadId, destination).pipe(
+        const again = yield* sameReview(first.shell, deps.prepare(threadId, destination)).pipe(
           Effect.tapError((error) => {
             const message =
               `The handoff stopped the running turn but could not send its last checkpoint: ${error.message} The turn continues here; hand it off again to move it.`.slice(
@@ -872,6 +880,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         sentAt: yield* deps.nowIso,
         // In the same write: a repeat after a stop names the same waiting machine.
         launcher: waits ?? null,
+        review: reviewTakeover(first.shell, {}).review === true,
       });
       if (sent === null) return yield* failed("busy", RESUMED_HERE);
       yield* deps

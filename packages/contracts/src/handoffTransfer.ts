@@ -133,6 +133,11 @@ export const HandoffTransferRecord = Schema.Struct({
    * (the record was sent by a build from before this field).
    */
   launcher: Schema.optionalKey(Schema.NullOr(HandoffTransferLauncher)),
+  /**
+   * The thread was a review when it was sent: every repeat goes the way the
+   * first send went. Absent from a record sent before this field.
+   */
+  review: Schema.optionalKey(Schema.Boolean),
 });
 export type HandoffTransferRecord = typeof HandoffTransferRecord.Type;
 

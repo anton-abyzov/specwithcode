@@ -54,6 +54,7 @@ function api() {
   const callers: Array<ReceiverCaller> = [];
   const extras: Array<{ readonly meta: unknown; readonly bundle: Uint8Array | null }> = [];
   const transfers: Array<unknown> = [];
+  const takeovers: Array<unknown> = [];
   const token = (headers: Record<string, string | undefined>) =>
     (headers.authorization ?? "").replace(/^Bearer /, "");
   // Route handlers read their services per request, so they stay in the output.
@@ -117,22 +118,37 @@ function api() {
             }),
         }),
         Layer.mock(HandoffReceiver)({
-          // It accepted the takeover and could not start the thread: the acceptance stands.
-          takeover: (_caller, request) =>
-            Effect.fail(
-              request.epoch === 3
-                ? new HandoffRefusal({
+          // Epoch 93: it accepted the takeover and could not start the thread, so the
+          // acceptance stands. Epoch 92: stale. Any other takeover goes through.
+          takeover: (caller, request) =>
+            request.epoch === 93
+              ? Effect.fail(
+                  new HandoffRefusal({
                     status: 503,
                     code: "failed",
                     message: "Mini accepted this handoff and could not start it.",
                     uncertain: true,
-                  })
-                : new HandoffRefusal({
-                    status: 409,
-                    code: "fenced",
-                    message: "Mini saw a newer epoch.",
                   }),
-            ),
+                )
+              : request.epoch === 92
+                ? Effect.fail(
+                    new HandoffRefusal({
+                      status: 409,
+                      code: "fenced",
+                      message: "Mini saw a newer epoch.",
+                    }),
+                  )
+                : Effect.sync(() => {
+                    callers.push(caller);
+                    takeovers.push(request);
+                    return {
+                      threadId: ThreadId.make("thread-continued"),
+                      machineLabel: "Mini",
+                      modelSelection: null,
+                      resumed: false,
+                      notice: null,
+                    };
+                  }),
           negotiate: (caller) =>
             Effect.sync(() => {
               callers.push(caller);
@@ -207,7 +223,7 @@ function api() {
         body: body as never,
       }),
     );
-  return { negotiate, post, frame, callers, extras, transfers, dispose };
+  return { negotiate, post, frame, callers, extras, transfers, takeovers, dispose };
 }
 
 describe("handoff route", () => {
@@ -380,14 +396,14 @@ describe("handoff route", () => {
             operationId: "0a1b2c3d-1111-4222-8333-444455556666",
           }),
         );
-      const doubt = await takeover(3);
+      const doubt = await takeover(93);
       expect(doubt.status).toBe(503);
       expect(await doubt.json()).toEqual({
         error: "Mini accepted this handoff and could not start it.",
         code: "failed",
         uncertain: true,
       });
-      const refused = await takeover(2);
+      const refused = await takeover(92);
       expect(refused.status).toBe(409);
       expect(await refused.json()).toEqual({ error: "Mini saw a newer epoch.", code: "fenced" });
     } finally {

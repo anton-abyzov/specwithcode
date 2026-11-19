@@ -956,6 +956,7 @@ export const make = Effect.gen(function* () {
             ? null
             : `Runs at ${runtimeMode} here (lowered from ${loweredFrom}) under this machine's limits for ${replica.sourceLabel}.`,
           workspaceNotice,
+          review.kind === "locked" ? review.notice : null,
           checkpoint.skipped.length > 0
             ? `Not carried over: ${checkpoint.skipped
                 .slice(0, 5)

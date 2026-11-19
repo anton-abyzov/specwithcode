@@ -85,14 +85,26 @@ function worker(
     // It is the latest release, from before transfer records: it answers those paths as that release does.
     if (url.pathname.includes("/transfer-"))
       return Response.json(PREVIOUS_UNKNOWN_PATH.body, { status: PREVIOUS_UNKNOWN_PATH.status });
-    // It accepted a takeover at epoch 3 and could not start it; any other epoch is stale.
-    if (url.pathname.endsWith("/takeover"))
-      return new TextDecoder().decode(init?.body as Uint8Array).includes('"epoch":3')
-        ? Response.json(
-            { error: "M1 could not start it.", code: "failed", uncertain: true },
-            { status: 503 },
-          )
-        : Response.json({ error: "M1 saw a newer epoch.", code: "fenced" }, { status: 409 });
+    // It accepted a takeover at epoch 93 and could not start it; epoch 92 is stale.
+    if (url.pathname.endsWith("/takeover")) {
+      const sent = new TextDecoder().decode(init?.body as Uint8Array);
+      if (sent.includes('"epoch":93'))
+        return Response.json(
+          { error: "M1 could not start it.", code: "failed", uncertain: true },
+          { status: 503 },
+        );
+      if (sent.includes('"epoch":92'))
+        return Response.json({ error: "M1 saw a newer epoch.", code: "fenced" }, { status: 409 });
+    }
+    // The previous release answers only the paths it had.
+    if (
+      options.previousRelease?.() === true &&
+      !PreviousRelease.PEER_PATHS.has(url.pathname.slice(HANDOFF_PEER_PREFIX.length + 1))
+    )
+      return Response.json(PreviousRelease.unknownPath.body, {
+        status: PreviousRelease.unknownPath.status,
+      });
+    if (url.pathname.endsWith("replicate")) return Response.json({ sequence: 1 });
     return Response.json({ machineLabel: "M1", continued: [] });
   }) as typeof fetch;
   return { fetcher, sent };
@@ -287,8 +299,8 @@ describe("handoff peers over SpecWithCode Connect", () => {
                 operationId: "0a1b2c3d-1111-4222-8333-444455556666",
               })
               .pipe(Effect.flip);
-          expect(yield* takeover(3)).toMatchObject({ code: "failed", uncertain: true });
-          expect(yield* takeover(2)).toMatchObject({ code: "fenced", uncertain: false });
+          expect(yield* takeover(93)).toMatchObject({ code: "failed", uncertain: true });
+          expect(yield* takeover(92)).toMatchObject({ code: "fenced", uncertain: false });
         }),
     ),
   );
