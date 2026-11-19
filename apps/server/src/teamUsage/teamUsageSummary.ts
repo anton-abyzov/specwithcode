@@ -14,6 +14,7 @@ import type {
   TeamUsageWindow,
   UsageLimitHistorySeries,
 } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 import { limitAccountKey } from "@specweave-studio/shared/usageLimits";
 
 import { emptyCounts, type TeamUsageInstanceCounts, utcDayBounds } from "./teamUsageCounts.ts";
@@ -109,7 +110,7 @@ export function buildTeamUsageSummary(input: TeamUsageSummaryInput): TeamUsageSu
       teamUsageLabel(input.config.machineLabel) ??
       teamUsageLabel(input.defaultMachineLabel) ??
       "This machine",
-    at: new Date(input.nowMs).toISOString(),
+    at: DateTime.formatIso(DateTime.makeUnsafe(input.nowMs)),
     accounts,
   };
 }

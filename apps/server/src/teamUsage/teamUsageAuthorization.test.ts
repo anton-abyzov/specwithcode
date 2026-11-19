@@ -5,7 +5,9 @@
  */
 import { AuthSettingsWriteScope, EnvironmentId, WS_METHODS } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import { RpcScopeAuthorization } from "@specweave-studio/contracts";
 
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
@@ -33,13 +35,19 @@ describe("team usage RPCs are the member's own", () => {
       const call = Effect.sync(() => {
         ran = true;
       });
-      const refused = yield* Effect.flip(
-        authorize(call as never, {
-          rpc: { _tag: WS_METHODS.teamUsageUpdate },
-          payload: { config: { enabled: true } },
-        } as never) as Effect.Effect<unknown, { message: string }>,
+      const refused = yield* Effect.exit(
+        Effect.scoped(
+          authorize(call as never, {
+            rpc: { _tag: WS_METHODS.teamUsageUpdate },
+            payload: { config: { enabled: true } },
+          } as never),
+        ),
       );
-      expect(refused.message).toBe("Only a person on this machine can change what it shares with a team.");
+      expect(Exit.isFailure(refused)).toBe(true);
+      if (Exit.isFailure(refused))
+        expect(String((Cause.squash(refused.cause) as { message?: unknown }).message)).toBe(
+          "Only a person on this machine can change what it shares with a team.",
+        );
       expect(ran).toBe(false);
     }).pipe(
       Effect.provide(RpcAuthorization.layer([AuthSettingsWriteScope], coordinator)),

@@ -16,6 +16,7 @@ import {
   WS_METHODS,
   WsTeamUsageRpcGroup,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -132,7 +133,7 @@ export const make = Effect.gen(function* () {
       ),
     buildSummary: (teamConfig) =>
       Effect.gen(function* () {
-        const nowMs = Date.now();
+        const nowMs = yield* Clock.currentTimeMillis;
         const descriptor = yield* environment.getDescriptor;
         const counts = yield* readTeamUsageCounts(nowMs).pipe(
           Effect.provideService(SqlClient.SqlClient, sql),
@@ -163,7 +164,7 @@ export const make = Effect.gen(function* () {
         : secrets.set(TEAM_USAGE_SECRET, new TextEncoder().encode(value.trim()))
       ).pipe(Effect.catchCause((cause) => Effect.logWarning("could not store team credential", { cause }))),
     send,
-    nowMs: Effect.sync(() => Date.now()),
+    nowMs: Clock.currentTimeMillis,
   });
 
   yield* Effect.forever(core.tick.pipe(Effect.andThen(Effect.sleep(TICK)))).pipe(

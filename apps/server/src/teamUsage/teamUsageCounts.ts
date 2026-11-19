@@ -6,6 +6,7 @@
  *
  * @module teamUsage/teamUsageCounts
  */
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -23,10 +24,12 @@ export const emptyCounts: TeamUsageInstanceCounts = {
 
 /** `[start, end)` of the UTC day holding `nowMs`, as ISO strings. */
 export function utcDayBounds(nowMs: number): { readonly start: string; readonly end: string } {
-  const start = new Date(nowMs);
-  start.setUTCHours(0, 0, 0, 0);
-  const end = new Date(start.getTime() + 24 * 60 * 60_000);
-  return { start: start.toISOString(), end: end.toISOString() };
+  const dayMs = 24 * 60 * 60_000;
+  const startMs = Math.floor(nowMs / dayMs) * dayMs;
+  return {
+    start: DateTime.formatIso(DateTime.makeUnsafe(startMs)),
+    end: DateTime.formatIso(DateTime.makeUnsafe(startMs + dayMs)),
+  };
 }
 
 interface CountRow {

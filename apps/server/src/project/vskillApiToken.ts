@@ -18,7 +18,7 @@ export const VSKILL_API_TOKEN_PATTERN = /^vsk_[A-Za-z0-9_-]+$/;
 export const readVskillApiToken: Effect.Effect<
   string | undefined,
   never,
-  FileSystem.FileSystem | Path.Path | ProcessRunner.ProcessRunner | HostProcessPlatform
+  FileSystem.FileSystem | Path.Path | ProcessRunner.ProcessRunner
 > = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

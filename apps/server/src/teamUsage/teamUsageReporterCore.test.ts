@@ -4,6 +4,7 @@
  * only, and the member's verified-skill.com token never goes elsewhere.
  */
 import type { TeamUsageConfig, TeamUsageSummary } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -38,7 +39,7 @@ function harness(options: { statuses?: number[]; token?: string | undefined } = 
       Effect.sync(
         (): TeamUsageSummary => ({
           machineLabel: config.machineLabel ?? "M4",
-          at: new Date(now).toISOString(),
+          at: DateTime.formatIso(DateTime.makeUnsafe(now)),
           accounts: [
             {
               provider: "claudeAgent" as TeamUsageSummary["accounts"][number]["provider"],
