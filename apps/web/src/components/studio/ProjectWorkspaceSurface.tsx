@@ -431,7 +431,7 @@ export function ProjectWorkspaceSurface({
   const [coordinatorDetailsOpen, setCoordinatorDetailsOpen] = useState(false);
   const [machineHandoffOpen, setMachineHandoffOpen] = useState(false);
   const [handoffTarget, setHandoffTarget] = useState<string | null>(null);
-  // The machine menu's "Send to another machine…": the dialog opens on the copy, once.
+  // The machine menu's Sync and Add items: the folder dialog opens on the copy, once.
   const handoff = useMachineHandoffRequest();
   const requestHandoff = handoff.ask;
   // "Continue the coordinator here": this page's confirmed move, the coordinator's page for a
@@ -2250,8 +2250,8 @@ export function ProjectWorkspaceSurface({
                       // Continuing the coordinator here is its own confirmed action.
                       mainOffers={mainSwitch.offers}
                       onMakeMain={mainSwitch.run}
-                      // One Send to another machine: its dialog offers Copy or Move.
-                      onCopy={canOperate && !machinePrivate ? () => requestHandoff("copy") : null}
+                      // Sync and Add in the machine menu ask the folder dialog through this.
+                      onCopy={canOperate && !machinePrivate ? requestHandoff : null}
                     />
                     {/* After the model, at the row's end: voice and the run state are icons,
                         so the machine and the model keep the room. */}
