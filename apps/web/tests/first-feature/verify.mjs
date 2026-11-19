@@ -234,6 +234,8 @@ try {
             // Text cut short inside the guide or the card, as a truncate class does it.
             clipped: all('[data-slot="first-feature-guide"] *, [data-first-feature-offer] *')
               .filter((node) => {
+                // Screen reader text such as " (done)" is a 1 px box on purpose.
+                if (node.closest(".sr-only") !== null) return false;
                 const style = getComputedStyle(node);
                 return (
                   (style.overflowX === "hidden" || style.overflowX === "clip") &&
