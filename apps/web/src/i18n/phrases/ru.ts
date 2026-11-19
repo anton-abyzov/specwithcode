@@ -5939,4 +5939,17 @@ export const ru: PhraseCatalog = {
   "Waiting for {machine}": "Ждём {machine}",
   "Waiting for machines to allow this device": "Ждём, пока машины разрешат это устройство",
   "Waiting to join": "Ожидает подключения",
+  "Sign in or switch account": "Войти или сменить аккаунт",
+  "Reinstall or update": "Переустановить или обновить",
+  "Pick command": "Выбрать команду",
+  "The sign-in looks expired or missing. Sign in again, with this account or another.":
+    "Вход, похоже, истёк или отсутствует. Войдите снова, с этим аккаунтом или другим.",
+  "The install looks broken. Reinstall or update it, then check again.":
+    "Установка, похоже, повреждена. Переустановите или обновите, затем проверьте снова.",
+  "The command could not be started. Pick the command to run, or reinstall.":
+    "Не удалось запустить команду. Выберите команду или переустановите.",
+  "Checked at {time}. Still not working.": "Проверено в {time}. Всё ещё не работает.",
+  "Checked at {time}.": "Проверено в {time}.",
+  "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.":
+    "Эта папка принадлежит одному сеансу терминала и исчезает, когда он закрывается. Приложение снова найдёт команду при следующей проверке.",
 };
