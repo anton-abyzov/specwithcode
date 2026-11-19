@@ -53,4 +53,21 @@ describe("providerFallbackCommand on the Review track", () => {
       modelSelection: { instanceId: museId, model: "muse-wonder-1.0" },
     });
   });
+
+  it("recognises a review thread started before the routing marker by its title", () => {
+    const legacy = { ...stopped, title: "Adversarial review: Model tracks" };
+    expect(providerFallbackCommand(legacy, providers, rule, now)).toMatchObject({
+      modelSelection: { instanceId: museId, model: "muse-wonder-1.0" },
+    });
+    // Regular work that only mentions a review in its title stays regular.
+    const regular = { ...stopped, title: "Fix the adversarial review card" };
+    expect(providerFallbackCommand(regular, providers, rule, now)).toBeNull();
+    // A routed regular thread is never read as review work by its title.
+    const routed = {
+      ...stopped,
+      title: "Adversarial review: renamed",
+      routing: { taskClass: "routine" },
+    } as unknown as typeof stopped;
+    expect(providerFallbackCommand(routed, providers, rule, now)).toBeNull();
+  });
 });
