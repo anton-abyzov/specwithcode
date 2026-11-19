@@ -35,6 +35,7 @@ describe("closedReset", () => {
     expect(closed).toEqual({
       endedAt: reset1,
       lastReadAt: reset1 - 30 * MINUTE,
+      announcedAt: reset1,
       usedPercentAtReset: 59,
       lostPercent: 41,
       cause: "scheduled",
@@ -227,16 +228,25 @@ describe("mergeResetPeriods", () => {
   });
 
   it("treats two machines' records of one reset with differently rounded times as one", () => {
-    const late = period(reset1 + MINUTE, reset1 + MINUTE, 90, null);
-    const rounded = period(reset1 + 3 * MINUTE, reset1 + 2 * MINUTE, 91, null);
+    const late = { ...period(reset1 + MINUTE, reset1 + MINUTE, 90, null), announcedAt: reset1 };
+    const rounded = {
+      ...period(reset1 + 3 * MINUTE, reset1 + 2 * MINUTE, 91, null),
+      announcedAt: reset1 + 3 * MINUTE,
+    };
     expect(mergeResetPeriods([[late], [rounded]])).toHaveLength(1);
     expect(mergeResetPeriods([[rounded], [late]])).toHaveLength(1);
   });
 
   it("treats three machines' records of one reset, none read at the reset, as one", () => {
-    const a = period(reset1 + MINUTE, reset1 + MINUTE, 90, null);
-    const b = period(reset1 + 3 * MINUTE, reset1 + 2 * MINUTE, 90, null);
-    const c = period(reset1 + 4 * MINUTE, reset1 + 3.5 * MINUTE, 91, null);
+    const a = { ...period(reset1 + MINUTE, reset1 + MINUTE, 90, null), announcedAt: reset1 };
+    const b = {
+      ...period(reset1 + 3 * MINUTE, reset1 + 2 * MINUTE, 90, null),
+      announcedAt: reset1 + 3 * MINUTE,
+    };
+    const c = {
+      ...period(reset1 + 4 * MINUTE, reset1 + 3.5 * MINUTE, 91, null),
+      announcedAt: reset1 + 4 * MINUTE,
+    };
     expect(mergeResetPeriods([[b], [c]])).toHaveLength(1);
     expect(mergeResetPeriods([[a], [b], [c]])).toHaveLength(1);
     expect(mergeResetPeriods([[c], [a], [b]])).toHaveLength(1);
@@ -258,6 +268,78 @@ describe("mergeResetPeriods", () => {
     expect(periods.map((entry) => entry.cause)).toEqual(["scheduled", "early"]);
     expect(mergeResetPeriods([periods])).toHaveLength(2);
     expect(mergeResetPeriods([[periods[0]!], [periods[1]!]])).toHaveLength(2);
+  });
+
+  it("keeps two resets minutes apart that announced no time", () => {
+    const periods = resetPeriods(
+      "codex:a@x.dev",
+      "weekly",
+      [
+        read(reset1, 90, null),
+        read(reset1 + 2 * MINUTE, 1, null),
+        read(reset1 + 4 * MINUTE, 30, null),
+        read(reset1 + 6 * MINUTE, 1, null),
+      ],
+      WEEK,
+    );
+    expect(periods).toHaveLength(2);
+    expect(mergeResetPeriods([periods])).toHaveLength(2);
+  });
+
+  it("matches a delayed record of a reset past an early reset that sorts between", () => {
+    const first = resetPeriods(
+      "codex:a@x.dev",
+      "weekly",
+      [
+        read(reset1 - MINUTE, 90, reset1),
+        read(reset1, 1, reset2),
+        read(reset1 + MINUTE, 30, reset2),
+        read(reset1 + 2 * MINUTE, 1, reset2 + DAY),
+      ],
+      WEEK,
+    );
+    const delayed = resetPeriods(
+      "codex:a@x.dev",
+      "weekly",
+      [
+        read(reset1 - 20 * MINUTE, 85, reset1 + 3 * MINUTE),
+        read(reset1 + 2.5 * MINUTE, 90, reset1 + 3 * MINUTE),
+        read(reset1 + 6 * MINUTE, 1, reset2 + DAY),
+      ],
+      WEEK,
+    );
+    expect(first.map((entry) => entry.cause)).toEqual(["scheduled", "early"]);
+    const merged = mergeResetPeriods([first, delayed]);
+    expect(merged.map((entry) => [entry.cause, entry.announcedAt])).toEqual([
+      ["early", reset2],
+      ["scheduled", reset1 + 3 * MINUTE],
+    ]);
+  });
+
+  it("treats one reset that one machine saw as early and another as scheduled as one", () => {
+    const announced = reset1 + 12 * MINUTE;
+    const early = resetPeriods(
+      "codex:a@x.dev",
+      "weekly",
+      [read(reset1 - MINUTE, 90, announced), read(reset1 + MINUTE, 1, announced + WEEK)],
+      WEEK,
+    );
+    const scheduled = resetPeriods(
+      "codex:a@x.dev",
+      "weekly",
+      [read(reset1 + 2 * MINUTE, 90, announced), read(reset1 + 4 * MINUTE, 1, announced + WEEK)],
+      WEEK,
+    );
+    expect([early[0]?.cause, scheduled[0]?.cause]).toEqual(["early", "scheduled"]);
+    expect(mergeResetPeriods([early, scheduled])).toHaveLength(1);
+  });
+
+  it("falls back to read spans for records saved without an announced time", () => {
+    const late = period(reset1 + MINUTE, reset1 + MINUTE, 90, null);
+    const before = period(reset1, reset1 - 10 * MINUTE, 90, null);
+    expect(mergeResetPeriods([[before], [late]])).toHaveLength(1);
+    const withTime = { ...period(reset1, reset1 - 10 * MINUTE, 90, null), announcedAt: reset1 };
+    expect(mergeResetPeriods([[withTime], [late]])).toHaveLength(1);
   });
 
   it("keeps different accounts and windows apart", () => {
