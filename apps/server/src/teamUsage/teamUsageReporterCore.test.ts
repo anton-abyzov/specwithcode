@@ -273,6 +273,16 @@ describe("team usage review round 1 (0898)", () => {
     expect(h.sent).toHaveLength(3);
   });
 
+  it("a 404 from the team is a refusal, not a confirmed removal", async () => {
+    const h = harness({ statuses: [200, 404, 200] });
+    await run(h.reporter.update({ config: { enabled: true, endpoint: hosted } }));
+    await run(h.reporter.update({ config: { enabled: false, endpoint: hosted } }));
+    expect((await run(h.reporter.status)).removalPending).toBe("M4");
+    await run(h.reporter.tick);
+    expect(h.sent.map((request) => request.method)).toEqual(["POST", "DELETE", "DELETE"]);
+    expect((await run(h.reporter.status)).removalPending).toBeUndefined();
+  });
+
   it("a renamed machine's history under the old name is removed, even after opt-out", async () => {
     const h = harness();
     await run(h.reporter.update({ config: { enabled: true, endpoint: hosted } }));

@@ -160,13 +160,16 @@ export const makeTeamUsageReporter = (deps: TeamUsageDeps) => {
         continue;
       }
       const status = yield* deps.send(request.request);
-      // 404: nothing is stored there for this machine any more.
-      if ((status >= 200 && status < 300) || status === 404) continue;
+      // Only a 2xx confirms: the team answers a member with nothing stored with
+      // 200, and answers 404 to anyone it will not tell, so 404 is a refusal.
+      if (status >= 200 && status < 300) continue;
       left.push(removal);
       error =
         status === 0
           ? "The team endpoint did not answer."
-          : `Removing history failed (HTTP ${status}).`;
+          : status === 401 || status === 403 || status === 404
+            ? "The team did not confirm removing this machine's history. Sign in as the member who sent it; it is retried."
+            : `Removing history failed (HTTP ${status}).`;
     }
     const latest = yield* current;
     const done = now.removals.filter(
@@ -312,7 +315,7 @@ export const makeTeamUsageReporter = (deps: TeamUsageDeps) => {
         let removals = [...before.removals];
         let reported = [...(before.reported ?? [])];
         // Whatever this machine sent under the old endpoint and labels is removed
-        // there; a delete of nothing is answered 404 and counts as done.
+        // there; a delete of nothing is answered 200 and counts as done.
         if (wasSending && moved && old.endpoint !== undefined) {
           const sentLabel = (yield* deps.buildSummary(old)).machineLabel;
           removals = addRemovals(removals, [
