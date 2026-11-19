@@ -762,7 +762,7 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
       return live.key === liveness;
       // Anything unreadable counts as changed.
     }).pipe(Effect.orElseSucceed(() => false));
-    const removal = yield* removeMembers(last, stillFree);
+    const removal = yield* removeMembers(last, stillFree, evidence);
     if (removal.stopped !== null) {
       // Nothing went and Git was never asked, so the copies made for this
       // removal are not needed. After any attempt they stay: Git may have

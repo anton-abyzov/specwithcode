@@ -31,6 +31,33 @@ import {
 } from "./worktreeCleanupMemberFacts.ts";
 
 /** `yyyyMMdd-HHmmss` in UTC, for an evidence folder name. */
+/** True when both files hold the same bytes, read in 1 MB chunks. */
+async function sameBytes(left: string, right: string): Promise<boolean> {
+  const a = await NodeFSP.open(left, "r");
+  let b: NodeFSP.FileHandle | null = null;
+  try {
+    b = await NodeFSP.open(right, "r");
+    const [sa, sb] = await Promise.all([a.stat(), b.stat()]);
+    if (sa.size !== sb.size) return false;
+    const chunk = 1024 * 1024;
+    const bufA = Buffer.alloc(chunk);
+    const bufB = Buffer.alloc(chunk);
+    for (let offset = 0; offset < sa.size; offset += chunk) {
+      const [ra, rb] = await Promise.all([
+        a.read(bufA, 0, chunk, offset),
+        b.read(bufB, 0, chunk, offset),
+      ]);
+      if (ra.bytesRead !== rb.bytesRead) return false;
+      if (!bufA.subarray(0, ra.bytesRead).equals(bufB.subarray(0, rb.bytesRead))) return false;
+      if (ra.bytesRead === 0) return false;
+    }
+    return true;
+  } finally {
+    await a.close();
+    await b?.close();
+  }
+}
+
 const evidenceStamp = (now: number) =>
   DateTime.formatIso(DateTime.makeUnsafe(now)).slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
 
@@ -232,6 +259,18 @@ export function makeRemoval(deps: {
     function* (state: MemberState, at: string) {
       // Both sides of every entry: Git's reachability keeps an entry's old
       // value too, and the reflog walk lists only new values.
+      // Only the files backend keeps HEAD's reflog in `logs/HEAD`; with any
+      // other (reftable) it cannot be read here, so the worktree stays.
+      const format = yield* git.execute({
+        operation: "WorktreeCleanupSweep.refFormat",
+        cwd: at,
+        args: ["config", "--get", "extensions.refStorage"],
+        maxOutputBytes: 4096,
+        allowNonZeroExit: true,
+        timeoutMs: 15_000,
+      });
+      if (format.exitCode === 0 ? format.stdout.trim().toLowerCase() !== "files" : format.exitCode !== 1)
+        return false;
       const where = yield* git.execute({
         operation: "WorktreeCleanupSweep.reflogPath",
         cwd: at,
@@ -334,6 +373,8 @@ export function makeRemoval(deps: {
     assessment: Assessment,
     /** Read right before each member goes: false when the folder's use changed. */
     stillFree: Effect.Effect<boolean>,
+    /** Where its media was copied; each file is compared with its copy last. */
+    evidence: string | null = null,
   ) {
     const depth = (state: MemberState) =>
       state.member.relativePath === "" ? 0 : state.member.relativePath.split(path.sep).length;
@@ -442,6 +483,20 @@ export function makeRemoval(deps: {
       // write that landed before the listing is never removed uncopied.
       if (!(yield* memberUnchanged(assessment, state, false, target)))
         return yield* keepAside("It changed");
+      // A same-size rewrite with its time restored passes that reading; the
+      // bytes Git is about to delete must be the bytes the evidence holds.
+      if (state.media.length > 0) {
+        if (evidence === null) return yield* keepAside("Its media has no copy");
+        for (const file of state.media) {
+          const same = yield* Effect.tryPromise(() =>
+            sameBytes(
+              path.join(target, file.relative),
+              path.join(evidence, state.member.relativePath, file.relative),
+            ),
+          ).pipe(Effect.orElseSucceed(() => false));
+          if (!same) return yield* keepAside("Its media changed after it was copied");
+        }
+      }
       // Files Git leaves behind were checked by nobody: they stay, and so does the rest.
       const removal = yield* git
         .removeWorktree({
