@@ -154,6 +154,8 @@ const PHASE_3_PHRASES: readonly string[] = [
  * coordinator, and the message box never sends to another machine.
  */
 const EQUAL_COORDINATORS_PHRASES: readonly string[] = [
+  "Pick {project} on another machine. Linking makes them one project with one coordinator.",
+  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.",
   "Ask the coordinator for {project} (on {machine}).",
   "Connect {machine} first to continue the coordinator there.",
   "Connect {main} first. This window has not opened {project} on {main}, so it cannot hand the coordinator off yet.",

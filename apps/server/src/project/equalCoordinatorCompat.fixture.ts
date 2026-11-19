@@ -6,12 +6,14 @@
  *
  * - the coordinator binding: `packages/contracts/src/logicalProject.ts`
  * - the supersede request of peer sync: `apps/server/src/handoff/linkedSyncWire.ts`
+ * - what link acceptance writes on the joining copy: `apps/server/src/project/ProjectLink.ts`
+ * - the capabilities its server advertises: `apps/server/src/environment/ServerEnvironment.ts`
  *
  * Pin it again, from the new tag, when a release changes either.
  */
 import * as Schema from "effect/Schema";
 
-export const PINNED_RELEASE = "1.0.385";
+export const PINNED_RELEASE = "1.0.386";
 
 const Member = Schema.Struct({
   environmentId: Schema.String,
@@ -43,4 +45,32 @@ export const PinnedReleaseSupersedeRequest = Schema.Struct({
   projectId: Schema.String,
   successor: Member,
   coordinatorBinding: PinnedReleaseBinding,
+});
+
+/**
+ * The capabilities that release's server advertises to a window, as far as linking goes.
+ * It links projects, and knows nothing of equal coordinators.
+ */
+export const PINNED_RELEASE_CAPABILITIES = {
+  projectLink: true,
+  coordinatorTakeover: true,
+  coordinatorPerMachine: true,
+} as const;
+
+/**
+ * What that release's `accept` writes on the joining copy and announces, for the link a
+ * kept copy prepared: its own coordinator relinquished to the kept one.
+ */
+export const pinnedReleaseAccept = (input: {
+  readonly operationId: string;
+  readonly kept: typeof Member.Type;
+  readonly coordinatorBinding: { readonly epoch: number; readonly state: string };
+}) => ({
+  coordinatorBinding: {
+    epoch: input.coordinatorBinding.epoch,
+    state: "transferred" as const,
+    operationId: input.operationId,
+    successor: input.kept,
+  },
+  role: { kind: "gave-way" as const, epoch: input.coordinatorBinding.epoch, successor: input.kept },
 });

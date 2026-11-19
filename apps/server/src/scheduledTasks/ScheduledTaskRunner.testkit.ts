@@ -85,6 +85,8 @@ export interface Machine {
     listFails: boolean;
     /** Machines this one's project is no longer linked with. */
     unlinked: Set<string>;
+    /** The exact binding this copy's project row carries, when a test sets one. */
+    binding: ProjectCoordinatorBinding | null;
     /**
      * Runs once, just before this machine's scheduler next reads every
      * routine's revision count: where a change saved by another request lands
@@ -262,12 +264,15 @@ export const fleet = (
           beside: false,
           listFails: false,
           unlinked: new Set(),
+          binding: null,
           beforeRevisionsRead: null,
           beforeRecordsRead: null,
         };
         // The binding this copy's project row carries, as the release before wrote it.
         const binding = () =>
-          state.role.state !== "active"
+          state.binding !== null
+            ? state.binding
+            : state.role.state !== "active"
             ? { epoch: state.role.epoch, state: state.role.state }
             : state.role.epoch === 0
               ? undefined

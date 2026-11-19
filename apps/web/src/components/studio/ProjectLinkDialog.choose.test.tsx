@@ -256,8 +256,9 @@ it("names no coordinator for a project that is not linked yet", async () => {
   await render();
   await settle();
   expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
-    "Pick EasyChamp on another machine. Linking makes them one project with one coordinator.",
+    "Pick EasyChamp on another machine. Linking makes them one project; each machine keeps its own coordinator.",
   );
+  expect(text()).not.toContain("one coordinator");
   expect(text()).not.toContain("One coordinator stays");
 });
 
@@ -294,8 +295,9 @@ it("names the real coordinator for a project already linked with another machine
   await render({ project: linkedHere as never });
   await settle();
   expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
-    "Pick EasyChamp on another machine. The coordinator stays on m5; you can continue it on another machine any time.",
+    "Pick EasyChamp on another machine. It joins this project and keeps its own coordinator.",
   );
+  expect(text()).not.toMatch(/coordinator stays|continue it on another machine/);
   // A copy already in this project is not offered again.
   expect(rows()).toEqual(["EasyChamp on m1"]);
 });
@@ -306,6 +308,11 @@ it("translates the first step", async () => {
   await render();
   await settle();
   expect(text()).toContain("Связать с проектом на другой машине");
+  // The chooser's own sentence is translated, and promises no single or movable coordinator.
+  const said = document.querySelector('[data-slot="dialog-description"]')?.textContent ?? "";
+  expect(said).not.toContain("Linking makes them one project");
+  expect(said).toContain("EasyChamp");
+  expect(said).toMatch(/свой координатор|своего координатора|собственн/);
   expect(text()).toContain("EasyChamp на другой машине не найден.");
   expect(text()).toContain("sketchmate_project на m1");
   expect(button("Другие проекты (1)")).toBeTruthy();

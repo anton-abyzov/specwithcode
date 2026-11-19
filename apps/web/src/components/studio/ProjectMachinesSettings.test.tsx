@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { setLocalePreference } from "../../i18n";
 import { ProjectMachinesSettings } from "./ProjectMachinesSettings";
 
 const state = vi.hoisted(() => ({
@@ -397,4 +398,26 @@ it("offers no Unlink on a side coordinator another copy works for, or one alone"
   });
   await render([main, copy("m4", "joined", roster, "transferred"), alone]);
   expect(labels()).not.toContain("Unlink EasyChamp on M1");
+});
+
+it("says the equal-coordinator rows in the person's language", async () => {
+  setLocalePreference("ru");
+  try {
+    const equal = copy("m4", "joined", shared, "active", { predecessor: null });
+    state.projects = [kept, equal];
+    await render([kept, equal]);
+    const rows = [...document.querySelectorAll("[data-project-copy]")];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.textContent).not.toContain("Runs its own coordinator for this project.");
+      expect(row.textContent).toContain("координатор");
+    }
+    expect(text()).not.toContain("Every machine runs its own coordinator.");
+    await render([kept, joined]);
+    expect(text()).not.toContain("Needs an update: this machine is on a version");
+    await click(button("Отвязать"));
+    expect(text()).not.toContain("It becomes its own project again");
+  } finally {
+    setLocalePreference("en");
+  }
 });

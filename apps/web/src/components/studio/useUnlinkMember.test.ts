@@ -52,6 +52,8 @@ type Call = { tag: string; environmentId: string; input: Record<string, any> };
 const fakes = (
   overrides: {
     keptReady?: boolean;
+    /** Machines this window cannot write to now. */
+    offline?: string[];
     fail?: (call: Call) => unknown;
   } = {},
 ) => {
@@ -82,6 +84,7 @@ const fakes = (
     shared: shared as never,
     label: (id) => MACHINES[id] ?? "Machine",
     keptReady: overrides.keptReady ?? true,
+    ready: (environmentId) => !(overrides.offline ?? []).includes(environmentId),
     preview: respond("preview"),
     unlink: respond("unlink"),
     newOperationId,
@@ -132,8 +135,16 @@ describe("runUnlink", () => {
       ["preview", "m1"],
       ["unlink", "m1"],
       ["unlink", "m4"],
+      // Every machine that stays is told, not only the one the unlink ran through.
+      ["unlink", "m5"],
     ]);
-    const [left, removed] = calls.filter((call) => call.tag === "unlink");
+    const [left, removed, told] = calls.filter((call) => call.tag === "unlink");
+    expect(told!.input).toEqual({
+      side: "coordinator",
+      operationId: OPERATION,
+      projectId: "side",
+      member: ref("m1", "plain"),
+    });
     expect(left!.input).toEqual({
       side: "member",
       operationId: OPERATION,
@@ -239,5 +250,21 @@ describe("runUnlink", () => {
     });
     await expect(runUnlink(run(plain))).rejects.toThrow("M4 could not read its notes.");
     expect(calls.some((call) => call.tag === "unlink")).toBe(false);
+  });
+
+  it("still unlinks when another machine that stays is away or refuses; it learns on its next sync", async () => {
+    const away = fakes({ offline: ["m5"] });
+    await runUnlink(away.run(plain));
+    expect(
+      away.calls.filter((call) => call.tag === "unlink").map((call) => call.environmentId),
+    ).toEqual(["m1", "m4"]);
+    expect(away.store.size).toBe(0);
+
+    const refuses = fakes({
+      fail: (call) =>
+        call.tag === "unlink" && call.environmentId === "m5" ? new Error("busy") : null,
+    });
+    await expect(runUnlink(refuses.run(plain))).resolves.toContain("M1 has its own coordinator");
+    expect(refuses.store.size).toBe(0);
   });
 });
