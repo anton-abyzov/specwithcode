@@ -6938,10 +6938,10 @@ export function makeClaudeAdapterV2(
           if (message.type === "assistant" && input.replayed !== true) {
             const now = yield* DateTime.now;
             yield* completeProviderRetry(context, now);
-            if (message.parent_tool_use_id === null) {
-              answeredAdvisorModel =
-                claudeAdvisorModelFromUsage(message.message.usage) ?? answeredAdvisorModel;
-            }
+            // A subagent's reply names its own advisor too; each message's entry
+            // is read before that message's items are titled.
+            answeredAdvisorModel =
+              claudeAdvisorModelFromUsage(message.message.usage) ?? answeredAdvisorModel;
             if (message.parent_tool_use_id === null && message.message.usage !== undefined) {
               const tokenUsage = claudeProviderTurnTokenUsage(
                 message.message.usage,
