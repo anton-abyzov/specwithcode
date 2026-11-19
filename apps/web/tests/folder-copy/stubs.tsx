@@ -166,7 +166,7 @@ export const linkCopyAsWorkers = async () => ({ status: "linked" });
 export const filesystemEnvironment = { browse: (value: unknown) => value };
 export const useFilesystemReadAccess = () => ({ canReadFiles: true });
 export const useEnvironmentQuery = () => ({
-  data: { parentPath: "/home/anton", entries: [] },
+  data: { parentPath: "/home/sam", entries: [] },
   isPending: false,
 });
 const fixtureParams = new URLSearchParams(location.search);
@@ -177,7 +177,7 @@ let attempted = false;
 let published = false;
 let op = incompleteUndo ? "00000000-0000-4000-8000-000000000009" : "";
 let mode = incompleteUndo && !undoCommitted ? "copy-and-move" : "copy-only";
-let targetFolder = incompleteUndo ? "/home/anton/Projects/project" : "";
+let targetFolder = incompleteUndo ? "/home/sam/Projects/project" : "";
 const umbrella = "/Users/you/Projects/github/specweave-umb";
 const child = "repositories/anton-abyzov/specweave";
 let copyRoot = umbrella;

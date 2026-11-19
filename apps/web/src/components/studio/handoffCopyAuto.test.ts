@@ -462,8 +462,8 @@ describe("grouped notices", () => {
 describe("steps and what happens next", () => {
   const base = {
     auto: true,
-    targetLabel: "ministorm",
-    approveLabel: "Copy to ministorm",
+    targetLabel: "linux-mini",
+    approveLabel: "Copy to linux-mini",
     failedBeforeApply: false,
   };
   it("says what happens next only while choosing file types or after a copy stopped", () => {
@@ -479,20 +479,20 @@ describe("steps and what happens next", () => {
     ] as const)
       expect(nextStepText({ ...base, stage })).toBeNull();
     expect(nextStepText({ ...base, stage: "select", auto: false })).toBe(
-      "Preview compares with ministorm's folder. Nothing is written until you approve.",
+      "Preview compares with linux-mini's folder. Nothing is written until you approve.",
     );
     expect(nextStepText({ ...base, stage: "failed", held: true })).toContain(
-      "Continue on ministorm anyway moves the coordinator with these differences.",
+      "Continue on linux-mini anyway moves the coordinator with these differences.",
     );
   });
 
   it("says Retry before Apply starts the copy again from measuring", () => {
     const failed = { ...base, stage: "failed" as const, failedBeforeApply: true };
     expect(nextStepText(failed)).toBe(
-      "Retry starts the copy again: it measures and compares again, then copies unless it needs you. Nothing on ministorm changed, so Stop copy leaves it as it was.",
+      "Retry starts the copy again: it measures and compares again, then copies unless it needs you. Nothing on linux-mini changed, so Stop copy leaves it as it was.",
     );
     expect(nextStepText({ ...failed, auto: false })).toBe(
-      "Retry starts the copy again: it measures again, then you choose what to copy and preview it. Nothing on ministorm changed, so Stop copy leaves it as it was.",
+      "Retry starts the copy again: it measures again, then you choose what to copy and preview it. Nothing on linux-mini changed, so Stop copy leaves it as it was.",
     );
     // After Apply the destination resumes the same copy.
     expect(nextStepText({ ...failed, failedBeforeApply: false })).toBe(
@@ -501,7 +501,7 @@ describe("steps and what happens next", () => {
   });
 
   const working = {
-    targetLabel: "ministorm",
+    targetLabel: "linux-mini",
     measured: null,
     copy: null,
     recompare: null,
@@ -511,7 +511,7 @@ describe("steps and what happens next", () => {
     expect(
       workingLine({ ...working, stage: "scanning", measured: { files: 1204, bytes: 3_000_000 } }),
     ).toBe("Measuring… 1,204 files, 3.0 MB");
-    expect(workingLine({ ...working, stage: "planning" })).toBe("Comparing with ministorm…");
+    expect(workingLine({ ...working, stage: "planning" })).toBe("Comparing with linux-mini…");
     expect(
       workingLine({
         ...working,
@@ -530,7 +530,7 @@ describe("steps and what happens next", () => {
     ).toBe("Copying 1.2 GB…");
     expect(workingLine({ ...working, stage: "copying" })).toBe("Copying…");
     expect(workingLine({ ...working, stage: "moving" })).toBe(
-      "Starting the coordinator on ministorm…",
+      "Starting the coordinator on linux-mini…",
     );
     for (const stage of ["setup", "select", "preview", "done", "failed", "undone"] as const)
       expect(workingLine({ ...working, stage })).toBeNull();
