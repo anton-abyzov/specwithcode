@@ -302,13 +302,19 @@ describe("Add from the machine menu", () => {
     expect(props().method).toBe("clone");
   });
 
-  it("resumes an unfinished Git handoff on its machine, unfiltered", async () => {
+  it("stays Add when a move to another machine was left unfinished, and keeps its pointer", async () => {
     state.environments = machineEnvironments;
-    localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:target" }));
+    const saved = JSON.stringify({ operationId, targetKey: "m1:target" });
+    localStorage.setItem(key, saved);
     await add();
-    expect(props().method).toBe("folder");
-    expect(props().selected).toBe("m1:target");
-    expect(offered()).toContain("m1");
+    expect(props().open).toBe(true);
+    // The copy-only flow, on no machine yet: never the move, never its machine.
+    expect(props().intent).toBe("copy");
+    expect(props().method).not.toBe("folder");
+    expect(props().selected).toBe("");
+    expect(offered()).not.toContain("m1");
+    // The unfinished move is still there for the page's own button to resume.
+    expect(localStorage.getItem(key)).toBe(saved);
   });
 
   it("starts a new copy: a finished one is not shown again", async () => {
