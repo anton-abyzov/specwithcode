@@ -382,9 +382,14 @@ export class SourceTransfers {
         if (grant.revokedAt !== null || now >= transferGrantExpiresAt(grant)) return "revoked";
         const refused = (await this.hooks.authority?.(loaded.record)) ?? null;
         if (refused !== null) return refused.code === "team_rules" ? "refused" : "revoked";
+        // The grant as it stands now, not as it was read before the decision: a token
+        // minted again meanwhile, or a revocation, is never written over.
+        const current = loaded.record.grant;
+        if (current.revokedAt !== null) return "revoked";
         // A read on the local network is a use of the grant, as one over Connect is.
-        if (used && now - grant.lastUsedAt > 60_000)
-          await this.save(loaded, { grant: { ...grant, lastUsedAt: now } });
+        // Only the idle time changes, on the grant read in this same step.
+        if (used && now - current.lastUsedAt > 60_000)
+          await this.save(loaded, { grant: { ...loaded.record.grant, lastUsedAt: now } });
         return null;
       },
       lanManifest: async (operationId) => {
@@ -794,6 +799,8 @@ export class SourceTransfers {
         : {}),
     });
     if (!verdict.ok || !loaded) throw new SourceTransferError(401, "unauthorized");
+    // Ending a local-network generation is not a use of the grant: nothing of it is written.
+    if (action === "retire") return loaded;
     if (action !== "hello") loaded.pulledAt = this.now();
     // A pull over Connect prompts a local-network offer; the offer itself goes by the control channel.
     if (action === undefined) this.lan?.pulled(operationId);

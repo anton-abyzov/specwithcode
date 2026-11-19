@@ -3,6 +3,7 @@ import { SourceTransferError, type SourceTransfers } from "./sourceService.ts";
 import {
   encodeFrames,
   FOLDER_TRANSFER_PREFIX,
+  LAN_RETIRE_BYTES,
   MAX_BATCH_CHUNKS_LARGE,
   MAX_REQUEST_BYTES,
   SEALED_SECRET_CONTENT_TYPE,
@@ -23,9 +24,6 @@ export interface RawResponse {
   readonly contentType: string;
   readonly body: Uint8Array;
 }
-
-/** A `lan-retire` body names one generation and nothing else. */
-const LAN_RETIRE_BYTES = 1024;
 
 const json = (status: number, value: unknown): RawResponse => ({
   status,

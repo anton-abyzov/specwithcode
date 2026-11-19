@@ -312,11 +312,13 @@ export class LanDestination {
     // A block accepted before a restart: its key is gone, so the copy switches now,
     // before any higher generation can be taken.
     if (await this.recovered(operationId, record)) return NONE;
-    // Taken only if still the highest, decided where the record is written.
+    // Taken only if still the highest, decided where the record is written. An earlier
+    // acceptance stays on the record until this generation's block is accepted, so a
+    // read that goes to Connect in between is still the copy's one switch.
     let won = false;
     await this.access.lanSave(operationId, (current) => {
       won = !current.latch && body.generation > current.generation;
-      return won ? { ...current, generation: body.generation, accepted: null } : current;
+      return won ? { ...current, generation: body.generation } : current;
     });
     if (!won) return NONE;
     this.drop(operationId);
@@ -431,7 +433,10 @@ export class LanDestination {
       return false;
     let won = false;
     await this.access.lanSave(operationId, (current) => {
-      won = current.generation === mine.generation && !current.latch && current.accepted === null;
+      won =
+        current.generation === mine.generation &&
+        !current.latch &&
+        current.accepted !== mine.generation;
       return won ? { ...current, accepted: mine.generation } : current;
     });
     if (!won || this.generations.get(operationId) !== mine) return false;
@@ -470,7 +475,9 @@ export class LanDestination {
     if (record.terminal || !record.lan || record.lan.latch || record.lan.accepted === null)
       return false;
     if (this.generations.get(operationId)?.connector) return false;
-    if (restartOnly && this.endedHere.has(operationId)) return false;
+    // A generation known to this process, live or ended, is not one a restart lost.
+    if (restartOnly && (this.endedHere.has(operationId) || this.generations.has(operationId)))
+      return false;
     await this.latched(operationId, "unreachable");
     return true;
   }

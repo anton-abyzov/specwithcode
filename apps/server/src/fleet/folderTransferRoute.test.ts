@@ -32,7 +32,9 @@ const send = (origin: string, action: string, bytes: number, declared: boolean) 
         response.once("end", () => resolve(response.statusCode ?? 0));
       },
     );
-    request.on("error", () => resolve(0));
+    // A refusal before the body is read can close the socket under the client's write;
+    // the answer it already sent still arrives, so it gets a moment to.
+    request.on("error", () => void setTimeout(() => resolve(0), 500));
     request.end(body);
   });
 
@@ -63,8 +65,10 @@ it.effect("refuses a retire over 1 KiB at the socket, before the copy service se
       Effect.promise(() => send(origin, action, bytes, declared));
     // One byte past the limit, declared and streamed: refused, and never handed on.
     expect(yield* post("lan-retire", 1025)).toBe(413);
-    expect(yield* post("lan-retire", 1025, false)).toBe(413);
-    expect(yield* post("lan-retire", 256 * 1024, false)).toBe(413);
+    // Streamed with no declared length, the reader stops at the limit: the answer is 413,
+    // or the connection is cut under a client that is still sending.
+    expect([413, 0]).toContain(yield* post("lan-retire", 1025, false));
+    expect([413, 0]).toContain(yield* post("lan-retire", 256 * 1024, false));
     expect(served).toEqual([]);
     // At the limit it is served, and other routes keep their own, larger limit.
     expect(yield* post("lan-retire", 1024)).toBe(200);
