@@ -41,6 +41,7 @@ import {
 } from "./providerUsageLimits.ts";
 import { isCommandMissingCause, spawnAndCollect } from "./providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
+import { type CopilotGhAccount, parseGhAuthStatus } from "./acp/copilotExistingSignIns.ts";
 
 /** The ACP Registry agent whose quota this module reads. */
 export const COPILOT_USAGE_AGENT_ID = "github-copilot-cli";
@@ -250,24 +251,20 @@ export type CopilotGhTokenResult =
  * `gh auth token` for one stored account, or for gh's active account when
  * `login` is undefined. The token never reaches a log.
  */
-export const readGhToken = (
-  login: string | undefined,
-  environment: NodeJS.ProcessEnv,
-): Effect.Effect<CopilotGhTokenResult, never, ChildProcessSpawner.ChildProcessSpawner> => {
+function ghEnvironment(environment: NodeJS.ProcessEnv): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = {
     ...environment,
     GH_DEBUG: "",
     GH_PROMPT_DISABLED: "1",
+    GH_NO_UPDATE_NOTIFIER: "1",
     NO_COLOR: "1",
   };
   for (const key of GH_ENVIRONMENT_TOKEN_KEYS) delete env[key];
-  const args = [
-    "auth",
-    "token",
-    "--hostname",
-    GITHUB_HOST,
-    ...(login === undefined ? [] : ["--user", login]),
-  ];
+  return env;
+}
+
+const runGh = (args: ReadonlyArray<string>, environment: NodeJS.ProcessEnv) => {
+  const env = ghEnvironment(environment);
   return Effect.gen(function* () {
     const spawnCommand = yield* resolveSpawnCommand("gh", args, { env });
     return yield* spawnAndCollect(
@@ -280,7 +277,21 @@ export const readGhToken = (
         forceKillAfter: "1 second",
       }),
     );
-  }).pipe(
+  });
+};
+
+export const readGhToken = (
+  login: string | undefined,
+  environment: NodeJS.ProcessEnv,
+): Effect.Effect<CopilotGhTokenResult, never, ChildProcessSpawner.ChildProcessSpawner> => {
+  const args = [
+    "auth",
+    "token",
+    "--hostname",
+    GITHUB_HOST,
+    ...(login === undefined ? [] : ["--user", login]),
+  ];
+  return runGh(args, environment).pipe(
     Effect.timeoutOption(GH_TIMEOUT_MS),
     Effect.result,
     Effect.map((result): CopilotGhTokenResult => {
@@ -295,6 +306,51 @@ export const readGhToken = (
     }),
   );
 };
+
+/**
+ * The github.com accounts gh holds, from plain `gh auth status` (it masks
+ * tokens). Empty when gh cannot say. Read only to word a sign-in hint.
+ */
+export const readGhAccounts = (
+  environment: NodeJS.ProcessEnv,
+): Effect.Effect<ReadonlyArray<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  runGh(["auth", "status", "--hostname", GITHUB_HOST], environment).pipe(
+    Effect.timeoutOption(GH_TIMEOUT_MS),
+    Effect.map((result) =>
+      Option.match(result, {
+        onNone: () => [],
+        onSome: ({ stdout, stderr }) =>
+          parseGhAuthStatus(`${stdout}\n${stderr}`)
+            .filter((account: CopilotGhAccount) => account.host === GITHUB_HOST)
+            .map((account) => account.account),
+      }),
+    ),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
+  );
+
+/**
+ * What to do when gh hands over no token for the Copilot CLI's account. The
+ * usage read asks gh for that account by name (`gh auth token --user`), so
+ * gh's active account never has to change: adding the account once is enough,
+ * and switching back keeps the person's usual account active.
+ */
+export function copilotGhSignInMessage(input: {
+  readonly login: string | undefined;
+  readonly ghAccounts: ReadonlyArray<string>;
+}): string {
+  const login = input.login?.trim();
+  const command = `gh auth login --hostname ${GITHUB_HOST} --web`;
+  if (!login) return `Sign in to the GitHub CLI to read Copilot usage (${command}).`;
+  const wanted = login.toLowerCase();
+  if (input.ghAccounts.some((account) => account.toLowerCase() === wanted)) {
+    return `The GitHub CLI holds ${login} but did not hand over its token for Copilot usage. Update gh to 2.40 or later, or run ${command} again and approve as ${login}.`;
+  }
+  const active = input.ghAccounts[0];
+  if (active === undefined) {
+    return `Sign in to the GitHub CLI as ${login} to read Copilot usage: run ${command} and approve as ${login} in the browser.`;
+  }
+  return `Add ${login} to the GitHub CLI to read Copilot usage: run ${command}, approve as ${login} in the browser, then gh auth switch --hostname ${GITHUB_HOST} --user ${active} to keep ${active} active. Usage is read for ${login} without switching.`;
+}
 
 export interface CopilotUsageInput {
   /** The instance's own configured variables, not the server's. */
@@ -412,6 +468,7 @@ export interface CopilotUsageReading {
 export const readCopilotUsage = Effect.fn("readCopilotUsage")(function* (
   input: CopilotUsageInput,
   ghToken: typeof readGhToken = readGhToken,
+  ghAccounts: typeof readGhAccounts = readGhAccounts,
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   let knownLogin: string | undefined;
@@ -457,14 +514,16 @@ export const readCopilotUsage = Effect.fn("readCopilotUsage")(function* (
               message: `Install the GitHub CLI and sign in${user.login ? ` as ${user.login}` : ""} to read Copilot usage.`,
             }),
           );
-        case "notSignedIn":
+        case "notSignedIn": {
+          const held = user.login ? yield* ghAccounts(input.processEnvironment) : [];
           return unavailable(
             makeUnavailableUsageLimits({
               checkedAt,
               reason: "unsupported",
-              message: `Sign in to the GitHub CLI${user.login ? ` as ${user.login}` : ""} to read Copilot usage (gh auth login).`,
+              message: copilotGhSignInMessage({ login: user.login, ghAccounts: held }),
             }),
           );
+        }
         case "failed":
           return unavailable(
             makeUnavailableUsageLimits({
@@ -522,7 +581,8 @@ export const readCopilotUsage = Effect.fn("readCopilotUsage")(function* (
 export const readCopilotUsageLimits = (
   input: CopilotUsageInput,
   ghToken: typeof readGhToken = readGhToken,
-) => readCopilotUsage(input, ghToken).pipe(Effect.map((reading) => reading.limits));
+  ghAccounts: typeof readGhAccounts = readGhAccounts,
+) => readCopilotUsage(input, ghToken, ghAccounts).pipe(Effect.map((reading) => reading.limits));
 
 const usageLimitsOf = (
   value: ServerProviderUsageLimits | CopilotUsageReading,
