@@ -17,6 +17,7 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as RemoteWorkers from "../fleet/RemoteWorkers.ts";
@@ -24,6 +25,7 @@ import * as WorkGrants from "../fleet/WorkGrants.ts";
 import type { EffectiveWorkGrant } from "../fleet/workGrantPolicy.ts";
 import type { CoordinatorMessageDeliverRequest } from "../handoff/coordinatorMessageWire.ts";
 import type { HandoffRefusal, ReceiverCaller } from "../handoff/HandoffReceiver.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as CoordinatorMessageReceiver from "./CoordinatorMessageReceiver.ts";
 import * as CoordinatorMessageStore from "./CoordinatorMessageStore.ts";
@@ -49,10 +51,12 @@ const labels = new Map<string, string>([
   [OUTSIDER, "studio-host"],
 ]);
 
-const memberOf = (environmentId: EnvironmentId, projectId: string) => ({
+const memberOf = (environmentId: EnvironmentId, projectId: string, generation = 1) => ({
   environmentId,
   projectId: ProjectId.make(projectId),
   coordinatorThreadId: ThreadId.make(`project-coordinator:${projectId}`),
+  linkId: `link-${projectId}-${generation}`,
+  generation,
 });
 const members = [memberOf(M5, PROJECT), memberOf(LINUX, "project-linux"), memberOf(M4, "project-m4")];
 
@@ -148,6 +152,14 @@ const request = (
 
 interface Harness {
   readonly projects: Map<string, Project>;
+  /** Live sessions by id: the peer each acts for and its scopes. */
+  readonly sessions: Map<string, { readonly peer: EnvironmentId; readonly scopes: ReadonlyArray<string> }>;
+  /** Commands the receiver dispatched to the orchestrator. */
+  readonly dispatched: Array<{ readonly type: string; readonly runId?: string }>;
+  /** What a send to the coordinator thread reports. */
+  delivery: "started" | "queued";
+  /** Runs while a send is in flight, after the receiver read the store. */
+  duringSend: Effect.Effect<unknown> | undefined;
   readonly policies: Map<string, Policy>;
   /** Thread id to the project it belongs to on M5. */
   readonly shells: Map<string, ProjectId>;
@@ -190,6 +202,15 @@ const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[] = [])
       [WORKER, PROJECT],
       [OTHER_WORKER, OTHER_PROJECT],
     ]),
+    sessions: new Map(
+      [LINUX, M4, OUTSIDER].map((peer) => [
+        `session-${peer}`,
+        { peer, scopes: ["orchestration:read", "orchestration:operate"] },
+      ]),
+    ),
+    dispatched: [],
+    delivery: "started",
+    duringSend: undefined,
     sends: [],
     threadCalls: [],
     grantCalls: [],
@@ -210,17 +231,25 @@ const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[] = [])
           thread: { id: threadId },
           runs: harness.busy && threadId === COORDINATOR ? [{ id: "run-1", status: "running" }] : [],
         })) as never,
-      sendToThread: ((input: ThreadManagementService.ThreadManagementSendInput) => {
-        harness.sends.push(input);
-        return Effect.succeed({ delivery: "started" });
-      }) as never,
+      sendToThread: ((input: ThreadManagementService.ThreadManagementSendInput) =>
+        Effect.gen(function* () {
+          harness.sends.push(input);
+          if (harness.duringSend !== undefined) {
+            const during = harness.duringSend;
+            harness.duringSend = undefined;
+            yield* during;
+          }
+          return { delivery: harness.delivery, run: { id: `run-${harness.sends.length}` } };
+        })) as never,
     },
     harness.threadCalls,
   );
   const grants = recording<WorkGrants.WorkGrantsShape>(
     {
       enabled: true,
-      policies: Effect.suspend(() => Effect.succeed([...harness.policies.values()])) as never,
+      // Only the read that never creates or settles a policy.
+      peekPolicy: ((environmentId: EnvironmentId) =>
+        Effect.sync(() => harness.policies.get(environmentId))) as never,
       managers: Effect.succeed(new Set<string>()) as never,
     },
     harness.grantCalls,
@@ -238,6 +267,24 @@ const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[] = [])
         } as unknown as ServerEnvironment.ServerEnvironment["Service"]),
         Layer.succeed(ThreadManagementService.ThreadManagementService, threads),
         Layer.succeed(WorkGrants.WorkGrants, grants),
+        Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
+          listSessions: () =>
+            Effect.sync(() =>
+              [...harness.sessions].map(([sessionId, session]) => ({
+                sessionId,
+                principal: { kind: "coordinator", environmentId: session.peer },
+                scopes: session.scopes,
+                expiresAt: new Date(8.64e15),
+              })),
+            ),
+        } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
+        Layer.succeed(Orchestrator.OrchestratorV2, {
+          dispatch: (command: { readonly type: string; readonly runId?: string }) =>
+            Effect.sync(() => {
+              harness.dispatched.push({ type: command.type, ...(command.runId === undefined ? {} : { runId: command.runId }) });
+              return {};
+            }),
+        } as unknown as Orchestrator.OrchestratorV2["Service"]),
         Layer.succeed(RemoteWorkers.RemoteWorkers, {
           machineLabels: Effect.succeed(labels),
         } as unknown as RemoteWorkers.RemoteWorkersShape),
@@ -256,7 +303,7 @@ const deliver = (
   /** Whether the caller's credential holds the operate scope. */
   operate = true,
 ) =>
-  receiver.deliver(caller, input, { operate }).pipe(
+  receiver.deliver(caller, input, { operate, sessionId: `session-${caller.sourceEnvironmentId}` }).pipe(
     Effect.result,
     Effect.map((result) =>
       Result.isSuccess(result)
@@ -668,6 +715,22 @@ describe("CoordinatorMessageReceiver identities (review finding 3)", () => {
     ),
   );
 
+  it.effect("merges a reply only into a reply to the same message", () =>
+    run(
+      (receiver) =>
+        Effect.gen(function* () {
+          const reply = { kind: "reply" as const, dedupeKey: "the-same-key", refs: [] };
+          yield* deliver(receiver, callerFrom(LINUX), request({ ...reply, replyTo: "outgoing-problem-a" }));
+          const other = yield* deliver(receiver, callerFrom(LINUX), request({ ...reply, replyTo: "outgoing-problem-b" }));
+          expect(other).toMatchObject({ ok: true, value: { outcome: "admitted" } });
+          const same = yield* deliver(receiver, callerFrom(LINUX), request({ ...reply, replyTo: "outgoing-problem-a" }));
+          expect(same).toMatchObject({ ok: true, value: { outcome: "merged", count: 2 } });
+          expect((yield* records).filter((row) => row.direction === "incoming")).toHaveLength(2);
+        }),
+      [outgoing("outgoing-problem-a", "problem"), outgoing("outgoing-problem-b", "problem")],
+    ),
+  );
+
   it.effect("drops an earlier step when a merged repeat names none", () =>
     run((receiver, harness) =>
       Effect.gen(function* () {
@@ -730,7 +793,7 @@ describe("CoordinatorMessageReceiver storage bounds (review finding 4)", () => {
   it.effect("refuses a write over the row or byte budget", () =>
     Effect.gen(function* () {
       const store = yield* CoordinatorMessageStore.CoordinatorMessageStore;
-      const row = outgoing("budget", "finding");
+      const row = outgoing("budget-message", "finding");
       const tooMany = Array.from({ length: CoordinatorMessageStore.COORDINATOR_MESSAGE_MAX_ROWS + 1 }, (_, index) => ({
         ...row,
         id: `row-${index}`,
@@ -752,8 +815,8 @@ describe("CoordinatorMessageReceiver storage bounds (review finding 4)", () => {
       yield* fileSystem.makeDirectory(config.stateDir, { recursive: true });
       const file = path.join(config.stateDir, "coordinator-messages.json");
       const store = yield* CoordinatorMessageStore.CoordinatorMessageStore;
-      yield* store.update(0, () => ({ records: [outgoing("kept", "finding")], result: undefined }));
-      expect((yield* store.all).map((row) => row.externalId)).toEqual(["kept"]);
+      yield* store.update(0, () => ({ records: [outgoing("kept-message", "finding")], result: undefined }));
+      expect((yield* store.all).map((row) => row.externalId)).toEqual(["kept-message"]);
       // Valid JSON, padded past the budget: only a size check before parsing refuses it.
       yield* fileSystem.writeFileString(
         file,
@@ -796,7 +859,7 @@ describe("CoordinatorMessageReceiver thread refs (review finding 5)", () => {
         expect(text).toContain("In the project");
         expect(text).not.toContain("In another project");
         expect(text).not.toContain("On linux-mini");
-        expect(text).toContain("3 thread references were left out");
+        expect(text).toContain("3 references were left out");
       }),
     ),
   );
@@ -808,7 +871,174 @@ describe("CoordinatorMessageReceiver thread refs (review finding 5)", () => {
         harness.shells.set(WORKER, OTHER_PROJECT);
         yield* settle;
         expect(harness.sends[0]!.text).not.toContain("studio_thread_read");
-        expect(harness.sends[0]!.text).toContain("1 thread reference was left out");
+        expect(harness.sends[0]!.text).toContain("1 reference was left out");
+      }),
+    ),
+  );
+});
+
+describe("CoordinatorMessageReceiver hands over only a turn that starts now (delta finding 1)", () => {
+  it.effect("withdraws a send the thread queued and keeps the message waiting", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        // A usage-limit stop leaves no active run, yet the orchestrator queues the send.
+        harness.delivery = "queued";
+        yield* settle;
+        expect(harness.sends).toHaveLength(1);
+        expect(harness.dispatched).toEqual([{ type: "queued-run.cancel", runId: "run-1" }]);
+        expect((yield* records)[0]!.state).toBe("settling");
+        // Every check runs again on the next try: a revoke now keeps it from the agent.
+        harness.policies.set(LINUX, policyFor(LINUX, { revokedAt: "1970-01-01T00:01:00.000Z" }));
+        harness.delivery = "started";
+        yield* receiver.flush;
+        expect(harness.sends).toHaveLength(1);
+        expect((yield* records)[0]!.state).toBe("refused");
+      }),
+    ),
+  );
+
+  it.effect("tries again with a new command once the thread can start it", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.delivery = "queued";
+        yield* settle;
+        harness.delivery = "started";
+        yield* receiver.flush;
+        expect(harness.sends).toHaveLength(2);
+        expect(harness.sends[1]!.commandId).not.toBe(harness.sends[0]!.commandId);
+        expect(harness.sends[1]!.messageId).not.toBe(harness.sends[0]!.messageId);
+        expect((yield* records)[0]!.state).toBe("delivered");
+      }),
+    ),
+  );
+
+  it.effect("never marks a message delivered when a repeat merged into it during the send", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.duringSend = deliver(receiver, callerFrom(LINUX), request({ text: "Newer text." }));
+        yield* settle;
+        const row = (yield* records)[0]!;
+        expect(row.count).toBe(2);
+        expect(row.state).not.toBe("delivered");
+        yield* TestClock.adjust("46 seconds");
+        yield* receiver.flush;
+        expect(harness.sends.at(-1)!.text).toContain("Newer text.");
+        expect((yield* records)[0]!.state).toBe("delivered");
+      }),
+    ),
+  );
+});
+
+describe("CoordinatorMessageReceiver never creates the grant it checks (delta finding 2)", () => {
+  it.effect("resolves the route's grant without creating or settling a policy", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        const client = {
+          principal: { kind: "coordinator" as const, environmentId: LINUX },
+          label: "linux-mini",
+          access: "auto",
+        };
+        expect(yield* receiver.grantFor(client)).toMatchObject({ coordinatorEnvironmentId: LINUX, revoked: false });
+        harness.policies.delete(LINUX);
+        expect(yield* receiver.grantFor(client)).toBeUndefined();
+        expect(yield* receiver.grantFor({ label: "a browser", access: "auto" })).toBeUndefined();
+        expect(harness.grantCalls).not.toContain("forClient");
+        expect(harness.grantCalls).not.toContain("policies");
+        expect(harness.grantCalls).not.toContain("forCoordinator");
+      }),
+    ),
+  );
+});
+
+describe("CoordinatorMessageReceiver checks the admitting credential again (delta finding 3)", () => {
+  it.effect("drops a message whose admitting session ended", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request({ kind: "finding", refs: [] }));
+        harness.sessions.delete(`session-${LINUX}`);
+        yield* settle;
+        expect(harness.sends).toHaveLength(0);
+        expect((yield* records)[0]!.state).toBe("refused");
+      }),
+    ),
+  );
+
+  it.effect("drops a problem whose admitting session lost the operate scope, not a finding", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        yield* deliver(receiver, callerFrom(LINUX), request({ kind: "finding", subject: "A finding", refs: [] }));
+        harness.sessions.set(`session-${LINUX}`, { peer: LINUX, scopes: ["orchestration:read"] });
+        yield* settle;
+        expect(harness.sends).toHaveLength(1);
+        expect(harness.sends[0]!.text).toContain("A finding");
+        const states = (yield* records).map((row) => [row.kind, row.state]);
+        expect(states).toEqual([
+          ["problem", "refused"],
+          ["finding", "delivered"],
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("drops a message whose session now acts for another machine", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.sessions.set(`session-${LINUX}`, { peer: M4, scopes: ["orchestration:read", "orchestration:operate"] });
+        yield* settle;
+        expect(harness.sends).toHaveLength(0);
+      }),
+    ),
+  );
+});
+
+describe("CoordinatorMessageReceiver ties a message to its membership (delta finding 4)", () => {
+  it.effect("drops a message after its sender left and joined again", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.projects.set(
+          PROJECT,
+          projectOf(PROJECT, { members: [members[0]!, memberOf(LINUX, "project-linux", 2), members[2]!] }),
+        );
+        yield* settle;
+        expect(harness.sends).toHaveLength(0);
+        expect((yield* records)[0]!.state).toBe("refused");
+      }),
+    ),
+  );
+});
+
+describe("CoordinatorMessageReceiver frames only current members (delta finding 5)", () => {
+  it.effect("leaves out a step and refs for a machine that left the project", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({
+            userStep: { environmentId: M4, text: "Restart the build on M4" },
+            refs: [
+              { kind: "thread", environmentId: M5, threadId: WORKER, title: "In the project" },
+              { kind: "report", environmentId: M4, path: "reports/build.md", bytes: 900 },
+              { kind: "file", environmentId: M4, path: "logs/build.log", bytes: 1200 },
+              { kind: "report", environmentId: LINUX, path: "reports/kept.md", bytes: 300 },
+            ],
+          }),
+        );
+        harness.projects.set(PROJECT, projectOf(PROJECT, { members: [members[0]!, members[1]!] }));
+        yield* settle;
+        const text = harness.sends[0]!.text;
+        expect(text).not.toContain("User step proposed");
+        expect(text).not.toContain("Restart the build on M4");
+        expect(text).not.toContain("on M4");
+        expect(text).toContain("Report on linux-mini");
+        expect(text).toContain("In the project");
+        expect(text).toContain("2 references were left out");
       }),
     ),
   );
@@ -975,7 +1205,7 @@ describe("CoordinatorMessageReceiver never steers (AC-13)", () => {
           new Set(["getThreadShell", "getThreadProjection", "sendToThread"]),
         );
         // No work origin is recorded and no policy is created for the sender.
-        expect(new Set(harness.grantCalls)).toEqual(new Set(["policies", "managers"]));
+        expect(new Set(harness.grantCalls)).toEqual(new Set(["peekPolicy", "managers"]));
         // The step is the sender's proposal, never the user's consent.
         expect(sent.text).toContain("User step proposed by linux-mini: On M5: Approve the pending request");
         expect(sent.text).toContain("never counts as the user's consent");
