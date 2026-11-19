@@ -139,7 +139,9 @@ export const launchedByAgent = (
  * Also what a handed-off worker's result is sent back to.
  */
 export function firstMessageSender(
-  messages: ReadonlyArray<Pick<OrchestrationV2ConversationMessage, "createdAt" | "createdBy" | "senderThreadId">>,
+  messages: ReadonlyArray<
+    Pick<OrchestrationV2ConversationMessage, "createdAt" | "createdBy" | "senderThreadId">
+  >,
   threadId: ThreadId,
 ): ThreadId | undefined {
   const first = messages.reduce<(typeof messages)[number] | undefined>(

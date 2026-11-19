@@ -37,7 +37,14 @@ export const HANDOFF_NOT_TAKEN = "The other machine did not take this thread.";
 export interface HandoffFollowInput {
   readonly shell: Pick<
     OrchestrationV2ThreadShell,
-    "id" | "projectId" | "title" | "lineage" | "createdBy" | "creationSource" | "origin" | "deletedAt"
+    | "id"
+    | "projectId"
+    | "title"
+    | "lineage"
+    | "createdBy"
+    | "creationSource"
+    | "origin"
+    | "deletedAt"
   >;
   readonly destination: EnvironmentId;
   /** The epoch the destination takes over at. */

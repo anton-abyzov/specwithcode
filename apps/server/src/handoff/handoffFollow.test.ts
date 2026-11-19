@@ -52,7 +52,15 @@ const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSY
 const git = (cwd: string, ...args: Array<string>) =>
   NodeChildProcess.execFileSync(
     "git",
-    ["-c", "user.name=Handoff Test", "-c", "user.email=handoff@example.invalid", "-C", cwd, ...args],
+    [
+      "-c",
+      "user.name=Handoff Test",
+      "-c",
+      "user.email=handoff@example.invalid",
+      "-C",
+      cwd,
+      ...args,
+    ],
     { encoding: "utf8", env: gitEnv, stdio: ["ignore", "pipe", "pipe"] },
   ).trim();
 
