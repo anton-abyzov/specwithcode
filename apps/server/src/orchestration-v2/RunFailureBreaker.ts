@@ -20,12 +20,13 @@ const FINISHED: ReadonlySet<OrchestrationV2Run["status"]> = new Set([
   "rolled_back",
 ]);
 
-type BreakerRun = Pick<OrchestrationV2Run, "ordinal" | "status"> &
-  Partial<Pick<OrchestrationV2Run, "userMessageId">>;
-type BreakerMessage = Pick<
-  OrchestrationV2ConversationMessage,
-  "id" | "role" | "creationSource" | "scheduledTaskId"
->;
+type BreakerRun = Pick<OrchestrationV2Run, "ordinal" | "status"> & {
+  readonly userMessageId?: string;
+};
+type BreakerMessage = Pick<OrchestrationV2ConversationMessage, "role" | "creationSource"> & {
+  readonly id: string;
+  readonly scheduledTaskId?: string | undefined;
+};
 
 /**
  * A run started by a person's or an agent's message, or a routine's Run now.

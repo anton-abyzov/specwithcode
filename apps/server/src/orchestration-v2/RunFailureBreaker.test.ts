@@ -48,12 +48,12 @@ it("starts a new streak at a failed run a person's message started", () => {
       role: "user",
       creationSource,
       ...(scheduledTaskId === undefined ? {} : { scheduledTaskId }),
-    }) as Message;
+    }) satisfies Message;
   const streak = [
     { ordinal: 1, status: "failed" as const, userMessageId: "scheduled-task-message:t:1" },
     { ordinal: 2, status: "failed" as const, userMessageId: "scheduled-task-message:t:2" },
     { ordinal: 3, status: "failed" as const, userMessageId: "scheduled-task-message:t:3" },
-  ] as Parameters<typeof trailingFailedRuns>[0];
+  ];
   const messages = [
     message("scheduled-task-message:t:1", "server", "t"),
     message("scheduled-task-message:t:2", "server", "t"),
@@ -65,7 +65,7 @@ it("starts a new streak at a failed run a person's message started", () => {
   const after = (...more: Array<[string, OrchestrationV2Run["status"]]>) => [
     ...streak,
     ...more.map(([userMessageId, status], index) => ({ ordinal: 4 + index, status, userMessageId })),
-  ] as Parameters<typeof trailingFailedRuns>[0];
+  ];
   assert.equal(trailingFailedRuns(streak, messages), 3);
   // The person's message failed to open: its retry may still start.
   const personFailed = after(["message:person", "failed"]);
