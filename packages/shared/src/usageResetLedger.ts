@@ -137,14 +137,36 @@ export function resetPeriods(
 }
 
 /**
+ * Two records of one window ending this close are one reset: a read up to
+ * five minutes past the announced reset still counts as before it, so one
+ * record can end at the announced time and another at that late read. A
+ * window that started over twice within this time would have had nothing to
+ * spend between the two.
+ */
+export const SAME_RESET_MS = 15 * MINUTE;
+
+/**
+ * Whether two records of one window are the same reset: their spans from last
+ * read to end overlap (both reads bracket it), or they end within
+ * `SAME_RESET_MS` of each other, which also covers an identical record whose
+ * span is a single instant.
+ */
+export function sameResetRecord(
+  left: Pick<ResetPeriod, "lastReadAt" | "endedAt">,
+  right: Pick<ResetPeriod, "lastReadAt" | "endedAt">,
+): boolean {
+  if (left.lastReadAt < right.endedAt && right.lastReadAt < left.endedAt) return true;
+  return Math.abs(left.endedAt - right.endedAt) <= SAME_RESET_MS;
+}
+
+/**
  * One list from the ledgers of several machines. Two machines signed in to
  * one account each record the same reset from their own reads; the one that
  * read last before the reset knows the spend best, so it is kept.
  *
- * Two records are one reset when the spans between each one's last read and
- * its end overlap: both machines had the reset inside their own gap. Two
- * resets one machine saw in a row never overlap, however close they are, so
- * an early reset and a redeemed one hours apart both stay.
+ * Two records are one reset when `sameResetRecord` says so. Two resets one
+ * machine saw in a row never overlap, so an early reset and a redeemed one
+ * hours apart both stay.
  */
 export function mergeResetPeriods<Period extends ResetPeriod>(
   ledgers: ReadonlyArray<ReadonlyArray<Period>>,
@@ -164,7 +186,7 @@ export function mergeResetPeriods<Period extends ResetPeriod>(
       last &&
       last.accountKey === period.accountKey &&
       last.windowId === period.windowId &&
-      period.lastReadAt < last.endedAt
+      sameResetRecord(last, period)
     ) {
       if (period.lastReadAt > last.lastReadAt) {
         merged[merged.length - 1] = {

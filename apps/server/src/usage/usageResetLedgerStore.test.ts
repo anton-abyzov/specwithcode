@@ -366,6 +366,33 @@ describe("backfillLedger", () => {
     expect(state.periods).toHaveLength(1);
   });
 
+  it("adds nothing for a reset the live ledger closed at a read just past its announced time", () => {
+    const state = emptyLedger();
+    const live = (checkedAt: number, used: number, resetsAt: number) =>
+      advanceLedger(state, {
+        accountKey: "claude:max@example.com",
+        driver: claude,
+        checkedAt,
+        windows: [{ ...weekly(used, resetsAt), id: "seven_day" }],
+        resetCredits: null,
+      });
+    live(reset1 - 10 * MINUTE, 90, reset1);
+    // Still fresh five minutes past the reset; the history skipped it as unchanged.
+    live(reset1 + 2 * MINUTE, 90, reset1);
+    live(reset1 + 6 * MINUTE, 2, reset2);
+    expect(state.periods.map((period) => [period.lastReadAt, period.endedAt])).toEqual([
+      [reset1 + 2 * MINUTE, reset1 + 2 * MINUTE],
+    ]);
+    const past = history(
+      series("seven_day", "weekly", [
+        [reset1 - 10 * MINUTE, 90, reset1],
+        [reset1 + 6 * MINUTE, 2, reset2],
+      ]),
+    );
+    expect(backfillLedger(state, past)).toBe(0);
+    expect(state.periods).toHaveLength(1);
+  });
+
   it("leaves a cursor undated when a whole window went unread since the history's last reset", () => {
     const state = emptyLedger();
     advanceLedger(state, {

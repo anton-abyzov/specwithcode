@@ -18,6 +18,7 @@ import {
   isLedgerWindow,
   ledgerWindowLengthMs,
   resetPeriods,
+  sameResetRecord,
 } from "@specweave-studio/shared/usageResetLedger";
 import { windowModelScope } from "@specweave-studio/shared/usageWindows";
 
@@ -219,10 +220,9 @@ export function backfillLedger(state: LedgerState, history: HistoryState): numbe
           other.accountKey === series.accountKey &&
           other.windowKind === series.windowKind &&
           other.windowId === series.windowId &&
-          // The same record again (its span may be a single instant), or one whose span
-          // from last read to reset overlaps: another read of the same reset.
-          ((other.endedAt === period.endedAt && other.lastReadAt === period.lastReadAt) ||
-            (period.lastReadAt < other.endedAt && other.lastReadAt < period.endedAt)),
+          // The same reset already recorded, from this history or a live read whose
+          // last read fell a few minutes past the announced time.
+          sameResetRecord(other, period),
       );
       if (overlaps) continue;
       added.push({

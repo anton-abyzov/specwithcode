@@ -182,6 +182,24 @@ describe("mergeResetPeriods", () => {
     ]);
   });
 
+  it("keeps one of two machines' identical records read at the reset itself", () => {
+    const merged = mergeResetPeriods([
+      [period(reset1, reset1, 90, null)],
+      [period(reset1, reset1, 90, null)],
+      [period(reset2, reset2 - HOUR, 70, reset1)],
+    ]);
+    expect(merged.map((entry) => entry.endedAt)).toEqual([reset1, reset2]);
+  });
+
+  it("treats a reset recorded at a late read and at its announced time as one", () => {
+    const merged = mergeResetPeriods([
+      [period(reset1, reset1 - 10 * MINUTE, 90, null)],
+      [period(reset1 + 2 * MINUTE, reset1 + 2 * MINUTE, 90, null)],
+    ]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.lastReadAt).toBe(reset1 + 2 * MINUTE);
+  });
+
   it("keeps different accounts and windows apart", () => {
     const other = { ...period(reset1, reset1 - HOUR, 10, null), windowId: "seven_day_opus" };
     expect(mergeResetPeriods([[period(reset1, reset1 - HOUR, 59, null)], [other]])).toHaveLength(2);
