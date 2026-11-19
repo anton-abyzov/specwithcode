@@ -1,11 +1,11 @@
 /**
- * The handoff wire and takeover rules of the latest release, v1.0.381, copied
- * verbatim with `git show v1.0.381:<path>` so the compatibility tests run
+ * The handoff wire and takeover rules of the latest release, v1.0.383, copied
+ * verbatim with `git show v1.0.383:<path>` so the compatibility tests run
  * today's code against what a machine that has not updated yet still does.
  * Only the names changed (the `previous` prefix). Never edit a body here:
  * replace it from the tag of the release a later test pins.
  *
- * Sources at v1.0.381:
+ * Sources at v1.0.383:
  * - apps/server/src/handoff/handoffWire.ts:159-250,353-372 (the preflight,
  *   takeover and heartbeat bodies, the error body, the paths the route knows)
  * - apps/server/src/handoff/handoffState.ts:603-612,638-802 (`takeoverVerdict`,
@@ -37,7 +37,7 @@ import {
   incomingKey,
 } from "./handoffState.ts";
 
-export const PREVIOUS_RELEASE = "v1.0.381";
+export const PREVIOUS_RELEASE = "v1.0.383";
 export const PREVIOUS_PROTOCOL_VERSION = 2;
 
 const text = (max: number) => Schema.String.check(Schema.isMaxLength(max));

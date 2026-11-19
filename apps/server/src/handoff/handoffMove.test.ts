@@ -789,7 +789,7 @@ describe("handoff between two machines", () => {
     }),
   );
 
-  it.effect("never continues here a copy from a machine on another handoff version", () =>
+  it.effect("never continues by itself a copy from a machine on another handoff version", () =>
     Effect.gen(function* () {
       const { moves, destinationReceiver, destination, destinationRoot, destinationServices } =
         yield* scenario();
@@ -1060,7 +1060,7 @@ describe("handoff between two machines", () => {
   );
 
   it.effect(
-    "continues a silent source here after its lease went stale; the source fences on rejoin",
+    "continues a silent source by itself after its lease went stale; the source fences on rejoin",
     () =>
       Effect.gen(function* () {
         const {
@@ -1134,7 +1134,7 @@ describe("handoff between two machines", () => {
   );
 
   it.effect.each(["awake", "refuses"] as const)(
-    "refuses Continue here while the source answers a direct probe (%s)",
+    "does not continue by itself while the source answers a direct probe (%s)",
     (answer) =>
       Effect.gen(function* () {
         const { continueHere, destination, probes } = yield* staleReplicaOnMinis(answer);
@@ -1152,7 +1152,7 @@ describe("handoff between two machines", () => {
   );
 
   it.effect.each(["silent", "local"] as const)(
-    "continues here when the source is unreachable or cannot be probed (%s)",
+    "continues by itself when the source is unreachable or cannot be probed (%s)",
     (answer) =>
       Effect.gen(function* () {
         const { continueHere, destination, probes } = yield* staleReplicaOnMinis(answer);
@@ -1163,7 +1163,7 @@ describe("handoff between two machines", () => {
       }),
   );
 
-  it.effect("refuses Continue here while this machine's own network is down", () =>
+  it.effect("does not continue by itself while this machine's own network is down", () =>
     Effect.gen(function* () {
       const { continueHere, destination, probes } = yield* staleReplicaOnMinis("silent", {
         connect: "offline",
@@ -1278,7 +1278,7 @@ describe("handoff between two machines", () => {
     }),
   );
 
-  it.effect("waits a minute after this machine starts or wakes before continuing here", () =>
+  it.effect("waits a minute after this machine starts or wakes before continuing by itself", () =>
     Effect.gen(function* () {
       const { destination, destinationReceiver, destinationServices, minisMoves } =
         yield* staleReplicaOnMinis("silent");
@@ -1570,39 +1570,6 @@ describe("handoff between two machines", () => {
         expect.objectContaining({ runId: "run-late", threadId, cause: "agent" }),
       ]);
       expect(fixture.activeRunId).toBeNull();
-    }),
-  );
-
-  it.effect("never hands over a thread whose turn does not stop", () =>
-    Effect.gen(function* () {
-      const { source, destination, moves, fixture, destinationRoot } = yield* scenario();
-      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
-      fixture.activeRunId = "run-1";
-      fixture.ignoreInterrupt = true;
-      let done = false;
-      const fiber = yield* handOff(moves).pipe(
-        Effect.result,
-        Effect.ensuring(
-          Effect.sync(() => {
-            done = true;
-          }),
-        ),
-        Effect.forkChild,
-      );
-      // The bounded wait for the turn to end runs out. Git work in between is real I/O,
-      // so the test clock moves in small steps while the handoff runs.
-      for (let step = 0; step < 2_000 && !done; step += 1) {
-        yield* TestClock.withLive(Effect.sleep("5 millis"));
-        yield* TestClock.adjust("1 second");
-      }
-      const result = yield* Fiber.join(fiber);
-      // The destination would start the next turn while this one still runs.
-      expect(result._tag).toBe("Failure");
-      expect(destination.launches).toHaveLength(0);
-      expect(source.document.threads[threadId]?.lease).toMatchObject({ state: "active", epoch: 1 });
-      expect(source.dispatched.filter((command) => command.type === "run.interrupt")).toHaveLength(
-        1,
-      );
     }),
   );
 

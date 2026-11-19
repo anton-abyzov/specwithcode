@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - disposable real Git fixtures only.
 /**
  * This build against the latest release, in both directions (1390). The other
- * machine's side comes from `previousRelease381.test.fixture.ts`, copied from
+ * machine's side comes from `previousRelease383.test.fixture.ts`, copied from
  * the release tag: its request and answer bodies, its takeover and heartbeat
  * rules, and what its sender does with a refusal.
  *
@@ -40,11 +40,12 @@ import {
   encodePreviousPreflightRequest,
   encodePreviousTakeoverRequest,
   overTheWire,
+  previousHeartbeatContinued,
   previousMarkContinued,
   previousReadAnswer,
   previousTakeoverFailure,
   previousTakeoverVerdict,
-} from "./previousRelease381.test.fixture.ts";
+} from "./previousRelease383.test.fixture.ts";
 
 const temporary: Array<string> = [];
 afterEach(() => {
@@ -87,7 +88,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
     const preflight = Schema.encodeSync(PeerPreflightRequest)({
       sourceEnvironmentId: "env-a" as never,
       protocolVersion: HANDOFF_PROTOCOL_VERSION,
-      appVersion: "1.0.382",
+      appVersion: "1.0.384",
       capabilities: [HANDOFF_V2_CAPABILITY],
       threads: [],
     });
@@ -228,6 +229,94 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
         expect(transferOf(a)?.state).toBe("resumed");
       }),
     );
+    /** The hold the release left with the takeover it sent still on file. */
+    const holdWithRequest = (a: RigMachine, old: RigMachine) =>
+      Effect.gen(function* () {
+        yield* a.moves.preflight({ destinationEnvironmentId: old.environmentId, threadIds: [t1] });
+        const record = a.document.threads[t1]!;
+        a.document = {
+          ...a.document,
+          threads: {
+            ...a.document.threads,
+            [t1]: {
+              ...record,
+              lease: { ...record.lease!, state: "handing-off" },
+              pendingTakeover: {
+                destinationEnvironmentId: old.environmentId,
+                request: {
+                  sourceEnvironmentId: a.environmentId,
+                  sourceThreadId: t1,
+                  epoch: 2,
+                  sequence: record.checkpoint!.sequence,
+                  reason: "handoff",
+                  modelSelection: null,
+                },
+              },
+            },
+          },
+        };
+      });
+
+    it.effect("sends the takeover an old hold kept on file again, to that machine only", () =>
+      Effect.gen(function* () {
+        const rig = yield* makeRig(temporary, withPrevious);
+        const [a, b, old] = rig.machines as [RigMachine, RigMachine, RigMachine];
+        rig.addThread(a, t1);
+        yield* a.moves.preflight({ destinationEnvironmentId: b.environmentId, threadIds: [t1] });
+        yield* holdWithRequest(a, old);
+
+        yield* a.moves.tick;
+
+        // That machine never got it: it takes the thread now, by its own rules.
+        expect(old.launches).toHaveLength(1);
+        expect(leaseOf(a)?.state).toBe("fenced");
+        expect(a.document.threads[t1]?.continuedOn).toMatchObject({
+          environmentId: old.environmentId,
+          threadId: continuationThreadId(a.environmentId, t1, 2),
+        });
+        expect(transferOf(a)).toMatchObject({ legacy: true, state: "resumed" });
+        expect(b.launches).toHaveLength(0);
+        expect(rig.callsOf("takeover", b)).toHaveLength(0);
+      }),
+    );
+
+    it.effect("does not stay held when that machine calls the kept takeover stale", () =>
+      Effect.gen(function* () {
+        const rig = yield* makeRig(temporary, withPrevious);
+        const [a, , old] = rig.machines as [RigMachine, RigMachine, RigMachine];
+        rig.addThread(a, t1);
+        yield* holdWithRequest(a, old);
+        // It was already told this epoch, and did not continue the thread.
+        old.document = previousHeartbeatContinued(
+          old.document,
+          {
+            sourceEnvironmentId: a.environmentId,
+            leases: [{ sourceThreadId: t1, epoch: 2 }],
+          },
+          "2026-11-19T14:00:00.000Z",
+        )[1];
+
+        yield* a.moves.tick;
+        // "Stale" is not "never continued", and it cannot answer for a transfer: the
+        // hold stays, and from here it is asked by heartbeat like a hold with nothing on file.
+        expect(leaseOf(a)?.state).toBe("handing-off");
+        expect(rig.callsOf("transfer-status", old)).toHaveLength(1);
+        expect(transferOf(a)).toMatchObject({ state: "unknown", sequence: null });
+        expect(transferOf(a)?.candidates.map((candidate) => candidate.environmentId)).toEqual([
+          old.environmentId,
+        ]);
+
+        yield* a.moves.tick;
+        expect(transferOf(a)?.candidates[0]).toMatchObject({ verdict: "fenced" });
+        expect(leaseOf(a)?.state).toBe("handing-off");
+
+        yield* TestClock.adjust("201 seconds");
+        yield* a.moves.tick;
+        expect(leaseOf(a)).toMatchObject({ state: "active", epoch: 2 });
+        expect(transferOf(a)?.state).toBe("failed");
+        expect(old.launches).toHaveLength(0);
+      }),
+    );
   });
 
   describe("as the source", () => {
@@ -242,7 +331,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
         const body = encodePreviousPreflightRequest({
           sourceEnvironmentId: a.environmentId,
           protocolVersion: PREVIOUS_PROTOCOL_VERSION,
-          appVersion: "1.0.381",
+          appVersion: "1.0.383",
           threads: [
             {
               sourceThreadId: t1,

@@ -29,7 +29,7 @@ import { makeRig, type Rig, type RigMachine } from "./handoffTransfer.test.fixtu
 import { putTransfer } from "./HandoffTransferStore.ts";
 import { turnRefusal } from "./HandoffTurnGate.ts";
 import type { TakeoverRequest } from "./handoffWire.ts";
-import { previousMarkContinued } from "./previousRelease381.test.fixture.ts";
+import { previousMarkContinued } from "./previousRelease383.test.fixture.ts";
 
 const temporary: Array<string> = [];
 afterEach(() => {
@@ -885,6 +885,32 @@ describe("Continue here on a machine that holds a copy", () => {
       expect(findIncoming(b.document, a.environmentId, t1)?.continuedThreadId).toBeNull();
       // The source still runs it.
       expect(leaseOf(a, t1)?.state).toBe("active");
+    }),
+  );
+
+  it.effect("asks the source for an agent too, and starts nothing when it is silent", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      yield* copyOn(rig, a, [b]);
+      const input = { sourceEnvironmentId: a.environmentId, sourceThreadId: t1 };
+      rig.network.rule = (call) => (call.to === a.environmentId ? "lose-request" : undefined);
+      const renewedAt = Date.parse(findIncoming(b.document, a.environmentId, t1)!.lease.renewedAt);
+      yield* TestClock.setTime(renewedAt + HANDOFF_LEASE_STALE_MS + 60_000);
+
+      const failure = yield* b.moves.continueHere(input, { byAgent: true }).pipe(Effect.flip);
+
+      expect(failure.code).toBe("busy");
+      expect(rig.callsOf("transfer-pull", a)).toHaveLength(1);
+      expect(b.launches).toHaveLength(0);
+      expect(leaseOf(a, t1)?.state).toBe("active");
+
+      // The source answers again: it hands the thread over under its own record.
+      rig.network.rule = null;
+      const result = yield* b.moves.continueHere(input, { byAgent: true });
+      expect(b.launches.map((launch) => launch.threadId)).toEqual([result.threadId]);
+      expect(transferOf(a, t1)).toMatchObject({ trigger: { kind: "pull" } });
+      expect(takeovers(rig)).toHaveLength(1);
     }),
   );
 

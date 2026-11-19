@@ -11,7 +11,7 @@
  * `hang`, which never returns, and then restarting the machine.
  *
  * A machine marked `previous` answers as the latest release does, from the
- * rules pinned in `previousRelease381.test.fixture.ts`.
+ * rules pinned in `previousRelease383.test.fixture.ts`.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -66,7 +66,7 @@ import {
   previousHeartbeatContinued,
   previousMarkContinued,
   previousTakeoverVerdict,
-} from "./previousRelease381.test.fixture.ts";
+} from "./previousRelease383.test.fixture.ts";
 
 const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const git = (cwd: string, ...args: Array<string>) =>
@@ -445,7 +445,7 @@ export const makeRig = (
           return encodePreviousPreflightResponse({
             machineLabel: to.label,
             protocolVersion: PREVIOUS_PROTOCOL_VERSION,
-            appVersion: "1.0.381",
+            appVersion: "1.0.383",
             results: decoded.value.threads.map((thread) => ({
               sourceThreadId: thread.sourceThreadId,
               failures: [],

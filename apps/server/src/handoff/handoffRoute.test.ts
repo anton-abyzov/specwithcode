@@ -26,7 +26,7 @@ import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
 import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
 import { ExtrasReceiver } from "./ExtrasReceiver.ts";
-import { HandoffReceiver, type ReceiverCaller } from "./HandoffReceiver.ts";
+import { HandoffReceiver, HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import * as HandoffRoute from "./handoffRoute.ts";
 import {
   encodeFrame,
@@ -117,6 +117,22 @@ function api() {
             }),
         }),
         Layer.mock(HandoffReceiver)({
+          // It accepted the takeover and could not start the thread: the acceptance stands.
+          takeover: (_caller, request) =>
+            Effect.fail(
+              request.epoch === 3
+                ? new HandoffRefusal({
+                    status: 503,
+                    code: "failed",
+                    message: "Mini accepted this handoff and could not start it.",
+                    uncertain: true,
+                  })
+                : new HandoffRefusal({
+                    status: 409,
+                    code: "fenced",
+                    message: "Mini saw a newer epoch.",
+                  }),
+            ),
           negotiate: (caller) =>
             Effect.sync(() => {
               callers.push(caller);
@@ -342,6 +358,38 @@ describe("handoff route", () => {
       expect(await invalid.json()).toMatchObject({ code: "invalid" });
       expect((await app.post("transfer-pull", "revoked", JSON.stringify(pull))).status).toBe(403);
       expect(app.transfers).toHaveLength(2);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it("says a failure after an accepted takeover is in doubt, and a refusal is not", async () => {
+    const app = api();
+    try {
+      const takeover = (epoch: number) =>
+        app.post(
+          "takeover",
+          "limited",
+          JSON.stringify({
+            sourceEnvironmentId: m4,
+            sourceThreadId: ThreadId.make("thread-m4"),
+            epoch,
+            sequence: 1,
+            reason: "handoff",
+            modelSelection: null,
+            operationId: "0a1b2c3d-1111-4222-8333-444455556666",
+          }),
+        );
+      const doubt = await takeover(3);
+      expect(doubt.status).toBe(503);
+      expect(await doubt.json()).toEqual({
+        error: "Mini accepted this handoff and could not start it.",
+        code: "failed",
+        uncertain: true,
+      });
+      const refused = await takeover(2);
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toEqual({ error: "Mini saw a newer epoch.", code: "fenced" });
     } finally {
       await app.dispose();
     }
