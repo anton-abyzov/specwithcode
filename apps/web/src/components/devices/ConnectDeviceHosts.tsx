@@ -67,10 +67,10 @@ export function useDeviceApprovalSupported(environmentId: EnvironmentId | null):
   return configs.get(environmentId)?.environment.capabilities.deviceApproval === true;
 }
 
-/** A polled device list with the machine it came from. */
-interface LoadedSnapshot {
+/** A polled device list, or why it could not be read, with the machine it came from. */
+interface FromMachine<T> {
   readonly environmentId: EnvironmentId;
-  readonly snapshot: ConnectDevicesSnapshot;
+  readonly value: T;
 }
 
 /** Polls one machine's device list while mounted; faster while the window is in view. */
@@ -83,12 +83,14 @@ export function useConnectDevices(
   },
 ) {
   const { visibleMs, hiddenMs } = poll;
-  // Kept with the machine it came from, so a change of machine never shows the
-  // last machine's list while the new one loads.
-  const [loaded, setLoaded] = useState<LoadedSnapshot | null>(null);
-  const snapshot =
-    enabled && loaded !== null && loaded.environmentId === environmentId ? loaded.snapshot : null;
-  const [error, setError] = useState<string | null>(null);
+  // Kept with the machine they came from, so a change of machine never shows the
+  // last machine's list or error while the new one loads.
+  const [loaded, setLoaded] = useState<FromMachine<ConnectDevicesSnapshot> | null>(null);
+  const [failure, setFailure] = useState<FromMachine<string> | null>(null);
+  const current = <T,>(entry: FromMachine<T> | null) =>
+    enabled && entry !== null && entry.environmentId === environmentId ? entry.value : null;
+  const snapshot = current(loaded);
+  const error = current(failure);
   const generation = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -97,12 +99,15 @@ export function useConnectDevices(
     try {
       const next = await connectDevices.list(environmentId);
       if (mine !== generation.current) return;
-      setLoaded({ environmentId, snapshot: next });
-      setError(null);
+      setLoaded({ environmentId, value: next });
+      setFailure(null);
       announceNotices(environmentId, next.notices);
     } catch (cause) {
       if (mine !== generation.current) return;
-      setError(cause instanceof Error ? cause.message : txNow("Could not reach this machine."));
+      setFailure({
+        environmentId,
+        value: cause instanceof Error ? cause.message : txNow("Could not reach this machine."),
+      });
     }
   }, [environmentId, enabled]);
 

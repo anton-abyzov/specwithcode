@@ -19,6 +19,9 @@ const world = vi.hoisted(() => {
     /** The waiting list of a second machine, for a change of primary machine. */
     otherPending: [] as ConnectDeviceRequest[],
     primary: "env-m4",
+    /** A machine whose list cannot be read, and one whose answer is held back. */
+    failing: null as string | null,
+    held: null as { environmentId: string; release: Promise<void> } | null,
     log: [] as string[],
     key: null as { thumbprint: string } | null,
     environments: [] as Array<{
@@ -93,7 +96,11 @@ vi.mock("../../studio/connectDevices", async () => {
   return {
     ...logic,
     connectDevices: {
-      list: async (environmentId: string) => snapshot(environmentId),
+      list: async (environmentId: string) => {
+        if (world.state.failing === environmentId) throw new Error(`${environmentId} is offline`);
+        if (world.state.held?.environmentId === environmentId) await world.state.held.release;
+        return snapshot(environmentId);
+      },
       approve: async (_environmentId: string, code: string) => {
         const id = CODES[code.replace(/[\s-]/g, "").toUpperCase()];
         const match = world.state.pending.find((request) => request.id === id);
@@ -124,7 +131,12 @@ vi.mock("../../studio/connectDevices", async () => {
   };
 });
 
-import { DeviceApprovalPromptHost, DeviceWaitingForApprovalHost } from "./ConnectDeviceHosts";
+import {
+  DeviceApprovalPromptHost,
+  DeviceWaitingForApprovalHost,
+  useConnectDevices,
+} from "./ConnectDeviceHosts";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 
 const phone = (id: string, shortId: string, askedAt: string): ConnectDeviceRequest => ({
   id,
@@ -194,6 +206,8 @@ beforeEach(() => {
   world.state.pending = [];
   world.state.otherPending = [];
   world.state.primary = "env-m4";
+  world.state.failing = null;
+  world.state.held = null;
   world.state.log = [];
   world.state.key = null;
   world.state.environments = [];
@@ -315,5 +329,41 @@ describe("the waiting card reads this device's ID once a machine waits (1406)", 
     });
     await act(settle);
     expect(document.body.textContent).toContain("This device's ID is TSKR.");
+  });
+});
+
+describe("a machine's device list and error stay with that machine (1406)", () => {
+  /** What Settings > Machines reads from the hook for the primary machine. */
+  function ListState() {
+    const { snapshot, error } = useConnectDevices(usePrimaryEnvironmentId(), true);
+    return (
+      <p data-list-state>
+        {snapshot?.machine ?? "loading"} / {error ?? "no error"}
+      </p>
+    );
+  }
+  const state = () => document.querySelector("[data-list-state]")!.textContent;
+
+  it("shows neither the last machine's list nor its error while the next one loads", async () => {
+    let release = () => {};
+    await mount(() => <ListState />);
+    expect(state()).toBe("m4 / no error");
+    world.state.failing = "env-m4";
+    await machineChanged();
+    expect(state()).toBe("m4 / env-m4 is offline");
+    world.state.held = {
+      environmentId: "env-m5",
+      release: new Promise<void>((resolve) => (release = resolve)),
+    };
+    await act(async () => {
+      world.setPrimary("env-m5");
+      await settle();
+    });
+    expect(state()).toBe("loading / no error");
+    await act(async () => {
+      release();
+      await settle();
+    });
+    expect(state()).toBe("m5 / no error");
   });
 });
