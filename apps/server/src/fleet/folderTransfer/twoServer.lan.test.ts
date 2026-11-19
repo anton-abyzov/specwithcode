@@ -807,7 +807,8 @@ describe("both machines opt in (AC-30, AC-31)", () => {
     ["the destination turns the setting off", () => void (on.destination = false), "retired"],
     ["the network changes", () => void (policy.network = "test0|10.9.9.9/8"), "network_changed"],
     // Same interfaces, same addresses: only the route to the peer leaves elsewhere now.
-    ["only the route changes", () => void (policy.route = "test1"), "network_changed"],
+    // Both machines watch the route: whichever sees it first ends its side and tells the other.
+    ["only the route changes", () => void (policy.route = "test1"), ["network_changed", "retired"]],
     ["the destination switches", () => void copies.lan!.latch(id, "unreachable"), "retired"],
   ])(
     "ends the generation on both machines within a second when %s, and rebinds nothing",
@@ -825,7 +826,7 @@ describe("both machines opt in (AC-30, AC-31)", () => {
         await new Promise((resolve) => setTimeout(resolve, 10));
       // Neither machine waits for its own idle limit: each told the other, or saw it itself.
       expect([sources.lan!.liveGenerations(), copies.lan!.liveGenerations()]).toEqual([0, 0]);
-      expect(listener.ended).toBe(cause);
+      expect([cause].flat()).toContain(listener.ended);
       expect((await rawClient({ port })).secure).toBe(false);
       await new Promise((resolve) => setTimeout(resolve, 300));
       expect(control.checks).toHaveLength(1);
