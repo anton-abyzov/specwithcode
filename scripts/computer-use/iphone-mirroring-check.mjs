@@ -59,6 +59,8 @@ export const CLEAR_PRESSES = 14;
 export const DEFAULTS = {
   clockApp: "Clock",
   tabs: ["World Clock", "Stopwatch"],
+  // Every tab Clock shows; a tab bar is where at least three of them line up.
+  barLabels: ["World Clock", "Alarms", "Stopwatch", "Timers"],
   listApp: "Settings",
   settleMs: 900,
   openMs: 2_200,
@@ -119,7 +121,6 @@ export const readAs = (text) =>
     .map((char) => LOOKALIKES[char] ?? char)
     .join("");
 export const normalize = (text) => readAs(text).toLowerCase().replace(/\s+/g, " ").trim();
-const squash = (text) => text.replace(/\s+/g, "");
 /** Letters whose capital has the same shape, so a reading cannot tell their case. */
 const SAME_SHAPE = new Set("cosvwxz");
 const sameChar = (typed, read) =>
@@ -127,26 +128,34 @@ const sameChar = (typed, read) =>
   (read !== undefined &&
     SAME_SHAPE.has(typed.toLowerCase()) &&
     typed.toLowerCase() === read.toLowerCase());
-const typedChar = (char) => char !== undefined && /[A-Za-z0-9@#$%&*!?]/.test(char);
+// What may follow the typed text in the field: nothing, the cursor, or
+// Spotlight's inline suggestion: a dash, a space and capitalized words ("- Ask Siri").
+const NOTHING_AFTER = /^\s*\|?\s*$/;
+const SUGGESTION_AFTER = /^\s*\|?\s*-\s+[A-Z][A-Za-z .']*$/;
 
-/**
- * How many digits follow `base` at the start of a reading (with `digits`), or
- * 0 when none may; undefined when the reading does not start with `base`. What
- * follows must not be more typed text: a suggestion ("- Ask Siri") or the
- * cursor ("|").
- */
-export function typedTail(reading, base, digits = false) {
-  const read = Array.from(squash(readAs(reading)));
-  const want = Array.from(squash(base));
+/** The field reading split at the typed text: base, digits after it, and the rest. */
+function splitTyped(reading, base, digits) {
+  const read = Array.from(readAs(reading).trim());
+  const want = Array.from(base);
   for (let index = 0; index < want.length; index++) {
     if (!sameChar(want[index], read[index])) return undefined;
   }
   let count = 0;
   if (digits) while (/[0-9]/.test(read[want.length + count] ?? "")) count++;
-  const rest = read.slice(want.length + count);
-  // The cursor may read as "|" right after the text.
-  const after = rest[0] === "|" ? rest.slice(1) : rest;
-  return typedChar(after[0]) ? undefined : count;
+  return { count, rest: read.slice(want.length + count).join("") };
+}
+
+/**
+ * How many digits follow `base` at the start of a reading (with `digits`), or
+ * 0 when none may; undefined when the reading does not start with exactly
+ * `base`, spaces included, or anything but the cursor or a suggestion follows.
+ */
+export function typedTail(reading, base, digits = false) {
+  const split = splitTyped(reading, base, digits);
+  if (split === undefined) return undefined;
+  return NOTHING_AFTER.test(split.rest) || SUGGESTION_AFTER.test(split.rest)
+    ? split.count
+    : undefined;
 }
 
 /** Whether a reading starts with exactly the typed text. */
@@ -154,10 +163,8 @@ export const startsWithTyped = (reading, typed) => typedTail(reading, typed) ===
 
 /** Whether a reading shows a suggestion after the typed text, such as "- Ask Siri". */
 export function showsSuggestion(reading, base) {
-  const rest = squash(readAs(reading))
-    .slice(base.length)
-    .replace(/^[0-9]*/, "");
-  return /[A-Za-z]/.test(rest);
+  const split = splitTyped(reading, base, true);
+  return split !== undefined && SUGGESTION_AFTER.test(split.rest);
 }
 /** Clock readings change between screenshots, so they never decide a match. */
 const isReading = (text) => /^[\d\s:.,]+(am|pm)?$/i.test(text.trim());
@@ -231,14 +238,18 @@ export function anchorIn(page, words) {
 /**
  * The two tab labels where they line up as a tab bar does: side by side in a
  * row (at the bottom, or on top in a wider layout) or one above the other in a
- * sidebar. A page title with a tab's name lines up with neither. Rows win, the
- * lowest first; then the leftmost column. Returns { tabs: {label: line}, bar }.
+ * sidebar. A bar must also hold a third of `barLabels` (Clock shows four
+ * tabs), so a page title and one tab never pass for a bar. Returns
+ * { tabs: {label: line}, bar }, { ambiguous: true } when two different bars
+ * hold as many labels, or undefined.
  */
-export function locateTabs(lines, labels) {
+export function locateTabs(lines, labels, barLabels = labels) {
+  const known = [...new Set(barLabels.map(normalize))];
+  const needed = Math.min(3, known.length);
   const [first, second] = labels.map((label) =>
     lines.filter((line) => normalize(line.text) === normalize(label)),
   );
-  let best;
+  const candidates = [];
   for (const a of first) {
     for (const b of second) {
       const ca = center(a);
@@ -257,12 +268,23 @@ export function locateTabs(lines, labels) {
         bar = { axis: "column", at: Math.round((ca.x + cb.x) / 2), half };
         rank = -bar.at;
       }
-      if (bar !== undefined && (best === undefined || rank > best.rank)) {
-        best = { rank, tabs: { [labels[0]]: a, [labels[1]]: b }, bar };
-      }
+      if (bar === undefined) continue;
+      const held = new Set(
+        lines
+          .filter((line) => known.includes(normalize(line.text)) && inBar(line, bar))
+          .map((line) => normalize(line.text)),
+      ).size;
+      if (held < needed) continue;
+      candidates.push({ held, rank, tabs: { [labels[0]]: a, [labels[1]]: b }, bar });
     }
   }
-  return best === undefined ? undefined : { tabs: best.tabs, bar: best.bar };
+  if (candidates.length === 0) return undefined;
+  const most = Math.max(...candidates.map((entry) => entry.held));
+  const top = candidates.filter((entry) => entry.held === most);
+  const bars = new Set(top.map((entry) => `${entry.bar.axis}:${Math.round(entry.bar.at / 10)}`));
+  if (bars.size > 1) return { ambiguous: true };
+  const best = top.sort((x, y) => y.rank - x.rank)[0];
+  return { tabs: best.tabs, bar: best.bar };
 }
 
 /** Every line with where it is, for a log line that shows what the check saw. */
@@ -332,6 +354,11 @@ export async function runCheck(deps, options = {}) {
     log(`${ok ? "PASS" : "FAIL"} ${name}: ${detail}`);
     return ok;
   };
+  // A check the screen could not settle either way: never a product failure.
+  const unsure = (name, detail) => {
+    checks.push({ name, ok: false, unsure: true });
+    log(`UNSURE ${name}: ${detail}`);
+  };
   const note = (detail) => log(`NOTE ${detail}`);
 
   let lastFrontmost;
@@ -390,8 +417,13 @@ export async function runCheck(deps, options = {}) {
     const passed = checks.filter((entry) => entry.ok).length;
     const pass =
       passed === checks.length && clickChecks.length === CLICK_TARGET && landed === CLICK_TARGET;
-    const firstFailure = checks.find((entry) => !entry.ok);
+    const firstFailure = checks.find((entry) => !entry.ok && !entry.unsure);
     const failure = `${passed}/${checks.length} checks passed${firstFailure ? `; first failure: ${firstFailure.name}` : ""}`;
+    const unsettled = checks.filter((entry) => entry.unsure).map((entry) => entry.name);
+    if (!pass && firstFailure === undefined && unsettled.length > 0) {
+      // Nothing failed on the product; what did not pass could not be judged.
+      return invalid(`could not judge ${unsettled.join(", ")}; ${landed} clicks landed`);
+    }
     if (!pass && startLoad !== undefined && startLoad > MAX_FAIL_LOAD) {
       // No click total: an invalid log must never read as a result.
       return invalid(
@@ -544,8 +576,8 @@ export async function runCheck(deps, options = {}) {
     await freshSearch();
     await call("computer_type", { text: REPEAT_BASE + REPEAT_TAIL });
     const reads = [];
-    const read = async () => {
-      await deps.sleep(config.suggestMs);
+    const read = async (waitMs = config.suggestMs) => {
+      await deps.sleep(waitMs);
       seen = await look();
       const line = fieldLine(seen, REPEAT_BASE);
       reads.push(line?.text);
@@ -558,8 +590,8 @@ export async function runCheck(deps, options = {}) {
     };
     const typed = await read();
     await call("computer_key", { keys: "backspace" });
-    await deps.sleep(300);
-    const afterOne = await read();
+    // Read soon, before Spotlight could search again and bring a suggestion back.
+    const afterOne = await read(config.settleMs);
     // New text, so Spotlight searches again, as it did before the single press.
     await call("computer_type", { text: "5" });
     const retyped = await read();
@@ -572,19 +604,34 @@ export async function runCheck(deps, options = {}) {
     } else {
       const one = typed.tail - afterOne.tail;
       const repeated = retyped.tail - afterRepeat.tail;
-      const sameView = typed.suggestion === retyped.suggestion;
-      const ok =
-        typed.tail === REPEAT_TAIL.length &&
-        retyped.tail === afterOne.tail + 1 &&
-        // Only a suggestion on screen may take the single press.
-        (one === 1 || (one === 0 && typed.suggestion)) &&
-        sameView &&
-        repeated - one === REPEAT_PRESSES - 1;
-      check(
-        "key repeat",
-        ok,
-        `field read ${shown.join(" -> ")}; one backspace removed ${one}, backspace repeat ${REPEAT_PRESSES} removed ${repeated}${ok ? `, ${REPEAT_PRESSES - 1} more, so every press arrived` : ""}; inline suggestion before each: ${typed.suggestion ? "yes" : "no"}, ${retyped.suggestion ? "yes" : "no"}${sameView ? "" : " (differs, so the two calls are not comparable; repeat the run)"}`,
-      );
+      const detail = `field read ${shown.join(" -> ")}; one backspace removed ${one}, backspace repeat ${REPEAT_PRESSES} removed ${repeated}; inline suggestion before each: ${typed.suggestion ? "yes" : "no"}, ${retyped.suggestion ? "yes" : "no"}`;
+      // A single press that removed no text must be seen taking the suggestion
+      // away; one that left text and suggestion as they were was lost or hidden.
+      const tookSuggestion = one === 0 && typed.suggestion && !afterOne.suggestion;
+      if (
+        typed.tail !== REPEAT_TAIL.length ||
+        retyped.tail !== afterOne.tail + 1 ||
+        (one !== 1 && !tookSuggestion && !(one === 0 && typed.suggestion))
+      ) {
+        check("key repeat", false, detail);
+      } else if (one === 0 && !tookSuggestion) {
+        unsure(
+          "key repeat",
+          `${detail}; the single press changed nothing on screen while a suggestion showed, so it cannot be told whether it arrived`,
+        );
+      } else if (typed.suggestion !== retyped.suggestion) {
+        unsure(
+          "key repeat",
+          `${detail}; a suggestion showed before one call and not the other, so the two calls are not comparable`,
+        );
+      } else {
+        const ok = repeated - one === REPEAT_PRESSES - 1;
+        check(
+          "key repeat",
+          ok,
+          `${detail}${ok ? `; ${REPEAT_PRESSES - 1} more than one press, so every press arrived${tookSuggestion ? " (the suggestion took the first press of each call)" : ""}` : ""}`,
+        );
+      }
     }
   } catch (error) {
     check("key repeat", false, `failed: ${error.message}`);
@@ -604,11 +651,25 @@ export async function runCheck(deps, options = {}) {
   } catch (error) {
     return stop("tabs", `opening ${config.clockApp} failed: ${error.message}`);
   }
-  const located = locateTabs(seen.lines, [tabA, tabB]);
+  const barLabels = options.tabs === undefined ? config.barLabels : config.tabs;
+  let located = locateTabs(seen.lines, [tabA, tabB], barLabels);
+  if (located === undefined || located.ambiguous) {
+    // One more reading: a label text recognition missed once usually shows the next time.
+    await deps.sleep(config.settleMs);
+    seen = await look();
+    located = locateTabs(seen.lines, [tabA, tabB], barLabels);
+  }
+  if (located?.ambiguous) {
+    unsure(
+      "tabs",
+      `"${tabA}" and "${tabB}" line up in more than one place; read ${describeLines(seen.lines)}`,
+    );
+    return finish();
+  }
   if (located === undefined) {
     return stop(
       "tabs",
-      `could not find "${tabA}" and "${tabB}" side by side in a row or a column; read ${describeLines(seen.lines)}`,
+      `could not find "${tabA}" and "${tabB}" in a tab bar with the other tabs (${barLabels.join(", ")}); read ${describeLines(seen.lines)}`,
     );
   }
   const { bar } = located;
@@ -623,8 +684,8 @@ export async function runCheck(deps, options = {}) {
 
   const tap = async (label) => {
     // Only the bar found first counts, so a page title never stands in for a missed label.
-    const again = locateTabs(seen.lines, [tabA, tabB]);
-    if (again?.bar.axis === bar.axis && Math.abs(again.bar.at - bar.at) <= bar.half) {
+    const again = locateTabs(seen.lines, [tabA, tabB], barLabels);
+    if (again?.bar?.axis === bar.axis && Math.abs(again.bar.at - bar.at) <= bar.half) {
       Object.assign(tabLines, again.tabs);
     }
     const line = tabLines[label];
@@ -766,7 +827,9 @@ export function simulatedPhone({
   const tabY = tabsOnTop ? 140 : 820;
   const tabs = {
     "World Clock": { x: 640, y: tabY, width: 90, height: 20 },
+    Alarms: { x: 740, y: tabY, width: 60, height: 20 },
     Stopwatch: { x: 840, y: tabY, width: 80, height: 20 },
+    Timers: { x: 900, y: tabY, width: 50, height: 20 },
   };
   const pages = pageOverride ?? {
     "World Clock": ["World Clock", "Edit", "Cupertino", "Today, +0HRS", "10:42"],

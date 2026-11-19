@@ -66,7 +66,7 @@ describe("dry run", () => {
     ]) {
       const result = await runCheck(phone.deps);
       expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
-        /^PASS key repeat: .*one backspace removed 0, backspace repeat 3 removed 2, 2 more, so every press arrived; inline suggestion before each: yes, yes/,
+        /^PASS key repeat: .*one backspace removed 0, backspace repeat 3 removed 2; inline suggestion before each: yes, yes; 2 more than one press, so every press arrived \(the suggestion took the first press of each call\)/,
       );
       expect(result.pass).toBe(true);
     }
@@ -118,6 +118,44 @@ describe("dry run", () => {
     expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
       /^FAIL key repeat: .*one backspace removed 0, backspace repeat 3 removed 2; inline suggestion before each: no, no/,
     );
+  });
+
+  it("never passes a lost press as a suggestion that stayed on screen", async () => {
+    // The suggestion shows throughout and takes nothing; the single press and one repeat press are lost.
+    const phone = simulatedPhone({ dropRepeat: true });
+    const ocr = phone.deps.ocr;
+    let swallowed = false;
+    let repeatTyped = false;
+    const deps = {
+      ...phone.deps,
+      ocr: async (...args) =>
+        (await ocr(...args)).map((entry) =>
+          phone.state.app === "spotlight" && phone.state.query !== ""
+            ? { ...entry, text: `${entry.text}- Ask Siri` }
+            : entry,
+        ),
+      call: async (tool, args) => {
+        if (tool === "computer_type" && args.text === "QHBR4207") repeatTyped = true;
+        if (
+          repeatTyped &&
+          !swallowed &&
+          tool === "computer_key" &&
+          args.keys === "backspace" &&
+          args.repeat === undefined
+        ) {
+          swallowed = true;
+          return phone.deps.call("computer_screenshot", {});
+        }
+        return phone.deps.call(tool, args);
+      },
+    };
+    const result = await runCheck(deps);
+    expect(result.pass).toBe(false);
+    expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+      /^UNSURE key repeat: .*changed nothing on screen while a suggestion showed/,
+    );
+    expect(result.invalid).toBe(true);
+    expect(result.lines.some((entry) => entry.startsWith("Clicks landed"))).toBe(false);
   });
 
   it("taps tabs shown in a row on top", async () => {
@@ -414,6 +452,53 @@ describe("judging the screen", () => {
     expect(locateTabs(bottom, ["World Clock", "Timers"])).toBeUndefined();
   });
 
+  it("needs a third Clock tab in the bar, so a title and one tab never pass for a bar", () => {
+    const clock = ["World Clock", "Alarms", "Stopwatch", "Timers"];
+    const pair = ["World Clock", "Stopwatch"];
+    // The bottom Stopwatch label missed once; the Stopwatch page title is left-aligned above.
+    const missed = [
+      line("Stopwatch", 620, 150, 80),
+      line("World Clock", 640, 820, 90),
+      line("Alarms", 740, 820, 60),
+      line("Timers", 900, 820, 50),
+    ];
+    expect(locateTabs(missed, pair, clock)).toBeUndefined();
+    // A sidebar with a World Clock title in line with the Stopwatch label.
+    const side = [
+      line("World Clock", 610, 300),
+      line("Alarms", 610, 340),
+      line("Stopwatch", 610, 380),
+      line("Timers", 610, 420),
+      line("World Clock", 800, 380),
+    ];
+    const found = locateTabs(side, pair, clock);
+    expect(found.bar.axis).toBe("column");
+    expect(found.tabs["World Clock"]).toEqual(side[0]);
+    // The full bottom bar.
+    const bottom = [...missed.slice(1), line("Stopwatch", 840, 820, 80)];
+    expect(locateTabs(bottom, pair, clock).bar).toMatchObject({ axis: "row", at: 830 });
+  });
+
+  it("reads Clock once more when the first reading misses a tab label", async () => {
+    const phone = simulatedPhone();
+    let clockReads = 0;
+    const deps = {
+      ...phone.deps,
+      ocr: async (...args) => {
+        const read = await phone.deps.ocr(...args);
+        if (phone.state.app !== "Clock" || clockReads++ > 0) return read;
+        // The first Clock reading misses the Stopwatch tab and shows a Stopwatch title.
+        return [
+          ...read.filter((entry) => entry.text !== "Stopwatch"),
+          line("Stopwatch", 620, 150, 80),
+        ];
+      },
+    };
+    const result = await runCheck(deps);
+    expect(result.lines.find((entry) => entry.startsWith("PASS tabs"))).toMatch(/in a row/);
+    expect(result.pass).toBe(true);
+  });
+
   it("leaves a tab bar on top out of every page's words", () => {
     const lines = [
       line("World Clock", 640, 140),
@@ -446,8 +531,14 @@ describe("judging the screen", () => {
     expect(showsSuggestion("QHBR4207- Ask Siri", "QHBR")).toBe(true);
     expect(showsSuggestion("QHBR4207", "QHBR")).toBe(false);
     expect(showsSuggestion("QHBR4207|", "QHBR")).toBe(false);
-    // A stray key after the text is not taken for the cursor.
+    // A stray key after the text is not taken for the cursor or a suggestion.
     expect(startsWithTyped("hbdtl", "hbdt")).toBe(false);
+    expect(startsWithTyped("hbdt.", "hbdt")).toBe(false);
+    expect(startsWithTyped("hbdt/a", "hbdt")).toBe(false);
+    expect(startsWithTyped("hbdt-incorrect", "hbdt")).toBe(false);
+    expect(startsWithTyped("hbdt- wrong", "hbdt")).toBe(false);
+    expect(startsWithTyped("hb dt", "hbdt")).toBe(false);
+    expect(startsWithTyped("hbdt - Ask Siri", "hbdt")).toBe(true);
   });
 
   it("types samples that text recognition reads in one way only", () => {
