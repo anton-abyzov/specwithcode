@@ -513,7 +513,7 @@ describe(`against the previous release (${Previous.PREVIOUS_RELEASE})`, () => {
   });
 
   it("that release does not say it keeps a reviewer lock", () => {
-    expect(Previous.PREVIOUS_RELEASE).toBe("v1.0.381");
+    expect(Previous.PREVIOUS_RELEASE).toBe("v1.0.383");
     const said = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor)(
       Previous.descriptor("env-minis", "Minis"),
     );
