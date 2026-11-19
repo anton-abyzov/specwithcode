@@ -77,6 +77,7 @@ function worker(
     // This worker is from before Sync extras: it has no such path.
     if (url.pathname.includes("/extras-"))
       return Response.json({ error: "not_found", code: "not_found" }, { status: 404 });
+    if (url.pathname.endsWith("/replicate")) return Response.json({ sequence: 1 });
     return Response.json({ machineLabel: "M1", continued: [] });
   }) as typeof fetch;
   return { fetcher, sent };
