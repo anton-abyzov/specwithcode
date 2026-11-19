@@ -809,6 +809,26 @@ describe("dry run", () => {
     expect(phone.state.taps).toBe(2);
   });
 
+  it("never taps another source's result when the app's own caption was missed", async () => {
+    const phone = simulatedPhone({ deadReturn: true, suggestion: true });
+    const ocr = phone.deps.ocr;
+    phone.deps.ocr = async (...args) => {
+      const read = await ocr(...args);
+      if (phone.state.app !== "spotlight" || phone.state.query !== "Clock") return read;
+      // window-11.png without the app's caption: a "Google" heading over Google's "Clock".
+      const [field] = read;
+      const at = (text, y) => ({ text, x: 640, y, width: 120, height: 20 });
+      return [field, at("Set Timer", 260), at("Google", 300), at("Clock", 340)];
+    };
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^NOTE .* Return did not open Clock .*the first "Clock" under the field is not in the first row of results/,
+      ),
+    );
+    expect(phone.state.taps ?? 0).toBe(0);
+  });
+
   it("waits for Spotlight's suggestion before pressing Return", async () => {
     const phone = simulatedPhone({ suggestion: true });
     const order = [];
@@ -1029,26 +1049,31 @@ describe("judging the screen", () => {
     expect(TYPE_SAMPLES.some((sample) => /(.)\1/.test(sample))).toBe(true);
   });
 
-  it("tells the home screen from Spotlight over it, leaving clocks and specks out", () => {
-    const at = (text, y = 300) => ({ text, x: 1200, y, width: 80, height: 14 });
+  it("tells the home screen from Spotlight over it, never a field with the wrong text", () => {
+    const at = (text, y = 500) => ({ text, x: 1200, y, width: 80, height: 14 });
     const home = [
       at("Sunny Isles B...", 313),
       at("77°", 332),
       at("11:26", 330),
       at("Messages"),
+      at("Settings"),
       at("o"),
     ];
     // The run of November 19 at 11:26 AM: the same home screen a few seconds later.
-    expect(
-      showsNoSpotlight([...home.slice(0, 2), at("11:27", 330), at("Messages"), at("00")], home),
-    ).toBe(true);
-    expect(
-      showsNoSpotlight([at("4207 - Open", 307), at("Flood Watch"), at("Messages")], home),
-    ).toBe(false);
-    expect(newTexts([at("x@y", 307), at("Messages")], home)).toEqual(["x@y"]);
-    // Without text to compare, nothing is called the home screen.
-    expect(showsNoSpotlight([], home)).toBe(false);
-    expect(showsNoSpotlight(home, [])).toBe(false);
+    const later = [home[0], home[1], at("11:27", 330), at("Messages"), at("Settings"), at("o")];
+    expect(showsNoSpotlight(later, home, "x@y#h")).toBe(true);
+    // A label the home reading missed is not the field.
+    expect(showsNoSpotlight([...later, at("Flood Watch", 384)], home, "x@y#h")).toBe(true);
+    // A field with wrong, short or numeric text is never the home screen.
+    for (const field of ["420", "x@", "4", "207"]) {
+      expect(showsNoSpotlight([...later, at(field, 307)], home, "4207 x@")).toBe(false);
+    }
+    expect(showsNoSpotlight([...later, at("Clock - Open", 307)], home, "hbbd")).toBe(false);
+    expect(newTexts([at("x@y", 307), at("Messages"), at("11:40")], home)).toEqual(["x@y"]);
+    // Another screen, or nothing to compare, is never called the home screen.
+    expect(showsNoSpotlight([at("Search")], home, "hbbd")).toBe(false);
+    expect(showsNoSpotlight([], home, "hbbd")).toBe(false);
+    expect(showsNoSpotlight(home, [], "hbbd")).toBe(false);
   });
 
   it("tells pages apart by their words, leaving clock readings out", () => {

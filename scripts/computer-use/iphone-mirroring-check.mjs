@@ -201,22 +201,40 @@ const isReading = (text) => /^[\d\s:.,]+(am|pm)?$/i.test(text.trim());
 
 /** How often a typing step opens Spotlight again when the phone showed no Spotlight after typing. */
 export const SPOTLIGHT_TRIES = 3;
-/** Text a reading shows that stays put between screenshots of one screen: no clocks, no specks. */
-const steadyTexts = (lines) =>
-  lines.map((line) => normalize(line.text)).filter((text) => text.length > 2 && !isReading(text));
-/** What a reading shows that the home screen reading did not. */
+/** A time of day, which changes between screenshots. */
+const isTime = (text) => /^\d{1,2}:\d{2}$/.test(text);
+const texts = (lines) =>
+  lines.map((line) => normalize(line.text)).filter((text) => text !== "" && !isTime(text));
+/** What a reading shows that the home screen reading did not; only times of day are left out. */
 export const newTexts = (lines, home) => {
-  const before = new Set(steadyTexts(home));
-  return steadyTexts(lines).filter((text) => !before.has(text));
+  const before = new Set(texts(home));
+  return texts(lines).filter((text) => !before.has(text));
 };
+/** Home screen labels: words, not numbers or specks, which read the same on every screenshot. */
+const labels = (lines) => texts(lines).filter((text) => text.length > 2 && !isReading(text));
+/** The share of home screen labels a reading must show again to be the home screen; text recognition misses a few. */
+export const HOME_SHARE = 0.6;
 /**
- * Whether a reading after typing shows only what the home screen showed: no
- * Spotlight bar and no typed text, so the typing reached no search field.
+ * Whether a reading after typing `typed` is the home screen with no search field.
+ * Most home labels show again, and no new text could be the field: the field
+ * shows a known suggestion or text starting with a typed character, numbers and
+ * single characters included, so a field showing the wrong text never passes
+ * for the home screen. A label the home reading missed ("Flood Watch") is not
+ * taken for the field unless it starts with a typed character.
  */
-export const showsNoSpotlight = (lines, home) =>
-  steadyTexts(lines).length > 0 &&
-  steadyTexts(home).length > 0 &&
-  newTexts(lines, home).length === 0;
+export function showsNoSpotlight(lines, home, typed) {
+  const before = labels(home);
+  if (before.length === 0) return false;
+  const now = new Set(labels(lines));
+  if (before.filter((text) => now.has(text)).length < HOME_SHARE * before.length) return false;
+  const chars = new Set(Array.from(normalize(typed)));
+  const suggestions = SUGGESTIONS.map((entry) => normalize(entry));
+  return !newTexts(lines, home).some(
+    (text) =>
+      chars.has(Array.from(text)[0]) ||
+      (text.includes("-") && suggestions.some((entry) => text.endsWith(entry))),
+  );
+}
 
 export const center = (line) => ({
   x: Math.round(line.x + line.width / 2),
@@ -767,7 +785,7 @@ export async function runCheck(deps, options = {}) {
       await call("computer_type", { text });
       await deps.sleep(waitMs);
       seen = await look();
-      if (!showsNoSpotlight(seen.lines, home.lines)) return undefined;
+      if (!showsNoSpotlight(seen.lines, home.lines, text)) return undefined;
       const extra = newTexts(opened.lines, home.lines);
       const detail = `after typing "${text}" the phone showed only its home screen, no search field (try ${tries} of ${SPOTLIGHT_TRIES}); before typing, after cmd+3, it showed ${extra.length === 0 ? "nothing beyond the home screen" : `new text ${extra.map((entry) => JSON.stringify(entry)).join(", ")}`}; home screen read ${describeLines(home.lines.slice(0, 6))}`;
       note(`${stamp()} ${name}: ${detail}`);
@@ -932,21 +950,28 @@ export async function runCheck(deps, options = {}) {
     await deps.sleep(config.openMs);
     seen = await look();
     const field = searchField(seen, name);
-    const result =
+    const below =
       field === undefined
-        ? undefined
+        ? []
         : seen.lines
-            .filter(
-              (line) =>
-                normalize(line.text) === normalize(name) &&
-                center(line).y > center(field).y + field.height,
-            )
-            .sort((a, b) => a.y - b.y)[0];
-    // Spotlight is still up only when its field shows a suggestion or a result
+            .filter((line) => center(line).y > center(field).y + field.height)
+            .sort((a, b) => a.y - b.y);
+    const first = below.find((line) => normalize(line.text) === normalize(name));
+    // The app's own result is the first row under the field. Text between them
+    // (a heading such as "Google" over another source's "Clock") means the
+    // app's caption was missed, and nothing is tapped.
+    const sameRow = (a, b) =>
+      Math.abs(center(a).y - center(b).y) <= Math.max(a.height, b.height) / 2;
+    const result =
+      first !== undefined &&
+      !below.some((line) => center(line).y < center(first).y && !sameRow(line, first))
+        ? first
+        : undefined;
+    // Spotlight is still up only when its field shows a suggestion or the name
     // shows under it: an opened app's own title (Settings) is neither.
     const searching =
       field !== undefined &&
-      (readField(field.text, name).after === "suggestion" || result !== undefined);
+      (readField(field.text, name).after === "suggestion" || first !== undefined);
     if (!searching || locateTabs(seen.lines, [tabA, tabB], barLabels) !== undefined) return seen;
     const before =
       suggested === undefined
@@ -954,7 +979,7 @@ export async function runCheck(deps, options = {}) {
         : `while ${JSON.stringify(suggested.text)} showed`;
     if (result === undefined) {
       note(
-        `${stamp()} Return did not open ${name} ${before}, and no "${name}" result showed to tap`,
+        `${stamp()} Return did not open ${name} ${before}, and ${first === undefined ? `no "${name}" result showed to tap` : `the first "${name}" under the field is not in the first row of results, so it is another source's and was not tapped`}`,
       );
       return seen;
     }
