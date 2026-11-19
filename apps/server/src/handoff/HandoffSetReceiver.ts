@@ -77,28 +77,34 @@ export const makeSetReceiver = <E>(
      * outside its repository and answers `meta: null`: nothing of the thread
      * is stored for it. With the thread's own frame every member's ref is
      * written (`landed`), and taken back if the thread is then refused.
+     *
+     * `linked` reads the project this machine links the source's to, and
+     * refuses when there is none. It is read before anything is taken and,
+     * for a set that landed, once more after: a link that went away while the
+     * refs were written refuses the thread, and the refs are taken back.
      */
-    take: (
+    take: <P extends { readonly workspaceRoot: string }>(
       /** `grant` is null for this machine asking itself: it never offers, and is taken at its word. */
       caller: { readonly grant: unknown },
-      project: { readonly workspaceRoot: string },
+      linked: Effect.Effect<P, HandoffRefusal>,
       sent: ReplicateMeta,
       bundle: Uint8Array | null,
     ): Effect.Effect<
-      { readonly meta: ReplicateMeta | null; readonly landed: boolean },
+      { readonly meta: ReplicateMeta | null; readonly landed: boolean; readonly project: P },
       HandoffRefusal,
       Scope.Scope
     > =>
       sent.setPart === undefined && sent.set === undefined
-        ? Effect.succeed({ meta: sent, landed: false })
+        ? Effect.map(linked, (project) => ({ meta: sent, landed: false, project }))
         : Effect.gen(function* () {
+            const asked = yield* linked;
             const whole = yield* Effect.tryPromise({
               try: () =>
                 setOffers.take({
                   sourceEnvironmentId: sent.sourceEnvironmentId,
                   sourceThreadId: sent.sourceThreadId,
                   self: caller.grant === null,
-                  projectRoot: project.workspaceRoot,
+                  projectRoot: asked.workspaceRoot,
                   targetRef: incomingRef(sent.sourceEnvironmentId, sent.sourceThreadId),
                   commit: sent.checkpoint.commit,
                   part: sent.setPart,
@@ -107,11 +113,12 @@ export const makeSetReceiver = <E>(
                 }),
               catch: fail,
             });
-            if (whole === null) return { meta: null, landed: false };
+            if (whole === null) return { meta: null, landed: false, project: asked };
             // Stored: the refs are the thread's. Refused or cut short: they are taken back.
             yield* Effect.addFinalizer((exit) =>
               Effect.promise(Exit.isSuccess(exit) ? whole.done : whole.undo),
             );
+            const project = yield* linked;
             const meta = { ...sent, repositoryPath: whole.set.members[0]!.repositoryPath };
             // The thread's copy is its own frame alone, and only with every member here.
             yield* Effect.tryPromise({
@@ -124,7 +131,7 @@ export const makeSetReceiver = <E>(
                 }),
               catch: fail,
             });
-            return { meta, landed: true };
+            return { meta, landed: true, project };
           }),
 
     /** Secret files the other members of a set need here and do not have. */

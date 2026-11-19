@@ -451,8 +451,8 @@ export const make = Effect.gen(function* () {
   const replicate = (caller: ReceiverCaller, sent: ReplicateMeta, bundle: Uint8Array | null) =>
     Effect.gen(function* () {
       yield* sameSource(caller, sent.sourceEnvironmentId);
-      const project = yield* requireProject(caller, sent.sourceProjectId);
-      const { meta, landed } = yield* sets.take(caller, project, sent, bundle);
+      const linked = requireProject(caller, sent.sourceProjectId);
+      const { meta, landed, project } = yield* sets.take(caller, linked, sent, bundle);
       if (meta === null) return { sequence: sent.checkpoint.sequence };
       const root = yield* repositoryRoot(project, meta.repositoryPath);
       const targetRef = incomingRef(meta.sourceEnvironmentId, meta.sourceThreadId);
