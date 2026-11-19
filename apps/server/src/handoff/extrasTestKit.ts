@@ -109,9 +109,12 @@ export function gitCommandsNotAllowed(): Array<string> {
                       ? rest[0] === "-d"
                         ? // With the commit it was listed at, or without: only ever a hidden ref.
                           (rest.length === 2 || rest.length === 3) && HIDDEN.test(rest[1] ?? "")
-                        : HIDDEN.test(rest[0] ?? "") ||
-                          // An arrival branch is created only where no ref of that name exists.
-                          (ARRIVAL.test(rest[0] ?? "") && rest.length === 3 && rest[2] === "")
+                        : rest[0] === "--no-deref" && rest[1] === "-d"
+                          ? // A send's own hidden ref, never through a symbolic ref, at its commit.
+                            rest.length === 4 && HIDDEN.test(rest[2] ?? "")
+                          : HIDDEN.test(rest[0] ?? "") ||
+                            // An arrival branch is created only where no ref of that name exists.
+                            (ARRIVAL.test(rest[0] ?? "") && rest.length === 3 && rest[2] === "")
                       : verb === "fetch"
                         ? (rest.length === 5 &&
                             rest.slice(0, 3).join(" ") ===

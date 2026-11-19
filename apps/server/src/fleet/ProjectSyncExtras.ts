@@ -413,154 +413,211 @@ export async function sendExtra(input: {
     detail: detail === null ? null : detail.slice(0, 1900),
   });
   const hidden = `${EXTRAS_REF_PREFIX}${refComponent(input.operationId)}/${input.index}`;
+  // The repository this send works in, for all of it: its hidden ref is written, checked
+  // and removed there (`GIT_DIR`), and a checkout that opens another one by the time the
+  // bundle is made or sent stays.
+  const where = await gitFolders(syncGit, root).catch(() => null);
+  if (where === null) return stays("failed", "The checkout's Git folder could not be read.");
+  const pinned = { GIT_DIR: where.gitDir, GIT_WORK_TREE: where.cwd };
+  const stillHere = async () => {
+    const now = await gitFolders(syncGit, root).catch(() => null);
+    if (now === null || now.cwd !== where.cwd || now.gitDir !== where.gitDir)
+      throw new Error("The checkout's Git folder changed during the send, so it stays.");
+  };
   // The commit this call wrote the hidden ref at, once Git created it; null while it has not.
   let created: string | null = null;
-  try {
-    let commit: string;
-    let leaf: string;
-    let exclude: ReadonlyArray<string>;
-    let more: Partial<ProjectSyncExtraResult> = {};
-    if (item.kind === "branch") {
-      const tip = await refCommit(root, `refs/heads/${item.branch}`);
-      if (tip === null) return stays("missing-branch");
-      // The branch may move while this runs: the hidden ref holds what is sent. Created only
-      // where none of that name exists: a ref another process holds is never taken over.
-      await runGit(root, ["update-ref", hidden, tip, ""]);
-      created = tip;
-      commit = tip;
-      leaf = item.branch;
-      exclude = await peer.negotiate(await negotiationCandidates(root, tip));
-      if (!exclude.includes(tip)) {
-        const measured = await measureCommitRange({
-          root,
-          commit: tip,
-          exclude,
-          maxFileBytes,
-        });
-        if (measured.oversizedFile !== null)
-          return stays(
-            "file-too-large",
-            `${measured.oversizedFile} is over ${megabytes(maxFileBytes)}.`,
-          );
-        if (measured.files > maxFiles)
-          return stays(
-            "too-many-files",
-            `${measured.files.toLocaleString("en-US")} files, over the limit of ${maxFiles.toLocaleString("en-US")}.`,
-          );
-      }
-    } else {
-      const snapshot = await writeCheckpoint({
-        cwd: root,
-        threadId: `sync-${input.operationId}`,
-        ref: hidden,
-        exclusive: true,
-        message: `SpecWithCode: uncommitted work on ${input.sourceLabel}`,
-        contentCheck: { pastLimit: "leave-out", sendAnyway: item.sendAnyway },
-      });
-      created = snapshot.commit;
-      const leftOutAll: Array<ProjectSyncLeftOutFile> = await Promise.all(
-        [
-          ...snapshot.excludedSecretPaths.map((path) => ({
-            path,
-            reason: "name" as const,
-            kind: null,
-          })),
-          ...snapshot.leftOutByContent,
-        ].map(async (file) => ({ ...file, modifiedAtMs: await modifiedAtMs(root, file.path) })),
-      );
-      const leftOut = capped(leftOutAll);
-      more = { leftOut: leftOut.listed, leftOutNotListed: leftOut.notListed };
-      const over = snapshot.overLimit;
-      if (over !== null) {
-        return over.reason === "too-large"
-          ? stays(
+  const outcome = await (async (): Promise<ProjectSyncExtraResult> => {
+    try {
+      let commit: string;
+      let leaf: string;
+      let exclude: ReadonlyArray<string>;
+      let more: Partial<ProjectSyncExtraResult> = {};
+      if (item.kind === "branch") {
+        const tip = await refCommit(root, `refs/heads/${item.branch}`);
+        if (tip === null) return stays("missing-branch");
+        // The branch may move while this runs: the hidden ref holds what is sent. Created only
+        // where none of that name exists: a ref another process holds is never taken over.
+        await runGit(root, ["update-ref", hidden, tip, ""], { env: pinned });
+        created = tip;
+        commit = tip;
+        leaf = item.branch;
+        exclude = await peer.negotiate(await negotiationCandidates(root, tip));
+        if (!exclude.includes(tip)) {
+          const measured = await measureCommitRange({
+            root,
+            commit: tip,
+            exclude,
+            maxFileBytes,
+          });
+          if (measured.oversizedFile !== null)
+            return stays(
               "file-too-large",
-              `${over.path} is ${megabytes(over.bytes)}, over ${megabytes(HANDOFF_MAX_SNAPSHOT_FILE_BYTES)}.`,
-              more,
-            )
-          : stays(
+              `${measured.oversizedFile} is over ${megabytes(maxFileBytes)}.`,
+            );
+          if (measured.files > maxFiles)
+            return stays(
               "too-many-files",
-              `More than ${HANDOFF_MAX_SNAPSHOT_FILES.toLocaleString("en-US")} files.`,
+              `${measured.files.toLocaleString("en-US")} files, over the limit of ${maxFiles.toLocaleString("en-US")}.`,
+            );
+        }
+      } else {
+        await stillHere();
+        const snapshot = await writeCheckpoint({
+          cwd: root,
+          threadId: `sync-${input.operationId}`,
+          ref: hidden,
+          exclusive: true,
+          message: `SpecWithCode: uncommitted work on ${input.sourceLabel}`,
+          contentCheck: { pastLimit: "leave-out", sendAnyway: item.sendAnyway },
+        });
+        // Its own only once the pinned repository has it, as a direct ref at that commit.
+        await stillHere();
+        if ((await directRef(root, pinned, hidden)) === snapshot.commit) created = snapshot.commit;
+        else throw new Error("The snapshot's ref could not be read back, so it stays.");
+        const leftOutAll: Array<ProjectSyncLeftOutFile> = await Promise.all(
+          [
+            ...snapshot.excludedSecretPaths.map((path) => ({
+              path,
+              reason: "name" as const,
+              kind: null,
+            })),
+            ...snapshot.leftOutByContent,
+          ].map(async (file) => ({ ...file, modifiedAtMs: await modifiedAtMs(root, file.path) })),
+        );
+        const leftOut = capped(leftOutAll);
+        more = { leftOut: leftOut.listed, leftOutNotListed: leftOut.notListed };
+        const over = snapshot.overLimit;
+        if (over !== null) {
+          return over.reason === "too-large"
+            ? stays(
+                "file-too-large",
+                `${over.path} is ${megabytes(over.bytes)}, over ${megabytes(HANDOFF_MAX_SNAPSHOT_FILE_BYTES)}.`,
+                more,
+              )
+            : stays(
+                "too-many-files",
+                `More than ${HANDOFF_MAX_SNAPSHOT_FILES.toLocaleString("en-US")} files.`,
+                more,
+              );
+        }
+        const [own, parent] = await Promise.all([
+          runGit(root, ["rev-parse", `${snapshot.commit}^{tree}`]),
+          runGit(root, ["rev-parse", `${snapshot.baseCommit}^{tree}`]),
+        ]);
+        if (own.stdout.trim() === parent.stdout.trim()) return stays("nothing-to-send", null, more);
+        commit = snapshot.commit;
+        leaf = snapshotLeaf(input.now, input.operationId);
+        exclude = await peer.negotiate(await negotiationCandidates(root, snapshot.baseCommit));
+        if (!exclude.includes(snapshot.baseCommit)) {
+          // The checked-out commit is not there yet: its commits travel in the same bundle,
+          // under the same limits as a branch.
+          const measured = await measureCommitRange({
+            root,
+            commit: snapshot.baseCommit,
+            exclude,
+            maxFileBytes,
+          });
+          if (measured.oversizedFile !== null)
+            return stays(
+              "file-too-large",
+              `${measured.oversizedFile} is over ${megabytes(maxFileBytes)}.`,
               more,
             );
+          if (measured.files + snapshot.includedFileCount > maxFiles)
+            return stays(
+              "too-many-files",
+              `${(measured.files + snapshot.includedFileCount).toLocaleString("en-US")} files, over the limit of ${maxFiles.toLocaleString("en-US")}.`,
+              more,
+            );
+          const included = await count(root, [snapshot.baseCommit, "--not", "--remotes=origin"]);
+          // A count Git could not make is said to be unknown: never a zero.
+          more = {
+            ...more,
+            ...(included === null
+              ? { includedCommits: 0, includedCommitsUnknown: true }
+              : { includedCommits: included }),
+            includedBranch: snapshot.branch,
+          };
+        }
       }
-      const [own, parent] = await Promise.all([
-        runGit(root, ["rev-parse", `${snapshot.commit}^{tree}`]),
-        runGit(root, ["rev-parse", `${snapshot.baseCommit}^{tree}`]),
-      ]);
-      if (own.stdout.trim() === parent.stdout.trim()) return stays("nothing-to-send", null, more);
-      commit = snapshot.commit;
-      leaf = snapshotLeaf(input.now, input.operationId);
-      exclude = await peer.negotiate(await negotiationCandidates(root, snapshot.baseCommit));
-      if (!exclude.includes(snapshot.baseCommit)) {
-        // The checked-out commit is not there yet: its commits travel in the same bundle,
-        // under the same limits as a branch.
-        const measured = await measureCommitRange({
+      let bytes = 0;
+      let payload: Uint8Array | null = null;
+      await stillHere();
+      if (!exclude.includes(commit)) {
+        const bundle = await createBundle({
           root,
-          commit: snapshot.baseCommit,
+          ref: hidden,
+          commit,
           exclude,
-          maxFileBytes,
+          maxBytes: maxBundleBytes,
         });
-        if (measured.oversizedFile !== null)
-          return stays(
-            "file-too-large",
-            `${measured.oversizedFile} is over ${megabytes(maxFileBytes)}.`,
-            more,
-          );
-        if (measured.files + snapshot.includedFileCount > maxFiles)
-          return stays(
-            "too-many-files",
-            `${(measured.files + snapshot.includedFileCount).toLocaleString("en-US")} files, over the limit of ${maxFiles.toLocaleString("en-US")}.`,
-            more,
-          );
-        const included = await count(root, [snapshot.baseCommit, "--not", "--remotes=origin"]);
-        // A count Git could not make is said to be unknown: never a zero.
-        more = {
-          ...more,
-          ...(included === null
-            ? { includedCommits: 0, includedCommitsUnknown: true }
-            : { includedCommits: included }),
-          includedBranch: snapshot.branch,
-        };
+        try {
+          bytes = bundle.bytes;
+          payload = await NodeFSP.readFile(bundle.path);
+        } finally {
+          await bundle.dispose();
+        }
       }
+      await stillHere();
+      const arrived = await peer.replicate({ leaf, commit }, payload);
+      const sent: ProjectSyncExtraResult = {
+        ...base,
+        ...more,
+        status: "sent",
+        arrivedAs: arrived.branch,
+        landed: arrived.landed,
+        bytes,
+      };
+      return sent;
+    } catch (cause) {
+      if (cause instanceof ExtrasPeerFailure) return stays(cause.stays, cause.message);
+      if (cause instanceof BundleError && cause.code === "too_large")
+        return stays("bundle-too-large", cause.message);
+      return stays("failed", cause instanceof Error ? cause.message : "Git did not finish.");
     }
-    let bytes = 0;
-    let payload: Uint8Array | null = null;
-    if (!exclude.includes(commit)) {
-      const bundle = await createBundle({
-        root,
-        ref: hidden,
-        commit,
-        exclude,
-        maxBytes: maxBundleBytes,
-      });
-      try {
-        bytes = bundle.bytes;
-        payload = await NodeFSP.readFile(bundle.path);
-      } finally {
-        await bundle.dispose();
-      }
-    }
-    const arrived = await peer.replicate({ leaf, commit }, payload);
-    const sent: ProjectSyncExtraResult = {
-      ...base,
-      ...more,
-      status: "sent",
-      arrivedAs: arrived.branch,
-      landed: arrived.landed,
-      bytes,
-    };
-    return sent;
-  } catch (cause) {
-    if (cause instanceof ExtrasPeerFailure) return stays(cause.stays, cause.message);
-    if (cause instanceof BundleError && cause.code === "too_large")
-      return stays("bundle-too-large", cause.message);
-    return stays("failed", cause instanceof Error ? cause.message : "Git did not finish.");
-  } finally {
-    // Only the ref this call created, and only while it is still at the commit written.
-    if (created !== null)
-      await runGit(root, ["update-ref", "-d", hidden, created], { allowFailure: true });
+  })();
+  // Only the ref this call created, in the repository it created it in, and only while it
+  // is still a direct ref at the commit written; never through a symbolic ref. One whose
+  // ownership cannot be shown any more is left, and said.
+  if (created === null) return outcome;
+  let left = true;
+  if ((await directRef(root, pinned, hidden).catch(() => undefined)) === created) {
+    const deleted = await runGit(root, ["update-ref", "--no-deref", "-d", hidden, created], {
+      env: pinned,
+      allowFailure: true,
+    }).catch(() => null);
+    left = deleted === null || deleted.code !== 0;
   }
+  if (!left) return outcome;
+  const note = `A temporary ref, ${hidden}, was left in the repository: Sync could not show it is still its own.`;
+  return {
+    ...outcome,
+    detail: (outcome.detail === null ? note : `${outcome.detail} ${note}`).slice(0, 1900),
+  };
+}
+
+/**
+ * The commit `ref` names in the repository `env` pins when it is a direct ref,
+ * null when it is absent, symbolic or not one ref; rejects when Git failed.
+ */
+async function directRef(
+  root: string,
+  env: Readonly<Record<string, string>>,
+  ref: string,
+): Promise<string | null> {
+  const listed = await runGit(
+    root,
+    ["for-each-ref", "--format=%(refname) %(objectname) %(symref)", ref],
+    {
+      env,
+    },
+  );
+  const lines = listed.stdout.split("\n").filter((line) => line.length > 0);
+  if (lines.length !== 1) return null;
+  const [name, oid, symref] = lines[0]!.split(" ");
+  return name === ref && oid !== undefined && /^[0-9a-f]{40,64}$/.test(oid) && symref === ""
+    ? oid
+    : null;
 }
 
 export class ProjectSyncExtras extends Context.Service<

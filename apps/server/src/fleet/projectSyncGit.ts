@@ -98,6 +98,27 @@ export const read = async (git: SyncGit, cwd: string, args: ReadonlyArray<string
   return { ok: result.code === 0, text: result.stdout.trim(), stderr: result.stderr.trim() };
 };
 
+/**
+ * The lines Git printed, exactly: each line ends in Git's own newline, which is
+ * the only thing removed; nothing is trimmed. Null when Git failed, its output
+ * is not UTF-8, or it is not `count` non-empty lines (a path with a newline in
+ * it would be one line more), so a path is never read as another one.
+ */
+export async function exactLines(
+  git: SyncGit,
+  cwd: string,
+  args: ReadonlyArray<string>,
+  count: number,
+): Promise<Array<string> | null> {
+  const result = await git(cwd, args, { allowFailure: true, timeoutMs: LOCAL_MS }).catch(
+    () => null,
+  );
+  if (result === null || result.code !== 0 || result.invalidUtf8 === true) return null;
+  if (!result.stdout.endsWith("\n")) return null;
+  const lines = result.stdout.slice(0, -1).split("\n");
+  return lines.length === count && lines.every((line) => line.length > 0) ? lines : null;
+}
+
 export const gitReason = (stderr: string) =>
   (
     stderr
@@ -254,10 +275,10 @@ async function withoutCloneStaging(
  * file system cannot say is there or not.
  */
 export async function operationUnfinished(git: SyncGit, cwd: string): Promise<boolean | null> {
-  const gitDir = await read(git, cwd, ["rev-parse", "--absolute-git-dir"]).catch(() => null);
-  if (gitDir === null || !gitDir.ok || gitDir.text.length === 0) return null;
+  const gitDir = (await exactLines(git, cwd, ["rev-parse", "--absolute-git-dir"], 1))?.[0];
+  if (gitDir === undefined) return null;
   for (const mark of UNFINISHED_MARKS) {
-    const found = await present(NodePath.join(gitDir.text, mark));
+    const found = await present(NodePath.join(gitDir, mark));
     if (found !== false) return found;
   }
   return false;

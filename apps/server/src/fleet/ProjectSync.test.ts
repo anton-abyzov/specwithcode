@@ -1378,9 +1378,11 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
         ]);
       // Settings are only read.
       if (args[0] === "config") {
-        expect(args.slice(0, 2)).toEqual(["config", "--get-all"]);
+        // One key, or one pattern of keys (the partial-clone check).
+        expect(["--get-all", "--get-regexp"]).toContain(args[1]);
         expect(
-          args.length === 3 || (args.length === 4 && args[2] === "--bool"),
+          args.length === 3 ||
+            (args[1] === "--get-all" && args.length === 4 && args[2] === "--bool"),
           args.join(" "),
         ).toBe(true);
       }

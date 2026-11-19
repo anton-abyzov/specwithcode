@@ -62,7 +62,7 @@ import {
   type SyncRepository,
   uncommittedCount,
 } from "./projectSyncGit.ts";
-import { gitAtLeast, gitVersion, type Row, sameTuple, upstreamOf } from "./projectSyncRecord.ts";
+import { type Row, sameTuple, upstreamOf } from "./projectSyncRecord.ts";
 import { type RefTransaction, refTransaction, type TransactionAnswer } from "./refTransaction.ts";
 
 const stepOf = (
@@ -200,21 +200,24 @@ async function heldElsewhere(
 }
 
 /**
- * Whether a move here can run without Git fetching anything: always on Git 2.45
- * and newer (Sync's runner sets `GIT_NO_LAZY_FETCH`), and on an older Git only
- * in a repository that is no partial clone. Undefined when unread.
+ * Whether this is a partial clone: a remote Git may fetch missing objects from
+ * (`remote.<name>.promisor`, or a filter alone, `remote.<name>.partialclonefilter`),
+ * or `extensions.partialClone`. On some Git versions a checkout fetches a missing
+ * file from that remote whatever `GIT_NO_LAZY_FETCH` says, so a move here never
+ * runs, on any version. Undefined when unread.
  */
-async function offlineCapable(git: SyncGit, cwd: string): Promise<boolean | undefined> {
-  const version = await gitVersion(git, cwd);
-  if (version === null) return undefined;
-  if (gitAtLeast(version, 2, 45)) return true;
-  const partial = await git(
+async function partialClone(git: SyncGit, cwd: string): Promise<boolean | undefined> {
+  const found = await git(
     cwd,
-    ["config", "--get-regexp", "^(remote\\..+\\.promisor|extensions\\.partialclone)$"],
+    [
+      "config",
+      "--get-regexp",
+      "^(remote\\..+\\.(promisor|partialclonefilter)|extensions\\.partialclone)$",
+    ],
     { allowFailure: true, timeoutMs: LOCAL_MS },
   ).catch(() => null);
-  if (partial === null || (partial.code !== 0 && partial.code !== 1)) return undefined;
-  return partial.code === 1;
+  if (found === null || (found.code !== 0 && found.code !== 1)) return undefined;
+  return found.code === 0;
 }
 
 /** The commit graph this move goes by: local grafts would rewrite it (replacements are off). */
@@ -289,13 +292,13 @@ export async function fastForwardRepository(
   // Every command from here on opens the recorded Git folder with the recorded checkout,
   // whatever `.git` says meanwhile; the binding is read again right before the write.
   const bound: SyncContext = { ...context, git: boundGit(git, row.gitDir, cwd) };
+  // A partial clone is never moved: Git could fetch a missing file in the middle of the
+  // move. Read before anything of the checkout's objects, HEAD included.
+  const partial = await partialClone(bound.git, cwd);
+  if (partial === undefined) return decline(PROJECT_SYNC_STATE_UNREAD_DETAIL);
+  if (partial) return decline(PROJECT_SYNC_PARTIAL_CLONE_DETAIL);
   const asFetched = await checkAsFetched(bound, cwd, row);
   if (asFetched !== null) return decline(asFetched);
-  // A Git that could fetch a missing file in the middle of the move does not move a
-  // partial clone; nothing below reads the target's objects before this.
-  const offline = await offlineCapable(bound.git, cwd);
-  if (offline === undefined) return decline(PROJECT_SYNC_STATE_UNREAD_DETAIL);
-  if (!offline) return decline(PROJECT_SYNC_PARTIAL_CLONE_DETAIL);
   // The target is in this checkout, and follows from the recorded commit.
   const objects = await bound
     .git(cwd, ["cat-file", "--batch-check=%(objecttype)"], {

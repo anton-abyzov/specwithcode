@@ -276,11 +276,11 @@ export const PROJECT_SYNC_GRAFTS_DETAIL =
 export const PROJECT_SYNC_GIT_TOO_OLD_DETAIL =
   "Fetched, but this machine's Git is older than 2.41 and cannot show what the fetch brought, so it was not moved. Update Git.";
 /**
- * The `detail` of a fast-forward declined in a partial clone on a Git older than 2.45,
- * which could fetch a missing file from origin in the middle of the move.
+ * The `detail` of a fast-forward declined in a partial clone: Git could fetch a missing
+ * file from origin in the middle of the move. Its fetch still runs.
  */
 export const PROJECT_SYNC_PARTIAL_CLONE_DETAIL =
-  "This is a partial clone, and this machine's Git is older than 2.45, so moving it could fetch from origin. It was not moved. Update Git.";
+  "This is a partial clone, and moving it could make Git fetch from origin, so Sync fetched it and did not move it.";
 /** The `unreadDetail` of a checkout for which the list of running threads could not be read. */
 export const PROJECT_SYNC_THREADS_UNREAD_DETAIL =
   "The list of running threads could not be read, so it was not moved.";

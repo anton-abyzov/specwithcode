@@ -16,6 +16,7 @@ import {
 import { canonicalOrigin } from "./handoffGitTypes.ts";
 import {
   commitOf,
+  exactLines,
   gitReason,
   headBranch,
   LOCAL_MS,
@@ -264,18 +265,18 @@ export async function gitFolders(
   git: SyncGit,
   cwd: string,
 ): Promise<{ readonly cwd: string; readonly gitDir: string } | null> {
+  // Each path exactly as Git printed it: a name that ends in a space is that name.
   const [real, dirs] = await Promise.all([
     NodeFSP.realpath(cwd).catch(() => null),
-    read(git, cwd, [
-      "rev-parse",
-      "--path-format=absolute",
-      "--show-toplevel",
-      "--absolute-git-dir",
-    ]).catch(() => null),
+    exactLines(
+      git,
+      cwd,
+      ["rev-parse", "--path-format=absolute", "--show-toplevel", "--absolute-git-dir"],
+      2,
+    ),
   ]);
-  if (real === null || dirs === null || !dirs.ok) return null;
-  const [top, gitDir] = dirs.text.split("\n");
-  if (top === undefined || gitDir === undefined || gitDir.length === 0) return null;
+  if (real === null || dirs === null) return null;
+  const [top, gitDir] = dirs as [string, string];
   const realTop = await NodeFSP.realpath(top).catch(() => null);
   return realTop === real ? { cwd: real, gitDir } : null;
 }
