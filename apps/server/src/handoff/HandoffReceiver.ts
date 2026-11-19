@@ -722,17 +722,23 @@ export const make = Effect.gen(function* () {
           const replica = findIncoming(current, caller.sourceEnvironmentId, thread.sourceThreadId);
           const holder = replica?.lease;
           const resolved =
-            project === null ? null : resolveProjectSettings(settings, project.id, project).settings;
-          // Review entries are the reviewer's own list; the named reviewer is what is checked.
-          const trackEntries =
-            resolved === null ||
-            thread.track === null ||
-            thread.track === "review" ||
-            resolved.threadModelMode !== "tracks"
+            project === null
               ? null
-              : launchTrackLanes(resolved.modelLanes, list, resolved.defaultModelProviders, nowMs)[
-                  TRACK_LANES[thread.track]
-                ];
+              : resolveProjectSettings(settings, project.id, project).settings;
+          // Null says this copy of the project has no such track, and then it is no
+          // target for a thread on one. The Review list is the reviewer's own, so
+          // the named reviewer is what is checked.
+          const trackEntries =
+            resolved === null || thread.track === null || resolved.threadModelMode !== "tracks"
+              ? null
+              : thread.track === "review"
+                ? [thread.modelSelection]
+                : launchTrackLanes(
+                    resolved.modelLanes,
+                    list,
+                    resolved.defaultModelProviders,
+                    nowMs,
+                  )[TRACK_LANES[thread.track]];
           const confirmed = confirmTarget({
             machineLabel: label,
             sourceLabel: request.sourceLabel,

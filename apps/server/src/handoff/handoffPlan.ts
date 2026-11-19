@@ -170,7 +170,11 @@ export function confirmTarget(input: {
     PeerCheckRequest["threads"][number],
     "modelSelection" | "track" | "driverKind" | "accountFingerprints"
   >;
-  /** This machine's entries for the thread's track, in order; null when the thread has no track. */
+  /**
+   * This machine's entries for the thread's track, in order. Null when its copy
+   * of the project has no such track (it runs one fixed model): then it is no
+   * target for a thread on a track.
+   */
   readonly trackEntries: ReadonlyArray<ModelSelection> | null;
   readonly signIns: ReadonlyArray<CheckSignIn>;
   /** Why the grant does not let the source run on a sign-in, worded with this machine's name. */
@@ -198,9 +202,25 @@ export function confirmTarget(input: {
     otherHolder: input.otherHolder,
   });
 
+  // Without the project here nothing else can be said about its tracks.
+  if (input.project === null) return { failures: base, evidence: null };
   let candidates: ReadonlyArray<ModelSelection>;
-  if (thread.track === null || input.trackEntries === null) {
+  if (thread.track === null) {
+    // Only a thread with no track at the source is checked on the model it names.
     candidates = [thread.modelSelection];
+  } else if (input.trackEntries === null) {
+    return {
+      failures: [
+        ...base,
+        {
+          check: "model",
+          message: at(
+            `${input.project.title} does not use the ${MODEL_TRACK_LABELS[thread.track]} track here`,
+          ),
+        },
+      ],
+      evidence: null,
+    };
   } else if (input.trackEntries.length === 0) {
     return {
       failures: [
@@ -402,15 +422,16 @@ export async function measureTravel(input: {
 }): Promise<HandoffMeasure> {
   const limits = input.limits ?? HANDOFF_LIMITS;
   const ref = checkRef(input.operationId, input.threadId);
-  let root: string | null = null;
+  // Exclusive: a second measure of the same operation and thread fails here, before
+  // it holds anything, and so never deletes the ref of the one that runs.
+  const checkpoint = await writeCheckpoint({
+    cwd: input.cwd,
+    threadId: input.threadId,
+    ref,
+    exclusive: true,
+  });
+  const root = checkpoint.root;
   try {
-    const checkpoint = await writeCheckpoint({
-      cwd: input.cwd,
-      threadId: input.threadId,
-      ref,
-      exclusive: true,
-    });
-    root = checkpoint.root;
     const known = await input.known(await negotiationCandidates(root, checkpoint.baseCommit));
     const range = await measureCommitRange({
       root,
@@ -434,20 +455,73 @@ export async function measureTravel(input: {
     if (skipped?.reason === "too-large") {
       over = { limit: "file", path: skipped.path, bytes: skipped.bytes };
     } else if (skipped?.reason === "too-many-files") {
-      over = { limit: "files", count: checkpoint.includedFileCount + checkpoint.skipped.length };
+      over = { limit: "files", count: await changedFileCount(root) };
     } else {
       const large = await largestOver(root, checkpoint.commit, checkpoint.baseCommit, limits);
       if (large !== null) over = large;
       else if (range.oversizedFile !== null) {
-        over = { limit: "file", path: range.oversizedFile, bytes: limits.maxFileBytes + 1 };
+        over = {
+          limit: "file",
+          path: range.oversizedFile,
+          bytes:
+            (await blobBytes(root, checkpoint.commit, known, range.oversizedFile)) ??
+            limits.maxFileBytes + 1,
+        };
       } else if (range.files > limits.maxFiles) over = { limit: "files", count: range.files };
       else if (bytes > limits.maxBundleBytes) over = { limit: "bundle", bytes };
     }
     return { bytes, files: range.files, over };
   } finally {
-    const at = root ?? input.cwd;
-    await runGit(at, ["update-ref", "-d", ref], { allowFailure: true }).catch(() => undefined);
+    // Only the ref this call wrote, and only while it still points at its commit.
+    await runGit(root, ["update-ref", "-d", ref, checkpoint.commit], { allowFailure: true }).catch(
+      () => undefined,
+    );
   }
+}
+
+/** Every changed and untracked file of the folder; the checkpoint's own list of skips is capped. */
+async function changedFileCount(root: string): Promise<number> {
+  const status = await runGit(root, [
+    "status",
+    "--porcelain",
+    "-z",
+    "--no-renames",
+    "--untracked-files=all",
+  ]);
+  return status.stdout.split("\0").filter(Boolean).length;
+}
+
+/** The size of the largest blob that travels under `path`, or null when it cannot be read. */
+async function blobBytes(
+  root: string,
+  commit: string,
+  exclude: ReadonlyArray<string>,
+  path: string,
+): Promise<number | null> {
+  const objects = await runGit(
+    root,
+    [
+      "rev-list",
+      "--objects",
+      commit,
+      ...exclude
+        .filter((sha) => /^[0-9a-f]{40,64}$/.test(sha) && sha !== commit)
+        .map((sha) => `^${sha}`),
+    ],
+    { allowFailure: true },
+  );
+  let largest: number | null = null;
+  for (const line of objects.stdout.split("\n")) {
+    if (line.slice(line.indexOf(" ") + 1) !== path) continue;
+    const size = await runGit(root, ["cat-file", "-s", line.slice(0, line.indexOf(" "))], {
+      allowFailure: true,
+    });
+    const bytes = Number(size.stdout.trim());
+    if (size.code === 0 && Number.isFinite(bytes) && (largest === null || bytes > largest)) {
+      largest = bytes;
+    }
+  }
+  return largest;
 }
 
 /** The first file of the snapshot commit itself that is over the per-file limit, with its size. */
@@ -493,6 +567,8 @@ export type HandoffStay =
   | "worktree-set"
   | "broken-folder"
   | "limit"
+  | "unmeasured"
+  | "track"
   | "needs-update"
   | "target";
 
@@ -514,8 +590,13 @@ export interface HandoffThreadFact {
   readonly worktreeSet: boolean;
   /** The path of a folder whose Git data cannot be read. */
   readonly brokenFolder: string | null;
+  /**
+   * Its model is on more than one track and no routing decision says which one
+   * it runs on (`trackOfThread`): an automatic move never guesses.
+   */
+  readonly trackAmbiguous: boolean;
   readonly check: HandoffTargetCheck;
-  /** Null while nothing was measured: then the run measures it. */
+  /** Null until it was measured: such a row cannot be ticked. */
   readonly measure: HandoffMeasure | null;
   /** Its sign-in's usage here, for the automatic start. */
   readonly usage: {
@@ -584,6 +665,8 @@ export interface HandoffPlan {
   readonly target: HandoffPlanFacts["target"];
   readonly items: ReadonlyArray<HandoffPlanItem>;
 }
+
+const UNMEASURED = "Not measured yet.";
 
 /** An idle thread at the threshold moves only this soon after its last turn. */
 export const AUTOMATIC_IDLE_WINDOW_MS = 10 * 60_000;
@@ -655,9 +738,15 @@ export function planThread(
   if (thread.brokenFolder !== null) {
     return stays("broken-folder", `Its folder's Git data is broken: ${thread.brokenFolder}`);
   }
-  if (thread.measure !== null && thread.measure.over !== null) {
-    return stays("limit", overLimitText(thread.measure.over));
+  if (!manual && thread.trackAmbiguous) {
+    return stays(
+      "track",
+      "Its model is on more than one track, and nothing says which one it runs on.",
+    );
   }
+  // A row is offered only with its size: what was not measured promises nothing.
+  if (thread.measure === null) return stays("unmeasured", UNMEASURED);
+  if (thread.measure.over !== null) return stays("limit", overLimitText(thread.measure.over));
   switch (thread.check.kind) {
     case "needs-update":
       return stays("needs-update", thread.check.message);
@@ -678,7 +767,11 @@ export function planThread(
       }
     }
   }
-  const resume = thread.activity === "running" || isResumableHandoffEnding(thread.runEnding);
+  // A settled thread is here for its files: moving them never starts its turn again,
+  // however its last run ended. Resume is for a thread that is being continued.
+  const resume =
+    thread.activity === "running" ||
+    (thread.activity !== "settled" && isResumableHandoffEnding(thread.runEnding));
   return {
     ...base,
     group:
@@ -717,9 +810,11 @@ export function folderWorkItem(
   const stay =
     work.brokenFolder !== null
       ? ({ stay: "broken-folder", reason: `Its Git data is broken: ${work.brokenFolder}` } as const)
-      : work.measure !== null && work.measure.over !== null
-        ? ({ stay: "limit", reason: overLimitText(work.measure.over) } as const)
-        : null;
+      : work.measure === null
+        ? ({ stay: "unmeasured", reason: UNMEASURED } as const)
+        : work.measure.over !== null
+          ? ({ stay: "limit", reason: overLimitText(work.measure.over) } as const)
+          : null;
   if (stay !== null) {
     return {
       ...base,
@@ -765,9 +860,11 @@ export function buildHandoffPlan(facts: HandoffPlanFacts): HandoffPlan {
 }
 
 /**
- * The thread's track at the source, from the lists its project routes by: the
- * Review track for a review thread, else the first of Complex and Daily that
- * names its model. Null when its project is not on tracks or neither names it.
+ * The thread's track at the source. The routing decision that chose its model
+ * names the track; a model can sit on both, so its name alone does not. Without
+ * a decision the track is the one list that names the model, and when both do
+ * it is not guessed: `ambiguous`, which no automatic move goes ahead on. Null
+ * when the project is not on tracks or neither list names the model.
  */
 export function trackOfThread(input: {
   readonly review: boolean;
@@ -777,10 +874,15 @@ export function trackOfThread(input: {
     readonly complex: ReadonlyArray<Pick<ModelSelection, "model">>;
     readonly routine: ReadonlyArray<Pick<ModelSelection, "model">>;
   } | null;
-}): ModelTrack | null {
-  if (input.lanes === null) return null;
-  if (input.review) return "review";
-  if (input.lanes.complex.some((entry) => entry.model === input.model)) return "complex";
-  if (input.lanes.routine.some((entry) => entry.model === input.model)) return "daily";
-  return null;
+  /** The lane of the thread's routing decision, when it has one. */
+  readonly routedLane: "complex" | "routine" | null;
+}): { readonly track: ModelTrack | null; readonly ambiguous: boolean } {
+  const known = (track: ModelTrack | null) => ({ track, ambiguous: false });
+  if (input.lanes === null) return known(null);
+  if (input.review) return known("review");
+  if (input.routedLane !== null) return known(input.routedLane === "complex" ? "complex" : "daily");
+  const complex = input.lanes.complex.some((entry) => entry.model === input.model);
+  const daily = input.lanes.routine.some((entry) => entry.model === input.model);
+  if (complex && daily) return { track: null, ambiguous: true };
+  return known(complex ? "complex" : daily ? "daily" : null);
 }
