@@ -82,7 +82,7 @@ import * as HandoffFollow from "./handoffFollow.ts";
 import { type HandoffContinueHereOptions, HandoffMode } from "./HandoffMode.ts";
 import { HandoffPeerError, HandoffPeers, layer as HandoffPeersLayer } from "./handoffPeers.ts";
 import { shouldResume } from "./handoffPreflight.ts";
-import { outgoingReviewLock, reviewTakeover } from "./handoffReviewLock.ts";
+import { outgoingReviewLock, reviewTakeover, sameReview } from "./handoffReviewLock.ts";
 import * as Resume from "./handoffResume.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import {
@@ -752,7 +752,7 @@ export const make = Effect.gen(function* () {
           fencedBy: reason === "sleep" ? "sleep" : "handoff",
         })).pipe(Effect.ignore);
         yield* interruptRun(heldShell, `Handing this thread to ${checked.machineLabel}.`);
-        const again = yield* prepare(input.threadId, destination).pipe(
+        const again = yield* sameReview(first.shell, prepare(input.threadId, destination)).pipe(
           Effect.tapError((error) =>
             releaseHold(
               input.threadId,

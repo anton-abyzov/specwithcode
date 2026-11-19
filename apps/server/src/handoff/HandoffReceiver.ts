@@ -52,7 +52,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveHandoffPlacement } from "./handoffPlacement.ts";
-import { arrivedReview } from "./handoffReviewLock.ts";
+import { arrivedReview, sentAsReview } from "./handoffReviewLock.ts";
 import * as ServerConfig from "../config.ts";
 import { clampRuntimeMode } from "../fleet/remoteWorkerMatching.ts";
 import {
@@ -657,7 +657,10 @@ export const make = Effect.gen(function* () {
         ),
       );
       // Asked again before the workspace changes, so a reviewer gone since the checks leaves nothing here.
-      const still = yield* reviewOf(caller, replica, detail, request.modelSelection);
+      const still = sentAsReview(
+        request,
+        yield* reviewOf(caller, replica, detail, request.modelSelection),
+      );
       if (still.kind === "refused") return yield* refuse(409, "invalid", still.message, "provider");
       const name = `${refComponent(project.title).slice(0, 32)}-handoff-${refComponent(
         request.sourceThreadId,
@@ -731,7 +734,10 @@ export const make = Effect.gen(function* () {
       );
       const now = yield* nowIso;
       // And once more now that the workspace is ready: this is the answer the launch runs on.
-      const review = yield* reviewOf(caller, replica, detail, request.modelSelection);
+      const review = sentAsReview(
+        request,
+        yield* reviewOf(caller, replica, detail, request.modelSelection),
+      );
       if (review.kind === "refused")
         return yield* refuse(409, "invalid", review.message, "provider");
       const modelSelection =

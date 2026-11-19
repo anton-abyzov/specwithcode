@@ -320,3 +320,33 @@ export function arrivedReview(input: {
     notice: moved ? `A review keeps to ${label} models, so it continues on ${pick.model}.` : null,
   };
 }
+
+const NO_LONGER_A_REVIEW =
+  "Review stays here: its last checkpoint no longer shows a review, so its reviewer cannot be kept. Hand it off again.";
+
+/**
+ * The decision for a takeover the source sent as a review: only a locked one
+ * starts. A checkpoint that arrives as an ordinary thread (renamed at the
+ * source since the move began) is refused, never started on the model asked for.
+ */
+export const sentAsReview = (
+  request: { readonly review?: boolean | undefined },
+  decision: ArrivedReview,
+): ArrivedReview =>
+  request.review === true && decision.kind === "unlocked"
+    ? { kind: "refused", message: NO_LONGER_A_REVIEW }
+    : decision;
+
+/**
+ * A later read of a thread whose move began as a review, or as none: the two
+ * reads must agree, or the move stops before any takeover is sent.
+ */
+export const sameReview = <A extends { readonly shell: ReviewThread }, E, R>(
+  first: ReviewThread,
+  later: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | HandoffModeError, R> =>
+  Effect.flatMap(later, (read) =>
+    (sourceReviewLock(first).kind === "none") === (sourceReviewLock(read.shell).kind === "none")
+      ? Effect.succeed(read)
+      : Effect.fail(new HandoffModeError({ code: "invalid", message: NO_LONGER_A_REVIEW })),
+  );
