@@ -14,6 +14,8 @@ import {
   ResumeMachineDialogView,
 } from "../../src/components/handoff/HandoffBadge";
 import { HandOffMachineDialogView } from "../../src/components/handoff/HandOffMachineDialog";
+import { HandOffProgressView } from "../../src/components/handoff/HandOffProgress";
+import { HANDOFF_PROGRESS_CASES, STAYS_REASONS, handoffProgressCase } from "./progressCases";
 import type { HandoffDestination } from "../../src/components/handoff/HandoffResults";
 import { HandOffThreadDialogView } from "../../src/components/handoff/HandOffThreadDialog";
 import { HandoffModeSettingsView } from "../../src/components/settings/HandoffModeSettings";
@@ -375,8 +377,128 @@ function CoordinatorBanner() {
   );
 }
 
+// 1390 AC-21, AC-31: the Hand off dialog after Hand off is pressed, one case per partial result.
+function ProgressDialog() {
+  const scenario = handoffProgressCase(params.get("case"));
+  return (
+    <HandOffMachineDialogView
+      machineName="M4"
+      projectName="atlas"
+      destinations={destinations.filter((item) => item.state !== "this-machine")}
+      destinationId={MINIS}
+      onDestination={noop}
+      threads={threads}
+      selected={new Set()}
+      onToggle={noop}
+      checking={false}
+      preflight={new Map()}
+      preflightError={null}
+      submitting={false}
+      error={scenario.error ?? null}
+      run={null}
+      progress={
+        <HandOffProgressView
+          projectName="atlas"
+          sourceName="M4"
+          targetName={scenario.trackOut ? null : "Minis"}
+          trigger={scenario.trigger}
+          rows={scenario.rows}
+          incomplete={scenario.incomplete ?? false}
+          trackOut={scenario.trackOut ?? null}
+          rowNotice={scenario.rowNotice ?? null}
+          onRelease={noop}
+          onOpen={noop}
+          onRetry={noop}
+          formatTime={() => "8:00 PM"}
+        />
+      }
+      destinationName="Minis"
+      onSubmit={noop}
+      onCancel={noop}
+      onOpenThread={noop}
+    />
+  );
+}
+
+// Every preflight check failing at once, so each reason a thread stays before Hand off shows.
+function CheckDialog() {
+  const checks = [
+    ["checkpoint", "M4: could not write a checkpoint of this thread"],
+    ["ignored-files", "Minis: no .env.local"],
+    ["grant", "Minis does not let M4 start work there"],
+    ["provider", "Minis: Claude not signed in"],
+    ["model", "Minis: Opus 5.5 is not available"],
+    ["project-link", "Minis does not have atlas linked"],
+    ["lease", "Another machine holds this thread"],
+    ["version", "Minis needs an update"],
+  ] as const;
+  const all = checks.map(([check, message], index) => ({
+    threadId: tid(`k${index}`),
+    title: `Stays: ${check}`,
+  }));
+  return (
+    <HandOffMachineDialogView
+      machineName="M4"
+      projectName="atlas"
+      destinations={destinations.filter((item) => item.state !== "this-machine")}
+      destinationId={MINIS}
+      onDestination={noop}
+      threads={[{ threadId: tid("ok"), title: "Goes: Fix the release build" }, ...all]}
+      selected={new Set([tid("ok"), ...all.map((row) => row.threadId)])}
+      onToggle={noop}
+      checking={false}
+      preflight={
+        new Map<ThreadId, HandoffPreflightResult>([
+          [tid("ok"), { ...failing, threadId: tid("ok"), ok: true, failures: [] }],
+          ...all.map(
+            (row, index) =>
+              [
+                row.threadId,
+                {
+                  ...failing,
+                  threadId: row.threadId,
+                  title: row.title,
+                  failures: [{ check: checks[index]![0], message: checks[index]![1] }],
+                },
+              ] as const,
+          ),
+        ])
+      }
+      preflightError={null}
+      submitting={false}
+      error={null}
+      run={null}
+      destinationName="Minis"
+      onSubmit={noop}
+      onCancel={noop}
+      onOpenThread={noop}
+    />
+  );
+}
+
 function Fixture() {
   if (view === "coordinator-banner") return <CoordinatorBanner />;
+  if (view === "handoff-progress") return <ProgressDialog />;
+  if (view === "handoff-check") return <CheckDialog />;
+  // What verify.mjs walks: each case with the rows and reasons it must find.
+  if (view === "cases")
+    return (
+      <pre id="cases">
+        {JSON.stringify({
+          cases: HANDOFF_PROGRESS_CASES.map((entry) => ({
+            key: entry.key,
+            label: entry.label,
+            rows: entry.rows.map((row) => ({
+              title: row.title,
+              state: row.state,
+              action: row.action,
+              detail: row.detail,
+            })),
+          })),
+          stays: STAYS_REASONS,
+        })}
+      </pre>
+    );
   return (
     <main className="min-h-screen bg-background p-4 text-foreground" data-testid="fixture">
       {view === "badges" ? <Badges /> : null}

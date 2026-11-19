@@ -38,6 +38,35 @@ const browser = await chromium.launch({
 });
 const errors = [];
 const shots = [];
+// AC-21 results not on main yet. When each PR lands, add its case to progressCases.ts and
+// drop it from here; the receipt lists what is still missing.
+const PENDING_CASES = [
+  {
+    result:
+      "The coordinator was refused in step 3: threads held, Hand off without the coordinator or Cancel",
+    pr: "#717",
+  },
+  {
+    result:
+      "The window closed in steps 1 to 3: the session card with Continue the hand off and Resume them here",
+    pr: "#717",
+  },
+  {
+    result: "Folder work could not be put into the working folder: it is a branch on the target",
+    pr: "#717",
+  },
+  { result: "A routine was refused or got no answer: Try the routines again", pr: "#717" },
+  {
+    result: "The coordinator row greyed: Stays while {n} threads keep working or waiting",
+    pr: "#717",
+  },
+  {
+    result: "Continue it on {source} offered only after the target answered it did not continue",
+    pr: "#717",
+  },
+  { result: "Idle threads listed in the Hand off dialog (AC-17)", pr: "T-12 finding 5" },
+  { result: "Per-provider usage in the Hand off dialog (AC-22)", pr: "T-12 finding 6" },
+];
 const cases = [
   ["badges", "M3 is offline"],
   ["thread-check", "Minis: no .env.local"],
@@ -117,6 +146,136 @@ try {
       shots.push(path);
     }
   }
+  // 1390 AC-21, AC-31: the Hand off dialog's progress, one case per partial result, light and
+  // dark at 1280 and 390 px. The cases and the "Stays" reasons come from the fixture page,
+  // which reads them from the server source; each must render on its row.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(`${origin}/?view=cases`);
+  const index = JSON.parse(await page.locator("#cases").textContent());
+  // The source parse must keep finding the runner's reasons: a refactor that hides them fails.
+  const reasonNames = index.stays.map((reason) => reason.name);
+  for (const name of [
+    "TURN_DID_NOT_STOP",
+    "UNSENT_TOO_OLD",
+    "RESUMED_HERE",
+    "NO_MACHINE_ACCEPTED",
+    "NOT_RECORDED",
+    "ARRIVED_FOR_THIS_RUN",
+    "BATCH_CUT",
+    "AUTOMATIC_OFF",
+    "AUTOMATIC_RUN_CHANGED",
+    "AUTOMATIC_DISPOSITION_CHANGED",
+    "LEGACY_HOLD_WAITS",
+    "FOLLOW_NOT_RECORDED",
+    "UNSETTLED_CHILD_REFUSAL",
+  ])
+    NodeAssert.ok(reasonNames.includes(name), `Stays reason ${name} is not read from the server`);
+  const staysCase = index.cases.find((entry) => entry.key === "stays");
+  NodeAssert.deepEqual(
+    staysCase.rows.map((row) => row.detail).sort(),
+    index.stays.map((reason) => reason.text).sort(),
+    "the stays case has one row per reason",
+  );
+  const ACTION_TEXT = {
+    "resume-here": "Resume here",
+    wait: "Wait",
+    open: "Open on Minis",
+    "try-again": "Try again",
+  };
+  const progressResults = [];
+  for (const entry of index.cases) {
+    for (const theme of ["light", "dark"]) {
+      for (const width of [1280, 390]) {
+        await page.emulateMedia({ colorScheme: theme });
+        await page.setViewportSize({ width, height: width === 390 ? 844 : 800 });
+        await page.goto(`${origin}/?view=handoff-progress&case=${entry.key}&theme=${theme}`);
+        await page.locator('[data-slot="hand-off-progress"]').waitFor({ timeout: 10_000 });
+        const items = page.locator("li[data-row-state]");
+        NodeAssert.equal(await items.count(), entry.rows.length, `${entry.key}: row count`);
+        for (const [n, row] of entry.rows.entries()) {
+          const item = items.nth(n);
+          NodeAssert.equal(await item.getAttribute("data-row-state"), row.state, row.title);
+          const text = await item.innerText();
+          NodeAssert.ok(text.includes(row.title), `${entry.key}: ${row.title} is shown`);
+          if (row.detail && (row.state === "stayed" || row.state === "failed"))
+            NodeAssert.equal(
+              (await item.locator('[data-slot="hand-off-row-reason"]').innerText()).trim(),
+              row.detail,
+              `${entry.key}: the reason of ${row.title}`,
+            );
+          if (row.action)
+            NodeAssert.ok(text.includes(ACTION_TEXT[row.action]), `${row.title}: ${row.action}`);
+          // A row nothing can be done for offers no control.
+          if (!row.action || row.action === "wait")
+            NodeAssert.equal(await item.locator("button").count(), 0, `${row.title}: no control`);
+        }
+        if (entry.key === "track-out") {
+          await page.getByText("Complex track is out on every machine").waitFor();
+          await page.getByText("3 threads stay on M4. Nothing moves.").waitFor();
+          await page.getByText("Next reset: Minis at 8:00 PM").waitFor();
+        }
+        if (entry.key === "track-out-unknown") {
+          await page.getByText("1 thread stays on M4. Nothing moves.").waitFor();
+          await page.getByText("Reset unknown").waitFor();
+        }
+        if (entry.key === "release-refused")
+          await page
+            .getByText("It is being sent now, so it was not released. Nothing changed.")
+            .waitFor();
+        if (entry.key === "partial")
+          await page.getByRole("alert").getByText("Minis stopped answering").waitFor();
+        await page.waitForTimeout(150);
+        const path = NodePath.join(output, `handoff-progress-${entry.key}-${theme}-${width}.png`);
+        await page.screenshot({ path, fullPage: true });
+        // No row's text runs out of the dialog at 390 px.
+        const overflow = await page.evaluate(() => {
+          const popup = document
+            .querySelector('[data-slot="dialog-popup"]')
+            .getBoundingClientRect();
+          return [...document.querySelectorAll("li[data-row-state] *")]
+            .map((node) => node.getBoundingClientRect())
+            .filter((rect) => rect.width > 0 && rect.right > popup.right + 1).length;
+        });
+        NodeAssert.equal(overflow, 0, `${entry.key} at ${width}: nothing past the dialog edge`);
+        shots.push(path);
+        progressResults.push({ case: entry.key, theme, width, rows: entry.rows.length });
+      }
+    }
+  }
+  // Before Hand off: each preflight check that keeps a thread here, with its own words.
+  for (const theme of ["light", "dark"]) {
+    for (const width of [1280, 390]) {
+      await page.emulateMedia({ colorScheme: theme });
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 800 });
+      await page.goto(`${origin}/?view=handoff-check&theme=${theme}`);
+      await page.getByText("Stays: version").waitFor({ timeout: 10_000 });
+      NodeAssert.equal(await page.locator('[data-thread-status="failed"]').count(), 8);
+      NodeAssert.equal(await page.locator('[data-thread-status="ready"]').count(), 1);
+      for (const check of [
+        "checkpoint",
+        "ignored-files",
+        "grant",
+        "provider",
+        "model",
+        "project-link",
+        "lease",
+        "version",
+      ])
+        NodeAssert.equal(await page.locator(`li[data-check="${check}"]`).count(), 1, check);
+      // Only the thread that passed goes: Hand off stays enabled for it.
+      NodeAssert.equal(
+        await page.getByRole("button", { name: "Hand off to Minis" }).isDisabled(),
+        false,
+      );
+      const path = NodePath.join(output, `handoff-check-${theme}-${width}.png`);
+      await page.screenshot({ path, fullPage: true });
+      shots.push(path);
+    }
+  }
+  await NodeFSP.writeFile(
+    NodePath.join(output, "handoff-progress.json"),
+    `${JSON.stringify({ cases: progressResults, stays: index.stays, pending: PENDING_CASES }, null, 2)}\n`,
+  );
   NodeAssert.deepEqual(errors, []);
 } finally {
   await browser.close();
